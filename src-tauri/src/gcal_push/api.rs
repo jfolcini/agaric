@@ -19,7 +19,7 @@
 //!   request per public method.  Retry / back-off policy lives in
 //!   FEAT-5e's connector where the error-class dispatch is
 //!   implemented.
-//! * **Token refresh.** Callers wrap each call in
+//! * **Token refresh.** The connector wraps each cycle in
 //!   [`crate::gcal_push::oauth::fetch_with_auto_refresh`]; the API
 //!   layer just returns `GcalErrorKind::Unauthorized` on 401.
 //! * **Middleware.** `reqwest-middleware`, `tower-http`, and similar
@@ -31,9 +31,9 @@
 //!
 //! Every public method awaits an [`InstantBucket`] token before issuing
 //! the HTTP request.  10 QPS sustained, 25-burst.  Implemented inline
-//! as a `VecDeque<Instant>` with sleep-until-oldest-falls-out — ~40
-//! lines, no new deps.  See FEAT-5 parent rejected-deps list for why
-//! `governor` / `leaky-bucket` were ruled out.
+//! as a classic token bucket (capacity = burst, refill = sustained
+//! QPS) — ~40 lines, no new deps.  See FEAT-5 parent rejected-deps
+//! list for why `governor` / `leaky-bucket` were ruled out.
 //!
 //! # All-day end-date translation
 //!
@@ -45,7 +45,6 @@
 //! (FEAT-5e's connector) can keep comparing `digest::Event` round-trips
 //! without worrying about which side of the wire they are on.
 
-use std::collections::VecDeque;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -221,7 +220,6 @@ impl GcalApi {
             client: shared_client()?,
             bucket: Arc::new(Mutex::new(InstantBucket::new(
                 RATE_LIMIT_BURST,
-                Duration::from_secs(1),
                 RATE_LIMIT_QPS,
             ))),
             base_url: base_url.trim_end_matches('/').to_owned(),
@@ -541,6 +539,14 @@ impl WireEventPatch {
 /// `events.get` / `events.patch`.  We deserialise into this and then
 /// translate the exclusive `end.date` back to the inclusive form the
 /// digest module uses.
+///
+/// #687 — tolerant decode: `start`/`end` accept either the all-day
+/// `{"date": "YYYY-MM-DD"}` shape we push or the timed
+/// `{"dateTime": "..."}` shape a user-converted event echoes back.
+/// A 2xx body that still cannot yield dates maps to
+/// [`GcalErrorKind::InvalidRequest`] (per-date skip) instead of a
+/// cycle-aborting `AppError::Validation` — see
+/// [`WireEventTime::into_all_day_date`].
 #[derive(Debug, Deserialize)]
 struct WireEventResponse {
     id: String,
@@ -548,21 +554,90 @@ struct WireEventResponse {
     summary: String,
     #[serde(default)]
     description: String,
-    start: EventDate,
-    end: EventDate,
+    #[serde(default)]
+    start: WireEventTime,
+    #[serde(default)]
+    end: WireEventTime,
     #[serde(default)]
     transparency: String,
 }
 
+/// Tolerant `start`/`end` shape for event-response bodies (#687).
+/// GCal returns `{date}` for all-day events and `{dateTime}` for timed
+/// events; a digest event the user converted to timed in the GCal UI
+/// echoes back as `dateTime` and must not wedge the connector.
+#[derive(Debug, Default, Deserialize)]
+struct WireEventTime {
+    #[serde(default)]
+    date: Option<String>,
+    #[serde(default, rename = "dateTime")]
+    date_time: Option<String>,
+}
+
+impl WireEventTime {
+    /// Reduce to a `YYYY-MM-DD` date string: prefer the all-day `date`
+    /// field; fall back to the calendar-date prefix of `dateTime`.
+    /// `field` names the slot ("start" / "end") for the error message.
+    fn into_date(self, field: &str) -> Result<(String, WireTimeKind), AppError> {
+        if let Some(date) = self.date {
+            return Ok((date, WireTimeKind::AllDay));
+        }
+        if let Some(dt) = self.date_time {
+            // RFC 3339 begins with the calendar date — validate the
+            // prefix so garbage cannot masquerade as a date.
+            let prefix: String = dt.chars().take(10).collect();
+            if NaiveDate::parse_from_str(&prefix, "%Y-%m-%d").is_ok() {
+                return Ok((prefix, WireTimeKind::Timed));
+            }
+        }
+        Err(nonconforming_response_err(&format!(
+            "event response carries no usable {field} date"
+        )))
+    }
+}
+
+/// Whether a [`WireEventTime`] decoded from the all-day `date` field
+/// or from a timed `dateTime`.  The exclusive-end −1-day shim only
+/// applies to the all-day shape — a timed event's end is on the same
+/// calendar day it names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WireTimeKind {
+    AllDay,
+    Timed,
+}
+
+/// #687 — a syntactically-2xx-but-semantically-broken event echo is a
+/// remote-data problem scoped to one date, not a connector bug: map it
+/// to [`GcalErrorKind::InvalidRequest`] so [`classify_date_err`] in
+/// the connector files it under `DateFailure::Skipped` (retry next
+/// sweep) instead of `DateFailure::Other` (cycle abort + permanently
+/// re-wedged dirty set).
+///
+/// [`classify_date_err`]: crate::gcal_push::connector
+fn nonconforming_response_err(detail: &str) -> AppError {
+    AppError::Gcal(GcalErrorKind::InvalidRequest(format!(
+        "gcal.api.nonconforming_event_response: {detail}"
+    )))
+}
+
 impl WireEventResponse {
     fn into_event_response(self) -> Result<EventResponse, AppError> {
-        let inclusive_end = shift_date_forward(&self.end.date, -1)?;
+        let (start_date, _) = self.start.into_date("start")?;
+        let (end_date, end_kind) = self.end.into_date("end")?;
+        let inclusive_end = match end_kind {
+            // All-day events store the exclusive convention
+            // (`end = start + 1`) — shift back to inclusive.
+            WireTimeKind::AllDay => shift_date_forward(&end_date, -1)
+                .map_err(|e| nonconforming_response_err(&e.to_string()))?,
+            // Timed events end on the calendar day they name.
+            WireTimeKind::Timed => end_date,
+        };
         Ok(EventResponse {
             id: self.id,
             event: Event {
                 summary: self.summary,
                 description: self.description,
-                start: self.start,
+                start: EventDate { date: start_date },
                 end: EventDate {
                     date: inclusive_end,
                 },
@@ -684,12 +759,17 @@ fn retry_after_from_headers(headers: &[(String, String)]) -> u64 {
 /// [`GcalErrorKind::Transport`] — callers treat that as a transient
 /// failure and retry with back-off (MAINT-151(b)).
 ///
-/// JSON-parse failures in the response body are distinctive enough to
-/// return [`AppError::Json`] via the existing `#[from]` impl, so
-/// callers can distinguish them from HTTP-layer errors if desired.
+/// #687 — JSON-decode failures on a 2xx body stay on the
+/// [`GcalErrorKind`] taxonomy ([`GcalErrorKind::InvalidRequest`])
+/// rather than `AppError::Validation`: a non-conforming response echo
+/// is a remote-data problem the connector must classify as a per-date
+/// skip, not a programmer error that aborts the cycle and permanently
+/// re-wedges the dirty set.
 fn reqwest_to_gcal_err(err: &reqwest::Error) -> AppError {
     if err.is_decode() {
-        AppError::Validation(format!("gcal.api.decode_failed: {err}"))
+        AppError::Gcal(GcalErrorKind::InvalidRequest(format!(
+            "gcal.api.decode_failed: {err}"
+        )))
     } else {
         // Connect / timeout / protocol error — transient, same retry
         // class as a 5xx but distinct in the taxonomy so logs and the
@@ -727,88 +807,72 @@ fn shared_client() -> Result<reqwest::Client, AppError> {
 // Rate limiter (InstantBucket)
 // ---------------------------------------------------------------------------
 
-/// Sliding-window token bucket.  Holds up to `burst` request
-/// timestamps; the oldest timestamp must be older than `window` before
-/// a new one is admitted, and then only at a rate of `sustained_qps`
-/// per second after the initial burst drains.
+/// Classic token bucket: capacity `burst` tokens, refilled at
+/// `sustained_qps` tokens per second.  A full (idle) bucket admits
+/// `burst` back-to-back requests; once drained, admissions are spaced
+/// at exactly the sustained rate.
 ///
-/// Implemented as a `VecDeque<Instant>` so eviction is O(1) at the
-/// front.  `take().await` returns once the next slot is free.
+/// #688 — the previous sliding-window implementation
+/// (`VecDeque<Instant>`, admit while `< burst` timestamps in the
+/// trailing 1 s window) sustained ~`burst`/s (≈25 QPS) at warm steady
+/// state because the whole window's worth of slots freed at once; the
+/// `1/sustained_qps` gap only spaced the over-burst sleep path.  The
+/// token bucket makes the steady-state rate equal the documented
+/// `RATE_LIMIT_QPS`.
 #[derive(Debug)]
 pub(crate) struct InstantBucket {
-    /// Recent request timestamps, oldest at the front.
-    recent: VecDeque<Instant>,
-    /// Burst size — how many back-to-back requests we allow before
-    /// the sustained rate engages.
-    burst: usize,
-    /// Sliding-window length over which `sustained_qps` is measured.
-    window: Duration,
-    /// Sustained queries per second once burst is exhausted.
-    sustained_qps: usize,
+    /// Tokens currently available (fractional between refill ticks).
+    tokens: f64,
+    /// Instant of the last refill accrual.
+    last_refill: Instant,
+    /// Maximum tokens the bucket holds — the burst ceiling.
+    capacity: f64,
+    /// Refill rate in tokens per second — the sustained QPS.
+    refill_per_sec: f64,
 }
 
 impl InstantBucket {
-    fn new(burst: usize, window: Duration, sustained_qps: usize) -> Self {
+    fn new(burst: usize, sustained_qps: usize) -> Self {
+        assert!(sustained_qps > 0, "sustained_qps must be non-zero");
         Self {
-            recent: VecDeque::with_capacity(burst),
-            burst,
-            window,
-            sustained_qps,
+            tokens: burst as f64,
+            last_refill: Instant::now(),
+            capacity: burst as f64,
+            refill_per_sec: sustained_qps as f64,
         }
     }
 
-    /// Sleep until a token is available, then record the current
-    /// instant in the bucket.
+    /// Accrue tokens for the time elapsed since the last refill,
+    /// capped at `capacity`.  Caller holds the lock.
+    fn refill(&mut self, now: Instant) {
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.refill_per_sec).min(self.capacity);
+        self.last_refill = now;
+    }
+
+    /// Sleep until a token is available, then consume it.
     ///
     /// Takes the bucket's `Mutex` by reference rather than `&mut self`
-    /// so that the lock can be released across the internal sleep.
-    /// Each iteration: acquire the guard, evict expired entries and
-    /// either admit (push the new timestamp and return) or compute
-    /// how long to wait, drop the guard explicitly, then sleep.
-    /// Concurrent callers can therefore overlap whenever the bucket
-    /// is not saturated — the rate-limit semantics still hit ~10 QPS
-    /// because every admission contends for the same shared state,
-    /// but we no longer serialise callers behind one another's sleeps.
+    /// so the lock can be released across the internal sleep (L-125):
+    /// each iteration refills + either consumes a token and returns,
+    /// or computes the deficit-driven wait, drops the guard, sleeps,
+    /// and re-checks.  Concurrent callers therefore overlap whenever
+    /// the bucket is not saturated, and contention for the shared
+    /// token count keeps the aggregate rate at the sustained QPS.
     async fn take(bucket: &Mutex<Self>) {
         loop {
-            let mut guard = bucket.lock().await;
-            let now = Instant::now();
-            // Drop expired entries from the front.
-            while let Some(oldest) = guard.recent.front() {
-                if now.duration_since(*oldest) >= guard.window {
-                    guard.recent.pop_front();
-                } else {
-                    break;
+            let sleep_for = {
+                let mut guard = bucket.lock().await;
+                guard.refill(Instant::now());
+                if guard.tokens >= 1.0 {
+                    guard.tokens -= 1.0;
+                    return;
                 }
-            }
-
-            if guard.recent.len() < guard.burst {
-                // Under the burst ceiling — admit immediately.
-                guard.recent.push_back(now);
-                return;
-            }
-
-            // Burst ceiling hit — compute how long until the oldest
-            // entry expires.  Sleep for at least that long, plus the
-            // sustained-QPS inter-request gap, so we do not immediately
-            // overshoot.
-            let sleep_for = guard.recent.front().map_or(guard.window, |&oldest| {
-                let elapsed = now.saturating_duration_since(oldest);
-                let remaining = guard.window.saturating_sub(elapsed);
-                // Add the sustained gap so successive admissions are
-                // spaced, not clustered.
-                let gap = if guard.sustained_qps == 0 {
-                    Duration::ZERO
-                } else {
-                    Duration::from_millis(1000 / guard.sustained_qps as u64)
-                };
-                remaining + gap
-            });
-
-            // Release the lock before sleeping so concurrent callers
-            // can enter the bucket while we wait.  Re-check on the
-            // next loop iteration after re-acquiring the guard.
-            drop(guard);
+                let deficit = 1.0 - guard.tokens;
+                Duration::from_secs_f64(deficit / guard.refill_per_sec)
+            };
+            // Lock released before sleeping (L-125).  Another caller
+            // may win the refilled token first — the loop re-checks.
             tokio::time::sleep(sleep_for).await;
         }
     }
@@ -1069,6 +1133,136 @@ mod tests {
         );
     }
 
+    // ── #687 — tolerant 2xx event-response decode ──────────────────
+
+    /// A digest event the user converted to *timed* in the GCal UI
+    /// echoes back with `start.dateTime` / `end.dateTime` instead of
+    /// `start.date` / `end.date`.  The tolerant decode must accept it
+    /// (deriving the calendar-date prefix) rather than failing the
+    /// whole response.  A timed end is NOT shifted by the exclusive
+    /// all-day −1-day shim.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn patch_event_accepts_timed_datetime_echo() {
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path(format!(
+                "/calendars/{TEST_CAL_ID}/events/{TEST_EVENT_ID}"
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": TEST_EVENT_ID,
+                "summary": "now timed",
+                "description": "",
+                "start": { "dateTime": "2026-04-22T09:00:00+02:00" },
+                "end":   { "dateTime": "2026-04-22T10:30:00+02:00" },
+                "transparency": "opaque",
+            })))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        let patch = EventPatch::new().with_summary("now timed");
+        let resp = api
+            .patch_event(&make_token(), TEST_CAL_ID, TEST_EVENT_ID, &patch)
+            .await
+            .expect("timed dateTime echo must decode tolerantly (#687)");
+        assert_eq!(resp.id, TEST_EVENT_ID);
+        assert_eq!(
+            resp.event.start.date, "2026-04-22",
+            "start must derive from the dateTime calendar-date prefix"
+        );
+        assert_eq!(
+            resp.event.end.date, "2026-04-22",
+            "timed end keeps its own calendar day (no exclusive-end −1 shim)"
+        );
+    }
+
+    /// A 2xx body that decodes as JSON but carries no usable dates
+    /// must map to `GcalErrorKind::InvalidRequest` — the connector
+    /// classifies that as a per-date skip rather than a cycle abort.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn insert_event_2xx_without_dates_maps_to_invalid_request() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": TEST_EVENT_ID,
+                "summary": "no dates at all",
+            })))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        let result = api
+            .insert_event(&make_token(), TEST_CAL_ID, &make_event("2026-04-22"))
+            .await;
+        match result {
+            Err(AppError::Gcal(GcalErrorKind::InvalidRequest(msg))) => {
+                assert!(
+                    msg.contains("gcal.api.nonconforming_event_response"),
+                    "error must carry the nonconforming-response key, got {msg}"
+                );
+            }
+            other => panic!("expected Gcal(InvalidRequest), got {other:?}"),
+        }
+    }
+
+    /// A 2xx body that is not JSON at all (reqwest decode failure)
+    /// must also stay on the Gcal taxonomy (`InvalidRequest`) so the
+    /// connector can skip the date instead of wedging the dirty set.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn insert_event_2xx_non_json_body_maps_to_invalid_request() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(200).set_body_string("<html>oops</html>"))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        let result = api
+            .insert_event(&make_token(), TEST_CAL_ID, &make_event("2026-04-22"))
+            .await;
+        match result {
+            Err(AppError::Gcal(GcalErrorKind::InvalidRequest(msg))) => {
+                assert!(
+                    msg.contains("gcal.api.decode_failed"),
+                    "error must carry the decode_failed key, got {msg}"
+                );
+            }
+            other => panic!("expected Gcal(InvalidRequest) for non-JSON 2xx, got {other:?}"),
+        }
+    }
+
+    /// Garbage in a `dateTime` field (prefix not a calendar date) must
+    /// be rejected as nonconforming, not silently accepted.
+    #[test]
+    fn wire_event_time_rejects_garbage_datetime_prefix() {
+        let t = WireEventTime {
+            date: None,
+            date_time: Some("not-a-date-at-all".to_owned()),
+        };
+        let err = t.into_date("start").expect_err("garbage prefix must fail");
+        match err {
+            AppError::Gcal(GcalErrorKind::InvalidRequest(msg)) => {
+                assert!(msg.contains("gcal.api.nonconforming_event_response"));
+            }
+            other => panic!("expected Gcal(InvalidRequest), got {other:?}"),
+        }
+    }
+
+    /// The all-day `date` field wins over `dateTime` when both are
+    /// present (defensive — GCal sends exactly one of the two).
+    #[test]
+    fn wire_event_time_prefers_all_day_date_field() {
+        let t = WireEventTime {
+            date: Some("2026-04-23".to_owned()),
+            date_time: Some("2026-04-22T09:00:00Z".to_owned()),
+        };
+        let (date, kind) = t.into_date("end").expect("date field must decode");
+        assert_eq!(date, "2026-04-23");
+        assert_eq!(kind, WireTimeKind::AllDay);
+    }
+
     // ── delete_event ───────────────────────────────────────────────
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1277,13 +1471,12 @@ mod tests {
     /// 30 requests at full throttle should stall at least once the
     /// 25-burst ceiling is hit.  Assert the total elapsed time is at
     /// least `(30 - 25)` * `(1000 / RATE_LIMIT_QPS)` ms — each
-    /// post-burst admission is gated by the sustained-QPS gap added
-    /// in `take()`.
+    /// post-burst admission must wait for one token to accrue at the
+    /// sustained rate.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn rate_limiter_throttles_beyond_burst() {
         let bucket = Arc::new(Mutex::new(InstantBucket::new(
             RATE_LIMIT_BURST,
-            Duration::from_secs(1),
             RATE_LIMIT_QPS,
         )));
         let start = Instant::now();
@@ -1325,7 +1518,6 @@ mod tests {
     async fn rate_limiter_allows_full_burst_immediately() {
         let bucket = Arc::new(Mutex::new(InstantBucket::new(
             RATE_LIMIT_BURST,
-            Duration::from_secs(1),
             RATE_LIMIT_QPS,
         )));
         let start = Instant::now();
@@ -1343,6 +1535,56 @@ mod tests {
         );
     }
 
+    /// #688 regression — measure the WARM steady-state rate, not just
+    /// a lower bound on a single stall.  Drain the full burst, then
+    /// time 20 further admissions: at the documented sustained rate
+    /// they must take `20 / RATE_LIMIT_QPS` = 2.0 s.  The pre-fix
+    /// sliding-window implementation freed the whole burst's worth of
+    /// slots each second (≈25 QPS warm) and completed the same 20
+    /// admissions in ≈1.1 s — well under the lower bound asserted
+    /// here.  Bounds are derived from the constants: ≥ 90% of the
+    /// theoretical elapsed (slack for token accrual during the burst
+    /// drain + timer rounding) and ≤ 200% (slack for CI scheduling)
+    /// so both "too fast" (the bug) and gross over-throttling fail.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rate_limiter_warm_steady_state_matches_documented_qps() {
+        let bucket = Arc::new(Mutex::new(InstantBucket::new(
+            RATE_LIMIT_BURST,
+            RATE_LIMIT_QPS,
+        )));
+
+        // Warm-up: drain the entire burst allowance.
+        for _ in 0..RATE_LIMIT_BURST {
+            InstantBucket::take(&bucket).await;
+        }
+
+        // Measure: N post-burst admissions over the simulated window.
+        let n_post: usize = 20;
+        let start = Instant::now();
+        for _ in 0..n_post {
+            InstantBucket::take(&bucket).await;
+        }
+        let elapsed = start.elapsed();
+
+        let theoretical_ms = (n_post as u128) * 1_000 / (RATE_LIMIT_QPS as u128);
+        let min_ms = theoretical_ms * 9 / 10;
+        let max_ms = theoretical_ms * 2;
+        let measured_qps = (n_post as f64) / elapsed.as_secs_f64();
+        assert!(
+            elapsed.as_millis() >= min_ms,
+            "warm steady-state must sustain ≈{RATE_LIMIT_QPS} QPS, not faster: \
+             {n_post} post-burst admissions took {}ms (≈{measured_qps:.1} QPS), \
+             expected ≥ {min_ms}ms",
+            elapsed.as_millis()
+        );
+        assert!(
+            elapsed.as_millis() <= max_ms,
+            "warm steady-state must not over-throttle: {n_post} post-burst \
+             admissions took {}ms (≈{measured_qps:.1} QPS), expected ≤ {max_ms}ms",
+            elapsed.as_millis()
+        );
+    }
+
     /// Regression for L-125: when the bucket is saturated and a caller
     /// is sleeping inside `take()`, the bucket's mutex MUST be released
     /// across the sleep so a concurrent caller can enter the bucket
@@ -1354,18 +1596,14 @@ mod tests {
     ///
     /// Runs in real time (not `start_paused`) because `InstantBucket`
     /// stores `std::time::Instant` rather than `tokio::time::Instant`,
-    /// so paused-time auto-advance and the bucket's expiry check
-    /// disagree and produce a busy loop.  A short window keeps the
+    /// so paused-time auto-advance and the bucket's refill accounting
+    /// disagree and produce a busy loop.  A small bucket keeps the
     /// total wall-clock cost modest.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn instant_bucket_releases_lock_during_sleep() {
-        // burst = 1 + a short window so the spawned take must sleep
-        // briefly but the test still finishes promptly.
-        let bucket = Arc::new(Mutex::new(InstantBucket::new(
-            1,
-            Duration::from_millis(200),
-            10,
-        )));
+        // burst = 1 at 10 QPS — the spawned take must sleep ~100 ms
+        // for the next token but the test still finishes promptly.
+        let bucket = Arc::new(Mutex::new(InstantBucket::new(1, 10)));
 
         // Saturate the bucket so any further `take` will sleep.
         InstantBucket::take(&bucket).await;

@@ -54,7 +54,7 @@ use super::models::{
     self, GcalAgendaEventMap, GcalSettingKey, delete_event_map_by_date, get_event_map_for_date,
     upsert_event_map,
 };
-use super::oauth::{OAuthClient, Token};
+use super::oauth::{FetchError, OAuthClient, Token, fetch_with_auto_refresh};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -85,6 +85,20 @@ pub const MAX_WINDOW_DAYS: i64 = 90;
 
 /// Human-readable summary for the dedicated calendar.
 pub const DEDICATED_CALENDAR_NAME: &str = "Agaric Agenda";
+
+/// #684 — upper bound on the one in-cycle `Retry-After` sleep.
+///
+/// The push lease is claimed once at the top of the cycle and expires
+/// [`lease::LEASE_EXPIRY_SECS`] (180 s) later with NO mid-cycle
+/// renewal, so any sleeping inside the cycle eats directly into the
+/// lease window; overrunning it would let a sibling device seize the
+/// lease and double-push.  Capping the sleep at half a renewal
+/// interval (30 s) leaves ≥ 150 s of lease for the HTTP work itself.
+/// An advertised delay above the cap cannot be honoured honestly, so
+/// the cycle aborts immediately (`Err` → dirty set retained) and the
+/// reconcile tick retries after [`RECONCILE_INTERVAL`] — far longer
+/// than any realistic 429 window.
+const RETRY_AFTER_SLEEP_CAP: Duration = Duration::from_secs(lease::LEASE_RENEW_INTERVAL_SECS / 2);
 
 // ---------------------------------------------------------------------------
 // Event → EventPatch translation
@@ -429,9 +443,30 @@ fn kind_display(kind: &GcalErrorKind) -> String {
     }
 }
 
-/// Run a single cycle end-to-end.  Entry point for the unit-test
-/// suite — the outer Tokio loop in [`spawn_connector`] wraps this in
-/// lease-renewal + `fetch_with_auto_refresh` + backoff logic.
+/// Outcome of a single cycle *attempt* — the side-effect-free
+/// precursor to [`CycleOutcome`].  A mid-cycle 401 surfaces here as
+/// [`CycleAttempt::Unauthorized`] WITHOUT firing the terminal-reauth
+/// side effects, so [`run_cycle_with_auto_refresh`] can try one
+/// bounded token refresh + re-attempt before declaring the situation
+/// terminal (#683).
+#[derive(Debug)]
+enum CycleAttempt {
+    /// The attempt resolved to a definitive outcome.
+    Completed(CycleOutcome),
+    /// Some API call returned HTTP 401.  No side effects have fired;
+    /// the caller decides between refresh-and-retry and terminal
+    /// reauth.
+    Unauthorized,
+}
+
+/// Run a single cycle end-to-end WITHOUT the bounded 401 refresh:
+/// a mid-cycle 401 goes straight to the terminal-reauth path
+/// ([`handle_terminal_unauthorized`] + `HardFailure(Unauthorized)`).
+///
+/// Entry point for most of the unit-test suite; production goes
+/// through [`run_cycle_with_auto_refresh`], which shares the same
+/// attempt body but inserts one [`OAuthClient::refresh_token`] +
+/// re-attempt between the 401 and the terminal declaration (#683).
 ///
 /// * `dirty`: dates the cycle must evaluate.  On entry to the
 ///   reconcile path the caller fills this with every date in
@@ -448,6 +483,75 @@ pub async fn run_cycle(
     token: &Token,
     dirty: &DirtySet,
 ) -> Result<CycleOutcome, AppError> {
+    match run_cycle_attempt(pool, api, emitter, device_id, clock, token, dirty).await? {
+        CycleAttempt::Completed(outcome) => Ok(outcome),
+        CycleAttempt::Unauthorized => {
+            handle_terminal_unauthorized(pool, emitter).await?;
+            Ok(CycleOutcome::HardFailure(GcalErrorKind::Unauthorized))
+        }
+    }
+}
+
+/// Production cycle entry point (#683): wraps [`run_cycle_attempt`]
+/// in [`fetch_with_auto_refresh`], so a mid-cycle 401 triggers ONE
+/// bounded token refresh + full re-attempt (per-date pushes are
+/// hash-idempotent, so re-running already-pushed dates is a no-op)
+/// before the terminal-reauth path fires.
+///
+/// Terminal taxonomy:
+/// * second 401 after a successful refresh, or the refresh itself
+///   rejected with `invalid_grant` / `unauthorized_client` →
+///   [`handle_terminal_unauthorized`] (pause flag + email-bearing
+///   `ReauthRequired` event) + `Ok(HardFailure(Unauthorized))`.
+/// * transient refresh failure (`oauth.refresh_failed: …`) →
+///   propagated as `Err`, so the task loop keeps the dirty set and
+///   retries on the next tick instead of demanding a manual re-auth.
+///
+/// The token is loaded from `token_store` by the wrapper itself, so
+/// callers do not pass one.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_cycle_with_auto_refresh(
+    pool: &SqlitePool,
+    api: &GcalApi,
+    emitter: &Arc<dyn GcalEventEmitter>,
+    device_id: &str,
+    clock: &dyn Clock,
+    oauth_client: &OAuthClient,
+    token_store: &Arc<dyn TokenStore>,
+    dirty: &DirtySet,
+) -> Result<CycleOutcome, AppError> {
+    let result = fetch_with_auto_refresh(oauth_client, token_store, |token| async move {
+        match run_cycle_attempt(pool, api, emitter, device_id, clock, &token, dirty).await {
+            Ok(CycleAttempt::Completed(outcome)) => Ok(outcome),
+            Ok(CycleAttempt::Unauthorized) => Err(FetchError::Unauthorized),
+            Err(e) => Err(FetchError::Other(e)),
+        }
+    })
+    .await;
+    match result {
+        Ok(outcome) => Ok(outcome),
+        Err(AppError::Gcal(GcalErrorKind::Unauthorized)) => {
+            handle_terminal_unauthorized(pool, emitter).await?;
+            Ok(CycleOutcome::HardFailure(GcalErrorKind::Unauthorized))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Single side-effect-free cycle attempt — shared body of
+/// [`run_cycle`] and [`run_cycle_with_auto_refresh`].  "Side-effect-
+/// free" refers to the *terminal-reauth* side effects only: per-date
+/// pushes, `last_error` bookkeeping, calendar-gone recovery, and the
+/// `PushDisabled` emit all still happen here.
+async fn run_cycle_attempt(
+    pool: &SqlitePool,
+    api: &GcalApi,
+    emitter: &Arc<dyn GcalEventEmitter>,
+    device_id: &str,
+    clock: &dyn Clock,
+    token: &Token,
+    dirty: &DirtySet,
+) -> Result<CycleAttempt, AppError> {
     // PEND-24 H3 — Pause gate.  When the prior cycle saw a terminal
     // `Unauthorized` (the refresh token has been revoked), it set
     // `gcal_settings.reauth_required = 'true'`. Every subsequent cycle
@@ -465,7 +569,7 @@ pub async fn run_cycle(
             device = device_id,
             "reauth_required flag set — connector paused; skipping cycle",
         );
-        return Ok(CycleOutcome::Ok);
+        return Ok(CycleAttempt::Completed(CycleOutcome::Ok));
     }
 
     let now = clock.now();
@@ -478,7 +582,7 @@ pub async fn run_cycle(
             device = device_id,
             "push-lease held by another device — idle",
         );
-        return Ok(CycleOutcome::LeaseUnavailable);
+        return Ok(CycleAttempt::Completed(CycleOutcome::LeaseUnavailable));
     }
 
     // 2. Read settings once.  If a writer changes them mid-cycle the
@@ -497,8 +601,14 @@ pub async fn run_cycle(
                 models::set_setting(pool, GcalSettingKey::CalendarId, &id).await?;
                 id
             }
+            // #683 — a 401 here is NOT immediately terminal: hand the
+            // signal back so the auto-refresh entry point can try one
+            // bounded refresh before declaring reauth.
+            Err(AppError::Gcal(GcalErrorKind::Unauthorized)) => {
+                return Ok(CycleAttempt::Unauthorized);
+            }
             Err(e) => {
-                return classify_cycle_failure(pool, emitter, &e).await;
+                return Ok(CycleAttempt::Completed(classify_cycle_failure(emitter, &e)));
             }
         }
     } else {
@@ -509,84 +619,139 @@ pub async fn run_cycle(
     // the first failure — a transient 5xx on one date should not block
     // a successful push to a sibling date.  Hard failures (401 / 403 /
     // CalendarGone) are returned to the caller for the whole cycle.
+    //
+    // #685 — `had_skip` tracks whether ANY date was skipped: a cycle
+    // that runs to completion without skips clears the Settings-tab
+    // `last_error` so a one-off transient failure does not stick
+    // forever.
+    let mut had_skip = false;
+    // #684 — at most one Retry-After-honouring retry per cycle
+    // ATTEMPT, not per date: a reconcile sweep can prime up to
+    // `MAX_WINDOW_DAYS` (90) dates, and the lease claimed at the top
+    // of the cycle is never renewed mid-cycle, so per-date sleeps
+    // would compound far past `lease::LEASE_EXPIRY_SECS`.  Once the
+    // budget is spent, the next 429 aborts the cycle (`Err`) and the
+    // retained dirty set re-arms on the next tick.
+    let mut rate_limit_retried = false;
     for date in dirty {
-        match push_date(pool, api, token, &settings, &calendar_id, *date).await {
-            Ok(_) => {}
-            Err(DateFailure::CalendarGone) => {
-                // Whole cycle has to abort — the calendar is gone.
-                recover_calendar_gone(pool, emitter).await?;
-                return Ok(CycleOutcome::Ok);
+        loop {
+            match push_date(pool, api, token, &settings, &calendar_id, *date).await {
+                Ok(()) => break,
+                Err(DateFailure::CalendarGone) => {
+                    // Whole cycle has to abort — the calendar is gone.
+                    recover_calendar_gone(pool, emitter).await?;
+                    return Ok(CycleAttempt::Completed(CycleOutcome::Ok));
+                }
+                Err(DateFailure::Unauthorized) => {
+                    // #683 — no terminal side effects here: the caller
+                    // (run_cycle / run_cycle_with_auto_refresh) decides
+                    // between one bounded refresh and terminal reauth.
+                    return Ok(CycleAttempt::Unauthorized);
+                }
+                Err(DateFailure::Forbidden(msg)) => {
+                    emitter.emit(GcalEvent::PushDisabled);
+                    return Ok(CycleAttempt::Completed(CycleOutcome::HardFailure(
+                        GcalErrorKind::Forbidden(msg),
+                    )));
+                }
+                Err(DateFailure::RateLimited { retry_after_ms }) => {
+                    // #684 — honour Retry-After instead of discarding
+                    // it: surface the reason, sleep the advertised
+                    // delay (bounded by `RETRY_AFTER_SLEEP_CAP`), and
+                    // retry this date.  A 429 after the cycle's one
+                    // sleep budget is spent — or an advertised delay
+                    // too long to honour inside the lease window —
+                    // aborts the cycle (`Err`), so the caller keeps
+                    // the dirty set and re-arms on the next tick
+                    // instead of hammering the remaining dates.
+                    let kind = GcalErrorKind::RateLimited { retry_after_ms };
+                    let reason = kind_display(&kind);
+                    models::set_space_config_last_error(pool, SPACE_PERSONAL_ULID, &reason).await?;
+                    let sleep_for = Duration::from_millis(retry_after_ms);
+                    if rate_limit_retried || sleep_for > RETRY_AFTER_SLEEP_CAP {
+                        tracing::warn!(
+                            target: "gcal",
+                            date = %date,
+                            retry_after_ms,
+                            already_retried = rate_limit_retried,
+                            "rate-limited beyond the in-cycle retry budget — \
+                             aborting cycle; dirty set retained for the next tick",
+                        );
+                        return Err(AppError::Gcal(kind));
+                    }
+                    rate_limit_retried = true;
+                    tracing::warn!(
+                        target: "gcal",
+                        date = %date,
+                        retry_after_ms,
+                        "rate-limited — sleeping Retry-After before retrying this date",
+                    );
+                    tokio::time::sleep(sleep_for).await;
+                    // Loop retries the same date.
+                }
+                Err(DateFailure::Skipped(reason)) => {
+                    // MAINT-169: surface the per-date transient failure on
+                    // the Settings UI's `last_error` channel before the
+                    // tracing log absorbs it.  No-op when the per-space
+                    // row is absent (fresh install with no migration yet).
+                    had_skip = true;
+                    models::set_space_config_last_error(pool, SPACE_PERSONAL_ULID, &reason).await?;
+                    tracing::warn!(
+                        target: "gcal",
+                        date = %date,
+                        reason = %reason,
+                        "skipped date for this cycle — will retry on next sweep",
+                    );
+                    break;
+                }
+                Err(DateFailure::Other(e)) => return Err(e),
             }
-            Err(DateFailure::Unauthorized) => {
-                // PEND-24 H3 — terminal Unauthorized: persist the
-                // pause flag, attach the email to the event payload,
-                // and surface the HardFailure. The next cycle will
-                // observe the flag at the top of `run_cycle` and
-                // short-circuit until the user re-authorizes.
-                handle_terminal_unauthorized(pool, emitter).await?;
-                return Ok(CycleOutcome::HardFailure(GcalErrorKind::Unauthorized));
-            }
-            Err(DateFailure::Forbidden(msg)) => {
-                emitter.emit(GcalEvent::PushDisabled);
-                return Ok(CycleOutcome::HardFailure(GcalErrorKind::Forbidden(msg)));
-            }
-            Err(DateFailure::Skipped(reason)) => {
-                // MAINT-169: surface the per-date transient failure on
-                // the Settings UI's `last_error` channel before the
-                // tracing log absorbs it.  No-op when the per-space
-                // row is absent (fresh install with no migration yet).
-                models::set_space_config_last_error(pool, SPACE_PERSONAL_ULID, &reason).await?;
-                tracing::warn!(
-                    target: "gcal",
-                    date = %date,
-                    reason = %reason,
-                    "skipped date for this cycle — will retry on next sweep",
-                );
-            }
-            Err(DateFailure::Other(e)) => return Err(e),
         }
     }
 
-    Ok(CycleOutcome::Ok)
+    // #685 — healthy cycle (no skips): clear any stale `last_error`
+    // so Settings stops showing an error that is no longer true.
+    // No-op when the per-space row is absent or already clean.
+    if !had_skip {
+        models::clear_space_config_last_error(pool, SPACE_PERSONAL_ULID).await?;
+    }
+
+    Ok(CycleAttempt::Completed(CycleOutcome::Ok))
 }
 
 #[derive(Debug)]
 enum DateFailure {
-    /// 401 — stop the cycle, emit reauth.
+    /// 401 — stop the attempt; the cycle entry point decides between
+    /// one bounded refresh (#683) and terminal reauth.
     Unauthorized,
     /// 403 — stop the cycle, emit push-disabled.
     Forbidden(String),
     /// 404 on calendar — abort cycle, recover.
     CalendarGone,
+    /// 429 — honour `Retry-After` (bounded by
+    /// [`RETRY_AFTER_SLEEP_CAP`], once per cycle attempt) then retry
+    /// this date (#684).
+    RateLimited { retry_after_ms: u64 },
     /// Transient / per-event error — log and continue with the next date.
     Skipped(String),
     /// Unexpected AppError — propagate to the caller.
     Other(AppError),
 }
 
-async fn classify_cycle_failure(
-    pool: &SqlitePool,
-    emitter: &Arc<dyn GcalEventEmitter>,
-    err: &AppError,
-) -> Result<CycleOutcome, AppError> {
+/// Map a first-connect (`create_dedicated_calendar`) failure to its
+/// [`CycleOutcome`].  401 never reaches here — [`run_cycle_attempt`]
+/// intercepts it first so the bounded-refresh path (#683) can run.
+fn classify_cycle_failure(emitter: &Arc<dyn GcalEventEmitter>, err: &AppError) -> CycleOutcome {
     if let AppError::Gcal(kind) = err {
         // Side effects (event emission) per kind — only the variants
         // the Settings UI surfaces a banner for fire here.  The
         // remaining recognised variants (rate-limit / 5xx /
         // invalid-request) are silent at the emitter level; the
         // tracing log line in [`spawn_connector`] still records them.
-        match kind {
-            // PEND-24 H3: route through the shared helper so the
-            // first-connect (`create_dedicated_calendar`) 401 path
-            // sets the pause flag + emits the email-bearing event,
-            // matching the per-date `DateFailure::Unauthorized` arm.
-            GcalErrorKind::Unauthorized => {
-                handle_terminal_unauthorized(pool, emitter).await?;
-            }
-            GcalErrorKind::Forbidden(_) => emitter.emit(GcalEvent::PushDisabled),
-            _ => {}
+        if matches!(kind, GcalErrorKind::Forbidden(_)) {
+            emitter.emit(GcalEvent::PushDisabled);
         }
-        return Ok(CycleOutcome::HardFailure(kind.clone()));
+        return CycleOutcome::HardFailure(kind.clone());
     }
     // Non-Gcal `AppError` is unexpected here (every transport-layer
     // failure is mapped to `AppError::Gcal(...)` upstream in `api.rs`)
@@ -598,9 +763,7 @@ async fn classify_cycle_failure(
         error = ?err,
         "hard failure in cycle setup",
     );
-    Ok(CycleOutcome::HardFailure(GcalErrorKind::InvalidRequest(
-        err.to_string(),
-    )))
+    CycleOutcome::HardFailure(GcalErrorKind::InvalidRequest(err.to_string()))
 }
 
 /// PEND-24 H3 — shared terminal-`Unauthorized` recovery path.  Called
@@ -798,12 +961,15 @@ fn classify_date_err(err: &AppError) -> DateFailure {
             GcalErrorKind::Unauthorized => DateFailure::Unauthorized,
             GcalErrorKind::Forbidden(msg) => DateFailure::Forbidden(msg.clone()),
             GcalErrorKind::CalendarGone => DateFailure::CalendarGone,
-            // EventGone / RateLimited / ServerError / Transport /
-            // InvalidRequest are all "skip this date, retry on next
-            // sweep" — the reason string comes from the shared
-            // formatter.
+            // #684 — carry the Retry-After hint to the cycle loop so
+            // it can sleep + retry instead of discarding it.
+            GcalErrorKind::RateLimited { retry_after_ms } => DateFailure::RateLimited {
+                retry_after_ms: *retry_after_ms,
+            },
+            // EventGone / ServerError / Transport / InvalidRequest are
+            // all "skip this date, retry on next sweep" — the reason
+            // string comes from the shared formatter.
             GcalErrorKind::EventGone
-            | GcalErrorKind::RateLimited { .. }
             | GcalErrorKind::ServerError { .. }
             | GcalErrorKind::Transport(_)
             | GcalErrorKind::InvalidRequest(_) => DateFailure::Skipped(kind_display(kind)),
@@ -1119,11 +1285,12 @@ async fn run_task_loop(
                         // tick / dirty arrival retries once the token
                         // store recovers.
                     }
-                    Ok(Some(mut token)) => {
+                    Ok(Some(token)) => {
                         // Proactively refresh the access token if it's close to expiring
-                        // (within 2 minutes). Google tokens expire in ~1h; without this,
-                        // the connector hits 401 on the first cycle after expiry and maps
-                        // it to a terminal HardFailure requiring manual re-auth (#462).
+                        // (within 2 minutes). Google tokens expire in ~1h; this avoids a
+                        // guaranteed 401 round trip on the first cycle after expiry (#462).
+                        // A 401 that still slips through is handled reactively by the
+                        // bounded refresh inside `run_cycle_with_auto_refresh` (#683).
                         if token.is_expiring_within(chrono::Duration::seconds(120)) {
                             match oauth_client.refresh_token(&token).await {
                                 Ok(refreshed) => {
@@ -1136,7 +1303,6 @@ async fn run_task_loop(
                                     } else {
                                         tracing::info!(target: "gcal", "gcal: proactively refreshed access token");
                                     }
-                                    token = refreshed;
                                 }
                                 Err(ref e) if matches!(e, AppError::Gcal(GcalErrorKind::Unauthorized)) => {
                                     tracing::warn!(
@@ -1156,18 +1322,19 @@ async fn run_task_loop(
                                         error = %e,
                                         "gcal: proactive refresh failed — proceeding with current token",
                                     );
-                                    // Use the original token; `run_cycle` may still succeed
-                                    // for a while, or will surface a HardFailure if truly expired.
+                                    // The stored token stays in place; the cycle's
+                                    // bounded 401 refresh (#683) covers actual expiry.
                                 }
                             }
                         }
-                        match run_cycle(
+                        match run_cycle_with_auto_refresh(
                             &pool,
                             &api,
                             &emitter,
                             &device_id,
                             &clock,
-                            &token,
+                            &oauth_client,
+                            &token_store,
                             &dirty,
                         )
                         .await
@@ -1984,17 +2151,13 @@ mod tests {
     ///    request — this is the wasted-quota / battery fix.
     ///
     /// The test simulates the connector path: 401 on
-    /// `create_dedicated_calendar`. The bounded refresh isn't wired
-    /// through the per-date `api.rs` calls today (deferred:
-    /// `fetch_with_auto_refresh` is only used at the OAuth layer),
-    /// so the 401 reaching `run_cycle` IS the terminal event from
-    /// the connector's point of view — semantically equivalent to
-    /// "Google rejected the access token AND the bounded refresh
-    /// failed". When `api.rs` adopts `fetch_with_auto_refresh` in a
-    /// future slice, this test will continue to exercise the same
-    /// connector contract because both paths funnel through
-    /// `DateFailure::Unauthorized` / `classify_cycle_failure`'s
-    /// `Unauthorized` arm.
+    /// `create_dedicated_calendar` driven through the plain
+    /// `run_cycle` entry point, where a 401 IS the terminal event
+    /// (#683 wired the bounded refresh into the production
+    /// `run_cycle_with_auto_refresh` entry point — its
+    /// refresh-then-retry/terminal taxonomy has its own test section
+    /// below; both entry points funnel terminal handling through
+    /// `handle_terminal_unauthorized`).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn revoked_refresh_token_emits_reauth_event_and_pauses() {
         let (pool, _dir) = test_pool().await;
@@ -2178,6 +2341,643 @@ mod tests {
             count_requests(&server, "POST", "/calendars").await,
             1,
             "resumed cycle must reach first-connect"
+        );
+    }
+
+    // ── #683 — bounded refresh on mid-cycle 401 ────────────────────
+
+    use crate::gcal_push::keyring_store::{MockTokenStore, TokenStore};
+
+    /// OAuth client whose token endpoint points at the same wiremock
+    /// server the `GcalApi` uses, so refresh-grant traffic can be
+    /// mocked alongside the calendar traffic.
+    fn oauth_client_for(server: &MockServer) -> OAuthClient {
+        OAuthClient::new(
+            "test-client-id".to_owned(),
+            format!("{}/oauth/auth", server.uri()),
+            format!("{}/token", server.uri()),
+            "http://127.0.0.1:1/callback".to_owned(),
+            vec!["https://www.googleapis.com/auth/calendar".to_owned()],
+        )
+        .expect("oauth client must build")
+    }
+
+    /// Token store pre-loaded with the standard dummy token
+    /// (access = "mock-access").
+    async fn store_with_dummy_token() -> Arc<dyn TokenStore> {
+        let store: Arc<dyn TokenStore> = Arc::new(MockTokenStore::new());
+        store.store(&dummy_token()).await.unwrap();
+        store
+    }
+
+    /// Mount the refresh-grant mock returning a fresh access token.
+    async fn mount_refresh_ok(server: &MockServer, new_access: &str) {
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": new_access,
+                "expires_in": 3600,
+                "token_type": "Bearer",
+            })))
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
+    /// #683 happy path: a mid-cycle 401 must trigger exactly one
+    /// token refresh + full re-attempt instead of the terminal
+    /// reauth prompt.  Pre-fix, the stale token's 401 went straight
+    /// to `handle_terminal_unauthorized` even though one refresh
+    /// would have recovered.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mid_cycle_401_recovers_via_single_refresh() {
+        let (pool, _dir) = test_pool().await;
+        let server = MockServer::start().await;
+
+        // Stale bearer → 401; refreshed bearer → 200.
+        Mock::given(method("POST"))
+            .and(path("/calendars"))
+            .and(wiremock::matchers::header(
+                "authorization",
+                "Bearer mock-access",
+            ))
+            .respond_with(ResponseTemplate::new(401))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/calendars"))
+            .and(wiremock::matchers::header(
+                "authorization",
+                "Bearer refreshed-access",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": TEST_CAL_ID,
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        mount_refresh_ok(&server, "refreshed-access").await;
+
+        let api = make_api(&server);
+        let (emitter, rec) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let oauth_client = oauth_client_for(&server);
+        let token_store = store_with_dummy_token().await;
+
+        let outcome = run_cycle_with_auto_refresh(
+            &pool,
+            &api,
+            &emitter,
+            DEV_A,
+            &clock,
+            &oauth_client,
+            &token_store,
+            &DirtySet::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            CycleOutcome::Ok,
+            "one bounded refresh must recover the cycle (#683), got {outcome:?}"
+        );
+        assert_eq!(
+            models::get_setting(&pool, GcalSettingKey::CalendarId)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(TEST_CAL_ID),
+            "the retried first-connect must persist the calendar id"
+        );
+        assert!(
+            !models::get_reauth_required(&pool).await.unwrap(),
+            "a recovered 401 must NOT set the reauth pause flag"
+        );
+        assert!(
+            !rec.events()
+                .iter()
+                .any(|e| matches!(e, GcalEvent::ReauthRequired { .. })),
+            "a recovered 401 must NOT emit ReauthRequired, got {:?}",
+            rec.events()
+        );
+        // The refreshed token was persisted for subsequent cycles.
+        use secrecy::ExposeSecret;
+        let stored = token_store.load().await.unwrap().expect("token stored");
+        assert_eq!(
+            stored.access.expose_secret(),
+            "refreshed-access",
+            "refreshed access token must be persisted to the store"
+        );
+    }
+
+    /// #683 terminal path A: the refresh itself is rejected with
+    /// `invalid_grant` → the cycle is terminal, with the full
+    /// PEND-24 H3 contract (pause flag + email-bearing event) and
+    /// the token store left intact.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revoked_refresh_after_mid_cycle_401_is_terminal() {
+        let (pool, _dir) = test_pool().await;
+        models::set_setting(
+            &pool,
+            GcalSettingKey::OauthAccountEmail,
+            "alice@example.com",
+        )
+        .await
+        .unwrap();
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/calendars"))
+            .respond_with(ResponseTemplate::new(401))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "error": "invalid_grant",
+                "error_description": "Token has been expired or revoked.",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, rec) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let oauth_client = oauth_client_for(&server);
+        let token_store = store_with_dummy_token().await;
+
+        let outcome = run_cycle_with_auto_refresh(
+            &pool,
+            &api,
+            &emitter,
+            DEV_A,
+            &clock,
+            &oauth_client,
+            &token_store,
+            &DirtySet::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            matches!(
+                outcome,
+                CycleOutcome::HardFailure(GcalErrorKind::Unauthorized)
+            ),
+            "revoked refresh token must be terminal, got {outcome:?}"
+        );
+        assert!(
+            models::get_reauth_required(&pool).await.unwrap(),
+            "terminal reauth must set the pause flag"
+        );
+        let reauth_events: Vec<_> = rec
+            .events()
+            .into_iter()
+            .filter(|e| matches!(e, GcalEvent::ReauthRequired { .. }))
+            .collect();
+        assert_eq!(
+            reauth_events.len(),
+            1,
+            "exactly one ReauthRequired must be emitted, got {reauth_events:?}"
+        );
+        assert!(
+            matches!(
+                &reauth_events[0],
+                GcalEvent::ReauthRequired { account_email } if account_email.as_deref() == Some("alice@example.com")
+            ),
+            "ReauthRequired must carry the persisted account email, got {reauth_events:?}"
+        );
+        assert!(
+            token_store.load().await.unwrap().is_some(),
+            "the token store is NOT cleared on terminal reauth — Settings keeps \
+             showing 'connected as …' alongside the reauth banner"
+        );
+    }
+
+    /// #683 terminal path B: the refresh succeeds but the retried
+    /// attempt still gets 401 → terminal, and the retry is bounded
+    /// to exactly one (two calendar calls total).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn second_401_after_successful_refresh_is_terminal() {
+        let (pool, _dir) = test_pool().await;
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/calendars"))
+            .respond_with(ResponseTemplate::new(401))
+            .expect(2)
+            .mount(&server)
+            .await;
+        mount_refresh_ok(&server, "refreshed-access").await;
+
+        let api = make_api(&server);
+        let (emitter, rec) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let oauth_client = oauth_client_for(&server);
+        let token_store = store_with_dummy_token().await;
+
+        let outcome = run_cycle_with_auto_refresh(
+            &pool,
+            &api,
+            &emitter,
+            DEV_A,
+            &clock,
+            &oauth_client,
+            &token_store,
+            &DirtySet::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            matches!(
+                outcome,
+                CycleOutcome::HardFailure(GcalErrorKind::Unauthorized)
+            ),
+            "second 401 after refresh must be terminal, got {outcome:?}"
+        );
+        assert_eq!(
+            count_requests(&server, "POST", "/calendars").await,
+            2,
+            "the refresh-retry must be bounded to exactly one re-attempt"
+        );
+        assert!(
+            models::get_reauth_required(&pool).await.unwrap(),
+            "terminal reauth must set the pause flag"
+        );
+        assert_eq!(
+            rec.events()
+                .iter()
+                .filter(|e| matches!(e, GcalEvent::ReauthRequired { .. }))
+                .count(),
+            1,
+            "exactly one ReauthRequired must be emitted"
+        );
+    }
+
+    /// #683 transient path: a 5xx from the token endpoint is NOT a
+    /// revocation — the cycle errors out (caller retains the dirty
+    /// set and retries later) and no reauth prompt fires.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn transient_refresh_failure_mid_cycle_is_not_terminal() {
+        let (pool, _dir) = test_pool().await;
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/calendars"))
+            .respond_with(ResponseTemplate::new(401))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, rec) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let oauth_client = oauth_client_for(&server);
+        let token_store = store_with_dummy_token().await;
+
+        let result = run_cycle_with_auto_refresh(
+            &pool,
+            &api,
+            &emitter,
+            DEV_A,
+            &clock,
+            &oauth_client,
+            &token_store,
+            &DirtySet::new(),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(ref m)) if m.contains("oauth.refresh_failed")),
+            "transient refresh failure must surface as Err(oauth.refresh_failed) \
+             so the dirty set is retained, got {result:?}"
+        );
+        assert!(
+            !models::get_reauth_required(&pool).await.unwrap(),
+            "transient refresh failure must NOT set the reauth pause flag"
+        );
+        assert!(
+            !rec.events()
+                .iter()
+                .any(|e| matches!(e, GcalEvent::ReauthRequired { .. })),
+            "transient refresh failure must NOT emit ReauthRequired"
+        );
+    }
+
+    // ── #684 — Retry-After is honoured ─────────────────────────────
+
+    /// First 429 on a date: the cycle must sleep the advertised
+    /// Retry-After (1 s here) and retry that date once — recovering
+    /// within the same cycle, with the stale rate-limit `last_error`
+    /// cleared by the healthy completion.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rate_limited_date_sleeps_retry_after_then_recovers() {
+        let (pool, _dir) = test_pool().await;
+        let seed = models::default_space_config(SPACE_PERSONAL_ULID, t0());
+        models::upsert_space_config(&pool, &seed).await.unwrap();
+
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        // First insert attempt → 429 with Retry-After: 1; second → 200.
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "1"))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(event_response_body("evt_RETRY", "2026-04-22")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+        seed_block_due_on(&pool, "Throttled once", "2026-04-22").await;
+        let mut dirty = DirtySet::new();
+        dirty.insert(fixed_date());
+
+        let start = std::time::Instant::now();
+        let outcome = run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
+            .await
+            .unwrap();
+        let elapsed = start.elapsed();
+
+        assert_eq!(outcome, CycleOutcome::Ok);
+        // The Retry-After header advertised 1 s — the cycle must have
+        // slept at least that long before the retry.
+        assert!(
+            elapsed.as_millis() >= 1_000,
+            "cycle must honour Retry-After (1s) before retrying, took {}ms",
+            elapsed.as_millis()
+        );
+        assert_eq!(
+            count_requests(&server, "POST", &format!("/calendars/{TEST_CAL_ID}/events")).await,
+            2,
+            "exactly one retry must follow the 429"
+        );
+        let map = models::get_event_map_for_date(&pool, "2026-04-22")
+            .await
+            .unwrap()
+            .expect("retried insert must land the map row");
+        assert_eq!(map.gcal_event_id, "evt_RETRY");
+        // #685 — the healthy completion clears the rate-limit reason
+        // written when the 429 was first seen.
+        let cfg = models::get_space_config(&pool, SPACE_PERSONAL_ULID)
+            .await
+            .unwrap()
+            .expect("seeded row must exist");
+        assert_eq!(
+            cfg.last_error, "",
+            "recovered cycle must clear the transient rate-limit last_error"
+        );
+    }
+
+    /// Persistent 429 on a date: after honouring Retry-After once,
+    /// the cycle must abort (Err) instead of hammering the remaining
+    /// dates — the caller keeps the dirty set and re-arms later.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn persistently_rate_limited_date_aborts_cycle() {
+        let (pool, _dir) = test_pool().await;
+        let seed = models::default_space_config(SPACE_PERSONAL_ULID, t0());
+        models::upsert_space_config(&pool, &seed).await.unwrap();
+
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "1"))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+        seed_block_due_on(&pool, "On A", "2026-04-22").await;
+        seed_block_due_on(&pool, "On B", "2026-04-23").await;
+        let mut dirty = DirtySet::new();
+        dirty.insert(fixed_date());
+        dirty.insert(NaiveDate::from_ymd_opt(2026, 4, 23).unwrap());
+
+        let result = run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(AppError::Gcal(GcalErrorKind::RateLimited { .. }))
+            ),
+            "persistent 429 must abort the cycle with Err(RateLimited) so the \
+             dirty set is retained, got {result:?}"
+        );
+        assert_eq!(
+            count_requests(&server, "POST", &format!("/calendars/{TEST_CAL_ID}/events")).await,
+            2,
+            "exactly initial attempt + one Retry-After retry must reach the server \
+             — date B must NOT be hammered after the abort"
+        );
+        let cfg = models::get_space_config(&pool, SPACE_PERSONAL_ULID)
+            .await
+            .unwrap()
+            .expect("seeded row must exist");
+        assert_eq!(
+            cfg.last_error, "rate_limited: retry after 1000ms",
+            "the rate-limit reason must be surfaced on last_error"
+        );
+    }
+
+    /// #684 — an advertised Retry-After longer than
+    /// `RETRY_AFTER_SLEEP_CAP` (30 s) cannot be honoured inside the
+    /// lease window: the cycle must abort immediately (no sleep, no
+    /// retry request) instead of stalling the connector task while
+    /// the unrenewed push lease lapses.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn retry_after_beyond_cap_aborts_cycle_without_sleeping() {
+        let (pool, _dir) = test_pool().await;
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "3600"))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+        seed_block_due_on(&pool, "Hour-long throttle", "2026-04-22").await;
+        let mut dirty = DirtySet::new();
+        dirty.insert(fixed_date());
+
+        let start = std::time::Instant::now();
+        let result = run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty).await;
+        let elapsed = start.elapsed();
+
+        assert!(
+            matches!(
+                result,
+                Err(AppError::Gcal(GcalErrorKind::RateLimited {
+                    retry_after_ms: 3_600_000
+                }))
+            ),
+            "un-honourable Retry-After must abort with Err(RateLimited), got {result:?}"
+        );
+        assert_eq!(
+            count_requests(&server, "POST", &format!("/calendars/{TEST_CAL_ID}/events")).await,
+            1,
+            "no retry must be attempted when the advertised delay exceeds the cap"
+        );
+        assert!(
+            elapsed < RETRY_AFTER_SLEEP_CAP,
+            "the cycle must NOT sleep toward an un-honourable Retry-After \
+             (took {}ms)",
+            elapsed.as_millis()
+        );
+    }
+
+    // ── #685 — healthy cycle clears stale last_error ───────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn healthy_cycle_clears_stale_last_error() {
+        let (pool, _dir) = test_pool().await;
+        let seed = models::default_space_config(SPACE_PERSONAL_ULID, t0());
+        models::upsert_space_config(&pool, &seed).await.unwrap();
+        // A previous cycle left a transient error behind.
+        models::set_space_config_last_error(&pool, SPACE_PERSONAL_ULID, "server_error: HTTP 503")
+            .await
+            .unwrap();
+
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(event_response_body("evt_OK", "2026-04-22")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+        seed_block_due_on(&pool, "Back to healthy", "2026-04-22").await;
+        let mut dirty = DirtySet::new();
+        dirty.insert(fixed_date());
+
+        let outcome = run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
+            .await
+            .unwrap();
+        assert_eq!(outcome, CycleOutcome::Ok);
+
+        let cfg = models::get_space_config(&pool, SPACE_PERSONAL_ULID)
+            .await
+            .unwrap()
+            .expect("seeded row must exist");
+        assert_eq!(
+            cfg.last_error, "",
+            "a cycle that completes without skips must clear the stale last_error (#685)"
+        );
+    }
+
+    // ── #687 — non-conforming 2xx skips the date, not the cycle ────
+
+    /// A 2xx insert response that fails the wire decode (no usable
+    /// dates) must classify as a per-date skip: the sibling date
+    /// still pushes, the cycle returns Ok (so the task loop clears
+    /// the dirty set instead of re-wedging it every reconcile), and
+    /// the reason lands on last_error.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn nonconforming_2xx_response_skips_date_instead_of_wedging() {
+        let (pool, _dir) = test_pool().await;
+        let seed = models::default_space_config(SPACE_PERSONAL_ULID, t0());
+        models::upsert_space_config(&pool, &seed).await.unwrap();
+
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        // Date A's insert echoes a non-conforming body (id only, no
+        // start/end at all).
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .and(body_string_contains("\"date\":\"2026-04-22\""))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "evt_WEIRD",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        // Date B's insert is conforming.
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .and(body_string_contains("\"date\":\"2026-04-23\""))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(event_response_body("evt_DATE_B", "2026-04-23")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+        seed_block_due_on(&pool, "On A", "2026-04-22").await;
+        seed_block_due_on(&pool, "On B", "2026-04-23").await;
+        let mut dirty = DirtySet::new();
+        dirty.insert(fixed_date());
+        dirty.insert(NaiveDate::from_ymd_opt(2026, 4, 23).unwrap());
+
+        let outcome = run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
+            .await
+            .unwrap();
+        assert_eq!(
+            outcome,
+            CycleOutcome::Ok,
+            "a non-conforming 2xx echo must NOT abort the cycle (#687), got {outcome:?}"
+        );
+
+        assert!(
+            models::get_event_map_for_date(&pool, "2026-04-22")
+                .await
+                .unwrap()
+                .is_none(),
+            "date A is skipped this cycle (no map row)"
+        );
+        let map_b = models::get_event_map_for_date(&pool, "2026-04-23")
+            .await
+            .unwrap()
+            .expect("date B must still push despite date A's bad echo");
+        assert_eq!(map_b.gcal_event_id, "evt_DATE_B");
+
+        let cfg = models::get_space_config(&pool, SPACE_PERSONAL_ULID)
+            .await
+            .unwrap()
+            .expect("seeded row must exist");
+        assert!(
+            cfg.last_error
+                .contains("gcal.api.nonconforming_event_response"),
+            "the skip reason must surface the nonconforming-response key, got {:?}",
+            cfg.last_error
         );
     }
 

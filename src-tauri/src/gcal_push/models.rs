@@ -544,6 +544,35 @@ pub async fn set_space_config_last_error(
     Ok(())
 }
 
+/// #685 — reset `last_error` to the empty string on the per-space
+/// config row after a healthy cycle (one that completed without any
+/// skipped dates), so a one-off transient failure does not stay on
+/// the Settings tab forever.
+///
+/// The `AND last_error <> ''` guard makes the call a true no-op on an
+/// already-clean row: `updated_at` is not bumped, so the row does not
+/// churn on every healthy cycle.  Like
+/// [`set_space_config_last_error`], this never inserts — a missing
+/// per-space row is silently ignored.
+///
+/// # Errors
+/// [`AppError::Database`] on SQL errors.
+pub async fn clear_space_config_last_error(
+    pool: &SqlitePool,
+    space_id: &str,
+) -> Result<(), AppError> {
+    let updated_at = now_rfc3339();
+    sqlx::query!(
+        "UPDATE gcal_space_config SET last_error = '', updated_at = ? \
+         WHERE space_id = ? AND last_error <> ''",
+        updated_at,
+        space_id,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Delete the per-space config row, silent on a missing row.
 ///
 /// # Errors
@@ -1269,6 +1298,73 @@ mod tests {
         );
         let got = get_space_config(&pool, SPACE_A).await.unwrap();
         assert_eq!(got, None, "no row must be visible after the no-op UPDATE");
+    }
+
+    #[tokio::test]
+    async fn clear_space_config_last_error_resets_column_and_bumps_updated_at() {
+        // #685: the clear helper must reset a non-empty `last_error`
+        // to "" and bump `updated_at`, leaving the rest of the row
+        // alone.
+        let (pool, _dir) = test_pool().await;
+        let cfg = default_space_config(SPACE_A, fixed_now());
+        upsert_space_config(&pool, &cfg).await.unwrap();
+        set_space_config_last_error(&pool, SPACE_A, "server_error: HTTP 503")
+            .await
+            .unwrap();
+        let before = get_space_config(&pool, SPACE_A).await.unwrap().unwrap();
+        assert_eq!(before.last_error, "server_error: HTTP 503");
+
+        // Millisecond-resolution timestamps — see the nap rationale in
+        // the set_space_config_last_error test above.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+        clear_space_config_last_error(&pool, SPACE_A).await.unwrap();
+
+        let after = get_space_config(&pool, SPACE_A).await.unwrap().unwrap();
+        assert_eq!(after.last_error, "", "last_error must be cleared");
+        assert_ne!(
+            after.updated_at, before.updated_at,
+            "updated_at must advance when a non-empty last_error is cleared"
+        );
+        assert_eq!(after.account_email, before.account_email);
+        assert_eq!(after.calendar_id, before.calendar_id);
+    }
+
+    #[tokio::test]
+    async fn clear_space_config_last_error_is_noop_when_already_clean() {
+        // #685: an already-empty `last_error` must not churn the row —
+        // `updated_at` stays put so healthy cycles don't bump it every
+        // 15 minutes.
+        let (pool, _dir) = test_pool().await;
+        let cfg = default_space_config(SPACE_A, fixed_now());
+        upsert_space_config(&pool, &cfg).await.unwrap();
+        let before = get_space_config(&pool, SPACE_A).await.unwrap().unwrap();
+        assert_eq!(before.last_error, "");
+
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+        clear_space_config_last_error(&pool, SPACE_A).await.unwrap();
+
+        let after = get_space_config(&pool, SPACE_A).await.unwrap().unwrap();
+        assert_eq!(
+            after.updated_at, before.updated_at,
+            "clearing an already-clean row must be a true no-op (no updated_at churn)"
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_space_config_last_error_is_noop_when_row_absent() {
+        // Same contract as the setter: never insert, never error.
+        let (pool, _dir) = test_pool().await;
+        clear_space_config_last_error(&pool, SPACE_A).await.unwrap();
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM gcal_space_config")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count.0, 0,
+            "clear_space_config_last_error must NOT insert a row when none exists"
+        );
     }
 
     #[tokio::test]
