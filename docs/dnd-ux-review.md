@@ -50,7 +50,7 @@ reproduces `handleDragEnd` + the real backend semantics).
   `src-tauri/src/commands/blocks/move_ops.rs:43-47`.
 - **Ties break by ULID, not drop intent.** The page tree is loaded by
   `load_page_subtree`, ordered `COALESCE(position, ?6) ASC, id ASC`
-  (`src-tauri/src/commands/pages.rs:372`); the per-parent child listing is
+  (`src-tauri/src/commands/pages/listing.rs`); the per-parent child listing is
   likewise `ORDER BY position ASC, id ASC`
   (`src-tauri/src/pagination/hierarchy.rs:69`, mirrored at
   `src-tauri/src/commands/blocks/queries.rs:540`). So when two siblings share a
