@@ -332,7 +332,10 @@ mod tests {
         // removed), this assertion fails — bump the constant
         // deliberately and confirm the new site uses the canonical
         // SELECT.
-        const EXPECTED_HITS: usize = 15;
+        // #660: export_page_markdown_inner inlined its page-row lookup as a
+        // canonical-column `query_as!(BlockRow, …)` (snapshot-isolation fix),
+        // adding one site in commands/pages/markdown.rs → 16.
+        const EXPECTED_HITS: usize = 16;
         assert_eq!(
             total_hits, EXPECTED_HITS,
             "expected {EXPECTED_HITS} `query_as!(BlockRow, …)` \
