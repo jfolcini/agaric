@@ -60,8 +60,8 @@
 use std::collections::HashMap;
 
 use loro::{
-    ExportMode, LoroDoc, LoroError, LoroList, LoroMap, LoroText, LoroTree, LoroTreeError,
-    LoroValue, PeerID, TreeID, TreeParentId, VersionVector,
+    Container, ExportMode, LoroDoc, LoroError, LoroList, LoroMap, LoroText, LoroTree,
+    LoroTreeError, LoroValue, PeerID, TreeID, TreeParentId, VersionVector,
 };
 
 use crate::error::AppError;
@@ -190,26 +190,54 @@ const BLOCKS_TREE_ROOT: &str = "blocks_tree";
 /// two peers concurrently resolves via Loro's per-key LWW.
 const BLOCK_PROPERTIES_ROOT: &str = "block_properties";
 
-/// Top-level LoroMap key holding per-block tag associations.  Each
-/// value is a `LoroList<String>` of `tag_id` strings (ULIDs).
+/// Top-level LoroMap key holding per-block tag associations.
 ///
-/// **Why LoroList over LoroMap-as-set** (Phase-2 day-8.5 decision):
-/// the SQL `block_tags` table is a `(block_id, tag_id)` set with no
-/// per-tag scalar payload — so either shape works at the read
-/// boundary.  LoroList gives:
-///   1. The simplest read API (`for_each` over scalar strings) for
-///      `read_tags` parity.
-///   2. Concurrent AddTag(X) and RemoveTag(X) on two peers converge
-///      naturally — Loro's list-CRDT keeps the first-applied insert
-///      and drops subsequent removals of an already-removed element
-///      (idempotent remove); this matches `INSERT OR IGNORE` /
-///      `DELETE` SQL semantics.
-///   3. Avoids the LoroMap-keyed-by-tag_id route, which would need a
-///      sentinel value (`true` / `Null`) that adds noise without
-///      buying any merge guarantee.
+/// ## Current shape (#622 fix / #709 Phase 1): name-keyed LoroMap
 ///
-/// Drawback: AddTag must walk the list to dedupe — O(N_tags_on_block).
-/// Acceptable: typical blocks carry <10 tags.
+/// Each value is a `LoroMap` keyed by the tag's **normalized name**
+/// ([`crate::tag_norm::normalize_tag_name`] over the tag block's
+/// `content` at apply time), whose entry value is the `tag_id` ULID
+/// string (what SQL `block_tags.tag_id` needs until the #709 Phase-2
+/// re-key). When the tag block is not present in this doc (cross-space
+/// tag, purged tag block, out-of-order replay) or its normalized name
+/// is empty, the key degrades to the raw `tag_id` — keys can't collide
+/// across the two namespaces because normalized names carry no ASCII
+/// uppercase while ULIDs minted by `crate::ulid` are uppercase
+/// Crockford base32 (worst case on a freak collision: two same-key
+/// tags coalesce, which is the #709 end-state semantics anyway).
+///
+/// **Why a map** (#622): the previous `LoroList<String>` shape deduped
+/// with a local check-then-push, which is NOT convergent — two peers
+/// concurrently adding the same tag each pass the local check and the
+/// list CRDT keeps both inserts after merge; `apply_remove_tag` then
+/// deleted only the first occurrence, and the surviving element
+/// resurrected the tag in SQL via
+/// `reproject_block_tags_from_engine`. A map keyed by tag identity
+/// makes duplicates unrepresentable: concurrent same-key inserts
+/// resolve to ONE entry by Loro's per-key LWW (lamport, then peer-id
+/// tiebreak — `MapValue::cmp` in loro-internal 1.12
+/// `delta/map_delta.rs`, applied in `state/map_state.rs`), and keying
+/// by *name* additionally converges concurrent adds of two same-named
+/// tag blocks by construction (#709). Map state iterates in BTreeMap
+/// key order, so `read_tags` is deterministic.
+///
+/// ## Legacy shape: LoroList (read + remove only)
+///
+/// Docs persisted before the fix hold a `LoroList<String>` of tag_ids
+/// in the slot, possibly already containing duplicate elements. The
+/// list is kept in place (no structural migration — overwriting the
+/// slot with a map container is itself a lossy concurrent operation;
+/// the wholesale re-key happens in #709 Phase 2) with fixed in-place
+/// semantics: `read_tags` dedupes, `apply_remove_tag` deletes ALL
+/// occurrences, and `apply_add_tag` keeps the legacy check-then-push
+/// (a concurrent duplicate is still representable there but is now
+/// harmless — reads flatten it and removal sweeps it).
+///
+/// Concurrent-container-creation caveat (pre-existing, both shapes):
+/// two peers concurrently creating the per-block container at this
+/// root race on the slot via per-key LWW (`LoroMap::insert_container`
+/// pitfall note in loro 1.12) — the losing container's entries are
+/// orphaned. Unchanged by #622; same exposure as `block_properties`.
 const BLOCK_TAGS_ROOT: &str = "block_tags";
 
 // Field keys inside a tree node's meta map.  Kept as &'static str constants
@@ -1455,65 +1483,168 @@ impl LoroEngine {
 
     /// Mirrors `AddTag` — associates `tag_id` with `block_id` in the
     /// `block_tags` map.  See the `BLOCK_TAGS_ROOT` docstring for the
-    /// LoroList-vs-LoroMap data-shape decision.
+    /// name-keyed-map shape (#622 fix / #709 Phase 1) and the legacy
+    /// LoroList compatibility story.
     ///
-    /// Idempotent: if `tag_id` is already present in the block's tag
-    /// list, the call is a no-op.  This matches the SQL
-    /// `INSERT OR IGNORE INTO block_tags ...` semantics in
-    /// `commands/tags.rs::add_tag_inner`.
+    /// Idempotent: re-adding a tag already on the block is a no-op —
+    /// for map-shaped slots `LoroMap::insert` itself records no op when
+    /// the key already holds the same value; for legacy list slots the
+    /// local contains-check bails. Matches the SQL `INSERT OR IGNORE
+    /// INTO block_tags ...` semantics in `commands/tags.rs::
+    /// add_tag_inner`. Unlike the pre-#622 list push, the map insert is
+    /// also **convergent**: two peers concurrently adding the same tag
+    /// write the same key and merge to one entry via per-key LWW.
     pub fn apply_add_tag(&mut self, block_id: &str, tag_id: &str) -> Result<(), AppError> {
         let tags_root: LoroMap = self.doc.get_map(BLOCK_TAGS_ROOT);
-        let block_tags = tags_get_or_create_list(&tags_root, block_id, "add_tag")?;
-
-        // Manual dedup — LoroList does not enforce uniqueness.  Walk
-        // the list once and bail if `tag_id` is already present.
-        if list_contains_string(&block_tags, tag_id) {
-            return Ok(());
+        match tags_slot(&tags_root, block_id, "add_tag")? {
+            Some(TagsSlot::Map(tag_map)) => {
+                let key = self.tag_map_key_for(tag_id);
+                tag_map.insert(&key, LoroValue::from(tag_id)).map_err(|e| {
+                    AppError::Validation(format!(
+                        "loro: add_tag block {block_id} tag {tag_id}: insert: {e}"
+                    ))
+                })?;
+            }
+            Some(TagsSlot::List(block_tags)) => {
+                // Legacy pre-#622 doc — keep the list shape in place
+                // (no structural migration before #709 Phase 2; see the
+                // BLOCK_TAGS_ROOT docstring). Local dedupe check + push:
+                // a concurrent duplicate is still representable here,
+                // but `read_tags` flattens it and `apply_remove_tag`
+                // sweeps every occurrence, so it can no longer
+                // resurrect a removed tag.
+                if list_contains_string(&block_tags, tag_id) {
+                    return Ok(());
+                }
+                block_tags.push(LoroValue::from(tag_id)).map_err(|e| {
+                    AppError::Validation(format!(
+                        "loro: add_tag block {block_id} tag {tag_id}: push: {e}"
+                    ))
+                })?;
+            }
+            None => {
+                let tag_map = tags_root
+                    .insert_container(block_id, LoroMap::new())
+                    .map_err(|e| {
+                        AppError::Validation(format!(
+                            "loro: add_tag: create tags map for {block_id}: {e}"
+                        ))
+                    })?;
+                let key = self.tag_map_key_for(tag_id);
+                tag_map.insert(&key, LoroValue::from(tag_id)).map_err(|e| {
+                    AppError::Validation(format!(
+                        "loro: add_tag block {block_id} tag {tag_id}: insert: {e}"
+                    ))
+                })?;
+            }
         }
-
-        block_tags.push(LoroValue::from(tag_id)).map_err(|e| {
-            AppError::Validation(format!(
-                "loro: add_tag block {block_id} tag {tag_id}: push: {e}"
-            ))
-        })?;
         self.doc.commit();
         Ok(())
+    }
+
+    /// Resolve the [`BLOCK_TAGS_ROOT`] map key under which `tag_id`'s
+    /// association is stored: the tag block's normalized name
+    /// ([`crate::tag_norm::normalize_tag_name`] over its `content`),
+    /// degrading to the raw `tag_id` when the tag block is absent from
+    /// this doc or its normalized name is empty. See the
+    /// [`BLOCK_TAGS_ROOT`] docstring for the namespace-collision
+    /// argument.
+    fn tag_map_key_for(&self, tag_id: &str) -> String {
+        if let Some(node) = self.node_for(tag_id)
+            && let Ok(meta) = self.tree().get_meta(node)
+            && let Ok(name) = read_text(&meta, FIELD_CONTENT)
+        {
+            let key = crate::tag_norm::normalize_tag_name(&name);
+            if !key.is_empty() {
+                return key;
+            }
+        }
+        tag_id.to_string()
     }
 
     /// Mirrors `RemoveTag` — dissociates `tag_id` from `block_id`.
     ///
     /// Idempotent: if `tag_id` is not present (or the block has no
-    /// tags map at all) the call is a no-op.  Matches the SQL
+    /// tags container at all) the call is a no-op.  Matches the SQL
     /// `DELETE FROM block_tags ...` (which is itself idempotent — a
     /// DELETE matching zero rows is not an error).
+    ///
+    /// #622: removal sweeps **every** stored occurrence of `tag_id`,
+    /// not the first match — for map-shaped slots that means every
+    /// entry whose *value* is `tag_id` (a rename can leave the same
+    /// tag_id under a stale-name key next to its current-name key; a
+    /// key-only delete would leave the stale entry to resurrect the
+    /// tag on reprojection), and for legacy list slots every duplicate
+    /// element a pre-fix concurrent add left behind. Matching by value
+    /// also means no name resolution is needed here at all.
     pub fn apply_remove_tag(&mut self, block_id: &str, tag_id: &str) -> Result<(), AppError> {
         let tags_root: LoroMap = self.doc.get_map(BLOCK_TAGS_ROOT);
-        let Some(voc) = tags_root.get(block_id) else {
-            // No tag list for this block — idempotent no-op.
+        let mut removed_any = false;
+        match tags_slot(&tags_root, block_id, "remove_tag")? {
+            // No tag container for this block — idempotent no-op.
+            None => return Ok(()),
+            Some(TagsSlot::Map(tag_map)) => {
+                // Collect first, then delete — don't mutate under for_each.
+                let mut doomed_keys: Vec<String> = Vec::new();
+                tag_map.for_each(|key, voc| {
+                    if let Ok(LoroValue::String(s)) = voc.into_value()
+                        && s.as_str() == tag_id
+                    {
+                        doomed_keys.push(key.to_string());
+                    }
+                });
+                for key in doomed_keys {
+                    tag_map.delete(&key).map_err(|e| {
+                        AppError::Validation(format!(
+                            "loro: remove_tag block {block_id} tag {tag_id} key {key}: {e}"
+                        ))
+                    })?;
+                    removed_any = true;
+                }
+            }
+            Some(TagsSlot::List(block_tags)) => {
+                // Legacy list: delete ALL occurrences (re-scan from the
+                // front after each delete; indices shift left).
+                while let Some(pos) = list_find_string(&block_tags, tag_id) {
+                    block_tags.delete(pos, 1).map_err(|e| {
+                        AppError::Validation(format!(
+                            "loro: remove_tag block {block_id} tag {tag_id} at {pos}: {e}"
+                        ))
+                    })?;
+                    removed_any = true;
+                }
+            }
+        }
+        if !removed_any {
+            // Tag absent — idempotent no-op, nothing to commit.
             return Ok(());
-        };
-        let block_tags: LoroList = voc
-            .into_container()
-            .map_err(|_| {
-                AppError::Validation(format!(
-                    "loro: remove_tag block {block_id} tags slot is not a container"
-                ))
-            })?
-            .into_list()
-            .map_err(|_| {
-                AppError::Validation(format!(
-                    "loro: remove_tag block {block_id} tags is not a LoroList"
-                ))
+        }
+        self.doc.commit();
+        Ok(())
+    }
+
+    /// Test-only: write the pre-#622 per-block tag structure — a raw
+    /// `LoroList` (possibly already containing duplicate elements) at
+    /// the block's `block_tags` slot — so persistence-compat tests can
+    /// simulate docs written by pre-fix code. Production code paths
+    /// never create this shape any more.
+    #[cfg(test)]
+    pub(crate) fn seed_legacy_tag_list(
+        &mut self,
+        block_id: &str,
+        tag_ids: &[&str],
+    ) -> Result<(), AppError> {
+        let tags_root: LoroMap = self.doc.get_map(BLOCK_TAGS_ROOT);
+        let list = tags_root
+            .insert_container(block_id, LoroList::new())
+            .map_err(|e| {
+                AppError::Validation(format!("loro: seed legacy tag list for {block_id}: {e}"))
             })?;
-        let Some(pos) = list_find_string(&block_tags, tag_id) else {
-            // Tag absent — idempotent no-op.
-            return Ok(());
-        };
-        block_tags.delete(pos, 1).map_err(|e| {
-            AppError::Validation(format!(
-                "loro: remove_tag block {block_id} tag {tag_id} at {pos}: {e}"
-            ))
-        })?;
+        for tag_id in tag_ids {
+            list.push(LoroValue::from(*tag_id)).map_err(|e| {
+                AppError::Validation(format!("loro: seed legacy tag push {tag_id}: {e}"))
+            })?;
+        }
         self.doc.commit();
         Ok(())
     }
@@ -1835,52 +1966,78 @@ impl LoroEngine {
         Ok(self.child_rank_position(node))
     }
 
-    /// Read the current tag list for `block_id`.  Returns an empty
+    /// Read the current tag-id set for `block_id`.  Returns an empty
     /// vector (not `None`) when the block has never had any tags or
-    /// when its list has been emptied — the SQL projection that this
-    /// mirrors uses `LEFT JOIN block_tags`, so "no row" and "no tag"
-    /// flatten to the same shape at the read boundary.
+    /// when its container has been emptied — the SQL projection that
+    /// this mirrors uses `LEFT JOIN block_tags`, so "no row" and "no
+    /// tag" flatten to the same shape at the read boundary.
+    ///
+    /// The result is **deduplicated** (#622): this is the authoritative
+    /// input to `reproject_block_tags_from_engine`, and duplicates can
+    /// still exist in storage — legacy LoroList slots persisted by
+    /// pre-fix code may carry duplicate elements from old concurrent
+    /// adds, and a map slot can hold the same tag_id under both a
+    /// stale-name key (pre-rename) and its current-name key. Order:
+    /// first-occurrence for legacy lists (insertion order), normalized-
+    /// name key order for map slots (loro map state is a BTreeMap).
     ///
     /// Phase-2 day-8.5: companion to `apply_add_tag` / `apply_remove_tag`,
-    /// used by the engine unit tests and parity-check paths.
+    /// used by the sync-pull projection, engine unit tests and
+    /// parity-check paths.
     pub fn read_tags(&self, block_id: &str) -> Result<Vec<String>, AppError> {
         let tags_root: LoroMap = self.doc.get_map(BLOCK_TAGS_ROOT);
-        let Some(voc) = tags_root.get(block_id) else {
-            return Ok(Vec::new());
-        };
-        let block_tags: LoroList = voc
-            .into_container()
-            .map_err(|_| {
-                AppError::Validation(format!(
-                    "loro: read_tags block {block_id} tags slot is not a container"
-                ))
-            })?
-            .into_list()
-            .map_err(|_| {
-                AppError::Validation(format!(
-                    "loro: read_tags block {block_id} tags is not a LoroList"
-                ))
-            })?;
-        let mut out: Vec<String> = Vec::with_capacity(block_tags.len());
+        let mut out: Vec<String> = Vec::new();
         let mut err: Option<AppError> = None;
-        block_tags.for_each(|voc| {
-            if err.is_some() {
-                return;
+        let mut push_unique = |tag_id: String| {
+            if !out.contains(&tag_id) {
+                out.push(tag_id);
             }
-            match voc.into_value() {
-                Ok(LoroValue::String(s)) => out.push((*s).clone()),
-                Ok(other) => {
-                    err = Some(AppError::Validation(format!(
-                        "loro: read_tags block {block_id}: expected String tag, got {other:?}"
-                    )));
-                }
-                Err(_) => {
-                    err = Some(AppError::Validation(format!(
-                        "loro: read_tags block {block_id}: tag value is not a scalar"
-                    )));
-                }
+        };
+        match tags_slot(&tags_root, block_id, "read_tags")? {
+            None => return Ok(Vec::new()),
+            Some(TagsSlot::Map(tag_map)) => {
+                tag_map.for_each(|key, voc| {
+                    if err.is_some() {
+                        return;
+                    }
+                    match voc.into_value() {
+                        Ok(LoroValue::String(s)) => push_unique((*s).clone()),
+                        Ok(other) => {
+                            err = Some(AppError::Validation(format!(
+                                "loro: read_tags block {block_id} key {key}: \
+                                 expected String tag_id, got {other:?}"
+                            )));
+                        }
+                        Err(_) => {
+                            err = Some(AppError::Validation(format!(
+                                "loro: read_tags block {block_id} key {key}: \
+                                 tag value is not a scalar"
+                            )));
+                        }
+                    }
+                });
             }
-        });
+            Some(TagsSlot::List(block_tags)) => {
+                block_tags.for_each(|voc| {
+                    if err.is_some() {
+                        return;
+                    }
+                    match voc.into_value() {
+                        Ok(LoroValue::String(s)) => push_unique((*s).clone()),
+                        Ok(other) => {
+                            err = Some(AppError::Validation(format!(
+                                "loro: read_tags block {block_id}: expected String tag, got {other:?}"
+                            )));
+                        }
+                        Err(_) => {
+                            err = Some(AppError::Validation(format!(
+                                "loro: read_tags block {block_id}: tag value is not a scalar"
+                            )));
+                        }
+                    }
+                });
+            }
+        }
         if let Some(e) = err {
             return Err(e);
         }
@@ -2389,10 +2546,45 @@ fn read_i64(map: &LoroMap, key: &str) -> Result<i64, AppError> {
 }
 
 // ---------------------------------------------------------------------------
-// Tag-list helpers (Phase-2 day-8.5).  Centralised so `apply_add_tag` /
-// `apply_remove_tag` / `read_tags` share one source of truth for the
-// LoroList<String> -> String mapping.
+// Tag-container helpers (Phase-2 day-8.5; reshaped for #622).  Centralised so
+// `apply_add_tag` / `apply_remove_tag` / `read_tags` share one source of truth
+// for the per-block container shape sniffing and the LoroList<String> ->
+// String mapping on the legacy path.
 // ---------------------------------------------------------------------------
+
+/// The two shapes a per-block [`BLOCK_TAGS_ROOT`] slot can hold (see
+/// the constant's docstring): the current name-keyed `LoroMap` (#622 /
+/// #709 Phase 1) or a legacy pre-#622 `LoroList` kept in place until
+/// the Phase-2 wholesale re-key.
+enum TagsSlot {
+    Map(LoroMap),
+    List(LoroList),
+}
+
+/// Sniff the per-block tag container under the `block_tags` root.
+/// `Ok(None)` when the block has no slot; an error when the slot holds
+/// a scalar or an unexpected container type (writer/reader drift —
+/// fail loudly).  `ctx` is the operation name (e.g. `"add_tag"`) for
+/// error-context prefixing.
+fn tags_slot(tags_root: &LoroMap, block_id: &str, ctx: &str) -> Result<Option<TagsSlot>, AppError> {
+    let Some(voc) = tags_root.get(block_id) else {
+        return Ok(None);
+    };
+    let container = voc.into_container().map_err(|_| {
+        AppError::Validation(format!(
+            "loro: {ctx} block {block_id} tags slot is not a container"
+        ))
+    })?;
+    match container {
+        Container::Map(map) => Ok(Some(TagsSlot::Map(map))),
+        Container::List(list) => Ok(Some(TagsSlot::List(list))),
+        other => Err(AppError::Validation(format!(
+            "loro: {ctx} block {block_id} tags slot is neither a LoroMap \
+             nor a legacy LoroList (got {:?})",
+            other.get_type()
+        ))),
+    }
+}
 
 /// Walk a `LoroList` looking for an exact-string match; on any
 /// non-string element this returns `false` (the writer only ever
@@ -2417,36 +2609,6 @@ fn list_find_string(list: &LoroList, needle: &str) -> Option<usize> {
         }
     }
     None
-}
-
-/// Get-or-create the per-block `LoroList` of tag_ids under the
-/// `block_tags` root.  `ctx` is the operation name (e.g. `"add_tag"`)
-/// for error-context prefixing.
-fn tags_get_or_create_list(
-    tags_root: &LoroMap,
-    block_id: &str,
-    ctx: &str,
-) -> Result<LoroList, AppError> {
-    match tags_root.get(block_id) {
-        Some(voc) => voc
-            .into_container()
-            .map_err(|_| {
-                AppError::Validation(format!(
-                    "loro: {ctx} block {block_id} tags slot is not a container"
-                ))
-            })?
-            .into_list()
-            .map_err(|_| {
-                AppError::Validation(format!(
-                    "loro: {ctx} block {block_id} tags is not a LoroList"
-                ))
-            }),
-        None => tags_root
-            .insert_container(block_id, LoroList::new())
-            .map_err(|e| {
-                AppError::Validation(format!("loro: {ctx}: create tags list for {block_id}: {e}"))
-            }),
-    }
 }
 
 #[cfg(test)]
@@ -3830,5 +3992,304 @@ mod tree_tests {
         let mut sorted = oa.clone();
         sorted.sort();
         assert_eq!(sorted, vec!["A", "B", "C"]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #622 — tag-set convergence tests.
+//
+// Repro shape (pre-fix): the per-block tag container was a LoroList and
+// `apply_add_tag` deduped with a local check-then-push, which is NOT
+// convergent — two peers concurrently adding the same tag each pass the
+// local check, and the list CRDT keeps BOTH concurrent inserts after
+// merge. `apply_remove_tag` deleted only the FIRST occurrence, so one
+// duplicate survived removal and `reproject_block_tags_from_engine`
+// resurrected the tag in SQL on the next sync pull.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tag_convergence_tests {
+    use super::LoroEngine;
+
+    const BLOCK_A: &str = "01HZ0000000000000000000B01";
+    const TAG_X: &str = "01HZ0000000000000000000T0X";
+    const TAG_Y: &str = "01HZ0000000000000000000T0Y";
+
+    /// Full-snapshot one-way sync helper (test fixture shape used across
+    /// this file's convergence tests).
+    fn sync(from: &LoroEngine, to: &mut LoroEngine) {
+        to.import(&from.export_snapshot().expect("export"))
+            .expect("import");
+    }
+
+    /// Two peers share a block that already carries one tag (so the
+    /// per-block tag container itself is shared, not racing on creation),
+    /// then concurrently AddTag the SAME tag, merge, and one peer removes
+    /// it. The tag must not survive removal on either peer — that
+    /// survivor is what `reproject_block_tags_from_engine` would
+    /// authoritatively re-insert into SQL (the #622 resurrection).
+    #[test]
+    fn concurrent_add_tag_then_remove_does_not_resurrect() {
+        let mut a = LoroEngine::with_peer_id("device-622-a").expect("peer a");
+        let mut b = LoroEngine::with_peer_id("device-622-b").expect("peer b");
+
+        a.apply_create_block(BLOCK_A, "content", "hello", None, 0)
+            .expect("create block");
+        a.apply_create_block(TAG_X, "tag", "Project", None, 1)
+            .expect("create tag X");
+        a.apply_create_block(TAG_Y, "tag", "Other", None, 2)
+            .expect("create tag Y");
+        // Establish the shared per-block tag container BEFORE the race —
+        // otherwise the peers race on container creation at the map slot
+        // (a different, pre-existing loro pitfall) instead of on element
+        // insertion within one shared container.
+        a.apply_add_tag(BLOCK_A, TAG_Y).expect("seed tag Y");
+        sync(&a, &mut b);
+
+        // Concurrent AddTag(X) on both peers; each local dedupe check
+        // passes because neither has seen the other's insert yet.
+        a.apply_add_tag(BLOCK_A, TAG_X).expect("a adds X");
+        b.apply_add_tag(BLOCK_A, TAG_X).expect("b adds X");
+
+        // Cross-merge the concurrent states.
+        let a_bytes = a.export_snapshot().expect("export a");
+        let b_bytes = b.export_snapshot().expect("export b");
+        a.import(&b_bytes).expect("a imports b");
+        b.import(&a_bytes).expect("b imports a");
+
+        for (label, engine) in [("a", &a), ("b", &b)] {
+            let tags = engine.read_tags(BLOCK_A).expect("read tags");
+            let x_count = tags.iter().filter(|t| *t == TAG_X).count();
+            assert_eq!(
+                x_count, 1,
+                "peer {label}: concurrent AddTag of the same tag must \
+                 converge to ONE element, got {tags:?}"
+            );
+        }
+
+        // Remove the tag on one peer and propagate.
+        a.apply_remove_tag(BLOCK_A, TAG_X).expect("a removes X");
+        assert!(
+            !a.read_tags(BLOCK_A)
+                .expect("read a")
+                .contains(&TAG_X.to_string()),
+            "peer a: removed tag must be gone locally"
+        );
+        sync(&a, &mut b);
+        for (label, engine) in [("a", &a), ("b", &b)] {
+            let tags = engine.read_tags(BLOCK_A).expect("read tags");
+            assert_eq!(
+                tags,
+                vec![TAG_Y.to_string()],
+                "peer {label}: RemoveTag must not leave a resurrectable \
+                 occurrence behind"
+            );
+        }
+    }
+
+    /// Legacy-list race fixed in place: duplicates created by concurrent
+    /// pushes into a shared legacy LoroList must (a) dedupe on read and
+    /// (b) be removed wholesale by `apply_remove_tag`, on both peers.
+    #[test]
+    fn legacy_list_concurrent_duplicates_dedupe_and_remove_all() {
+        let mut a = LoroEngine::with_peer_id("device-622-c").expect("peer a");
+        let mut b = LoroEngine::with_peer_id("device-622-d").expect("peer b");
+
+        a.apply_create_block(BLOCK_A, "content", "hello", None, 0)
+            .expect("create block");
+        // Seed an (empty) legacy LoroList container in the tag slot —
+        // simulates a doc written before the #622 fix.
+        a.seed_legacy_tag_list(BLOCK_A, &[]).expect("seed legacy");
+        sync(&a, &mut b);
+
+        // Concurrent adds land in the SHARED legacy list on both peers;
+        // the local contains-check passes on each, so after merge the
+        // list holds two TAG_X elements (list CRDTs keep both inserts).
+        a.apply_add_tag(BLOCK_A, TAG_X).expect("a adds X");
+        b.apply_add_tag(BLOCK_A, TAG_X).expect("b adds X");
+        let a_bytes = a.export_snapshot().expect("export a");
+        let b_bytes = b.export_snapshot().expect("export b");
+        a.import(&b_bytes).expect("a imports b");
+        b.import(&a_bytes).expect("b imports a");
+
+        // (a) read-side dedupe: projection input must not carry dupes.
+        for (label, engine) in [("a", &a), ("b", &b)] {
+            let tags = engine.read_tags(BLOCK_A).expect("read tags");
+            assert_eq!(
+                tags,
+                vec![TAG_X.to_string()],
+                "peer {label}: legacy duplicate elements must dedupe on read"
+            );
+        }
+
+        // (b) remove-all: removal must delete EVERY occurrence so no
+        // element survives to resurrect the tag on reprojection.
+        a.apply_remove_tag(BLOCK_A, TAG_X).expect("a removes X");
+        sync(&a, &mut b);
+        for (label, engine) in [("a", &a), ("b", &b)] {
+            let tags = engine.read_tags(BLOCK_A).expect("read tags");
+            assert!(
+                tags.is_empty(),
+                "peer {label}: remove must clear all occurrences, got {tags:?}"
+            );
+        }
+    }
+
+    /// A persisted doc whose legacy list ALREADY contains duplicate
+    /// elements (written by pre-fix code) must project correctly after
+    /// the fix: dedupe on read, remove-all on removal, surviving an
+    /// export/import round trip.
+    #[test]
+    fn legacy_persisted_duplicates_project_and_remove_cleanly() {
+        let mut a = LoroEngine::with_peer_id("device-622-e").expect("peer a");
+        a.apply_create_block(BLOCK_A, "content", "hello", None, 0)
+            .expect("create block");
+        a.seed_legacy_tag_list(BLOCK_A, &[TAG_X, TAG_X, TAG_Y])
+            .expect("seed legacy duplicates");
+
+        // Round-trip through persistence bytes — the shape a vault
+        // snapshot written by pre-fix code would arrive in.
+        let mut fresh = LoroEngine::with_peer_id("device-622-f").expect("peer f");
+        fresh
+            .import(&a.export_snapshot().expect("export"))
+            .expect("import legacy doc");
+
+        assert_eq!(
+            fresh.read_tags(BLOCK_A).expect("read tags"),
+            vec![TAG_X.to_string(), TAG_Y.to_string()],
+            "duplicate legacy elements must flatten on read (first \
+             occurrence order)"
+        );
+
+        fresh.apply_remove_tag(BLOCK_A, TAG_X).expect("remove X");
+        assert_eq!(
+            fresh.read_tags(BLOCK_A).expect("read tags"),
+            vec![TAG_Y.to_string()],
+            "remove must take out BOTH legacy occurrences"
+        );
+
+        // Adding to a legacy-list block keeps working (slot stays a
+        // list; in-place semantics, no structural migration pre-#709
+        // Phase 2).
+        fresh.apply_add_tag(BLOCK_A, TAG_X).expect("re-add X");
+        fresh
+            .apply_add_tag(BLOCK_A, TAG_X)
+            .expect("dup re-add is no-op");
+        assert_eq!(
+            fresh.read_tags(BLOCK_A).expect("read tags"),
+            vec![TAG_Y.to_string(), TAG_X.to_string()],
+        );
+    }
+
+    /// Name-keyed identity (#709 Phase 1): the map key is the
+    /// NORMALIZED tag name, so peers whose tag blocks spell the name
+    /// with different case/composition still converge to one entry.
+    /// Here one engine holds the tag block (key = normalized name) and
+    /// both add the same tag_id concurrently — same key, one survivor.
+    #[test]
+    fn map_key_is_normalized_tag_name() {
+        let mut a = LoroEngine::with_peer_id("device-622-g").expect("peer a");
+        a.apply_create_block(BLOCK_A, "content", "hello", None, 0)
+            .expect("create block");
+        // Tag name in NFD with mixed case; key must be the NFC
+        // lowercase form.
+        a.apply_create_block(TAG_X, "tag", "Re\u{0301}ussi", None, 1)
+            .expect("create tag");
+        a.apply_add_tag(BLOCK_A, TAG_X).expect("add tag");
+
+        let tags_root: super::LoroMap = a.doc.get_map(super::BLOCK_TAGS_ROOT);
+        let slot = tags_root
+            .get(BLOCK_A)
+            .expect("slot exists")
+            .into_container()
+            .expect("container")
+            .into_map()
+            .expect("map-shaped slot (post-#622 write path)");
+        let keys: Vec<String> = slot.keys().map(|k| k.to_string()).collect();
+        assert_eq!(
+            keys,
+            vec!["r\u{e9}ussi".to_string()],
+            "map key must be the NFC + lowercased tag name"
+        );
+        assert_eq!(
+            a.read_tags(BLOCK_A).expect("read tags"),
+            vec![TAG_X.to_string()],
+            "read must surface the tag_id value, not the name key"
+        );
+    }
+
+    /// When the tag block is NOT present in the doc (cross-space tag,
+    /// out-of-order replay), the key degrades to the raw tag_id — set
+    /// semantics still hold and removal still clears it.
+    #[test]
+    fn unresolvable_tag_id_degrades_to_id_key() {
+        let mut a = LoroEngine::with_peer_id("device-622-h").expect("peer a");
+        a.apply_create_block(BLOCK_A, "content", "hello", None, 0)
+            .expect("create block");
+        // TAG_X block never created in this doc.
+        a.apply_add_tag(BLOCK_A, TAG_X)
+            .expect("add unresolvable tag");
+        a.apply_add_tag(BLOCK_A, TAG_X).expect("idempotent re-add");
+        assert_eq!(
+            a.read_tags(BLOCK_A).expect("read tags"),
+            vec![TAG_X.to_string()]
+        );
+        a.apply_remove_tag(BLOCK_A, TAG_X).expect("remove");
+        assert!(a.read_tags(BLOCK_A).expect("read tags").is_empty());
+    }
+
+    /// Rename staleness (pre-#709-Phase-2 hazard): add tag → rename the
+    /// tag block → add again re-keys the same tag_id under the new
+    /// name. Reads must dedupe the doubled value and removal must sweep
+    /// BOTH keys — a key-only delete would leave the stale-name entry
+    /// to resurrect the tag on reprojection.
+    #[test]
+    fn rename_then_readd_dedupes_and_remove_sweeps_stale_key() {
+        let mut a = LoroEngine::with_peer_id("device-622-i").expect("peer a");
+        a.apply_create_block(BLOCK_A, "content", "hello", None, 0)
+            .expect("create block");
+        a.apply_create_block(TAG_X, "tag", "foo", None, 1)
+            .expect("create tag");
+        a.apply_add_tag(BLOCK_A, TAG_X).expect("add under 'foo'");
+
+        // Rename the tag block: "foo" -> "bar".
+        a.apply_edit_content(TAG_X, 0, 3, "bar")
+            .expect("rename tag");
+        a.apply_add_tag(BLOCK_A, TAG_X).expect("re-add under 'bar'");
+
+        assert_eq!(
+            a.read_tags(BLOCK_A).expect("read tags"),
+            vec![TAG_X.to_string()],
+            "same tag_id under stale + current name keys must read as one"
+        );
+
+        a.apply_remove_tag(BLOCK_A, TAG_X).expect("remove");
+        assert!(
+            a.read_tags(BLOCK_A).expect("read tags").is_empty(),
+            "removal must sweep the stale-name key too — no resurrection"
+        );
+    }
+
+    /// Two DISTINCT tag blocks carrying the same name coalesce to one
+    /// entry (per-key LWW) — name IS the identity (#709; the engine-
+    /// level shape of the #626 same-name problem). The later add wins.
+    #[test]
+    fn same_name_distinct_tag_ids_coalesce_by_name() {
+        let mut a = LoroEngine::with_peer_id("device-622-j").expect("peer a");
+        a.apply_create_block(BLOCK_A, "content", "hello", None, 0)
+            .expect("create block");
+        a.apply_create_block(TAG_X, "tag", "Project", None, 1)
+            .expect("create tag X");
+        a.apply_create_block(TAG_Y, "tag", "pROJECT", None, 2)
+            .expect("create tag Y (same name, different case)");
+
+        a.apply_add_tag(BLOCK_A, TAG_X).expect("add X");
+        a.apply_add_tag(BLOCK_A, TAG_Y)
+            .expect("add Y overwrites by name");
+
+        assert_eq!(
+            a.read_tags(BLOCK_A).expect("read tags"),
+            vec![TAG_Y.to_string()],
+            "same normalized name must coalesce to the latest tag_id"
+        );
     }
 }

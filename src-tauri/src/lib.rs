@@ -48,6 +48,7 @@ pub mod sync_protocol;
 pub mod sync_scheduler;
 pub mod tag_inheritance;
 pub mod tag_inheritance_macros;
+pub mod tag_norm;
 pub mod tag_query;
 pub mod task_locals;
 pub mod text_utils;
