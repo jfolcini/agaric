@@ -40,7 +40,7 @@ import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 
 import { useRichContentCallbacks, useTagClickHandler } from '../../hooks/useRichContentCallbacks'
-import { formatTimestamp } from '../../lib/format'
+import { formatRelativeTime } from '../../lib/format-relative-time'
 import { getPayloadRawContent } from '../../lib/history-utils'
 import { logger } from '../../lib/logger'
 import type { DiffSpan, HistoryEntry } from '../../lib/tauri'
@@ -283,7 +283,7 @@ export function BlockHistoryItem({
           >
             <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
             {t('history.restoreThisVersion', {
-              timestamp: formatTimestamp(entry.created_at, 'relative'),
+              timestamp: formatRelativeTime(entry.created_at, t),
             })}
           </Button>
           {/* The preview is a labelled region — using a real <section>

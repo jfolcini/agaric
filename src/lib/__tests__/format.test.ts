@@ -1,10 +1,14 @@
 /**
- * Tests for src/lib/format.ts — formatTimestamp, formatLastSynced, truncateId.
+ * Tests for src/lib/format.ts — formatTimestamp (absolute styles), truncateId.
+ *
+ * Relative-time formatting (and the old `formatLastSynced` "Never synced"
+ * helper) moved to `formatRelativeTime` (i18n-aware) — see #745 and
+ * format-relative-time.test.ts.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { formatLastSynced, formatTimestamp, truncateId, ulidToDate } from '../format'
+import { formatTimestamp, truncateId, ulidToDate } from '../format'
 
 // ── Fake-timer anchor ────────────────────────────────────────────────────
 // All relative-time tests pin "now" to this instant so diffs are deterministic.
@@ -32,62 +36,6 @@ describe('invalid date handling', () => {
 
   it('returns the raw string for garbage input', () => {
     expect(formatTimestamp('abc123xyz')).toBe('abc123xyz')
-  })
-})
-
-// ── Relative style ───────────────────────────────────────────────────────
-
-describe('relative style', () => {
-  it('returns "Just now" for timestamps less than 1 minute ago', () => {
-    const thirtySecsAgo = new Date(NOW.getTime() - 30_000).toISOString()
-    expect(formatTimestamp(thirtySecsAgo, 'relative')).toBe('Just now')
-  })
-
-  it('returns "Just now" for the exact current time', () => {
-    expect(formatTimestamp(NOW.toISOString(), 'relative')).toBe('Just now')
-  })
-
-  it('returns "Xm ago" for 1 minute', () => {
-    const oneMinAgo = new Date(NOW.getTime() - 60_000).toISOString()
-    expect(formatTimestamp(oneMinAgo, 'relative')).toBe('1m ago')
-  })
-
-  it('returns "Xm ago" for 59 minutes', () => {
-    const fiftyNineMinAgo = new Date(NOW.getTime() - 59 * 60_000).toISOString()
-    expect(formatTimestamp(fiftyNineMinAgo, 'relative')).toBe('59m ago')
-  })
-
-  it('returns "Xh ago" for 1 hour', () => {
-    const oneHrAgo = new Date(NOW.getTime() - 60 * 60_000).toISOString()
-    expect(formatTimestamp(oneHrAgo, 'relative')).toBe('1h ago')
-  })
-
-  it('returns "Xh ago" for 23 hours', () => {
-    const twentyThreeHrAgo = new Date(NOW.getTime() - 23 * 60 * 60_000).toISOString()
-    expect(formatTimestamp(twentyThreeHrAgo, 'relative')).toBe('23h ago')
-  })
-
-  it('returns "Xd ago" for 1 day', () => {
-    const oneDayAgo = new Date(NOW.getTime() - 24 * 60 * 60_000).toISOString()
-    expect(formatTimestamp(oneDayAgo, 'relative')).toBe('1d ago')
-  })
-
-  it('returns "Xd ago" for 29 days', () => {
-    const twentyNineDaysAgo = new Date(NOW.getTime() - 29 * 24 * 60 * 60_000).toISOString()
-    expect(formatTimestamp(twentyNineDaysAgo, 'relative')).toBe('29d ago')
-  })
-
-  it('falls back to toLocaleDateString for 30+ days', () => {
-    const thirtyDaysAgo = new Date(NOW.getTime() - 30 * 24 * 60 * 60_000)
-    const result = formatTimestamp(thirtyDaysAgo.toISOString(), 'relative')
-    // Should match the locale-formatted date (not a relative string)
-    expect(result).toBe(thirtyDaysAgo.toLocaleDateString())
-  })
-
-  it('falls back to toLocaleDateString for 90+ days', () => {
-    const ninetyDaysAgo = new Date(NOW.getTime() - 90 * 24 * 60 * 60_000)
-    const result = formatTimestamp(ninetyDaysAgo.toISOString(), 'relative')
-    expect(result).toBe(ninetyDaysAgo.toLocaleDateString())
   })
 })
 
@@ -125,30 +73,6 @@ describe('full style (default)', () => {
     const withFull = formatTimestamp(iso, 'full')
     const withDefault = formatTimestamp(iso)
     expect(withDefault).toBe(withFull)
-  })
-})
-
-// ── formatLastSynced ─────────────────────────────────────────────────────
-
-describe('formatLastSynced', () => {
-  it('returns "Never synced" for null', () => {
-    expect(formatLastSynced(null)).toBe('Never synced')
-  })
-
-  it('returns relative time for a valid timestamp', () => {
-    const fiveMinAgo = NOW.getTime() - 5 * 60_000 // epoch ms (#109 Phase 2)
-    expect(formatLastSynced(fiveMinAgo)).toBe('5m ago')
-  })
-
-  it('returns "Just now" for a recent timestamp', () => {
-    const tenSecsAgo = NOW.getTime() - 10_000
-    expect(formatLastSynced(tenSecsAgo)).toBe('Just now')
-  })
-
-  it('treats epoch 0 as a real timestamp, not "Never synced"', () => {
-    // #109 Phase 2: synced_at is now a number; 0 is a valid (very old)
-    // timestamp and must not be confused with the null "never synced" case.
-    expect(formatLastSynced(0)).not.toBe('Never synced')
   })
 })
 

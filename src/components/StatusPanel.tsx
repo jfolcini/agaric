@@ -24,7 +24,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { MetricCard } from '@/components/ui/metric-card'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { formatTimestamp } from '@/lib/format'
+import { formatRelativeTime } from '@/lib/format-relative-time'
 import { cn } from '@/lib/utils'
 
 import { usePollingQuery } from '../hooks/usePollingQuery'
@@ -355,7 +355,7 @@ export function StatusPanel(): React.ReactElement {
                   <MetricCard
                     value={
                       <span className="sync-last-synced">
-                        {syncLastSynced ? formatTimestamp(syncLastSynced, 'relative') : '--'}
+                        {syncLastSynced ? formatRelativeTime(syncLastSynced, t) : '--'}
                       </span>
                     }
                     labelSlot={
