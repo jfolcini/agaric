@@ -261,6 +261,12 @@ export interface RovingEditorHandle {
    * Returns null if the editor is not mounted.
    */
   getMarkdown: () => string | null
+  /**
+   * Split the document at the collapsed caret (#909). Returns the markdown
+   * before and after the caret, or null when the editor is unmounted or the
+   * selection is a non-collapsed range. Does NOT mutate the document.
+   */
+  splitAtCaret: () => { before: string; after: string } | null
   /** The markdown string that was passed to `mount()`. */
   originalMarkdown: string
   /**
@@ -588,6 +594,22 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     return serialize(json, notifyUnknownNodeTypeToast)
   }, [editor])
 
+  // #909 — split the document at the collapsed caret. Returns the markdown of
+  // everything BEFORE the caret and everything AFTER it, so Enter can leave the
+  // before-text in the current block and seed the new block with the after-text
+  // (ProseMirror's splitBlock semantics; marks spanning the caret are carried
+  // into each half by `doc.cut`). Returns null when there is no editor or the
+  // selection is a range (a non-collapsed selection has no single split point).
+  const splitAtCaret = useCallback((): { before: string; after: string } | null => {
+    if (!editor) return null
+    const { from, empty } = editor.state.selection
+    if (!empty) return null
+    const { doc } = editor.state
+    const before = serialize(doc.cut(0, from).toJSON() as DocNode, notifyUnknownNodeTypeToast)
+    const after = serialize(doc.cut(from).toJSON() as DocNode, notifyUnknownNodeTypeToast)
+    return { before, after }
+  }, [editor])
+
   // Memoize the returned handle so its object identity is stable across
   // renders that don't change `editor` / `mount` / `unmount` / `getMarkdown`.
   // The two `activeBlockId` / `originalMarkdown` getters read from refs, so
@@ -611,11 +633,12 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         return activeBlockIdRef.current
       },
       getMarkdown,
+      splitAtCaret,
       get originalMarkdown() {
         return originalMarkdownRef.current
       },
       setOnMarkdownChange,
     }),
-    [editor, mount, unmount, getMarkdown, setOnMarkdownChange],
+    [editor, mount, unmount, getMarkdown, splitAtCaret, setOnMarkdownChange],
   )
 }

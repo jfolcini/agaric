@@ -55,7 +55,10 @@ function announceMoveResult(
 export interface UseBlockKeyboardHandlersParams {
   focusedBlockId: string | null
   collapsedVisible: FlatBlock[]
-  rovingEditor: Pick<RovingEditorHandle, 'editor' | 'mount' | 'unmount' | 'getMarkdown'>
+  rovingEditor: Pick<
+    RovingEditorHandle,
+    'editor' | 'mount' | 'unmount' | 'getMarkdown' | 'splitAtCaret'
+  >
   setFocused: (id: string | null) => void
   handleFlush: () => string | null
   remove: (id: string) => Promise<void>
@@ -64,7 +67,7 @@ export interface UseBlockKeyboardHandlersParams {
   dedent: (id: string) => Promise<boolean>
   moveUp: (id: string) => Promise<boolean>
   moveDown: (id: string) => Promise<boolean>
-  createBelow: (afterBlockId: string) => Promise<string | null>
+  createBelow: (afterBlockId: string, content?: string) => Promise<string | null>
   justCreatedBlockIds: RefObject<Set<string>>
   /** Discard any persisted draft for the given block (called on Escape). */
   discardDraft: (blockId: string) => void
@@ -436,6 +439,31 @@ export function useBlockKeyboardHandlers({
     try {
       // Capture content before flush so we can re-mount on failure
       const savedContent = rovingEditorRef.current.getMarkdown?.() ?? ''
+
+      // #909 — split the block at the caret. When there is text AFTER the
+      // caret, keep the before-text in the current block and move the
+      // after-text into the new block (Logseq/Notion/ProseMirror splitBlock).
+      // When the caret is at the end (after === '') or no caret split is
+      // available (range selection / no editor), fall back to the legacy
+      // path: flush the whole block and create an EMPTY block below.
+      const split = rovingEditorRef.current.splitAtCaret?.() ?? null
+      if (split && split.after !== '') {
+        rovingEditorRef.current.unmount()
+        await edit(focusedBlockId, split.before)
+        const newBlockId = await createBelow(focusedBlockId, split.after)
+        if (newBlockId) {
+          // NOT added to justCreatedBlockIds: the new block carries real
+          // content, so Escape must not auto-delete it as an empty stub.
+          setFocused(newBlockId)
+          announce(t('announce.blockCreated'))
+        } else {
+          // Backend error — restore the original (unsplit) block so the user
+          // isn't left with a truncated block and no place to type.
+          rovingEditorRef.current.mount(focusedBlockId, savedContent)
+        }
+        return
+      }
+
       handleFlush()
       const newBlockId = await createBelow(focusedBlockId)
       if (newBlockId) {
@@ -450,7 +478,7 @@ export function useBlockKeyboardHandlers({
     } finally {
       enterSaveInProgress.current = false
     }
-  }, [focusedBlockId, handleFlush, createBelow, setFocused, justCreatedBlockIds, t])
+  }, [focusedBlockId, handleFlush, createBelow, edit, setFocused, justCreatedBlockIds, t])
 
   const handleEscapeCancel = useCallback(() => {
     if (!focusedBlockId) return

@@ -42,6 +42,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockKeyboar
       mount: vi.fn(),
       unmount: vi.fn(() => null as string | null),
       getMarkdown: vi.fn(() => null as string | null),
+      splitAtCaret: vi.fn(() => null as { before: string; after: string } | null),
     },
     setFocused: vi.fn(),
     handleFlush: vi.fn(() => null as string | null),
@@ -805,6 +806,67 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
     })
 
     expect(mockedAnnounce).not.toHaveBeenCalled()
+  })
+
+  // #909 — Enter splits the block at the caret.
+  it('splits at caret: before-text stays, after-text seeds the new block', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    // The current block keeps the before-caret text…
+    expect(params.edit).toHaveBeenCalledWith('B', 'hello')
+    // …and the new block is created WITH the after-caret text.
+    expect(params.createBelow).toHaveBeenCalledWith('B', 'world')
+    expect(params.setFocused).toHaveBeenCalledWith('NEW_1')
+    // The legacy whole-block flush path must NOT run on a mid-text split.
+    expect(params.handleFlush).not.toHaveBeenCalled()
+  })
+
+  it('split-created block is NOT registered as a just-created empty stub', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    // It carries real content, so Escape must not auto-delete it.
+    expect(params.justCreatedBlockIds.current.has('NEW_1')).toBe(false)
+  })
+
+  it('caret at end (after === "") uses the legacy empty-block path', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: '' }))
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(params.handleFlush).toHaveBeenCalled()
+    expect(params.createBelow).toHaveBeenCalledWith('B')
+    expect(params.justCreatedBlockIds.current.has('NEW_1')).toBe(true)
+  })
+
+  it('restores the original block when a split createBelow fails', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.getMarkdown = vi.fn(() => 'helloworld')
+    params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
+    params.createBelow = vi.fn(async () => null)
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'helloworld')
+    expect(params.setFocused).not.toHaveBeenCalled()
   })
 })
 

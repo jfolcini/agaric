@@ -201,6 +201,54 @@ describe('handleBlockKeyDown', () => {
     })
   })
 
+  // #910 — Shift+Arrow at a block boundary must EXTEND the selection (defer to
+  // ProseMirror) instead of navigating to the adjacent block and dropping it.
+  describe('Shift+Arrow at a boundary does not navigate (#910)', () => {
+    it('Shift+ArrowUp at start does NOT focus the previous block', () => {
+      const editor = makeEditor({ from: 1, to: 1, selectionEmpty: true })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowUp', { shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls['onFocusPrev']).toBeUndefined()
+    })
+
+    it('Shift+ArrowLeft at start does NOT focus the previous block', () => {
+      const editor = makeEditor({ from: 1, to: 1, selectionEmpty: true })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowLeft', { shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls['onFocusPrev']).toBeUndefined()
+    })
+
+    it('Shift+ArrowDown at end does NOT focus the next block', () => {
+      const editor = makeEditor({ from: 19, to: 19, selectionEmpty: true, docSize: 20 })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowDown', { shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls['onFocusNext']).toBeUndefined()
+    })
+
+    it('Shift+ArrowRight at end does NOT focus the next block', () => {
+      const editor = makeEditor({ from: 19, to: 19, selectionEmpty: true, docSize: 20 })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowRight', { shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls['onFocusNext']).toBeUndefined()
+    })
+  })
+
   describe('Ctrl+Shift+ArrowRight / ArrowLeft (indent / dedent)', () => {
     it('Ctrl+Shift+ArrowRight calls onFlush + onIndent', () => {
       const editor = makeEditor({})
@@ -250,16 +298,31 @@ describe('handleBlockKeyDown', () => {
       expect(cbs._calls['onDedent']).toBe(1)
     })
 
-    it('Tab does NOT call onIndent (Tab freed for focus navigation)', () => {
+    // #912 — Tab / Shift+Tab are now the primary outliner indent/dedent keys.
+    it('Tab calls onFlush + onIndent', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
       const event = makeEvent('Tab')
 
       handleBlockKeyDown(event, editor, cbs)
 
-      expect(event.preventDefault).not.toHaveBeenCalled()
-      expect(cbs._calls['onIndent']).toBeUndefined()
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onIndent']).toBe(1)
       expect(cbs._calls['onDedent']).toBeUndefined()
+    })
+
+    it('Shift+Tab calls onFlush + onDedent', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('Tab', { shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onDedent']).toBe(1)
+      expect(cbs._calls['onIndent']).toBeUndefined()
     })
 
     it('Ctrl+ArrowRight without Shift does NOT call onIndent', () => {
@@ -839,6 +902,55 @@ describe('useBlockKeyboard — IME / composition guard', () => {
 
     expect(callbacks._calls['onEnterSave']).toBe(1)
 
+    cleanup()
+  })
+})
+
+// #912 — accessibility opt-out: when "Tab indents blocks" is OFF, Tab must pass
+// through for focus navigation instead of indenting (no keyboard trap).
+describe('useBlockKeyboard — Tab-indent accessibility opt-out', () => {
+  function setup() {
+    const element = document.createElement('div')
+    document.body.appendChild(element)
+    const editor = new Editor({
+      element,
+      extensions: [Document, Paragraph, Text],
+      content: { type: 'doc', content: [{ type: 'paragraph' }] },
+    })
+    const callbacks = makeCallbacks()
+    const { unmount } = renderHook(() => useBlockKeyboard(editor, callbacks))
+    const target = editor.view.dom.parentElement as HTMLElement
+    const cleanup = () => {
+      unmount()
+      editor.destroy()
+      element.remove()
+      localStorage.removeItem('agaric-tab-indents-blocks')
+    }
+    return { callbacks, target, cleanup }
+  }
+
+  it('Tab indents by default (preference absent)', () => {
+    const { callbacks, target, cleanup } = setup()
+
+    const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    target.dispatchEvent(event)
+
+    expect(callbacks._calls['onIndent']).toBe(1)
+    cleanup()
+  })
+
+  it('Tab does NOT indent and is not preventDefault-ed when the opt-out is off', () => {
+    localStorage.setItem('agaric-tab-indents-blocks', 'false')
+    const { callbacks, target, cleanup } = setup()
+
+    const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    const preventDefaultSpy = vi.spyOn(event, 'preventDefault')
+    target.dispatchEvent(event)
+
+    // Tab passes through for browser focus navigation.
+    expect(callbacks._calls['onIndent']).toBeUndefined()
+    expect(callbacks._calls['onDedent']).toBeUndefined()
+    expect(preventDefaultSpy).not.toHaveBeenCalled()
     cleanup()
   })
 })

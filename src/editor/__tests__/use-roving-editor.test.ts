@@ -801,6 +801,62 @@ describe('useRovingEditor integration (renderHook)', () => {
     unmountHook()
   })
 
+  // #909 — caret-based split.
+  it('splitAtCaret() splits the block content at a collapsed caret', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    act(() => {
+      result.current.mount('block-split', 'helloworld')
+    })
+
+    // Place the caret after "hello" (doc start = 0, paragraph opens at 0, text
+    // begins at pos 1, so "hello" ends at pos 6).
+    act(() => {
+      ;(result.current.editor as Editor).commands.setTextSelection(6)
+    })
+
+    const split = result.current.splitAtCaret()
+    expect(split).toEqual({ before: 'hello', after: 'world' })
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  it('splitAtCaret() at the end returns the full content and an empty tail', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    act(() => {
+      result.current.mount('block-split-end', 'hello')
+    })
+    act(() => {
+      const editor = result.current.editor as Editor
+      editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+    })
+
+    const split = result.current.splitAtCaret()
+    expect(split?.before).toBe('hello')
+    expect(split?.after).toBe('')
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  it('splitAtCaret() returns null for a non-collapsed (range) selection', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    act(() => {
+      result.current.mount('block-split-range', 'helloworld')
+    })
+    act(() => {
+      ;(result.current.editor as Editor).commands.setTextSelection({ from: 2, to: 6 })
+    })
+
+    expect(result.current.splitAtCaret()).toBeNull()
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
   it('mount() → unmount() returns null for unchanged content', async () => {
     const { result, unmount: unmountHook } = await setup()
 

@@ -236,6 +236,7 @@ function makeRovingEditor() {
     unmount: vi.fn(() => null),
     activeBlockId: null,
     getMarkdown: vi.fn(() => null),
+    splitAtCaret: vi.fn(() => null),
     originalMarkdown: '',
     setOnMarkdownChange: vi.fn(),
   }

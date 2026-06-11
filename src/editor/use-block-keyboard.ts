@@ -9,6 +9,7 @@
 import type { Editor } from '@tiptap/core'
 import { useCallback, useEffect } from 'react'
 
+import { isTabIndentEnabled } from '../lib/editor-preferences'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 
 /**
@@ -200,6 +201,27 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       cb.onDedent()
     },
   },
+  // Tab / Shift+Tab: indent / dedent the current block (#912). Tab is the
+  // universal outliner restructure key (Logseq, Workflowy, Roam, Notion);
+  // Ctrl/Cmd+Shift+Arrow above is the secondary alias. When a suggestion
+  // popup is open the hook defers Tab to the Suggestion plugin (Tab-to-accept)
+  // BEFORE this rule is reached, so this fires only for plain block editing.
+  {
+    match: (e) => e.key === 'Tab' && !e.shiftKey,
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onFlush()
+      cb.onIndent()
+    },
+  },
+  {
+    match: (e) => e.key === 'Tab' && e.shiftKey,
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onFlush()
+      cb.onDedent()
+    },
+  },
   // `cycleTaskState` (default Ctrl/Cmd+Enter): toggle task state
   {
     match: (e) => matchesShortcutBinding(e, 'cycleTaskState'),
@@ -244,20 +266,30 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       cb.onEscapeCancel()
     },
   },
-  // ArrowUp / ArrowLeft at position 0 → previous block (suppressed when popup open)
+  // ArrowUp / ArrowLeft at position 0 → previous block (suppressed when popup open).
+  // #910 — `!e.shiftKey`: Shift+Arrow at a boundary must EXTEND the selection
+  // (let ProseMirror/the browser handle it), not navigate to the adjacent block
+  // and silently drop the selection. Plain Arrow still moves block focus.
   {
     match: (e, ctx) =>
-      (e.key === 'ArrowUp' || e.key === 'ArrowLeft') && ctx.atStart && !isSuggestionPopupVisible(),
+      (e.key === 'ArrowUp' || e.key === 'ArrowLeft') &&
+      !e.shiftKey &&
+      ctx.atStart &&
+      !isSuggestionPopupVisible(),
     handle: (e, cb) => {
       e.preventDefault()
       cb.onFlush()
       cb.onFocusPrev()
     },
   },
-  // ArrowDown / ArrowRight at end → next block (suppressed when popup open)
+  // ArrowDown / ArrowRight at end → next block (suppressed when popup open).
+  // #910 — `!e.shiftKey`: see the ArrowUp/ArrowLeft rule above.
   {
     match: (e, ctx) =>
-      (e.key === 'ArrowDown' || e.key === 'ArrowRight') && ctx.atEnd && !isSuggestionPopupVisible(),
+      (e.key === 'ArrowDown' || e.key === 'ArrowRight') &&
+      !e.shiftKey &&
+      ctx.atEnd &&
+      !isSuggestionPopupVisible(),
     handle: (e, cb) => {
       e.preventDefault()
       cb.onFlush()
@@ -324,7 +356,6 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       // Backspace pass through to ProseMirror so the Suggestion plugin can
       // handle them: Enter → select item, Escape → dismiss popup,
       // Backspace → delete query character (not merge blocks).
-      // (Tab also passes through naturally since it's no longer intercepted.)
       if (
         (event.key === 'Enter' || event.key === 'Escape' || event.key === 'Backspace') &&
         !event.shiftKey &&
@@ -333,6 +364,15 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       ) {
         if (isSuggestionPopupVisible()) return // let ProseMirror / Suggestion plugin handle it
       }
+
+      // #912 — Tab now indents/dedents blocks. Two reasons to let Tab pass
+      // through to the browser/ProseMirror untouched:
+      //   1. A suggestion popup is open → defer to the Suggestion plugin's
+      //      Tab-to-accept instead of restructuring the outline.
+      //   2. The accessibility opt-out is OFF → restore Tab as the focus-
+      //      navigation key for keyboard/AT users (indent stays on
+      //      Ctrl/Cmd+Shift+Arrow). See `isTabIndentEnabled`.
+      if (event.key === 'Tab' && (isSuggestionPopupVisible() || !isTabIndentEnabled())) return
 
       handleBlockKeyDown(event, editor, {
         onFocusPrev,
