@@ -656,9 +656,15 @@ struct ResolvedBlockRow {
 ///
 /// PEND-35 Tier 1.3 — `op_type_filter` is pushed into SQL so the FE no
 /// longer drops rows post-pagination. Mirrors `list_page_history_inner`.
+///
+/// #663 — takes a [`BlockId`] (not a raw `String`) so the ULID is
+/// normalised to canonical uppercase before it reaches SQL, matching every
+/// other `BlockId`-typed sibling command. A lowercase id from a caller used
+/// to miss the (uppercase) `op_log.block_id` rows and return an empty
+/// history silently.
 pub async fn get_block_history_inner(
     pool: &SqlitePool,
-    block_id: String,
+    block_id: BlockId,
     op_type_filter: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
@@ -918,9 +924,18 @@ pub async fn get_block_history(
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<HistoryEntry>, AppError> {
-    get_block_history_inner(&pool.0, block_id, op_type_filter, cursor, limit)
-        .await
-        .map_err(sanitize_internal_error)
+    // #663 — normalise the IPC-boundary `String` to a canonical-case
+    // `BlockId` before it reaches SQL. The command signature stays `String`
+    // so the generated TS bindings are unchanged.
+    get_block_history_inner(
+        &pool.0,
+        BlockId::from(block_id),
+        op_type_filter,
+        cursor,
+        limit,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 // ---------------------------------------------------------------------------

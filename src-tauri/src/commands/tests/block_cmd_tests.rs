@@ -722,6 +722,94 @@ async fn edit_block_updates_content() {
     );
 }
 
+/// #656 — an edit only changes `content`; the returned `BlockRow` must
+/// carry the block's existing task metadata (todo_state / priority /
+/// due_date / scheduled_date) rather than hardcoding them to `None`. A
+/// consumer applying the response optimistically must not wipe task state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_response_preserves_task_fields() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "original".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    // Set task metadata on the block via the dedicated setters.
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.as_str().into(),
+        Some("DOING".into()),
+    )
+    .await
+    .unwrap();
+    set_priority_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.as_str().into(),
+        Some("1".into()),
+    )
+    .await
+    .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.as_str().into(),
+        Some("2026-06-15".into()),
+    )
+    .await
+    .unwrap();
+    set_scheduled_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.as_str().into(),
+        Some("2026-06-14".into()),
+    )
+    .await
+    .unwrap();
+
+    // Edit only the content.
+    let edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), "updated".into())
+        .await
+        .unwrap();
+
+    assert_eq!(edited.content, Some("updated".into()), "content updated");
+    // The four task fields must survive the edit (were hardcoded None before).
+    assert_eq!(
+        edited.todo_state,
+        Some("DOING".into()),
+        "todo_state must be preserved in the edit response"
+    );
+    assert_eq!(
+        edited.priority,
+        Some("1".into()),
+        "priority must be preserved in the edit response"
+    );
+    assert_eq!(
+        edited.due_date,
+        Some("2026-06-15".into()),
+        "due_date must be preserved in the edit response"
+    );
+    assert_eq!(
+        edited.scheduled_date,
+        Some("2026-06-14".into()),
+        "scheduled_date must be preserved in the edit response"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn edit_block_sequential_edits_chain_prev_edit() {
     let (pool, _dir) = test_pool().await;

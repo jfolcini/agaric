@@ -9,6 +9,7 @@
 
 use super::*;
 use crate::db::init_pool;
+use crate::ulid::BlockId;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
@@ -2641,7 +2642,7 @@ async fn test_list_block_history_basic() {
     .await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_block_history(&pool, "HIST_BLK", None, &page)
+    let resp = list_block_history(&pool, &BlockId::test_id("HIST_BLK"), None, &page)
         .await
         .unwrap();
 
@@ -2680,7 +2681,7 @@ async fn test_list_block_history_pagination() {
     // Page 1: newest first → seq 5, 4
     let r1 = list_block_history(
         &pool,
-        "HIST_BLK",
+        &BlockId::test_id("HIST_BLK"),
         None,
         &PageRequest::new(None, Some(2)).unwrap(),
     )
@@ -2694,7 +2695,7 @@ async fn test_list_block_history_pagination() {
     // Page 2: seq 3, 2
     let r2 = list_block_history(
         &pool,
-        "HIST_BLK",
+        &BlockId::test_id("HIST_BLK"),
         None,
         &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
     )
@@ -2708,7 +2709,7 @@ async fn test_list_block_history_pagination() {
     // Page 3 (last): seq 1
     let r3 = list_block_history(
         &pool,
-        "HIST_BLK",
+        &BlockId::test_id("HIST_BLK"),
         None,
         &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
     )
@@ -2729,7 +2730,7 @@ async fn test_list_block_history_empty() {
 
     // No ops in op_log at all
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_block_history(&pool, "NONEXISTENT", None, &page)
+    let resp = list_block_history(&pool, &BlockId::test_id("NONEXISTENT"), None, &page)
         .await
         .unwrap();
 
@@ -2781,7 +2782,7 @@ async fn test_list_block_history_all_op_types() {
     }
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_block_history(&pool, "BLK01", None, &page)
+    let resp = list_block_history(&pool, &BlockId::test_id("BLK01"), None, &page)
         .await
         .unwrap();
 
@@ -2849,9 +2850,14 @@ async fn list_block_history_filters_by_op_type() {
     let page = PageRequest::new(None, Some(10)).unwrap();
 
     // Filter to edit_block — only the two edit ops should come back.
-    let resp = list_block_history(&pool, "FILT_BLK", Some("edit_block"), &page)
-        .await
-        .unwrap();
+    let resp = list_block_history(
+        &pool,
+        &BlockId::test_id("FILT_BLK"),
+        Some("edit_block"),
+        &page,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         resp.items.len(),
         2,
@@ -2863,16 +2869,21 @@ async fn list_block_history_filters_by_op_type() {
     );
 
     // Filter to add_tag — only the single add_tag op.
-    let resp_tag = list_block_history(&pool, "FILT_BLK", Some("add_tag"), &page)
+    let resp_tag = list_block_history(&pool, &BlockId::test_id("FILT_BLK"), Some("add_tag"), &page)
         .await
         .unwrap();
     assert_eq!(resp_tag.items.len(), 1, "only one add_tag op");
     assert_eq!(resp_tag.items[0].op_type, "add_tag");
 
     // Filter to a type that's absent — empty result.
-    let resp_none = list_block_history(&pool, "FILT_BLK", Some("move_block"), &page)
-        .await
-        .unwrap();
+    let resp_none = list_block_history(
+        &pool,
+        &BlockId::test_id("FILT_BLK"),
+        Some("move_block"),
+        &page,
+    )
+    .await
+    .unwrap();
     assert!(
         resp_none.items.is_empty(),
         "no move_block ops were inserted"
@@ -2911,7 +2922,7 @@ async fn list_block_history_no_filter_returns_all() {
     }
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_block_history(&pool, "NOFLT_BLK", None, &page)
+    let resp = list_block_history(&pool, &BlockId::test_id("NOFLT_BLK"), None, &page)
         .await
         .unwrap();
 
@@ -2961,7 +2972,7 @@ async fn list_block_history_paginates_under_op_type_filter() {
     // Page 1 — limit 1, expect the newest edit_block (seq 5).
     let r1 = list_block_history(
         &pool,
-        "PG_FILT",
+        &BlockId::test_id("PG_FILT"),
         Some("edit_block"),
         &PageRequest::new(None, Some(1)).unwrap(),
     )
@@ -2977,7 +2988,7 @@ async fn list_block_history_paginates_under_op_type_filter() {
     // Page 2 — using r1.next_cursor, expect seq 4.
     let r2 = list_block_history(
         &pool,
-        "PG_FILT",
+        &BlockId::test_id("PG_FILT"),
         Some("edit_block"),
         &PageRequest::new(r1_cursor, Some(1)).unwrap(),
     )
@@ -2996,7 +3007,7 @@ async fn list_block_history_paginates_under_op_type_filter() {
     // (create_block) because the filter pushes through every page.
     let r3 = list_block_history(
         &pool,
-        "PG_FILT",
+        &BlockId::test_id("PG_FILT"),
         Some("edit_block"),
         &PageRequest::new(r2_cursor, Some(1)).unwrap(),
     )
@@ -3052,7 +3063,7 @@ async fn test_list_block_history_uses_native_block_id_column() {
     .unwrap();
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_block_history(&pool, "PEND20B2", None, &page)
+    let resp = list_block_history(&pool, &BlockId::test_id("PEND20B2"), None, &page)
         .await
         .unwrap();
 
@@ -3088,7 +3099,7 @@ async fn snapshot_history_entry_response() {
     .await;
 
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let resp = list_block_history(&pool, "SNAP_HIS", None, &page)
+    let resp = list_block_history(&pool, &BlockId::test_id("SNAP_HIS"), None, &page)
         .await
         .unwrap();
 
@@ -3160,7 +3171,7 @@ async fn test_list_block_history_multi_device_pagination() {
     let mut cursor = None;
     loop {
         let page = PageRequest::new(cursor, Some(1)).unwrap();
-        let resp = list_block_history(&pool, "MULTI_BLK", None, &page)
+        let resp = list_block_history(&pool, &BlockId::test_id("MULTI_BLK"), None, &page)
             .await
             .unwrap();
         for entry in &resp.items {

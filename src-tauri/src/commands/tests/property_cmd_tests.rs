@@ -466,8 +466,13 @@ async fn delete_property_space_clears_space_id_533() {
     );
 }
 
+/// #658 — the public `delete_property` command must reject system-managed
+/// *lifecycle* built-in keys (`created_at` / `completed_at` / `repeat-*`),
+/// which are written only by internal state-transition helpers. Deleting
+/// them from FE/MCP would break recurrence bookkeeping. User-settable
+/// properties remain freely deletable.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn delete_property_allows_builtin_key() {
+async fn delete_property_rejects_lifecycle_builtin_key_658() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -484,7 +489,7 @@ async fn delete_property_allows_builtin_key() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Set a system-managed built-in property
+    // Set a system-managed lifecycle built-in property.
     set_property_inner(
         &pool,
         DEV,
@@ -502,8 +507,8 @@ async fn delete_property_allows_builtin_key() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Deleting a built-in property should now succeed
-    delete_property_inner(
+    // Deleting a lifecycle built-in must be rejected with a Validation error.
+    let err = delete_property_inner(
         &pool,
         DEV,
         &mat,
@@ -511,16 +516,27 @@ async fn delete_property_allows_builtin_key() {
         "created_at".into(),
     )
     .await
-    .unwrap();
-
-    // Verify it's gone
-    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    .expect_err("deleting a built-in lifecycle key must be rejected");
     assert!(
-        !props.iter().any(|p| p.key == "created_at"),
-        "created_at should be deleted, got: {props:?}"
+        matches!(err, AppError::Validation(_)),
+        "expected Validation error, got: {err:?}"
     );
 
-    // Deleting a user-settable property like "effort" should work
+    // And `created_at` must still be present (the reject happened before any
+    // mutation).
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    assert!(
+        props.iter().any(|p| p.key == "created_at"),
+        "created_at must survive a rejected delete, got: {props:?}"
+    );
+
+    // A `repeat-*` lifecycle key is likewise rejected.
+    let err = delete_property_inner(&pool, DEV, &mat, block.id.as_str().into(), "repeat".into())
+        .await
+        .expect_err("deleting a repeat-* key must be rejected");
+    assert!(matches!(err, AppError::Validation(_)));
+
+    // Deleting a user-settable property like "effort" still works.
     set_property_inner(
         &pool,
         DEV,
@@ -542,7 +558,7 @@ async fn delete_property_allows_builtin_key() {
         .await
         .unwrap();
 
-    // Deleting a custom property should still work
+    // Deleting a custom property should still work.
     set_property_inner(
         &pool,
         DEV,

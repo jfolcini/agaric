@@ -2,6 +2,7 @@ use sqlx::SqlitePool;
 
 use super::{Cursor, HistoryEntry, PageRequest, PageResponse, build_page_response};
 use crate::error::AppError;
+use crate::ulid::BlockId;
 
 /// List op-log history for a specific block, paginated.
 ///
@@ -37,11 +38,16 @@ use crate::error::AppError;
 /// `Option<i64>` and bind it directly at that point.
 pub async fn list_block_history(
     pool: &SqlitePool,
-    block_id: &str,
+    block_id: &BlockId,
     op_type_filter: Option<&str>,
     page: &PageRequest,
 ) -> Result<PageResponse<HistoryEntry>, AppError> {
     let fetch_limit = page.limit + 1;
+
+    // #663 — the canonical (uppercase) ULID. `op_log.block_id` is always
+    // stored canonical, so a lowercase caller id is normalised here via the
+    // `BlockId` newtype rather than missing every row.
+    let block_id = block_id.as_str();
 
     // `id` in the cursor stores `device_id` for history queries — it is the
     // tie-breaker because the op_log PK is `(device_id, seq)`. The

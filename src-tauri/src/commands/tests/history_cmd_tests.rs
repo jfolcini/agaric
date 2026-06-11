@@ -26,7 +26,7 @@ async fn get_block_history_returns_ops_for_block() {
         .await
         .unwrap();
 
-    let resp = get_block_history_inner(&pool, created.id.into_string(), None, None, None)
+    let resp = get_block_history_inner(&pool, created.id, None, None, None)
         .await
         .unwrap();
 
@@ -39,6 +39,69 @@ async fn get_block_history_returns_ops_for_block() {
     assert_eq!(
         resp.items[1].op_type, "create_block",
         "oldest op should be create_block"
+    );
+}
+
+/// #663 — `get_block_history` used to pass the raw, un-normalised id to
+/// SQL. `op_log.block_id` is stored canonical (uppercase) ULID, so a
+/// lowercase caller id matched zero rows and the history came back EMPTY
+/// silently. The fix normalises the id via `BlockId` before it reaches SQL,
+/// so a lowercase id must now return the same history as the canonical
+/// uppercase id.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_block_history_normalizes_lowercase_id_663() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "hello".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "updated".into())
+        .await
+        .unwrap();
+
+    let canonical = created.id.as_str().to_string();
+    // Sanity: a real ULID is uppercase, so the lowercase form differs.
+    let lower = canonical.to_ascii_lowercase();
+    assert_ne!(
+        canonical, lower,
+        "canonical ULID should be uppercase (differs from its lowercase form)"
+    );
+
+    // Canonical-case query returns the full history (create + edit = 2).
+    let resp_canonical =
+        get_block_history_inner(&pool, BlockId::from(canonical.clone()), None, None, None)
+            .await
+            .unwrap();
+    assert_eq!(
+        resp_canonical.items.len(),
+        2,
+        "canonical-case id must return create + edit"
+    );
+
+    // Lowercase query (the bug case) must now return the SAME history,
+    // not an empty page. This mirrors the IPC boundary, where the command
+    // receives a `String` and normalises it via `BlockId::from`.
+    let resp_lower = get_block_history_inner(&pool, BlockId::from(lower), None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        resp_lower.items.len(),
+        resp_canonical.items.len(),
+        "lowercase id must return the same history as the canonical id (was empty before #663)"
+    );
+    assert_eq!(
+        resp_lower.items[0].seq, resp_canonical.items[0].seq,
+        "lowercase and canonical histories must be identical"
     );
 }
 

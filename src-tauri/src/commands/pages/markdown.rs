@@ -90,14 +90,42 @@ pub async fn export_page_markdown_inner(
     // that the SQL `WHERE id = ?` lookup would otherwise produce.
     BlockId::from_string(page_id)?;
 
+    // #660 — open ONE read transaction and run every read below through
+    // it so the entire export observes a single, consistent WAL
+    // snapshot. Pre-fix the keyset descendant walk issued N independent
+    // `fetch_all(pool)` calls, each taking its own snapshot; a
+    // concurrent edit/move/delete landing between two pages of the
+    // keyset could skip or duplicate blocks in the exported markdown.
+    // `pool.begin()` opens a `BEGIN DEFERRED` transaction (read-only —
+    // every statement here is a SELECT, so no writer lock is taken);
+    // SQLite pins the snapshot at the first read and holds it until the
+    // tx drops. The page-row lookup, descendant walk, reference
+    // resolution and property reads all execute against `&mut *tx`, so
+    // they cannot interleave with a concurrent writer's commit.
+    let mut tx = pool.begin().await?;
+
     // 1. Get the page
     //
-    // M-98 — `get_active_block_inner` (not `get_block_inner`) so a
-    // soft-deleted page surfaces as `NotFound` instead of exporting
-    // as `# Title\n\n` with no descendants. The descendant walk
-    // below already filters `deleted_at IS NULL`, so prior to this
-    // fix the page row itself was the only row that could leak.
-    let page = get_active_block_inner(pool, page_id.into()).await?;
+    // M-98 — filter `deleted_at IS NULL` (mirrors `get_active_block_inner`)
+    // so a soft-deleted page surfaces as `NotFound` instead of exporting
+    // as `# Title\n\n` with no descendants. The descendant walk below
+    // already filters `deleted_at IS NULL`, so prior to this fix the page
+    // row itself was the only row that could leak. Inlined here (rather
+    // than calling `get_active_block_inner`, which takes `&SqlitePool`)
+    // so the page read shares the #660 snapshot tx with the walk below.
+    let page = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content,
+                parent_id as "parent_id: crate::ulid::BlockId", position,
+                deleted_at, todo_state, priority, due_date, scheduled_date,
+                page_id as "page_id: crate::ulid::BlockId"
+           FROM blocks
+           WHERE id = ? AND deleted_at IS NULL"#,
+        page_id,
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("block '{page_id}'")))?;
     if page.block_type != "page" {
         return Err(AppError::Validation("not a page".into()));
     }
@@ -152,7 +180,7 @@ pub async fn export_page_markdown_inner(
             fetch_limit,            // ?5
             NULL_POSITION_SENTINEL, // ?6
         )
-        .fetch_all(pool)
+        .fetch_all(&mut *tx)
         .await?;
 
         let limit_usize = usize::try_from(req.limit).unwrap_or(usize::MAX);
@@ -219,7 +247,7 @@ pub async fn export_page_markdown_inner(
                  AND deleted_at IS NULL"#,
             ids_json,
         )
-        .fetch_all(pool)
+        .fetch_all(&mut *tx)
         .await?;
         for r in rows {
             match r.block_type.as_str() {
@@ -271,7 +299,7 @@ pub async fn export_page_markdown_inner(
              )"#,
         page_id,
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await?;
 
     // Resolve value_ref ULIDs to page titles where possible. Unresolved
@@ -295,7 +323,7 @@ pub async fn export_page_markdown_inner(
                  AND deleted_at IS NULL"#,
             ids_json,
         )
-        .fetch_all(pool)
+        .fetch_all(&mut *tx)
         .await?;
         for r in rows {
             if let Some(c) = r.content {
@@ -315,6 +343,13 @@ pub async fn export_page_markdown_inner(
             value_bool: r.value_bool,
         })
         .collect();
+
+    // #660 — all reads are done; release the snapshot tx. A read-only
+    // `BEGIN DEFERRED` tx takes no writer lock, so the `commit` here is
+    // effectively a rollback (nothing was written); committing rather
+    // than letting the tx drop makes the snapshot-release point explicit
+    // and returns the connection to the pool promptly.
+    tx.commit().await?;
 
     // 5. Build markdown output
     let mut output = String::new();

@@ -248,6 +248,91 @@ async fn set_page_aliases_in_transaction() {
     }
 }
 
+// #661 — the page-exists probe in `set_page_aliases_inner` must run
+// INSIDE the `BEGIN IMMEDIATE` transaction (the F01/F02/F03
+// sibling-command pattern). Pre-fix the probe ran on the pool BEFORE the
+// tx opened, so a concurrent `delete_block` between the probe and the
+// write lock left aliases attached to a tombstoned page (TOCTOU). The
+// two tests below pin the in-tx behaviour:
+//   1. a non-existent page id is rejected as NotFound with no aliases
+//      written;
+//   2. a soft-deleted (tombstoned) page is rejected as NotFound — the
+//      in-tx probe sees `deleted_at IS NOT NULL` and aborts before the
+//      DELETE/INSERT, so no aliases survive against the dead page.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_page_aliases_rejects_nonexistent_page() {
+    let (pool, _dir) = test_pool().await;
+
+    // No block with this id exists. The in-tx existence probe must
+    // reject it before any DELETE/INSERT runs.
+    let result = set_page_aliases_inner(&pool, "PAGE-NONE-1", vec!["X".into(), "Y".into()]).await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "aliases on a non-existent page must return NotFound, got: {result:?}"
+    );
+
+    // And no aliases must have been written for the phantom page.
+    let aliases = get_page_aliases_inner(&pool, "PAGE-NONE-1").await.unwrap();
+    assert!(
+        aliases.is_empty(),
+        "no aliases may be attached to a non-existent page, got: {aliases:?}"
+    );
+    for a in ["X", "Y"] {
+        let r = resolve_page_by_alias_inner(&pool, a, &SpaceScope::Global)
+            .await
+            .unwrap();
+        assert!(
+            r.is_none(),
+            "alias '{a}' must not resolve to a phantom page"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_page_aliases_rejects_tombstoned_page() {
+    // #661 — a page that has been soft-deleted (its `deleted_at` is set)
+    // must be rejected by the in-tx existence probe. This models the
+    // TOCTOU race the fix closes: pre-fix the probe ran outside the tx,
+    // so a delete that landed after the probe but before the write lock
+    // would still attach aliases to the now-tombstoned page. With the
+    // probe inside the IMMEDIATE tx, the deleted page is never a valid
+    // target and no aliases are written.
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "PAGE-TOMB-1", "page", "Doomed", None, Some(0)).await;
+
+    // Seed a prior alias set so we can prove the DELETE never runs either
+    // (the probe aborts the tx before touching `page_aliases`).
+    set_page_aliases_inner(&pool, "PAGE-TOMB-1", vec!["before".into()])
+        .await
+        .unwrap();
+
+    // Tombstone the page.
+    sqlx::query("UPDATE blocks SET deleted_at = 1778284800000 WHERE id = 'PAGE-TOMB-1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Attempt to replace aliases on the now-deleted page.
+    let result = set_page_aliases_inner(&pool, "PAGE-TOMB-1", vec!["after".into()]).await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "aliases on a tombstoned page must return NotFound, got: {result:?}"
+    );
+
+    // The replacement alias must not have been attached.
+    let r = resolve_page_by_alias_inner(&pool, "after", &SpaceScope::Global)
+        .await
+        .unwrap();
+    assert!(
+        r.is_none(),
+        "no alias may be attached to a tombstoned page (TOCTOU window closed)"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_page_aliases_returns_sorted_list() {
     let (pool, _dir) = test_pool().await;
@@ -857,6 +942,104 @@ async fn export_page_markdown_walks_full_subtree_with_pagination() {
         assert!(
             md.contains(&grand_line),
             "expected grandchild line {grand_line:?} in export"
+        );
+    }
+}
+
+/// #660 — the keyset descendant walk must run inside ONE read
+/// transaction so the whole multi-page export observes a single,
+/// consistent WAL snapshot. Pre-fix each `fetch_all(pool)` page of the
+/// keyset took its own snapshot, so a concurrent writer reshuffling
+/// `position` between two pages could make a block straddle the cursor
+/// boundary and appear *twice* (or get skipped) in the output.
+///
+/// This test forces > `DESCENDANT_PAGE_SIZE` (200) descendants and then,
+/// while repeatedly exporting, hammers the page with concurrent
+/// `position` churn from a background task. With the single-snapshot fix
+/// every export is internally consistent: no content line ever appears
+/// more than once. (Pre-fix, the position churn straddling a keyset
+/// boundary produced duplicate lines.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn export_page_markdown_single_snapshot_no_dup_under_concurrent_reorder() {
+    let (pool, _dir) = test_pool().await;
+
+    // 300 direct children — comfortably above the 200-row page size, so
+    // the keyset loop iterates at least twice and a concurrent reorder
+    // can land between two pages.
+    const N: i64 = 300;
+    let page_id = "01SNAPSH0TPAGE00000000PAG1";
+    insert_block(&pool, page_id, "page", "Snapshot Page", None, Some(0)).await;
+    for i in 0..N {
+        let child_id = format!("01SNAPCHILD{i:015}");
+        insert_block(
+            &pool,
+            &child_id,
+            "content",
+            &format!("snap-line-{i}"),
+            Some(page_id),
+            Some(i + 1),
+        )
+        .await;
+    }
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // Background writer: continuously reshuffle child positions so that
+    // rows cross the keyset cursor boundary mid-export. Pre-fix this is
+    // exactly what causes a row to be read twice (once near the tail of
+    // page K under its old position, once near the head of page K+1
+    // under its new position).
+    let writer_pool = pool.clone();
+    let writer = tokio::spawn(async move {
+        for round in 0..40i64 {
+            // Rotate every child's position by a round-dependent offset.
+            // `position = ((position + round) % N) + 1` keeps values in
+            // [1, N] while churning the global order each round.
+            sqlx::query(
+                "UPDATE blocks SET position = ((position + ?1) % ?2) + 1 \
+                 WHERE page_id = ?3 AND id != ?3 AND deleted_at IS NULL",
+            )
+            .bind(round)
+            .bind(N)
+            .bind(page_id)
+            .execute(&writer_pool)
+            .await
+            .unwrap();
+            tokio::task::yield_now().await;
+        }
+    });
+
+    // Export repeatedly while the writer churns positions. Each export
+    // must be internally consistent: every `snap-line-K` content line
+    // appears AT MOST once. A duplicate would be the pre-fix
+    // cross-snapshot read-twice bug.
+    for _ in 0..40 {
+        let md = export_page_markdown_inner(&pool, page_id).await.unwrap();
+        for i in 0..N {
+            let needle = format!("snap-line-{i}\n");
+            let count = md.matches(&needle).count();
+            assert!(
+                count <= 1,
+                "line {needle:?} appeared {count} times — a multi-snapshot \
+                 read duplicated a row across the keyset boundary (#660)"
+            );
+        }
+        tokio::task::yield_now().await;
+    }
+
+    writer.await.unwrap();
+
+    // Final settle: once positions stop changing, the export must be
+    // COMPLETE — every child line present exactly once. This guards the
+    // skip half of the bug (a row falling between two snapshots and
+    // never being read).
+    let md = export_page_markdown_inner(&pool, page_id).await.unwrap();
+    for i in 0..N {
+        let needle = format!("snap-line-{i}\n");
+        let count = md.matches(&needle).count();
+        assert_eq!(
+            count, 1,
+            "after the writer stops, line {needle:?} must appear exactly \
+             once (present + not duplicated); got {count}"
         );
     }
 }
