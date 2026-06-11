@@ -4,14 +4,11 @@
 use sqlx::SqlitePool;
 
 use super::parser::shift_date;
-// #642: `is_valid_iso_date` moved to the neutral `crate::domain::block_ops`
-// layer so recurrence depends *down* on it. `create_block_in_tx` /
-// `set_property_in_tx` are the create-block / set-property command cores
-// (op_log + payload entangled) and stay in `crate::commands` —
-// TODO(#642 follow-up): extract their tx-scoped bodies into `domain` once
-// the op_log/payload plumbing can be threaded through the neutral layer.
-use crate::commands::{create_block_in_tx, set_property_in_tx};
-use crate::domain::block_ops::is_valid_iso_date;
+// #642/#882: `is_valid_iso_date`, `create_block_in_tx` and
+// `set_property_in_tx` all live in the neutral `crate::domain::block_ops`
+// layer now, so recurrence depends *down* on them — the residual
+// `recurrence → commands` upward edge is gone.
+use crate::domain::block_ops::{create_block_in_tx, is_valid_iso_date, set_property_in_tx};
 use crate::materializer::Materializer;
 use crate::op_log;
 use crate::pagination::BlockRow;
