@@ -57,7 +57,7 @@ jobs:
         # defence-in-depth: every `permissions:` is read except the OIDC
         # `id-token: write`, so even a prompt-injection via an `@claude`
         # comment can't push code or write issues/PRs with the workflow token.
-        uses: anthropics/claude-code-action@fbda2eb1bdc90d319b8d853f5deb53bca199a7c1 # v1.0.140
+        uses: anthropics/claude-code-action@0f97b95b6536c26e5f6bd90faec370d41695beca # v1.0.144
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
