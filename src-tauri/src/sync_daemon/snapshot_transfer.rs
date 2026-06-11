@@ -756,6 +756,7 @@ mod tests {
     use crate::op_log::append_local_op;
     use crate::snapshot::{
         BlockSnapshot, SCHEMA_VERSION, SnapshotData, SnapshotTables, create_snapshot,
+        encode_snapshot,
     };
     use crate::sync_events::RecordingEventSink;
     use crate::sync_net::test_connection_pair;
@@ -827,6 +828,89 @@ mod tests {
             OfferOutcome::NoSnapshot,
             "empty log_snapshots must produce OfferOutcome::NoSnapshot"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // #793: a device that just went through a RESET must not offer its
+    // pre-reset snapshot to an old-lineage requester
+    // -----------------------------------------------------------------
+
+    /// #793 regression, end-to-end at the offer layer: the responder
+    /// took a local snapshot, then itself moved to a NEW lineage via a
+    /// snapshot RESET (`apply_snapshot`). A third device still on the
+    /// OLD lineage now asks for catch-up, advertising heads that the
+    /// pre-reset snapshot covers — so the M-58 covering check alone
+    /// would let the offer through and re-ship the pre-reset vault.
+    /// Post-fix, `apply_snapshot` wipes `log_snapshots` in the RESET tx,
+    /// so the responder has nothing to offer (`NoSnapshot`) until it
+    /// snapshots its new state.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn try_offer_snapshot_catchup_declines_pre_reset_snapshot_793() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        // Pre-reset lineage: one local op, snapshotted. The snapshot's
+        // frontier is {LOCAL_DEV: 1}.
+        seed_one_op(&pool, LOCAL_DEV).await;
+        create_snapshot(&pool, LOCAL_DEV)
+            .await
+            .expect("create_snapshot on the pre-reset lineage");
+        assert!(
+            get_latest_snapshot(&pool).await.unwrap().is_some(),
+            "pre-condition: the pre-reset snapshot is offerable"
+        );
+
+        // The responder RESETs onto a peer's (empty) snapshot — a new
+        // lineage. Mirrors `try_receive_snapshot_catchup`'s apply.
+        let reset = SnapshotData {
+            schema_version: SCHEMA_VERSION,
+            snapshot_device_id: REMOTE_DEV.to_string(),
+            up_to_seqs: BTreeMap::new(),
+            up_to_hash: "reset-793".to_string(),
+            tables: SnapshotTables {
+                blocks: vec![],
+                block_tags: vec![],
+                block_properties: vec![],
+                block_links: vec![],
+                attachments: vec![],
+                property_definitions: vec![],
+                page_aliases: vec![],
+            },
+        };
+        let encoded = encode_snapshot(&reset).unwrap();
+        apply_snapshot(&pool, &materializer, &encoded[..])
+            .await
+            .expect("RESET must succeed");
+
+        // Old-lineage requester: its heads ({LOCAL_DEV: 1}) are covered
+        // by the pre-reset snapshot, so M-58 alone would NOT block the
+        // offer — pre-fix this call sent `SnapshotOffer` with the
+        // pre-reset vault.
+        let old_lineage_heads = vec![DeviceHead {
+            device_id: LOCAL_DEV.to_string(),
+            seq: 1,
+            hash: "old-lineage".into(),
+        }];
+        let (mut server_conn, _client_conn) = test_connection_pair().await;
+        let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+        let outcome = try_offer_snapshot_catchup(
+            &mut server_conn,
+            &pool,
+            &event_sink,
+            REMOTE_DEV,
+            &old_lineage_heads,
+        )
+        .await
+        .expect("offer attempt must not error");
+        assert_eq!(
+            outcome,
+            OfferOutcome::NoSnapshot,
+            "#793: after a RESET the responder must have NOTHING to offer — \
+             serving the pre-reset snapshot would re-ship the retired vault \
+             to an old-lineage device"
+        );
+
+        materializer.shutdown();
     }
 
     // -----------------------------------------------------------------

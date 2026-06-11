@@ -778,6 +778,158 @@ async fn dispatch_op_delete_property() {
     .unwrap();
     assert_eq!(row.0, 0, "property should be gone after DeleteProperty");
 }
+
+/// #802 regression: the engine-less SQL-only fallback for `SetProperty`
+/// had no arm for the column-backed `space` key (#533) — the op fell into
+/// the generic `block_properties` INSERT and aborted on migration 0088's
+/// `key_not_reserved` CHECK. The fallback now delegates to the same
+/// projection the via-loro path uses, so a `space` op routes to
+/// `blocks.space_id` for the whole owning-page group.
+///
+/// The SQL-only path is reached here because the target page has no
+/// `space_id` yet (`resolve_block_space` → None) — exactly the degraded
+/// replay shape the fallback exists for.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_op_set_property_space_sql_only_802() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // A registered space — the 0089 `spaces_register_is_space` trigger
+    // fires on the `is_space = 'true'` property row.
+    insert_block_direct(&pool, "SPACE-802", "page", "the space").await;
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) \
+         VALUES ('SPACE-802', 'is_space', 'true')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // A page plus one member block in its page group.
+    insert_block_direct(&pool, "PAGE-802", "page", "the page").await;
+    insert_block_direct(&pool, "CHILD-802", "content", "member").await;
+    sqlx::query(
+        "UPDATE blocks SET parent_id = 'PAGE-802', page_id = 'PAGE-802' WHERE id = 'CHILD-802'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let set = make_op_record(
+        &pool,
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("page-802"),
+            key: "space".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: Some(BlockId::test_id("space-802")),
+            value_bool: None,
+        }),
+    )
+    .await;
+    mat.dispatch_op(&set).await.expect(
+        "#802: engine-less SetProperty(space) must not abort on the 0088 reserved-key CHECK",
+    );
+    mat.flush_foreground().await.unwrap();
+
+    // The op landed on the column, for the whole page group …
+    let spaces: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT id, space_id FROM blocks WHERE id IN ('PAGE-802', 'CHILD-802') ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        spaces,
+        vec![
+            ("CHILD-802".to_string(), Some("SPACE-802".to_string())),
+            ("PAGE-802".to_string(), Some("SPACE-802".to_string())),
+        ],
+        "SetProperty(space) must stamp blocks.space_id for the page group"
+    );
+    // … and never as a block_properties row (the 0088 invariant).
+    let prop_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE key = 'space'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        prop_rows, 0,
+        "the space key is column-backed only — no block_properties row"
+    );
+
+    // Parity: the engine-less DeleteProperty(space) clears the column for
+    // the page group (the old inline body silently no-op'd here).
+    let del = make_op_record(
+        &pool,
+        OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: BlockId::test_id("page-802"),
+            key: "space".into(),
+        }),
+    )
+    .await;
+    mat.dispatch_op(&del)
+        .await
+        .expect("engine-less DeleteProperty(space) must succeed");
+    mat.flush_foreground().await.unwrap();
+    let cleared: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT space_id FROM blocks WHERE id IN ('PAGE-802', 'CHILD-802') ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        cleared,
+        vec![None, None],
+        "DeleteProperty(space) must clear blocks.space_id for the page group"
+    );
+
+    mat.shutdown();
+}
+
+/// #802 guard: a `SetProperty(space)` whose target is NOT a registered
+/// space must be skipped (warn) on the SQL-only path too — mirroring the
+/// #708 degrade contract of the via-loro projection — instead of tripping
+/// the 0089 `blocks.space_id → spaces(id)` FK and wedging replay.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_op_set_property_space_sql_only_skips_unregistered_target_802() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block_direct(&pool, "NOT-A-SPACE", "page", "no is_space flag").await;
+    insert_block_direct(&pool, "PAGE-802B", "page", "the page").await;
+
+    let set = make_op_record(
+        &pool,
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("page-802b"),
+            key: "space".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: Some(BlockId::test_id("not-a-space")),
+            value_bool: None,
+        }),
+    )
+    .await;
+    mat.dispatch_op(&set)
+        .await
+        .expect("an unregistered space target must be skipped, not an FK abort (#708 contract)");
+    mat.flush_foreground().await.unwrap();
+
+    let sid: Option<String> =
+        sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'PAGE-802B'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        sid, None,
+        "a dangling/mis-stamped space target must leave space_id untouched"
+    );
+
+    mat.shutdown();
+}
+
 #[tokio::test]
 async fn dispatch_op_move_block() {
     let (pool, _dir) = test_pool().await;
