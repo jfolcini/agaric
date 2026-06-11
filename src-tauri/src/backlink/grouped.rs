@@ -475,11 +475,10 @@ pub async fn eval_unlinked_references(
     //    pagination correctness no longer DEPENDS on the cursor group
     //    surviving. See I-Search-13 for the cursor-side cross-reference.
     //
-    //    FEAT-3p4 — the `(?3 IS NULL OR COALESCE(...))` clause mirrors
-    //    `crate::space_filter_clause!`. Resolves the FTS-matched block
-    //    to its owning page via `b.page_id` and
-    //    intersects against `block_properties(key = 'space').value_ref`
-    //    when `space_id` is `Some`. Kept inline (not via the macro)
+    //    FEAT-3p4 — the `(?3 IS NULL OR b.space_id = ?3)` clause mirrors
+    //    [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`].
+    //    Filters on the first-class `b.space_id` column (#533, migration
+    //    0086) when `space_id` is `Some`. Kept inline (not via the macro)
     //    because the FTS SQL is built with `format!` to splice in
     //    `FTS_ROW_CAP + 1`, which precludes the `query_scalar!` macro.
     //    Applied at the base-set step so `total_count` /

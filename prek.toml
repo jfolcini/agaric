@@ -538,6 +538,28 @@ language = "system"
 files = '^src-tauri/src/.*\.rs$'
 stages = ["pre-commit", "pre-push"]
 
+# Rust: space-filter drift guard (#139). Space membership is a first-class
+# `blocks.space_id` column (#533, migration 0086), so the active-space read
+# filter is the canonical guard fragment `(?N IS NULL OR b.space_id = ?N)`
+# (same bind index on both sides), inlined at ~30 paginated-read call sites.
+# The maintainer deferred the build.rs / include_str! consolidation that
+# would dedupe it (blocked on sqlx#3388) and adopted this cheap drift-guard
+# instead: it fails when an inlined copy is mangled — a mismatched `?N`, a
+# wrong column, or the `?N IS NULL OR` guard dropped (degrading it to a bare
+# `b.space_id = ?N`), the last caught via a per-file count baseline
+# (src-tauri/space-filter-baseline.txt) since a bare `b.space_id = ?` is
+# legitimate at single-space query sites. Re-anchor the baseline with
+# `python3 scripts/check-space-filter-drift.py --update-baseline`. Mirrors
+# the `space_filter_canonical.rs` parity test at pre-commit stage. Rules
+# live in scripts/check-space-filter-drift.py.
+[[repos.hooks]]
+id = "check-space-filter-drift"
+name = "space-filter drift guard (#139)"
+entry = "python3 scripts/check-space-filter-drift.py"
+language = "system"
+files = '^src-tauri/src/.*\.rs$'
+stages = ["pre-commit", "pre-push"]
+
 # Rust: cargo fmt. Auto-fix formatter (#817): drops `--check` so a
 # formatting miss is rewritten in place + re-staged mechanically instead
 # of aborting the commit with a manual `cargo fmt` step. Matches the prek

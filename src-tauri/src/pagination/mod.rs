@@ -70,41 +70,38 @@ const CURRENT_CURSOR_VERSION: u8 = 1;
 // ---------------------------------------------------------------------------
 //
 // Every paginated list / search query that honours the active space must
-// restrict results to blocks whose owning page (`b.page_id`) carries
-// `space = ?space_id`. The clause short-circuits when `?space_id` is NULL
-// so the same SQL serves both the scoped and unscoped cases without a
-// separate codepath.
+// restrict results to blocks whose `b.space_id` matches the active space.
+// The clause short-circuits when `?space_id` is NULL so the same SQL serves
+// both the scoped and unscoped cases without a separate codepath.
 //
 // Canonical form (bind slot `?N` is referenced twice — once for the NULL
-// guard, once for the subquery filter):
+// guard, once for the equality filter):
 //
-//     AND (?N IS NULL OR b.page_id IN (
-//          SELECT bp.block_id FROM block_properties bp
-//          WHERE bp.key = 'space' AND bp.value_ref = ?N))
+//     AND (?N IS NULL OR b.space_id = ?N)
 //
-// (#349) The bare `b.page_id` is deliberate — migration 0066 dropped the
-// former `COALESCE(b.page_id, b.id)` wrapper for sargability, and
-// migration 0073's `page_id_self_for_pages` CHECK guarantees a page block's
-// `page_id` equals its own id (so the COALESCE fallback is no longer
-// needed). Do NOT reintroduce the COALESCE form — copying it back makes the
-// filter non-sargable (full scan). The canonical text lives in
-// [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`].
+// (#533, migration 0086) Space membership is now a first-class
+// `blocks.space_id` column, so the read filter is the trivial equality
+// above — the former `b.page_id IN (SELECT bp.block_id FROM
+// block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?N)`
+// sub-select no longer exists. The canonical text lives in
+// [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`], and the
+// `check-space-filter-drift` prek hook (#139) guards every inlined copy
+// against drift.
 //
 // `sqlx::query_as!` / `sqlx::query!` require a string literal and do
 // *not* accept `concat!()`, so the fragment is inlined at each compile-
 // time-checked callsite (`pagination::list_children`,
 // `pagination::list_by_type`, `pagination::list_trash`). The dynamic-SQL
-// FTS path (`fts::search_fts`) builds the same fragment through string
-// concatenation so its `?N` index tracks the runtime param count. Any
-// change to the filter SQL must mirror across every copy.
+// FTS path (`fts::search_fts`) appends the bare `b.space_id = ?N` form
+// (no NULL guard — the filter is only appended when a space is active) so
+// its `?N` index tracks the runtime param count. Any change to the filter
+// SQL must mirror across every copy.
 //
-// Schema reminder (migration 0035 + migration 0027 + migration 0073):
-// * `blocks.page_id` — nullable. For page blocks it is the page's own id
-//   (enforced by 0073's `page_id_self_for_pages` CHECK); for content
-//   blocks it is the owning page's id.
-// * `block_properties(key = 'space').value_ref` — points to the space
-//   block's id. Non-space pages carry this property; space blocks
-//   themselves carry `is_space = 'true'` instead.
+// Schema reminder (migration 0086):
+// * `blocks.space_id` — nullable FK to the owning space block's id. NULL
+//   means the block is unscoped (visible in every space). A page block and
+//   its content blocks carry the same `space_id`; space blocks themselves
+//   carry `is_space = 'true'`.
 
 /// Sentinel substituted for NULL `position` in keyset comparisons.
 ///

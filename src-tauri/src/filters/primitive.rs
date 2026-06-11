@@ -668,8 +668,8 @@ impl Projection for PagesProjection {
     }
     /// D17 — **intentionally redundant on the Pages surface.** The Pages
     /// IPC (`commands::pages::list_pages_with_metadata_inner`) is already
-    /// space-scoped: its base SELECT filters
-    /// `b.page_id IN (SELECT … WHERE key = 'space' AND value_ref = ?1)`
+    /// space-scoped: its base SELECT filters `b.space_id = ?1` (#533,
+    /// migration 0086 — `space_id` is a first-class column)
     /// against the request's `space_id` before any compiled filter runs.
     /// A `Space` primitive therefore re-applies the same predicate the
     /// request already enforces — a no-op for the request's own space, and
