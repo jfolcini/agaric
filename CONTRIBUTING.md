@@ -18,11 +18,19 @@ The toolchain set is documented in [`docs/BUILD.md`](docs/BUILD.md): Rust stable
 # 1. Install prek (Rust reimplementation of pre-commit; no Python toolchain needed).
 cargo install --locked prek
 
-# 2. Wire .git/hooks/{pre-commit,pre-push} to invoke prek.
+# 2. Wire all five git shims (pre-commit, commit-msg, prepare-commit-msg,
+#    pre-push, post-commit) to invoke prek. The shim list is declared via
+#    `default_install_hook_types` in prek.toml, so plain `prek install`
+#    writes all of them.
 prek install
+
+# Already cloned before the commit-msg shim was added? Re-run once with -f
+# to overwrite the existing shims and pick up the new commit-msg hook (this
+# is what makes the Conventional-Commits check actually fire locally):
+prek install -f
 ```
 
-After this, every `git commit` runs the fast subset and every `git push` runs the slower CI-equivalent gate (`scripts/verify-ci-equivalent.sh`). The full surface — including all rules, hook IDs, and stage assignments — lives in [`prek.toml`](prek.toml); the same hooks run again in CI via `.github/workflows/_validate.yml`, so green local prek ⇒ green CI validate.
+After this, every `git commit` runs the fast subset (lint + format + static checks, no tests), every `git push` runs the slower CI-equivalent gate (`scripts/verify-ci-equivalent.sh`, which adds nextest + clippy + knip + lychee + the related-test suites), and the commit message is checked against Conventional Commits. The full surface — including all rules, hook IDs, and stage assignments — lives in [`prek.toml`](prek.toml); the same hooks run again in CI via `.github/workflows/_validate.yml`, so green local prek ⇒ green CI validate.
 
 **If you cannot install prek locally** (e.g., contributor without Rust toolchain): your patch is welcome anyway; CI will run the same gate on the PR. Open the PR and iterate based on CI feedback.
 

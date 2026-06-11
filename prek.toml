@@ -1,49 +1,58 @@
 # Configuration file for `prek`, a git hook framework written in Rust.
 # See https://prek.j178.dev for more information.
 
-# All four git shims this config relies on (#819 (7)): a plain
+# All five git shims this config relies on (#819 (7) / #817): a plain
 # `prek install` only writes `.git/hooks/pre-commit` by default, so
 # without this list the prepare-commit-msg (dco-signoff), pre-push
-# (verify-ci-equivalent), and post-commit (commit-sentinel) stages
-# would silently never fire on a fresh clone. Verified against
-# prek 0.3.8: `prek install` with this key writes all four shims.
-default_install_hook_types = ["pre-commit", "prepare-commit-msg", "pre-push", "post-commit"]
+# (verify-ci-equivalent), post-commit (commit-sentinel), and commit-msg
+# (conventional-pre-commit) stages would silently never fire on a fresh
+# clone. The `commit-msg` shim was missing before #817, so the
+# Conventional-Commits hook never actually ran locally. Verified against
+# prek 0.3.8: `prek install` with this key writes all five shims; run
+# `prek install -f` once on an existing clone to add the new commit-msg
+# shim.
+default_install_hook_types = ["pre-commit", "commit-msg", "prepare-commit-msg", "pre-push", "post-commit"]
 
 [[repos]]
 repo = "builtin"
+# Stage pinning (#817): every stage-less hook below is re-run by Phase A
+# of the pre-push verifier (`prek run --all-files --hook-stage pre-commit`),
+# so pinning each to `stages = ["pre-commit"]` makes it run once at commit
+# AND exactly once per push (via Phase A) instead of the previous up-to-3×
+# (pre-commit shim + pre-push shim + Phase A re-run).
 hooks = [
-    { id = "trailing-whitespace", exclude = "\\.(png|ico|icns|svg)$" },
-    { id = "end-of-file-fixer", exclude = "\\.(png|ico|icns|svg)$" },
-    { id = "check-yaml" },
-    { id = "check-toml" },
-    { id = "check-json", exclude = "(tsconfig.*\\.json$|\\.sqlx/)" },
-    { id = "check-merge-conflict" },
+    { id = "trailing-whitespace", exclude = "\\.(png|ico|icns|svg)$", stages = ["pre-commit"] },
+    { id = "end-of-file-fixer", exclude = "\\.(png|ico|icns|svg)$", stages = ["pre-commit"] },
+    { id = "check-yaml", stages = ["pre-commit"] },
+    { id = "check-toml", stages = ["pre-commit"] },
+    { id = "check-json", exclude = "(tsconfig.*\\.json$|\\.sqlx/)", stages = ["pre-commit"] },
+    { id = "check-merge-conflict", stages = ["pre-commit"] },
     { id = "check-added-large-files", args = [
         "--maxkb=500",
-    ], exclude = "^docs/session-log/" },
+    ], exclude = "^docs/session-log/", stages = ["pre-commit"] },
     { id = "no-commit-to-branch", args = [
         "--branch=main",
     ], stages = [
         "pre-push",
     ] },
-    { id = "detect-private-key", exclude = "^src-tauri/src/(sync_cert\\.rs|sync_net/tests\\.rs|sync_daemon/tests\\.rs)$|^SESSION-LOG\\.md$|^docs/session-log/" },
+    { id = "detect-private-key", exclude = "^src-tauri/src/(sync_cert\\.rs|sync_net/tests\\.rs|sync_daemon/tests\\.rs)$|^SESSION-LOG\\.md$|^docs/session-log/", stages = ["pre-commit"] },
     # Catch the "I added a script but forgot chmod +x" / "I marked a non-executable as +x" class of mistake.
     # scripts/ mixes .sh, .mjs, and .py files that all rely on shebangs + +x bits. `*.rs` is excluded
     # because Rust's inner-attribute syntax `#![...]` looks like a shebang to this builtin and gives
     # unactionable false positives on every test module under src-tauri/src/commands/tests/.
-    { id = "check-shebang-scripts-are-executable", exclude = "\\.rs$" },
-    { id = "check-executables-have-shebangs" },
+    { id = "check-shebang-scripts-are-executable", exclude = "\\.rs$", stages = ["pre-commit"] },
+    { id = "check-executables-have-shebangs", stages = ["pre-commit"] },
     # Normalise CRLF leakage from non-Linux contributors.
     { id = "mixed-line-ending", args = [
         "--fix=lf",
-    ] },
+    ], stages = ["pre-commit"] },
 ]
 
 # Secret scanning (gitleaks)
 [[repos]]
 repo = "https://github.com/gitleaks/gitleaks"
 rev = "v8.30.1"
-hooks = [{ id = "gitleaks" }]
+hooks = [{ id = "gitleaks", stages = ["pre-commit"] }]
 
 # Conventional Commits enforcement on commit-msg stage (PEND-41 R8).
 [[repos]]
@@ -75,7 +84,7 @@ always_run = true
 [[repos]]
 repo = "https://github.com/rhysd/actionlint"
 rev = "v1.7.12"
-hooks = [{ id = "actionlint" }]
+hooks = [{ id = "actionlint", stages = ["pre-commit"] }]
 
 # OXC: lint (oxlint) + format check (oxfmt) for JS/TS
 [[repos]]
@@ -88,14 +97,23 @@ language = "system"
 types_or = ["javascript", "jsx", "ts", "tsx"]
 exclude = "(src/lib/bindings\\.ts$|\\.sqlx/)"
 pass_filenames = true
+stages = ["pre-commit"]
+# Auto-fix formatter (#817): `oxfmt` writes in place (its default mode) so a
+# formatting miss is mechanically corrected + re-staged instead of aborting
+# the commit with a manual fixup step. This matches the prek "fixer" contract
+# used by the builtin trailing-whitespace / end-of-file-fixer hooks: the hook
+# mutates the file, prek detects the modification and fails the run, and the
+# user re-stages the now-formatted file. (taplo stays `--check` below — writing
+# it conflicts with the repo's .taplo.toml style overrides.)
 [[repos.hooks]]
 id = "oxfmt"
-name = "oxfmt --check"
-entry = "npx oxfmt --check"
+name = "oxfmt (write)"
+entry = "npx oxfmt --write"
 language = "system"
 types_or = ["javascript", "jsx", "ts", "tsx", "json"]
 exclude = "(src/lib/bindings\\.ts$|\\.sqlx/)"
 pass_filenames = true
+stages = ["pre-commit"]
 
 # TypeScript type checking
 [[repos]]
@@ -107,6 +125,7 @@ entry = "npx tsc -b --noEmit"
 language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx"]
+stages = ["pre-commit"]
 
 # CSS variable wrapper guard — theme uses oklch(), so hsl()/rgb() wrappers are invalid
 [[repos]]
@@ -118,6 +137,7 @@ entry = "bash -c 'if grep -rn \"hsl(var(--\\|rgb(var(--\" src/ --include=\"*.tsx
 language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx", "css"]
+stages = ["pre-commit"]
 
 # Sonner chokepoint guard — every production toast call must route through
 # `src/lib/notify.ts` so the wrapper (Phase 3a, design-system-maintainability)
@@ -133,6 +153,7 @@ entry = "bash -c 'if grep -rnE \"from ['\\''\\\"]sonner['\\''\\\"]\" src/ --incl
 language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx"]
+stages = ["pre-commit"]
 
 # Layer-boundary guard — UI primitives in `src/components/ui/` must be
 # stateless. They are atomic building blocks (AGENTS.md "Component
@@ -150,6 +171,7 @@ entry = "bash -c 'if grep -rnE \"from ['\\''\\\"](\\@/stores|\\.\\./stores|\\.\\
 language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx"]
+stages = ["pre-commit"]
 
 # Legacy React API guard — block re-introduction of APIs we migrated away from
 # (MAINT-48 React 19, MAINT-49 TypeScript 6, follow-up MutableRefObject removal).
@@ -164,8 +186,14 @@ entry = "bash -c 'set -e; if grep -rnE \"\\bforwardRef\\b|\\bReact\\.forwardRef\
 language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx"]
+stages = ["pre-commit"]
 
-# Vitest: smart related-only tests (run on TS changes)
+# Vitest: smart related-only tests. Pre-push only (#817): running the
+# related-test set degenerates toward the full vitest suite (the FALLBACK
+# patterns in test-related-ts.sh trip on shared modules), which is far too
+# slow for the commit path. The pre-push verifier runs it once, scoped to
+# the push range, in Phase C of scripts/verify-ci-equivalent.sh; Phase A
+# additionally passes SKIP=vitest so this hook is not re-run there.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -175,6 +203,7 @@ entry = "scripts/test-related-ts.sh"
 language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx"]
+stages = ["pre-push"]
 
 # Tauri-mock parity: ensures every IPC command emitted from
 # `src/lib/bindings.ts` (the auto-generated tauri-specta surface) has a
@@ -192,6 +221,7 @@ entry = "node scripts/check-tauri-mock-parity.mjs"
 language = "system"
 pass_filenames = false
 files = "^src/lib/(bindings\\.ts|tauri-mock/handlers\\.ts)$"
+stages = ["pre-commit"]
 
 # Tauri bindings ↔ wrapper parity: ensures every `commands.*` export from
 # `src/lib/bindings.ts` (auto-generated tauri-specta surface) has either a
@@ -207,6 +237,7 @@ entry = "node scripts/check-tauri-bindings-parity.mjs"
 language = "system"
 pass_filenames = false
 files = "^src/lib/(bindings\\.ts|tauri\\.ts)$"
+stages = ["pre-commit"]
 
 # Tracked-file Markdown link integrity. Verifies that every relative
 # `](path.md)` link in tracked Markdown files points to a file that's
@@ -223,6 +254,7 @@ entry = "node scripts/check-md-link-targets.mjs"
 language = "system"
 pass_filenames = false
 types = ["markdown"]
+stages = ["pre-commit"]
 
 # doc-vs-code drift detector (ui-improvements 2026-05-16 §Maintenance /
 # tooling). Complements `md-link-targets`: this hook scans inline-code
@@ -243,6 +275,7 @@ entry = "node scripts/check-doc-code-paths.mjs"
 language = "system"
 pass_filenames = false
 types = ["markdown"]
+stages = ["pre-commit"]
 
 # Frontend import-cycle guard (#761). The `src/` module graph was driven to
 # zero cycles (Tarjan SCC over ~600 first-party modules); this hook keeps it
@@ -260,6 +293,7 @@ entry = "node scripts/check-import-cycles.mjs"
 language = "system"
 pass_filenames = false
 files = "^src/.*\\.(ts|tsx|js|jsx|mjs|cjs)$"
+stages = ["pre-commit"]
 
 # axe-presence: every `src/components/__tests__/*.test.tsx` must include
 # at least one axe(...) audit, per src/__tests__/AGENTS.md:227. Without
@@ -275,6 +309,7 @@ entry = "bash scripts/check-axe-presence.sh"
 language = "system"
 pass_filenames = false
 files = "^src/components/__tests__/.*\\.test\\.tsx$"
+stages = ["pre-commit"]
 
 # test-file-naming: enforce the convention from src/__tests__/AGENTS.md:81
 # (Vitest → .test.ts/.test.tsx in src/, Playwright → .spec.ts in e2e/).
@@ -289,6 +324,7 @@ entry = "bash scripts/check-test-file-naming.sh"
 language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx"]
+stages = ["pre-commit"]
 
 # ipc-error-path-coverage: every `src/components/**/*.tsx` (recursive,
 # excluding `ui/` and `__tests__/`) that imports from `@/lib/tauri` (or
@@ -309,6 +345,7 @@ entry = "node scripts/check-ipc-error-path.mjs"
 language = "system"
 pass_filenames = false
 files = "^src/components/.*\\.tsx$"
+stages = ["pre-commit"]
 
 # snapshot-redaction: scan every `*.snap` file under `src/` and
 # `src-tauri/` for unredacted ULIDs (26-char Crockford base32),
@@ -328,6 +365,7 @@ entry = "node scripts/check-snapshot-redaction.mjs"
 language = "system"
 pass_filenames = false
 files = "(\\.snap$|^src-tauri/src/.*\\.rs$)"
+stages = ["pre-commit"]
 
 # JS: better-npm-audit (security advisories)
 [[repos]]
@@ -339,6 +377,7 @@ entry = "npx better-npm-audit audit"
 language = "system"
 pass_filenames = false
 files = "(^package\\.json$|^package-lock\\.json$)"
+stages = ["pre-commit"]
 
 # JS: license-checker (license compliance, PEND-41 R23). The repo is
 # GPL-3.0-or-later, so every accepted license below must be one-way-
@@ -355,9 +394,14 @@ entry = "npx license-checker --onlyAllow 'MIT;ISC;Apache-2.0;BSD-3-Clause;BSD-2-
 language = "system"
 pass_filenames = false
 files = "(^package\\.json$|^package-lock\\.json$)"
+stages = ["pre-commit"]
 
 # JS: knip (dead export detection — also covers unused-dep detection, so PEND-41
-# R19 retired the separate `depcheck` hook in favour of knip-only).
+# R19 retired the separate `depcheck` hook in favour of knip-only). Pre-push
+# only (#817): knip is a whole-repo analysis that goes red on stale branches
+# for diffs unrelated to the commit, so it doesn't belong in the commit path.
+# As a pre-push-staged hook it runs once, directly from the pre-push git shim
+# (not via Phase A, which is pre-commit-stage only).
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -367,6 +411,7 @@ entry = "npx knip"
 language = "system"
 pass_filenames = false
 types = ["ts", "tsx"]
+stages = ["pre-push"]
 
 # Markdown lint (style + structure)
 [[repos]]
@@ -379,6 +424,7 @@ language = "system"
 pass_filenames = true
 types = ["markdown"]
 exclude = "^(SESSION-LOG\\.md|node_modules/|dist/)"
+stages = ["pre-commit"]
 
 # Broken link check
 #
@@ -404,6 +450,11 @@ args = ["--no-progress", "--max-concurrency=4", "--cache"]
 language = "system"
 types = ["markdown"]
 pass_filenames = true
+# Pre-push only (#817): lychee resolves links over the NETWORK, which is
+# slow and flaky on the commit path; network checks don't belong in
+# `git commit`. As a pre-push-staged hook it runs once, directly from the
+# pre-push git shim (not via Phase A, which is pre-commit-stage only).
+stages = ["pre-push"]
 
 # SQL: sqruff (SQLite migrations lint — MAINT-88)
 # Scope: src-tauri/migrations/*.sql only. Inline `sqlx::query!` strings in Rust
@@ -420,6 +471,7 @@ entry = "bash -c '. \"$HOME/.cargo/env\" && sqruff lint \"$@\"' --"
 language = "system"
 pass_filenames = true
 files = "^src-tauri/migrations/.*\\.sql$"
+stages = ["pre-commit"]
 
 # Tauri command IPC error-sanitization check (MAINT-147 (c)). Every
 # `#[tauri::command]` wrapper that returns `Result<_, AppError>` and
@@ -439,6 +491,7 @@ entry = "node scripts/check-tauri-command-sanitize.mjs"
 language = "system"
 pass_filenames = false
 files = "^src-tauri/src/commands/.*\\.rs$"
+stages = ["pre-commit"]
 
 # Rust: raw write-tx guard (#110 / MAINT-112). MAINT-112 replaced ad-hoc
 # `pool.begin_with("BEGIN IMMEDIATE")` write transactions on user-edit
@@ -485,16 +538,22 @@ language = "system"
 files = '^src-tauri/src/.*\.rs$'
 stages = ["pre-commit", "pre-push"]
 
-# Rust: cargo fmt
+# Rust: cargo fmt. Auto-fix formatter (#817): drops `--check` so a
+# formatting miss is rewritten in place + re-staged mechanically instead
+# of aborting the commit with a manual `cargo fmt` step. Matches the prek
+# "fixer" contract used by the builtin trailing-whitespace hook — the hook
+# mutates the file, prek detects the modification and fails the run, and
+# the author re-stages the now-formatted file.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
 id = "cargo-fmt"
 name = "cargo fmt"
-entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo fmt --check'"
+entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo fmt'"
 language = "system"
 pass_filenames = false
 types = ["rust"]
+stages = ["pre-commit"]
 
 # Rust: cargo clippy
 [[repos]]
@@ -509,12 +568,28 @@ name = "cargo clippy"
 # bench file silently. `--all-targets` adds benches/tests/examples to the
 # lint set, turning "benches compile" into a checked contract on the fast
 # (per-PR) path at near-zero marginal cost.
+#
+# Pre-push only (#817): clippy compiles the whole workspace (+ all targets)
+# and surfaces latent warnings in untouched files, so it's too slow and too
+# broad for the commit path. As a pre-push-staged hook it runs once,
+# directly from the pre-push git shim (not via Phase A, which is
+# pre-commit-stage only).
 entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo clippy --all-targets -- -D warnings'"
 language = "system"
 pass_filenames = false
 types = ["rust"]
+stages = ["pre-push"]
 
-# Rust: smart related-only tests (run on .rs changes)
+# Rust: smart related-only tests. Pre-push only (#817): the related-test
+# selector falls back to the FULL nextest suite whenever a foundational
+# module is touched (lib.rs/db.rs/op.rs/error.rs/pagination.rs — see
+# test-related-rust.sh), so at commit time this routinely ran the entire
+# suite and dominated commit latency. The pre-push verifier runs nextest
+# once, scoped to the push range, in Phase D of verify-ci-equivalent.sh;
+# Phase A passes SKIP=cargo-test so it is not re-run there. (As a
+# pre-push-staged prek hook it would invoke the script with the default
+# `--cached` source against an empty index → a no-op at push; the genuine
+# run is Phase D's `--range`.)
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -524,6 +599,7 @@ entry = "scripts/test-related-rust.sh"
 language = "system"
 pass_filenames = false
 types = ["rust"]
+stages = ["pre-push"]
 
 # Rust: cargo-deny (advisories + licenses + bans + sources)
 [[repos]]
@@ -535,6 +611,7 @@ entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo deny check'"
 language = "system"
 pass_filenames = false
 files = "^src-tauri/Cargo\\.(toml|lock)$"
+stages = ["pre-commit"]
 
 # cargo-audit accept-list sync (PEND-40 #11). `cargo audit` (run as a
 # warn-only step in `_validate.yml`) does NOT consult `deny.toml`, so
@@ -555,6 +632,7 @@ entry = "node scripts/sync-audit-from-deny.mjs --check"
 language = "system"
 pass_filenames = false
 files = "^src-tauri/(deny\\.toml|\\.cargo/audit\\.toml)$"
+stages = ["pre-commit"]
 
 # Rust: unsafe-code allowlist (PEND-41 R13). Workspace lint is
 # `unsafe_code = "deny"`; the only escape hatch is a per-file
@@ -572,6 +650,7 @@ entry = "bash scripts/check-unsafe-allowlist.sh"
 language = "system"
 pass_filenames = false
 files = "^(src-tauri/src/.*\\.rs|src-tauri/unsafe-allowlist\\.txt)$"
+stages = ["pre-commit"]
 
 # Rust: cargo-machete (unused dependency detection)
 [[repos]]
@@ -583,6 +662,7 @@ entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo machete'"
 language = "system"
 pass_filenames = false
 files = "^src-tauri/Cargo\\.(toml|lock)$"
+stages = ["pre-commit"]
 
 # typos: language-agnostic typo checker (crate-ci/typos). Catches
 # misspellings in code, comments, identifiers, snapshot fixtures,
@@ -601,6 +681,7 @@ name = "typos"
 entry = "bash -c '. \"$HOME/.cargo/env\" && typos'"
 language = "system"
 pass_filenames = false
+stages = ["pre-commit"]
 
 # shellcheck: lint shell scripts under scripts/. `--severity=warning`
 # skips the `info` / `style` notices (e.g. SC2012 "use find instead
@@ -617,6 +698,7 @@ name = "shellcheck"
 entry = "shellcheck --severity=warning"
 language = "system"
 files = "^scripts/.*\\.sh$"
+stages = ["pre-commit"]
 
 # Migration immutability — enforces the AGENTS.md "append-only,
 # never modify shipped migrations" invariant. The sqlx runtime
@@ -641,6 +723,7 @@ entry = "bash scripts/check-migrations-immutable.sh"
 language = "system"
 pass_filenames = false
 always_run = true
+stages = ["pre-commit"]
 
 # STRICT tables policy (PEND-07). Every new `CREATE TABLE` in a
 # SQLite migration must use STRICT mode (SQLite 3.37+) so silent
@@ -658,6 +741,7 @@ entry = "node scripts/check-migrations-strict.mjs"
 language = "system"
 pass_filenames = true
 files = "^src-tauri/migrations/.*\\.sql$"
+stages = ["pre-commit"]
 
 # Blocks-rebuild cascade guard (#606). `DROP TABLE blocks` under
 # `foreign_keys = ON` immediately cascade-deletes every child row
@@ -679,6 +763,7 @@ entry = "node scripts/check-migrations-rebuild-cascade.mjs"
 language = "system"
 pass_filenames = true
 files = "^src-tauri/migrations/.*\\.sql$"
+stages = ["pre-commit"]
 
 # zizmor: GitHub Actions security audit. Complements actionlint
 # (which is style/correctness only) by catching unpinned `uses:`,
@@ -696,6 +781,7 @@ name = "zizmor"
 entry = "bash -c '. \"$HOME/.cargo/env\" && zizmor \"$@\"' --"
 language = "system"
 files = "^\\.github/workflows/.*\\.ya?ml$"
+stages = ["pre-commit"]
 
 # taplo: TOML lint + format. The `check-toml` builtin only validates
 # parseability; taplo enforces consistent formatting across
@@ -710,9 +796,14 @@ repo = "local"
 [[repos.hooks]]
 id = "taplo-fmt"
 name = "taplo fmt --check"
+# #817 EXCEPTION: taplo stays `--check` (read-only). Switching it to write
+# mode reformats all TOML in a style the repo's .taplo.toml overrides reject,
+# producing mass unrelated diffs — known issue, so this fmt hook is NOT
+# converted to the auto-fix contract.
 entry = "bash -c '. \"$HOME/.cargo/env\" && taplo fmt --check \"$@\"' --"
 language = "system"
 types = ["toml"]
+stages = ["pre-commit"]
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -721,6 +812,7 @@ name = "taplo lint"
 entry = "bash -c '. \"$HOME/.cargo/env\" && taplo lint \"$@\"' --"
 language = "system"
 types = ["toml"]
+stages = ["pre-commit"]
 
 # ─── pre-push only ────────────────────────────────────────────────
 #
@@ -766,6 +858,7 @@ entry = "bash scripts/test-skip-ci-verify-guard.sh"
 language = "system"
 pass_filenames = false
 files = '^scripts/(verify-ci-equivalent|push|test-skip-ci-verify-guard)\.sh$'
+stages = ["pre-commit"]
 
 [[repos]]
 repo = "local"
