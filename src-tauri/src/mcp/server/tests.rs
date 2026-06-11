@@ -67,7 +67,14 @@ async fn shutdown_closes_accept_loop_and_drops_listener() {
     let registry = Arc::new(PlaceholderRegistry);
     let serve_lc = lifecycle.clone();
     let serve_task = tokio::spawn(async move {
-        let result = serve_unix(listener, registry, None, Some(serve_lc.clone())).await;
+        let result = serve_unix(
+            listener,
+            registry,
+            None,
+            Some(serve_lc.clone()),
+            crate::mcp::McpSurface::ReadOnly,
+        )
+        .await;
         serve_lc
             .task_running
             .store(false, std::sync::atomic::Ordering::Release);
@@ -145,7 +152,14 @@ async fn re_enable_rebinds_listener_after_shutdown() {
     let serve_lc_1 = lifecycle.clone();
     let registry_1 = registry.clone();
     let task_v1 = tokio::spawn(async move {
-        let result = serve_unix(listener_v1, registry_1, None, Some(serve_lc_1.clone())).await;
+        let result = serve_unix(
+            listener_v1,
+            registry_1,
+            None,
+            Some(serve_lc_1.clone()),
+            crate::mcp::McpSurface::ReadOnly,
+        )
+        .await;
         serve_lc_1
             .task_running
             .store(false, std::sync::atomic::Ordering::Release);
@@ -186,7 +200,14 @@ async fn re_enable_rebinds_listener_after_shutdown() {
     let serve_lc_2 = lifecycle.clone();
     let registry_2 = registry.clone();
     let task_v2 = tokio::spawn(async move {
-        let result = serve_unix(listener_v2, registry_2, None, Some(serve_lc_2.clone())).await;
+        let result = serve_unix(
+            listener_v2,
+            registry_2,
+            None,
+            Some(serve_lc_2.clone()),
+            crate::mcp::McpSurface::ReadOnly,
+        )
+        .await;
         serve_lc_2
             .task_running
             .store(false, std::sync::atomic::Ordering::Release);
@@ -230,7 +251,14 @@ async fn shutdown_during_active_connection_blocks_new_connects() {
     let registry = Arc::new(PlaceholderRegistry);
     let serve_lc = lifecycle.clone();
     let serve_task = tokio::spawn(async move {
-        let result = serve_unix(listener, registry, None, Some(serve_lc.clone())).await;
+        let result = serve_unix(
+            listener,
+            registry,
+            None,
+            Some(serve_lc.clone()),
+            crate::mcp::McpSurface::ReadOnly,
+        )
+        .await;
         serve_lc
             .task_running
             .store(false, std::sync::atomic::Ordering::Release);
@@ -288,6 +316,113 @@ async fn shutdown_during_active_connection_blocks_new_connects() {
         "connect after in-flight shutdown must fail; got Ok({:?})",
         post_shutdown.as_ref().map(|_| "<stream>"),
     );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// #636 — a transient accept() error must NOT kill the serve loop
+// ──────────────────────────────────────────────────────────────────────
+
+/// #636 acceptance test: inject a REAL `accept()` failure (EMFILE via
+/// fd exhaustion — one of the exact transient errors the issue names)
+/// and assert the loop survives it and accepts the pending client once
+/// the pressure clears. Pre-fix, the first `Err` propagated out of
+/// `serve_unix` via `?` and the socket was dead until the user toggled
+/// the surface off and on.
+///
+/// Sequencing makes the failure deterministic:
+///   1. bind the listener and connect a client BEFORE the serve loop
+///      starts — the connection parks in the kernel backlog;
+///   2. exhaust this process's fd budget (nextest runs each test in
+///      its own process, so this cannot poison sibling tests);
+///   3. start the serve loop — its first `accept()` of the pending
+///      connection must fail with EMFILE (no free fd for the accepted
+///      socket) and the loop backs off and retries;
+///   4. release the fds — the retry succeeds and the pending client is
+///      finally served (observed via the lifecycle connection counter).
+///
+/// If the environment's fd limit is too high to exhaust within the
+/// bounded attempt cap, the test degrades to the happy path (the loop
+/// still must serve the client) rather than flaking.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn accept_error_does_not_kill_serve_loop_636() {
+    use super::super::McpLifecycle;
+    use tokio::net::{UnixListener, UnixStream};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("i636-emfile.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+
+    // 1. Client connects while no accept loop is running — the unix
+    //    socket handshake completes against the listen backlog.
+    let _pending_client = UnixStream::connect(&path)
+        .await
+        .expect("backlog connect succeeds before the serve loop starts");
+
+    // 2. Exhaust the fd budget. Bounded attempt cap so an environment
+    //    with a very large soft limit degrades instead of spinning.
+    let mut hogs: Vec<std::fs::File> = Vec::new();
+    let mut exhausted = false;
+    for _ in 0..1_100_000 {
+        match std::fs::File::open("/dev/null") {
+            Ok(f) => hogs.push(f),
+            Err(_) => {
+                exhausted = true;
+                break;
+            }
+        }
+    }
+
+    // 3. Start the serve loop under fd pressure.
+    let lifecycle = McpLifecycle::new();
+    let registry = Arc::new(PlaceholderRegistry);
+    let serve_lc = lifecycle.clone();
+    let serve_task = tokio::spawn(async move {
+        serve_unix(
+            listener,
+            registry,
+            None,
+            Some(serve_lc),
+            crate::mcp::McpSurface::ReadOnly,
+        )
+        .await
+    });
+
+    if exhausted {
+        // Hold the pressure long enough for the loop to take the
+        // error arm at least once (first backoff step is 100 ms).
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(
+            !serve_task.is_finished(),
+            "#636: the serve loop must survive accept() errors (EMFILE), \
+             not propagate them out",
+        );
+    } else {
+        eprintln!(
+            "#636 test note: fd limit too high to exhaust within the cap; \
+             exercising the happy path only"
+        );
+    }
+
+    // 4. Release the fds; the retry must accept the parked client.
+    drop(hogs);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while lifecycle.connection_count() == 0 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        lifecycle.connection_count() >= 1,
+        "#636: after the transient accept failure clears, the loop must \
+         accept the pending connection",
+    );
+    assert!(
+        !serve_task.is_finished(),
+        "#636: the serve loop must still be running after recovery",
+    );
+
+    // Tear down cleanly.
+    lifecycle.shutdown();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), serve_task).await;
 }
 
 #[test]

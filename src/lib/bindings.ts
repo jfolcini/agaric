@@ -665,6 +665,17 @@ export const commands = {
 	 *  post-disconnect count, not this command.
 	 */
 	mcpDisconnectAll: () => typedError<null, AppError>(__TAURI_INVOKE("mcp_disconnect_all")),
+	/**
+	 *  Tauri command: return the most recent MCP tool-call activity entries
+	 *  (oldest first, capped at the ring's 100-entry capacity).
+	 *
+	 *  #695 — read surface for the FEAT-4d activity ring. The ring is the
+	 *  shared [`McpActivityRing`] managed state written by both the RO and
+	 *  RW serve tasks, so late subscribers (a Settings tab opened after
+	 *  the calls happened) and diagnostics can inspect recent history
+	 *  without having been subscribed to the `mcp:activity` event stream.
+	 */
+	getMcpRecentActivity: () => typedError<ActivityEntry_Serialize[], AppError>(__TAURI_INVOKE("get_mcp_recent_activity")),
 	/**  Tauri command: return the current MCP RW status for the Settings tab. */
 	getMcpRwStatus: () => typedError<McpRwStatus, AppError>(__TAURI_INVOKE("get_mcp_rw_status")),
 	/**
@@ -870,6 +881,182 @@ export type ActiveProjectedAgendaEntry = {
 	/**  Which date column was used as the base for projection. */
 	source: string,
 };
+
+/**
+ *  A single entry in the activity ring. One entry is appended per
+ *  `tools/call` completion (success or failure) and emitted on the
+ *  `mcp:activity` Tauri event bus.
+ *
+ *  Serialization uses `camelCase` to match the rest of the app's event
+ *  payloads. `agent_name` is skipped when `None` so the wire payload
+ *  stays compact for user-initiated entries.
+ *
+ *  The `Debug` impl is handwritten to redact `agent_name` — never rely on
+ *  `{entry:?}` producing the agent identifier in tracing spans. If an
+ *  auditor needs the real name, read it via `entry.agent_name` explicitly.
+ */
+export type ActivityEntry = ActivityEntry_Serialize | ActivityEntry_Deserialize;
+
+/**
+ *  A single entry in the activity ring. One entry is appended per
+ *  `tools/call` completion (success or failure) and emitted on the
+ *  `mcp:activity` Tauri event bus.
+ *
+ *  Serialization uses `camelCase` to match the rest of the app's event
+ *  payloads. `agent_name` is skipped when `None` so the wire payload
+ *  stays compact for user-initiated entries.
+ *
+ *  The `Debug` impl is handwritten to redact `agent_name` — never rely on
+ *  `{entry:?}` producing the agent identifier in tracing spans. If an
+ *  auditor needs the real name, read it via `entry.agent_name` explicitly.
+ */
+export type ActivityEntry_Deserialize = {
+	/**  MCP tool name (e.g. `"search"`, `"get_block"`). */
+	toolName: string,
+	/**
+	 *  Tool-specific short summary built by the handler (e.g.
+	 *  `"searched for '...' (12 results)"`). Must never include block
+	 *  content / page titles / property values — see module docs.
+	 */
+	summary: string,
+	/**  UTC timestamp of the completion. */
+	timestamp: string,
+	/**  Discriminant of the calling actor. */
+	actorKind: ActorKind,
+	/**
+	 *  Agent identifier, present iff `actor_kind == Agent`. Serialized
+	 *  into the `mcp:activity` event; **redacted** in `Debug` output.
+	 */
+	agentName: string | null,
+	/**  Success / failure outcome of the tool invocation. */
+	result: ActivityResult,
+	/**
+	 *  Opaque per-connection session ULID. Populated by the dispatch
+	 *  layer from `ConnectionState.session_id`. Stable across every
+	 *  request on the same socket connection. Serialised as `sessionId`.
+	 */
+	sessionId: string,
+	/**
+	 *  `OpRef` of the *first* op this tool call produced, if any.
+	 *  `None` for RO tools and for tools that produce no ops.
+	 *  Populated by the dispatch layer from the `LAST_APPEND`
+	 *  task-local. Serialised as `opRef`; omitted from the wire
+	 *  payload when `None`.
+	 *
+	 *  Multi-op tools surface their additional `OpRef`s on
+	 *  [`ActivityEntry::additional_op_refs`] — see L-114 for the
+	 *  rationale (forward-compat for `move_subtree` /
+	 *  `bulk_set_property` and similar future tools that append more
+	 *  than one op per call).
+	 */
+	opRef: OpRef | null,
+	/**
+	 *  L-114 forward-compat: any further `OpRef`s produced by the
+	 *  same tool call, in append order. Empty for the (current)
+	 *  single-op RW tools and for RO / failing tools. Defaults to
+	 *  `Vec::new()` for older clients / fixtures that don't set the
+	 *  field, and is omitted from the wire payload when empty so the
+	 *  `mcp:activity` event stays compact for the common case.
+	 *  Serialised as `additionalOpRefs`.
+	 */
+	additionalOpRefs?: OpRef[],
+};
+
+/**
+ *  A single entry in the activity ring. One entry is appended per
+ *  `tools/call` completion (success or failure) and emitted on the
+ *  `mcp:activity` Tauri event bus.
+ *
+ *  Serialization uses `camelCase` to match the rest of the app's event
+ *  payloads. `agent_name` is skipped when `None` so the wire payload
+ *  stays compact for user-initiated entries.
+ *
+ *  The `Debug` impl is handwritten to redact `agent_name` — never rely on
+ *  `{entry:?}` producing the agent identifier in tracing spans. If an
+ *  auditor needs the real name, read it via `entry.agent_name` explicitly.
+ */
+export type ActivityEntry_Serialize = {
+	/**  MCP tool name (e.g. `"search"`, `"get_block"`). */
+	toolName: string,
+	/**
+	 *  Tool-specific short summary built by the handler (e.g.
+	 *  `"searched for '...' (12 results)"`). Must never include block
+	 *  content / page titles / property values — see module docs.
+	 */
+	summary: string,
+	/**  UTC timestamp of the completion. */
+	timestamp: string,
+	/**  Discriminant of the calling actor. */
+	actorKind: ActorKind,
+	/**
+	 *  Agent identifier, present iff `actor_kind == Agent`. Serialized
+	 *  into the `mcp:activity` event; **redacted** in `Debug` output.
+	 */
+	agentName?: string | null,
+	/**  Success / failure outcome of the tool invocation. */
+	result: ActivityResult,
+	/**
+	 *  Opaque per-connection session ULID. Populated by the dispatch
+	 *  layer from `ConnectionState.session_id`. Stable across every
+	 *  request on the same socket connection. Serialised as `sessionId`.
+	 */
+	sessionId: string,
+	/**
+	 *  `OpRef` of the *first* op this tool call produced, if any.
+	 *  `None` for RO tools and for tools that produce no ops.
+	 *  Populated by the dispatch layer from the `LAST_APPEND`
+	 *  task-local. Serialised as `opRef`; omitted from the wire
+	 *  payload when `None`.
+	 *
+	 *  Multi-op tools surface their additional `OpRef`s on
+	 *  [`ActivityEntry::additional_op_refs`] — see L-114 for the
+	 *  rationale (forward-compat for `move_subtree` /
+	 *  `bulk_set_property` and similar future tools that append more
+	 *  than one op per call).
+	 */
+	opRef?: OpRef | null,
+	/**
+	 *  L-114 forward-compat: any further `OpRef`s produced by the
+	 *  same tool call, in append order. Empty for the (current)
+	 *  single-op RW tools and for RO / failing tools. Defaults to
+	 *  `Vec::new()` for older clients / fixtures that don't set the
+	 *  field, and is omitted from the wire payload when empty so the
+	 *  `mcp:activity` event stays compact for the common case.
+	 *  Serialised as `additionalOpRefs`.
+	 */
+	additionalOpRefs?: OpRef[],
+};
+
+/**
+ *  Outcome of a tool call. `Err` carries a short, user-friendly message —
+ *  never the full `AppError` chain — because the summary is rendered in the
+ *  Settings activity feed.
+ */
+export type ActivityResult =
+/**  The tool call completed successfully. */
+{ kind: "ok" } |
+/**
+ *  The tool call failed. `String` is a short error description (e.g.
+ *  `"block not found"`), not a serialized `AppError`.
+ */
+{ kind: "err"; message: string };
+
+/**
+ *  Discriminates the caller kind on an activity entry without carrying any
+ *  identifying name in Debug output. Agent identifiers (when present) live
+ *  on [`ActivityEntry::agent_name`] and are redacted from the `Debug` impl.
+ */
+export type ActorKind =
+/**
+ *  Tool call originated from a user action in the UI (today this never
+ *  happens for the RO server; reserved for FEAT-4h's RW tools).
+ */
+"user" |
+/**
+ *  Tool call originated from an external agent connected via the MCP
+ *  socket.
+ */
+"agent";
 
 /**
  *  Bundled agenda filter for the [`list_blocks`] Tauri command.

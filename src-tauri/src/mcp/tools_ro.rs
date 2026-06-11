@@ -1,7 +1,8 @@
 //! Read-only [`ToolRegistry`] impl — the v1 MCP tool surface.
 //!
-//! FEAT-4c wires nine read-only tools into the MCP dispatcher established by
-//! FEAT-4a/4b. Each tool is a **thin wrapper** around an existing
+//! FEAT-4c wired nine read-only tools into the MCP dispatcher established by
+//! FEAT-4a/4b; #633 added `list_spaces` (space discovery) as the tenth.
+//! Each tool is a **thin wrapper** around an existing
 //! `*_inner` command handler so the op-log / event-sourcing / sqlx-compile-time-query
 //! invariants of the frontend path apply verbatim to agent calls
 //! (AGENTS.md §Key Architectural Invariants).
@@ -19,6 +20,7 @@
 //! | `list_property_defs` | [`list_property_defs_inner`](crate::commands::list_property_defs_inner) | Typed property schema; cursor paginated (M-85). |
 //! | `get_agenda` | [`list_projected_agenda_inner`](crate::commands::list_projected_agenda_inner) | Date-range agenda projection. |
 //! | `journal_for_date` | [`journal_for_date_inner`](crate::commands::journal_for_date_inner) | Idempotent date → page lookup. **M-84 carve-out:** on first read-of-the-day this RO tool emits a single `CreateBlock` op (origin `agent:<name>`) for the missing journal page; see the M-82/M-84 commentary on [`ReadOnlyTools`] below. |
+//! | `list_spaces` | [`list_spaces_registry_inner`](crate::commands::list_spaces_registry_inner) | #633 — space discovery for agents. Returns `{ id, name, is_default }` per live space from the canonical `spaces` registry (#804). |
 //!
 //! # Actor scoping
 //!
@@ -32,7 +34,7 @@
 //!
 //! # Cap enforcement
 //!
-//! Two caps are enforced at the tool boundary:
+//! Three caps are enforced at the tool boundary:
 //!
 //! - **Result count:** `search` is capped at [`SEARCH_RESULT_CAP`] (50),
 //!   list-style tools at [`LIST_RESULT_CAP`] (100), `get_agenda` at
@@ -48,6 +50,11 @@
 //!   id. The implementation truncates at char boundaries so the output
 //!   is always valid UTF-8 even when the content contains multi-byte
 //!   codepoints (CJK, emoji, etc.).
+//! - **Filter-term budget (#699):** `search` rejects requests whose
+//!   combined `tag_ids` + PEND-65 `filter` vector element count exceeds
+//!   [`SEARCH_FILTER_TERMS_CAP`] (= SQLite's bind-parameter limit) —
+//!   such a query could never execute anyway; the boundary check turns
+//!   the failure into an actionable `-32602`.
 
 use std::future::Future;
 
@@ -60,13 +67,13 @@ use super::dispatch::{scoped_dispatch, unknown_tool_error};
 use super::handler_utils::{normalize_ulid_arg, parse_args, to_tool_result};
 use super::registry::{
     TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS,
-    TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_TAGS, TOOL_SEARCH, ToolDescription,
-    ToolRegistry,
+    TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_SEARCH,
+    ToolDescription, ToolRegistry,
 };
 use crate::commands::{
     get_active_block_inner, get_page_unscoped_inner, journal_for_date_inner,
     list_backlinks_grouped_inner, list_pages_inner, list_projected_agenda_inner,
-    list_property_defs_inner, list_tags_inner, search_blocks_inner,
+    list_property_defs_inner, list_spaces_registry_inner, list_tags_inner, search_blocks_inner,
 };
 use crate::error::AppError;
 use crate::materializer::Materializer;
@@ -102,6 +109,19 @@ pub const SEARCH_SNIPPET_CAP: usize = 512;
 /// into [`list_projected_agenda_inner`] remains as a defense-in-depth
 /// backstop for any non-MCP caller.
 pub const AGENDA_RESULT_CAP: i64 = 500;
+
+/// #699 — upper bound on the combined number of `search` filter terms
+/// (`tag_ids` plus every PEND-65 `filter` vector element).
+///
+/// Not an invented number: this is [`crate::db::MAX_SQL_PARAMS`] (999),
+/// SQLite's per-statement bind-parameter limit — the same bound the
+/// chunked-insert helpers (`spaces/bootstrap.rs`, `cache/`) already
+/// derive their chunk sizes from. Every filter term binds at least one
+/// SQL parameter in the search query, so a request with more terms
+/// than this can never execute; rejecting it at the boundary turns an
+/// opaque post-#698 `-32603 internal error` into an actionable
+/// `-32602 invalid params`.
+pub const SEARCH_FILTER_TERMS_CAP: usize = crate::db::MAX_SQL_PARAMS;
 
 // ---------------------------------------------------------------------------
 // Typed argument structs (one per tool)
@@ -146,7 +166,7 @@ struct SearchArgs {
     /// inside a single space and the FTS5 hits are restricted to blocks
     /// whose owning page carries `space = ?space_id`. Agents that do not
     /// yet track a "current space" must pick one explicitly (typically
-    /// the first space surfaced via `list_spaces`).
+    /// the `is_default` space surfaced via the `list_spaces` tool, #633).
     space_id: String,
     /// PEND-65 — optional structured filter set mirroring the
     /// `SearchFilter` user-facing surface. Omitted = the agent runs a
@@ -257,14 +277,21 @@ struct GetAgendaArgs {
     space_id: Option<String>,
 }
 
+/// #633 — `list_spaces` takes no arguments; the empty struct (with
+/// `deny_unknown_fields`) keeps the strict-boundary posture so a typo'd
+/// argument surfaces as `-32602` instead of being silently ignored.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListSpacesArgs {}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JournalForDateArgs {
     date: String,
     /// FEAT-3p5 — the active space's ULID. Required: every journal page
     /// belongs to a space. Agents that do not yet track a "current
-    /// space" must pick one explicitly (typically the first space
-    /// surfaced via `list_spaces`).
+    /// space" must pick one explicitly (typically the `is_default`
+    /// space surfaced via the `list_spaces` tool, #633).
     space_id: String,
 }
 
@@ -359,6 +386,7 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_list_property_defs(),
         tool_desc_get_agenda(),
         tool_desc_journal_for_date(),
+        tool_desc_list_spaces(),
     ]
 }
 
@@ -405,6 +433,7 @@ impl ToolRegistry for ReadOnlyTools {
                     // on the reader pool.
                     handle_journal_for_date(&writer_pool, &materializer, &device_id, args).await
                 }
+                TOOL_LIST_SPACES => handle_list_spaces(&pool, args).await,
                 other => Err(unknown_tool_error(other)),
             }
         })
@@ -711,6 +740,22 @@ fn tool_desc_journal_for_date() -> ToolDescription {
     }
 }
 
+fn tool_desc_list_spaces() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_LIST_SPACES.to_string(),
+        description: "List every space as { id, name, is_default }. Every read-write tool (and \
+             search / journal_for_date) requires a space_id — call this first to discover \
+             one. is_default marks the seeded Personal space, the sensible fallback when \
+             no space has been chosen."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {},
+        }),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Handler implementations
 //
@@ -763,6 +808,33 @@ async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppErr
     to_tool_result(&resp)
 }
 
+/// #699 — reject a `search` call whose combined filter-term count
+/// exceeds [`SEARCH_FILTER_TERMS_CAP`]. Counts every element of
+/// `tag_ids` plus every element of each PEND-65 `filter` vector; each
+/// term binds at least one SQL parameter downstream, so anything past
+/// the SQLite bind-parameter limit could never execute anyway.
+fn validate_search_term_budget(args: &SearchArgs) -> Result<(), AppError> {
+    let f = args.filter.as_ref();
+    let total = args.tag_ids.as_ref().map_or(0, Vec::len)
+        + f.map_or(0, |f| {
+            f.include_page_globs.len()
+                + f.exclude_page_globs.len()
+                + f.state_filter.len()
+                + f.priority_filter.len()
+                + f.excluded_state_filter.len()
+                + f.excluded_priority_filter.len()
+                + f.property_filters.len()
+                + f.excluded_property_filters.len()
+        });
+    if total > SEARCH_FILTER_TERMS_CAP {
+        return Err(AppError::Validation(format!(
+            "{TOOL_SEARCH}: too many filter terms — tag_ids plus filter vectors total {total}, \
+             max {SEARCH_FILTER_TERMS_CAP} (SQLite bind-parameter limit)"
+        )));
+    }
+    Ok(())
+}
+
 async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: SearchArgs = parse_args(TOOL_SEARCH, args)?;
     // L-119: reject out-of-range explicitly; default to SEARCH_RESULT_CAP
@@ -770,6 +842,8 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
     // back to MAX_PAGE_SIZE=200.
     let validated = validate_limit(TOOL_SEARCH, args.limit, SEARCH_RESULT_CAP)?;
     let limit = Some(validated.unwrap_or(SEARCH_RESULT_CAP));
+    // #699 — bound the input vectors before they reach SQL.
+    validate_search_term_budget(&args)?;
     // L-121: normalise ULID-shaped IDs (parent, each tag, and space) at the
     // MCP boundary so a lowercase ULID matches the canonical uppercase store.
     let parent_id = args.parent_id.as_deref().map(normalize_ulid_arg);
@@ -919,7 +993,26 @@ async fn handle_journal_for_date(
             "tool `{TOOL_JOURNAL_FOR_DATE}`: `date` must be YYYY-MM-DD — {e}"
         ))
     })?;
-    let resp = journal_for_date_inner(pool, device_id, materializer, date, &args.space_id).await?;
+    // L-121 / #694: normalise the space ULID at the MCP boundary like
+    // every other handler — the per-space lookup inside
+    // `resolve_or_create_journal_page` matches `blocks.space_id`
+    // case-sensitively, so a lowercase ULID previously surfaced as a
+    // spurious "space not found" on this one tool.
+    let space_id = normalize_ulid_arg(&args.space_id);
+    let resp = journal_for_date_inner(pool, device_id, materializer, date, &space_id).await?;
+    to_tool_result(&resp)
+}
+
+/// Handle the `list_spaces` MCP tool call (#633).
+///
+/// Pure read against the canonical `spaces` registry (#804). This is
+/// the discovery entry point for the `space_id` argument every RW tool
+/// (plus `search` / `journal_for_date`) requires — without it an agent
+/// with no out-of-band configuration could not legally call any of
+/// them. Returns a JSON array of `{ id, name, is_default }` rows.
+async fn handle_list_spaces(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
+    let _args: ListSpacesArgs = parse_args(TOOL_LIST_SPACES, args)?;
+    let resp = list_spaces_registry_inner(pool).await?;
     to_tool_result(&resp)
 }
 

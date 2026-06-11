@@ -31,6 +31,7 @@ use specta::Type;
 
 use super::sanitize_internal_error;
 use crate::error::AppError;
+use crate::mcp::activity::{ActivityEntry, McpActivityRing};
 use crate::mcp::{
     self, MCP_RO_ENABLED_MARKER, MCP_RW_ENABLED_MARKER, McpLifecycle, McpRwLifecycle,
     default_mcp_ro_socket_path, default_mcp_rw_socket_path, mcp_ro_enabled, mcp_rw_enabled,
@@ -88,6 +89,17 @@ pub fn get_mcp_status_inner(app_data_dir: &Path, lifecycle: &McpLifecycle) -> Mc
 /// `select!` branch fires and the stream is dropped. Idempotent.
 pub fn mcp_disconnect_all_inner(lifecycle: &McpLifecycle) {
     lifecycle.disconnect_all();
+}
+
+/// #695 — snapshot the shared activity ring, oldest first. Pure read;
+/// tolerates a poisoned lock the same way `emit_activity` does (a
+/// panicked tool-call task must not brick the diagnostics surface).
+pub fn get_mcp_recent_activity_inner(ring: &McpActivityRing) -> Vec<ActivityEntry> {
+    let guard = ring
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    guard.entries().iter().cloned().collect()
 }
 
 /// Shared body for [`mcp_set_enabled_inner`] and
@@ -314,6 +326,23 @@ pub async fn mcp_disconnect_all(
     Ok(())
 }
 
+/// Tauri command: return the most recent MCP tool-call activity entries
+/// (oldest first, capped at the ring's 100-entry capacity).
+///
+/// #695 — read surface for the FEAT-4d activity ring. The ring is the
+/// shared [`McpActivityRing`] managed state written by both the RO and
+/// RW serve tasks, so late subscribers (a Settings tab opened after
+/// the calls happened) and diagnostics can inspect recent history
+/// without having been subscribed to the `mcp:activity` event stream.
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_mcp_recent_activity(
+    ring: tauri::State<'_, McpActivityRing>,
+) -> Result<Vec<ActivityEntry>, AppError> {
+    Ok(get_mcp_recent_activity_inner(ring.inner()))
+}
+
 /// Tauri command: toggle the MCP RO enabled marker file and start / stop
 /// the serve task accordingly.
 ///
@@ -334,6 +363,7 @@ pub async fn mcp_set_enabled(
     write_pool: tauri::State<'_, crate::db::WritePool>,
     materializer: tauri::State<'_, crate::materializer::Materializer>,
     device_id: tauri::State<'_, crate::device::DeviceId>,
+    activity_ring: tauri::State<'_, McpActivityRing>,
     enabled: bool,
 ) -> Result<bool, AppError> {
     // L-46: serialise rapid toggles. Cloning the `Arc` lets us hold the
@@ -366,6 +396,9 @@ pub async fn mcp_set_enabled(
             write_pool.inner().0.clone(),
             materializer.inner().clone(),
             device_id.inner().as_str().to_string(),
+            // #695 — re-spawns reuse the shared managed ring so the
+            // activity history survives the enable/disable cycle.
+            activity_ring.inner().0.clone(),
             Some((*lc).clone()),
         );
     }
@@ -482,6 +515,7 @@ pub async fn mcp_rw_disconnect_all(
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn mcp_rw_set_enabled(
     app: tauri::AppHandle,
     lifecycle: tauri::State<'_, McpRwLifecycle>,
@@ -489,6 +523,7 @@ pub async fn mcp_rw_set_enabled(
     write_pool: tauri::State<'_, crate::db::WritePool>,
     materializer: tauri::State<'_, crate::materializer::Materializer>,
     device_id: tauri::State<'_, crate::device::DeviceId>,
+    activity_ring: tauri::State<'_, McpActivityRing>,
     enabled: bool,
 ) -> Result<bool, AppError> {
     // L-46: serialise rapid toggles.
@@ -507,6 +542,8 @@ pub async fn mcp_rw_set_enabled(
             write_pool.inner().0.clone(),
             materializer.inner().clone(),
             device_id.inner().as_str().to_string(),
+            // #695 — same shared ring as the RO surface.
+            activity_ring.inner().0.clone(),
             Some((*lc).clone()),
         );
     }
@@ -899,6 +936,103 @@ mod tests {
         // Re-enable is idempotent (returns Ok(false), no marker churn).
         let again = set_marker_enabled(dir.path(), &lc, MCP_RO_ENABLED_MARKER, "RO", true).unwrap();
         assert!(!again, "re-enable must report no change");
+    }
+
+    // ── #695: get_mcp_recent_activity ────────────────────────────────────
+
+    fn make_activity_entry(tag: &str) -> crate::mcp::activity::ActivityEntry {
+        crate::mcp::activity::ActivityEntry {
+            tool_name: tag.to_string(),
+            summary: format!("summary for {tag}"),
+            timestamp: chrono::Utc::now(),
+            actor_kind: crate::mcp::activity::ActorKind::Agent,
+            agent_name: Some("test-agent".to_string()),
+            result: crate::mcp::activity::ActivityResult::Ok,
+            session_id: "SESSION".to_string(),
+            op_ref: None,
+            additional_op_refs: Vec::new(),
+        }
+    }
+
+    /// #695 happy path: entries pushed through the activity-emission
+    /// seam (the same `emit_activity` the serve loops use) are readable
+    /// via the command inner, oldest first.
+    #[test]
+    fn get_mcp_recent_activity_returns_pushed_entries_oldest_first() {
+        use crate::mcp::activity::{McpActivityRing, NoopEmitter, emit_activity};
+
+        let ring = McpActivityRing::new();
+        assert!(
+            get_mcp_recent_activity_inner(&ring).is_empty(),
+            "fresh ring reads as empty"
+        );
+
+        emit_activity(&ring.0, &NoopEmitter, make_activity_entry("search"));
+        emit_activity(&ring.0, &NoopEmitter, make_activity_entry("append_block"));
+
+        let entries = get_mcp_recent_activity_inner(&ring);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].tool_name, "search", "oldest first");
+        assert_eq!(entries[1].tool_name, "append_block");
+    }
+
+    /// #695: the read surface tolerates a poisoned ring lock — a
+    /// panicked tool-call task must not brick the diagnostics command.
+    #[test]
+    fn get_mcp_recent_activity_survives_poisoned_lock() {
+        use crate::mcp::activity::{McpActivityRing, NoopEmitter, emit_activity};
+
+        let ring = McpActivityRing::new();
+        emit_activity(&ring.0, &NoopEmitter, make_activity_entry("search"));
+        let poison = ring.0.clone();
+        let _ = std::thread::spawn(move || {
+            let _g = poison.lock().unwrap();
+            panic!("poison the ring mutex");
+        })
+        .join();
+        assert!(ring.0.is_poisoned(), "mutex must be poisoned before read");
+
+        let entries = get_mcp_recent_activity_inner(&ring);
+        assert_eq!(entries.len(), 1, "read survives the poisoned lock");
+    }
+
+    /// #695 root cause regression: the ring an `ActivityContext` writes
+    /// must be the SAME ring the command reads, and rebuilding the
+    /// context (an enable/disable cycle) must not reset the history.
+    /// Pre-fix, `ActivityContext::from_app_handle` allocated a fresh
+    /// unreadable ring per spawn.
+    #[test]
+    fn shared_ring_survives_context_rebuild_across_enable_cycles() {
+        use crate::mcp::activity::{ActivityContext, McpActivityRing, NoopEmitter, emit_activity};
+        use std::sync::Arc;
+
+        let managed = McpActivityRing::new();
+
+        // First "enable cycle": a context built around the shared ring.
+        let ctx_v1 = ActivityContext::new(managed.0.clone(), Arc::new(NoopEmitter));
+        emit_activity(
+            &ctx_v1.ring,
+            ctx_v1.emitter.as_ref(),
+            make_activity_entry("search"),
+        );
+        drop(ctx_v1);
+
+        // Second "enable cycle": fresh context, same managed ring.
+        let ctx_v2 = ActivityContext::new(managed.0.clone(), Arc::new(NoopEmitter));
+        emit_activity(
+            &ctx_v2.ring,
+            ctx_v2.emitter.as_ref(),
+            make_activity_entry("delete_block"),
+        );
+
+        let entries = get_mcp_recent_activity_inner(&managed);
+        assert_eq!(
+            entries.len(),
+            2,
+            "history must accumulate across context rebuilds (enable cycles)",
+        );
+        assert_eq!(entries[0].tool_name, "search");
+        assert_eq!(entries[1].tool_name, "delete_block");
     }
 
     // ── L-46: rapid-toggle gate serialises concurrent callers ───────────

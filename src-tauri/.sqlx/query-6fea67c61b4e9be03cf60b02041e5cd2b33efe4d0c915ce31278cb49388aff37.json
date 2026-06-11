@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT\n               s.id as \"id!: String\",\n               COALESCE(b.content, '') as \"name!: String\"\n           FROM spaces s\n           JOIN blocks b\n             ON b.id = s.id\n            AND b.deleted_at IS NULL\n           ORDER BY COALESCE(b.content, '') ASC, s.id ASC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "spaces",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "6fea67c61b4e9be03cf60b02041e5cd2b33efe4d0c915ce31278cb49388aff37"
+}

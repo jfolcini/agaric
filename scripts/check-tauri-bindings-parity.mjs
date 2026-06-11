@@ -61,6 +61,9 @@ const KNOWN_UNWRAPPED = new Set([
   'getMcpSocketPath',
   'mcpSetEnabled',
   'mcpDisconnectAll',
+  // (a) MCP activity-ring read surface (#695) — status/diagnostics
+  // consumer reads `commands.getMcpRecentActivity` directly.
+  'getMcpRecentActivity',
   // (a) MCP read-write status + control — same rationale as RO.
   'getMcpRwStatus',
   'getMcpRwSocketPath',

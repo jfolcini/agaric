@@ -8,7 +8,8 @@
 # ///
 """Manual MCP wire-compat smoke test for the v1 read-only tool surface.
 
-Exercises every v1 MCP read tool (9 of them) against a running
+Exercises every MCP read tool (the v1 nine plus #633 `list_spaces`)
+against a running
 ``cargo tauri dev`` build of Agaric, using the same Python MCP SDK that
 real agents (Claude Desktop, Cursor, Continue, …) use — so the harness
 validates wire compat, not just Rust unit-test parity.
@@ -31,7 +32,7 @@ not.
 
 Exit codes:
 
-    0   All 9 tools succeeded and returned schema-valid payloads.
+    0   All tools succeeded and returned schema-valid payloads.
     1   One or more tool calls failed (structured report on stderr).
     2   Argparse / usage error.
 
@@ -58,8 +59,9 @@ APP_ID = "com.agaric.app"
 MCP_RO_FILENAME = "mcp-ro.sock"
 WINDOWS_PIPE_PATH = r"\\.\pipe\agaric-mcp-ro"
 
-# Exact tool surface v1 — order is part of the wire contract, mirror of
+# Exact tool surface — order is part of the wire contract, mirror of
 # `src-tauri/src/mcp/tools_ro.rs::ReadOnlyTools::list_tools()`.
+# v1 nine tools + `list_spaces` (#633, space discovery).
 EXPECTED_TOOLS: tuple[str, ...] = (
     "list_pages",
     "get_page",
@@ -70,6 +72,7 @@ EXPECTED_TOOLS: tuple[str, ...] = (
     "list_property_defs",
     "get_agenda",
     "journal_for_date",
+    "list_spaces",
 )
 
 
@@ -160,6 +163,18 @@ PROPERTY_DEF_SCHEMA: dict[str, Any] = {
     },
 }
 
+# #633 — `list_spaces` rows: the discovery entry point for the
+# `space_id` argument required by search / journal_for_date / RW tools.
+SPACE_ROW_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["id", "name", "is_default"],
+    "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "is_default": {"type": "boolean"},
+    },
+}
+
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "list_pages": PAGE_RESPONSE_SCHEMA,
     "get_page": PAGE_SUBTREE_SCHEMA,
@@ -170,6 +185,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "list_property_defs": {"type": "array", "items": PROPERTY_DEF_SCHEMA},
     "get_agenda": {"type": "array"},
     "journal_for_date": BLOCK_ROW_SCHEMA,
+    "list_spaces": {"type": "array", "items": SPACE_ROW_SCHEMA},
 }
 
 
@@ -321,11 +337,11 @@ async def run_smoke(socket_path: Path) -> int:
             # Advertised tool surface --------------------------------------
             tools_result = await session.list_tools()
             advertised = [t.name for t in tools_result.tools]
-            if len(advertised) != 9:
+            if len(advertised) != len(EXPECTED_TOOLS):
                 failures.append(
                     (
                         "list_tools",
-                        f"expected exactly 9 tools, got {len(advertised)}",
+                        f"expected exactly {len(EXPECTED_TOOLS)} tools, got {len(advertised)}",
                         {},
                         repr(advertised),
                     )
@@ -353,6 +369,31 @@ async def run_smoke(socket_path: Path) -> int:
 
             today = datetime.date.today().isoformat()
 
+            # Space discovery (#633) ---------------------------------------
+            # `search` / `journal_for_date` require a `space_id`;
+            # `list_spaces` is the in-band way an agent discovers one.
+            spaces_payload = await call_and_validate(
+                session, "list_spaces", {}, failures
+            )
+            space_id: str | None = None
+            if isinstance(spaces_payload, list) and spaces_payload:
+                default = next(
+                    (s for s in spaces_payload if s.get("is_default")),
+                    spaces_payload[0],
+                )
+                sid = default.get("id")
+                if isinstance(sid, str):
+                    space_id = sid
+            if space_id is None:
+                failures.append(
+                    (
+                        "list_spaces",
+                        "no space id discoverable — space_id-requiring tools skipped",
+                        {},
+                        repr(spaces_payload)[:500],
+                    )
+                )
+
             # Seed --------------------------------------------------------
             # Strategy: prefer the real `list_pages` result as seed (matches
             # the "assume a dev build with data" spec). On a fresh DB with
@@ -365,17 +406,19 @@ async def run_smoke(socket_path: Path) -> int:
             )
             seed_id = _first_page_id(pages_payload)
 
-            if seed_id is None:
+            journal_called = False
+            if seed_id is None and space_id is not None:
                 journal_payload = await call_and_validate(
-                    session, "journal_for_date", {"date": today}, failures
+                    session,
+                    "journal_for_date",
+                    {"date": today, "space_id": space_id},
+                    failures,
                 )
                 if isinstance(journal_payload, dict):
                     jid = journal_payload.get("id")
                     if isinstance(jid, str):
                         seed_id = jid
                 journal_called = True
-            else:
-                journal_called = False
 
             # Dependent calls --------------------------------------------
             if seed_id is not None:
@@ -404,9 +447,13 @@ async def run_smoke(socket_path: Path) -> int:
                     )
 
             # Remaining tools --------------------------------------------
-            await call_and_validate(
-                session, "search", {"query": "a", "limit": 10}, failures
-            )
+            if space_id is not None:
+                await call_and_validate(
+                    session,
+                    "search",
+                    {"query": "a", "limit": 10, "space_id": space_id},
+                    failures,
+                )
             await call_and_validate(session, "list_tags", {"limit": 10}, failures)
             await call_and_validate(session, "list_property_defs", {}, failures)
             await call_and_validate(
@@ -415,9 +462,12 @@ async def run_smoke(socket_path: Path) -> int:
                 {"start_date": today, "end_date": today},
                 failures,
             )
-            if not journal_called:
+            if not journal_called and space_id is not None:
                 await call_and_validate(
-                    session, "journal_for_date", {"date": today}, failures
+                    session,
+                    "journal_for_date",
+                    {"date": today, "space_id": space_id},
+                    failures,
                 )
 
     return _report(failures)
@@ -425,7 +475,7 @@ async def run_smoke(socket_path: Path) -> int:
 
 def _report(failures: list[Failure]) -> int:
     if not failures:
-        print("[ok] 9/9 tools passed")
+        print(f"[ok] {len(EXPECTED_TOOLS)}/{len(EXPECTED_TOOLS)} tools passed")
         return 0
 
     # De-dup on (tool, reason) so a single missing seed does not noisy-spam
@@ -466,7 +516,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             f"com.agaric.app).\n"
             "\n"
             "Exit codes:\n"
-            "  0  all 9 tools passed\n"
+            "  0  all tools passed\n"
             "  1  one or more tools failed (see stderr)\n"
             "  2  argparse / usage error\n"
             "\n"

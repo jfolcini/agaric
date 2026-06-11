@@ -2,8 +2,9 @@
 //!
 //! `rmcp` is a hard dependency (see `Cargo.toml`) and this adapter is the
 //! production `tools/list` / `tools/call` dispatcher: `super::server`
-//! constructs [`RmcpReadOnlyAdapter`] and serves every read-only tool
-//! through it. The hand-rolled `mcp/server.rs` framing is retained only
+//! constructs [`RmcpAdapter`] (parameterised on [`McpSurface`], #693)
+//! and serves both the read-only and read-write registries through it.
+//! The hand-rolled `mcp/server.rs` framing is retained only
 //! for the connection lifecycle plumbing it wraps (see "What this adapter
 //! does NOT do" below); it no longer dispatches tool calls.
 //!
@@ -20,9 +21,10 @@
 //!   own per-connection JSON-RPC dispatch for every read-only tool:
 //!   `tools/list` reflects the full RO registry and `call_tool`
 //!   dispatches every RO tool through the adapter.
-//! - It does NOT migrate any RW tool. Read-write tools have richer
+//! - It does NOT special-case RW tools. Read-write tools' richer
 //!   side-effects (op-log appends, activity-feed errors, materializer
-//!   trigger) that are handled by a separate registry path.
+//!   trigger) live behind the [`ToolRegistry`] seam; the adapter only
+//!   differs per surface in what `get_info` advertises (#693).
 //!
 //! ## How to drive it
 //!
@@ -45,6 +47,7 @@ use rmcp::{
 use serde_json::Value;
 use ulid::Ulid;
 
+use super::McpSurface;
 use super::activity::{
     ActivityContext, ActivityResult, ActorKind, ToolCompletionEvent, emit_tool_completion,
 };
@@ -53,19 +56,27 @@ use super::registry::ToolRegistry;
 use super::server::ERROR_CLIP_CAP;
 use crate::error::AppError;
 
-/// Production adapter that exposes the read-only registry through `rmcp`'s
+/// Production adapter that exposes a tool registry through `rmcp`'s
 /// [`ServerHandler`] trait.
 ///
 /// `list_tools` forwards every entry the [`ToolRegistry`] returns and
-/// `call_tool` dispatches every RO tool through the registry. `R` is the
+/// `call_tool` dispatches every tool through the registry. `R` is the
 /// existing [`ToolRegistry`] trait — the adapter does NOT need a parallel
 /// registration model.
-pub struct RmcpReadOnlyAdapter<R: ToolRegistry> {
+///
+/// #693 — the adapter is parameterised on [`McpSurface`] so `get_info`
+/// advertises the surface it actually fronts. (Previously named
+/// `RmcpReadOnlyAdapter` and hardcoded to introduce itself as the
+/// read-only server even on the RW socket.)
+pub struct RmcpAdapter<R: ToolRegistry> {
     registry: Arc<R>,
     /// FEAT-4d activity-emission seam. `None` in tests / stub binaries
     /// where no Tauri runtime is bound; `Some(_)` in production via
     /// `ActivityContext::from_app_handle`.
     activity_ctx: Option<ActivityContext>,
+    /// Which surface this adapter fronts — drives `get_info`'s
+    /// instructions (#693).
+    surface: McpSurface,
     /// Stable per-connection ULID, mirroring
     /// `super::server::ConnectionState::session_id`. Stamped onto every
     /// emitted activity entry so the frontend feed can group entries
@@ -73,32 +84,38 @@ pub struct RmcpReadOnlyAdapter<R: ToolRegistry> {
     session_id: String,
 }
 
-impl<R: ToolRegistry> RmcpReadOnlyAdapter<R> {
-    /// Build an adapter around an existing registry handle and an
-    /// optional FEAT-4d activity context. Pass `None` for activity_ctx in
-    /// tests / stub binaries with no Tauri runtime bound.
-    pub fn new(registry: Arc<R>, activity_ctx: Option<ActivityContext>) -> Self {
+impl<R: ToolRegistry> RmcpAdapter<R> {
+    /// Build an adapter around an existing registry handle, an optional
+    /// FEAT-4d activity context, and the surface it fronts. Pass `None`
+    /// for activity_ctx in tests / stub binaries with no Tauri runtime
+    /// bound.
+    pub fn new(
+        registry: Arc<R>,
+        activity_ctx: Option<ActivityContext>,
+        surface: McpSurface,
+    ) -> Self {
         Self {
             registry,
             activity_ctx,
+            surface,
             session_id: Ulid::new().to_string(),
         }
     }
 }
 
-impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
+impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
     fn get_info(&self) -> ServerInfo {
         // `ServerInfo` (= `InitializeResult`) is `#[non_exhaustive]` —
         // construct it through the documented builder methods. The
         // hand-rolled code pins to MCP "2025-06-18"; rmcp picks the
         // latest spec version it knows. Either is acceptable per MCP
         // — version negotiation is the client's responsibility.
+        //
+        // #693 — instructions come from the surface so the RW socket
+        // no longer advertises itself as the read-only server.
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("agaric", env!("CARGO_PKG_VERSION")))
-            .with_instructions(
-                "Agaric MCP read-only server. Exposes the full read-only tool \
-                 registry — use tools/list to discover available tools.",
-            )
+            .with_instructions(self.surface.instructions())
     }
 
     async fn list_tools(
@@ -229,15 +246,28 @@ impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
     }
 }
 
+/// Generic wire message for the `app_error_to_rmcp` catch-all arm
+/// (#698). Mirrors the wording of the IPC boundary's
+/// `sanitize_internal_error` so both agent-facing surfaces speak the
+/// same sentence.
+pub(crate) const INTERNAL_ERROR_WIRE_MESSAGE: &str = "an internal error occurred";
+
 /// `AppError → rmcp::ErrorData` translation. Maps error variants to
 /// JSON-RPC error codes. NotFound is mapped
 /// via [`ErrorData::new`] rather than [`ErrorData::resource_not_found`]
 /// because the latter emits -32002 (MCP-spec default); the agaric
 /// hand-rolled path deliberately uses -32001 to leave -32002 free
 /// for a future second resource class.
+///
+/// #698 — the catch-all arm no longer copies `err.to_string()` onto the
+/// wire: internal `AppError` variants (Database / Io / Json / …) embed
+/// sqlx / OS detail that has no business reaching an automation client
+/// (the Tauri IPC boundary already strips the same variants via
+/// `sanitize_internal_error`). The detail is preserved on a
+/// `tracing::error!` line for the daily log; the wire sees a generic
+/// `-32603` message.
 fn app_error_to_rmcp(err: &AppError) -> ErrorData {
     use rmcp::model::ErrorCode;
-    let msg = err.to_string();
     match err {
         AppError::NotFound(_) => {
             // The constant is `i64` (JSON-RPC error codes are spec'd as
@@ -248,12 +278,20 @@ fn app_error_to_rmcp(err: &AppError) -> ErrorData {
             // a hidden cast.
             let code = i32::try_from(super::server::JSONRPC_RESOURCE_NOT_FOUND)
                 .expect("JSONRPC_RESOURCE_NOT_FOUND fits in i32");
-            ErrorData::new(ErrorCode(code), msg, None)
+            ErrorData::new(ErrorCode(code), err.to_string(), None)
         }
         AppError::Validation(_) | AppError::InvalidOperation(_) => {
-            ErrorData::invalid_params(msg, None)
+            ErrorData::invalid_params(err.to_string(), None)
         }
-        _ => ErrorData::internal_error(msg, None),
+        _ => {
+            // #698 — log the real chain, send a generic message.
+            tracing::error!(
+                target: "mcp",
+                error = %err,
+                "internal error suppressed before reaching the MCP wire",
+            );
+            ErrorData::internal_error(INTERNAL_ERROR_WIRE_MESSAGE, None)
+        }
     }
 }
 
@@ -364,7 +402,7 @@ mod tests {
             Arc::new(std::sync::Mutex::new(ActivityRing::new())),
             Arc::new(RecordingEmitter::new()),
         );
-        let adapter = RmcpReadOnlyAdapter::new(registry, Some(activity_ctx));
+        let adapter = RmcpAdapter::new(registry, Some(activity_ctx), McpSurface::ReadOnly);
         let info = adapter.get_info();
         assert!(
             info.capabilities.tools.is_some(),
@@ -405,7 +443,7 @@ mod tests {
         let emitter = Arc::new(RecordingEmitter::new());
         let activity_ctx = ActivityContext::new(ring.clone(), emitter.clone());
 
-        let adapter = RmcpReadOnlyAdapter::new(registry, Some(activity_ctx));
+        let adapter = RmcpAdapter::new(registry, Some(activity_ctx), McpSurface::ReadOnly);
 
         // 4 KiB duplex pipe — large enough for handshake + one tool
         // call without back-pressure stalls.
@@ -526,7 +564,7 @@ mod tests {
         let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
         let emitter = Arc::new(RecordingEmitter::new());
         let activity_ctx = ActivityContext::new(ring.clone(), emitter.clone());
-        let adapter = RmcpReadOnlyAdapter::new(registry, Some(activity_ctx));
+        let adapter = RmcpAdapter::new(registry, Some(activity_ctx), McpSurface::ReadOnly);
 
         let (server_io, client_io) = tokio::io::duplex(4096);
         let server_task = tokio::spawn(async move {
@@ -568,7 +606,7 @@ mod tests {
     /// Parity gate. Builds the production
     /// [`crate::mcp::tools_ro::ReadOnlyTools`] registry against a
     /// temp-dir SQLite pool, drives `tools/list` through the
-    /// `RmcpReadOnlyAdapter` over rmcp's wire framing, and asserts that
+    /// `RmcpAdapter` over rmcp's wire framing, and asserts that
     /// every advertised tool matches the registry's own `list_tools()`
     /// output field-by-field: `name`, `description`, and `inputSchema`.
     ///
@@ -623,7 +661,7 @@ mod tests {
         let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
         let emitter = Arc::new(RecordingEmitter::new());
         let activity_ctx = ActivityContext::new(ring, emitter);
-        let adapter = RmcpReadOnlyAdapter::new(registry, Some(activity_ctx));
+        let adapter = RmcpAdapter::new(registry, Some(activity_ctx), McpSurface::ReadOnly);
 
         let (server_io, client_io) = tokio::io::duplex(64 * 1024);
         let server_task = tokio::spawn(async move {
@@ -785,10 +823,16 @@ mod tests {
                 "Invalid operation: cannot do that",
             ),
             (
+                // #698 — the catch-all arm sends a GENERIC message;
+                // the sqlx detail goes to tracing, not the wire. The
+                // previous revision of this test pinned the raw
+                // "attempted to acquire a connection on a closed pool"
+                // string on the wire as intended behaviour — that was
+                // the leak, not the contract.
                 "Database (catch-all) → -32603",
                 AppError::Database(sqlx::Error::PoolClosed),
                 -32603,
-                "Database error: attempted to acquire a connection on a closed pool",
+                super::INTERNAL_ERROR_WIRE_MESSAGE,
             ),
         ];
         for (label, err, expected_code, expected_msg) in cases {
@@ -804,5 +848,106 @@ mod tests {
                 "{label}: message drift",
             );
         }
+    }
+
+    /// #698 — exhaustive leak guard for the catch-all arm: internal
+    /// `AppError` variants must never put their `Display` payload on
+    /// the wire. NotFound / Validation / InvalidOperation keep their
+    /// crafted, agent-actionable messages (covered above); everything
+    /// else collapses to the generic `-32603` sentence.
+    #[test]
+    fn rmcp_internal_errors_never_leak_detail_to_the_wire() {
+        let internal_cases: Vec<(&str, AppError)> = vec![
+            ("Database", AppError::Database(sqlx::Error::PoolClosed)),
+            (
+                "Io",
+                AppError::Io(std::io::Error::other("SECRET_OS_DETAIL: fd 7 exploded")),
+            ),
+            (
+                "Json",
+                AppError::Json(serde_json::from_str::<serde_json::Value>("{SECRET").unwrap_err()),
+            ),
+        ];
+        for (label, err) in internal_cases {
+            let detail = err.to_string();
+            let rmcp_err = super::app_error_to_rmcp(&err);
+            assert_eq!(rmcp_err.code.0, -32603, "{label}: must map to -32603");
+            assert_eq!(
+                rmcp_err.message.as_ref(),
+                super::INTERNAL_ERROR_WIRE_MESSAGE,
+                "{label}: wire message must be the generic sentence",
+            );
+            assert!(
+                !rmcp_err.message.contains(&detail) && !rmcp_err.message.contains("SECRET"),
+                "{label}: internal detail {detail:?} leaked onto the wire",
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // #693 — per-surface get_info advertisement
+    // -----------------------------------------------------------------
+
+    fn mk_mock_adapter(surface: McpSurface) -> RmcpAdapter<MockRoRegistry> {
+        let registry = Arc::new(MockRoRegistry {
+            observed_actor: Arc::new(Mutex::new(None)),
+            call_count: Arc::new(Mutex::new(0)),
+        });
+        RmcpAdapter::new(registry, None, surface)
+    }
+
+    /// #693 — the RO adapter keeps the historical read-only
+    /// advertisement, and the RW adapter must NOT claim to be the
+    /// read-only server (agents weight `initialize` instructions
+    /// heavily; a read-only claim suppresses legitimate write-tool
+    /// use). Nothing asserted what the RW socket advertised before
+    /// this test.
+    #[test]
+    fn rmcp_get_info_instructions_match_surface() {
+        let ro_info = mk_mock_adapter(McpSurface::ReadOnly).get_info();
+        let ro_instructions = ro_info.instructions.as_deref().unwrap_or_default();
+        assert!(
+            ro_instructions.contains("read-only"),
+            "RO surface must advertise read-only; got {ro_instructions:?}",
+        );
+
+        let rw_info = mk_mock_adapter(McpSurface::ReadWrite).get_info();
+        let rw_instructions = rw_info.instructions.as_deref().unwrap_or_default();
+        assert!(
+            rw_instructions.contains("read-write"),
+            "RW surface must advertise read-write; got {rw_instructions:?}",
+        );
+        assert!(
+            !rw_instructions.contains("read-only"),
+            "RW surface must NOT claim to be the read-only server (#693); got {rw_instructions:?}",
+        );
+        // Both surfaces keep the same serverInfo implementation name.
+        assert_eq!(ro_info.server_info.name, "agaric");
+        assert_eq!(rw_info.server_info.name, "agaric");
+    }
+
+    /// #693 wire-level twin: drive a real rmcp handshake against an
+    /// RW-surface adapter and assert the `initialize` result the
+    /// client observes carries the read-write instructions.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rmcp_rw_surface_advertises_read_write_over_the_wire() {
+        let adapter = mk_mock_adapter(McpSurface::ReadWrite);
+        let (server_io, client_io) = tokio::io::duplex(4096);
+        let server_task = tokio::spawn(async move {
+            let server = adapter.serve(server_io).await.expect("server handshake");
+            let _ = server.waiting().await;
+        });
+        let client = make_test_client_info()
+            .serve(client_io)
+            .await
+            .expect("client handshake");
+        let info = client.peer_info().expect("initialize result captured");
+        let instructions = info.instructions.as_deref().unwrap_or_default();
+        assert!(
+            instructions.contains("read-write"),
+            "wire initialize must advertise read-write; got {instructions:?}",
+        );
+        let _ = client.cancel().await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), server_task).await;
     }
 }

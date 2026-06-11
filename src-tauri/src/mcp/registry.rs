@@ -65,6 +65,7 @@ pub(crate) const TOOL_LIST_TAGS: &str = "list_tags";
 pub(crate) const TOOL_LIST_PROPERTY_DEFS: &str = "list_property_defs";
 pub(crate) const TOOL_GET_AGENDA: &str = "get_agenda";
 pub(crate) const TOOL_JOURNAL_FOR_DATE: &str = "journal_for_date";
+pub(crate) const TOOL_LIST_SPACES: &str = "list_spaces";
 
 // Read-write tool names (`tools_rw.rs`).
 pub(crate) const TOOL_APPEND_BLOCK: &str = "append_block";

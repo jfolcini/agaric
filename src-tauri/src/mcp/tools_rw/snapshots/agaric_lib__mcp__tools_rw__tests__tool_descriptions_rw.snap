@@ -1,6 +1,5 @@
 ---
 source: src/mcp/tools_rw/tests.rs
-assertion_line: 72
 expression: wire
 ---
 - description: "Append a content block under an existing parent. The block_type is always `content` — agents cannot create pages or tags through this tool."
@@ -45,7 +44,7 @@ expression: wire
       - space_id
     type: object
   name: update_block_content
-- description: Set (upsert) a typed property on a block. Exactly one of value_text / value_num / value_date / value_ref must be provided.
+- description: Set (upsert) a typed property on a block. Exactly one of value_text / value_num / value_date / value_ref / value_bool must be provided.
   inputSchema:
     additionalProperties: false
     properties:
@@ -58,6 +57,9 @@ expression: wire
       space_id:
         description: "PEND-24 — ULID of the space the agent is operating in. The write is rejected with a Validation error if `block_id`'s owning page lives in a different space."
         type: string
+      value_bool:
+        description: "Boolean value (exactly one value_* must be set). #697 — for `value_type = 'boolean'` property definitions."
+        type: boolean
       value_date:
         description: ISO-8601 date (exactly one value_* must be set).
         type: string

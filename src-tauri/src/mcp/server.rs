@@ -1,7 +1,7 @@
 //! MCP server lifecycle and accept-loop driver.
 //!
 //! As of MAINT-111 M3 the per-connection JSON-RPC framing and
-//! `tools/call` dispatch live in [`super::rmcp_adapter::RmcpReadOnlyAdapter`]
+//! `tools/call` dispatch live in [`super::rmcp_adapter::RmcpAdapter`]
 //! (the rmcp adapter). This module owns the bits that the rmcp adapter
 //! does not touch:
 //!
@@ -18,7 +18,7 @@
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use super::{ConnectionCounterGuard, McpLifecycle, SocketKind};
+use super::{ConnectionCounterGuard, McpLifecycle, McpSurface, SocketKind};
 use crate::error::AppError;
 
 // Re-export the registry types so external callers (tests, mod.rs's
@@ -62,6 +62,39 @@ pub(crate) const ERROR_CLIP_CAP: usize = 200;
 pub(crate) const MCP_DISCONNECT_GRACE_PERIOD: std::time::Duration =
     std::time::Duration::from_secs(2);
 
+/// #636 — maximum back-off for consecutive `accept()` failures.
+/// Mirrors the sync daemon's M-53 accept-loop hardening
+/// (`sync_net/websocket.rs::ACCEPT_BACKOFF_CAP`, 30 s) — that helper
+/// lives in a private module, so the schedule is mirrored here rather
+/// than imported.
+const ACCEPT_BACKOFF_CAP: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// #636 — back-off duration before the *next* accept attempt after a
+/// run of consecutive `accept()` failures.
+///
+/// Schedule mirrors the sync daemon's M-53 `compute_accept_backoff_duration`:
+/// `100ms × 2^(n-1)` capped at [`ACCEPT_BACKOFF_CAP`], where `n` is the
+/// 1-based count of consecutive failures; `0` means "no recent
+/// failure" and yields zero so a healthy loop never sleeps.
+///
+/// Rationale: a transient `accept()` error (EMFILE / ENFILE /
+/// ECONNABORTED) used to propagate out of the serve loop via `?`,
+/// permanently killing the socket until the user toggled the setting
+/// off and on. The loop now logs, backs off, and retries; the back-off
+/// is CPU protection against a runaway error, never a DoS guard
+/// (single-user local socket — see AGENTS.md threat model).
+pub(crate) fn compute_accept_backoff_duration(failure_count: u32) -> std::time::Duration {
+    if failure_count == 0 {
+        return std::time::Duration::ZERO;
+    }
+    // Cap the exponent so a runaway counter cannot overflow the shift;
+    // the 30 s ceiling is the real limit anyway.
+    let exponent = failure_count.saturating_sub(1).min(32);
+    let factor: u64 = 1u64.checked_shl(exponent).unwrap_or(u64::MAX);
+    let millis: u64 = 100u64.saturating_mul(factor);
+    std::time::Duration::from_millis(millis).min(ACCEPT_BACKOFF_CAP)
+}
+
 // ---------------------------------------------------------------------------
 // Per-connection loop
 // ---------------------------------------------------------------------------
@@ -77,6 +110,7 @@ pub async fn handle_connection<S, R>(
     stream: S,
     registry: std::sync::Arc<R>,
     activity_ctx: Option<super::activity::ActivityContext>,
+    surface: McpSurface,
 ) -> Result<(), AppError>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -84,7 +118,9 @@ where
 {
     use rmcp::service::ServiceExt;
 
-    let adapter = super::rmcp_adapter::RmcpReadOnlyAdapter::new(registry, activity_ctx);
+    // #693 — the surface drives what `get_info` advertises so the RW
+    // socket no longer introduces itself as the read-only server.
+    let adapter = super::rmcp_adapter::RmcpAdapter::new(registry, activity_ctx, surface);
     let server = adapter
         .serve(stream)
         .await
@@ -124,16 +160,19 @@ pub async fn serve<R>(
     registry: std::sync::Arc<R>,
     activity_ctx: Option<super::activity::ActivityContext>,
     lifecycle: Option<McpLifecycle>,
+    surface: McpSurface,
 ) -> Result<(), AppError>
 where
     R: ToolRegistry + Send + Sync + 'static,
 {
     match socket {
         #[cfg(unix)]
-        SocketKind::Unix(listener) => serve_unix(listener, registry, activity_ctx, lifecycle).await,
+        SocketKind::Unix(listener) => {
+            serve_unix(listener, registry, activity_ctx, lifecycle, surface).await
+        }
         #[cfg(windows)]
         SocketKind::Pipe { server, path } => {
-            serve_pipe(server, path, registry, activity_ctx, lifecycle).await
+            serve_pipe(server, path, registry, activity_ctx, lifecycle, surface).await
         }
     }
 }
@@ -152,10 +191,15 @@ async fn serve_unix<R>(
     registry: std::sync::Arc<R>,
     activity_ctx: Option<super::activity::ActivityContext>,
     lifecycle: Option<McpLifecycle>,
+    surface: McpSurface,
 ) -> Result<(), AppError>
 where
     R: ToolRegistry + Send + Sync + 'static,
 {
+    // #636 — consecutive accept-failure counter driving the M-53-style
+    // exponential back-off. Reset to zero by every successful accept.
+    let mut accept_failure_count: u32 = 0;
+
     loop {
         // H-2: per-iteration gate. A `mcp_set_enabled(false)` clears
         // `enabled` and notifies, so we either short-circuit here on
@@ -165,7 +209,8 @@ where
         if lifecycle_disabled(lifecycle.as_ref()) {
             tracing::info!(
                 target: "mcp",
-                "MCP RO accept loop exiting (lifecycle.enabled cleared)",
+                kind = surface.label(),
+                "MCP accept loop exiting (lifecycle.enabled cleared)",
             );
             return Ok(());
         }
@@ -188,7 +233,41 @@ where
         };
 
         let (stream, _addr) = match outcome {
-            Some(res) => res?,
+            Some(Ok(accepted)) => {
+                accept_failure_count = 0;
+                accepted
+            }
+            Some(Err(e)) => {
+                // #636 — a transient accept error (EMFILE / ENFILE /
+                // ECONNABORTED) must NOT kill the serve loop: the old
+                // `res?` propagated it out, leaving the socket dead
+                // until the user toggled the setting off and on. Log,
+                // back off (M-53 schedule), and retry. The sleep races
+                // the disconnect signal so a disable during back-off
+                // still tears the loop down promptly via the gate
+                // re-check at the top.
+                accept_failure_count = accept_failure_count.saturating_add(1);
+                let backoff = compute_accept_backoff_duration(accept_failure_count);
+                tracing::warn!(
+                    target: "mcp",
+                    kind = surface.label(),
+                    error = %e,
+                    failure_count = accept_failure_count,
+                    backoff_ms = u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX),
+                    "MCP accept() failed; backing off and retrying",
+                );
+                match lifecycle.as_ref() {
+                    Some(lc) => {
+                        let notify = lc.disconnect_signal.clone();
+                        tokio::select! {
+                            () = tokio::time::sleep(backoff) => {}
+                            () = async move { notify.notified().await } => {}
+                        }
+                    }
+                    None => tokio::time::sleep(backoff).await,
+                }
+                continue;
+            }
             None => continue,
         };
 
@@ -201,7 +280,8 @@ where
             drop(stream);
             tracing::info!(
                 target: "mcp",
-                "MCP RO accept loop exiting after racing accept (lifecycle.enabled cleared)",
+                kind = surface.label(),
+                "MCP accept loop exiting after racing accept (lifecycle.enabled cleared)",
             );
             return Ok(());
         }
@@ -210,7 +290,7 @@ where
         let activity_ctx = activity_ctx.clone();
         let lifecycle = lifecycle.clone();
         tokio::spawn(async move {
-            run_connection(stream, registry, activity_ctx, lifecycle).await;
+            run_connection(stream, registry, activity_ctx, lifecycle, surface).await;
         });
     }
 }
@@ -222,6 +302,7 @@ async fn serve_pipe<R>(
     registry: std::sync::Arc<R>,
     activity_ctx: Option<super::activity::ActivityContext>,
     lifecycle: Option<McpLifecycle>,
+    surface: McpSurface,
 ) -> Result<(), AppError>
 where
     R: ToolRegistry + Send + Sync + 'static,
@@ -236,12 +317,16 @@ where
     // connected and the loop spun up the second server instance.
     let pipe_path = pipe_path.as_str();
 
+    // #636 — consecutive connect-failure counter; see `serve_unix`.
+    let mut accept_failure_count: u32 = 0;
+
     loop {
         // H-2: per-iteration gate. See `serve_unix` for the rationale.
         if lifecycle_disabled(lifecycle.as_ref()) {
             tracing::info!(
                 target: "mcp",
-                "MCP RO accept loop exiting (lifecycle.enabled cleared)",
+                kind = surface.label(),
+                "MCP accept loop exiting (lifecycle.enabled cleared)",
             );
             return Ok(());
         }
@@ -258,8 +343,38 @@ where
         };
 
         match outcome {
-            Some(Ok(())) => {}
-            Some(Err(e)) => return Err(e.into()),
+            Some(Ok(())) => {
+                accept_failure_count = 0;
+            }
+            Some(Err(e)) => {
+                // #636 — same hardening as `serve_unix`: a transient
+                // `connect()` error must not kill the loop. Log, back
+                // off, retry against the same pipe instance (the
+                // instance stays listenable; if it is permanently
+                // broken the capped back-off keeps the retry loop
+                // cheap until the user toggles the surface).
+                accept_failure_count = accept_failure_count.saturating_add(1);
+                let backoff = compute_accept_backoff_duration(accept_failure_count);
+                tracing::warn!(
+                    target: "mcp",
+                    kind = surface.label(),
+                    error = %e,
+                    failure_count = accept_failure_count,
+                    backoff_ms = u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX),
+                    "MCP pipe connect() failed; backing off and retrying",
+                );
+                match lifecycle.as_ref() {
+                    Some(lc) => {
+                        let notify = lc.disconnect_signal.clone();
+                        tokio::select! {
+                            () = tokio::time::sleep(backoff) => {}
+                            () = async move { notify.notified().await } => {}
+                        }
+                    }
+                    None => tokio::time::sleep(backoff).await,
+                }
+                continue;
+            }
             None => continue,
         }
 
@@ -268,7 +383,8 @@ where
         if lifecycle_disabled(lifecycle.as_ref()) {
             tracing::info!(
                 target: "mcp",
-                "MCP RO accept loop exiting after racing connect (lifecycle.enabled cleared)",
+                kind = surface.label(),
+                "MCP accept loop exiting after racing connect (lifecycle.enabled cleared)",
             );
             return Ok(());
         }
@@ -295,7 +411,7 @@ where
         let activity_ctx = activity_ctx.clone();
         let lifecycle = lifecycle.clone();
         tokio::spawn(async move {
-            run_connection(connected, registry, activity_ctx, lifecycle).await;
+            run_connection(connected, registry, activity_ctx, lifecycle, surface).await;
         });
     }
 }
@@ -310,6 +426,7 @@ async fn run_connection<S, R>(
     registry: std::sync::Arc<R>,
     activity_ctx: Option<super::activity::ActivityContext>,
     lifecycle: Option<McpLifecycle>,
+    surface: McpSurface,
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     R: ToolRegistry,
@@ -320,7 +437,7 @@ async fn run_connection<S, R>(
         .as_ref()
         .map(|lc| ConnectionCounterGuard::new(lc.active_connections.clone()));
 
-    let fut = handle_connection(stream, registry, activity_ctx);
+    let fut = handle_connection(stream, registry, activity_ctx, surface);
 
     let result = match lifecycle.as_ref() {
         Some(lc) => {
@@ -363,7 +480,57 @@ async fn run_connection<S, R>(
     };
 
     if let Err(e) = result {
-        tracing::warn!(target: "mcp", error = %e, "MCP connection ended with error");
+        tracing::warn!(
+            target: "mcp",
+            kind = surface.label(),
+            error = %e,
+            "MCP connection ended with error",
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #636 — accept-loop back-off tests (mirrors sync_net M-53 coverage)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests_backoff {
+    use super::compute_accept_backoff_duration;
+    use std::time::Duration;
+
+    #[test]
+    fn accept_backoff_is_zero_after_successful_accept() {
+        assert_eq!(compute_accept_backoff_duration(0), Duration::ZERO);
+    }
+
+    #[test]
+    fn accept_backoff_doubles_each_step_until_cap() {
+        assert_eq!(
+            compute_accept_backoff_duration(1),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            compute_accept_backoff_duration(2),
+            Duration::from_millis(200)
+        );
+        assert_eq!(
+            compute_accept_backoff_duration(3),
+            Duration::from_millis(400)
+        );
+        assert_eq!(
+            compute_accept_backoff_duration(5),
+            Duration::from_millis(1600)
+        );
+    }
+
+    #[test]
+    fn accept_backoff_caps_at_thirty_seconds_and_survives_runaway_counter() {
+        assert_eq!(compute_accept_backoff_duration(10), Duration::from_secs(30));
+        // A runaway counter must not overflow the shift.
+        assert_eq!(
+            compute_accept_backoff_duration(u32::MAX),
+            Duration::from_secs(30)
+        );
     }
 }
 
@@ -458,8 +625,16 @@ mod tests_m83 {
             let registry = Arc::new(PlaceholderRegistry);
             let lifecycle = McpLifecycle::new();
             let serve_lc = lifecycle.clone();
-            let serve_task =
-                tokio::spawn(async move { serve(socket, registry, None, Some(serve_lc)).await });
+            let serve_task = tokio::spawn(async move {
+                serve(
+                    socket,
+                    registry,
+                    None,
+                    Some(serve_lc),
+                    crate::mcp::McpSurface::ReadWrite,
+                )
+                .await
+            });
 
             // First client: connect on the custom path. The accept
             // loop hands the connection off to a per-connection task

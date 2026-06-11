@@ -86,7 +86,14 @@ async fn disconnect_signal_grants_grace_period_for_in_flight_tool_call_l113() {
     let task_lc = lifecycle.clone();
     let task_registry = registry.clone();
     let server_task = tokio::spawn(async move {
-        run_connection(server_io, task_registry, None, Some(task_lc)).await;
+        run_connection(
+            server_io,
+            task_registry,
+            None,
+            Some(task_lc),
+            crate::mcp::McpSurface::ReadOnly,
+        )
+        .await;
     });
 
     let client = make_test_client_info("l113-grace-test")
@@ -167,7 +174,14 @@ async fn disconnect_signal_drops_after_grace_period_when_call_hangs_l113() {
     let task_lc = lifecycle.clone();
     let task_registry = registry.clone();
     let server_task = tokio::spawn(async move {
-        run_connection(server_io, task_registry, None, Some(task_lc)).await;
+        run_connection(
+            server_io,
+            task_registry,
+            None,
+            Some(task_lc),
+            crate::mcp::McpSurface::ReadOnly,
+        )
+        .await;
     });
 
     let client = make_test_client_info("l113-drop-test")
@@ -226,17 +240,17 @@ async fn disconnect_signal_drops_after_grace_period_when_call_hangs_l113() {
 /// typed `ClientRequest` variants, which closes off the unknown-method
 /// surface — raw bytes are the only way to test it).
 ///
-/// Server side still uses the production `RmcpReadOnlyAdapter` over
+/// Server side still uses the production `RmcpAdapter` over
 /// `tokio::io::duplex`; client side writes raw newline-delimited JSON
 /// directly to the pipe.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unknown_method_returns_method_not_found() {
-    use crate::mcp::rmcp_adapter::RmcpReadOnlyAdapter;
+    use crate::mcp::rmcp_adapter::RmcpAdapter;
 
     let registry = Arc::new(SlowRegistry {
         sleep: Duration::from_millis(0),
     });
-    let adapter = RmcpReadOnlyAdapter::new(registry, None);
+    let adapter = RmcpAdapter::new(registry, None, crate::mcp::McpSurface::ReadOnly);
 
     let (server_io, client_io) = tokio::io::duplex(4096);
     let server_task = tokio::spawn(async move {
@@ -323,12 +337,12 @@ async fn unknown_method_returns_method_not_found() {
 /// accept loop continues handling future connections.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn malformed_json_does_not_panic_server() {
-    use crate::mcp::rmcp_adapter::RmcpReadOnlyAdapter;
+    use crate::mcp::rmcp_adapter::RmcpAdapter;
 
     let registry = Arc::new(SlowRegistry {
         sleep: Duration::from_millis(0),
     });
-    let adapter = RmcpReadOnlyAdapter::new(registry, None);
+    let adapter = RmcpAdapter::new(registry, None, crate::mcp::McpSurface::ReadOnly);
 
     let (server_io, client_io) = tokio::io::duplex(4096);
     let server_task = tokio::spawn(async move {

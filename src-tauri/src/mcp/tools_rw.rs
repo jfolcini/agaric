@@ -107,6 +107,13 @@ struct SetPropertyArgs {
     value_date: Option<String>,
     #[serde(default)]
     value_ref: Option<String>,
+    /// #697 — boolean slot (PEND-14 `value_type = 'boolean'` defs).
+    /// Previously the backend accepted it and the L-122 error message
+    /// advertised it, but the MCP schema rejected it via
+    /// `deny_unknown_fields` — an agent following the error got a
+    /// parse failure.
+    #[serde(default)]
+    value_bool: Option<bool>,
     space_id: String,
 }
 
@@ -281,7 +288,7 @@ fn tool_desc_set_property() -> ToolDescription {
     ToolDescription {
         name: TOOL_SET_PROPERTY.to_string(),
         description: "Set (upsert) a typed property on a block. Exactly one of value_text / \
-                      value_num / value_date / value_ref must be provided."
+                      value_num / value_date / value_ref / value_bool must be provided."
             .to_string(),
         input_schema: json!({
             "type": "object",
@@ -294,6 +301,7 @@ fn tool_desc_set_property() -> ToolDescription {
                 "value_num":  { "type": "number", "description": "Numeric value (exactly one value_* must be set)." },
                 "value_date": { "type": "string", "description": "ISO-8601 date (exactly one value_* must be set)." },
                 "value_ref":  { "type": "string", "description": "Block ULID reference (exactly one value_* must be set)." },
+                "value_bool": { "type": "boolean", "description": "Boolean value (exactly one value_* must be set). #697 — for `value_type = 'boolean'` property definitions." },
                 "space_id": {
                     "type": "string",
                     "description": "PEND-24 — ULID of the space the agent is operating in. The write is rejected with a Validation error if `block_id`'s owning page lives in a different space.",
@@ -433,6 +441,20 @@ async fn handle_set_property(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: SetPropertyArgs = parse_args(TOOL_SET_PROPERTY, args)?;
+    // #699 — cap `value_text` at the same MAX_CONTENT_LENGTH the IPC
+    // layer enforces on block content (`create_block_in_tx`,
+    // `edit_block_inner`; see `commands/mod.rs`). `block_properties`
+    // rows had no size bound at this boundary, so a buggy agent could
+    // push multi-MB payloads into the property table.
+    if let Some(ref text) = args.value_text
+        && text.len() > crate::commands::MAX_CONTENT_LENGTH
+    {
+        return Err(AppError::Validation(format!(
+            "tool `{TOOL_SET_PROPERTY}`: value_text length {} exceeds maximum {}",
+            text.len(),
+            crate::commands::MAX_CONTENT_LENGTH,
+        )));
+    }
     // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary
     // (block_id is required, value_ref is optional and only meaningful
     // when the property is a ref-typed value).
@@ -461,7 +483,9 @@ async fn handle_set_property(
         args.value_num,
         args.value_date,
         value_ref,
-        None,
+        // #697 — thread the boolean slot through; the schema and the
+        // L-122 error message now agree on the five accepted slots.
+        args.value_bool,
         Some(TOOL_SET_PROPERTY),
     )
     .await?;

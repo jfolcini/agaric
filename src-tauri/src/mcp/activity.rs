@@ -2,9 +2,12 @@
 //!
 //! FEAT-4d ships the in-memory rolling log of the last 100 tool calls plus
 //! the `mcp:activity` Tauri event surface. The frontend (FEAT-4e) subscribes
-//! to the event stream and maintains its own 100-entry render buffer — the
-//! ring lives here only so late subscribers / diagnostics can inspect the
-//! recent history without a pull-query surface.
+//! to the event stream and maintains its own 100-entry render buffer; the
+//! ring lets late subscribers / diagnostics inspect the recent history via
+//! the `get_mcp_recent_activity` command (#695). Production threads ONE
+//! shared, Tauri-managed ring ([`McpActivityRing`]) through both the RO and
+//! RW serve tasks via [`ActivityContext::from_app_handle_with_ring`], so
+//! the history survives enable/disable cycles and is readable on demand.
 //!
 //! Design notes:
 //!
@@ -49,7 +52,7 @@ pub const MCP_ACTIVITY_EVENT: &str = "mcp:activity";
 /// Discriminates the caller kind on an activity entry without carrying any
 /// identifying name in Debug output. Agent identifiers (when present) live
 /// on [`ActivityEntry::agent_name`] and are redacted from the `Debug` impl.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ActorKind {
     /// Tool call originated from a user action in the UI (today this never
@@ -63,7 +66,7 @@ pub enum ActorKind {
 /// Outcome of a tool call. `Err` carries a short, user-friendly message —
 /// never the full `AppError` chain — because the summary is rendered in the
 /// Settings activity feed.
-#[derive(Clone, PartialEq, Eq, Serialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(tag = "kind", content = "message", rename_all = "snake_case")]
 pub enum ActivityResult {
     /// The tool call completed successfully.
@@ -95,7 +98,7 @@ impl fmt::Debug for ActivityResult {
 /// The `Debug` impl is handwritten to redact `agent_name` — never rely on
 /// `{entry:?}` producing the agent identifier in tracing spans. If an
 /// auditor needs the real name, read it via `entry.agent_name` explicitly.
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityEntry {
     /// MCP tool name (e.g. `"search"`, `"get_block"`).
@@ -331,11 +334,46 @@ impl ActivityContext {
 
     /// Build a production context from a Tauri `AppHandle`. Shorthand for
     /// `ActivityContext::new(Arc::new(Mutex::new(ActivityRing::new())), ...)`.
+    ///
+    /// #695 — allocates a FRESH ring, invisible to the
+    /// `get_mcp_recent_activity` command. Production wiring must use
+    /// [`from_app_handle_with_ring`](Self::from_app_handle_with_ring)
+    /// with the shared [`McpActivityRing`] managed state instead; this
+    /// constructor is kept for tests / headless callers that only care
+    /// about the emitter.
     pub fn from_app_handle<R: tauri::Runtime>(handle: tauri::AppHandle<R>) -> Self {
-        Self::new(
-            Arc::new(Mutex::new(ActivityRing::new())),
-            Arc::new(TauriRuntimeEmitter::new(handle)),
-        )
+        Self::from_app_handle_with_ring(handle, Arc::new(Mutex::new(ActivityRing::new())))
+    }
+
+    /// #695 — production constructor: bundle the Tauri emitter with the
+    /// caller-supplied **shared** ring (the Tauri-managed
+    /// [`McpActivityRing`]), so the ring the serve loops write is the
+    /// same ring `get_mcp_recent_activity` reads, and the history
+    /// survives enable/disable cycles.
+    pub fn from_app_handle_with_ring<R: tauri::Runtime>(
+        handle: tauri::AppHandle<R>,
+        ring: Arc<Mutex<ActivityRing>>,
+    ) -> Self {
+        Self::new(ring, Arc::new(TauriRuntimeEmitter::new(handle)))
+    }
+}
+
+/// #695 — newtype around the shared activity ring for Tauri's managed-
+/// state resolver (which keys on type). One instance is created at app
+/// setup, threaded into both the RO and RW serve tasks, and read by
+/// the `get_mcp_recent_activity` command.
+#[derive(Clone)]
+pub struct McpActivityRing(pub Arc<Mutex<ActivityRing>>);
+
+impl McpActivityRing {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(ActivityRing::new())))
+    }
+}
+
+impl Default for McpActivityRing {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

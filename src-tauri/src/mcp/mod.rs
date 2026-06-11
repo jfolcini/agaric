@@ -43,6 +43,52 @@ use crate::error::AppError;
 use crate::materializer::Materializer;
 
 // ---------------------------------------------------------------------------
+// Server surface (#693)
+// ---------------------------------------------------------------------------
+
+/// Which MCP surface a serve loop / adapter instance fronts.
+///
+/// #693 — the RO and RW sockets share the accept-loop and adapter
+/// machinery, but they must not share their *advertisement*: agents
+/// weight the `initialize` instructions heavily, and an RW socket that
+/// introduces itself as "read-only" can suppress legitimate write-tool
+/// use. The surface is threaded from the spawn helpers through the
+/// serve loop into [`rmcp_adapter::RmcpAdapter::get_info`], and also
+/// labels the accept-loop log lines (previously hardcoded "RO" on both
+/// paths).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpSurface {
+    ReadOnly,
+    ReadWrite,
+}
+
+impl McpSurface {
+    /// Short diagnostic label used in log lines and bind errors.
+    pub fn label(self) -> &'static str {
+        match self {
+            McpSurface::ReadOnly => "RO",
+            McpSurface::ReadWrite => "RW",
+        }
+    }
+
+    /// MCP `initialize` instructions advertised by [`rmcp_adapter::RmcpAdapter::get_info`].
+    pub fn instructions(self) -> &'static str {
+        match self {
+            McpSurface::ReadOnly => {
+                "Agaric MCP read-only server. Exposes the full read-only tool \
+                 registry — use tools/list to discover available tools."
+            }
+            McpSurface::ReadWrite => {
+                "Agaric MCP read-write server. Exposes the reversible write tool \
+                 registry — use tools/list to discover available tools. Every \
+                 mutation is recorded in the user-visible activity feed and is \
+                 reversible from the app."
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Runtime lifecycle (FEAT-4e)
 // ---------------------------------------------------------------------------
 
@@ -477,9 +523,19 @@ pub async fn bind_socket(pipe_path: &Path, socket_kind: &str) -> Result<SocketKi
 /// completed tool call pushes an [`activity::ActivityEntry`] into the ring
 /// and emits an `mcp:activity` event on this handle's bus.
 ///
+/// `activity_ring` (#695) is the **shared, managed** ring backing the
+/// `get_mcp_recent_activity` command. Threading it in (instead of
+/// letting `ActivityContext` allocate a fresh ring per spawn) makes
+/// the ring readable and persistent across enable/disable cycles.
+///
 /// `lifecycle` is the FEAT-4e managed state that surfaces connection
 /// counts and disconnect-signal plumbing to the Settings UI. Passed as
 /// `Option` so headless / test callers can elide it.
+// One spawn entry point assembling the full RO server dependency set
+// (pools, materializer, device id, the #695 shared activity ring, and
+// the FEAT-4e lifecycle handle); grouping these into a struct would just
+// move the same fields behind one more indirection.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_mcp_ro_task<R: tauri::Runtime>(
     app_data_dir: &Path,
     app_handle: tauri::AppHandle<R>,
@@ -487,6 +543,7 @@ pub fn spawn_mcp_ro_task<R: tauri::Runtime>(
     write_pool: SqlitePool,
     materializer: Materializer,
     device_id: String,
+    activity_ring: Arc<std::sync::Mutex<activity::ActivityRing>>,
     lifecycle: Option<McpLifecycle>,
 ) {
     if !mcp_ro_enabled(app_data_dir) {
@@ -498,7 +555,8 @@ pub fn spawn_mcp_ro_task<R: tauri::Runtime>(
     }
 
     let socket_path = default_mcp_ro_socket_path(app_data_dir);
-    let activity_ctx = activity::ActivityContext::from_app_handle(app_handle);
+    let activity_ctx =
+        activity::ActivityContext::from_app_handle_with_ring(app_handle, activity_ring);
     let registry = tools_ro::ReadOnlyTools::new(read_pool, write_pool, materializer, device_id);
     spawn_mcp_ro_task_with_registry(socket_path, registry, Some(activity_ctx), lifecycle);
 }
@@ -544,8 +602,14 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
                     lc.task_running
                         .store(true, std::sync::atomic::Ordering::Release);
                 }
-                if let Err(e) =
-                    server::serve(socket, registry, activity_ctx, lifecycle.clone()).await
+                if let Err(e) = server::serve(
+                    socket,
+                    registry,
+                    activity_ctx,
+                    lifecycle.clone(),
+                    McpSurface::ReadOnly,
+                )
+                .await
                 {
                     tracing::error!(
                         target: "mcp",
@@ -590,12 +654,16 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
 /// Passed as `Option` so headless / test callers can elide it. Call sites
 /// normally wrap the lifecycle in an [`McpRwLifecycle`] newtype before
 /// handing it to Tauri's managed-state resolver.
+///
+/// `activity_ring` (#695) — same shared managed ring as the RO task,
+/// so the `get_mcp_recent_activity` command surfaces one merged feed.
 pub fn spawn_mcp_rw_task<R: tauri::Runtime>(
     app_data_dir: &Path,
     app_handle: tauri::AppHandle<R>,
     write_pool: SqlitePool,
     materializer: Materializer,
     device_id: String,
+    activity_ring: Arc<std::sync::Mutex<activity::ActivityRing>>,
     lifecycle: Option<McpLifecycle>,
 ) {
     if !mcp_rw_enabled(app_data_dir) {
@@ -607,7 +675,8 @@ pub fn spawn_mcp_rw_task<R: tauri::Runtime>(
     }
 
     let socket_path = default_mcp_rw_socket_path(app_data_dir);
-    let activity_ctx = activity::ActivityContext::from_app_handle(app_handle);
+    let activity_ctx =
+        activity::ActivityContext::from_app_handle_with_ring(app_handle, activity_ring);
     let registry = tools_rw::ReadWriteTools::new(write_pool, materializer, device_id);
     spawn_mcp_rw_task_with_registry(socket_path, registry, Some(activity_ctx), lifecycle);
 }
@@ -637,8 +706,14 @@ pub fn spawn_mcp_rw_task_with_registry<R>(
                     lc.task_running
                         .store(true, std::sync::atomic::Ordering::Release);
                 }
-                if let Err(e) =
-                    server::serve(socket, registry, activity_ctx, lifecycle.clone()).await
+                if let Err(e) = server::serve(
+                    socket,
+                    registry,
+                    activity_ctx,
+                    lifecycle.clone(),
+                    McpSurface::ReadWrite,
+                )
+                .await
                 {
                     tracing::error!(
                         target: "mcp",
@@ -854,8 +929,13 @@ mod tests {
         // Spawn the in-process server against this socket.
         tokio::spawn(async move {
             let (server_side, _) = listener.accept().await.unwrap();
-            let _ = handle_connection(server_side, std::sync::Arc::new(PlaceholderRegistry), None)
-                .await;
+            let _ = handle_connection(
+                server_side,
+                std::sync::Arc::new(PlaceholderRegistry),
+                None,
+                crate::mcp::McpSurface::ReadOnly,
+            )
+            .await;
         });
 
         // Locate the built binary relative to CARGO_MANIFEST_DIR.
