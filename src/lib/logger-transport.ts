@@ -10,6 +10,12 @@
  * The default sink is a no-op: before `tauri.ts` has been imported (or in
  * browser/test contexts where the Tauri IPC bridge is absent) backend logging
  * is silently skipped, exactly matching the prior fire-and-forget fallback.
+ *
+ * Constraint (#868): there is a lazy-sink seam here — any `logger.warn`/
+ * `logger.error` fired at module-init time *before* `tauri.ts` registers its
+ * sink is silently dropped by this default no-op. No such early call exists
+ * today; this note is a guard-rail for future code that might log during
+ * module evaluation and expect it to reach the backend.
  */
 
 /**
