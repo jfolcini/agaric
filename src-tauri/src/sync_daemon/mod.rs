@@ -55,10 +55,11 @@ pub use discovery::{
 // on non-test builds (same rationale as the orchestrator/server re-exports below).
 #[allow(unused_imports)]
 pub(crate) use discovery::{format_peer_address, process_service_removed};
-// `pub(crate) use` re-exports consumed only by `#[cfg(test)]` siblings
-// (sync_daemon/tests.rs and the crate-level `sync_integration_tests`).
-// Without this `#[allow]` rustc fires `unused_imports` on non-test
-// builds because no production code path imports through this module.
+// `pub(crate) use` re-exports consumed only by the `#[cfg(test)]` sibling
+// `sync_daemon/tests.rs` (the crate-level `sync_integration_tests.rs` that
+// once also consumed these was deleted with the diffy sync layer). Without
+// this `#[allow]` rustc fires `unused_imports` on non-test builds because no
+// production code path imports through this module.
 #[allow(unused_imports)]
 pub(crate) use orchestrator::{
     SyncSessionContext, run_sequential_sync_round, run_sync_session, try_sync_with_peer,

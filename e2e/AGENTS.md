@@ -4,14 +4,16 @@
 
 ## Configuration
 
-- **Test dir:** `e2e/` — 29 spec files.
+The authoritative values live in [`playwright.config.ts`](../playwright.config.ts) — read it rather than trusting numbers copied here (the repo's no-counts rule: counts drift).
+
+- **Test dir:** `e2e/` (the `.spec.ts` files in this folder).
 - **Browser:** Chromium only.
 - **Base URL:** `http://localhost:5173`.
-- **Dev server:** auto-started via `npm run dev`; reused if already running.
-- **Retries:** 2 on CI, 0 locally.
-- **Workers:** 1 on CI, auto locally.
+- **Dev server:** auto-started via `npm run dev`; reused if already running (not in CI — `reuseExistingServer: !CI`).
+- **Retries:** retried both in CI and locally (`retries`); the local pre-push umbrella is the real gate, so mirroring CI's retry keeps a one-off overlay-timing hiccup from rejecting a green tree.
+- **Workers:** capped per shard (`workers`); CI shards the playwright job, so effective CI parallelism is `shards × workers`. Local has no sharding, so the cap keeps the single shared Vite dev server responsive.
 - **Tracing:** on first retry.
-- **Global expect timeout:** 8000ms (set in `playwright.config.ts`; no per-assertion overrides needed).
+- **Global expect timeout:** set in `playwright.config.ts`'s `expect.timeout` (absorbs overlay-mount jitter under load; no per-assertion overrides needed).
 
 ## Mock backend
 

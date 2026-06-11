@@ -18,28 +18,13 @@ import { format, subDays } from 'date-fns'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+
 // perf-review Tier 2 #6 (2026-05-14) — mirror the PageBrowser mock so
 // jsdom's zero-height scroll container doesn't collapse the virtual list
 // to zero rows. The mock returns every row so existing assertions
 // querying by content / role still see the full list.
-vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: (opts: { count: number; estimateSize: (i: number) => number }) => {
-    const sizes = Array.from({ length: opts.count }, (_, i) => opts.estimateSize(i))
-    let start = 0
-    const items = sizes.map((size, index) => {
-      const item = { index, key: index, start, size, end: start + size }
-      start += size
-      return item
-    })
-    return {
-      getVirtualItems: () => items,
-      getTotalSize: () => start,
-      scrollToIndex: vi.fn(),
-      scrollToOffset: vi.fn(),
-      measureElement: vi.fn(),
-    }
-  },
-}))
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 let mockInvalidationKey = 0
 vi.mock('../../hooks/useBlockPropertyEvents', () => ({

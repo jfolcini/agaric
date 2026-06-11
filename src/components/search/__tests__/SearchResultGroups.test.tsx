@@ -26,6 +26,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import type { SearchBlockRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 
@@ -38,27 +39,16 @@ import { groupResultsByPage, SearchResultGroups } from '../SearchResultGroups'
 const scrollCalls: number[] = []
 let windowSize: number | null = null
 
-vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: (opts: { count: number; estimateSize: (i: number) => number }) => {
-    const limit = windowSize === null ? opts.count : Math.min(windowSize, opts.count)
-    let start = 0
-    const items = Array.from({ length: limit }, (_, index) => {
-      const size = opts.estimateSize(index)
-      const item = { index, key: index, start, size, end: start + size }
-      start += size
-      return item
-    })
-    return {
-      getVirtualItems: () => items,
-      getTotalSize: () => opts.count * 36,
-      scrollToIndex: (i: number) => {
-        scrollCalls.push(i)
-      },
-      scrollToOffset: vi.fn(),
-      measureElement: vi.fn(),
-    }
-  },
-}))
+// Shared virtualizer mock (src/__tests__/mocks/react-virtual.ts) with a lazy
+// `windowSize` getter (it changes per test) and a `scrollToIndex` capture.
+vi.mock('@tanstack/react-virtual', () =>
+  mockReactVirtual({
+    windowSize: () => windowSize,
+    scrollToIndex: (i: number) => {
+      scrollCalls.push(i)
+    },
+  }),
+)
 
 // FE-A5: spy on the PAGE-level `Element.prototype.scrollIntoView` (jsdom
 // stubs it to a no-op in test-setup; we replace it with a recording spy so

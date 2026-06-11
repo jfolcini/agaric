@@ -9,10 +9,20 @@
 
 let counter = 0
 
-/** Generate a deterministic fake ULID-ish id for newly created rows. */
+/**
+ * Generate a deterministic, ULID-shaped fake id for newly created rows.
+ *
+ * Must be 26 chars from the Crockford-base32 alphabet (`[0-9A-Z]`) so that
+ * blocks created *during* a test can be `[[ULID]]` link targets — the link
+ * scanner in `handlers.ts` matches `/\[\[([0-9A-Z]{26})\]\]/` (#762). The old
+ * 12-char `MOCK00000001` form could never match, silently making
+ * test-created blocks unlinkable. We keep the `MOCK` marker (still valid
+ * base32) and left-pad with `0` to the full ULID width, matching the
+ * zero-padded shape of the `SEED_IDS` constants below.
+ */
 export function fakeId(): string {
   counter += 1
-  return `MOCK${String(counter).padStart(8, '0')}`
+  return `MOCK${String(counter).padStart(8, '0')}`.padStart(26, '0')
 }
 
 // ---------------------------------------------------------------------------

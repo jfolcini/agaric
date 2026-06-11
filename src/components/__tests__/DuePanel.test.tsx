@@ -21,6 +21,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { t } from '@/lib/i18n'
 
 import { clearProjectedCache } from '../../hooks/useDuePanelData'
@@ -43,24 +44,7 @@ vi.mock('../../lib/tauri', () => ({
 // grouped-blocks list to zero rows. Returns every row so existing
 // assertions querying by content / role / test-id still see the full
 // list.
-vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: (opts: { count: number; estimateSize: (i: number) => number }) => {
-    const sizes = Array.from({ length: opts.count }, (_, i) => opts.estimateSize(i))
-    let start = 0
-    const items = sizes.map((size, index) => {
-      const item = { index, key: index, start, size, end: start + size }
-      start += size
-      return item
-    })
-    return {
-      getVirtualItems: () => items,
-      getTotalSize: () => start,
-      scrollToIndex: vi.fn(),
-      scrollToOffset: vi.fn(),
-      measureElement: vi.fn(),
-    }
-  },
-}))
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 vi.mock('../RichContentRenderer', () => ({
   renderRichContent: vi.fn((markdown: string) => markdown),
