@@ -37,8 +37,12 @@ import { type SearchSheetMode, useSearchSheetStore } from '../stores/useSearchSh
 // The in-page-find toolbar and the palette body are both lazy-imported
 // at the App level for their overlay surfaces. Importing them here
 // reuses the same chunks — React.lazy memoises by module identifier.
-const InPageFind = lazy(() => import('./InPageFind').then((m) => ({ default: m.InPageFind })))
-const PaletteBody = lazy(() => import('./CommandPalette').then((m) => ({ default: m.PaletteBody })))
+const InPageFind = lazy(() =>
+  import('@/components/query/InPageFind').then((m) => ({ default: m.InPageFind })),
+)
+const PaletteBody = lazy(() =>
+  import('@/components/common/CommandPalette').then((m) => ({ default: m.PaletteBody })),
+)
 
 export function SearchSheet(): React.ReactElement | null {
   const { t } = useTranslation()

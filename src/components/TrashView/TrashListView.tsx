@@ -11,13 +11,13 @@ import { Search, Trash2, X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { LoadingSkeleton } from '@/components/LoadingSkeleton'
+import { EmptyState } from '@/components/common/EmptyState'
+import { ListViewState } from '@/components/common/ListViewState'
+import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 
 import type { RichContentCallbacks } from '../../hooks/useRichContentCallbacks'
 import type { BlockRow } from '../../lib/tauri'
-import { EmptyState } from '../EmptyState'
-import { ListViewState } from '../ListViewState'
 import { TrashRowItem } from './TrashRowItem'
 
 interface TrashListViewProps {

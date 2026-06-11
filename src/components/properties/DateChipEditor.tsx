@@ -1,0 +1,182 @@
+/**
+ * DateChipEditor — inline date editor for agenda date chips (F-22).
+ *
+ * Renders inside a Popover with:
+ *   - A text input that accepts natural language dates (via parseDate)
+ *   - Quick option buttons: Today, Tomorrow, Next week, Clear
+ *   - Calls setDueDate / setScheduledDate on selection
+ *   - Shows a toast on success
+ *   - Calls onSuccess so the parent can close the popover and refresh
+ */
+
+import { AlertCircle } from 'lucide-react'
+import type React from 'react'
+import { useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
+
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { useBlockReschedule } from '@/hooks/useBlockReschedule'
+import { useDateInput } from '@/hooks/useDateInput'
+import { announce } from '@/lib/announcer'
+import { formatDate } from '@/lib/date-utils'
+import { notify } from '@/lib/notify'
+import { reportIpcError } from '@/lib/report-ipc-error'
+import { cn } from '@/lib/utils'
+
+export type DateType = 'due' | 'scheduled'
+
+export interface DateChipEditorProps {
+  /** Block ID to update. */
+  blockId: string
+  /** Which date field to modify. */
+  dateType: DateType
+  /** Current date value (YYYY-MM-DD or null). */
+  currentDate: string | null
+  /** Called after a successful update — parent should close popover and refresh. */
+  onSuccess?: () => void
+}
+
+export function DateChipEditor({
+  blockId,
+  dateType,
+  currentDate,
+  onSuccess,
+}: DateChipEditorProps): React.ReactElement {
+  const { t } = useTranslation()
+  const { setDueDate, setScheduledDate } = useBlockReschedule()
+
+  // Date input hook (M-29) — manages input state + NL preview.
+  // Seed with currentDate so opening the editor on a block that already
+  // has a due/scheduled date pre-fills the input (PEND-23 M1).
+  const { dateInput, datePreview, handleChange } = useDateInput({
+    initialValue: currentDate ?? '',
+  })
+
+  // Parse-fail flag — drives aria-invalid + border-destructive on the input.
+  // datePreview is null while typing (debounced parse) and the visible error
+  // message uses the same condition: a non-empty input that has no preview.
+  const parseError = dateInput.length > 0 && datePreview === null
+
+  const applyDate = useCallback(
+    async (newDate: string | null) => {
+      try {
+        if (dateType === 'due') {
+          await setDueDate(blockId, newDate)
+        } else {
+          await setScheduledDate(blockId, newDate)
+        }
+        notify.success(newDate ? t('dateChip.dateUpdated') : t('dateChip.dateCleared'))
+        announce(newDate ? t('announce.dateUpdated', { date: newDate }) : t('announce.dateCleared'))
+        onSuccess?.()
+      } catch (err) {
+        reportIpcError('DateChipEditor', 'dateChip.updateFailed', err, t, {
+          blockId,
+          dateType,
+          newDate,
+        })
+        announce(t('announce.rescheduleFailed'))
+      }
+    },
+    [blockId, dateType, onSuccess, setDueDate, setScheduledDate, t],
+  )
+
+  const handleQuickOption = useCallback(
+    (option: 'today' | 'tomorrow' | 'nextWeek' | 'clear') => {
+      if (option === 'clear') {
+        applyDate(null)
+        return
+      }
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      if (option === 'today') {
+        applyDate(formatDate(today))
+      } else if (option === 'tomorrow') {
+        const d = new Date(today)
+        d.setDate(d.getDate() + 1)
+        applyDate(formatDate(d))
+      } else if (option === 'nextWeek') {
+        const d = new Date(today)
+        d.setDate(d.getDate() + 7)
+        applyDate(formatDate(d))
+      }
+    },
+    [applyDate],
+  )
+
+  return (
+    <div className="space-y-2" data-testid="date-chip-editor">
+      {/* Natural language text input */}
+      <div>
+        <Input
+          type="text"
+          className={cn('text-sm', parseError && 'border-destructive')}
+          placeholder={t('dateChip.placeholder')}
+          value={dateInput}
+          onChange={handleChange}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && datePreview) {
+              e.preventDefault()
+              applyDate(datePreview)
+            }
+          }}
+          aria-label={t('dateChip.inputLabel')}
+          aria-invalid={parseError}
+          // oxlint-disable-next-line jsx-a11y/no-autofocus -- date-chip editor opens inside a Popover; focus the natural-language date input on open so the user can type a date immediately
+          autoFocus
+        />
+        {dateInput && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            {datePreview ? (
+              <>
+                {t('datePicker.parsed')} <strong>{datePreview}</strong> (
+                {t('datePicker.pressEnter')})
+              </>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-destructive">
+                <AlertCircle className="h-3 w-3" aria-hidden="true" />
+                {t('property.dateParseError')}
+              </span>
+            )}
+          </p>
+        )}
+      </div>
+
+      {/* Quick option buttons */}
+      <div className="flex flex-wrap gap-1">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => handleQuickOption('today')}
+          data-testid="quick-today"
+        >
+          {t('dateChip.today')}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => handleQuickOption('tomorrow')}
+          data-testid="quick-tomorrow"
+        >
+          {t('dateChip.tomorrow')}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => handleQuickOption('nextWeek')}
+          data-testid="quick-next-week"
+        >
+          {t('dateChip.nextWeek')}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => handleQuickOption('clear')}
+          data-testid="quick-clear"
+        >
+          {t('dateChip.clear')}
+        </Button>
+      </div>
+    </div>
+  )
+}

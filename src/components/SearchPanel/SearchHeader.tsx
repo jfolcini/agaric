@@ -15,11 +15,10 @@ import { HelpCircle } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ViewHeader } from '@/components/layout/ViewHeader'
 import { Button } from '@/components/ui/button'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
-
-import { ViewHeader } from '../ViewHeader'
 
 export interface SearchHeaderProps {
   inputRef: React.RefObject<HTMLInputElement | null>

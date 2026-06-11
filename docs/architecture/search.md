@@ -87,7 +87,7 @@ Errors propagate through the existing `AppError` shape — `{ kind: string, mess
 
 ## Grouped-render layer
 
-The result list reuses `src/components/CollapsibleGroupList.tsx` — the same primitive backing the agenda's by-date and by-tag groupings. **Do not fork a search-only grouped list.** The component owns:
+The result list reuses `src/components/common/CollapsibleGroupList.tsx` — the same primitive backing the agenda's by-date and by-tag groupings. **Do not fork a search-only grouped list.** The component owns:
 
 - per-group `expandedGroups: Record<string, boolean>` state with `aria-expanded` chevrons,
 - a `renderHeader` slot for the page-title + breadcrumb + match-count row,
@@ -247,7 +247,7 @@ When ambiguity exists, autocomplete-open wins, then history recall (PEND-55), th
 - `src/components/search/ResultCountSummary.tsx` — "N matches in M pages" header.
 - `src/components/search/SearchToggleRow.tsx` — three toggle buttons (PEND-55).
 - `src/components/search/SearchHistoryDropdown.tsx` — recent-queries listbox (PEND-55).
-- `src/components/CollapsibleGroupList.tsx` — the grouped-list primitive (reused, never forked).
+- `src/components/common/CollapsibleGroupList.tsx` — the grouped-list primitive (reused, never forked).
 - `src/components/help/SearchHelpDialog.tsx` — in-app `?` help.
 - `src/stores/search-history.ts` — Zustand-persisted per-space history (PEND-55).
 - `src/hooks/useSearchHistoryCycling.ts` — `↑`/`↓` browse state machine (PEND-55).

@@ -38,14 +38,14 @@ vi.mock('../../lib/tauri', () => ({
 
 // DateChipEditor pulls in tauri-backed reschedule hooks; stub it to a sentinel
 // so the date-chip surface tests focus on the Sheet-vs-Popover wrapper.
-vi.mock('../DateChipEditor', () => ({
+vi.mock('@/components/properties/DateChipEditor', () => ({
   DateChipEditor: () => <div data-testid="date-chip-editor-stub" />,
 }))
 
-import { AddPropertyPopover } from '../AddPropertyPopover'
-import { BlockGutterControls } from '../BlockGutterControls'
-import { BlockInlineControls } from '../BlockInlineControls'
-import { BlockListItem } from '../BlockListItem'
+import { BlockGutterControls } from '@/components/editor/BlockGutterControls'
+import { BlockInlineControls } from '@/components/editor/BlockInlineControls'
+import { BlockListItem } from '@/components/editor/BlockListItem'
+import { AddPropertyPopover } from '@/components/properties/AddPropertyPopover'
 
 /** Override window.matchMedia so `(pointer: coarse)` reports the given value. */
 function setCoarse(coarse: boolean): void {

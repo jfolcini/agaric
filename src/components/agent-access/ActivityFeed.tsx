@@ -21,6 +21,8 @@ import type React from 'react'
 import { Fragment, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EmptyState } from '@/components/common/EmptyState'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -34,8 +36,6 @@ import { notify } from '@/lib/notify'
 import { revertOps } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 
-import { ConfirmDialog } from '../ConfirmDialog'
-import { EmptyState } from '../EmptyState'
 import { SessionRevertControls } from './SessionRevertControls'
 
 /**

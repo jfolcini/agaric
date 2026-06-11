@@ -1,0 +1,366 @@
+/**
+ * Tests for AttachmentList component.
+ *
+ * Validates:
+ *  - Empty state when no attachments
+ *  - Renders list of attachments with filenames
+ *  - Shows correct MIME type icons
+ *  - Delete button calls deleteAttachment IPC
+ *  - Shows loading state
+ *  - a11y compliance
+ */
+
+import { invoke } from '@tauri-apps/api/core'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
+import type { StoreApi } from 'zustand'
+
+import { AttachmentList, formatSize } from '@/components/attachments/AttachmentList'
+import { t } from '@/lib/i18n'
+import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
+
+const mockedInvoke = vi.mocked(invoke)
+const mockedToast = vi.mocked(toast)
+const mockedToastSuccess = vi.mocked(toast.success)
+const mockedToastError = vi.mocked(toast.error)
+
+let pageStore: StoreApi<PageBlockState>
+
+function renderWithProvider(ui: React.ReactElement) {
+  return render(<PageBlockContext.Provider value={pageStore}>{ui}</PageBlockContext.Provider>)
+}
+
+function makeAttachment(
+  id: string,
+  filename: string,
+  opts: { mimeType?: string; sizeBytes?: number; createdAt?: string } = {},
+) {
+  return {
+    id,
+    block_id: 'block-1',
+    filename,
+    mime_type: opts.mimeType ?? 'application/octet-stream',
+    size_bytes: opts.sizeBytes ?? 1024,
+    fs_path: `/files/${filename}`,
+    created_at: opts.createdAt ?? new Date().toISOString(),
+  }
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  pageStore = createPageBlockStore('PAGE_1')
+  // Default: list_attachments returns empty
+  mockedInvoke.mockResolvedValue([])
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+describe('AttachmentList', () => {
+  it('renders empty state when no attachments', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+
+    renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    expect(await screen.findByText(/No attachments yet/)).toBeInTheDocument()
+  })
+
+  it('renders list of attachments with filenames', async () => {
+    mockedInvoke.mockResolvedValueOnce([
+      makeAttachment('a1', 'report.pdf'),
+      makeAttachment('a2', 'photo.png', { mimeType: 'image/png' }),
+    ])
+
+    renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    expect(await screen.findByText('report.pdf')).toBeInTheDocument()
+    expect(screen.getByText('photo.png')).toBeInTheDocument()
+  })
+
+  it('shows loading state', () => {
+    // Never-resolving promise keeps loading state
+    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+
+    const { container } = renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
+    expect(skeletons.length).toBe(2)
+    expect(screen.getByRole('status')).toBeInTheDocument()
+  })
+
+  it('renders human-readable file sizes', async () => {
+    mockedInvoke.mockResolvedValueOnce([
+      makeAttachment('a1', 'small.txt', { sizeBytes: 500, mimeType: 'text/plain' }),
+      makeAttachment('a2', 'medium.doc', { sizeBytes: 2048 }),
+      makeAttachment('a3', 'large.zip', { sizeBytes: 1048576 * 5 }),
+    ])
+
+    renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    expect(await screen.findByText('500 B')).toBeInTheDocument()
+    expect(screen.getByText('2.0 KB')).toBeInTheDocument()
+    expect(screen.getByText('5.0 MB')).toBeInTheDocument()
+  })
+
+  it('delete button calls deleteAttachment IPC on double-click confirmation', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+
+    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'to-delete.txt')])
+
+    renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    expect(await screen.findByText('to-delete.txt')).toBeInTheDocument()
+
+    const deleteBtn = screen.getByRole('button', { name: /delete attachment to-delete\.txt/i })
+
+    // First click — confirmation toast
+    await user.click(deleteBtn)
+    expect(mockedToast).toHaveBeenCalledWith(
+      t('attachments.confirmDelete', { name: 'to-delete.txt' }),
+      expect.objectContaining({
+        description: t('attachments.clickAgain'),
+        duration: 3000,
+      }),
+    )
+
+    // Mock delete_attachment response
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    // Second click — actually deletes
+    await user.click(deleteBtn)
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_attachment', { attachmentId: 'a1' })
+    expect(mockedToastSuccess).toHaveBeenCalledWith(
+      t('attachments.deleted', { name: 'to-delete.txt' }),
+    )
+  })
+
+  it('rename button opens an input that calls rename_attachment IPC on Enter', async () => {
+    const user = userEvent.setup()
+
+    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'old-name.txt')])
+
+    renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    expect(await screen.findByText('old-name.txt')).toBeInTheDocument()
+
+    // Enter rename mode via the pencil button.
+    await user.click(screen.getByRole('button', { name: /rename attachment old-name\.txt/i }))
+
+    const input = screen.getByRole('textbox', { name: /rename attachment old-name\.txt/i })
+    expect(input).toHaveValue('old-name.txt')
+
+    // rename_attachment resolves; the hook applies an optimistic local update
+    // (no list refetch).
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    await user.clear(input)
+    await user.type(input, 'new-name.txt{Enter}')
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('rename_attachment', {
+        attachmentId: 'a1',
+        newFilename: 'new-name.txt',
+      })
+    })
+  })
+
+  it('rename input cancels on Escape without calling IPC', async () => {
+    const user = userEvent.setup()
+
+    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'keep.txt')])
+
+    renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    expect(await screen.findByText('keep.txt')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /rename attachment keep\.txt/i }))
+    const input = screen.getByRole('textbox', { name: /rename attachment keep\.txt/i })
+
+    await user.clear(input)
+    await user.type(input, 'discarded.txt{Escape}')
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('rename_attachment', expect.anything())
+    // Back to the static filename label.
+    expect(screen.getByText('keep.txt')).toBeInTheDocument()
+  })
+
+  it('resets pending delete state after timeout', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+
+    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'timeout-test.txt')])
+
+    renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    expect(await screen.findByText('timeout-test.txt')).toBeInTheDocument()
+
+    const deleteBtn = screen.getByRole('button', { name: /delete attachment timeout-test\.txt/i })
+
+    // First click — enters pending state
+    await user.click(deleteBtn)
+    expect(mockedToast).toHaveBeenCalled()
+
+    // Advance past the 3s timeout
+    // React 19: state updates from setTimeout callbacks must be flushed via
+    // act() so the pendingDeleteId reset is visible before the next click.
+    await act(async () => {
+      vi.advanceTimersByTime(3100)
+    })
+
+    // Now clicking should be a new first click, not a confirm
+    mockedToast.mockClear()
+    await user.click(deleteBtn)
+    // Should call toast again (first click), not invoke delete
+    expect(mockedToast).toHaveBeenCalled()
+    // delete_attachment should NOT have been called (only list_attachments)
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_attachment', expect.anything())
+  })
+
+  it('cancels the pending-delete timer on unmount (#MAINT-48)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+
+    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'unmount-test.txt')])
+
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { unmount } = renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    expect(await screen.findByText('unmount-test.txt')).toBeInTheDocument()
+
+    const deleteBtn = screen.getByRole('button', { name: /delete attachment unmount-test\.txt/i })
+
+    // First click — schedules a 3s reset timer
+    await user.click(deleteBtn)
+    expect(mockedToast).toHaveBeenCalled()
+
+    // Unmount before the timer fires — the ref cleanup must cancel the timeout
+    unmount()
+
+    // Advance past the 3s timeout; if cleanup failed, setState on unmounted
+    // component would fire a React warning via console.error.
+    vi.advanceTimersByTime(3100)
+
+    // No React warning about setState on unmounted component
+    const warningCalls = consoleErrorSpy.mock.calls.filter(
+      (args) =>
+        typeof args[0] === 'string' &&
+        (args[0].includes('unmounted') || args[0].includes("Can't perform a React state update")),
+    )
+    expect(warningCalls).toHaveLength(0)
+
+    consoleErrorSpy.mockRestore()
+  })
+
+  it('calls list_attachments with the correct blockId', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+
+    renderWithProvider(<AttachmentList blockId="my-block-42" />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('list_attachments', { blockId: 'my-block-42' })
+    })
+  })
+
+  it('has no a11y violations (empty state)', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+
+    const { container } = renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  it('has no a11y violations (with attachments)', async () => {
+    mockedInvoke.mockResolvedValueOnce([
+      makeAttachment('a1', 'doc.pdf', { mimeType: 'application/pdf' }),
+      makeAttachment('a2', 'photo.jpg', { mimeType: 'image/jpeg' }),
+    ])
+
+    const { container } = renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  it('shows error toast when list_attachments fails', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('network failure'))
+
+    const { container } = renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    // Should show error toast
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(
+        'Failed to load attachments',
+        // Effect-driven load: dedup so re-mounts / rapid blockId
+        // changes don't stack identical toasts.
+        expect.objectContaining({ id: 'attachments-load-failed' }),
+      )
+    })
+
+    // Loading should be finished (no skeletons)
+    const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
+    expect(skeletons.length).toBe(0)
+
+    // Should render empty state, not crash
+    expect(screen.getByText(/No attachments yet/)).toBeInTheDocument()
+  })
+
+  it('shows error toast when delete_attachment fails and keeps attachment in list', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+
+    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'keep-me.txt')])
+
+    renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    expect(await screen.findByText('keep-me.txt')).toBeInTheDocument()
+
+    const deleteBtn = screen.getByRole('button', { name: /delete attachment keep-me\.txt/i })
+
+    // First click — confirmation toast
+    await user.click(deleteBtn)
+    expect(mockedToast).toHaveBeenCalled()
+
+    // Mock delete_attachment to reject
+    mockedInvoke.mockRejectedValueOnce(new Error('backend error'))
+
+    // Second click — attempts delete, which fails
+    await user.click(deleteBtn)
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to delete attachment')
+    })
+
+    // Attachment should still be in the list (not removed)
+    expect(screen.getByText('keep-me.txt')).toBeInTheDocument()
+  })
+})
+
+describe('formatSize', () => {
+  it('formats bytes', () => {
+    expect(formatSize(0)).toBe('0 B')
+    expect(formatSize(512)).toBe('512 B')
+    expect(formatSize(1023)).toBe('1023 B')
+  })
+
+  it('formats kilobytes', () => {
+    expect(formatSize(1024)).toBe('1.0 KB')
+    expect(formatSize(1536)).toBe('1.5 KB')
+    expect(formatSize(1024 * 1023)).toBe('1023.0 KB')
+  })
+
+  it('formats megabytes', () => {
+    expect(formatSize(1024 * 1024)).toBe('1.0 MB')
+    expect(formatSize(1024 * 1024 * 2.5)).toBe('2.5 MB')
+  })
+})

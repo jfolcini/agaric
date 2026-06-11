@@ -38,7 +38,7 @@ vi.mock('react-dom/client', () => ({
 
 vi.mock('../App.tsx', () => ({ App: () => null }))
 
-vi.mock('../components/ErrorBoundary', () => ({
+vi.mock('@/components/common/ErrorBoundary', () => ({
   ErrorBoundary: ({ children }: { children: ReactNode }) => children,
 }))
 

@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
+import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -38,7 +39,6 @@ import { DailyView } from './journal/DailyView'
 import { MonthlyView } from './journal/MonthlyView'
 import { WeeklyView } from './journal/WeeklyView'
 import { LinkPreviewTooltip } from './LinkPreviewTooltip'
-import { LoadingSkeleton } from './LoadingSkeleton'
 import { SpaceManageDialog } from './SpaceManageDialog'
 
 export type { DayEntry } from '../lib/date-utils'
@@ -47,8 +47,8 @@ export { getMaxJournalDate, MIN_JOURNAL_DATE } from '../lib/date-utils'
 // MAINT-119 — Re-export sibling components so existing imports
 // (`import { GlobalDateControls, JournalControls } from '../JournalPage'`)
 // continue to work.
-export { GlobalDateControls } from './GlobalDateControls'
-export { JournalControls } from './JournalControls'
+export { GlobalDateControls } from '@/components/agenda/GlobalDateControls'
+export { JournalControls } from '@/components/journal/JournalControls'
 
 interface JournalPageProps {
   /** Called when a block is clicked -- navigates to block editor. */

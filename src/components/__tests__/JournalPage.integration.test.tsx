@@ -18,7 +18,7 @@
  *
  * This file deliberately lives next to `JournalPage.test.tsx` rather
  * than reusing it: a separate file signals "integration-level
- * regression" and avoids the `vi.unmock('../BlockTree')` +
+ * regression" and avoids the `vi.unmock('@/components/editor/BlockTree')` +
  * `vi.resetModules()` mock-juggling fragility.
  */
 
@@ -57,7 +57,7 @@ vi.mock('../../hooks/useViewportObserver', () => ({
   }),
 }))
 
-vi.mock('../SortableBlock', () => ({
+vi.mock('@/components/editor/SortableBlock', () => ({
   SortableBlock: (props: { blockId: string }) => (
     <div data-testid={`sortable-block-${props.blockId}`}>SortableBlock</div>
   ),
@@ -88,15 +88,15 @@ vi.mock('@dnd-kit/sortable', () => ({
 // vitest-module-scoped and we want this file's intent ("the real
 // BlockTree, please") to be self-contained.
 
-vi.mock('../DuePanel', () => ({
+vi.mock('@/components/agenda/DuePanel', () => ({
   DuePanel: () => <div data-testid="due-panel" />,
 }))
 
-vi.mock('../DonePanel', () => ({
+vi.mock('@/components/agenda/DonePanel', () => ({
   DonePanel: () => <div data-testid="done-panel" />,
 }))
 
-vi.mock('../LinkedReferences', () => ({
+vi.mock('@/components/backlinks/LinkedReferences', () => ({
   LinkedReferences: () => <div data-testid="linked-references" />,
 }))
 

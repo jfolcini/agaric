@@ -38,7 +38,7 @@ vi.mock('../../lib/tree-utils', () => ({
   SENTINEL_ID: '__drop-after-last__',
 }))
 
-vi.mock('../../components/SortableBlock', () => ({
+vi.mock('@/components/editor/SortableBlock', () => ({
   INDENT_WIDTH: 24,
 }))
 

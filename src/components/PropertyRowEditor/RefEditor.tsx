@@ -11,6 +11,7 @@
 import { FileSearch, Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { EmptyState } from '@/components/common/EmptyState'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -19,7 +20,6 @@ import { Spinner } from '@/components/ui/spinner'
 
 import type { PropertyRow } from '../../lib/tauri'
 import { useResolveStore } from '../../stores/resolve'
-import { EmptyState } from '../EmptyState'
 import type { RefPickerEditorState } from './usePropertyRowEditor'
 
 export interface RefEditorProps {

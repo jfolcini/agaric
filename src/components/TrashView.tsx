@@ -18,7 +18,7 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { BatchActionToolbar } from '@/components/BatchActionToolbar'
+import { BatchActionToolbar } from '@/components/common/BatchActionToolbar'
 import { Button } from '@/components/ui/button'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { SearchInput } from '@/components/ui/search-input'

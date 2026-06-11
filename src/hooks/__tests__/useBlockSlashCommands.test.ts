@@ -47,7 +47,7 @@ vi.mock('../../lib/template-utils', () => ({
   insertTemplateBlocks: vi.fn(async () => ['NEW_1']),
   loadTemplatePagesWithPreview: vi.fn(async () => []),
 }))
-vi.mock('../../components/BlockTree', () => ({
+vi.mock('@/components/editor/BlockTree', () => ({
   guessMimeType: vi.fn(() => 'application/octet-stream'),
 }))
 

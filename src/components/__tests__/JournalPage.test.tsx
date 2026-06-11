@@ -25,7 +25,7 @@ import { axe } from 'vitest-axe'
 import { emptyPage, makeDailyPage } from '../../__tests__/fixtures'
 
 // ── Mock BlockTree ──────────────────────────────────────────────────
-vi.mock('../BlockTree', () => ({
+vi.mock('@/components/editor/BlockTree', () => ({
   BlockTree: (props: { parentId?: string }) => {
     return (
       <div data-testid="block-tree" data-parent-id={props.parentId ?? ''} className="block-tree" />
@@ -34,7 +34,7 @@ vi.mock('../BlockTree', () => ({
 }))
 
 // ── Mock DuePanel ───────────────────────────────────────────────────
-vi.mock('../DuePanel', () => ({
+vi.mock('@/components/agenda/DuePanel', () => ({
   DuePanel: (props: { date: string; onNavigateToPage?: unknown }) => (
     <div data-testid="due-panel" data-date={props.date}>
       DuePanel
@@ -43,7 +43,7 @@ vi.mock('../DuePanel', () => ({
 }))
 
 // ── Mock DonePanel ──────────────────────────────────────────────────
-vi.mock('../DonePanel', () => ({
+vi.mock('@/components/agenda/DonePanel', () => ({
   DonePanel: (props: { date: string; onNavigateToPage?: unknown }) => (
     <div data-testid="done-panel" data-date={props.date}>
       DonePanel
@@ -52,7 +52,7 @@ vi.mock('../DonePanel', () => ({
 }))
 
 // ── Mock LinkedReferences ───────────────────────────────────────────
-vi.mock('../LinkedReferences', () => ({
+vi.mock('@/components/backlinks/LinkedReferences', () => ({
   LinkedReferences: (props: { pageId: string; onNavigateToPage?: unknown }) => (
     <div data-testid="linked-references" data-page-id={props.pageId}>
       LinkedReferences
@@ -65,7 +65,7 @@ const { filterChangeRef } = vi.hoisted(() => ({
   filterChangeRef: { current: null as ((filters: unknown[]) => void) | null },
 }))
 
-vi.mock('../AgendaFilterBuilder', () => ({
+vi.mock('@/components/agenda/AgendaFilterBuilder', () => ({
   AgendaFilterBuilder: (props: { filters: unknown[]; onFiltersChange: unknown }) => {
     filterChangeRef.current = props.onFiltersChange as (filters: unknown[]) => void
     return (
@@ -94,7 +94,7 @@ vi.mock('../AgendaFilterBuilder', () => ({
 }))
 
 // ── Mock AgendaResults ──────────────────────────────────────────────
-vi.mock('../AgendaResults', () => ({
+vi.mock('@/components/agenda/AgendaResults', () => ({
   AgendaResults: (props: { blocks: unknown[]; loading: boolean; hasActiveFilters: boolean }) => (
     <div
       data-testid="agenda-results"

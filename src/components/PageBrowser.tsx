@@ -17,8 +17,12 @@ import type React from 'react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ConfirmDialog } from '@/components/ConfirmDialog'
-import { LoadingSkeleton } from '@/components/LoadingSkeleton'
+import { EmptyState } from '@/components/common/EmptyState'
+import { LoadMoreButton } from '@/components/common/LoadMoreButton'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { ViewHeader } from '@/components/layout/ViewHeader'
+import { PageBrowserBatchToolbar } from '@/components/pages/PageBrowserBatchToolbar'
+import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
@@ -56,8 +60,6 @@ import { useNavigationStore } from '../stores/navigation'
 import { selectPageFiltersForSpace, usePageBrowserFiltersStore } from '../stores/pageBrowserFilters'
 import { useResolveStore } from '../stores/resolve'
 import { LEGACY_SPACE_KEY, useSpaceStore } from '../stores/space'
-import { EmptyState } from './EmptyState'
-import { LoadMoreButton } from './LoadMoreButton'
 import {
   PageBrowserFilterRow,
   type PageFilterWithKey,
@@ -65,8 +67,6 @@ import {
 } from './PageBrowser/PageBrowserFilterRow'
 import { PageBrowserHeader } from './PageBrowser/PageBrowserHeader'
 import { PageBrowserRowRenderer } from './PageBrowser/PageBrowserRowRenderer'
-import { PageBrowserBatchToolbar } from './PageBrowserBatchToolbar'
-import { ViewHeader } from './ViewHeader'
 
 const HEADER_ROW_HEIGHT = 36
 

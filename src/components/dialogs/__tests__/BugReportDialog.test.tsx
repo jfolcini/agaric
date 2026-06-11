@@ -1,0 +1,960 @@
+/**
+ * Tests for BugReportDialog (FEAT-5).
+ *
+ * - render + axe a11y audit
+ * - title/description toggles update state
+ * - "Open in GitHub" button gated on confirmation checkbox
+ * - IPC rejection path: metadata load failure shows toast and keeps dialog
+ *   open (no crash)
+ * - logs on + redact toggle refetches
+ * - Copy button copies the formatted body to clipboard
+ * - Primary click with logs on triggers the ZIP download + openUrl flow
+ */
+
+import { invoke } from '@tauri-apps/api/core'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
+
+import { BugReportDialog } from '@/components/dialogs/BugReportDialog'
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { writeText } from '@/lib/clipboard'
+import { t } from '@/lib/i18n'
+
+// MAINT-215: useDialogOrSheet branches on useIsMobile. Default to the
+// desktop (Dialog) path so the pre-existing test bodies keep their
+// semantics; the dedicated viewport-switch describe at the bottom
+// overrides this.
+vi.mock('@/hooks/useIsMobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
+const mockedUseIsMobile = vi.mocked(useIsMobile)
+
+const mockedInvoke = vi.mocked(invoke)
+const mockedToastError = vi.mocked(toast.error)
+const mockedToastSuccess = vi.mocked(toast.success)
+
+// Mock open-url + download so the primary button path runs without touching
+// `@tauri-apps/plugin-shell` or the DOM download machinery.
+// MAINT-177: openUrl now returns Promise<boolean> reflecting whether the
+// browser actually opened — the mock signature follows.
+const openUrlMock = vi.fn<(url: string) => Promise<boolean>>()
+vi.mock('@/lib/open-url', () => ({
+  openUrl: (url: string) => openUrlMock(url),
+}))
+
+const downloadBlobMock = vi.fn<(blob: Blob, filename: string) => void>()
+vi.mock('@/lib/export-graph', () => ({
+  downloadBlob: (blob: Blob, name: string) => downloadBlobMock(blob, name),
+}))
+
+// Mock the clipboard wrapper so the Copy button path does not depend on
+// `@tauri-apps/plugin-clipboard-manager` IPC or jsdom's `navigator.clipboard`.
+vi.mock('@/lib/clipboard', () => ({
+  writeText: vi.fn().mockResolvedValue(undefined),
+}))
+const mockedWriteText = vi.mocked(writeText)
+
+const sampleMetadata = {
+  app_version: '0.1.0',
+  os: 'linux',
+  arch: 'x86_64',
+  device_id: 'DEV-XYZ',
+  recent_errors: ['2025-01-01 ERROR [agaric] kaboom'],
+}
+
+function setupDefaultIpcMocks() {
+  mockedInvoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'collect_bug_report_metadata') return sampleMetadata
+    if (cmd === 'read_logs_for_report') {
+      return [{ name: 'agaric.log', contents: 'today content\n' }]
+    }
+    return null
+  })
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  // MAINT-177: default to `true` (browser opened) so existing tests assert
+  // the success path. The MAINT-177 failure-path test below overrides this.
+  openUrlMock.mockResolvedValue(true)
+  setupDefaultIpcMocks()
+  // Re-arm the wrapper mock — `vi.clearAllMocks()` clears the default
+  // resolution installed at module load.
+  mockedWriteText.mockResolvedValue(undefined)
+  // MAINT-215: reset to desktop so cross-test mobile overrides never leak.
+  mockedUseIsMobile.mockReturnValue(false)
+})
+
+describe('BugReportDialog', () => {
+  it('renders the dialog with title, form fields, preview, and confirmation checkbox', async () => {
+    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByLabelText(t('bugReport.fieldTitleLabel'))).toBeInTheDocument()
+    expect(screen.getByLabelText(t('bugReport.fieldDescriptionLabel'))).toBeInTheDocument()
+    expect(
+      screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('checkbox', { name: t('bugReport.confirmCheckbox') }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: t('bugReport.openIssue') })).toBeInTheDocument()
+  })
+
+  it('primary button is disabled until the confirmation checkbox is ticked', async () => {
+    const user = userEvent.setup()
+    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+    // Wait for metadata to resolve so the preview has content.
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
+    })
+    await screen.findByText(/## Description/)
+
+    const openBtn = screen.getByRole('button', { name: t('bugReport.openIssue') })
+    expect(openBtn).toBeDisabled()
+
+    const checkbox = screen.getByRole('checkbox', {
+      name: t('bugReport.confirmCheckbox'),
+    })
+    await user.click(checkbox)
+
+    expect(openBtn).not.toBeDisabled()
+  })
+
+  it('toggling "Include diagnostic logs" requests logs from the backend', async () => {
+    const user = userEvent.setup()
+    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
+    })
+
+    expect(mockedInvoke.mock.calls.find(([cmd]) => cmd === 'read_logs_for_report')).toBeUndefined()
+
+    const toggle = screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') })
+    await user.click(toggle)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'read_logs_for_report',
+        expect.objectContaining({ redact: true }),
+      )
+    })
+
+    // The logs list region must render the filename we seeded.
+    expect(await screen.findByText('agaric.log')).toBeInTheDocument()
+  })
+
+  it('toggling the redact switch re-reads the logs with redact=false', async () => {
+    const user = userEvent.setup()
+    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
+    })
+
+    await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'read_logs_for_report',
+        expect.objectContaining({ redact: true }),
+      )
+    })
+
+    await user.click(screen.getByRole('switch', { name: t('bugReport.redactLabel') }))
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'read_logs_for_report',
+        expect.objectContaining({ redact: false }),
+      )
+    })
+  })
+
+  // ── UX-383: Redact toggle sibling layout ────────────────────────────
+  describe('redact switch sibling layout (UX-383)', () => {
+    it('redact switch is visible regardless of include-logs state', async () => {
+      const user = userEvent.setup()
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      // Wait for metadata so the form is fully rendered.
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
+      })
+
+      // Visible while Include logs is OFF (default).
+      expect(screen.getByRole('switch', { name: t('bugReport.redactLabel') })).toBeInTheDocument()
+
+      // Still visible after toggling Include logs ON.
+      await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+      expect(screen.getByRole('switch', { name: t('bugReport.redactLabel') })).toBeInTheDocument()
+    })
+
+    it('redact switch is disabled when include-logs is off', async () => {
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
+      })
+
+      const redact = screen.getByRole('switch', { name: t('bugReport.redactLabel') })
+      // Radix Switch forwards the React `disabled` prop to the native
+      // disabled attribute on the underlying button. `toBeDisabled`
+      // matches both the native attribute and aria-disabled.
+      expect(redact).toBeDisabled()
+    })
+
+    it('redact switch is enabled when include-logs is on', async () => {
+      const user = userEvent.setup()
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
+      })
+
+      await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+
+      const redact = screen.getByRole('switch', { name: t('bugReport.redactLabel') })
+      expect(redact).not.toBeDisabled()
+    })
+  })
+
+  it('shows a toast and stays open when collect_bug_report_metadata rejects', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'collect_bug_report_metadata') throw new Error('boom')
+      return null
+    })
+
+    const onOpenChange = vi.fn()
+    render(<BugReportDialog open={true} onOpenChange={onOpenChange} />)
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(t('bugReport.loadMetadataFailed'))
+    })
+
+    // Dialog must still be open — no onOpenChange(false) call.
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  it('shows a toast when read_logs_for_report rejects', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'collect_bug_report_metadata') return sampleMetadata
+      if (cmd === 'read_logs_for_report') throw new Error('io fail')
+      return null
+    })
+
+    const user = userEvent.setup()
+    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
+    })
+
+    await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(t('bugReport.readLogsFailed'))
+    })
+  })
+
+  it('Copy button writes the report body to the clipboard', async () => {
+    const user = userEvent.setup()
+
+    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+    await screen.findByText(/## Description/)
+
+    const copyBtn = screen.getByRole('button', { name: t('bugReport.copy') })
+    await user.click(copyBtn)
+
+    await waitFor(() => {
+      expect(mockedWriteText).toHaveBeenCalled()
+    })
+    const firstCall = mockedWriteText.mock.calls[0]
+    expect(firstCall).toBeDefined()
+    expect(firstCall?.[0]).toContain('## Description')
+    expect(mockedToastSuccess).toHaveBeenCalledWith(t('bugReport.copied'))
+  })
+
+  it('primary click with logs OFF opens the GitHub URL and closes', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    render(<BugReportDialog open={true} onOpenChange={onOpenChange} />)
+
+    await screen.findByText(/## Description/)
+
+    await user.click(screen.getByRole('checkbox', { name: t('bugReport.confirmCheckbox') }))
+    await user.click(screen.getByRole('button', { name: t('bugReport.openIssue') }))
+
+    await waitFor(() => {
+      expect(openUrlMock).toHaveBeenCalledTimes(1)
+    })
+    const openCall = openUrlMock.mock.calls[0]
+    expect(openCall).toBeDefined()
+    expect(openCall?.[0]).toMatch(/^https:\/\/github\.com\/jfolcini\/agaric\/issues\/new\?/)
+    expect(downloadBlobMock).not.toHaveBeenCalled()
+    expect(mockedToastSuccess).toHaveBeenCalledWith(t('bugReport.submitted'))
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  // MAINT-177: when openUrl resolves false (Tauri shell errored AND
+  // window.open was popup-blocked), the dialog must surface an error,
+  // copy the issue URL to the clipboard as a manual escape hatch, and
+  // stay open instead of claiming success.
+  it('primary click with openUrl resolving false → error toast + clipboard fallback + stays open', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    openUrlMock.mockResolvedValueOnce(false)
+
+    // jsdom's `navigator.clipboard` is not a configurable accessor in every
+    // setup — install a writeText spy via `Object.defineProperty` if needed.
+    const originalClipboard = navigator.clipboard
+    const writeTextSpy = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: writeTextSpy },
+    })
+
+    try {
+      render(<BugReportDialog open={true} onOpenChange={onOpenChange} />)
+
+      await screen.findByText(/## Description/)
+
+      await user.click(screen.getByRole('checkbox', { name: t('bugReport.confirmCheckbox') }))
+      await user.click(screen.getByRole('button', { name: t('bugReport.openIssue') }))
+
+      await waitFor(() => {
+        expect(openUrlMock).toHaveBeenCalledTimes(1)
+      })
+      const openCall = openUrlMock.mock.calls[0]
+      expect(openCall).toBeDefined()
+      const issueUrl = openCall?.[0] ?? ''
+      expect(issueUrl).toMatch(/^https:\/\/github\.com\/jfolcini\/agaric\/issues\/new\?/)
+
+      // Clipboard fallback called with the same URL openUrl received.
+      await waitFor(() => {
+        expect(writeTextSpy).toHaveBeenCalledWith(issueUrl)
+      })
+
+      // Error toast surfaced; success toast NOT called; dialog NOT closed.
+      expect(mockedToastError).toHaveBeenCalledWith(t('bugReport.browserOpenFailed'))
+      expect(mockedToastSuccess).not.toHaveBeenCalledWith(t('bugReport.submitted'))
+      expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: originalClipboard,
+      })
+    }
+  })
+
+  // MAINT-177 (reviewer follow-up): when openUrl resolves false AND the
+  // clipboard fallback also rejects, the user has no way to recover the
+  // URL — the error toast must switch to the no-clipboard variant so the
+  // wording directs them to the Copy report button rather than promising
+  // a clipboard paste that never happened.
+  it('primary click with openUrl=false AND clipboard.writeText reject → no-clipboard toast + stays open', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    openUrlMock.mockResolvedValueOnce(false)
+
+    const originalClipboard = navigator.clipboard
+    const writeTextSpy = vi
+      .fn<(text: string) => Promise<void>>()
+      .mockRejectedValue(new Error('clipboard unavailable'))
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: writeTextSpy },
+    })
+
+    try {
+      render(<BugReportDialog open={true} onOpenChange={onOpenChange} />)
+
+      await screen.findByText(/## Description/)
+
+      await user.click(screen.getByRole('checkbox', { name: t('bugReport.confirmCheckbox') }))
+      await user.click(screen.getByRole('button', { name: t('bugReport.openIssue') }))
+
+      // Clipboard write was attempted (and rejected internally).
+      await waitFor(() => {
+        expect(writeTextSpy).toHaveBeenCalledTimes(1)
+      })
+
+      // No-clipboard toast surfaced; primary error toast NOT called;
+      // success toast NOT called; dialog NOT closed.
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(t('bugReport.browserOpenFailedNoClipboard'))
+      })
+      expect(mockedToastError).not.toHaveBeenCalledWith(t('bugReport.browserOpenFailed'))
+      expect(mockedToastSuccess).not.toHaveBeenCalledWith(t('bugReport.submitted'))
+      expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: originalClipboard,
+      })
+    }
+  })
+
+  it('renders the design-system Checkbox primitive (data-slot="checkbox") and toggles via onCheckedChange', async () => {
+    const user = userEvent.setup()
+    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+    const checkbox = await screen.findByRole('checkbox', {
+      name: t('bugReport.confirmCheckbox'),
+    })
+    // Design-system primitive — Radix-based Checkbox renders as a <button>
+    // with data-slot="checkbox", not a native <input type="checkbox">.
+    expect(checkbox).toHaveAttribute('data-slot', 'checkbox')
+    expect(checkbox.tagName).not.toBe('INPUT')
+    expect(checkbox).toHaveAttribute('aria-checked', 'false')
+
+    await user.click(checkbox)
+
+    expect(checkbox).toHaveAttribute('aria-checked', 'true')
+    // Confirm the primary button becomes enabled (downstream effect of
+    // onCheckedChange firing with `true`).
+    await screen.findByText(/## Description/)
+    expect(screen.getByRole('button', { name: t('bugReport.openIssue') })).not.toBeDisabled()
+  })
+
+  // PEND-bug-report-zip-affordance: the old "Open in GitHub" button was
+  // split into a separate "Download zip" + "Open GitHub issue" pair when
+  // logs are ON. Each click is independent — Download zip writes the
+  // file, Open GitHub issue navigates — and the dialog stays open after
+  // openUrl so the user can re-download if the OS save dialog was
+  // dismissed.
+  it('Download zip writes the ZIP file and shows a success toast', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    render(<BugReportDialog open={true} onOpenChange={onOpenChange} />)
+
+    await screen.findByText(/## Description/)
+
+    await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+    await waitFor(() => {
+      expect(
+        mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'read_logs_for_report'),
+      ).toHaveLength(1)
+    })
+
+    const downloadBtn = screen.getByRole('button', { name: t('bugReport.downloadZip') })
+    await user.click(downloadBtn)
+
+    await waitFor(() => {
+      expect(downloadBlobMock).toHaveBeenCalledTimes(1)
+    })
+    const downloadCall = downloadBlobMock.mock.calls[0]
+    expect(downloadCall).toBeDefined()
+    const [blob, filename] = downloadCall ?? []
+    expect(blob).toBeInstanceOf(Blob)
+    expect(filename).toMatch(/^agaric-bug-report-\d{4}-\d{2}-\d{2}\.zip$/)
+
+    // openUrl must NOT have been called — Download zip is a local-only
+    // action; opening GitHub is a separate click now.
+    expect(openUrlMock).not.toHaveBeenCalled()
+
+    // Success toast names the saved file so the user knows where it
+    // landed.
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalledWith(
+        t('bugReport.zipDownloaded', { fileName: filename as string }),
+      )
+    })
+
+    // Dialog stays open after Download zip — user still needs to click
+    // Open GitHub issue.
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+  })
+
+  it('Open GitHub issue (logs ON) opens the URL and keeps the dialog open', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    render(<BugReportDialog open={true} onOpenChange={onOpenChange} />)
+
+    await screen.findByText(/## Description/)
+
+    await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+    await waitFor(() => {
+      expect(
+        mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'read_logs_for_report'),
+      ).toHaveLength(1)
+    })
+
+    await user.click(screen.getByRole('checkbox', { name: t('bugReport.confirmCheckbox') }))
+    await user.click(screen.getByRole('button', { name: t('bugReport.openGitHubIssue') }))
+
+    await waitFor(() => {
+      expect(openUrlMock).toHaveBeenCalledTimes(1)
+    })
+    // Open GitHub issue is now a navigation-only click — no zip
+    // download side-effect.
+    expect(downloadBlobMock).not.toHaveBeenCalled()
+    expect(mockedToastSuccess).toHaveBeenCalledWith(t('bugReport.submitted'))
+    // PEND-bug-report-zip-affordance: dialog stays open when logs are
+    // ON so the user can copy the saved zip path or re-trigger Download
+    // zip if the OS save dialog was dismissed.
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+  })
+
+  // PEND-bug-report-zip-affordance: inline hint under the logs list
+  // names the saved zip and tells the user they will have to drag it
+  // into the GitHub issue manually.
+  it('renders the zip-download hint under the logs list when logs are ON', async () => {
+    const user = userEvent.setup()
+    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+    await screen.findByText(/## Description/)
+
+    // Hint must not exist when logs are OFF.
+    expect(screen.queryByTestId('bug-report-zip-hint')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+    await screen.findByText('agaric.log')
+
+    const hint = await screen.findByTestId('bug-report-zip-hint')
+    // Hint text interpolates the same filename that downloadBlob would
+    // receive — verify the date-stamped zip filename appears.
+    expect(hint.textContent ?? '').toMatch(/agaric-bug-report-\d{4}-\d{2}-\d{2}\.zip/)
+  })
+
+  it('Download zip button is not rendered when logs are OFF', async () => {
+    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+    await screen.findByText(/## Description/)
+    expect(
+      screen.queryByRole('button', { name: t('bugReport.downloadZip') }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('has no a11y violations', async () => {
+    const { container } = render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+    await screen.findByText(/## Description/)
+
+    await waitFor(
+      async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
+  })
+
+  // ── UX-277: per-log preview sub-dialog ───────────────────────────────
+  describe('log preview sub-dialog (UX-277)', () => {
+    const longContent = `${'a'.repeat(600)}END`
+    const shortContent = 'short log line\n'
+
+    function setupTwoLogs() {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'collect_bug_report_metadata') return sampleMetadata
+        if (cmd === 'read_logs_for_report') {
+          return [
+            { name: 'agaric.log', contents: longContent },
+            { name: 'agaric-2025-01-01.log', contents: shortContent },
+          ]
+        }
+        return null
+      })
+    }
+
+    async function openLogsList(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+      // Wait for both log entries to appear in the list.
+      expect(await screen.findByText('agaric.log')).toBeInTheDocument()
+      expect(await screen.findByText('agaric-2025-01-01.log')).toBeInTheDocument()
+    }
+
+    it('renders a Preview button for each log entry', async () => {
+      const user = userEvent.setup()
+      setupTwoLogs()
+
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      await openLogsList(user)
+
+      expect(
+        screen.getByRole('button', {
+          name: t('bugReport.previewLabel', { filename: 'agaric.log' }),
+        }),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', {
+          name: t('bugReport.previewLabel', { filename: 'agaric-2025-01-01.log' }),
+        }),
+      ).toBeInTheDocument()
+    })
+
+    it('opens the sub-dialog when the Preview button is clicked', async () => {
+      const user = userEvent.setup()
+      setupTwoLogs()
+
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      await openLogsList(user)
+
+      await user.click(
+        screen.getByRole('button', {
+          name: t('bugReport.previewLabel', { filename: 'agaric.log' }),
+        }),
+      )
+
+      const previewDialog = await screen.findByRole('dialog', {
+        name: t('bugReport.previewTitle'),
+      })
+      expect(previewDialog).toBeInTheDocument()
+      // Filename is rendered inside the sub-dialog header.
+      expect(previewDialog).toHaveTextContent('agaric.log')
+    })
+
+    it('truncates content and shows the truncation notice when the file exceeds 500 chars', async () => {
+      const user = userEvent.setup()
+      setupTwoLogs()
+
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      await openLogsList(user)
+
+      await user.click(
+        screen.getByRole('button', {
+          name: t('bugReport.previewLabel', { filename: 'agaric.log' }),
+        }),
+      )
+
+      const pre = await screen.findByTestId('bug-report-log-preview-content')
+      // Content is sliced to PREVIEW_MAX_CHARS (500).
+      expect(pre.textContent ?? '').toHaveLength(500)
+      expect(pre.textContent).not.toContain('END')
+      // Truncation notice with the total byte count is rendered.
+      const total = longContent.length
+      expect(
+        screen.getByText(t('bugReport.previewTruncated', { shown: 500, total })),
+      ).toBeInTheDocument()
+    })
+
+    it('shows the full content (no truncation notice) when the file is ≤ 500 chars', async () => {
+      const user = userEvent.setup()
+      setupTwoLogs()
+
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      await openLogsList(user)
+
+      await user.click(
+        screen.getByRole('button', {
+          name: t('bugReport.previewLabel', { filename: 'agaric-2025-01-01.log' }),
+        }),
+      )
+
+      const pre = await screen.findByTestId('bug-report-log-preview-content')
+      expect(pre.textContent).toBe(shortContent)
+      // No truncation notice for a short file.
+      expect(screen.queryByText(/Showing first 500 of/)).not.toBeInTheDocument()
+    })
+
+    it('shows the loading spinner while the IPC is in flight', async () => {
+      const user = userEvent.setup()
+
+      // First read_logs_for_report call (loading the list) resolves
+      // immediately; the second call (preview) hangs so we can observe
+      // the loading state.
+      let readCallCount = 0
+      let resolvePreview!: (entries: { name: string; contents: string }[]) => void
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'collect_bug_report_metadata') return sampleMetadata
+        if (cmd === 'read_logs_for_report') {
+          readCallCount += 1
+          if (readCallCount === 1) {
+            return [{ name: 'agaric.log', contents: 'tiny' }]
+          }
+          return new Promise<{ name: string; contents: string }[]>((resolve) => {
+            resolvePreview = resolve
+          })
+        }
+        return null
+      })
+
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+      await screen.findByText('agaric.log')
+
+      await user.click(
+        screen.getByRole('button', {
+          name: t('bugReport.previewLabel', { filename: 'agaric.log' }),
+        }),
+      )
+
+      // Loading message visible inside the sub-dialog.
+      const loadingMessage = await screen.findByText(t('bugReport.previewLoading'))
+      expect(loadingMessage).toBeInTheDocument()
+      // Sub-dialog should advertise its busy state for assistive tech.
+      expect(screen.getByTestId('bug-report-log-preview')).toHaveAttribute('aria-busy', 'true')
+
+      // Now resolve the preview IPC and the spinner should disappear.
+      resolvePreview([{ name: 'agaric.log', contents: 'tiny' }])
+
+      await waitFor(() => {
+        expect(screen.queryByText(t('bugReport.previewLoading'))).not.toBeInTheDocument()
+      })
+      expect(await screen.findByTestId('bug-report-log-preview-content')).toHaveTextContent('tiny')
+    })
+
+    it('shows an error message when the IPC fails and logs the error', async () => {
+      const user = userEvent.setup()
+
+      let readCallCount = 0
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'collect_bug_report_metadata') return sampleMetadata
+        if (cmd === 'read_logs_for_report') {
+          readCallCount += 1
+          if (readCallCount === 1) {
+            return [{ name: 'agaric.log', contents: 'tiny' }]
+          }
+          throw new Error('disk on fire')
+        }
+        return null
+      })
+
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+      await screen.findByText('agaric.log')
+
+      await user.click(
+        screen.getByRole('button', {
+          name: t('bugReport.previewLabel', { filename: 'agaric.log' }),
+        }),
+      )
+
+      const errorMsg = await screen.findByRole('alert')
+      expect(errorMsg).toHaveTextContent(t('bugReport.previewError'))
+      // The preview content pre block must not be rendered when the
+      // IPC failed.
+      expect(screen.queryByTestId('bug-report-log-preview-content')).not.toBeInTheDocument()
+    })
+
+    it('passes the axe a11y audit with the sub-dialog open', async () => {
+      const user = userEvent.setup()
+      setupTwoLogs()
+
+      const { container } = render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      await openLogsList(user)
+
+      await user.click(
+        screen.getByRole('button', {
+          name: t('bugReport.previewLabel', { filename: 'agaric.log' }),
+        }),
+      )
+      await screen.findByTestId('bug-report-log-preview-content')
+
+      await waitFor(
+        async () => {
+          const results = await axe(container)
+          expect(results).toHaveNoViolations()
+        },
+        { timeout: 5000 },
+      )
+    })
+  })
+
+  // ── UX-12: required-marker on confirmation checkbox ─────────────────
+  describe('confirmation checkbox required marker (UX-12)', () => {
+    it('renders aria-required="true" on the confirmation checkbox', async () => {
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      const checkbox = await screen.findByRole('checkbox', {
+        name: t('bugReport.confirmCheckbox'),
+      })
+      expect(checkbox).toHaveAttribute('aria-required', 'true')
+    })
+
+    it('renders the aria-hidden asterisk visual marker in the label', async () => {
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      // Wait for the dialog body to render.
+      await screen.findByRole('checkbox', { name: t('bugReport.confirmCheckbox') })
+
+      // Visual marker: asterisk in destructive color, hidden from AT so
+      // the accessible name stays unchanged. aria-required on the
+      // checkbox itself communicates the required state.
+      const marker = screen.getByTestId('bug-report-confirm-required-marker')
+      expect(marker).toBeInTheDocument()
+      expect(marker.textContent).toBe('*')
+      expect(marker).toHaveAttribute('aria-hidden', 'true')
+      expect(marker.className).toContain('text-destructive')
+      // Ensure it is inside the confirmation label.
+      const label = document.querySelector('label[for="bug-report-confirm"]')
+      expect(label?.contains(marker)).toBe(true)
+    })
+  })
+
+  // ── UX-12: View full log toggle in the per-log preview sub-dialog ───
+  describe('preview "View full log" toggle (UX-12)', () => {
+    const longContent = `${'a'.repeat(600)}END`
+
+    function setupOneLongLog() {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'collect_bug_report_metadata') return sampleMetadata
+        if (cmd === 'read_logs_for_report') {
+          return [{ name: 'agaric.log', contents: longContent }]
+        }
+        return null
+      })
+    }
+
+    it('toggles between truncated and full content when clicked', async () => {
+      const user = userEvent.setup()
+      setupOneLongLog()
+
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+      await screen.findByText('agaric.log')
+      await user.click(
+        screen.getByRole('button', {
+          name: t('bugReport.previewLabel', { filename: 'agaric.log' }),
+        }),
+      )
+
+      const pre = await screen.findByTestId('bug-report-log-preview-content')
+      // Initially truncated.
+      expect(pre.textContent ?? '').toHaveLength(500)
+      expect(pre.textContent).not.toContain('END')
+
+      // Toggle button visible only when content exceeds the threshold.
+      const toggle = screen.getByTestId('bug-report-log-preview-toggle')
+      expect(toggle).toHaveTextContent(t('bugReport.viewFullLog'))
+
+      await user.click(toggle)
+
+      // Full content now rendered.
+      const expanded = await screen.findByTestId('bug-report-log-preview-content')
+      expect(expanded.textContent).toBe(longContent)
+      expect(expanded.textContent).toContain('END')
+      expect(toggle).toHaveTextContent(t('bugReport.collapseLog'))
+
+      // Collapse again returns to the truncated view.
+      await user.click(toggle)
+      const collapsed = await screen.findByTestId('bug-report-log-preview-content')
+      expect(collapsed.textContent ?? '').toHaveLength(500)
+    })
+  })
+
+  // ── PEND-28b M1 → pending/dialog-responsiveness-primitive-2026-05-13:
+  // scrollable body keeps title and footer fixed. The custom ScrollArea
+  // wrapper became a DialogBody slot baked into the Dialog primitive; the
+  // ScrollArea is now an implementation detail of DialogBody.
+  describe('scrollable body layout', () => {
+    it('renders the form body inside the DialogBody slot with title and footer outside', async () => {
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      await screen.findByText(/## Description/)
+
+      // The body wrapper carries the dialog-body data-slot exposed by the
+      // shared DialogBody primitive — guarantees future renames stay caught.
+      const body = screen.getByTestId('bug-report-body')
+      expect(body).toHaveAttribute('data-slot', 'dialog-body')
+
+      // Title is rendered as a sibling of the ScrollArea, not inside
+      // it, so it stays visible while the body scrolls.
+      const title = screen.getByText(t('bugReport.title'))
+      expect(body.contains(title)).toBe(false)
+
+      // Submit + Cancel buttons sit in the dialog footer, NOT inside
+      // the scroll body.
+      const cancelBtn = screen.getByRole('button', { name: t('bugReport.cancel') })
+      const openBtn = screen.getByRole('button', { name: t('bugReport.openIssue') })
+      expect(body.contains(cancelBtn)).toBe(false)
+      expect(body.contains(openBtn)).toBe(false)
+    })
+  })
+
+  // ── PEND-23 L7: nested log-preview dialog autofocuses close button ──
+  describe('log preview close button autoFocus (PEND-23 L7)', () => {
+    it('focuses the close button when the preview dialog opens', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'collect_bug_report_metadata') return sampleMetadata
+        if (cmd === 'read_logs_for_report') {
+          return [{ name: 'agaric.log', contents: 'tiny' }]
+        }
+        return null
+      })
+
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
+      await screen.findByText('agaric.log')
+
+      await user.click(
+        screen.getByRole('button', {
+          name: t('bugReport.previewLabel', { filename: 'agaric.log' }),
+        }),
+      )
+
+      // Wait for the preview content to render so focus has settled
+      // after Radix's open transition.
+      await screen.findByTestId('bug-report-log-preview-content')
+
+      const closeBtn = screen.getByTestId('bug-report-log-preview-close')
+      await waitFor(() => {
+        expect(closeBtn).toHaveFocus()
+      })
+    })
+  })
+
+  it('prefills title and description from props', async () => {
+    render(
+      <BugReportDialog
+        open={true}
+        onOpenChange={() => {}}
+        initialTitle="crash prefilled"
+        initialDescription="stack trace here"
+      />,
+    )
+
+    const titleInput = (await screen.findByLabelText(
+      t('bugReport.fieldTitleLabel'),
+    )) as HTMLInputElement
+    expect(titleInput.value).toBe('crash prefilled')
+
+    const descInput = screen.getByLabelText(
+      t('bugReport.fieldDescriptionLabel'),
+    ) as HTMLTextAreaElement
+    expect(descInput.value).toBe('stack trace here')
+  })
+
+  // ─── MAINT-215: useDialogOrSheet('dialog') viewport switch ─────────────
+  //
+  // On phones < 768 px the outer shell renders as a bottom Sheet so the
+  // footer actions sit within thumb reach. The form body, IPC wiring, and
+  // confirm checkbox are identical on both paths — assert the dialog mounts
+  // and the form fields are reachable under both viewports.
+  describe('viewport switch (MAINT-215)', () => {
+    it('renders form body on mobile (Sheet path)', async () => {
+      mockedUseIsMobile.mockReturnValue(true)
+
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      expect(await screen.findByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('bugReport.fieldTitleLabel'))).toBeInTheDocument()
+      expect(screen.getByLabelText(t('bugReport.fieldDescriptionLabel'))).toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: t('bugReport.confirmCheckbox') }),
+      ).toBeInTheDocument()
+    })
+
+    it('renders form body on desktop (Dialog path)', async () => {
+      mockedUseIsMobile.mockReturnValue(false)
+
+      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+
+      expect(await screen.findByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('bugReport.fieldTitleLabel'))).toBeInTheDocument()
+      expect(screen.getByLabelText(t('bugReport.fieldDescriptionLabel'))).toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: t('bugReport.confirmCheckbox') }),
+      ).toBeInTheDocument()
+    })
+  })
+})

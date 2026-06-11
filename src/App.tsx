@@ -1,22 +1,25 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
+import { GcalReauthBanner } from '@/components/gcal/GcalReauthBanner'
+import { AppSidebar } from '@/components/layout/AppSidebar'
+import { QuickAccessBar } from '@/components/layout/QuickAccessBar'
+import { SpaceTopStripe } from '@/components/layout/SpaceTopStripe'
+import { TabBar } from '@/components/layout/TabBar'
+import {
+  ViewHeaderOutletProvider,
+  ViewHeaderOutletSlot,
+} from '@/components/layout/ViewHeaderOutlet'
+import { BootGate } from '@/components/pages/BootGate'
+import { useHeaderLabel, ViewDispatcher } from '@/components/pages/ViewDispatcher'
 import { notify } from '@/lib/notify'
 
-import { AppSidebar } from './components/AppSidebar'
-import { BootGate } from './components/BootGate'
-import { FeatureErrorBoundary } from './components/FeatureErrorBoundary'
-import { GcalReauthBanner } from './components/GcalReauthBanner'
 import { GlobalDateControls, JournalControls } from './components/JournalPage'
-import { QuickAccessBar } from './components/QuickAccessBar'
 import { SearchSheetTrigger } from './components/SearchSheetTrigger'
-import { SpaceTopStripe } from './components/SpaceTopStripe'
-import { TabBar } from './components/TabBar'
 import { ScrollArea } from './components/ui/scroll-area'
 import { SidebarInset, SidebarProvider } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
-import { useHeaderLabel, ViewDispatcher } from './components/ViewDispatcher'
-import { ViewHeaderOutletProvider, ViewHeaderOutletSlot } from './components/ViewHeaderOutlet'
 import { useAndroidBackButton } from './hooks/useAndroidBackButton'
 import { useAppBootRecovery } from './hooks/useAppBootRecovery'
 import { useAppDialogs } from './hooks/useAppDialogs'
@@ -50,10 +53,10 @@ import { useSearchSheetStore } from './stores/useSearchSheetStore'
 // (PERF-24) and the shared `<ViewFallback>` Suspense skeleton live in
 // `./components/ViewDispatcher` (MAINT-124 step 4).
 const KeyboardShortcuts = lazy(() =>
-  import('./components/KeyboardShortcuts').then((m) => ({ default: m.KeyboardShortcuts })),
+  import('@/components/common/KeyboardShortcuts').then((m) => ({ default: m.KeyboardShortcuts })),
 )
 const WelcomeModal = lazy(() =>
-  import('./components/WelcomeModal').then((m) => ({ default: m.WelcomeModal })),
+  import('@/components/pages/WelcomeModal').then((m) => ({ default: m.WelcomeModal })),
 )
 // PERF (design-system review tier-2 #12): the three shell-level dialogs
 // below are mounted unconditionally near the bottom of `App` but only
@@ -64,27 +67,29 @@ const WelcomeModal = lazy(() =>
 // user actually triggers each one. Each component is a named export so
 // the dynamic-import re-export shape is required for `React.lazy`.
 const BugReportDialog = lazy(() =>
-  import('./components/BugReportDialog').then((m) => ({ default: m.BugReportDialog })),
+  import('@/components/dialogs/BugReportDialog').then((m) => ({ default: m.BugReportDialog })),
 )
 const QuickCaptureDialog = lazy(() =>
-  import('./components/QuickCaptureDialog').then((m) => ({ default: m.QuickCaptureDialog })),
+  import('@/components/dialogs/QuickCaptureDialog').then((m) => ({
+    default: m.QuickCaptureDialog,
+  })),
 )
 const NoPeersDialog = lazy(() =>
-  import('./components/NoPeersDialog').then((m) => ({ default: m.NoPeersDialog })),
+  import('@/components/dialogs/NoPeersDialog').then((m) => ({ default: m.NoPeersDialog })),
 )
 // PEND-52 — in-page find toolbar; lazy so the matcher + highlight code
 // only ships when the user actually opens it (Ctrl+F). It self-renders
 // nothing when the store flag is closed, so the lazy boundary is also
 // the rendering gate.
 const InPageFind = lazy(() =>
-  import('./components/InPageFind').then((m) => ({ default: m.InPageFind })),
+  import('@/components/query/InPageFind').then((m) => ({ default: m.InPageFind })),
 )
 // PEND-61 — Cmd/Ctrl+K command palette (successor to PEND-51's
 // SearchPalette). Same lazy-render-gate pattern: the component
 // self-renders nothing when its `useCommandPaletteStore.open` flag
 // is `false`.
 const CommandPalette = lazy(() =>
-  import('./components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
+  import('@/components/common/CommandPalette').then((m) => ({ default: m.CommandPalette })),
 )
 // Mobile unified search sheet. Same lazy-render-gate pattern as the
 // overlays above: renders nothing when its store flag is closed.

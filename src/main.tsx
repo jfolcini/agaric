@@ -4,8 +4,9 @@ import { createRoot } from 'react-dom/client'
 import './lib/i18n'
 
 import './index.css'
+import { ErrorBoundary } from '@/components/common/ErrorBoundary'
+
 import { App } from './App.tsx'
-import { ErrorBoundary } from './components/ErrorBoundary'
 import { PrimaryFocusProvider } from './hooks/usePrimaryFocus'
 import { logger } from './lib/logger'
 

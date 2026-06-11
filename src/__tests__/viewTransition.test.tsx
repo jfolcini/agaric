@@ -19,15 +19,15 @@ vi.mock('../lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
-vi.mock('../components/DeviceManagement', () => ({
+vi.mock('@/components/peers/DeviceManagement', () => ({
   DeviceManagement: () => <div data-testid="device-management" />,
 }))
 
-vi.mock('../components/LinkedReferences', () => ({
+vi.mock('@/components/backlinks/LinkedReferences', () => ({
   LinkedReferences: () => <div data-testid="linked-references" />,
 }))
 
-vi.mock('../components/PagePropertyTable', () => ({
+vi.mock('@/components/pages/PagePropertyTable', () => ({
   PagePropertyTable: () => <div data-testid="page-property-table" />,
 }))
 

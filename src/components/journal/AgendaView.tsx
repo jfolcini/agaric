@@ -5,6 +5,13 @@
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 
+import type { AgendaFilter } from '@/components/agenda/AgendaFilterBuilder'
+import {
+  AgendaFilterBuilder,
+  AgendaSortGroupControls,
+} from '@/components/agenda/AgendaFilterBuilder'
+import { AgendaResults } from '@/components/agenda/AgendaResults'
+import { ViewHeader } from '@/components/layout/ViewHeader'
 import { logger } from '@/lib/logger'
 
 import { useAgendaPreferences } from '../../hooks/useAgendaPreferences'
@@ -16,10 +23,6 @@ import {
 import type { BlockRow } from '../../lib/tauri'
 import { batchResolve } from '../../lib/tauri'
 import { useSpaceStore } from '../../stores/space'
-import type { AgendaFilter } from '../AgendaFilterBuilder'
-import { AgendaFilterBuilder, AgendaSortGroupControls } from '../AgendaFilterBuilder'
-import { AgendaResults } from '../AgendaResults'
-import { ViewHeader } from '../ViewHeader'
 import { appendUniqueBlocks, buildPageTitleMap, processFilterResult } from './AgendaView.helpers'
 
 interface AgendaViewProps {

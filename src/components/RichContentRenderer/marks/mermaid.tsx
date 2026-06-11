@@ -6,7 +6,7 @@ import { Spinner } from '../../ui/spinner'
 
 // Lazy-load MermaidDiagram to avoid bundling mermaid on initial load
 const LazyMermaidDiagram = lazy(() =>
-  import('../../MermaidDiagram').then((m) => ({ default: m.MermaidDiagram })),
+  import('@/components/rendering/MermaidDiagram').then((m) => ({ default: m.MermaidDiagram })),
 )
 
 export function renderMermaidBlock(code: string, key: string): React.ReactElement {

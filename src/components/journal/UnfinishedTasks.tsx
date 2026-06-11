@@ -10,7 +10,9 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { CollapsiblePanelHeader } from '@/components/CollapsiblePanelHeader'
+import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
+import { BlockListItem } from '@/components/editor/BlockListItem'
+import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { getTodayString } from '@/lib/date-utils'
 
@@ -20,8 +22,6 @@ import { logger } from '../../lib/logger'
 import type { BlockRow } from '../../lib/tauri'
 import { batchResolve, listUnfinishedTasks, paginationLimit } from '../../lib/tauri'
 import { useSpaceStore } from '../../stores/space'
-import { BlockListItem } from '../BlockListItem'
-import { LoadingSkeleton } from '../LoadingSkeleton'
 
 // ── Constants ──────────────────────────────────────────────────────────
 

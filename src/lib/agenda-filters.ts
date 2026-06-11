@@ -14,9 +14,9 @@
  * round-trip with cursor-paginated, correctness-preserving output.
  */
 
+import type { AgendaFilter } from '@/components/agenda/AgendaFilterBuilder'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 
-import type { AgendaFilter } from '../components/AgendaFilterBuilder'
 import type { PageResponse } from './bindings'
 import { formatDate, getDateRangeForFilter } from './date-utils'
 import { paginationLimit, type SafeLimit } from './safe-limit'

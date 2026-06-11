@@ -13,13 +13,13 @@ import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { FilterPillRow, type FilterWithKey } from '@/components/filters/FilterPillRow'
+import { FilterSortControls } from '@/components/filters/FilterSortControls'
 import { Button } from '@/components/ui/button'
 import { notify } from '@/lib/notify'
 
 import type { BacklinkFilter, BacklinkSort, SortDir } from '../lib/tauri'
 import { AddFilterRow } from './backlink-filter/AddFilterRow'
-import { FilterPillRow, type FilterWithKey } from './FilterPillRow'
-import { FilterSortControls } from './FilterSortControls'
 
 // ---------------------------------------------------------------------------
 // Types

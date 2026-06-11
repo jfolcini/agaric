@@ -330,7 +330,7 @@ Desktop drives three search surfaces with three keybindings: `Ctrl+F` opens in-p
 The Sheet has two segments rendered as a Radix `ToggleGroup`:
 
 - **In this page** — embeds the PEND-52 find-in-page toolbar (`<InPageFind variant="embedded" />`). Same matcher, same highlight pipeline; only the chrome differs from the desktop overlay.
-- **Across all pages** — embeds the PEND-61 palette search via the inner `<PaletteBody>` component (the same body that mounts inside the overlay `<CommandPalette>` shell, exported from `src/components/CommandPalette.tsx`; no `variant` prop). Same cmdk surface, same partitioned IPC, same escalation footer. Tapping the footer fires `setPendingViewQuery(query)` → `onClose()` → `setView('search')`; the Sheet tears down, the find-in-files view picks up the query.
+- **Across all pages** — embeds the PEND-61 palette search via the inner `<PaletteBody>` component (the same body that mounts inside the overlay `<CommandPalette>` shell, exported from `src/components/common/CommandPalette.tsx`; no `variant` prop). Same cmdk surface, same partitioned IPC, same escalation footer. Tapping the footer fires `setPendingViewQuery(query)` → `onClose()` → `setView('search')`; the Sheet tears down, the find-in-files view picks up the query.
 
 The default segment is context-aware: `defaultModeForView()` returns `'in-page'` for the Journal and page-editor views (the user is reading a page), `'all-pages'` everywhere else.
 
