@@ -676,24 +676,51 @@ pub async fn sweep_once(
     let due = fetch_due(read_pool, SWEEP_BATCH_LIMIT).await?;
     let mut re_enqueued = 0usize;
     for row in &due {
+        let apply_op_kind = match RetryKind::from_str(&row.task_kind) {
+            Some(RetryKind::ApplyOp { device_id, seq }) => Some((device_id, seq)),
+            _ => None,
+        };
+
         // Issue #157 sub-item D — give-up before any further work.
-        // Checked before the ApplyOp special-case below so a permanently
-        // failing apply op is also retired by the same triggers.
+        //
+        // #621: ApplyOp rows are exempt. A persisted ApplyOp is a
+        // CORRECTNESS hole — the apply cursor's MAX-semantics advance has
+        // already leapt past the dropped op's seq, so the boot replay
+        // (`seq > cursor`) can never re-cover it; this retry row is the ONLY
+        // remaining record that the op was never materialized. Auto-retiring
+        // it (10 attempts / 7 days) would leave the op permanently
+        // unmaterialized with no recovery net. The row stays on the capped
+        // 1-hour backoff schedule until durable success (`clear_on_success`)
+        // or an explicit retirement below (op row compacted away /
+        // superseded by a later purge). The threshold crossing is still
+        // logged so a permanently-failing apply stays operator-visible.
         if let Some(reason) = give_up_reason(row) {
+            if apply_op_kind.is_none() {
+                tracing::warn!(
+                    block_id = %row.block_id,
+                    task_kind = %row.task_kind,
+                    attempts = row.attempts,
+                    created_at = %row.created_at,
+                    give_up_reason = reason,
+                    "retry queue give-up — task permanently dropped"
+                );
+                materializer
+                    .metrics()
+                    .retry_queue_giveup_total
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                clear_entry(write_pool, &row.block_id, &row.task_kind).await?;
+                continue;
+            }
             tracing::warn!(
                 block_id = %row.block_id,
                 task_kind = %row.task_kind,
                 attempts = row.attempts,
                 created_at = %row.created_at,
                 give_up_reason = reason,
-                "retry queue give-up — task permanently dropped"
+                "persisted ApplyOp exceeds the give-up thresholds but is kept — \
+                 apply ops are correctness, not cache freshness (#621); it stays \
+                 on the capped backoff until it applies durably"
             );
-            materializer
-                .metrics()
-                .retry_queue_giveup_total
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            clear_entry(write_pool, &row.block_id, &row.task_kind).await?;
-            continue;
         }
 
         // PEND-24 H1: ApplyOp rows are dispatched to the foreground
@@ -702,9 +729,9 @@ pub async fn sweep_once(
         // them from the row alone — the `OpRecord` must be re-loaded
         // from `op_log` — and (b) `try_enqueue_background` would route
         // to the wrong consumer.
-        if let Some(RetryKind::ApplyOp { device_id, seq }) = RetryKind::from_str(&row.task_kind) {
+        if let Some((device_id, seq)) = apply_op_kind {
             match try_reenqueue_apply_op(read_pool, materializer, &device_id, seq).await {
-                Ok(()) => {
+                Ok(ApplyOpSweepDisposition::Enqueued) => {
                     // Issue #378: lease (do NOT clear) on successful
                     // enqueue. The row stays so a subsequent failure's
                     // `record_failure` UPSERT finds it and increments
@@ -714,6 +741,39 @@ pub async fn sweep_once(
                     // being swept twice before it resolves.
                     lease_entry(write_pool, &row.block_id, &row.task_kind, row.attempts).await?;
                     re_enqueued += 1;
+                }
+                Ok(ApplyOpSweepDisposition::OpRowMissing) => {
+                    // #621: permanent — the op_log row is gone (compacted
+                    // away or corrupted), so there is nothing left to apply.
+                    // Retire the row instead of erroring every sweep forever.
+                    tracing::error!(
+                        block_id = %row.block_id,
+                        task_kind = %row.task_kind,
+                        "retiring persisted ApplyOp row: its op_log row no longer \
+                         exists (compacted or corrupted) — the op is permanently \
+                         unmaterialized (#621)"
+                    );
+                    materializer
+                        .metrics()
+                        .retry_queue_giveup_total
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    clear_entry(write_pool, &row.block_id, &row.task_kind).await?;
+                }
+                Ok(ApplyOpSweepDisposition::SupersededByPurge) => {
+                    // #621: a later purge_block targets the same block. The
+                    // sweep runs minutes-to-hours after the original failure,
+                    // so re-applying now (projections are INSERT OR IGNORE
+                    // with no tombstone check, and the engine recreates the
+                    // node) would RESURRECT user-destroyed data. The purge
+                    // makes this op's effect moot — retire the row.
+                    tracing::info!(
+                        block_id = %row.block_id,
+                        task_kind = %row.task_kind,
+                        "retiring persisted ApplyOp row: a later purge_block \
+                         supersedes it — re-applying would resurrect a purged \
+                         block (#621)"
+                    );
+                    clear_entry(write_pool, &row.block_id, &row.task_kind).await?;
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -772,25 +832,42 @@ pub async fn sweep_once(
     Ok(re_enqueued)
 }
 
+/// #621: what [`try_reenqueue_apply_op`] decided about a persisted ApplyOp
+/// row. `Enqueued` is the normal path; the other two are permanent
+/// dispositions the caller must retire the retry row for.
+#[derive(Debug, PartialEq, Eq)]
+enum ApplyOpSweepDisposition {
+    /// The record was re-submitted on the foreground queue.
+    Enqueued,
+    /// The `op_log` row no longer exists (compacted away or corrupted) —
+    /// there is nothing left to apply, ever.
+    OpRowMissing,
+    /// A later `purge_block` op targets the same block; re-applying this op
+    /// out of order would resurrect user-destroyed data (the projections are
+    /// `INSERT OR IGNORE` with no tombstone/purge check, and the engine
+    /// recreates the node).
+    SupersededByPurge,
+}
+
 /// PEND-24 H1: re-enqueue a previously-persisted [`MaterializeTask::ApplyOp`]
 /// failure onto the foreground queue.
 ///
 /// Steps:
 ///   1. Load the `OpRecord` from `op_log` by `(device_id, seq)`.
-///   2. Wrap in `Arc` and submit via [`crate::materializer::Materializer::enqueue_foreground`].
+///   2. #621: gate on op-log supersession — if a later `purge_block` targets
+///      the same block, do NOT re-apply (out-of-order resurrection).
+///   3. Wrap in `Arc` and submit via [`crate::materializer::Materializer::enqueue_foreground`].
 ///
-/// If the op_log row is missing (e.g. compacted / corrupted), the row
-/// is treated as orphaned by the caller (via the unknown-task_kind
-/// drop path) — but in practice op_log compaction never deletes rows,
-/// so a missing row indicates a deeper corruption that needs operator
-/// attention. We surface it as a hard error here so the sweeper logs
-/// it at warn level instead of silently dropping the retry row.
+/// A missing op_log row and a purge-superseded op are reported as
+/// [`ApplyOpSweepDisposition`] values (permanent — the caller retires the
+/// row); transient failures (enqueue / probe errors) propagate as `Err` so
+/// the row survives for the next sweep.
 async fn try_reenqueue_apply_op(
     read_pool: &SqlitePool,
     materializer: &crate::materializer::Materializer,
     device_id: &str,
     seq: i64,
-) -> Result<(), AppError> {
+) -> Result<ApplyOpSweepDisposition, AppError> {
     let record = sqlx::query_as!(
         crate::op_log::OpRecord,
         "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id \
@@ -799,15 +876,47 @@ async fn try_reenqueue_apply_op(
         seq,
     )
     .fetch_optional(read_pool)
-    .await?
-    .ok_or_else(|| {
-        AppError::NotFound(format!(
-            "op_log row missing for ApplyOp retry ({device_id}, {seq})"
-        ))
-    })?;
+    .await?;
+    let Some(record) = record else {
+        return Ok(ApplyOpSweepDisposition::OpRowMissing);
+    };
+
+    // #621: out-of-order-sweep guard. The sweep re-applies minutes-to-hours
+    // after the original failure, after later ops already applied. If a
+    // LATER `purge_block` (materializer LWW order: `created_at, device_id,
+    // seq`) targets the same block, re-applying this op would re-insert the
+    // purged block in SQL (`INSERT OR IGNORE`, no purge check) and recreate
+    // the node in the engine. The op the user observed winning is the purge
+    // — drop this one. (`purge_block` is excluded from gating itself only by
+    // the strict "later than" comparison: a purge is never superseded by
+    // itself.)
+    if let Some(block_id) = record.block_id.as_deref() {
+        let superseded: i64 = sqlx::query_scalar(
+            "SELECT EXISTS( \
+                 SELECT 1 FROM op_log p \
+                 WHERE p.op_type = 'purge_block' \
+                   AND p.block_id = ?1 \
+                   AND (p.created_at > ?2 \
+                        OR (p.created_at = ?2 \
+                            AND (p.device_id > ?3 \
+                                 OR (p.device_id = ?3 AND p.seq > ?4)))) \
+             )",
+        )
+        .bind(block_id)
+        .bind(record.created_at)
+        .bind(&record.device_id)
+        .bind(record.seq)
+        .fetch_one(read_pool)
+        .await?;
+        if superseded != 0 {
+            return Ok(ApplyOpSweepDisposition::SupersededByPurge);
+        }
+    }
+
     materializer
         .enqueue_foreground(MaterializeTask::ApplyOp(Arc::new(record)))
-        .await
+        .await?;
+    Ok(ApplyOpSweepDisposition::Enqueued)
 }
 
 /// Spawn a long-lived task that sweeps the retry queue every 60 seconds
@@ -1795,6 +1904,206 @@ mod tests {
             giveups, 0,
             "retry_queue_giveup_total must stay zero for normal-path rows"
         );
+    }
+
+    // --- #621: persisted ApplyOp rows are correctness, not cache freshness ---
+
+    /// Insert a raw op_log row for the ApplyOp sweep tests.
+    async fn insert_sweep_op(
+        pool: &SqlitePool,
+        device_id: &str,
+        seq: i64,
+        op_type: &str,
+        payload: &str,
+        block_id: &str,
+        created_at: i64,
+    ) {
+        sqlx::query(
+            "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
+             VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
+        )
+        .bind(device_id)
+        .bind(seq)
+        .bind(format!("hash-{device_id}-{seq}"))
+        .bind(op_type)
+        .bind(payload)
+        .bind(created_at)
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// #621 (cursor-gap half): an ApplyOp row past BOTH give-up thresholds
+    /// must NOT be retired — the apply cursor has already leapt past the
+    /// dropped seq, so this row is the only remaining recovery net. The op
+    /// payload is deliberately invalid (`{}`) so the re-enqueued apply fails
+    /// and `clear_on_success` can never race the row away.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_keeps_apply_op_rows_past_give_up_thresholds_621() {
+        use crate::materializer::Materializer;
+        use std::sync::atomic::Ordering;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_sweep_op(
+            &pool,
+            "dev-621",
+            1,
+            "create_block",
+            "{}", // invalid payload → the re-applied op keeps failing
+            "BLK621KEEP",
+            crate::db::now_ms(),
+        )
+        .await;
+
+        let past = crate::db::now_ms() - 5 * 60_000;
+        let stale_created = crate::db::now_ms() - (GIVE_UP_AGE_DAYS + 1) * 86_400_000;
+        let attempts = MAX_ATTEMPTS + 3;
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "__APPLY_OP__",
+            "ApplyOp:1:dev-621",
+            attempts,
+            stale_created,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 1,
+            "an over-threshold ApplyOp row must still be re-enqueued (#621)"
+        );
+        let giveups = mat
+            .metrics()
+            .retry_queue_giveup_total
+            .load(Ordering::Relaxed);
+        assert_eq!(
+            giveups, 0,
+            "ApplyOp rows are exempt from the give-up triggers (#621)"
+        );
+        // Drain the (failing) re-apply, then confirm the row survived.
+        mat.flush_foreground().await.unwrap();
+        let remaining: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) as \"n!: i64\" FROM materializer_retry_queue \
+             WHERE task_kind = 'ApplyOp:1:dev-621'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            remaining, 1,
+            "the ApplyOp row must survive until durable success (#621)"
+        );
+        mat.shutdown();
+    }
+
+    /// #621: an ApplyOp row whose op_log row no longer exists (compacted /
+    /// corrupted) is permanent — the sweeper retires it instead of erroring
+    /// on every sweep forever.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_retires_apply_op_when_op_log_row_missing_621() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let past = crate::db::now_ms() - 5 * 60_000;
+        let recent = crate::db::now_ms();
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "__APPLY_OP__",
+            "ApplyOp:42:dev-gone",
+            1_i64,
+            recent,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(n, 0, "nothing to re-enqueue — the op row is gone");
+        let remaining = pending_count(&pool).await.unwrap();
+        assert_eq!(
+            remaining, 0,
+            "an ApplyOp row without a backing op_log row must be retired (#621)"
+        );
+        mat.shutdown();
+    }
+
+    /// #621 (out-of-order-sweep half): an ApplyOp superseded by a LATER
+    /// `purge_block` of the same block must be retired, not re-applied —
+    /// re-applying would resurrect user-destroyed data (`INSERT OR IGNORE`
+    /// projection with no purge check + engine node recreation).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_retires_apply_op_superseded_by_purge_621() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+        // The failed-then-persisted create, and the later successful purge.
+        insert_sweep_op(
+            &pool,
+            "dev-621p",
+            1,
+            "create_block",
+            r#"{"block_id":"BLK621PURGED","block_type":"content","content":"x","parent_id":null,"position":1}"#,
+            "BLK621PURGED",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-621p",
+            2,
+            "purge_block",
+            r#"{"block_id":"BLK621PURGED"}"#,
+            "BLK621PURGED",
+            t0 + 1000,
+        )
+        .await;
+
+        let past = crate::db::now_ms() - 5 * 60_000;
+        let recent = crate::db::now_ms();
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "__APPLY_OP__",
+            "ApplyOp:1:dev-621p",
+            1_i64,
+            recent,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(n, 0, "a purge-superseded ApplyOp must not be re-enqueued");
+        let remaining = pending_count(&pool).await.unwrap();
+        assert_eq!(remaining, 0, "the superseded row must be retired (#621)");
+
+        // The purged block must NOT have been resurrected.
+        let resurrected: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'BLK621PURGED'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            resurrected, 0,
+            "sweeping must not re-insert a block a later purge destroyed (#621)"
+        );
+        mat.shutdown();
     }
 
     // --- PEND-03: global cache rebuild persistence ---

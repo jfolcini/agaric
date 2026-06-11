@@ -167,6 +167,32 @@ pub async fn apply_reverse_in_tx(
             )
             .execute(&mut **tx)
             .await?;
+
+            // #657: keep the denormalized `space_id` in step with the
+            // just-refreshed `page_id`, synchronously — #533 parity with the
+            // forward path this arm mirrors (`restore_block_inner`,
+            // `commands/blocks/crud.rs`). Without it, space-scoped lists
+            // read stale membership after an undo until the background
+            // `RebuildPageIds` chain lands. Non-page rows derive from their
+            // owning page's `space` property; pages keep their own.
+            sqlx::query!(
+                "WITH RECURSIVE descendants(id, depth) AS ( \
+                     SELECT b.id, 0 FROM blocks b \
+                     WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
+                     UNION ALL \
+                     SELECT b.id, d.depth + 1 FROM blocks b \
+                     JOIN descendants d ON b.parent_id = d.id \
+                     WHERE b.deleted_at IS NULL AND d.depth < 100 \
+                 ) \
+                 UPDATE blocks SET space_id = ( \
+                     SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
+                 ) \
+                 WHERE (id = ?1 OR id IN (SELECT id FROM descendants)) \
+                   AND block_type != 'page' AND page_id IS NOT NULL",
+                block_id_str,
+            )
+            .execute(&mut **tx)
+            .await?;
         }
         OpPayload::EditBlock(p) => {
             let block_id_str = p.block_id.as_str();
@@ -260,6 +286,29 @@ pub async fn apply_reverse_in_tx(
                  WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
                 block_id_str,
                 effective_page_id,
+            )
+            .execute(&mut **tx)
+            .await?;
+
+            // #657: refresh `space_id` for the moved subtree synchronously —
+            // #533 parity with the forward path this arm mirrors
+            // (`move_block_inner`, `commands/blocks/move_ops.rs`). See the
+            // matching note on the RestoreBlock arm above.
+            sqlx::query!(
+                "WITH RECURSIVE descendants(id, depth) AS ( \
+                     SELECT b.id, 0 FROM blocks b \
+                     WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
+                     UNION ALL \
+                     SELECT b.id, d.depth + 1 FROM blocks b \
+                     JOIN descendants d ON b.parent_id = d.id \
+                     WHERE b.deleted_at IS NULL AND d.depth < 100 \
+                 ) \
+                 UPDATE blocks SET space_id = ( \
+                     SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
+                 ) \
+                 WHERE (id = ?1 OR id IN (SELECT id FROM descendants)) \
+                   AND block_type != 'page' AND page_id IS NOT NULL",
+                block_id_str,
             )
             .execute(&mut **tx)
             .await?;
@@ -502,7 +551,11 @@ pub async fn revert_ops_inner(
         // Append reverse op to log first, then apply — same order as
         // undo_page_op_inner / redo_page_op_inner.  The clone is needed
         // because append_local_op_in_tx consumes the payload.
-        let op_record = op_log::append_local_op_in_tx(
+        // #659: batch reverts are undo-producing too — their `new_op_ref`s
+        // are legitimate redo targets (activity-feed / point-in-time
+        // restore undo), so flag them `is_undo = 1` like the interactive
+        // undo path.
+        let op_record = op_log::append_local_undo_op_in_tx(
             &mut tx,
             device_id,
             reverse_payload.clone(),
@@ -752,7 +805,10 @@ pub async fn undo_page_op_inner(
     // desequence.
     let mut tx = CommandTx::begin_immediate(pool, "undo_page_op").await?;
 
-    let op_record = op_log::append_local_op_in_tx(
+    // #659: flag the reverse op as an undo op (`op_log.is_undo = 1`) so
+    // `redo_page_op_inner` can verify that the ref it is asked to reverse
+    // really came from an undo.
+    let op_record = op_log::append_local_undo_op_in_tx(
         &mut tx,
         device_id,
         reverse_payload.clone(),
@@ -803,6 +859,28 @@ pub async fn redo_page_op_inner(
     // I-Core-8: wrap to typed read-pool — caller is in write context
     let undo_record =
         op_log::get_op_by_seq(&ReadPool(pool.clone()), &undo_device_id, undo_seq).await?;
+
+    // #659: redo means "reverse an undo op" — verify the target's recorded
+    // provenance before reversing anything. Without this check a buggy IPC
+    // caller could hand any forward op ref to redo and get it reversed,
+    // mislabelled `is_redo: true`. The flag is stamped at append time by
+    // `undo_page_op_inner` (`op_log.is_undo`, migration 0090); pre-0090
+    // undo ops backfill to 0 and are no longer redoable (the FE redo stack
+    // is session-scoped, so no live ref can point at one).
+    let is_undo: i64 = sqlx::query_scalar!(
+        r#"SELECT is_undo as "is_undo!: i64" FROM op_log WHERE device_id = ? AND seq = ?"#,
+        undo_device_id,
+        undo_seq,
+    )
+    .fetch_one(pool)
+    .await?;
+    if is_undo == 0 {
+        return Err(AppError::Validation(format!(
+            "redo target ({undo_device_id}, {undo_seq}) is a '{}' op that was not \
+             produced by undo — refusing to reverse a forward op via redo (#659)",
+            undo_record.op_type
+        )));
+    }
 
     // Compute reverse of the undo op
     let reverse_payload = reverse::compute_reverse(pool, &undo_device_id, undo_seq).await?;

@@ -523,7 +523,16 @@ fn base_connect_options(db_path: &Path) -> SqliteConnectOptions {
 /// Dependent tables (block_properties, block_tags, …) are recovered
 /// *after* migrations run via [`recover_derived_state_from_op_log`]
 /// because migration 73's DROP TABLE blocks would CASCADE-delete them.
-async fn ensure_blocks_table_exists(pool: &SqlitePool) -> Result<(), crate::error::AppError> {
+///
+/// #616: returns `true` iff block recovery actually fired this boot (the
+/// temp table was created and ops replayed). The caller threads this
+/// positive corruption signal into [`recover_derived_state_from_op_log`],
+/// which no longer infers corruption from empty derived tables alone (a
+/// reserved-key-only vault legitimately keeps `block_properties` and
+/// `block_tags` empty forever post-0088). For crash-retry coverage the
+/// same signal is also persisted as the [`DERIVED_RECOVERY_PENDING_KEY`]
+/// marker row, when the `app_settings` table (migration 0053) exists.
+async fn ensure_blocks_table_exists(pool: &SqlitePool) -> Result<bool, crate::error::AppError> {
     // R4 (#347): propagate probe errors with `?` rather than masking a
     // transient failure as `0`/false. A swallowed error here would skip
     // recovery entirely and let migrations run against a missing `blocks`
@@ -536,7 +545,7 @@ async fn ensure_blocks_table_exists(pool: &SqlitePool) -> Result<(), crate::erro
         > 0;
 
     if exists {
-        return Ok(());
+        return Ok(false);
     }
 
     // Only recover if this is a corrupted database (migrations have already
@@ -548,7 +557,7 @@ async fn ensure_blocks_table_exists(pool: &SqlitePool) -> Result<(), crate::erro
     .await?;
 
     if migrations_table_exists == 0 {
-        return Ok(());
+        return Ok(false);
     }
 
     // #618: the highest applied migration version determines the era-correct
@@ -561,7 +570,7 @@ async fn ensure_blocks_table_exists(pool: &SqlitePool) -> Result<(), crate::erro
             .await?;
 
     if max_applied_migration == 0 {
-        return Ok(());
+        return Ok(false);
     }
 
     // #618: era switches — `ensure_blocks_table_exists` fires for ANY
@@ -624,9 +633,41 @@ async fn ensure_blocks_table_exists(pool: &SqlitePool) -> Result<(), crate::erro
     // Replay create / edit / move / delete / restore / purge ops into blocks.
     recover_blocks_from_op_log(&mut tx, deleted_at_is_ms).await?;
 
+    // #616: persist the "derived recovery still pending" marker in the SAME
+    // tx, so a crash between this commit and the post-migration derived-state
+    // replay leaves a durable retry signal (the next boot sees `blocks`
+    // present and would otherwise never re-run the derived recovery).
+    // `app_settings` exists iff migration 0053 has run — true for every
+    // rebuild-migration corruption era this recovery targets (0073+); on an
+    // ancient pre-0053 DB the marker is skipped and the same-boot in-memory
+    // flag alone gates the derived replay.
+    let app_settings_exists: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'app_settings'"
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    if app_settings_exists > 0 {
+        let now = now_ms();
+        sqlx::query(
+            "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, '1', ?)",
+        )
+        .bind(DERIVED_RECOVERY_PENDING_KEY)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+    }
+
     tx.commit().await?;
-    Ok(())
+    Ok(true)
 }
+
+/// #616: `app_settings` key marking that block-table recovery fired and the
+/// post-migration derived-state replay has not yet completed. Written by
+/// [`ensure_blocks_table_exists`] (same tx as the temp-table rebuild),
+/// cleared by [`recover_derived_state_from_op_log`] in the same tx as a
+/// successful replay — so the replay retries on every boot until it lands,
+/// and never runs without a positive corruption signal.
+const DERIVED_RECOVERY_PENDING_KEY: &str = "recovery.derived_replay_pending";
 
 /// #429: read an `op_log` row's `created_at` as an rfc3339 string, for use as
 /// `blocks.deleted_at` when recovery replays a `delete_block` on a pre-0080
@@ -855,17 +896,103 @@ async fn recover_blocks_from_op_log(
             }
             "restore_block" => {
                 let block_id = payload["block_id"].as_str().unwrap_or("");
-                sqlx::query("UPDATE blocks SET deleted_at = NULL WHERE id = ?")
-                    .bind(block_id)
-                    .execute(&mut *executor)
-                    .await?;
+                // #613: a `restore_block` op encodes ONLY the root, but the
+                // production path (`apply_restore_block_sql_only` /
+                // `project_restore_block_to_sql`, `collect_restore_cohort`)
+                // un-deletes the whole `(seed, deleted_at_ref)` cohort —
+                // every descendant tombstoned by the SAME delete op. The
+                // previous root-only UPDATE left every descendant tombstoned
+                // after a delete(root)+restore(root) replay, and ignored the
+                // cohort token entirely (a root deleted independently earlier
+                // would get resurrected by a later unrelated restore op).
+                //
+                // Mirror the #429 delete-arm cascade, keyed on the cohort
+                // timestamp: `deleted_at_ref` is the originating delete op's
+                // `created_at` in epoch-ms — exactly what the delete arm
+                // above stamped into `deleted_at` (per era, #618). Pre-0080
+                // (TEXT era) the delete arm stored rfc3339, so the guard
+                // compares via the same julianday()→ms conversion migration
+                // 0079/0080 use; this is the deliberate TEXT-era exception
+                // to the "no julianday on INTEGER columns" rule.
+                //
+                // A legacy payload missing `deleted_at_ref` (pre-cohort
+                // producers) falls back to un-deleting the whole subtree
+                // unconditionally — the legacy restore semantics.
+                let deleted_at_ref = payload
+                    .get("deleted_at_ref")
+                    .and_then(serde_json::Value::as_i64);
+                const RESTORE_CASCADE_PREFIX: &str = "UPDATE blocks SET deleted_at = NULL \
+                     WHERE id IN ( \
+                         WITH RECURSIVE descendants(id, depth) AS ( \
+                             SELECT id, 0 FROM blocks WHERE id = ?1 \
+                             UNION ALL \
+                             SELECT b.id, d.depth + 1 FROM blocks b \
+                             JOIN descendants d ON b.parent_id = d.id \
+                             WHERE d.depth < 100 \
+                         ) \
+                         SELECT id FROM descendants \
+                     )";
+                match deleted_at_ref {
+                    Some(ref_ms) if deleted_at_is_ms => {
+                        sqlx::query(sqlx::AssertSqlSafe(format!(
+                            "{RESTORE_CASCADE_PREFIX} AND deleted_at = ?2"
+                        )))
+                        .bind(block_id)
+                        .bind(ref_ms)
+                        .execute(&mut *executor)
+                        .await?;
+                    }
+                    Some(ref_ms) => {
+                        // TEXT era: `deleted_at` is rfc3339 (possibly the op
+                        // row's original string formatting), so compare on
+                        // the parsed ms value rather than string equality.
+                        sqlx::query(sqlx::AssertSqlSafe(format!(
+                            "{RESTORE_CASCADE_PREFIX} \
+                             AND deleted_at IS NOT NULL \
+                             AND CAST(ROUND((julianday(deleted_at) - 2440587.5) * 86400000.0) \
+                                 AS INTEGER) = ?2"
+                        )))
+                        .bind(block_id)
+                        .bind(ref_ms)
+                        .execute(&mut *executor)
+                        .await?;
+                    }
+                    None => {
+                        sqlx::query(sqlx::AssertSqlSafe(format!(
+                            "{RESTORE_CASCADE_PREFIX} AND deleted_at IS NOT NULL"
+                        )))
+                        .bind(block_id)
+                        .execute(&mut *executor)
+                        .await?;
+                    }
+                }
             }
             "purge_block" => {
                 let block_id = payload["block_id"].as_str().unwrap_or("");
-                sqlx::query("DELETE FROM blocks WHERE id = ?")
-                    .bind(block_id)
-                    .execute(&mut *executor)
-                    .await?;
+                // #615: production purge (`apply_purge_block_*`) hard-deletes
+                // the whole subtree, but the temp recovery table has no FK
+                // cascade (created constraint-free above), so a root-only
+                // DELETE left every purged descendant alive — and the orphan
+                // cleanup after this loop then PROMOTED them to live
+                // top-level blocks (`parent_id = NULL`), resurrecting
+                // user-destroyed data. Cascade with the same depth-bounded
+                // recursive CTE shape as the delete arm.
+                sqlx::query(
+                    "DELETE FROM blocks \
+                     WHERE id IN ( \
+                         WITH RECURSIVE descendants(id, depth) AS ( \
+                             SELECT id, 0 FROM blocks WHERE id = ?1 \
+                             UNION ALL \
+                             SELECT b.id, d.depth + 1 FROM blocks b \
+                             JOIN descendants d ON b.parent_id = d.id \
+                             WHERE d.depth < 100 \
+                         ) \
+                         SELECT id FROM descendants \
+                     )",
+                )
+                .bind(block_id)
+                .execute(&mut *executor)
+                .await?;
             }
             _ => {
                 // set_property / delete_property / add_tag are handled
@@ -944,12 +1071,15 @@ fn reserved_key_blocks_column(key: &str) -> Option<&'static str> {
 }
 
 /// After migrations run, recover dependent tables (block_properties,
-/// block_tags) from `op_log` if they are empty but the op log contains
-/// the corresponding ops.  Reserved-key properties (todo_state, priority,
+/// block_tags, attachments) from `op_log` — but only when block-table
+/// recovery actually fired (#616: `blocks_recovered_this_boot`, or the
+/// persisted pending marker from a prior crashed attempt) AND the derived
+/// tables are empty. Reserved-key properties (todo_state, priority,
 /// due_date, scheduled_date, space) are replayed directly onto their
 /// denormalised `blocks` columns (#534), not into `block_properties`.
 async fn recover_derived_state_from_op_log(
     pool: &SqlitePool,
+    blocks_recovered_this_boot: bool,
 ) -> Result<(), crate::error::AppError> {
     // Guard: skip if op_log is empty or missing.
     //
@@ -964,8 +1094,34 @@ async fn recover_derived_state_from_op_log(
         return Ok(());
     }
 
-    // Only recover if derived tables are empty — otherwise we would
-    // duplicate rows on every startup.
+    // #616: require a POSITIVE corruption signal before replaying anything.
+    //
+    // The old gate ("recover iff block_properties AND block_tags are both
+    // empty", C9/#345) assumed the two tables never empty independently of
+    // corruption. Post-0088 that premise is dead: reserved-key properties
+    // (todo_state / priority / due_date / scheduled_date / space) live on
+    // `blocks` columns and create NO `block_properties` rows, so a vault
+    // using only TODO states/dates and no tags legitimately keeps both
+    // counts at 0 forever — and the old gate re-ran the full O(op_count)
+    // op-log replay (plus a scary warn) on EVERY boot.
+    //
+    // The positive signal is "block-table recovery fired": either this very
+    // boot (`blocks_recovered_this_boot`, threaded from
+    // `ensure_blocks_table_exists`) or a prior boot that crashed before this
+    // replay completed (the durable `DERIVED_RECOVERY_PENDING_KEY` marker,
+    // written in the recovery tx and cleared below in the replay tx).
+    let marker_pending: i64 =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_settings WHERE key = ?")
+            .bind(DERIVED_RECOVERY_PENDING_KEY)
+            .fetch_one(pool)
+            .await?;
+
+    if !blocks_recovered_this_boot && marker_pending == 0 {
+        return Ok(());
+    }
+
+    // Secondary duplicate-protection guard: only replay into EMPTY derived
+    // tables — otherwise we would duplicate / clobber rows.
     //
     // R4 (#347): propagate probe errors with `?` rather than masking them
     // as `0` (which would wrongly trigger a full re-replay against an
@@ -979,32 +1135,25 @@ async fn recover_derived_state_from_op_log(
         .await?;
 
     // C9 (#345) — the OR is intentional; a per-table gate is NOT safe here.
-    //
-    // This recovery exists for exactly one state: migration 73's
-    // `DROP TABLE blocks` CASCADE-emptied both `block_properties` and
-    // `block_tags` (both carry `FK … ON DELETE CASCADE` to `blocks(id)`),
-    // so in the corruption path the two tables empty *together* — they
-    // never empty independently. The OR therefore fires recovery iff BOTH
-    // are empty and skips it the moment EITHER holds rows (the DB is
-    // already populated; re-replaying would duplicate).
-    //
-    // A per-table gate ("recover properties iff prop_count == 0, tags iff
-    // tag_count == 0") was evaluated and rejected: (1) the single shared
-    // `tx` replays the whole op log once across set_property /
-    // delete_property / add_tag, so per-table gating would need two passes
-    // or mid-loop op-type skipping; (2) the trailing blocks-column
-    // backfill (todo_state / priority / due_date / scheduled_date) reads
-    // from the just-repopulated `block_properties`, so gating properties
-    // off while tags ran would leave the denormalised columns stale; and
-    // (3) because both tables empty together, the OR and an AND are
-    // equivalent on the only path that reaches here — the OR is just the
-    // more conservative phrasing (any sign of existing data ⇒ skip).
+    // The corruption this recovery targets (a rebuild migration's
+    // `DROP TABLE blocks` CASCADE) empties both tables *together*, so any
+    // rows in EITHER table mean the DB is already populated and replaying
+    // would duplicate. Clear the pending marker too: there is nothing left
+    // for a retry to do, and a stale marker would re-trip this probe (and
+    // the duplicate risk) forever.
     if prop_count > 0 || tag_count > 0 {
+        if marker_pending > 0 {
+            sqlx::query("DELETE FROM app_settings WHERE key = ?")
+                .bind(DERIVED_RECOVERY_PENDING_KEY)
+                .execute(pool)
+                .await?;
+        }
         return Ok(());
     }
 
     tracing::warn!(
-        "Derived tables empty but op_log has {} ops — recovering properties, tags, and attachments",
+        "block recovery fired and derived tables are empty (op_log has {} ops) — \
+         recovering properties, tags, and attachments",
         op_count
     );
 
@@ -1018,57 +1167,242 @@ async fn recover_derived_state_from_op_log(
     // #374: `created_at` is selected so the `add_attachment` arm can restore
     // `attachments.created_at` (a NOT NULL column) from the originating op's
     // timestamp — the same value the live `apply_add_attachment_tx` writes.
-    let ops = sqlx::query(
-        "SELECT op_type, payload, created_at FROM op_log ORDER BY created_at, device_id, seq",
-    )
-    .fetch_all(&mut *tx)
-    .await?;
+    //
+    // #616: stream in keyset-paginated chunks instead of one unbounded
+    // `fetch_all` — at the 100k-op target a whole-log buffer inside a write
+    // tx is a multi-second, multi-MB boot stall. The row-value comparison
+    // `(created_at, device_id, seq) > (?, ?, ?)` continues exactly where the
+    // previous chunk ended under the same total order; the surrounding tx
+    // gives a stable snapshot, so the iteration is consistent.
+    const DERIVED_REPLAY_CHUNK: i64 = 500;
+    let mut cursor: Option<(i64, String, i64)> = None;
+    loop {
+        let chunk = match &cursor {
+            None => {
+                sqlx::query(
+                    "SELECT op_type, payload, created_at, device_id, seq FROM op_log \
+                     ORDER BY created_at, device_id, seq LIMIT ?",
+                )
+                .bind(DERIVED_REPLAY_CHUNK)
+                .fetch_all(&mut *tx)
+                .await?
+            }
+            Some((ca, dev, seq)) => {
+                sqlx::query(
+                    "SELECT op_type, payload, created_at, device_id, seq FROM op_log \
+                     WHERE (created_at, device_id, seq) > (?, ?, ?) \
+                     ORDER BY created_at, device_id, seq LIMIT ?",
+                )
+                .bind(ca)
+                .bind(dev)
+                .bind(seq)
+                .bind(DERIVED_REPLAY_CHUNK)
+                .fetch_all(&mut *tx)
+                .await?
+            }
+        };
+        if chunk.is_empty() {
+            break;
+        }
 
-    for row in ops {
-        let op_type: String = row.try_get("op_type")?;
-        let payload_str: String = row.try_get("payload")?;
-        let payload: serde_json::Value =
-            serde_json::from_str(&payload_str).map_err(crate::error::AppError::Json)?;
+        for row in chunk {
+            let op_type: String = row.try_get("op_type")?;
+            let payload_str: String = row.try_get("payload")?;
+            cursor = Some((
+                row.try_get("created_at")?,
+                row.try_get("device_id")?,
+                row.try_get("seq")?,
+            ));
+            let payload: serde_json::Value =
+                serde_json::from_str(&payload_str).map_err(crate::error::AppError::Json)?;
 
-        match op_type.as_str() {
-            "set_property" => {
-                let block_id = payload["block_id"].as_str().unwrap_or("");
-                let key = payload["key"].as_str().unwrap_or("");
-                let value_text = payload
-                    .get("value_text")
-                    .and_then(serde_json::Value::as_str);
-                let value_num = payload.get("value_num").and_then(serde_json::Value::as_f64);
-                let value_date = payload
-                    .get("value_date")
-                    .and_then(serde_json::Value::as_str);
-                let value_ref = payload.get("value_ref").and_then(serde_json::Value::as_str);
-                let value_bool = payload
-                    .get("value_bool")
-                    .and_then(serde_json::Value::as_bool)
-                    .map(|b| if b { 1i64 } else { 0i64 });
+            match op_type.as_str() {
+                "set_property" => {
+                    let block_id = payload["block_id"].as_str().unwrap_or("");
+                    let key = payload["key"].as_str().unwrap_or("");
+                    let value_text = payload
+                        .get("value_text")
+                        .and_then(serde_json::Value::as_str);
+                    let value_num = payload.get("value_num").and_then(serde_json::Value::as_f64);
+                    let value_date = payload
+                        .get("value_date")
+                        .and_then(serde_json::Value::as_str);
+                    let value_ref = payload.get("value_ref").and_then(serde_json::Value::as_str);
+                    let value_bool = payload
+                        .get("value_bool")
+                        .and_then(serde_json::Value::as_bool)
+                        .map(|b| if b { 1i64 } else { 0i64 });
 
-                // A `SetProperty` with NO value set is an explicit *clear*
-                // (value = None) — the live projection represents a cleared
-                // property as row-absent, never an all-NULL row. Inserting
-                // the all-NULL row here would violate the `exactly_one_value`
-                // CHECK (migration 0062, which requires exactly one value
-                // column non-NULL) and abort startup with a (275) panic.
-                // Replay it as a DELETE so the LWW order is preserved: a
-                // clear removes any prior value for this (block_id, key).
-                let value_count = i32::from(value_text.is_some())
-                    + i32::from(value_num.is_some())
-                    + i32::from(value_date.is_some())
-                    + i32::from(value_ref.is_some())
-                    + i32::from(value_bool.is_some());
-                if value_count == 0 {
-                    // #534: reserved keys are column-backed on `blocks` (the
-                    // single source of truth); a clear is replayed as nulling
-                    // the column, never a `block_properties` DELETE (which is
-                    // now CHECK-forbidden for these keys anyway).
+                    // A `SetProperty` with NO value set is an explicit *clear*
+                    // (value = None) — the live projection represents a cleared
+                    // property as row-absent, never an all-NULL row. Inserting
+                    // the all-NULL row here would violate the `exactly_one_value`
+                    // CHECK (migration 0062, which requires exactly one value
+                    // column non-NULL) and abort startup with a (275) panic.
+                    // Replay it as a DELETE so the LWW order is preserved: a
+                    // clear removes any prior value for this (block_id, key).
+                    let value_count = i32::from(value_text.is_some())
+                        + i32::from(value_num.is_some())
+                        + i32::from(value_date.is_some())
+                        + i32::from(value_ref.is_some())
+                        + i32::from(value_bool.is_some());
+                    if value_count == 0 {
+                        // #534: reserved keys are column-backed on `blocks` (the
+                        // single source of truth); a clear is replayed as nulling
+                        // the column, never a `block_properties` DELETE (which is
+                        // now CHECK-forbidden for these keys anyway).
+                        if let Some(col) = reserved_key_blocks_column(key) {
+                            // `col` is a fixed internal literal from the allowlist
+                            // in `reserved_key_blocks_column`, never user input.
+                            // `space` fans out to the whole owning-page group, like
+                            // `project_delete_property_to_sql`; the others are 1:1.
+                            let q = if col == "space_id" {
+                                sqlx::query(sqlx::AssertSqlSafe(format!(
+                                    "UPDATE blocks SET {col} = NULL WHERE id = ? OR page_id = ?"
+                                )))
+                                .bind(block_id)
+                                .bind(block_id)
+                            } else {
+                                sqlx::query(sqlx::AssertSqlSafe(format!(
+                                    "UPDATE blocks SET {col} = NULL WHERE id = ?"
+                                )))
+                                .bind(block_id)
+                            };
+                            q.execute(&mut *tx).await?;
+                            continue;
+                        }
+                        sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
+                            .bind(block_id)
+                            .bind(key)
+                            .execute(&mut *tx)
+                            .await?;
+                        continue;
+                    }
+
+                    // #534: reserved keys (`todo_state` / `priority` / `due_date` /
+                    // `scheduled_date` / `space`) are column-backed on `blocks` and
+                    // are FORBIDDEN in `block_properties` by the migration-0088
+                    // CHECK constraint. Route the set to the dedicated `blocks` column,
+                    // mirroring `project_set_property_to_sql`, instead of inserting
+                    // a (now-rejected) property row. Skip if the owning block is
+                    // absent (purged / never reached this device) to avoid clobber.
                     if let Some(col) = reserved_key_blocks_column(key) {
-                        // `col` is a fixed internal literal from the allowlist
-                        // in `reserved_key_blocks_column`, never user input.
-                        // `space` fans out to the whole owning-page group, like
+                        // `space` is value_ref-typed; the date/text keys carry their
+                        // value in value_date / value_text respectively. Pick the
+                        // payload field that matches the column's storage.
+                        let col_value: Option<&str> = match key {
+                            "due_date" | "scheduled_date" => value_date,
+                            crate::op::SPACE_PROPERTY_KEY => value_ref,
+                            _ => value_text,
+                        };
+                        if key == crate::op::SPACE_PROPERTY_KEY {
+                            // #605: `blocks.space_id` carries an FK and recovery
+                            // runs with `foreign_keys=ON`, so an op whose target
+                            // is absent (purged locally, or created on another
+                            // device and never present in the local op_log) would
+                            // trip FK 787 — and because recovery re-runs on every
+                            // boot until it succeeds, that single dangling ref
+                            // becomes a PERMANENT boot failure. Skip the op
+                            // instead, exactly like the generic value_ref branch
+                            // below: a dead ref means the assignment is dead.
+                            // #708: the FK target is now `spaces(id)` (migration
+                            // 0089), so the guard checks the registry — a target
+                            // that exists as a block but was never flagged
+                            // `is_space` (the #612 mis-stamp class) is skipped
+                            // too. Replay order keeps legitimate targets
+                            // registered before they are referenced: the
+                            // `SetProperty(is_space)` op precedes any
+                            // `SetProperty(space)` pointing at it, and its
+                            // `block_properties` INSERT fires the 0089
+                            // `spaces_register_is_space` trigger.
+                            // The block keeps its prior (NULL/unchanged) space_id;
+                            // a later import / rebuild reconciles once the space
+                            // block exists (same degrade contract as
+                            // `project_block_full_to_sql`'s subquery stamp).
+                            if let Some(target) = col_value {
+                                let target_exists: i64 = sqlx::query_scalar(
+                                    "SELECT EXISTS(SELECT 1 FROM spaces WHERE id = ?)",
+                                )
+                                .bind(target)
+                                .fetch_one(&mut *tx)
+                                .await?;
+                                if target_exists == 0 {
+                                    tracing::warn!(
+                                        block_id,
+                                        space_id = target,
+                                        "recovery: set_property(space) references a block that \
+                                     is not a registered space — skipping (dangling or \
+                                     mis-stamped value_ref, #605/#708)"
+                                    );
+                                    continue;
+                                }
+                            }
+                            // `space` fans out to the whole owning-page group, like
+                            // the live projection (`blocks.space_id`).
+                            // `col` is a fixed internal literal from the allowlist
+                            // in `reserved_key_blocks_column`, never user input.
+                            let sql =
+                                format!("UPDATE blocks SET {col} = ? WHERE id = ? OR page_id = ?");
+                            sqlx::query(sqlx::AssertSqlSafe(sql))
+                                .bind(col_value)
+                                .bind(block_id)
+                                .bind(block_id)
+                                .execute(&mut *tx)
+                                .await?;
+                        } else {
+                            // `col` is a fixed internal literal from the allowlist
+                            // in `reserved_key_blocks_column`, never user input.
+                            let sql = format!("UPDATE blocks SET {col} = ? WHERE id = ?");
+                            sqlx::query(sqlx::AssertSqlSafe(sql))
+                                .bind(col_value)
+                                .bind(block_id)
+                                .execute(&mut *tx)
+                                .await?;
+                        }
+                        continue;
+                    }
+
+                    // Guard the two FK columns (block_id, value_ref → blocks(id)).
+                    // An op may reference a block that was purged or created on
+                    // another device and is absent from the local op_log, so
+                    // inserting blindly would trip FOREIGN KEY constraint failed
+                    // (787) and abort startup. Skip the row entirely if its owning
+                    // block is gone, or if a non-null value_ref dangles: under the
+                    // exactly-one-value invariant (migration 0062) value_ref is the
+                    // row's sole value, and its FK is ON DELETE CASCADE, so a dead
+                    // ref means the whole property is dead — nulling it would just
+                    // trade FK 787 for a CHECK violation on the now all-NULL row.
+                    sqlx::query(
+                        "INSERT OR REPLACE INTO block_properties \
+                     (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
+                     SELECT ?, ?, ?, ?, ?, ?, ? \
+                     WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?) \
+                       AND (? IS NULL OR EXISTS (SELECT 1 FROM blocks WHERE id = ?))",
+                    )
+                    .bind(block_id)
+                    .bind(key)
+                    .bind(value_text)
+                    .bind(value_num)
+                    .bind(value_date)
+                    .bind(value_ref)
+                    .bind(value_bool)
+                    .bind(block_id)
+                    .bind(value_ref)
+                    .bind(value_ref)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                "delete_property" => {
+                    let block_id = payload["block_id"].as_str().unwrap_or("");
+                    let key = payload["key"].as_str().unwrap_or("");
+
+                    // #534: reserved keys clear the dedicated `blocks` column
+                    // (single source of truth); non-reserved keys delete the
+                    // `block_properties` row. Mirrors `project_delete_property_to_sql`.
+                    if let Some(col) = reserved_key_blocks_column(key) {
+                        // `col` is a fixed internal literal from the allowlist in
+                        // `reserved_key_blocks_column`, never user input. `space`
+                        // fans out to the whole owning-page group, like
                         // `project_delete_property_to_sql`; the others are 1:1.
                         let q = if col == "space_id" {
                             sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -1083,236 +1417,121 @@ async fn recover_derived_state_from_op_log(
                             .bind(block_id)
                         };
                         q.execute(&mut *tx).await?;
-                        continue;
-                    }
-                    sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
-                        .bind(block_id)
-                        .bind(key)
-                        .execute(&mut *tx)
-                        .await?;
-                    continue;
-                }
-
-                // #534: reserved keys (`todo_state` / `priority` / `due_date` /
-                // `scheduled_date` / `space`) are column-backed on `blocks` and
-                // are FORBIDDEN in `block_properties` by the migration-0088
-                // CHECK constraint. Route the set to the dedicated `blocks` column,
-                // mirroring `project_set_property_to_sql`, instead of inserting
-                // a (now-rejected) property row. Skip if the owning block is
-                // absent (purged / never reached this device) to avoid clobber.
-                if let Some(col) = reserved_key_blocks_column(key) {
-                    // `space` is value_ref-typed; the date/text keys carry their
-                    // value in value_date / value_text respectively. Pick the
-                    // payload field that matches the column's storage.
-                    let col_value: Option<&str> = match key {
-                        "due_date" | "scheduled_date" => value_date,
-                        crate::op::SPACE_PROPERTY_KEY => value_ref,
-                        _ => value_text,
-                    };
-                    if key == crate::op::SPACE_PROPERTY_KEY {
-                        // #605: `blocks.space_id` carries an FK and recovery
-                        // runs with `foreign_keys=ON`, so an op whose target
-                        // is absent (purged locally, or created on another
-                        // device and never present in the local op_log) would
-                        // trip FK 787 — and because recovery re-runs on every
-                        // boot until it succeeds, that single dangling ref
-                        // becomes a PERMANENT boot failure. Skip the op
-                        // instead, exactly like the generic value_ref branch
-                        // below: a dead ref means the assignment is dead.
-                        // #708: the FK target is now `spaces(id)` (migration
-                        // 0089), so the guard checks the registry — a target
-                        // that exists as a block but was never flagged
-                        // `is_space` (the #612 mis-stamp class) is skipped
-                        // too. Replay order keeps legitimate targets
-                        // registered before they are referenced: the
-                        // `SetProperty(is_space)` op precedes any
-                        // `SetProperty(space)` pointing at it, and its
-                        // `block_properties` INSERT fires the 0089
-                        // `spaces_register_is_space` trigger.
-                        // The block keeps its prior (NULL/unchanged) space_id;
-                        // a later import / rebuild reconciles once the space
-                        // block exists (same degrade contract as
-                        // `project_block_full_to_sql`'s subquery stamp).
-                        if let Some(target) = col_value {
-                            let target_exists: i64 = sqlx::query_scalar(
-                                "SELECT EXISTS(SELECT 1 FROM spaces WHERE id = ?)",
-                            )
-                            .bind(target)
-                            .fetch_one(&mut *tx)
-                            .await?;
-                            if target_exists == 0 {
-                                tracing::warn!(
-                                    block_id,
-                                    space_id = target,
-                                    "recovery: set_property(space) references a block that \
-                                     is not a registered space — skipping (dangling or \
-                                     mis-stamped value_ref, #605/#708)"
-                                );
-                                continue;
-                            }
-                        }
-                        // `space` fans out to the whole owning-page group, like
-                        // the live projection (`blocks.space_id`).
-                        // `col` is a fixed internal literal from the allowlist
-                        // in `reserved_key_blocks_column`, never user input.
-                        let sql =
-                            format!("UPDATE blocks SET {col} = ? WHERE id = ? OR page_id = ?");
-                        sqlx::query(sqlx::AssertSqlSafe(sql))
-                            .bind(col_value)
-                            .bind(block_id)
-                            .bind(block_id)
-                            .execute(&mut *tx)
-                            .await?;
                     } else {
-                        // `col` is a fixed internal literal from the allowlist
-                        // in `reserved_key_blocks_column`, never user input.
-                        let sql = format!("UPDATE blocks SET {col} = ? WHERE id = ?");
-                        sqlx::query(sqlx::AssertSqlSafe(sql))
-                            .bind(col_value)
+                        sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
                             .bind(block_id)
+                            .bind(key)
                             .execute(&mut *tx)
                             .await?;
                     }
-                    continue;
                 }
+                "add_tag" => {
+                    let block_id = payload["block_id"].as_str().unwrap_or("");
+                    let tag_id = payload["tag_id"].as_str().unwrap_or("");
 
-                // Guard the two FK columns (block_id, value_ref → blocks(id)).
-                // An op may reference a block that was purged or created on
-                // another device and is absent from the local op_log, so
-                // inserting blindly would trip FOREIGN KEY constraint failed
-                // (787) and abort startup. Skip the row entirely if its owning
-                // block is gone, or if a non-null value_ref dangles: under the
-                // exactly-one-value invariant (migration 0062) value_ref is the
-                // row's sole value, and its FK is ON DELETE CASCADE, so a dead
-                // ref means the whole property is dead — nulling it would just
-                // trade FK 787 for a CHECK violation on the now all-NULL row.
-                sqlx::query(
-                    "INSERT OR REPLACE INTO block_properties \
-                     (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
-                     SELECT ?, ?, ?, ?, ?, ?, ? \
-                     WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?) \
-                       AND (? IS NULL OR EXISTS (SELECT 1 FROM blocks WHERE id = ?))",
-                )
-                .bind(block_id)
-                .bind(key)
-                .bind(value_text)
-                .bind(value_num)
-                .bind(value_date)
-                .bind(value_ref)
-                .bind(value_bool)
-                .bind(block_id)
-                .bind(value_ref)
-                .bind(value_ref)
-                .execute(&mut *tx)
-                .await?;
-            }
-            "delete_property" => {
-                let block_id = payload["block_id"].as_str().unwrap_or("");
-                let key = payload["key"].as_str().unwrap_or("");
-
-                // #534: reserved keys clear the dedicated `blocks` column
-                // (single source of truth); non-reserved keys delete the
-                // `block_properties` row. Mirrors `project_delete_property_to_sql`.
-                if let Some(col) = reserved_key_blocks_column(key) {
-                    // `col` is a fixed internal literal from the allowlist in
-                    // `reserved_key_blocks_column`, never user input. `space`
-                    // fans out to the whole owning-page group, like
-                    // `project_delete_property_to_sql`; the others are 1:1.
-                    let q = if col == "space_id" {
-                        sqlx::query(sqlx::AssertSqlSafe(format!(
-                            "UPDATE blocks SET {col} = NULL WHERE id = ? OR page_id = ?"
-                        )))
-                        .bind(block_id)
-                        .bind(block_id)
-                    } else {
-                        sqlx::query(sqlx::AssertSqlSafe(format!(
-                            "UPDATE blocks SET {col} = NULL WHERE id = ?"
-                        )))
-                        .bind(block_id)
-                    };
-                    q.execute(&mut *tx).await?;
-                } else {
-                    sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
-                        .bind(block_id)
-                        .bind(key)
-                        .execute(&mut *tx)
-                        .await?;
-                }
-            }
-            "add_tag" => {
-                let block_id = payload["block_id"].as_str().unwrap_or("");
-                let tag_id = payload["tag_id"].as_str().unwrap_or("");
-
-                // Both columns are FKs to blocks(id): skip the tag if either
-                // the tagged block or the tag block is absent (purged, or
-                // never created in the local op_log) to avoid FK 787 panic.
-                sqlx::query(
-                    "INSERT OR IGNORE INTO block_tags (block_id, tag_id) \
+                    // Both columns are FKs to blocks(id): skip the tag if either
+                    // the tagged block or the tag block is absent (purged, or
+                    // never created in the local op_log) to avoid FK 787 panic.
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO block_tags (block_id, tag_id) \
                      SELECT ?, ? \
                      WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?) \
                        AND EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
-                )
-                .bind(block_id)
-                .bind(tag_id)
-                .bind(block_id)
-                .bind(tag_id)
-                .execute(&mut *tx)
-                .await?;
-            }
-            // #374: `attachments` is the one AUTHORITATIVE child of `blocks`
-            // (its rows are the source of truth for fs_path / mime_type /
-            // filename / size_bytes — NOT a derived cache). Migration 0061
-            // gave `attachments.block_id` an `ON DELETE CASCADE` to
-            // `blocks(id)`, so the `DROP TABLE blocks` in the 0073/0080
-            // rebuilds cascade-deleted every attachment row under
-            // `foreign_keys=ON`, silently destroying that metadata and
-            // orphaning the on-disk files. The op-log `add_attachment`
-            // payload carries every column the row needs, so replay it here
-            // to restore the table (this arm runs on the same all-derived-
-            // tables-empty corruption path as the property/tag arms above).
-            "add_attachment" => {
-                let attachment_id = payload["attachment_id"].as_str().unwrap_or("");
-                let block_id = payload["block_id"].as_str().unwrap_or("");
-                let mime_type = payload["mime_type"].as_str().unwrap_or("");
-                let filename = payload["filename"].as_str().unwrap_or("");
-                let size_bytes = payload["size_bytes"].as_i64().unwrap_or(0);
-                let fs_path = payload["fs_path"].as_str().unwrap_or("");
-                let created_at: i64 = row.try_get("created_at")?;
+                    )
+                    .bind(block_id)
+                    .bind(tag_id)
+                    .bind(block_id)
+                    .bind(tag_id)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                // #614: a later `remove_tag` must win over its earlier `add_tag`
+                // (LWW replay order) — the exact analogue of the #374
+                // `delete_attachment` arm below. Without this arm every tag the
+                // user added and later removed resurrected after a recovery.
+                "remove_tag" => {
+                    let block_id = payload["block_id"].as_str().unwrap_or("");
+                    let tag_id = payload["tag_id"].as_str().unwrap_or("");
 
-                // Guard the `block_id` FK (→ blocks(id)): an attachment whose
-                // owning block was purged (or never reached this device) must
-                // stay deleted — restoring it would trip FK 787 and abort
-                // startup. `INSERT OR IGNORE` makes a duplicate `add_attachment`
-                // (same id) a no-op and keeps recovery idempotent across boots.
-                sqlx::query(
-                    "INSERT OR IGNORE INTO attachments \
+                    sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                        .bind(block_id)
+                        .bind(tag_id)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+                // #374: `attachments` is the one AUTHORITATIVE child of `blocks`
+                // (its rows are the source of truth for fs_path / mime_type /
+                // filename / size_bytes — NOT a derived cache). Migration 0061
+                // gave `attachments.block_id` an `ON DELETE CASCADE` to
+                // `blocks(id)`, so the `DROP TABLE blocks` in the 0073/0080
+                // rebuilds cascade-deleted every attachment row under
+                // `foreign_keys=ON`, silently destroying that metadata and
+                // orphaning the on-disk files. The op-log `add_attachment`
+                // payload carries every column the row needs, so replay it here
+                // to restore the table (this arm runs on the same all-derived-
+                // tables-empty corruption path as the property/tag arms above).
+                "add_attachment" => {
+                    let attachment_id = payload["attachment_id"].as_str().unwrap_or("");
+                    let block_id = payload["block_id"].as_str().unwrap_or("");
+                    let mime_type = payload["mime_type"].as_str().unwrap_or("");
+                    let filename = payload["filename"].as_str().unwrap_or("");
+                    let size_bytes = payload["size_bytes"].as_i64().unwrap_or(0);
+                    let fs_path = payload["fs_path"].as_str().unwrap_or("");
+                    let created_at: i64 = row.try_get("created_at")?;
+
+                    // Guard the `block_id` FK (→ blocks(id)): an attachment whose
+                    // owning block was purged (or never reached this device) must
+                    // stay deleted — restoring it would trip FK 787 and abort
+                    // startup. `INSERT OR IGNORE` makes a duplicate `add_attachment`
+                    // (same id) a no-op and keeps recovery idempotent across boots.
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO attachments \
                      (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
                      SELECT ?, ?, ?, ?, ?, ?, ? \
                      WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
-                )
-                .bind(attachment_id)
-                .bind(block_id)
-                .bind(mime_type)
-                .bind(filename)
-                .bind(size_bytes)
-                .bind(fs_path)
-                .bind(created_at)
-                .bind(block_id)
-                .execute(&mut *tx)
-                .await?;
-            }
-            // #374: a later `delete_attachment` must win over its earlier
-            // `add_attachment` (LWW replay order), so drop any row this op
-            // removed — otherwise recovery would resurrect a deleted file.
-            "delete_attachment" => {
-                let attachment_id = payload["attachment_id"].as_str().unwrap_or("");
-
-                sqlx::query("DELETE FROM attachments WHERE id = ?")
+                    )
                     .bind(attachment_id)
+                    .bind(block_id)
+                    .bind(mime_type)
+                    .bind(filename)
+                    .bind(size_bytes)
+                    .bind(fs_path)
+                    .bind(created_at)
+                    .bind(block_id)
                     .execute(&mut *tx)
                     .await?;
+                }
+                // #374: a later `delete_attachment` must win over its earlier
+                // `add_attachment` (LWW replay order), so drop any row this op
+                // removed — otherwise recovery would resurrect a deleted file.
+                "delete_attachment" => {
+                    let attachment_id = payload["attachment_id"].as_str().unwrap_or("");
+
+                    sqlx::query("DELETE FROM attachments WHERE id = ?")
+                        .bind(attachment_id)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+                // #651: replay `rename_attachment` so a recovered attachment
+                // keeps its post-rename filename instead of reverting to the
+                // `add_attachment` original. LWW replay order means the last
+                // rename wins, mirroring the live `apply_rename_attachment_tx`.
+                // No-op if the row was never restored (owning block purged —
+                // the add_attachment arm above skipped it).
+                "rename_attachment" => {
+                    let attachment_id = payload["attachment_id"].as_str().unwrap_or("");
+                    let new_filename = payload["new_filename"].as_str().unwrap_or("");
+
+                    if !new_filename.is_empty() {
+                        sqlx::query("UPDATE attachments SET filename = ? WHERE id = ?")
+                            .bind(new_filename)
+                            .bind(attachment_id)
+                            .execute(&mut *tx)
+                            .await?;
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 
@@ -1321,6 +1540,13 @@ async fn recover_derived_state_from_op_log(
     // the replay loop above — they are the single source of truth and no
     // longer have backing `block_properties` rows (migration-0088 forbids
     // them), so there is nothing to backfill from `block_properties` here.
+
+    // #616: clear the pending marker atomically with the replay — a crash
+    // before this commit leaves the marker for the next boot's retry.
+    sqlx::query("DELETE FROM app_settings WHERE key = ?")
+        .bind(DERIVED_RECOVERY_PENDING_KEY)
+        .execute(&mut *tx)
+        .await?;
 
     tx.commit().await?;
     Ok(())
@@ -1350,7 +1576,7 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
 
     // BUG-73 recovery: if a prior crash left blocks missing, recreate it
     // from op_log so migrations have a target table to rebuild.
-    ensure_blocks_table_exists(&write_pool).await?;
+    let blocks_recovered = ensure_blocks_table_exists(&write_pool).await?;
 
     // Run migrations on the write pool (needs write access)
     tracing::info!("running database migrations");
@@ -1358,8 +1584,10 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
     tracing::info!("database migrations complete");
 
     // BUG-73 recovery part 2: restore properties and tags that migration 73's
-    // DROP TABLE would have CASCADE-deleted.
-    recover_derived_state_from_op_log(&write_pool).await?;
+    // DROP TABLE would have CASCADE-deleted. #616: gated on the positive
+    // corruption signal from `ensure_blocks_table_exists` (this boot's flag
+    // or the persisted pending marker), never on empty-table inference.
+    recover_derived_state_from_op_log(&write_pool, blocks_recovered).await?;
 
     // T-5: Update query planner statistics after migrations.
     // PRAGMA optimize analyzes tables whose stats may be stale and runs
@@ -1432,15 +1660,15 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, crate::error::AppEr
         .await?;
 
     // BUG-73 recovery
-    ensure_blocks_table_exists(&pool).await?;
+    let blocks_recovered = ensure_blocks_table_exists(&pool).await?;
 
     // Run migrations
     tracing::info!("running database migrations");
     sqlx::migrate!("./migrations").run(&pool).await?;
     tracing::info!("database migrations complete");
 
-    // BUG-73 recovery part 2
-    recover_derived_state_from_op_log(&pool).await?;
+    // BUG-73 recovery part 2 (#616: see `init_pools` for the gate rationale)
+    recover_derived_state_from_op_log(&pool, blocks_recovered).await?;
 
     // L-8: match `init_pools` — refresh planner stats after migrations.
     sqlx::query("PRAGMA optimize").execute(&pool).await?;
@@ -2754,10 +2982,11 @@ mod tests {
 
     /// Seed a fully-migrated pool with a space page, a content page, and a child
     /// of that page (all `space_id` NULL), plus the given op_log rows, then run
-    /// `recover_derived_state_from_op_log` directly. The derived-recovery gate
-    /// (op_log non-empty AND block_properties + block_tags empty) is satisfied,
-    /// so this exercises the real production replay path against a real schema —
-    /// without the temp-table BUG-73 path that `DROP TABLE blocks` would trigger.
+    /// `recover_derived_state_from_op_log` directly with the #616 positive
+    /// corruption signal forced `true` (op_log non-empty + empty derived tables
+    /// keep the secondary gate open), so this exercises the real production
+    /// replay path against a real schema — without the temp-table BUG-73 path
+    /// that `DROP TABLE blocks` would trigger.
     #[cfg(test)]
     async fn seed_space_recovery_pool(ops: &[(i64, &str, &str)]) -> (SqlitePool, TempDir) {
         let dir = TempDir::new().unwrap();
@@ -2806,7 +3035,9 @@ mod tests {
             .await
             .unwrap();
         }
-        recover_derived_state_from_op_log(&pool).await.unwrap();
+        recover_derived_state_from_op_log(&pool, true)
+            .await
+            .unwrap();
         (pool, dir)
     }
 
@@ -2917,9 +3148,9 @@ mod tests {
             "fan-out member must also keep the prior valid space (#605)"
         );
 
-        // Second pass (recovery refires on every boot while the derived-table
-        // gate stays open) must be idempotent — no error, same end state.
-        recover_derived_state_from_op_log(&pool)
+        // Second pass (recovery can refire on a later boot while the #616
+        // pending marker survives) must be idempotent — no error, same end state.
+        recover_derived_state_from_op_log(&pool, true)
             .await
             .expect("second recovery pass must be idempotent, not FK-abort (#605)");
         assert_eq!(space_id_of(&pool, "PAGE1").await.as_deref(), Some("SPACE1"));
@@ -3177,6 +3408,411 @@ mod tests {
         assert!(
             stamps.iter().all(|s| *s == DELETE_TS_MS),
             "the whole cohort must share the delete op's epoch-ms instant: {stamps:?}"
+        );
+    }
+
+    /// Insert a raw op_log row (post-0079 schema: INTEGER-ms `created_at`).
+    async fn insert_op(pool: &SqlitePool, seq: i64, op_type: &str, payload: &str, ts_ms: i64) {
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, origin) \
+             VALUES ('dev1', ?, ?, ?, ?, ?, 'user')",
+        )
+        .bind(seq)
+        .bind(format!("h{seq}"))
+        .bind(op_type)
+        .bind(payload)
+        .bind(ts_ms)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// #613 regression: recovery replay of a `restore_block` op must restore
+    /// the whole `(seed, deleted_at_ref)` cohort — production restore
+    /// un-deletes every descendant tombstoned by the SAME delete op — and
+    /// must respect the cohort token: a root deleted by a DIFFERENT
+    /// (earlier, unrelated) delete op must NOT be resurrected by a restore
+    /// carrying a non-matching `deleted_at_ref`.
+    #[tokio::test]
+    async fn init_pool_recovery_restore_cascades_cohort_613() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+
+        const CREATE_TS: i64 = 1_500_000_000_000;
+        const DELETE_X_TS: i64 = 1_590_000_000_000; // unrelated earlier delete
+        const DELETE_P_TS: i64 = 1_600_000_000_000; // the restored cohort
+        const RESTORE_TS: i64 = 1_610_000_000_000;
+
+        // Tree: P613 → C613 → G613, plus an independent root X613.
+        insert_op(&pool, 1, "create_block",
+            r#"{"block_id":"P613","block_type":"page","content":"P","parent_id":null,"position":1}"#,
+            CREATE_TS).await;
+        insert_op(&pool, 2, "create_block",
+            r#"{"block_id":"C613","block_type":"content","content":"C","parent_id":"P613","position":1}"#,
+            CREATE_TS).await;
+        insert_op(&pool, 3, "create_block",
+            r#"{"block_id":"G613","block_type":"content","content":"G","parent_id":"C613","position":1}"#,
+            CREATE_TS).await;
+        insert_op(&pool, 4, "create_block",
+            r#"{"block_id":"X613","block_type":"content","content":"X","parent_id":null,"position":2}"#,
+            CREATE_TS).await;
+        // X613 deleted by an independent earlier op.
+        insert_op(
+            &pool,
+            5,
+            "delete_block",
+            r#"{"block_id":"X613"}"#,
+            DELETE_X_TS,
+        )
+        .await;
+        // P613 subtree deleted, then restored with the matching cohort token.
+        insert_op(
+            &pool,
+            6,
+            "delete_block",
+            r#"{"block_id":"P613"}"#,
+            DELETE_P_TS,
+        )
+        .await;
+        insert_op(
+            &pool,
+            7,
+            "restore_block",
+            &format!(r#"{{"block_id":"P613","deleted_at_ref":{DELETE_P_TS}}}"#),
+            RESTORE_TS,
+        )
+        .await;
+        // A restore aimed at X613 with a NON-matching token must not
+        // resurrect it (the #613 unrelated-restore hazard).
+        insert_op(
+            &pool,
+            8,
+            "restore_block",
+            &format!(r#"{{"block_id":"X613","deleted_at_ref":{DELETE_P_TS}}}"#),
+            RESTORE_TS,
+        )
+        .await;
+
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(pool);
+        let pool = init_pool(&db_path).await.unwrap();
+
+        // The whole delete(P613) cohort is live again — descendants included.
+        let live: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM blocks WHERE id IN ('P613','C613','G613') AND deleted_at IS NULL \
+             ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            live,
+            vec!["C613", "G613", "P613"],
+            "restore recovery must un-delete the whole (seed, deleted_at_ref) cohort"
+        );
+
+        // X613 stays tombstoned with its original cohort stamp.
+        let x_deleted_at: Option<i64> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = 'X613'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            x_deleted_at,
+            Some(DELETE_X_TS),
+            "a non-matching deleted_at_ref must not resurrect an unrelated deletion (#613)"
+        );
+    }
+
+    /// #615 regression: recovery replay of a `purge_block` op must hard-delete
+    /// the whole subtree. The temp recovery table has no FK cascade, so a
+    /// root-only DELETE left purged descendants alive — and the orphan
+    /// cleanup then PROMOTED them to live top-level blocks.
+    #[tokio::test]
+    async fn init_pool_recovery_purge_cascades_subtree_615() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+
+        const TS: i64 = 1_600_000_000_000;
+        insert_op(&pool, 1, "create_block",
+            r#"{"block_id":"P615","block_type":"page","content":"P","parent_id":null,"position":1}"#,
+            TS).await;
+        insert_op(&pool, 2, "create_block",
+            r#"{"block_id":"C615","block_type":"content","content":"C","parent_id":"P615","position":1}"#,
+            TS).await;
+        insert_op(&pool, 3, "create_block",
+            r#"{"block_id":"G615","block_type":"content","content":"G","parent_id":"C615","position":1}"#,
+            TS).await;
+        // A survivor outside the purged subtree.
+        insert_op(&pool, 4, "create_block",
+            r#"{"block_id":"OUT615","block_type":"content","content":"O","parent_id":null,"position":2}"#,
+            TS).await;
+        insert_op(&pool, 5, "purge_block", r#"{"block_id":"P615"}"#, TS + 1000).await;
+
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(pool);
+        let pool = init_pool(&db_path).await.unwrap();
+
+        let purged_remnants: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id IN ('P615','C615','G615')")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            purged_remnants, 0,
+            "purge recovery must delete the whole subtree — no descendant may \
+             survive (let alone be promoted to a live root, #615)"
+        );
+
+        let survivor: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = 'OUT615'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(survivor, 1, "blocks outside the purged subtree survive");
+    }
+
+    /// #614 regression: derived-state recovery must replay `remove_tag` —
+    /// without the arm, every tag the user added and later removed
+    /// resurrects after a recovery. The kept tag doubles as the positive
+    /// control that the replay ran at all.
+    #[tokio::test]
+    async fn init_pool_recovery_removes_removed_tags_614() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+
+        const TS: i64 = 1_600_000_000_000;
+        insert_op(&pool, 1, "create_block",
+            r#"{"block_id":"BLK614","block_type":"content","content":"b","parent_id":null,"position":1}"#,
+            TS).await;
+        insert_op(&pool, 2, "create_block",
+            r#"{"block_id":"TAGKEEP614","block_type":"page","content":"keep","parent_id":null,"position":2}"#,
+            TS).await;
+        insert_op(&pool, 3, "create_block",
+            r#"{"block_id":"TAGGONE614","block_type":"page","content":"gone","parent_id":null,"position":3}"#,
+            TS).await;
+        insert_op(
+            &pool,
+            4,
+            "add_tag",
+            r#"{"block_id":"BLK614","tag_id":"TAGKEEP614"}"#,
+            TS + 100,
+        )
+        .await;
+        insert_op(
+            &pool,
+            5,
+            "add_tag",
+            r#"{"block_id":"BLK614","tag_id":"TAGGONE614"}"#,
+            TS + 200,
+        )
+        .await;
+        insert_op(
+            &pool,
+            6,
+            "remove_tag",
+            r#"{"block_id":"BLK614","tag_id":"TAGGONE614"}"#,
+            TS + 300,
+        )
+        .await;
+
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(pool);
+        let pool = init_pool(&db_path).await.unwrap();
+
+        let kept: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM block_tags WHERE block_id = 'BLK614' AND tag_id = 'TAGKEEP614'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(kept, 1, "never-removed tag must be recovered (replay ran)");
+
+        let resurrected: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM block_tags WHERE block_id = 'BLK614' AND tag_id = 'TAGGONE614'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            resurrected, 0,
+            "a removed tag must NOT resurrect after recovery (#614)"
+        );
+    }
+
+    /// #651 regression: derived-state recovery must replay
+    /// `rename_attachment` — otherwise a recovered attachment reverts to its
+    /// pre-rename filename from the `add_attachment` op.
+    #[tokio::test]
+    async fn init_pool_recovery_replays_rename_attachment_651() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+
+        const TS: i64 = 1_600_000_000_000;
+        insert_op(&pool, 1, "create_block",
+            r#"{"block_id":"BLK651","block_type":"content","content":"b","parent_id":null,"position":1}"#,
+            TS).await;
+        insert_op(&pool, 2, "add_attachment",
+            r#"{"attachment_id":"ATT651","block_id":"BLK651","mime_type":"text/plain","filename":"draft.txt","size_bytes":12,"fs_path":"/tmp/draft.txt"}"#,
+            TS + 100).await;
+        insert_op(
+            &pool,
+            3,
+            "rename_attachment",
+            r#"{"attachment_id":"ATT651","old_filename":"draft.txt","new_filename":"final.txt"}"#,
+            TS + 200,
+        )
+        .await;
+
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(pool);
+        let pool = init_pool(&db_path).await.unwrap();
+
+        let filename: String =
+            sqlx::query_scalar("SELECT filename FROM attachments WHERE id = 'ATT651'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            filename, "final.txt",
+            "recovered attachment must keep its post-rename filename (#651)"
+        );
+    }
+
+    /// #616 regression: the derived-state replay needs a POSITIVE corruption
+    /// signal — empty `block_properties` + `block_tags` alone are a
+    /// legitimate steady state post-0088 (reserved-key-only vaults), and the
+    /// old count-only gate re-ran the full op-log replay on every boot
+    /// (resurrecting removed state and burning O(op_count) per boot).
+    #[tokio::test]
+    async fn derived_recovery_requires_positive_corruption_signal_616() {
+        let dir = TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+
+        // Healthy vault shape: blocks + ops exist, derived tables empty.
+        for (id, pos) in [("BLK616", 1i64), ("TAG616", 2i64)] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, 'page', 'x', NULL, ?, ?)",
+            )
+            .bind(id)
+            .bind(pos)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        insert_op(
+            &pool,
+            1,
+            "add_tag",
+            r#"{"block_id":"BLK616","tag_id":"TAG616"}"#,
+            1_600_000_000_000,
+        )
+        .await;
+
+        // No corruption signal: the gate must stay CLOSED — nothing replayed.
+        recover_derived_state_from_op_log(&pool, false)
+            .await
+            .unwrap();
+        let tags: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_tags")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            tags, 0,
+            "without a positive corruption signal the replay must not run (#616)"
+        );
+
+        // Crash-retry path: the persisted pending marker (written by
+        // `ensure_blocks_table_exists` in the recovery tx) opens the gate
+        // even when this boot's in-memory flag is false — and a successful
+        // replay clears it.
+        sqlx::query("INSERT INTO app_settings (key, value, updated_at) VALUES (?, '1', ?)")
+            .bind(DERIVED_RECOVERY_PENDING_KEY)
+            .bind(now_ms())
+            .execute(&pool)
+            .await
+            .unwrap();
+        recover_derived_state_from_op_log(&pool, false)
+            .await
+            .unwrap();
+        let tags: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_tags")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(tags, 1, "the pending marker must open the gate (#616)");
+        let marker_left: i64 =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_settings WHERE key = ?")
+                .bind(DERIVED_RECOVERY_PENDING_KEY)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            marker_left, 0,
+            "a successful replay must clear the pending marker (#616)"
+        );
+    }
+
+    /// #616 boot-loop regression: a reserved-key-only vault (op_log non-empty,
+    /// derived tables legitimately empty) must NOT re-run the derived replay
+    /// on every `init_pool` boot. Before the fix, each boot resurrected the
+    /// removed tag below.
+    #[tokio::test]
+    async fn init_pool_does_not_replay_derived_state_every_boot_616() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+
+        for (id, pos) in [("BLK616B", 1i64), ("TAG616B", 2i64)] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, 'page', 'x', NULL, ?, ?)",
+            )
+            .bind(id)
+            .bind(pos)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        // History where the tag was added then removed — live tables
+        // correctly hold no row. The old every-boot replay would re-add it
+        // (the missing remove_tag arm, #614) or at best burn a full replay.
+        insert_op(
+            &pool,
+            1,
+            "add_tag",
+            r#"{"block_id":"BLK616B","tag_id":"TAG616B"}"#,
+            1_600_000_000_000,
+        )
+        .await;
+        drop(pool);
+
+        // Healthy reboot — no corruption, no marker: the replay must not run.
+        let pool = init_pool(&db_path).await.unwrap();
+        let tags: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_tags")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            tags, 0,
+            "a healthy boot must not replay the op-log into the derived tables (#616)"
         );
     }
 

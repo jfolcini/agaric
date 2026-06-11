@@ -225,7 +225,8 @@ pub async fn recover_at_boot(
     };
 
     for draft in &drafts {
-        match recover_single_draft(pool, device_id, draft, &existing_block_ids).await {
+        match recover_single_draft(pool, device_id, materializer, draft, &existing_block_ids).await
+        {
             Ok(true) => {
                 drafts_recovered.push(draft.block_id.to_string());
             }
@@ -247,6 +248,20 @@ pub async fn recover_at_boot(
         if let Err(e) = delete_draft(pool, draft.block_id.as_str()).await {
             log_draft_error(&mut draft_errors, draft.block_id.as_str(), &e, "deleting");
         }
+    }
+
+    // #620: drain the foreground queue so the synthetic ApplyOps enqueued by
+    // `recover_single_draft` are fully applied (engine + cursor) before the
+    // caller proceeds — `refresh_caches_for_recovered_drafts` and the first
+    // user ops must observe a settled state. Non-fatal, same "log +
+    // continue" philosophy as the replay step.
+    if !drafts_recovered.is_empty()
+        && let Err(e) = materializer.flush_foreground().await
+    {
+        tracing::warn!(
+            error = %e,
+            "recovery: failed to drain foreground queue after draft recovery — continuing"
+        );
     }
 
     // Elapsed millis for boot recovery won't exceed u64; saturate on overflow.

@@ -24,13 +24,16 @@ use crate::ulid::{AttachmentId, BlockId};
 /// Operation type tag. Serialized as snake_case strings for storage in the
 /// `op_log.op_type` TEXT column.
 ///
-/// **In-crate exhaustive-match invariant** (per docs/ARCHITECTURE.md §4 — *"12 op
-/// types with exhaustive `match` — no catch-all arms"*): every consumer of
-/// this enum is workspace-internal and matches on every variant explicitly.
+/// **In-crate exhaustive-match invariant** (per docs/ARCHITECTURE.md §4 —
+/// exhaustive `match` over every op type, no catch-all arms): every consumer
+/// of this enum is workspace-internal and matches on every variant
+/// explicitly. (#652: the invariant is the exhaustive matching, not any
+/// specific variant count — an earlier "12 op types" phrasing here drifted
+/// the moment `RenameAttachment` landed as the 13th.)
 /// I-Core-1: `#[non_exhaustive]` was previously applied as future-proofing
 /// for downstream consumers outside the crate, but no such consumers exist —
 /// the attribute weakened the invariant by silencing the "missing arm"
-/// compiler error when a new variant is added. Without it, adding a 13th op
+/// compiler error when a new variant is added. Without it, adding a new op
 /// type (e.g. for compaction tombstones) reliably surfaces every site that
 /// must be updated.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1968,6 +1971,7 @@ mod proptest_tests {
             Just(OpType::DeleteProperty),
             Just(OpType::AddAttachment),
             Just(OpType::DeleteAttachment),
+            Just(OpType::RenameAttachment),
         ]
     }
 

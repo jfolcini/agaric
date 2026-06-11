@@ -122,8 +122,35 @@ pub async fn append_local_op(
 pub async fn append_local_op_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
+    op_payload: OpPayload,
+    created_at: i64,
+) -> Result<OpRecord, AppError> {
+    append_local_op_in_tx_with_provenance(tx, device_id, op_payload, created_at, false).await
+}
+
+/// #659: append a local op flagged as an UNDO op (`op_log.is_undo = 1`,
+/// migration 0090).
+///
+/// Only `undo_page_op_inner` calls this — the reverse op it appends is the
+/// one thing `redo_page_op` may later reverse, and redo verifies the flag
+/// before reversing. Redo's own output ops are forward-equivalent and go
+/// through the plain [`append_local_op_in_tx`] (flag 0), as does everything
+/// else. Same `BEGIN IMMEDIATE` contract as the plain variant.
+pub async fn append_local_undo_op_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device_id: &str,
+    op_payload: OpPayload,
+    created_at: i64,
+) -> Result<OpRecord, AppError> {
+    append_local_op_in_tx_with_provenance(tx, device_id, op_payload, created_at, true).await
+}
+
+async fn append_local_op_in_tx_with_provenance(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device_id: &str,
     mut op_payload: OpPayload,
     created_at: i64,
+    is_undo: bool,
 ) -> Result<OpRecord, AppError> {
     // L-98: `op_log.created_at` is INTEGER epoch-ms (migration 0079);
     // reverse-op "find prior op" queries compare it numerically. No
@@ -214,9 +241,14 @@ pub async fn append_local_op_in_tx(
     // tagged with different origins must still hash-match for sync.
     let origin = crate::mcp::actor::current_actor().origin_tag();
 
+    // #659: `is_undo` (migration 0090) records undo provenance so
+    // `redo_page_op` can verify its target really is an undo op. Like
+    // `origin`, it is local metadata and NOT part of the hash preimage.
+    let is_undo_flag: i64 = i64::from(is_undo);
+
     sqlx::query!(
-        "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, origin, attachment_id) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, origin, attachment_id, is_undo) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         device_id,
         seq,
         parent_seqs,
@@ -227,6 +259,7 @@ pub async fn append_local_op_in_tx(
         block_id,
         origin,
         attachment_id,
+        is_undo_flag,
     )
     .execute(&mut **tx)
     .await?;
@@ -527,7 +560,7 @@ pub async fn get_ops_since(
 /// `get_latest_seq`, `get_ops_since`, and `serialize_inner_payload`.
 ///
 /// Covers sequential appending, parent-chain linking, per-device isolation,
-/// hash integrity, all 12 op types, concurrent writes, DB round-trips,
+/// hash integrity, every op type, concurrent writes, DB round-trips,
 /// read helpers, and timestamp determinism.
 #[cfg(test)]
 mod tests {
@@ -667,6 +700,16 @@ mod tests {
                     fs_path: "/tmp/readme.txt".into(),
                 }),
             ),
+            // #652: keep RenameAttachment exercised through the append /
+            // L-13 sidecar / canonical-JSON-ordering harnesses too.
+            (
+                "rename_attachment",
+                OpPayload::RenameAttachment(RenameAttachmentPayload {
+                    attachment_id: BlockId::test_id("ATT01"),
+                    old_filename: "readme.txt".into(),
+                    new_filename: "manual.txt".into(),
+                }),
+            ),
         ]
     }
 
@@ -748,10 +791,11 @@ mod tests {
 
     // ── All op types ──────────────────────────────────────────────────────
 
-    /// All 12 op types should append successfully and produce the correct
-    /// `op_type` string in the stored record.
+    /// Every op type should append successfully and produce the correct
+    /// `op_type` string in the stored record. (#652: count-free name — the
+    /// fixture list is the source of truth.)
     #[tokio::test]
-    async fn all_12_op_types_append_successfully() {
+    async fn all_op_types_append_successfully() {
         let (pool, _dir) = test_pool().await;
 
         for (expected_type, payload) in all_op_payloads() {

@@ -18,16 +18,24 @@ use crate::ulid::BlockId;
 /// path in `commands::edit_block_inner`. This ensures `blocks.content` is
 /// always consistent with the op_log after recovery.
 ///
-/// ## Materializer note (F04)
+/// ## Materializer note (F04 / #620)
 ///
-/// Recovery runs **before** the materializer is created in the boot sequence
-/// (see `lib.rs`), so we cannot dispatch background cache-rebuild tasks
-/// here. Caches (tags, pages, FTS, block_links) will be rebuilt on the
-/// first materializer dispatch after boot. This is by design — the
-/// materializer's stale-while-revalidate pattern handles it.
+/// `recover_at_boot` receives the already-created materializer, and the
+/// boot-time op-log replay (step 1.5) has fully drained the foreground
+/// queue before the draft loop runs. The synthetic op is therefore
+/// dispatched as a foreground `ApplyOp` after the recovery tx commits, so
+/// the per-space `LoroEngine` (authoritative per `loro/snapshot.rs`)
+/// observes the recovered content and the apply cursor advances over the
+/// synthetic seq. Without this dispatch the engine misses the recovered
+/// text permanently once a later op's `MAX`-semantics cursor advance leaps
+/// past the synthetic seq — risking old-text resurrection on a later CRDT
+/// merge or `save_all_engines`. Background cache rebuilds (tags, pages,
+/// FTS, block_links) are still handled separately by
+/// `refresh_caches_for_recovered_drafts` (BUG-23).
 pub(super) async fn recover_single_draft(
     pool: &SqlitePool,
     device_id: &str,
+    materializer: &crate::materializer::Materializer,
     draft: &crate::draft::Draft,
     existing_block_ids: &HashSet<String>,
 ) -> Result<bool, AppError> {
@@ -148,15 +156,39 @@ pub(super) async fn recover_single_draft(
 
         // F01: Use a single IMMEDIATE transaction to atomically write the
         // synthetic op AND update blocks.content — same pattern as
-        // commands::edit_block_inner.
+        // commands::edit_block_inner. The direct content UPDATE keeps SQL
+        // consistent with op_log even if the engine dispatch below fails.
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-        append_local_op_in_tx(&mut tx, device_id, op, crate::db::now_ms()).await?;
+        let record = append_local_op_in_tx(&mut tx, device_id, op, crate::db::now_ms()).await?;
         sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
             .bind(&draft.content)
             .bind(&draft.block_id)
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
+
+        // #620: dispatch the synthetic record to the materializer as a
+        // foreground ApplyOp so the Loro engine applies the recovered
+        // content and the apply cursor advances over the synthetic seq.
+        // The apply is idempotent over the direct SQL write above (the
+        // EditBlock projection writes the same content). On enqueue
+        // failure the op stays in op_log with `seq > cursor`; the next
+        // boot's replay walk re-covers it as long as no later apply has
+        // leapt the cursor past it — hence the loud warn.
+        if let Err(e) = materializer
+            .enqueue_foreground(crate::materializer::MaterializeTask::ApplyOp(
+                std::sync::Arc::new(record),
+            ))
+            .await
+        {
+            tracing::warn!(
+                block_id = %draft.block_id,
+                error = %e,
+                "draft recovery: failed to enqueue synthetic edit op for engine \
+                 apply — the Loro engine may miss the recovered content until \
+                 the next boot replay (#620)"
+            );
+        }
 
         tracing::info!(block_id = %draft.block_id, "recovered unflushed draft");
         Ok(true)

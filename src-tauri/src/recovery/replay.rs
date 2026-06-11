@@ -124,6 +124,35 @@ async fn read_apply_cursor(pool: &SqlitePool) -> Result<i64, AppError> {
     Ok(cursor)
 }
 
+/// #619: does rewinding the apply cursor to `reset_to` under-rebuild
+/// because the op-log head below the rewind target was compacted away?
+///
+/// `compact_op_log` deletes rows older than the retention window, so after
+/// at least one compaction `MIN(op_log.seq) > 1`. A replay walk
+/// (`seq > reset_to`) is only a genuine rebuild when every op in
+/// `(reset_to, MIN(seq))` still exists — i.e. when
+/// `reset_to >= MIN(seq) - 1`. Anything lower silently reconstructs the
+/// engines from the surviving tail only.
+///
+/// Split out of [`heal_orphaned_apply_cursor`] so the floor predicate is
+/// directly unit-testable without staging a full heal scenario.
+pub(super) async fn compacted_floor_above(
+    pool: &SqlitePool,
+    reset_to: i64,
+) -> Result<bool, AppError> {
+    let min_seq: Option<i64> =
+        sqlx::query_scalar!(r#"SELECT MIN(seq) as "min_seq: i64" FROM op_log"#)
+            .fetch_one(pool)
+            .await?;
+    let Some(min_seq) = min_seq else {
+        // Empty op_log — nothing to rebuild from, but also nothing was
+        // compacted "above" the target; the caller's `max_seq == 0` guard
+        // bails out before this matters.
+        return Ok(false);
+    };
+    Ok(reset_to < min_seq - 1)
+}
+
 /// Boot-only self-heal for an orphaned / stale apply cursor.
 ///
 /// `loro_doc_state` holds one persisted Loro engine snapshot per space,
@@ -199,6 +228,32 @@ pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool
         }
         min_watermark
     };
+
+    // #619: compaction-floor check. `compact_op_log` purges ops below the
+    // retention frontier, so the oldest surviving row is NOT necessarily
+    // seq 1. A `reset_to` below `MIN(op_log.seq) - 1` means the replay walk
+    // (`seq > reset_to`) can only reconstruct the surviving TAIL: blocks
+    // created before the retention window exist in SQL but will be missing
+    // from the rebuilt engines — the exact "loro: block not found" wedge
+    // this heal exists to fix, plus an old-data-loss hazard if the partial
+    // engines are later persisted as authoritative snapshots. We still
+    // rewind (replaying the tail heals strictly more than leaving the
+    // engines empty/stale), but surface the under-rebuild LOUDLY instead of
+    // logging it as a routine heal.
+    if compacted_floor_above(pool, reset_to).await? {
+        tracing::error!(
+            cursor,
+            max_seq,
+            reset_to,
+            snapshot_count,
+            "recovery: engine rebuild target is below the op-log compaction \
+             floor — the op-log head was compacted away, so the rebuilt \
+             engines will only contain the surviving tail. Blocks older than \
+             the retention window remain in SQL but NOT in the Loro engines; \
+             edits to them will fail until a full engine rebuild from a \
+             snapshot/SQL import. (#619)"
+        );
+    }
 
     tracing::warn!(
         cursor,
@@ -607,6 +662,100 @@ mod tests {
         assert_eq!(
             row_seq, 1,
             "cursor must rewind to the snapshot watermark so replay re-applies seq 2..3"
+        );
+    }
+
+    /// #619: the compaction-floor predicate. A "full rebuild" rewind target
+    /// below `MIN(op_log.seq) - 1` means the op-log head was compacted away
+    /// and the replay can only reconstruct the surviving tail.
+    #[tokio::test]
+    async fn compacted_floor_above_detects_purged_op_log_head_619() {
+        let (pool, _dir) = test_pool().await;
+
+        // Empty op_log: nothing was compacted "above" any target.
+        assert!(
+            !compacted_floor_above(&pool, 0).await.unwrap(),
+            "empty op_log must not flag a floor violation"
+        );
+
+        // Simulate a compacted log: seqs 5..=8 survive (1..=4 purged).
+        for seq in 5..=8i64 {
+            sqlx::query(
+                "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+            )
+            .bind("test-device")
+            .bind(seq)
+            .bind(format!("hash-{seq}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        assert!(
+            compacted_floor_above(&pool, 0).await.unwrap(),
+            "rewind-to-0 against a compacted log under-rebuilds (#619)"
+        );
+        assert!(
+            compacted_floor_above(&pool, 3).await.unwrap(),
+            "a target below MIN(seq)-1 still misses compacted ops"
+        );
+        assert!(
+            !compacted_floor_above(&pool, 4).await.unwrap(),
+            "target == MIN(seq)-1 covers every surviving op — no violation"
+        );
+        assert!(
+            !compacted_floor_above(&pool, 7).await.unwrap(),
+            "targets above the floor are fine"
+        );
+    }
+
+    /// #619: the heal still rewinds on a compacted log (replaying the tail
+    /// heals strictly more than leaving the engines empty) — the floor
+    /// violation is surfaced via `error!`, not by aborting the heal. Pins
+    /// the rewind-still-happens behaviour the loud log documents.
+    #[tokio::test]
+    async fn heal_still_rewinds_when_op_log_head_compacted_619() {
+        let (pool, _dir) = test_pool().await;
+
+        // Compacted log (head purged), empty loro_doc_state, cursor ahead.
+        for seq in 5..=8i64 {
+            sqlx::query(
+                "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+            )
+            .bind("test-device")
+            .bind(seq)
+            .bind(format!("hash-{seq}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "UPDATE materializer_apply_cursor \
+             SET materialized_through_seq = 8, \
+                 updated_at = 1767225600000 \
+             WHERE id = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let healed = heal_orphaned_apply_cursor(&pool).await.unwrap();
+        assert!(healed, "heal must still rewind on a compacted op_log");
+
+        let row_seq: i64 = sqlx::query_scalar(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row_seq, 0,
+            "the rewind target is unchanged — the floor violation is a loud \
+             error!, not a behaviour change (#619)"
         );
     }
 }
