@@ -26,6 +26,10 @@ dist-ssr
 # Tauri
 src-tauri/target/
 src-tauri/gen/
+# cargo-fuzz (#650): build tree + libFuzzer crash artifacts are generated;
+# the targets, Cargo.toml/lock, and seed corpora under fuzz/ stay tracked.
+src-tauri/fuzz/target/
+src-tauri/fuzz/artifacts/
 # Generated per-target copies of bundled external binaries (see
 # scripts/prepare-external-bins.mjs + tauri.conf.json → externalBin).
 src-tauri/binaries/

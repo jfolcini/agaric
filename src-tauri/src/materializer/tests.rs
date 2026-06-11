@@ -3192,9 +3192,14 @@ async fn fg_apply_dropped_bumps_once_per_failed_batch() {
     .unwrap();
     mat.flush_foreground().await.unwrap();
     let m = mat.metrics();
-    assert!(
-        m.fg_apply_dropped.load(AtomicOrdering::Relaxed) >= 1,
-        "BatchApplyOps retry exhaust should bump fg_apply_dropped at least once",
+    // #649: the spec above says "exactly once for the failed batch,
+    // regardless of batch size". The old `>= 1` left a weakening mutant
+    // (an off-by-N bump) undetected; assert the exact count the comment
+    // promises so the test actually constrains the implementation.
+    assert_eq!(
+        m.fg_apply_dropped.load(AtomicOrdering::Relaxed),
+        1,
+        "BatchApplyOps retry exhaust should bump fg_apply_dropped exactly once for the failed batch",
     );
     assert!(
         m.fg_errors.load(AtomicOrdering::Relaxed) >= 1,

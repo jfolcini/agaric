@@ -3825,6 +3825,12 @@ async fn pump_full_session_602(
 ///
 /// Crucially this seeds ONLY the device's own state — nothing is ever
 /// hand-written into the PEER's op_log (post-#490-M1 no real flow does).
+// #639: surfaced once clippy began linting test targets (`--all-targets`).
+// This is a test fixture that mirrors the local-edit pipeline's full
+// parameter set (pool, materializer, engine state, device, space, block,
+// content, timestamp); bundling them into a struct would obscure the
+// call sites more than it helps. Allow the arg count for the helper.
+#[allow(clippy::too_many_arguments)]
 async fn make_local_edit_602(
     pool: &SqlitePool,
     mat: &Materializer,

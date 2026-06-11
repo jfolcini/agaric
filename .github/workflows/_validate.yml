@@ -319,23 +319,25 @@ jobs:
         run: npm ci
 
       - name: Vitest (full suite, with coverage)
-        # Full-suite run writes the coverage summary directly to
-        # `coverage-merged/` (the artifact name kept for downstream
-        # tooling). Thresholds are overridden to 0 here to preserve the
-        # prior behaviour — the old 3-shard pipeline never enforced the
-        # `vitest.config.ts` thresholds in CI either (the merge job only
-        # rendered a summary). Coverage stays informational; tightening to
-        # the configured 80/75 gate is a separate follow-up.
+        # #749: `vitest.config.ts` is the SINGLE source of truth for the
+        # coverage thresholds (lines 90 / functions 89 / branches 80 /
+        # statements 89). This step no longer overrides them to 0 — the
+        # config thresholds now actually gate here, at zero marginal cost
+        # (the suite already runs with coverage). Measured full-suite
+        # coverage clears all four with headroom (lines 91.6 / functions
+        # 90.9 / branches 82.0 / statements 89.8), so enabling the gate
+        # does not red an otherwise-green PR; it stops a new untested module
+        # from silently dropping below the OSPS-Silver line. The old three
+        # contradictory versions (config 90/89/80/89, the `=0` override
+        # here, and a `>=80%/>=75%` step-summary string) are reconciled to
+        # this one. Writes the json summary to `coverage-merged/` for the
+        # summary step + artifact.
         run: |
           npx vitest run \
             --coverage \
             --coverage.reportsDirectory=coverage-merged \
             --coverage.reporter=json \
-            --coverage.reporter=json-summary \
-            --coverage.thresholds.lines=0 \
-            --coverage.thresholds.functions=0 \
-            --coverage.thresholds.statements=0 \
-            --coverage.thresholds.branches=0
+            --coverage.reporter=json-summary
 
       - name: Production build (tsc -b && vite build)
         # Issue #812: nothing else on the PR path runs the production
@@ -346,6 +348,15 @@ jobs:
         # imports, env handling, chunking) passes every PR check and
         # surfaces first at release-tag time.
         run: npm run build
+
+      - name: Bundle-size budget gate (#750)
+        # Zero new CI minutes — the production `dist/` from the build step
+        # above is already on disk. The gate measures each PERF-24-tuned
+        # chunk's gzip size against the checked-in budgets and fails on a
+        # regression (e.g. a heavy lib pulled onto the entry path via a new
+        # static import). Budgets are measured + 10% headroom; re-baseline
+        # with `node scripts/check-bundle-budget.mjs --update`.
+        run: node scripts/check-bundle-budget.mjs
 
       - name: Coverage summary
         if: hashFiles('coverage-merged/coverage-summary.json') != ''
@@ -363,8 +374,18 @@ jobs:
               "| Branches   | \(.branches.pct)% | \(.branches.covered) / \(.branches.total) |"
             ' coverage-merged/coverage-summary.json
             echo
-            echo "_Thresholds in \`vitest.config.ts\`: lines/functions/statements >= 80%, branches >= 75% (informational — not gated in CI)._"
+            echo "_Gated against \`vitest.config.ts\` thresholds (#749, single source of truth): lines >= 90%, functions >= 89%, branches >= 80%, statements >= 88%. The vitest step above fails the job if any metric drops below its threshold._"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Coverage ratchet (#648, non-blocking)
+        if: hashFiles('coverage-merged/coverage-summary.json') != ''
+        # Non-blocking patch-level signal: compares this run's total line
+        # coverage against the checked-in baseline (scripts/coverage-
+        # baseline.json) and surfaces a drop in the step summary. ALWAYS
+        # exits 0 — coverage is deliberately not gated here (#648); the
+        # config thresholds above are the only vitest gate. Zero new CI
+        # minutes (the summary already exists).
+        run: node scripts/coverage-ratchet.mjs --summary coverage-merged/coverage-summary.json --key vitest
 
       - name: Upload coverage artifact
         # Kept the `vitest-coverage-merged` name so any downstream Codecov /
@@ -662,6 +683,23 @@ jobs:
             echo
             echo "_LLVM source-based coverage; the two nextest partitions' lcovs union-merged via \`lcov --add-tracefile\`._"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install Node.js (for the coverage ratchet)
+        if: hashFiles('coverage.lcov') != ''
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+
+      - name: Coverage ratchet (#648, non-blocking)
+        if: hashFiles('coverage.lcov') != ''
+        # Non-blocking: compares total Rust line coverage (summed LF/LH from
+        # the merged lcov) against the checked-in baseline and surfaces a
+        # drop in the step summary. ALWAYS exits 0 — this job is already
+        # informational/non-gating, and #648 deliberately does not gate
+        # coverage. The `rust` baseline key is seeded from the first main
+        # run via `--update` (no cargo-llvm-cov is available off-CI to
+        # measure it locally).
+        run: node scripts/coverage-ratchet.mjs --lcov coverage.lcov --key rust
 
       - name: Upload merged rust coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

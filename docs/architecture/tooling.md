@@ -20,7 +20,7 @@ Bindings are generated into `src/lib/bindings.ts` by the `regenerate_ts_bindings
 
 Every `sqlx::query!` / `sqlx::query_as!` is validated at compile time against the schema. The offline cache is `.sqlx/` (checked in). The `sqlx-prepare-check` prek hook (pre-push) fails on a stale cache.
 
-Runtime `sqlx::query()` (no macro) is restricted to genuinely-dynamic SQL: recursive CTEs, FTS5 query builders, snapshot ops, sync protocol fan-out. Every such site has a comment justifying the runtime form.
+Runtime `sqlx::query()` (no macro) is restricted to genuinely-dynamic SQL: recursive CTEs, FTS5 query builders, snapshot ops, sync protocol fan-out. The `check-dynamic-sql` prek hook (#646) enforces this: it counts runtime `sqlx::query(`/`query_as(`/`query_scalar(` sites per production file against a checked-in baseline (`src-tauri/dynamic-sql-baseline.txt`) and fails any file that grows past its baseline unless every dynamic site in it carries an adjacent `// dynamic-sql: <reason>` marker. Existing sites are grandfathered; the gate applies back-pressure toward the compile-checked macro forms for new code.
 
 ## ULID + RFC3339 type-level contracts
 

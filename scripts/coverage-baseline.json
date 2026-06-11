@@ -1,0 +1,4 @@
+{
+  "_comment": "Coverage ratchet baseline (#648) — total LINE coverage % per suite, MEASURED from a real CI-equivalent run. The coverage-ratchet script compares each run against these and surfaces a drop in the step summary (NON-BLOCKING — coverage is not gated, per #648). Re-baseline on main with `--update` after a deliberate change.",
+  "vitest": 91.58
+}

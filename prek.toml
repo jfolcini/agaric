@@ -446,6 +446,28 @@ language = "system"
 files = '^src-tauri/src/.*\.rs$'
 stages = ["pre-commit", "pre-push"]
 
+# Rust: dynamic-SQL justification guard (#646). docs/architecture/tooling.md
+# claims every runtime `sqlx::query()` (non-macro) site carries a comment
+# justifying the runtime form — until #646 that claim was unenforced (unlike
+# every sibling invariant: check-raw-tx, unsafe-allowlist, migrations-
+# immutable). This hook counts runtime `sqlx::query(`/`query_as(`/
+# `query_scalar(` sites per production file (the macro forms are compile-
+# checked and exempt) and compares against a checked-in baseline
+# (src-tauri/dynamic-sql-baseline.txt). Existing sites are grandfathered;
+# a file that grows PAST its baseline must carry a `// dynamic-sql: <reason>`
+# marker at every dynamic site, applying back-pressure toward the compile-
+# checked macros. Comment-/string-stripping and `#[cfg(test)]`-module skipping
+# are shared with check-raw-tx.py. Regenerate the baseline with
+# `python3 scripts/check-dynamic-sql.py --update-baseline`. Allowlist/rules
+# live in scripts/check-dynamic-sql.py.
+[[repos.hooks]]
+id = "check-dynamic-sql"
+name = "dynamic-SQL justification guard (#646)"
+entry = "python3 scripts/check-dynamic-sql.py"
+language = "system"
+files = '^src-tauri/src/.*\.rs$'
+stages = ["pre-commit", "pre-push"]
+
 # Rust: cargo fmt
 [[repos]]
 repo = "local"
@@ -463,7 +485,14 @@ repo = "local"
 [[repos.hooks]]
 id = "cargo-clippy"
 name = "cargo clippy"
-entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo clippy -- -D warnings'"
+# `--all-targets` (#639): the bare invocation lints only the default
+# target set (lib + bins), so the 26 criterion benches and the
+# interactive_slo SLO gate (~1,271 lines) were never even COMPILED by
+# clippy or CI — a refactor of agaric_lib internals could break every
+# bench file silently. `--all-targets` adds benches/tests/examples to the
+# lint set, turning "benches compile" into a checked contract on the fast
+# (per-PR) path at near-zero marginal cost.
+entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo clippy --all-targets -- -D warnings'"
 language = "system"
 pass_filenames = false
 types = ["rust"]

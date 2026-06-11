@@ -1,0 +1,44 @@
+# cargo-mutants configuration (#649).
+#
+# Mutation testing tells us whether the proptests actually CONSTRAIN the
+# implementation rather than just exercising it. The correctness story of
+# this codebase rests on a small invariant core — hash-chain append,
+# inverse-op derivation, and CRDT merge — each heavily proptested with
+# independent oracles. Those are exactly the surfaces where a surviving
+# mutant means a proptest is too weak (the review found a real example:
+# `fg_apply_dropped_bumps_once_per_failed_batch` asserting `>= 1` where its
+# own comment says "exactly once").
+#
+# Scope is deliberately narrow: mutating the whole crate would take hours
+# and bury the high-value survivors. `examine_globs` restricts mutation to
+# the invariant core; everything else is left to the (cheaper, broader)
+# proptest + nextest suites. Run from `src-tauri/` via the scheduled
+# `scheduled-deep-checks.yml` mutants lane (never per-PR, never gating —
+# surviving mutants are triage signal for new tests).
+
+# Only mutate the invariant core (#649: op, op_log, reverse, loro/engine).
+examine_globs = [
+    "src/op.rs",
+    "src/op_log.rs",
+    "src/reverse/**",
+    "src/loro/engine.rs",
+]
+
+# Never mutate test code or proptest harnesses — they are the oracle, not
+# the system under test.
+exclude_globs = [
+    "**/tests.rs",
+    "**/tests/**",
+    "**/*_tests.rs",
+    "**/*proptest*.rs",
+]
+
+# nextest is this repo's test arbiter (it catches dynamic-SQL / STRICT-table
+# bugs that `cargo check` is green on). Use it so a mutant that breaks a
+# runtime invariant is actually caught.
+test_tool = "nextest"
+
+# Skip mutants whose unmutated build/test already fails to build or times
+# out — keeps the survivor list to genuine test-coverage gaps.
+# (Per-mutant timeout is supplied on the CLI by the workflow so it can be
+#  tuned via workflow_dispatch without editing this file.)

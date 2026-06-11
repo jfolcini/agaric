@@ -46,6 +46,7 @@ use crate::materializer::MaterializeTask;
 use sqlx::SqlitePool;
 use std::borrow::Cow;
 use std::sync::Arc;
+use tracing::instrument;
 
 /// Sentinel literal stored in the `block_id` column for global cache
 /// rebuild tasks (PEND-03). SQLite's `STRICT` mode forbids `NULL` in
@@ -667,6 +668,13 @@ pub(crate) fn task_from_row(row: &DueRow) -> Option<MaterializeTask> {
 /// arguments.
 ///
 /// Returns the number of rows re-enqueued.
+// #647: the retry sweeper is the documented worst-case path (a stuck retry
+// row, the 1-hour cache-staleness ceiling) — yet it had no span. This span
+// covers a full sweep cycle and records how many rows it re-enqueued on the
+// way out (`ret` via `err`/return is the natural place; the count is small
+// and non-sensitive). `skip_all` (#632): pools + the Materializer handle
+// carry no PII but are not useful in a log line either.
+#[instrument(name = "materializer.sweep_once", skip_all, err)]
 pub async fn sweep_once(
     read_pool: &SqlitePool,
     write_pool: &SqlitePool,
