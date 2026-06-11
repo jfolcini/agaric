@@ -1735,13 +1735,18 @@ pub fn run() {
                 oauth_client.clone(),
             );
             app.manage(connector_task.handle.clone());
-            // FEAT-5h — wire the connector handle into the
-            // materializer so the foreground queue's `apply_op`
-            // fires `DirtyEvent`s on every remote op that could
-            // shift the projected agenda.  Without this hook, the
-            // connector would only catch changes on the 15-minute
-            // reconcile tick.
-            materializer_for_gcal.set_gcal_handle(connector_task.handle.clone());
+            // FEAT-5h / #643 — register the connector handle as the
+            // materializer's `DirtySink` so the foreground queue's
+            // `apply_op` hands it every remote op that could shift the
+            // projected agenda; the connector (not the materializer)
+            // computes the resulting `DirtyEvent`s. Without this hook,
+            // the connector would only catch changes on the 15-minute
+            // reconcile tick. The materializer holds the sink behind
+            // `dyn DirtySink`, so the GCal coupling lives entirely on
+            // this wiring line plus `gcal_push`'s `impl DirtySink`.
+            materializer_for_gcal.set_dirty_sink(std::sync::Arc::new(
+                connector_task.handle.clone(),
+            ));
             // Keep the `ConnectorTask` alive for the lifetime of the
             // app via managed state.
             app.manage(connector_task);

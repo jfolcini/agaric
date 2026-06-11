@@ -145,8 +145,8 @@ async fn delete_block_dispatches_to_loro_for_each_descendant() {
             .expect("append op_log"),
     );
 
-    let gcal_handle: OnceLock<GcalConnectorHandle> = OnceLock::new();
-    super::apply_op(&pool, &record, &gcal_handle)
+    let dirty_sink: OnceLock<std::sync::Arc<dyn DirtySink + Send + Sync>> = OnceLock::new();
+    super::apply_op(&pool, &record, &dirty_sink)
         .await
         .expect("apply_op");
 

@@ -20,11 +20,10 @@
 //! - `attachments`: attachment apply handlers + orphan-cleanup (C-3c).
 
 use super::MaterializeTask;
+use super::dirty_sink::{DirtyNotification, DirtySink};
 use crate::cache;
 use crate::error::AppError;
 use crate::fts;
-use crate::gcal_push::connector::GcalConnectorHandle;
-use crate::gcal_push::dirty_producer::{BlockDateSnapshot, compute_dirty_event, snapshot_for_op};
 use crate::op::{
     AddAttachmentPayload, AddTagPayload, CreateBlockPayload, DeleteAttachmentPayload,
     DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpType,

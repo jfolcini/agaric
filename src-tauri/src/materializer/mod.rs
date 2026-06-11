@@ -1,6 +1,7 @@
 mod consumer;
 mod coordinator;
 mod dedup;
+mod dirty_sink;
 mod dispatch;
 mod handlers;
 mod metrics;
@@ -11,6 +12,11 @@ use crate::op_log::OpRecord;
 #[cfg(test)]
 use consumer::process_single_foreground_task;
 pub use coordinator::Materializer;
+// #643 — the integration-agnostic dirty-data seam. `gcal_push`
+// implements `DirtySink`; `lib.rs` registers the connector handle as the
+// materializer's sink. The materializer's internal apply pipeline names
+// only these types — never any `gcal_push::*` type.
+pub use dirty_sink::{DirtyNotification, DirtySink, DirtySnapshot};
 // #417/#432: the local command path (commands/blocks/*) maintains
 // `pages_cache.{child_block_count,inbound_link_count}` in-tx for ops that
 // do NOT enqueue a full `RebuildPagesCache` (notably content `create`),
