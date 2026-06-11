@@ -23,8 +23,9 @@
 //!
 //! ## Coverage
 //!
-//! All twelve op types have projection helpers; the two attachment
-//! ops bypass the projection (file blobs live outside CRDT state).
+//! Every block/tag/property op type has a projection helper; the
+//! attachment ops bypass the projection (file blobs live outside CRDT
+//! state).
 //!
 //! ## What this module does NOT do
 //!

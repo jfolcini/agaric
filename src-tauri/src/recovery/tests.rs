@@ -198,6 +198,60 @@ async fn unflushed_draft_gets_recovered_as_synthetic_edit_block() {
     assert!(drafts.is_empty());
 }
 
+/// #620: the recovered draft's synthetic op must be dispatched through the
+/// materializer as a foreground `ApplyOp` — not just written to SQL. The
+/// observable contract: the apply cursor advances over the synthetic seq
+/// (only `apply_op`'s in-tx `advance_apply_cursor` moves it), so the next
+/// boot's `seq > cursor` walk treats the op as materialized BECAUSE it was,
+/// rather than skipping an unapplied op. Before the fix the cursor stayed
+/// behind and the engine never saw the recovered content.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn recovered_draft_is_dispatched_as_foreground_apply_op_620() {
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-620";
+    let block_id = "block-620";
+
+    insert_test_block(&pool, block_id, "old content").await;
+    save_draft(&pool, block_id, "recovered content")
+        .await
+        .unwrap();
+
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
+    assert_eq!(report.drafts_recovered, vec![block_id.to_string()]);
+
+    // The synthetic edit op exists…
+    let synthetic_seq: i64 = sqlx::query_scalar!(
+        r#"SELECT MAX(seq) as "seq!: i64" FROM op_log WHERE device_id = ? AND op_type = 'edit_block'"#,
+        device_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(synthetic_seq >= 1, "synthetic edit_block op must exist");
+
+    // …and it was APPLIED through the materializer: the cursor covers it.
+    let cursor: i64 = sqlx::query_scalar!(
+        r#"SELECT materialized_through_seq as "seq!: i64" FROM materializer_apply_cursor WHERE id = 1"#,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        cursor, synthetic_seq,
+        "the apply cursor must advance over the synthetic op — proof the \
+         ApplyOp was dispatched and applied (#620)"
+    );
+
+    // SQL content reflects the recovered draft (written in the recovery tx
+    // and idempotently re-projected by the apply).
+    let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(content.as_deref(), Some("recovered content"));
+}
+
 #[tokio::test]
 async fn already_flushed_draft_just_gets_deleted() {
     let (pool, _dir) = test_pool().await;
@@ -2360,10 +2414,14 @@ async fn recover_at_boot_includes_replay_step_c2b() {
             .unwrap();
         assert!(exists.is_some(), "replayed block {bid} must exist");
     }
+    // #620: the recovered draft's synthetic edit op (seq 6) is now also
+    // dispatched as a foreground ApplyOp, so the cursor covers it too —
+    // before the fix it stopped at the last replayed op (5) and the
+    // synthetic op was never engine-applied.
     assert_eq!(
         read_cursor(&pool).await,
-        5,
-        "cursor must advance to highest replayed seq",
+        6,
+        "cursor must advance over the replayed ops AND the synthetic draft op (#620)",
     );
 }
 

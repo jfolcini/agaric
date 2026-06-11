@@ -4539,3 +4539,254 @@ async fn pend18_list_page_history_scope_parity() {
 
     mat.shutdown();
 }
+
+// ======================================================================
+// #657 — reverse RestoreBlock / MoveBlock must refresh `space_id` in
+// step with `page_id` (#533 parity with the forward paths they mirror).
+// ======================================================================
+
+/// Seed two registered spaces, a page in each, and a child subtree under
+/// the space-A page. Returns nothing — fixed ids are used by the callers.
+async fn seed_two_space_pages_657(pool: &SqlitePool) {
+    // Space blocks first (spaces.id FK → blocks.id, migration 0089).
+    for (id, pos) in [("SPACEA657", 1i64), ("SPACEB657", 2i64)] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', 'space', NULL, ?, ?)",
+        )
+        .bind(id)
+        .bind(pos)
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    // One page per space.
+    for (id, pos, space) in [
+        ("PAGE1657", 3i64, "SPACEA657"),
+        ("PAGE2657", 4i64, "SPACEB657"),
+    ] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'page', 'p', NULL, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(pos)
+        .bind(id)
+        .bind(space)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    // Child + grandchild under the space-A page.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+         VALUES ('CHILD657', 'content', 'c', 'PAGE1657', 1, 'PAGE1657', 'SPACEA657')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+         VALUES ('GRAND657', 'content', 'g', 'CHILD657', 1, 'PAGE1657', 'SPACEA657')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn page_and_space_of(pool: &SqlitePool, id: &str) -> (Option<String>, Option<String>) {
+    let row = sqlx::query("SELECT page_id, space_id FROM blocks WHERE id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    use sqlx::Row;
+    (row.get("page_id"), row.get("space_id"))
+}
+
+/// #657 (MoveBlock half): undoing a move re-parents the subtree across a
+/// space boundary — the reverse arm must rewrite `space_id` alongside
+/// `page_id`, not leave the subtree's space membership stale until the
+/// background RebuildPageIds chain lands.
+#[tokio::test]
+async fn apply_reverse_move_block_refreshes_space_id_657() {
+    let (pool, _dir) = test_pool().await;
+    seed_two_space_pages_657(&pool).await;
+
+    // Reverse-of-a-move payload: put CHILD657 under the space-B page.
+    let payload = OpPayload::MoveBlock(crate::op::MoveBlockPayload {
+        block_id: BlockId::test_id("CHILD657"),
+        new_parent_id: Some(BlockId::test_id("PAGE2657")),
+        new_position: 1,
+        new_index: None,
+    });
+    let mut tx = pool.begin().await.unwrap();
+    apply_reverse_in_tx(&mut tx, &payload).await.unwrap();
+    tx.commit().await.unwrap();
+
+    for id in ["CHILD657", "GRAND657"] {
+        let (page_id, space_id) = page_and_space_of(&pool, id).await;
+        assert_eq!(
+            page_id.as_deref(),
+            Some("PAGE2657"),
+            "{id}: page_id refreshed"
+        );
+        assert_eq!(
+            space_id.as_deref(),
+            Some("SPACEB657"),
+            "{id}: space_id must follow page_id synchronously on reverse move (#657)"
+        );
+    }
+}
+
+/// #657 (RestoreBlock half): undoing a delete restores the subtree into a
+/// page whose space assignment changed while the subtree was tombstoned —
+/// the reverse arm must stamp the CURRENT space, not resurrect the stale one.
+#[tokio::test]
+async fn apply_reverse_restore_block_refreshes_space_id_657() {
+    let (pool, _dir) = test_pool().await;
+    seed_two_space_pages_657(&pool).await;
+
+    // Tombstone the subtree as one cohort, then move its owning page to
+    // space B while it sits in the trash.
+    const COHORT_TS: i64 = 1_600_000_000_000;
+    sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id IN ('CHILD657','GRAND657')")
+        .bind(COHORT_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET space_id = 'SPACEB657' WHERE id = 'PAGE1657'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let payload = OpPayload::RestoreBlock(crate::op::RestoreBlockPayload {
+        block_id: BlockId::test_id("CHILD657"),
+        deleted_at_ref: COHORT_TS,
+    });
+    let mut tx = pool.begin().await.unwrap();
+    apply_reverse_in_tx(&mut tx, &payload).await.unwrap();
+    tx.commit().await.unwrap();
+
+    for id in ["CHILD657", "GRAND657"] {
+        let (page_id, space_id) = page_and_space_of(&pool, id).await;
+        assert_eq!(
+            page_id.as_deref(),
+            Some("PAGE1657"),
+            "{id}: page_id refreshed"
+        );
+        assert_eq!(
+            space_id.as_deref(),
+            Some("SPACEB657"),
+            "{id}: restored subtree must pick up the page's CURRENT space (#657)"
+        );
+    }
+}
+
+// ======================================================================
+// #659 — redo_page_op must verify its target is an undo op.
+// ======================================================================
+
+/// #659: handing redo a FORWARD op ref (here: the original edit, not the
+/// undo) must be rejected with `Validation` — before the fix it happily
+/// reversed the forward op and labelled the result `is_redo: true`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn redo_rejects_forward_op_ref_659() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (_page_id, child_ids) = create_page_with_children(&pool, &mat).await;
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child_ids[0].clone().into(),
+        "edited".into(),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // The forward edit op's ref.
+    let edit_seq: i64 = sqlx::query_scalar(
+        "SELECT MAX(seq) FROM op_log WHERE device_id = ? AND op_type = 'edit_block'",
+    )
+    .bind(DEV)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let result = redo_page_op_inner(&pool, DEV, &mat, DEV.into(), edit_seq).await;
+    let err = result.expect_err("redo of a forward op must be rejected (#659)");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "expected Validation, got: {err:?}"
+    );
+    assert!(
+        err.to_string().contains("not"),
+        "error should explain the target is not an undo op: {err}"
+    );
+
+    // The forward edit's effect must be untouched.
+    let after = get_block_inner(&pool, child_ids[0].clone().into())
+        .await
+        .unwrap();
+    assert_eq!(
+        after.content,
+        Some("edited".into()),
+        "rejected redo must not mutate state (#659)"
+    );
+    mat.shutdown();
+}
+
+/// #659: the legitimate path still works — undo stamps `is_undo = 1` and
+/// redo accepts the ref. (The end-to-end behaviour is covered by the
+/// existing redo tests; this pins the flag itself.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_ops_are_flagged_is_undo_659() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (page_id, child_ids) = create_page_with_children(&pool, &mat).await;
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child_ids[0].clone().into(),
+        "edited".into(),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let undo = undo_page_op_inner(&pool, DEV, &mat, page_id, 0)
+        .await
+        .unwrap();
+
+    let flag: i64 =
+        sqlx::query_scalar("SELECT is_undo FROM op_log WHERE device_id = ? AND seq = ?")
+            .bind(&undo.new_op_ref.device_id)
+            .bind(undo.new_op_ref.seq)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(flag, 1, "undo-produced ops must carry is_undo = 1 (#659)");
+
+    // And the forward edit op is NOT flagged.
+    let forward_flag: i64 = sqlx::query_scalar(
+        "SELECT is_undo FROM op_log WHERE device_id = ? AND op_type = 'edit_block' \
+         ORDER BY seq ASC LIMIT 1",
+    )
+    .bind(DEV)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(forward_flag, 0, "forward ops keep is_undo = 0 (#659)");
+    mat.shutdown();
+}
