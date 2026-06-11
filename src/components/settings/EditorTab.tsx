@@ -13,12 +13,16 @@ import { useTranslation } from 'react-i18next'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
-import { EMOJI_PICKER_ENABLED_KEY } from '@/lib/editor-preferences'
+import { EMOJI_PICKER_ENABLED_KEY, TAB_INDENTS_BLOCKS_KEY } from '@/lib/editor-preferences'
 
 export function EditorTab(): React.ReactElement {
   const { t } = useTranslation()
   const [emojiEnabled, setEmojiEnabled] = useLocalStoragePreference<boolean>(
     EMOJI_PICKER_ENABLED_KEY,
+    true,
+  )
+  const [tabIndents, setTabIndents] = useLocalStoragePreference<boolean>(
+    TAB_INDENTS_BLOCKS_KEY,
     true,
   )
 
@@ -39,6 +43,24 @@ export function EditorTab(): React.ReactElement {
           onCheckedChange={setEmojiEnabled}
           aria-label={t('settings.editor.emojiPickerLabel')}
           data-testid="emoji-picker-toggle"
+        />
+      </div>
+
+      {/* #912 — accessibility opt-out: turn off Tab-indent to restore Tab as
+          the focus-navigation key. Block indent stays on Ctrl/Cmd+Shift+Arrow. */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1">
+          <Label htmlFor="tab-indent-toggle" muted={false}>
+            {t('settings.editor.tabIndentLabel')}
+          </Label>
+          <p className="text-xs text-muted-foreground mt-1">{t('settings.editor.tabIndentHelp')}</p>
+        </div>
+        <Switch
+          id="tab-indent-toggle"
+          checked={tabIndents}
+          onCheckedChange={setTabIndents}
+          aria-label={t('settings.editor.tabIndentLabel')}
+          data-testid="tab-indent-toggle"
         />
       </div>
     </div>

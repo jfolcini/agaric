@@ -9,6 +9,7 @@
 import type { Editor } from '@tiptap/core'
 import { useCallback, useEffect } from 'react'
 
+import { isTabIndentEnabled } from '../lib/editor-preferences'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 
 /**
@@ -364,10 +365,14 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         if (isSuggestionPopupVisible()) return // let ProseMirror / Suggestion plugin handle it
       }
 
-      // #912 — Tab now indents/dedents blocks. While a suggestion popup is
-      // open, defer Tab (and Shift+Tab) to the Suggestion plugin's
-      // Tab-to-accept instead of restructuring the outline.
-      if (event.key === 'Tab' && isSuggestionPopupVisible()) return
+      // #912 — Tab now indents/dedents blocks. Two reasons to let Tab pass
+      // through to the browser/ProseMirror untouched:
+      //   1. A suggestion popup is open → defer to the Suggestion plugin's
+      //      Tab-to-accept instead of restructuring the outline.
+      //   2. The accessibility opt-out is OFF → restore Tab as the focus-
+      //      navigation key for keyboard/AT users (indent stays on
+      //      Ctrl/Cmd+Shift+Arrow). See `isTabIndentEnabled`.
+      if (event.key === 'Tab' && (isSuggestionPopupVisible() || !isTabIndentEnabled())) return
 
       handleBlockKeyDown(event, editor, {
         onFocusPrev,

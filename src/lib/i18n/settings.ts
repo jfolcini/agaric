@@ -23,6 +23,9 @@ export const settings: Record<string, string> = {
   'settings.editor.emojiPickerLabel': 'Emoji picker',
   'settings.editor.emojiPickerHelp':
     'Type : followed by a shortcode (e.g. :joy) to insert an emoji inline. Turn off to type a literal colon with no popup.',
+  'settings.editor.tabIndentLabel': 'Tab indents blocks',
+  'settings.editor.tabIndentHelp':
+    'Use Tab and Shift+Tab to indent and outdent blocks (like Logseq and Notion). Turn off for accessibility to keep Tab as the focus-navigation key — block indenting then stays on Ctrl/Cmd+Shift+Arrow. Press Escape any time to leave the editor.',
   'settings.tabSync': 'Sync & Devices',
   'settings.tabData': 'Data',
   'settings.themeLabel': 'Theme',

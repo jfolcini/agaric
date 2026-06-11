@@ -906,6 +906,55 @@ describe('useBlockKeyboard — IME / composition guard', () => {
   })
 })
 
+// #912 — accessibility opt-out: when "Tab indents blocks" is OFF, Tab must pass
+// through for focus navigation instead of indenting (no keyboard trap).
+describe('useBlockKeyboard — Tab-indent accessibility opt-out', () => {
+  function setup() {
+    const element = document.createElement('div')
+    document.body.appendChild(element)
+    const editor = new Editor({
+      element,
+      extensions: [Document, Paragraph, Text],
+      content: { type: 'doc', content: [{ type: 'paragraph' }] },
+    })
+    const callbacks = makeCallbacks()
+    const { unmount } = renderHook(() => useBlockKeyboard(editor, callbacks))
+    const target = editor.view.dom.parentElement as HTMLElement
+    const cleanup = () => {
+      unmount()
+      editor.destroy()
+      element.remove()
+      localStorage.removeItem('agaric-tab-indents-blocks')
+    }
+    return { callbacks, target, cleanup }
+  }
+
+  it('Tab indents by default (preference absent)', () => {
+    const { callbacks, target, cleanup } = setup()
+
+    const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    target.dispatchEvent(event)
+
+    expect(callbacks._calls['onIndent']).toBe(1)
+    cleanup()
+  })
+
+  it('Tab does NOT indent and is not preventDefault-ed when the opt-out is off', () => {
+    localStorage.setItem('agaric-tab-indents-blocks', 'false')
+    const { callbacks, target, cleanup } = setup()
+
+    const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    const preventDefaultSpy = vi.spyOn(event, 'preventDefault')
+    target.dispatchEvent(event)
+
+    // Tab passes through for browser focus navigation.
+    expect(callbacks._calls['onIndent']).toBeUndefined()
+    expect(callbacks._calls['onDedent']).toBeUndefined()
+    expect(preventDefaultSpy).not.toHaveBeenCalled()
+    cleanup()
+  })
+})
+
 // -- #725: Enter/Backspace inside code blocks and tables ------------------------
 //
 // The Enter rule used to fire unconditionally on the capture-phase listener,
