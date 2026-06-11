@@ -96,7 +96,7 @@ by the unit tests in `primitive.rs`.
 ## SQL composition
 
 The Pages IPC composes filters in
-[`list_pages_with_metadata_inner`](../../src-tauri/src/commands/pages.rs) via
+[`list_pages_with_metadata_inner`](../../src-tauri/src/commands/pages/metadata.rs) via
 the `compile_pages_filters` helper:
 
 1. **Cost ordering.** Each primitive carries a `cost_hint(&self) -> u8`

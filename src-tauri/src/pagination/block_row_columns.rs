@@ -249,7 +249,14 @@ mod tests {
                 "commands/journal.rs",
                 include_str!("../commands/journal.rs"),
             ),
-            ("commands/pages.rs", include_str!("../commands/pages.rs")),
+            (
+                "commands/pages/markdown.rs",
+                include_str!("../commands/pages/markdown.rs"),
+            ),
+            (
+                "commands/pages/listing.rs",
+                include_str!("../commands/pages/listing.rs"),
+            ),
             (
                 "commands/properties.rs",
                 include_str!("../commands/properties.rs"),
