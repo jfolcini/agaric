@@ -7,8 +7,8 @@ use sqlx::SqlitePool;
 use std::time::{Duration, Instant};
 
 use crate::cancellation::CancellationToken;
-use crate::commands::SearchBlockRow;
 use crate::db::search_pool_acquire_logged;
+use crate::domain::search_types::SearchBlockRow;
 use crate::error::AppError;
 use crate::pagination::{Cursor, PageRequest, PageResponse};
 

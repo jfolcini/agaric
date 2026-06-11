@@ -370,7 +370,13 @@ pub use tags::{
 
 // pub(crate) helpers used by other crate modules (e.g. recurrence.rs)
 pub(crate) use blocks::{create_block_in_tx, delete_property_in_tx, set_property_in_tx};
-pub(crate) use properties::is_valid_iso_date;
+// #642: `is_valid_iso_date` (+ its delegate `validate_date_format`) moved to
+// the neutral `crate::domain::block_ops` layer. Re-export keeps the
+// `crate::commands::is_valid_iso_date` / `crate::commands::validate_date_format`
+// paths and every unqualified command-internal caller (via the `super::*`
+// glob) churn-free; `recurrence` now imports `is_valid_iso_date` directly
+// from `crate::domain::block_ops`.
+pub(crate) use crate::domain::block_ops::{is_valid_iso_date, validate_date_format};
 
 /// Maximum block-content size (bytes) enforced at the IPC layer
 /// (`create_block_in_tx`, `edit_block_inner`, drafts). `pub(crate)` so
@@ -400,49 +406,10 @@ const ALLOWED_MIME_PATTERNS: &[&str] = &[
 // Response types
 // ---------------------------------------------------------------------------
 
-/// Validate that `s` parses as a calendar-valid `YYYY-MM-DD` date.
-///
-/// I-CommandsCRUD-6: previously did only structural validation (month
-/// 01–12, day 01–31) and explicitly accepted impossible combinations
-/// (Feb 30, Apr 31), relying on downstream callers to handle them. The
-/// agenda path (`list_projected_agenda_inner`) re-parsed via
-/// `NaiveDate::parse_from_str` and rejected with a different error
-/// shape — inconsistent failure for the same input depending on which
-/// command consumed it.
-///
-/// Now uses `NaiveDate::parse_from_str` directly so impossible dates
-/// are rejected at the boundary with a single canonical error message.
-/// The agenda re-parse becomes redundant and can be removed in a
-/// follow-up; this change keeps the validator's return type stable so
-/// existing callers don't need updating.
-///
-/// MAINT-163: chrono's `%Y-%m-%d` accepts non-zero-padded forms like
-/// `2025-1-1` and 2-digit years like `25-1-1`. Pre-validate the strict
-/// shape (`\d{4}-\d{2}-\d{2}`) before delegating calendar validity to
-/// chrono — otherwise these slip through and downstream callers get
-/// surprising "valid" dates that the canonical date format invariant
-/// rejects.
-pub(crate) fn validate_date_format(s: &str) -> Result<(), AppError> {
-    let bytes = s.as_bytes();
-    let shape_ok = bytes.len() == 10
-        && bytes[4] == b'-'
-        && bytes[7] == b'-'
-        && bytes[..4].iter().all(u8::is_ascii_digit)
-        && bytes[5..7].iter().all(u8::is_ascii_digit)
-        && bytes[8..10].iter().all(u8::is_ascii_digit);
-    if !shape_ok {
-        return Err(AppError::Validation(format!(
-            "expected YYYY-MM-DD format with calendar-valid date, got '{s}'"
-        )));
-    }
-    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-        .map(|_| ())
-        .map_err(|_| {
-            AppError::Validation(format!(
-                "expected YYYY-MM-DD format with calendar-valid date, got '{s}'"
-            ))
-        })
-}
+// #642: `validate_date_format` moved to `crate::domain::block_ops` (pure;
+// `AppError` + `chrono` only) and is re-exported above so the unqualified
+// command-internal callers (agenda / journal / blocks::queries) keep
+// resolving it via the `super::*` glob unchanged.
 
 /// A date range for agenda queries. Both fields must be in `YYYY-MM-DD` format.
 #[derive(Debug, Clone, serde::Deserialize, Serialize, Type)]

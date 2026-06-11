@@ -704,13 +704,6 @@ pub async fn set_scheduled_date_inner(
     .await
 }
 
-/// I-CommandsCRUD-8: previously a separate structural validator that
-/// drifted from `validate_date_format`. Now delegates so there is one
-/// source of truth for ISO-date validation across the commands surface.
-pub(crate) fn is_valid_iso_date(s: &str) -> bool {
-    crate::commands::validate_date_format(s).is_ok()
-}
-
 /// Delete a property from a block.
 ///
 /// Appends a `DeleteProperty` op and removes the row from `block_properties`.

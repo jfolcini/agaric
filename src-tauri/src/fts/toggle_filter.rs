@@ -50,7 +50,7 @@
 //! `row.content.substring(start, end)` against the same string it
 //! rendered. See [`byte_to_utf16_offsets`].
 
-use crate::commands::{MatchOffset, SearchBlockRow};
+use crate::domain::search_types::{MatchOffset, SearchBlockRow};
 use crate::error::AppError;
 use crate::pagination::{PageRequest, PageResponse};
 use regex::{Regex, RegexBuilder};
