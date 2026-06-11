@@ -1,0 +1,333 @@
+name: Scheduled deep checks
+
+# Heavy correctness/perf tooling that is too slow for the per-PR critical
+# path (the PR gate is `ci.yml` → `_validate.yml`). Runs weekly + on manual
+# dispatch. None of these jobs is a required check; they surface signal via
+# step summaries and uploaded artifacts, and a maintainer triages survivors.
+#
+# Lanes:
+#   bench-compile  — #639: compile all 26 criterion benches (clippy already
+#                    `--all-targets`-lints them per-PR, but this also RUNS
+#                    the interactive_slo SLO gate + the `#[ignore]`d 20k-row
+#                    perf gates, which nothing else exercises).
+#   mutants        — #649: cargo-mutants scoped to the invariant core
+#                    (op, op_log, reverse, loro/engine). Non-blocking; the
+#                    survivor list is the deliverable to triage into tests.
+#   fuzz           — #650: short coverage-guided fuzz runs over the three
+#                    byte-level parsers (snapshot decode, deeplink parse).
+#                    Smoke-length here (the per-target time budget is small);
+#                    a real fuzzing campaign runs longer out-of-band.
+on:
+  schedule:
+    # Mondays 04:17 UTC — off-peak, odd minute to avoid the top-of-hour
+    # scheduler stampede. Weekly is enough for trend/triage tooling.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      mutants_timeout:
+        description: 'Per-mutant timeout (seconds) for the mutants lane'
+        required: false
+        default: '300'
+      fuzz_seconds:
+        description: 'Per-target fuzz time budget (seconds)'
+        required: false
+        default: '120'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # bench-compile (#639) — compile every bench target and run the gates that
+  # are otherwise never executed by automation: the interactive_slo SLO bench
+  # (it `panic!`s on a per-command budget breach — already pass/fail) and the
+  # `#[ignore]`d 20k-row perf gates.
+  # ---------------------------------------------------------------------------
+  bench-compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            pkg-config \
+            mold
+
+      - name: Enable mold linker (CI-only .cargo/config.toml)
+        run: |
+          mkdir -p .cargo
+          cp .cargo/config.toml.example .cargo/config.toml
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: 1.95.0
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src-tauri
+          # Own cache key — the bench/test profile tree matches neither the
+          # lint nor the llvm-cov instrumented tree (issue #813 rationale).
+          shared-key: rust-bench
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        # Tauri's build.rs validates externalBin paths on every cargo
+        # invocation, including `cargo bench` / nextest below.
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
+
+      - name: Compile all bench targets (no-run)
+        working-directory: src-tauri
+        # `--no-run` compiles every `[[bench]]` (all 26) without executing
+        # them — the cheap half of #639. `--all-targets` clippy already
+        # guards this per-PR; this is the belt-and-braces compile under the
+        # bench profile (criterion harness linked in).
+        run: cargo bench --no-run
+
+      - name: Run interactive_slo SLO gate (#639)
+        working-directory: src-tauri
+        # The bench self-`panic!`s if any command's mean latency exceeds its
+        # ARCHITECTURE.md §25 budget, so a non-zero exit IS the gate. The
+        # already-breaching `list_page_links` / `list_projected_agenda`
+        # probes stay env-gated out (SLO_INCLUDE_PROBLEM unset) so the gate
+        # tracks the commands currently within budget; flip the env to
+        # surface the known-slow ones.
+        run: cargo bench --bench interactive_slo
+
+      - name: Install cargo-nextest via prebuilt binary
+        uses: taiki-e/install-action@0631aa6515c7d545823c67cfae7ef4fc7f490154 # v2.81.8
+        with:
+          tool: cargo-nextest
+
+      - name: Run the #[ignore]d perf gates (#639)
+        working-directory: src-tauri
+        # The 20k-row perf gates are `#[ignore]`d so the per-PR suite doesn't
+        # pay for 20k-row seeding. `--run-ignored=only` runs exactly those;
+        # they assert wall-clock budgets and fail on regression.
+        run: cargo nextest run --run-ignored=only --no-fail-fast
+
+  # ---------------------------------------------------------------------------
+  # mutants (#649) — cargo-mutants scoped (via mutants.toml `examine_globs`)
+  # to the invariant core. Non-blocking: the deliverable is the survivor list
+  # in the step summary + uploaded artifact, which a maintainer triages into
+  # test gaps. `|| true` is intentional — a surviving mutant is signal, not a
+  # CI failure (this lane is not a required check and is never gated).
+  # ---------------------------------------------------------------------------
+  mutants:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            pkg-config \
+            mold
+
+      - name: Enable mold linker (CI-only .cargo/config.toml)
+        run: |
+          mkdir -p .cargo
+          cp .cargo/config.toml.example .cargo/config.toml
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: 1.95.0
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src-tauri
+          shared-key: rust-mutants
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
+
+      - name: Install cargo-mutants + cargo-nextest via prebuilt binary
+        uses: taiki-e/install-action@0631aa6515c7d545823c67cfae7ef4fc7f490154 # v2.81.8
+        with:
+          tool: cargo-mutants,cargo-nextest
+
+      - name: Run cargo-mutants (scoped to invariant core)
+        working-directory: src-tauri
+        # Scope, test-tool (nextest), and timeouts come from mutants.toml.
+        # `--in-place` avoids the default copy-to-tmp (faster; the runner is
+        # ephemeral). Never gate: surviving mutants are triage signal.
+        # The dispatch input rides via `env:` (not inline `${{ }}`) so it
+        # can't expand into the shell as code (zizmor template-injection).
+        env:
+          MUTANTS_TIMEOUT: ${{ github.event.inputs.mutants_timeout || '300' }}
+        run: |
+          cargo mutants --in-place --timeout "$MUTANTS_TIMEOUT" \
+            --output mutants-out || true
+
+      - name: Mutants summary
+        if: always()
+        working-directory: src-tauri
+        run: |
+          {
+            echo "## cargo-mutants (invariant core)"
+            echo
+            if [ -f mutants-out/outcomes.json ]; then
+              echo '```'
+              # caught / missed / unviable / timeout tallies
+              for f in caught missed unviable timeout; do
+                if [ -f "mutants-out/$f.txt" ]; then
+                  echo "$f: $(wc -l < "mutants-out/$f.txt")"
+                fi
+              done
+              echo '```'
+              echo
+              if [ -s mutants-out/missed.txt ]; then
+                echo "### Surviving (missed) mutants — triage into test gaps"
+                echo '```'
+                cat mutants-out/missed.txt
+                echo '```'
+              fi
+            else
+              echo "_No outcomes produced (build or config error) — see job log._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload mutants report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: mutants-out
+          path: src-tauri/mutants-out/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # fuzz (#650) — short coverage-guided fuzz of the byte-level parsers. The
+  # fuzz crate (src-tauri/fuzz) builds under stable for compile-checking but
+  # `cargo fuzz run` needs nightly (libFuzzer instrumentation). Smoke-length
+  # budget here; a longer campaign runs out-of-band. Non-blocking.
+  # ---------------------------------------------------------------------------
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            pkg-config \
+            mold
+
+      - name: Enable mold linker (CI-only .cargo/config.toml)
+        run: |
+          mkdir -p .cargo
+          cp .cargo/config.toml.example .cargo/config.toml
+
+      - name: Install nightly Rust toolchain
+        # cargo-fuzz requires nightly for the libFuzzer sanitizer coverage
+        # instrumentation (`-Z sanitizer`). The production toolchain stays
+        # pinned at 1.95.0; only this lane uses nightly.
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: nightly
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src-tauri/fuzz
+          shared-key: rust-fuzz
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
+
+      - name: Install cargo-fuzz via prebuilt binary
+        uses: taiki-e/install-action@0631aa6515c7d545823c67cfae7ef4fc7f490154 # v2.81.8
+        with:
+          tool: cargo-fuzz
+
+      - name: Fuzz each parser target (smoke length)
+        working-directory: src-tauri/fuzz
+        # `-max_total_time` keeps each target to a smoke budget so the weekly
+        # lane stays bounded; a crash exits non-zero and the artifact upload
+        # below preserves the reproducer. Seeds come from the checked-in
+        # corpora under fuzz/corpus/<target>/. The dispatch input rides via
+        # `env:` (not inline `${{ }}`) per zizmor template-injection.
+        env:
+          FUZZ_SECONDS: ${{ github.event.inputs.fuzz_seconds || '120' }}
+        run: |
+          set -euo pipefail
+          for target in snapshot_decode deeplink_parse; do
+            echo "::group::fuzz $target"
+            cargo +nightly fuzz run "$target" -- \
+              -max_total_time="$FUZZ_SECONDS" -rss_limit_mb=4096
+            echo "::endgroup::"
+          done
+
+      - name: Upload fuzz artifacts (crashes / corpus)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fuzz-artifacts
+          path: |
+            src-tauri/fuzz/artifacts/
+            src-tauri/fuzz/corpus/
+          if-no-files-found: ignore
+          retention-days: 30

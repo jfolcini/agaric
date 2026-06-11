@@ -1,0 +1,14 @@
+{
+  "_comment": "Bundle-size budgets (#750) — per-chunk gzip ceiling in bytes. MEASURED from a real production build (npm run build) plus a 10% headroom margin, then checked in. Regenerate with `node scripts/check-bundle-budget.mjs --update` after an intentional, reviewed size change. The check-bundle-budget gate fails when a chunk's gzip size exceeds its budget here.",
+  "measuredAt": "Baseline gzip sizes at generation time were below these budgets by the headroom margin; see git history for the build that set them.",
+  "chunks": {
+    "index": 255978,
+    "editor": 167441,
+    "highlight": 17745,
+    "react-vendor": 81493,
+    "ui-radix": 31954,
+    "d3": 45490,
+    "dnd": 18504,
+    "datepicker": 24236
+  }
+}

@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc;
-use tracing::Instrument;
+use tracing::{Instrument, instrument};
 
 use super::FOREGROUND_CAPACITY;
 use super::MaterializeTask;
@@ -217,6 +217,16 @@ where
     outcome
 }
 
+// #647: the foreground consumer loop is the async core's hardest path to
+// debug from logs alone (queues, barriers, batch-apply). A long-lived span
+// gives every task processed inside it parent context. `skip_all` (#632):
+// the `MaterializeTask`s draining through here carry op payloads / note
+// content — never record args.
+#[instrument(
+    name = "materializer.run_foreground",
+    skip_all,
+    fields(queue = "foreground")
+)]
 pub(super) async fn run_foreground(
     pool: SqlitePool,
     mut rx: mpsc::Receiver<MaterializeTask>,
@@ -387,6 +397,12 @@ async fn process_foreground_segment(
     }
 }
 
+// #647: per-task dispatch — the span where a stuck/dropped foreground task
+// is diagnosed. `skip_all` (#632) because `task` carries op content; we do
+// not record a kind discriminant here (MaterializeTask has no production
+// label accessor and adding one is out of this change's scope) — the parent
+// `run_foreground` span plus this span's timing are the debugging hook.
+#[instrument(name = "materializer.process_fg_task", skip_all)]
 pub(super) async fn process_single_foreground_task(
     pool: &SqlitePool,
     task: MaterializeTask,
@@ -532,6 +548,13 @@ pub(super) async fn process_single_foreground_task(
     metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
 }
 
+// #647: background consumer loop (cache fan-out, FTS, gcal dispatch). Same
+// rationale + `skip_all` privacy guard as `run_foreground`.
+#[instrument(
+    name = "materializer.run_background",
+    skip_all,
+    fields(queue = "background")
+)]
 pub(super) async fn run_background(
     pool: SqlitePool,
     mut rx: mpsc::Receiver<MaterializeTask>,

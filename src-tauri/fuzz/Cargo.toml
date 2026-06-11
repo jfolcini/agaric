@@ -1,0 +1,58 @@
+# cargo-fuzz crate (#650) — coverage-guided fuzzing for the byte-level
+# parsers that accept ARBITRARY input (peer snapshot bytes, OS-supplied
+# deep-link URLs). The structured proptest harnesses only generate VALID
+# shapes; libFuzzer's coverage-guided mutation is the right tool for the
+# raw-byte boundary.
+#
+# This is its OWN workspace (the `[workspace]` table below) so cargo-fuzz's
+# nightly/sanitizer build never contaminates the pinned-stable main build
+# and the parent `src-tauri` workspace doesn't try to compile it on every
+# `cargo build`. It depends on the parent crate as a path dependency, so it
+# only sees that crate's `pub` API surface.
+[package]
+name = "agaric-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+# cargo-machete scans a crate's `src/` for usage, but our targets live in
+# `fuzz_targets/*.rs` (non-standard [[bin]] paths it doesn't trace), so it
+# false-reports `agaric` as unused. The crate genuinely depends on it —
+# both targets `use agaric::{snapshot::decode_snapshot, deeplink::parse_deep_link}`
+# and the crate fails to build without it. Ignore the false positive.
+[package.metadata.cargo-machete]
+ignored = ["agaric"]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.agaric]
+path = ".."
+
+# Excludes the fuzz crate from the parent workspace; cargo-fuzz builds it
+# standalone under nightly with sanitizer instrumentation.
+[workspace]
+
+[profile.release]
+debug = 1
+
+# `cargo fuzz` discovers targets from these [[bin]] entries. `test = false`
+# / `doc = false` keep `cargo test`/`cargo doc` from trying to build the
+# libFuzzer harness (which needs the nightly `-Z sanitizer` flags injected
+# by `cargo fuzz`).
+[[bin]]
+name = "snapshot_decode"
+path = "fuzz_targets/snapshot_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "deeplink_parse"
+path = "fuzz_targets/deeplink_parse.rs"
+test = false
+doc = false
+bench = false

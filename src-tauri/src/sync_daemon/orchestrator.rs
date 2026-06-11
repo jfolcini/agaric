@@ -48,6 +48,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use sqlx::SqlitePool;
 use tokio::sync::Notify;
+use tracing::instrument;
 
 use crate::error::AppError;
 use crate::lifecycle::LifecycleHooks;
@@ -593,6 +594,16 @@ pub(crate) struct SyncSessionContext<'a> {
     fields(peer = %peer.device_id),
     name = "sync",
 )]
+// #647: a sync attempt against one peer — backoff gate, lease, connect,
+// session. The device_id is the key correlation field when diagnosing a
+// stuck/looping peer; it is a non-sensitive opaque id. `skip_all` keeps the
+// `SyncSessionContext` / `PeerRef` slices (which can reference op data) out
+// of the span per #632.
+#[instrument(
+    name = "sync.try_sync_with_peer",
+    skip_all,
+    fields(peer = %peer.device_id)
+)]
 pub(crate) async fn try_sync_with_peer(
     ctx: &SyncSessionContext<'_>,
     peer: &DiscoveredPeer,
@@ -806,6 +817,11 @@ where
 /// deltas via a normal `HeadExchange`. On failure (no offer arrives,
 /// offer over size cap, decode/apply failure) the sync returns `Err`
 /// so the caller records the failure and backs off.
+// #647: the message-exchange session loop — the path to instrument for a
+// hung handshake or a session that never reaches a terminal state. `err`
+// records the terminating error; `skip_all` (#632) because the orchestrator
+// + connection carry sync payloads (op/note content).
+#[instrument(name = "sync.run_session", skip_all, err)]
 pub(crate) async fn run_sync_session(
     orch: &mut SyncOrchestrator,
     conn: &mut SyncConnection,
