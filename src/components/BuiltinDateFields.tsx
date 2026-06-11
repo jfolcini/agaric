@@ -10,7 +10,7 @@
 import { CalendarCheck2, CalendarClock } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { PropertyRow } from './BlockPropertyDrawer'
+import { PropertyRow } from './PropertyRow'
 
 export interface BuiltinDateFieldsProps {
   dueDate: string | null

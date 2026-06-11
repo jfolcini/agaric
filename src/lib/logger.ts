@@ -5,13 +5,16 @@
  * In dev mode, all levels are logged. In production, only warn and error.
  *
  * For warn/error levels, also fires a fire-and-forget IPC call to the Rust
- * backend's daily-rolling log file via `logFrontend()`. Includes JS stack
- * traces and optional cause chains for debugging.
+ * backend's daily-rolling log file via the registered backend sink (see
+ * `logger-transport.ts`). `tauri.ts` registers its `logFrontend` IPC call as
+ * that sink at init; the indirection keeps this module from importing
+ * `tauri.ts` (which imports the logger), breaking the old import cycle (#761).
+ * Includes JS stack traces and optional cause chains for debugging.
  *
  * Format: [ISO-timestamp] [LEVEL] [module] message {optional JSON data}
  */
 
-import { logFrontend } from './tauri'
+import { getLogBackendSink } from './logger-transport'
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
@@ -149,12 +152,13 @@ function bridgeToBackend(
   data?: Record<string, unknown>,
 ) {
   try {
-    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+    const sink = getLogBackendSink()
+    if (sink && typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
       const serializedData = data ? safeStringify(data) : undefined
       // Fire-and-forget: logging to backend should not block or crash the app.
       // NOTE: Intentional sole exception to the "no silent catch" rule (AGENTS.md).
       // Logging the error here would recurse through the same IPC bridge.
-      logFrontend(level, module, message, stack, context, serializedData).catch(() => {})
+      sink(level, module, message, stack, context, serializedData).catch(() => {})
     }
   } catch {
     // IPC unavailable — console-only fallback

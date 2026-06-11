@@ -6,24 +6,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { _resetRateLimits, logger, setLogLevel } from '../logger'
+import { setLogBackendSink } from '../logger-transport'
 
-// ── Mock logFrontend from tauri ──────────────────────────────────────────
+// ── Backend log sink ─────────────────────────────────────────────────────
+//
+// The logger reaches the backend via the `logger-transport` seam (#761) rather
+// than importing `tauri.ts` directly. We register this mock as the sink (what
+// `tauri.ts` does in production with its `logFrontend` IPC call) and assert
+// against it exactly as before.
 
 const mockLogFrontend = vi.fn<
   (
     level: string,
     module: string,
     message: string,
-    stack?: string,
-    context?: string,
-    data?: string,
+    stack?: string | null,
+    context?: string | null,
+    data?: string | null,
   ) => Promise<void>
 >(() => Promise.resolve())
-
-vi.mock('../tauri', () => ({
-  logFrontend: (...args: [string, string, string, string?, string?, string?]) =>
-    mockLogFrontend(...args),
-}))
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -53,6 +54,7 @@ beforeEach(() => {
   vi.spyOn(console, 'warn').mockImplementation(() => {})
   vi.spyOn(console, 'error').mockImplementation(() => {})
   mockLogFrontend.mockClear()
+  setLogBackendSink(mockLogFrontend)
   _resetRateLimits()
   disableTauri()
   // Reset to dev default

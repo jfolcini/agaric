@@ -7,32 +7,13 @@
  * testable without hauling d3 types around.
  */
 
-import type { SimulationLinkDatum, SimulationNodeDatum } from 'd3-force'
-
+import type { GraphEdge, GraphFetchResult, GraphNode } from '@/lib/graph-types'
 import type { PageHeading } from '@/lib/tauri'
 import { listAllPagesInSpace, listPageLinks, listTemplatePageIdsInSpace } from '@/lib/tauri'
 
-export interface GraphNode extends SimulationNodeDatum {
-  id: string
-  label: string
-  todo_state: string | null
-  priority: string | null
-  due_date: string | null
-  scheduled_date: string | null
-  is_template: boolean
-  backlink_count: number
-}
-
-export interface GraphEdge extends SimulationLinkDatum<GraphNode> {
-  source: string | GraphNode
-  target: string | GraphNode
-  ref_count: number
-}
-
-export interface GraphFetchResult {
-  nodes: GraphNode[]
-  edges: GraphEdge[]
-}
+// Re-export the graph data types from their leaf home (`@/lib/graph-types`,
+// #761) so existing `from './GraphView.helpers'` import sites keep working.
+export type { GraphEdge, GraphFetchResult, GraphNode } from '@/lib/graph-types'
 
 /**
  * Fetch every page in the active space (optionally restricted to pages

@@ -2,6 +2,7 @@ import { Channel } from '@tauri-apps/api/core'
 
 import { commands } from './bindings'
 import { logger } from './logger'
+import { setLogBackendSink } from './logger-transport'
 import type { SafeLimit } from './safe-limit'
 
 export type {
@@ -2131,6 +2132,12 @@ export async function logFrontend(
     ),
   )
 }
+
+// Wire the IPC log call into the logger's backend-transport seam (#761). This
+// import-time side effect replaces the old direct `logger.ts -> tauri.ts`
+// import that formed an import cycle; `logger.ts` now depends only on the leaf
+// `logger-transport.ts`.
+setLogBackendSink(logFrontend)
 
 /** Return the path to the logs directory. */
 export async function getLogDir(): Promise<string> {
