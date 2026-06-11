@@ -429,6 +429,57 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
     ],
   )
 
+  // #915 — `beforeinput` fallback for IMEs (notably Android Gboard) that report
+  // `keyCode === 229` for Enter/Backspace, so `handleKeyDown` bails before the
+  // KEY_RULES run and block create/delete/merge never fires. `beforeinput`
+  // carries a reliable semantic `inputType` independent of the keyCode quirk.
+  //
+  // No double-fire on desktop: when `handleKeyDown` handles a key it calls
+  // `preventDefault()`, which suppresses the subsequent `beforeinput`. This
+  // handler therefore only acts when keydown bailed (the Gboard path) or for
+  // input the key rules intentionally don't own (mid-text backspace → defer to
+  // ProseMirror). Genuine IME composition produces `insertCompositionText` /
+  // sets `isComposing`, never `insertParagraph`, so composition is unaffected.
+  const handleBeforeInput = useCallback(
+    (event: InputEvent) => {
+      if (!editor) return
+      if (event.isComposing) return
+
+      const it = event.inputType
+      if (it !== 'insertParagraph' && it !== 'deleteContentBackward') return
+
+      // Defer to the Suggestion plugin while its popup is open (Enter selects an
+      // item, Backspace edits the query) — mirrors the keydown popup guard.
+      if (isSuggestionPopupVisible()) return
+
+      // Inside a code block / table, Enter and Backspace belong to ProseMirror
+      // (newline in the fence, paragraph/cell edits) — same #725 guard as keydown.
+      if ((editor.isActive?.('codeBlock') ?? false) || (editor.isActive?.('table') ?? false)) return
+
+      const { from, empty } = editor.state.selection
+      const atStart = from <= 1 && empty
+
+      if (it === 'insertParagraph') {
+        event.preventDefault()
+        onEnterSave()
+        return
+      }
+
+      // deleteContentBackward: only the block-structural cases. Mid-text
+      // backspace falls through (no preventDefault) so ProseMirror deletes the
+      // character normally.
+      if (editor.isEmpty) {
+        event.preventDefault()
+        if (isLastBlock?.()) return
+        onDeleteBlock({ cursorPlacement: 'end' })
+      } else if (atStart) {
+        event.preventDefault()
+        onMergeWithPrev()
+      }
+    },
+    [editor, onEnterSave, onDeleteBlock, onMergeWithPrev, isLastBlock],
+  )
+
   useEffect(() => {
     if (!editor) return
 
@@ -454,7 +505,13 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       const container = dom.parentElement
       if (!container) return
       container.addEventListener('keydown', handleKeyDown, true)
-      listenerCleanup = () => container.removeEventListener('keydown', handleKeyDown, true)
+      // #915 — `beforeinput` fires on the contenteditable itself; capture:true
+      // keeps us ahead of ProseMirror's own input handling.
+      dom.addEventListener('beforeinput', handleBeforeInput as EventListener, true)
+      listenerCleanup = () => {
+        container.removeEventListener('keydown', handleKeyDown, true)
+        dom.removeEventListener('beforeinput', handleBeforeInput as EventListener, true)
+      }
     }
 
     attach()
@@ -464,5 +521,5 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       editor.off('mount', attach)
       listenerCleanup?.()
     }
-  }, [editor, handleKeyDown])
+  }, [editor, handleKeyDown, handleBeforeInput])
 }

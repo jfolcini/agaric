@@ -1002,6 +1002,97 @@ describe('useBlockKeyboard — Tab-indent accessibility opt-out', () => {
   })
 })
 
+// #915 — `beforeinput` fallback so Android Gboard (keyCode 229) can still
+// create/delete/merge blocks even when `handleKeyDown` bails.
+describe('useBlockKeyboard — beforeinput fallback (#915)', () => {
+  function setup(markdownContent?: string) {
+    const element = document.createElement('div')
+    document.body.appendChild(element)
+    const editor = new Editor({
+      element,
+      extensions: [Document, Paragraph, Text],
+      content: markdownContent
+        ? {
+            type: 'doc',
+            content: [{ type: 'paragraph', content: [{ type: 'text', text: markdownContent }] }],
+          }
+        : { type: 'doc', content: [{ type: 'paragraph' }] },
+    })
+    const callbacks = makeCallbacks()
+    const { unmount } = renderHook(() => useBlockKeyboard(editor, callbacks))
+    const dom = editor.view.dom as HTMLElement
+    const cleanup = () => {
+      unmount()
+      editor.destroy()
+      element.remove()
+    }
+    return { editor, callbacks, dom, cleanup }
+  }
+
+  function fireBeforeInput(dom: HTMLElement, inputType: string) {
+    const event = new InputEvent('beforeinput', { inputType, bubbles: true, cancelable: true })
+    const preventDefaultSpy = vi.spyOn(event, 'preventDefault')
+    dom.dispatchEvent(event)
+    return preventDefaultSpy
+  }
+
+  it('insertParagraph triggers onEnterSave (Gboard Enter)', () => {
+    const { callbacks, dom, cleanup } = setup()
+    const spy = fireBeforeInput(dom, 'insertParagraph')
+    expect(callbacks._calls['onEnterSave']).toBe(1)
+    expect(spy).toHaveBeenCalled()
+    cleanup()
+  })
+
+  it('deleteContentBackward on an empty block triggers onDeleteBlock', () => {
+    const { callbacks, dom, cleanup } = setup()
+    const spy = fireBeforeInput(dom, 'deleteContentBackward')
+    expect(callbacks._calls['onDeleteBlock']).toBe(1)
+    expect(spy).toHaveBeenCalled()
+    cleanup()
+  })
+
+  it('deleteContentBackward at the start of a non-empty block triggers onMergeWithPrev', () => {
+    const { editor, callbacks, dom, cleanup } = setup('hello')
+    editor.commands.setTextSelection(1) // caret at the very start
+    const spy = fireBeforeInput(dom, 'deleteContentBackward')
+    expect(callbacks._calls['onMergeWithPrev']).toBe(1)
+    expect(spy).toHaveBeenCalled()
+    cleanup()
+  })
+
+  it('deleteContentBackward mid-text is left to ProseMirror (no callback, no preventDefault)', () => {
+    const { editor, callbacks, dom, cleanup } = setup('hello')
+    editor.commands.setTextSelection(3) // caret in the middle
+    const spy = fireBeforeInput(dom, 'deleteContentBackward')
+    expect(callbacks._calls['onMergeWithPrev']).toBeUndefined()
+    expect(callbacks._calls['onDeleteBlock']).toBeUndefined()
+    expect(spy).not.toHaveBeenCalled()
+    cleanup()
+  })
+
+  it('ignores non-structural input types (insertText)', () => {
+    const { callbacks, dom, cleanup } = setup()
+    const spy = fireBeforeInput(dom, 'insertText')
+    expect(callbacks._calls['onEnterSave']).toBeUndefined()
+    expect(spy).not.toHaveBeenCalled()
+    cleanup()
+  })
+
+  it('ignores input while an IME composition is active', () => {
+    const { dom, callbacks, cleanup } = setup()
+    const event = new InputEvent('beforeinput', {
+      inputType: 'insertParagraph',
+      bubbles: true,
+      cancelable: true,
+    })
+    Object.defineProperty(event, 'isComposing', { value: true })
+    dom.dispatchEvent(event)
+    expect(callbacks._calls['onEnterSave']).toBeUndefined()
+    cleanup()
+  })
+})
+
 // -- #725: Enter/Backspace inside code blocks and tables ------------------------
 //
 // The Enter rule used to fire unconditionally on the capture-phase listener,
