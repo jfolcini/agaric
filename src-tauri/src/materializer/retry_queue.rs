@@ -936,14 +936,14 @@ async fn try_reenqueue_apply_op(
 ///
 /// # Shutdown-flag coordination (#483 L1)
 ///
-/// `shutdown_flag` (`RetryQueueSweeperShutdown` in `lib.rs`) is managed here
-/// but currently never set to `true` anywhere in the tree — the sweeper relies
-/// on process exit to stop. This is safe in practice because after
+/// `shutdown_flag` is never set to `true` anywhere in the tree — the sweeper
+/// relies on process exit to stop (#703 removed the dead managed-state
+/// newtype that once wrapped it). This is safe in practice because after
 /// `Materializer::shutdown()` the sweeper's `try_enqueue_background` calls
 /// short-circuit on the materializer's own shutdown flag and log a `warn!` for
 /// any row they attempt to re-enqueue. Convergence requires a restart; the
-/// dormant `shutdown_flag` field is retained for a future graceful-shutdown
-/// path that coordinates the two flags.
+/// dormant `shutdown_flag` parameter is retained only to keep this signature
+/// stable for a future graceful-shutdown path.
 #[cfg(not(tarpaulin_include))]
 pub fn spawn_sweeper(
     read_pool: SqlitePool,

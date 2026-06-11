@@ -63,12 +63,13 @@ use crate::log_dir_for_app_data;
 //      defense-in-depth fallback rather than the primary path.
 //
 // **Drift watch:** the on-disk format produced by `tracing-subscriber`
-// in `lib.rs::run` is currently the human-readable text format
-// (`fmt::layer().with_writer(non_blocking).with_ansi(false)`), NOT JSON.
-// That means today every line takes the H-9a fallback branch. The
-// deny-list architecture is fully implemented and tested; it activates
-// automatically once the file appender is switched to `.json()` (a
-// follow-up bookkeeping change tracked as H-9b).
+// in `lib.rs::run` is JSON-per-line — the file appender layer calls
+// `.json()` (`fmt::layer().json().with_writer(non_blocking).with_ansi(false)`).
+// That means today every `agaric.log` line takes the JSON deny-list
+// branch (step 1/2 above); the H-9a allow-list is now the
+// defense-in-depth fallback for older rolled text files only. The
+// stderr layer stays human-readable for live dev debugging and never
+// reaches the redaction pipeline.
 //
 // **Tuning:** to widen what survives the pipeline, add a regex to
 // [`SAFE_TOKEN_PATTERNS`] or a string to [`STABLE_MESSAGES`]. **Never**
@@ -222,7 +223,7 @@ const STABLE_MESSAGES: &[&str] = &[
     "TLS cert loaded",
     "boot count query failed; treating as 0",
     "PANIC",
-    "failed to run Tauri application",
+    "failed to build Tauri application",
     "failed to bootstrap spaces — aborting boot",
     "failed to clean up stale link metadata",
     "cleaned up stale link metadata entries",
@@ -1198,6 +1199,67 @@ mod tests {
 
     const DEV: &str = "device-abc-123";
     const HOME: &str = "/home/alice";
+
+    // -- STABLE_MESSAGES drift guard (#700) ------------------------------
+
+    /// #700 drift guard: every [`STABLE_MESSAGES`] entry is meant to pin a
+    /// real `tracing::*!("…")` call site so the redaction deny-list keeps
+    /// that diagnostic verbatim in a redacted bundle. If a call site's
+    /// literal is edited (e.g. "run" → "build") without updating this list,
+    /// the whitelist entry silently collapses to `[REDACTED]` in bug
+    /// reports — the exact regression #700 documented.
+    ///
+    /// This test walks every `.rs` file under the crate's `src/` and
+    /// asserts each STABLE_MESSAGES literal appears as a quoted string
+    /// somewhere OTHER than the STABLE_MESSAGES array itself (i.e. at a
+    /// genuine call site). It is a coarse substring check on purpose —
+    /// the repo's standard grep-based drift-guard pattern — so it has no
+    /// false negatives even though it can't prove the surrounding token is
+    /// literally a `tracing::` macro.
+    #[test]
+    fn stable_messages_pin_real_call_sites() {
+        let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+        // Collect every `.rs` file under src/.
+        fn collect_rs(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).expect("read_dir src").flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect_rs(&path, out);
+                } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                    out.push(path);
+                }
+            }
+        }
+        let mut files = Vec::new();
+        collect_rs(&src_root, &mut files);
+        assert!(!files.is_empty(), "found no .rs files under {src_root:?}");
+
+        // Concatenate all source for substring scanning.
+        let mut all_src = String::new();
+        for f in &files {
+            all_src.push_str(&std::fs::read_to_string(f).expect("read source file"));
+            all_src.push('\n');
+        }
+
+        let mut missing = Vec::new();
+        for msg in STABLE_MESSAGES {
+            // Each literal appears at least once: in the STABLE_MESSAGES
+            // array. A genuine call site means it appears at least TWICE.
+            let needle = format!("\"{msg}\"");
+            let count = all_src.matches(&needle).count();
+            if count < 2 {
+                missing.push((*msg, count));
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "STABLE_MESSAGES entries with no matching tracing call site \
+             (each must appear as a string literal in a `tracing::*!` call \
+             besides its STABLE_MESSAGES entry): {missing:?}"
+        );
+    }
 
     // -- extract_recent_errors -------------------------------------------
 
