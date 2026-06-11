@@ -73,6 +73,20 @@ pub(crate) fn shift_date_once(
         "daily" => base + chrono::Duration::days(1),
         "weekly" => base + chrono::Duration::days(7),
         "monthly" => {
+            // #679: month-end clamp is INTENTIONALLY sticky (Org-mode
+            // in-place shift semantics). We shift the *given base* by one
+            // month and clamp the day-of-month against the destination
+            // month's length (`day.min(max_day)`). Because each recurrence
+            // step uses the PREVIOUS shifted date as its base (see
+            // `compute.rs` sibling base = previous shifted date), the
+            // original day-of-month is NOT restored once it has been
+            // clamped: Jan-31 → Feb-28 → Mar-28 → Apr-28 … forever, never
+            // back to day-31. This matches Org-mode's behavior, where the
+            // repeater rewrites the timestamp in place and the clamped day
+            // becomes the new anchor. Do NOT "fix" this to re-derive the
+            // day from the series origin without changing the documented
+            // contract and the chain test that pins it
+            // (`monthly_clamp_is_sticky_three_step_chain` in tests.rs).
             let new_month = if month == 12 { 1 } else { month + 1 };
             let new_year = if month == 12 { year + 1 } else { year };
             let max_day = days_in_month(new_year, new_month);

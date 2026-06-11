@@ -126,6 +126,13 @@ pub(crate) async fn handle_recurrence_in_tx(
     // Both are `Err(AppError::Validation)` and propagate via `?` here so
     // the IMMEDIATE tx rolls back cleanly — same shape as the M-77
     // `set_property_in_tx` propagation below, no half-formed sibling.
+    // #679: each completion shifts the block's CURRENT date forward by
+    // one interval and writes it back, so the next recurrence step uses
+    // this freshly-shifted date as its base. For `monthly` rules this
+    // makes the month-end clamp intentionally sticky: once Jan-31 clamps
+    // to Feb-28 it shifts to Mar-28, Apr-28, … and never recovers day-31
+    // (Org-mode in-place-shift semantics). See the clamp site in
+    // `parser.rs::shift_date_once` ("monthly" arm) for the full contract.
     let shifted_due = match original.due_date.as_ref() {
         Some(d) => shift_date(d, &rule)?,
         None => None,
