@@ -36,6 +36,24 @@ import { cn } from '@/lib/utils'
 const GUTTER_BUTTON_BASE =
   'flex-shrink-0 p-0.5 text-muted-foreground opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target'
 
+/**
+ * Touch drag-handle grip (#918).
+ *
+ * Unlike the desktop gutter buttons, the touch grip must be *visible and
+ * hittable at rest* — coarse-pointer devices have no hover to reveal it, and
+ * it is the only element carrying the dnd-kit drag listeners. We therefore do
+ * NOT inherit `GUTTER_BUTTON_BASE` (which hides controls behind hover /
+ * `pointer-events-none`). Instead:
+ *  - `touch-target` guarantees a ≥44×44 hit area (WCAG 2.5.5).
+ *  - `touch-action: none` (via `touch-none`) stops the browser from claiming
+ *    the press-drag as a scroll gesture so the dnd-kit activator can start the
+ *    drag. The handle is the activator, so the touch-action must live here.
+ *  - It is calm at rest (muted, low-contrast grip) and firms up on
+ *    press/active, so it reads as intentional chrome, not a permanent button.
+ */
+const TOUCH_DRAG_HANDLE_CLASS =
+  'drag-handle touch-none flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground/60 active:text-foreground active:bg-accent transition-colors focus-ring active:scale-95 touch-target cursor-grab'
+
 /** Layout for the action rows inside the touch overflow Sheet. */
 const SHEET_ROW_CLASS =
   'flex w-full items-center gap-3 rounded-md px-3 py-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent focus-visible:bg-accent focus-ring touch-target'
@@ -187,23 +205,29 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
   // ── Touch render — drag handle + overflow Sheet ─────────────────
   if (isTouch) {
     const hasOverflow = Boolean(onDelete || onShowHistory)
-    // UX-305: on touch, the @dnd-kit PointerSensor requires a 250 ms
-    // press-and-hold before the drag activates. The desktop tooltip
-    // never fires on touch UAs, so the hint must live in `aria-label`.
+    // UX-305: on touch, the @dnd-kit PointerSensor requires a press-and-hold
+    // before the drag activates; the desktop tooltip never fires on touch UAs,
+    // so the hint lives in `aria-label`.
+    // #918: render the grip as a plain, always-visible button (NOT the
+    // hover-hidden `GutterButton`) so it is hittable at rest on touch. This
+    // button is the dnd-kit drag activator, so the listeners — and the
+    // `touch-action: none` that lets them win the gesture over scrolling —
+    // must live here.
     const touchDragHandle = (
-      <GutterButton
-        icon={GripVertical}
-        label={t('block.reorderTouchHint')}
-        ariaLabel={t('block.reorderTouchHint')}
-        testId="drag-handle"
-        className="drag-handle cursor-grab hover:text-foreground"
+      <button
+        type="button"
+        className={TOUCH_DRAG_HANDLE_CLASS}
+        aria-label={t('block.reorderTouchHint')}
+        data-testid="drag-handle"
         // B (#216): keyboard-reorder shortcut for AT (keyboard users on
         // touch UAs with an attached keyboard).
         aria-keyshortcuts={t('block.reorderKeyshortcuts')}
         data-context-trigger="true"
         {...dragAttributes}
         {...dragListeners}
-      />
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
     )
     // UX-306: enumerate the available secondary actions in the
     // overflow button's `aria-label` so screen readers can preview

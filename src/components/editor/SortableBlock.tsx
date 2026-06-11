@@ -301,10 +301,19 @@ function SortableBlockInner({
           )}
 
           {/* ── Narrow gutter — grip + history + delete ────────────── */}
+          {/* #918: On a fine-pointer device the gutter collapses to 0px on
+              narrow viewports (`max-md`) and reveals its controls on hover.
+              On a touch device there is no hover, and `BlockGutterControls`
+              renders a dedicated touch drag handle — collapsing to `w-0`
+              clipped that handle to zero width, leaving nothing hittable to
+              start a drag. So we only apply the touch-collapse classes when
+              the pointer is *not* coarse; on touch the gutter keeps its real
+              width and the touch grip stays a hittable target. */}
           <div
             className={cn(
               GUTTER_WIDTH,
-              'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end max-md:w-0 max-md:overflow-hidden',
+              'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end',
+              !isTouchDevice && 'max-md:w-0 max-md:overflow-hidden',
             )}
           >
             <BlockGutterControls
