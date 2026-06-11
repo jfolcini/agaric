@@ -41,6 +41,13 @@
 ///   `[range_start, range_end]` and is not past `repeat_until`.
 /// - 10 000-iteration safety bound per `(block, source)` so a
 ///   pathological rule cannot infinite-loop.
+/// - #680 / PEND-24 H2: for `plus_plus`, if the catch-up loop exhausts
+///   the safety bound (or `shift_date_once` overflows) WITHOUT reaching
+///   a date strictly after `today`, the source is skipped entirely — no
+///   occurrence is emitted. Emitting the stale past `current` would be a
+///   silent data bug; this mirrors the string parser
+///   (`parser::shift_date`), which raises `Err(AppError::Validation)`
+///   for the identical input class.
 /// - End conditions:
 ///     * `until_date` — stop once `current > until_date`.
 ///     * `remaining` — stop once we've emitted (or attempted to emit)
@@ -132,15 +139,44 @@ pub(crate) fn project_block_dates<F>(
                 // Advance from `base` one step at a time until strictly
                 // greater than today. The caught-up date is pre-emitted
                 // below, then the main loop continues from it.
+                //
+                // #680 / PEND-24 H2: the catch-up can fail to reach a
+                // future date in two ways — the 10 000-step budget
+                // elapses without `c > today` (e.g. `++1d` against an
+                // `original` decades in the past), or `shift_date_once`
+                // returns `None` mid-loop (single-step `NaiveDate`
+                // arithmetic overflow). In either case `c` is left as a
+                // STALE PAST date. Pre-fix, the pre-emit block below and
+                // the main loop still ran against that stale date, so the
+                // projection silently emitted a past occurrence.
+                //
+                // The string parser (`parser::shift_date`) treats this
+                // SAME input class as a hard `Err(AppError::Validation)`
+                // ("cap exceeded" / "arithmetic overflow"). This
+                // emit-driven projection has no error channel, so the
+                // consistent "loud failure" here is to SKIP the source
+                // entirely: produce no occurrence rather than a stale one.
+                // We track whether we actually caught up and `continue`
+                // to the next source when we did not.
                 let mut c = base;
+                let mut caught_up = false;
                 for _ in 0..10_000 {
                     c = match crate::recurrence::shift_date_once(c, interval) {
                         Some(d) => d,
+                        // Single-step overflow: cannot reach a valid
+                        // future date, so abandon this source rather than
+                        // emitting the stale `c`.
                         None => break,
                     };
                     if c > today {
+                        caught_up = true;
                         break;
                     }
+                }
+                if !caught_up {
+                    // Cap exhausted or overflow without `c > today`: skip
+                    // emission (mirrors the parser's `Err(Validation)`).
+                    continue;
                 }
                 c
             }

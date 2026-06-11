@@ -331,6 +331,45 @@ fn shift_date_monthly_from_string() {
 }
 
 #[test]
+fn monthly_clamp_is_sticky_three_step_chain() {
+    // #679: the month-end clamp is INTENTIONALLY sticky (Org-mode
+    // in-place shift). Each recurrence step shifts the PREVIOUS shifted
+    // date — not the series origin — so once Jan-31 clamps to Feb-28 the
+    // day-of-month is never restored to 31. This test pins the full
+    // three-step chain so a future "restore the original day" change
+    // cannot silently regress the documented behavior.
+    //
+    // Step 1: Jan-31 → Feb-28 (clamp; Feb 2025 is non-leap, max day 28).
+    let step1 = shift_date("2025-01-31", "monthly")
+        .expect("monthly parses cleanly")
+        .expect("monthly yields a date");
+    assert_eq!(step1, "2025-02-28", "Jan-31 monthly clamps to Feb-28");
+
+    // Step 2: base is the *clamped* Feb-28, so this yields Mar-28 — NOT
+    // Mar-31. This is the crux of the sticky behavior.
+    let step2 = shift_date(&step1, "monthly")
+        .expect("monthly parses cleanly")
+        .expect("monthly yields a date");
+    assert_eq!(
+        step2, "2025-03-28",
+        "sticky clamp: Feb-28 monthly must yield Mar-28, NOT Mar-31"
+    );
+    assert_ne!(
+        step2, "2025-03-31",
+        "day-31 must NOT be restored after the Feb clamp (Org-mode in-place shift)"
+    );
+
+    // Step 3: Mar-28 → Apr-28, confirming the clamped day persists.
+    let step3 = shift_date(&step2, "monthly")
+        .expect("monthly parses cleanly")
+        .expect("monthly yields a date");
+    assert_eq!(
+        step3, "2025-04-28",
+        "sticky clamp persists: Mar-28 monthly yields Apr-28"
+    );
+}
+
+#[test]
 fn shift_date_once_monthly_december_year_rollover() {
     // Dec 31 + 1 month → Jan 31 of the next year.
     // Exercises the `month == 12` branch in `shift_by_months` that sets
@@ -560,6 +599,126 @@ fn plus_plus_boundary_success_under_cap() {
     assert_eq!(
         result, expected_str,
         "++1d from 5 days ago must land on tomorrow (today + 1)"
+    );
+}
+
+// ==================================================================
+// #680: projection ++ catch-up cap-exhaustion must NOT emit a stale date
+// ==================================================================
+
+#[test]
+fn projection_plus_plus_cap_exhaustion_emits_no_stale_date() {
+    // #680 / PEND-24 H2 (projection surface): a `++1d` rule whose
+    // `due_date` is far enough in the past that the 10 000-step catch-up
+    // budget elapses without ever exceeding `today`. Pre-fix, the
+    // catch-up loop left `current` as a STALE PAST date and the
+    // projection emitted it. Post-fix, the source is skipped — no
+    // occurrence is emitted — mirroring the string parser's hard
+    // `Err(AppError::Validation)` ("cap exceeded") for the same input.
+    let today = chrono::Local::now().date_naive();
+    // 11 000 days under `++1d` blows the 10 000-iteration cap (same
+    // construction as `plus_plus_with_very_old_origin_returns_err`).
+    let very_old = today - chrono::Duration::days(11_000);
+    let very_old_str = very_old.format("%Y-%m-%d").to_string();
+
+    // A generous range that WOULD have captured the stale past date had
+    // it been emitted (range_start sits well before `very_old`).
+    let range_start = today - chrono::Duration::days(20_000);
+    let range_end = today + chrono::Duration::days(365);
+
+    let mut emitted: Vec<(chrono::NaiveDate, &'static str)> = Vec::new();
+    crate::recurrence::project_block_dates(
+        Some(&very_old_str), // due_date
+        None,                // scheduled_date
+        "++1d",              // repeat_rule
+        None,                // repeat_until
+        None,                // remaining (unbounded)
+        today,
+        range_start,
+        range_end,
+        |date, source| emitted.push((date, source)),
+    );
+
+    assert!(
+        emitted.is_empty(),
+        "cap-exhausted ++ catch-up must emit nothing, got: {emitted:?}"
+    );
+    // Defensive: even if some future change re-introduces emission, it
+    // must never be a stale PAST date.
+    assert!(
+        emitted.iter().all(|(d, _)| *d > today),
+        "no emitted projection may be a stale past date, got: {emitted:?}"
+    );
+}
+
+#[test]
+fn projection_plus_plus_overflow_emits_no_stale_date() {
+    // #680 companion: the `None => break` (single-step overflow) arm of
+    // the catch-up loop must also skip emission rather than emitting the
+    // stale pre-overflow `current`. `++100y` from a date near the 2200
+    // calendar guard overflows on the first catch-up step.
+    let today = chrono::Local::now().date_naive();
+    let range_start = chrono::NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
+    let range_end = chrono::NaiveDate::from_ymd_opt(2299, 12, 31).unwrap();
+
+    let mut emitted: Vec<(chrono::NaiveDate, &'static str)> = Vec::new();
+    crate::recurrence::project_block_dates(
+        Some("2150-01-15"), // due_date — ++100y targets 2250 > guard
+        None,
+        "++100y",
+        None,
+        None,
+        today,
+        range_start,
+        range_end,
+        |date, source| emitted.push((date, source)),
+    );
+
+    assert!(
+        emitted.is_empty(),
+        "overflowing ++ catch-up must emit nothing, got: {emitted:?}"
+    );
+}
+
+#[test]
+fn projection_plus_plus_caught_up_still_emits() {
+    // Regression guard for the #680 fix: a `++1d` rule whose catch-up
+    // DOES reach a future date must still emit normally. Confirms the
+    // `caught_up` skip does not suppress the happy path.
+    let today = chrono::Local::now().date_naive();
+    let recent = today - chrono::Duration::days(5);
+    let recent_str = recent.format("%Y-%m-%d").to_string();
+
+    let range_start = today - chrono::Duration::days(30);
+    let range_end = today + chrono::Duration::days(10);
+
+    let mut emitted: Vec<(chrono::NaiveDate, &'static str)> = Vec::new();
+    crate::recurrence::project_block_dates(
+        Some(&recent_str),
+        None,
+        "++1d",
+        None,
+        None,
+        today,
+        range_start,
+        range_end,
+        |date, source| emitted.push((date, source)),
+    );
+
+    assert!(
+        !emitted.is_empty(),
+        "a catch-up that reaches the future must still emit occurrences"
+    );
+    // The pre-emitted caught-up date is `today + 1` (first date strictly
+    // after today reached by `++1d`).
+    assert_eq!(
+        emitted[0],
+        (today + chrono::Duration::days(1), "due_date"),
+        "first emission must be the caught-up date (today + 1)"
+    );
+    assert!(
+        emitted.iter().all(|(d, _)| *d > today),
+        "every emission must be strictly after today, got: {emitted:?}"
     );
 }
 
