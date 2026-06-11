@@ -12,43 +12,6 @@ use tracing::instrument;
 use super::super::*;
 use crate::space::SpaceScope;
 
-/// MAINT-147 (a): collapse the ~10 near-identical
-/// `DELETE FROM <table> WHERE <col> IN (SELECT id FROM descendants)`
-/// blocks in [`purge_block_inner`] into a single helper macro.
-///
-/// Each invocation expands to a fully-prepared `sqlx::query(...)` whose
-/// SQL is the textual concatenation of [`crate::descendants_cte_purge!()`]
-/// (a string-literal-emitting macro) and the per-table `DELETE` clause.
-/// The expanded SQL is byte-for-byte identical to the original inline
-/// strings — verified by spot-checking with `cargo expand` — so no
-/// `.sqlx/` cache regeneration is needed (these queries use the
-/// dynamic-string `sqlx::query` API rather than `query!`/`query_as!`).
-///
-/// The macro defaults the predicate column to `block_id`; tables that
-/// key on a different column (e.g. `tags_cache.tag_id`,
-/// `pages_cache.page_id`, `blocks.id`) pass the column literal
-/// explicitly. Variant cases — multi-column `OR` filters and `UPDATE`s
-/// that nullify a column — stay inline; trying to capture their shapes
-/// in this macro would obscure intent without saving lines.
-macro_rules! purge_descendants_table {
-    ($tx:expr_2021, $block_id:expr_2021, $table:literal $(,)?) => {
-        purge_descendants_table!($tx, $block_id, $table, "block_id")
-    };
-    ($tx:expr_2021, $block_id:expr_2021, $table:literal, $col:literal $(,)?) => {
-        sqlx::query(concat!(
-            $crate::descendants_cte_purge!(),
-            "DELETE FROM ",
-            $table,
-            " WHERE ",
-            $col,
-            " IN (SELECT id FROM descendants)",
-        ))
-        .bind($block_id)
-        .execute(&mut **$tx)
-        .await?
-    };
-}
-
 /// Look up the most-recent `edit_block`/`create_block` op for the given
 /// `block_id`, scoped to the supplied connection (typically a live
 /// transaction). Returns the originating `(device_id, seq)` pair if any,
@@ -1383,85 +1346,11 @@ pub async fn restore_block_inner(
     // `parent_id` from the original and would otherwise be reparented
     // under the restored subtree.
     //
-    // 1. Compute the effective `page_id` for the restored block:
-    //    parent's `page_id` (or parent's `id` if parent is a page) for
-    //    non-pages; self for pages.
-    let parent_id: Option<String> =
-        sqlx::query_scalar!("SELECT parent_id FROM blocks WHERE id = ?", block_id)
-            .fetch_one(&mut **tx)
-            .await?;
-    let new_page_id: Option<String> = if let Some(ref pid) = parent_id {
-        sqlx::query_scalar!(
-            "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END \
-             FROM blocks WHERE id = ?",
-            pid
-        )
-        .fetch_optional(&mut **tx)
-        .await?
-        .flatten()
-    } else {
-        None
-    };
-    let is_page: bool = sqlx::query_scalar!("SELECT block_type FROM blocks WHERE id = ?", block_id)
-        .fetch_one(&mut **tx)
-        .await?
-        == "page";
-    if !is_page {
-        sqlx::query!(
-            "UPDATE blocks SET page_id = ? WHERE id = ?",
-            new_page_id,
-            block_id
-        )
-        .execute(&mut **tx)
-        .await?;
-    }
-    // 2. Cascade page_id to all non-page active descendants. Pages keep
-    //    their own id as page_id regardless of parent (mirrors the
-    //    template at `move_ops.rs:219-234`).
-    let effective_page_id = if is_page {
-        Some(block_id.clone())
-    } else {
-        new_page_id
-    };
-    sqlx::query!(
-        "WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT b.id, 0 FROM blocks b \
-             WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
-             UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
-             JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.deleted_at IS NULL AND d.depth < 100 \
-         ) \
-         UPDATE blocks SET page_id = ?2 \
-         WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
-        block_id,
-        effective_page_id,
-    )
-    .execute(&mut **tx)
-    .await?;
-    // #533: keep `space_id` in step with the just-refreshed `page_id` for
-    // the restored subtree, synchronously (parity with the PEND-24 M6
-    // page_id treatment above — callers read space-scoped lists right after
-    // commit). Non-page rows derive from their owning page's `space`
-    // property; pages keep their own.
-    sqlx::query!(
-        "WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT b.id, 0 FROM blocks b \
-             WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
-             UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
-             JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.deleted_at IS NULL AND d.depth < 100 \
-         ) \
-         UPDATE blocks SET space_id = ( \
-             SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
-         ) \
-         WHERE (id = ?1 OR id IN (SELECT id FROM descendants)) \
-           AND block_type != 'page' AND page_id IS NOT NULL",
-        block_id,
-    )
-    .execute(&mut **tx)
-    .await?;
+    // #664: recompute `page_id` AND `space_id` for the restored subtree,
+    // synchronously (callers read space-scoped lists right after commit, so
+    // both columns must be re-derived in-tx). Shared helper lives in
+    // `crate::commands::block_cleanup`.
+    crate::commands::block_cleanup::rederive_page_and_space_ids(&mut tx, &block_id).await?;
 
     // P-4: Recompute inherited tags for restored subtree
     crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &block_id).await?;
@@ -1609,109 +1498,22 @@ pub async fn purge_block_inner(
     .fetch_all(&mut **tx)
     .await?;
 
-    // PURGE: the goal is to erase every row descended from the purged
-    // block. `descendants_cte_purge!()` (defined in
-    // `crate::block_descendants`) walks the subtree without filters,
-    // bounded only by `depth < 100` to defend against corrupted
-    // parent_id chains. The materializer's `OpType::PurgeBlock` handler
-    // mirrors this sequence for remote ops.
-
-    // block_tags: either column may reference a descendant
-    sqlx::query(concat!(
+    // PURGE: erase every row descended from the purged block. The
+    // single-root `descendants_cte_purge!()` walks the subtree without
+    // filters, bounded only by `depth < 100` against corrupted parent_id
+    // chains. #664: the satellite-table chain (block_tags … blocks, with
+    // the pre-DELETE attachment-path capture) lives in the shared
+    // `crate::commands::block_cleanup::purge_subtree_tables` helper — the
+    // single source of truth across all three purge variants. The
+    // materializer's `OpType::PurgeBlock` handler mirrors this sequence for
+    // remote ops.
+    let (purged_attachment_paths, count) = crate::commands::block_cleanup::purge_subtree_tables(
+        &mut tx,
         crate::descendants_cte_purge!(),
-        "DELETE FROM block_tags \
-         WHERE block_id IN (SELECT id FROM descendants) \
-            OR tag_id IN (SELECT id FROM descendants)",
-    ))
-    .bind(&block_id)
-    .execute(&mut **tx)
+        "SELECT id FROM descendants",
+        Some(&block_id),
+    )
     .await?;
-
-    // block_tag_inherited (P-4)
-    sqlx::query(concat!(
-        crate::descendants_cte_purge!(),
-        "DELETE FROM block_tag_inherited \
-         WHERE block_id IN (SELECT id FROM descendants) \
-            OR tag_id IN (SELECT id FROM descendants) \
-            OR inherited_from IN (SELECT id FROM descendants)",
-    ))
-    .bind(&block_id)
-    .execute(&mut **tx)
-    .await?;
-
-    // block_properties: owned by descendants (MAINT-147 (a): uniform site)
-    purge_descendants_table!(tx, &block_id, "block_properties");
-
-    // block_properties: value_ref pointing into the subtree — DELETE the
-    // property row rather than NULLing the ref. Under the exactly-one-value
-    // CHECK introduced by migration 0062 a `value_ref`-typed property has
-    // no other typed value to fall back on, so a SET-NULL would produce an
-    // invariant-violating all-NULL row; the migration aligned the FK on
-    // `value_ref` to `ON DELETE CASCADE` and this application-level cascade
-    // matches that direction. See migration 0062's header for the full
-    // rationale.
-    sqlx::query(concat!(
-        crate::descendants_cte_purge!(),
-        "DELETE FROM block_properties \
-         WHERE value_ref IN (SELECT id FROM descendants)",
-    ))
-    .bind(&block_id)
-    .execute(&mut **tx)
-    .await?;
-
-    // block_links: either end may be in the subtree (variant — multi-column OR)
-    sqlx::query(concat!(
-        crate::descendants_cte_purge!(),
-        "DELETE FROM block_links \
-         WHERE source_id IN (SELECT id FROM descendants) \
-            OR target_id IN (SELECT id FROM descendants)",
-    ))
-    .bind(&block_id)
-    .execute(&mut **tx)
-    .await?;
-
-    // agenda_cache (MAINT-147 (a): uniform site)
-    purge_descendants_table!(tx, &block_id, "agenda_cache");
-
-    // tags_cache (MAINT-147 (a): uniform site, keyed on tag_id)
-    purge_descendants_table!(tx, &block_id, "tags_cache", "tag_id");
-
-    // pages_cache (MAINT-147 (a): uniform site, keyed on page_id)
-    purge_descendants_table!(tx, &block_id, "pages_cache", "page_id");
-
-    // #85 F2: capture the attachment file paths for the post-commit unlink
-    // BEFORE the rows are deleted — single-block purge previously dropped the
-    // rows but leaked the files on disk (the two bulk paths already unlink).
-    let purged_attachment_paths = sqlx::query_scalar::<_, String>(concat!(
-        crate::descendants_cte_purge!(),
-        "SELECT fs_path FROM attachments WHERE block_id IN (SELECT id FROM descendants)"
-    ))
-    .bind(&block_id)
-    .fetch_all(&mut **tx)
-    .await?;
-
-    // attachments (MAINT-147 (a): uniform site)
-    purge_descendants_table!(tx, &block_id, "attachments");
-
-    // block_drafts (MAINT-147 (a): uniform site)
-    purge_descendants_table!(tx, &block_id, "block_drafts");
-
-    // fts_blocks — FTS5 virtual table, no FK, must be cleaned explicitly
-    // (MAINT-147 (a): uniform site)
-    purge_descendants_table!(tx, &block_id, "fts_blocks");
-
-    // page_aliases (MAINT-147 (a): uniform site, keyed on page_id)
-    purge_descendants_table!(tx, &block_id, "page_aliases", "page_id");
-
-    // projected_agenda_cache (MAINT-147 (a): uniform site)
-    purge_descendants_table!(tx, &block_id, "projected_agenda_cache");
-
-    // Delete blocks (deferred FK allows single-statement batch).
-    // MAINT-147 (a): uniform site, keyed on `id` rather than `block_id`.
-    // Capture the result so we can report `rows_affected` to the caller.
-    let result = purge_descendants_table!(tx, &block_id, "blocks", "id");
-
-    let count = result.rows_affected();
 
     // #417: refresh `inbound_link_count` for the OTHER pages that lost an
     // inbound edge from the purged subtree (captured pre-DELETE above).
@@ -2017,138 +1819,21 @@ pub async fn purge_all_deleted_inner(
         .await?;
 
     // Cleanup for every table referencing `blocks.id`: match any row whose
-    // target block is soft-deleted. The old implementation interpolated a
-    // `deleted_set` subquery at runtime via `sqlx::query(&format!(...))`;
-    // each query is now inlined so `sqlx::query!` can validate it at compile
-    // time. Since ALL deleted blocks (and their descendants — the cascade
-    // already ran at the individual purge layer) carry `deleted_at IS NOT
-    // NULL`, we do not need a recursive CTE here.
-
-    // block_tags
-    sqlx::query!(
-        "DELETE FROM block_tags \
-         WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL) \
-            OR tag_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
+    // target block is soft-deleted. Since ALL deleted blocks (and their
+    // descendants — the cascade already ran at the individual purge layer)
+    // carry `deleted_at IS NOT NULL`, the member set is the flat
+    // `deleted_at IS NOT NULL` selection rather than a recursive CTE; there
+    // is no seed-id placeholder, so `bind` is `None`. #664: the
+    // satellite-table chain (block_tags … blocks, with the pre-DELETE
+    // attachment-path capture) lives in the shared
+    // `crate::commands::block_cleanup::purge_subtree_tables` helper.
+    let (attachment_rows, count) = crate::commands::block_cleanup::purge_subtree_tables(
+        &mut tx,
+        "",
+        "SELECT id FROM blocks WHERE deleted_at IS NOT NULL",
+        None,
     )
-    .execute(&mut **tx)
     .await?;
-
-    // block_tag_inherited
-    sqlx::query!(
-        "DELETE FROM block_tag_inherited \
-         WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL) \
-            OR tag_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL) \
-            OR inherited_from IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
-    )
-    .execute(&mut **tx)
-    .await?;
-
-    // block_properties: owned by deleted blocks
-    sqlx::query!(
-        "DELETE FROM block_properties \
-         WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
-    )
-    .execute(&mut **tx)
-    .await?;
-
-    // block_properties: value_ref pointing to deleted blocks. DELETE the
-    // property row (post-migration-0062 the FK is CASCADE and the
-    // exactly-one-value CHECK makes the value_ref-only row meaningless
-    // once the ref disappears; see migration 0062 header).
-    sqlx::query!(
-        "DELETE FROM block_properties \
-         WHERE value_ref IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
-    )
-    .execute(&mut **tx)
-    .await?;
-
-    // block_links
-    sqlx::query!(
-        "DELETE FROM block_links \
-         WHERE source_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL) \
-            OR target_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
-    )
-    .execute(&mut **tx)
-    .await?;
-
-    // agenda_cache
-    sqlx::query!(
-        "DELETE FROM agenda_cache \
-         WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
-    )
-    .execute(&mut **tx)
-    .await?;
-
-    // tags_cache
-    sqlx::query!(
-        "DELETE FROM tags_cache \
-         WHERE tag_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
-    )
-    .execute(&mut **tx)
-    .await?;
-
-    // pages_cache
-    sqlx::query!(
-        "DELETE FROM pages_cache \
-         WHERE page_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
-    )
-    .execute(&mut **tx)
-    .await?;
-
-    // Collect attachment paths BEFORE deleting rows
-    let attachment_rows = sqlx::query_scalar!(
-        "SELECT fs_path FROM attachments \
-         WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
-    )
-    .fetch_all(&mut **tx)
-    .await?;
-
-    // attachments
-    sqlx::query!(
-        "DELETE FROM attachments \
-         WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
-    )
-    .execute(&mut **tx)
-    .await?;
-
-    // block_drafts
-    sqlx::query!(
-        "DELETE FROM block_drafts \
-         WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
-    )
-    .execute(&mut **tx)
-    .await?;
-
-    // fts_blocks
-    sqlx::query!(
-        "DELETE FROM fts_blocks \
-         WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
-    )
-    .execute(&mut **tx)
-    .await?;
-
-    // page_aliases
-    sqlx::query!(
-        "DELETE FROM page_aliases \
-         WHERE page_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
-    )
-    .execute(&mut **tx)
-    .await?;
-
-    // projected_agenda_cache
-    sqlx::query!(
-        "DELETE FROM projected_agenda_cache \
-         WHERE block_id IN (SELECT id FROM blocks WHERE deleted_at IS NOT NULL)"
-    )
-    .execute(&mut **tx)
-    .await?;
-
-    // Delete all deleted blocks
-    let result = sqlx::query!("DELETE FROM blocks WHERE deleted_at IS NOT NULL")
-        .execute(&mut **tx)
-        .await?;
-
-    let count = result.rows_affected();
     // Commit + drain the queued PurgeBlock op records for background
     // dispatch. Attachment-file unlink runs after dispatch (cache
     // rebuilds are independent of the filesystem side effect).
@@ -2491,150 +2176,19 @@ pub async fn purge_blocks_by_ids_inner(
         .execute(&mut **tx)
         .await?;
 
-    // block_tags
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "{cte}DELETE FROM block_tags \
-         WHERE block_id IN (SELECT id FROM descendants) \
-            OR tag_id IN (SELECT id FROM descendants)"
-    )))
-    .bind(&ids_json)
-    .execute(&mut **tx)
+    // #664: the satellite-table chain (block_tags … blocks, with the
+    // pre-DELETE attachment-path capture) lives in the shared
+    // `crate::commands::block_cleanup::purge_subtree_tables` helper — the
+    // single source of truth across all three purge variants. Here the
+    // member set is the multi-root `json_each`-seeded `descendants` CTE
+    // (the `cte` prefix built above), bound to the `?1` JSON id array.
+    let (attachment_rows, count) = crate::commands::block_cleanup::purge_subtree_tables(
+        &mut tx,
+        cte,
+        "SELECT id FROM descendants",
+        Some(&ids_json),
+    )
     .await?;
-
-    // block_tag_inherited
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "{cte}DELETE FROM block_tag_inherited \
-         WHERE block_id IN (SELECT id FROM descendants) \
-            OR tag_id IN (SELECT id FROM descendants) \
-            OR inherited_from IN (SELECT id FROM descendants)"
-    )))
-    .bind(&ids_json)
-    .execute(&mut **tx)
-    .await?;
-
-    // block_properties: owned by descendants
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "{cte}DELETE FROM block_properties \
-         WHERE block_id IN (SELECT id FROM descendants)"
-    )))
-    .bind(&ids_json)
-    .execute(&mut **tx)
-    .await?;
-
-    // block_properties: value_ref pointing into the subtree — DELETE the
-    // row (post-migration-0062, see header rationale).
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "{cte}DELETE FROM block_properties \
-         WHERE value_ref IN (SELECT id FROM descendants)"
-    )))
-    .bind(&ids_json)
-    .execute(&mut **tx)
-    .await?;
-
-    // block_links: either end may be in the subtree
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "{cte}DELETE FROM block_links \
-         WHERE source_id IN (SELECT id FROM descendants) \
-            OR target_id IN (SELECT id FROM descendants)"
-    )))
-    .bind(&ids_json)
-    .execute(&mut **tx)
-    .await?;
-
-    // agenda_cache
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "{cte}DELETE FROM agenda_cache \
-         WHERE block_id IN (SELECT id FROM descendants)"
-    )))
-    .bind(&ids_json)
-    .execute(&mut **tx)
-    .await?;
-
-    // tags_cache (keyed on tag_id)
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "{cte}DELETE FROM tags_cache \
-         WHERE tag_id IN (SELECT id FROM descendants)"
-    )))
-    .bind(&ids_json)
-    .execute(&mut **tx)
-    .await?;
-
-    // pages_cache (keyed on page_id)
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "{cte}DELETE FROM pages_cache \
-         WHERE page_id IN (SELECT id FROM descendants)"
-    )))
-    .bind(&ids_json)
-    .execute(&mut **tx)
-    .await?;
-
-    // Collect attachment paths BEFORE deleting rows so the post-commit
-    // unlink loop has the on-disk paths.
-    let attachment_rows: Vec<String> =
-        sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(format!(
-            "{cte}SELECT fs_path FROM attachments \
-         WHERE block_id IN (SELECT id FROM descendants)"
-        )))
-        .bind(&ids_json)
-        .fetch_all(&mut **tx)
-        .await?;
-
-    // attachments
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "{cte}DELETE FROM attachments \
-         WHERE block_id IN (SELECT id FROM descendants)"
-    )))
-    .bind(&ids_json)
-    .execute(&mut **tx)
-    .await?;
-
-    // block_drafts
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "{cte}DELETE FROM block_drafts \
-         WHERE block_id IN (SELECT id FROM descendants)"
-    )))
-    .bind(&ids_json)
-    .execute(&mut **tx)
-    .await?;
-
-    // fts_blocks — FTS5 virtual table, no FK, must be cleaned explicitly
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "{cte}DELETE FROM fts_blocks \
-         WHERE block_id IN (SELECT id FROM descendants)"
-    )))
-    .bind(&ids_json)
-    .execute(&mut **tx)
-    .await?;
-
-    // page_aliases (keyed on page_id)
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "{cte}DELETE FROM page_aliases \
-         WHERE page_id IN (SELECT id FROM descendants)"
-    )))
-    .bind(&ids_json)
-    .execute(&mut **tx)
-    .await?;
-
-    // projected_agenda_cache
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "{cte}DELETE FROM projected_agenda_cache \
-         WHERE block_id IN (SELECT id FROM descendants)"
-    )))
-    .bind(&ids_json)
-    .execute(&mut **tx)
-    .await?;
-
-    // Delete blocks themselves (deferred FK lets this single DELETE sweep
-    // the whole multi-root subtree).
-    let result = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "{cte}DELETE FROM blocks \
-         WHERE id IN (SELECT id FROM descendants)"
-    )))
-    .bind(&ids_json)
-    .execute(&mut **tx)
-    .await?;
-
-    let count = result.rows_affected();
 
     // #461 — recompute pages_cache counts for non-purged pages that had
     // inbound links from the purged subtrees. Pages whose own `pages_cache`

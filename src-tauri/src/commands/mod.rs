@@ -29,6 +29,7 @@ use crate::ulid::BlockId;
 // Domain sub-modules
 pub(crate) mod agenda;
 pub(crate) mod attachments;
+pub(crate) mod block_cleanup;
 pub(crate) mod blocks;
 pub(crate) mod bug_report;
 pub(crate) mod compaction;

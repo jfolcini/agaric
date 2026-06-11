@@ -1533,6 +1533,288 @@ async fn purge_block_inner_cleans_projected_agenda_cache() {
 }
 
 // ======================================================================
+// #664 — shared block_cleanup helpers: purge satellite-table cascade +
+// page_id/space_id rederive (pins the drift fix where the history.rs
+// reverse arms used to skip the space_id step).
+// ======================================================================
+
+/// The shared `purge_subtree_tables` helper must erase rows from EVERY
+/// satellite table for the whole subtree — not just the root. Seeds one
+/// row per satellite table keyed to a descendant (or a tag/link pointing
+/// into the subtree), purges the root, and asserts each table is empty.
+/// This is the regression guard for "a new table referencing blocks.id was
+/// added to only some of the duplicated purge chains".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_block_cascades_all_satellite_tables() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // page ROOT664 → child C664 → grandchild G664; plus a sibling TAG664
+    // used as a tag target and an EXT664 outside the subtree to prove the
+    // link/tag cleanup keys on subtree membership of either endpoint.
+    insert_block(&pool, "ROOT664", "page", "root page", None, Some(1)).await;
+    insert_block(&pool, "C664", "content", "child", Some("ROOT664"), Some(1)).await;
+    insert_block(
+        &pool,
+        "G664",
+        "content",
+        "grandchild",
+        Some("C664"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "TAG664",
+        "content",
+        "a tag block",
+        Some("ROOT664"),
+        Some(2),
+    )
+    .await;
+    insert_block(&pool, "EXT664", "page", "outside page", None, Some(2)).await;
+
+    // Seed one row in every satellite table the purge chain sweeps. Each
+    // row is keyed so the subtree-membership predicate (block_id / tag_id /
+    // page_id / source_id / target_id / inherited_from / value_ref) fires.
+    let now = crate::db::now_ms();
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES ('G664', 'TAG664')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO block_tag_inherited (block_id, tag_id, inherited_from) \
+         VALUES ('G664', 'TAG664', 'C664')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES ('C664', 'k', 'v')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // value_ref pointing INTO the subtree from an outside block — the chain
+    // DELETEs the whole property row (migration 0062 rationale).
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_ref) VALUES ('EXT664', 'ref', 'G664')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES ('C664', 'EXT664')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES ('2025-06-15', 'C664', 'due_date')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO tags_cache (tag_id, name, usage_count, updated_at) VALUES ('TAG664', 'tag664', 1, '0')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO pages_cache (page_id, title, updated_at) VALUES ('ROOT664', 'root', ?)",
+    )
+    .bind(now)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_drafts (block_id, content, updated_at) VALUES ('C664', 'draft', '0')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES ('ROOT664', 'root-alias')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO projected_agenda_cache (block_id, projected_date, source) VALUES ('G664', '2025-06-16', 'scheduled_date')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Purge requires a prior soft-delete of the root subtree.
+    soft_delete::cascade_soft_delete(&pool, &mat, DEV, "ROOT664")
+        .await
+        .unwrap();
+    purge_block_inner(&pool, DEV, &mat, "ROOT664".into())
+        .await
+        .unwrap();
+
+    // Every satellite row that referenced the subtree must be gone, and so
+    // must every block in the subtree.
+    let checks: &[(&str, &str)] = &[
+        ("block_tags", "tag_id = 'TAG664' OR block_id = 'G664'"),
+        ("block_tag_inherited", "block_id = 'G664'"),
+        (
+            "block_properties",
+            "block_id = 'C664' OR value_ref = 'G664'",
+        ),
+        ("block_links", "source_id = 'C664' OR target_id = 'C664'"),
+        ("agenda_cache", "block_id = 'C664'"),
+        ("tags_cache", "tag_id = 'TAG664'"),
+        ("pages_cache", "page_id = 'ROOT664'"),
+        ("block_drafts", "block_id = 'C664'"),
+        ("page_aliases", "page_id = 'ROOT664'"),
+        ("projected_agenda_cache", "block_id = 'G664'"),
+        ("blocks", "id IN ('ROOT664', 'C664', 'G664', 'TAG664')"),
+    ];
+    for (table, predicate) in checks {
+        let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM {table} WHERE {predicate}"
+        )))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            n, 0,
+            "purge must cascade-clean {table} for the subtree (left {n} row(s))"
+        );
+    }
+}
+
+/// A move re-parents a multi-level subtree across spaces; the shared
+/// `rederive_page_and_space_ids` helper must refresh BOTH `page_id` and
+/// `space_id` for the whole subtree SYNCHRONOUSLY (before the async
+/// `RebuildPageIds` chain lands). The undo arm — which used to skip the
+/// `space_id` step — must do the same on the reverse. Assertions read
+/// state WITHOUT `flush_background`, so they observe only the in-tx
+/// rederive, pinning the drift fix.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_and_undo_rederive_page_and_space_ids_synchronously() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Two destination spaces.
+    ensure_test_space(&pool).await; // TEST_SPACE_ID
+    ensure_test_space_b(&pool).await; // TEST_SPACE_B_ID
+
+    // Source page A (in space A) with a 2-level subtree: A → child → grand.
+    let page_a = create_block_inner(&pool, DEV, &mat, "page".into(), "A".into(), None, Some(1))
+        .await
+        .unwrap();
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child".into(),
+        Some(page_a.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let grand = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "grand".into(),
+        Some(child.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    // Destination page B (in space B).
+    let page_b = create_block_inner(&pool, DEV, &mat, "page".into(), "B".into(), None, Some(2))
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Stamp page-group space membership directly (as the materializer would)
+    // so the rederive has a non-NULL owning-page space_id to copy.
+    assign_to_space(&pool, page_a.id.as_str(), TEST_SPACE_ID).await;
+    assign_to_space(&pool, page_b.id.as_str(), TEST_SPACE_B_ID).await;
+
+    let child_id = child.id.clone().into_string();
+    let grand_id = grand.id.clone().into_string();
+
+    // --- MOVE child (with its grandchild) from A to B. No flush after, so
+    //     only the synchronous in-tx rederive is under test. ---
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone(),
+        Some(page_b.id.clone()),
+        1,
+    )
+    .await
+    .unwrap();
+
+    let read_pid_sid = |id: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (Option<String>, Option<String>)>(
+                "SELECT page_id, space_id FROM blocks WHERE id = ?",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    let (c_pid, c_sid) = read_pid_sid(child_id.clone()).await;
+    let (g_pid, g_sid) = read_pid_sid(grand_id.clone()).await;
+    assert_eq!(
+        c_pid.as_deref(),
+        Some(page_b.id.as_str()),
+        "moved child page_id → B"
+    );
+    assert_eq!(
+        g_pid.as_deref(),
+        Some(page_b.id.as_str()),
+        "moved grandchild page_id → B"
+    );
+    assert_eq!(
+        c_sid.as_deref(),
+        Some(TEST_SPACE_B_ID),
+        "moved child space_id → space B (sync)"
+    );
+    assert_eq!(
+        g_sid.as_deref(),
+        Some(TEST_SPACE_B_ID),
+        "moved grandchild space_id → space B (sync) — this is the step the undo arm used to skip"
+    );
+
+    // --- UNDO the move. The move op is recorded against the destination
+    //     page's history (B is the moved child's new owner), so undo there
+    //     at depth 0. Again no flush, so the reverse arm's synchronous
+    //     rederive is what's under test. ---
+    undo_page_op_inner(&pool, DEV, &mat, page_b.id.clone().into_string(), 0)
+        .await
+        .unwrap();
+
+    let (c_pid, c_sid) = read_pid_sid(child_id).await;
+    let (g_pid, g_sid) = read_pid_sid(grand_id).await;
+    assert_eq!(
+        c_pid.as_deref(),
+        Some(page_a.id.as_str()),
+        "undo restores child page_id → A"
+    );
+    assert_eq!(
+        g_pid.as_deref(),
+        Some(page_a.id.as_str()),
+        "undo restores grandchild page_id → A"
+    );
+    assert_eq!(
+        c_sid.as_deref(),
+        Some(TEST_SPACE_ID),
+        "undo must re-derive child space_id → space A (sync reverse arm)"
+    );
+    assert_eq!(
+        g_sid.as_deref(),
+        Some(TEST_SPACE_ID),
+        "undo must re-derive grandchild space_id → space A (sync) — pins the #664 drift fix"
+    );
+}
+
+// ======================================================================
 // PEND-35 Tier 2.2 — restore_blocks_by_ids / purge_blocks_by_ids
 // ======================================================================
 
