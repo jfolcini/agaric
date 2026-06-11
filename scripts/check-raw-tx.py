@@ -72,7 +72,8 @@ ALLOWLIST_GLOBS = [
     # Tag-inheritance rebuild — derived cache (verified: no op_log writes).
     "src-tauri/src/tag_inheritance/rebuild.rs",
     # The materializer itself — dispatching here would self-recurse.
-    "src-tauri/src/materializer/handlers.rs",
+    # (handlers.rs was split into the handlers/ directory in #644.)
+    "src-tauri/src/materializer/handlers/**",
     # System-level snapshot / compaction — must not dispatch edit tasks.
     "src-tauri/src/snapshot/create.rs",
     "src-tauri/src/snapshot/restore.rs",
