@@ -201,6 +201,54 @@ describe('handleBlockKeyDown', () => {
     })
   })
 
+  // #910 — Shift+Arrow at a block boundary must EXTEND the selection (defer to
+  // ProseMirror) instead of navigating to the adjacent block and dropping it.
+  describe('Shift+Arrow at a boundary does not navigate (#910)', () => {
+    it('Shift+ArrowUp at start does NOT focus the previous block', () => {
+      const editor = makeEditor({ from: 1, to: 1, selectionEmpty: true })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowUp', { shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls['onFocusPrev']).toBeUndefined()
+    })
+
+    it('Shift+ArrowLeft at start does NOT focus the previous block', () => {
+      const editor = makeEditor({ from: 1, to: 1, selectionEmpty: true })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowLeft', { shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls['onFocusPrev']).toBeUndefined()
+    })
+
+    it('Shift+ArrowDown at end does NOT focus the next block', () => {
+      const editor = makeEditor({ from: 19, to: 19, selectionEmpty: true, docSize: 20 })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowDown', { shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls['onFocusNext']).toBeUndefined()
+    })
+
+    it('Shift+ArrowRight at end does NOT focus the next block', () => {
+      const editor = makeEditor({ from: 19, to: 19, selectionEmpty: true, docSize: 20 })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowRight', { shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls['onFocusNext']).toBeUndefined()
+    })
+  })
+
   describe('Ctrl+Shift+ArrowRight / ArrowLeft (indent / dedent)', () => {
     it('Ctrl+Shift+ArrowRight calls onFlush + onIndent', () => {
       const editor = makeEditor({})
@@ -250,16 +298,31 @@ describe('handleBlockKeyDown', () => {
       expect(cbs._calls['onDedent']).toBe(1)
     })
 
-    it('Tab does NOT call onIndent (Tab freed for focus navigation)', () => {
+    // #912 — Tab / Shift+Tab are now the primary outliner indent/dedent keys.
+    it('Tab calls onFlush + onIndent', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
       const event = makeEvent('Tab')
 
       handleBlockKeyDown(event, editor, cbs)
 
-      expect(event.preventDefault).not.toHaveBeenCalled()
-      expect(cbs._calls['onIndent']).toBeUndefined()
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onIndent']).toBe(1)
       expect(cbs._calls['onDedent']).toBeUndefined()
+    })
+
+    it('Shift+Tab calls onFlush + onDedent', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('Tab', { shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls['onFlush']).toBe(1)
+      expect(cbs._calls['onDedent']).toBe(1)
+      expect(cbs._calls['onIndent']).toBeUndefined()
     })
 
     it('Ctrl+ArrowRight without Shift does NOT call onIndent', () => {

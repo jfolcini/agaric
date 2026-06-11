@@ -211,6 +211,7 @@ describe('useBlockNavigateToLink', () => {
           unmount: vi.fn(() => null),
           activeBlockId: null,
           getMarkdown: () => null,
+          splitAtCaret: () => null,
           originalMarkdown: '',
           setOnMarkdownChange: vi.fn(),
         },
