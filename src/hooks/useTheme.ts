@@ -25,9 +25,19 @@
  *     (avoids visual no-ops) for the classic sidebar toggle button.
  *   - `setTheme(value)` sets a specific theme directly (used by the Settings
  *     Select which offers all 7 options).
+ *
+ * #733 — the preference lives in a MODULE-LEVEL store (localStorage as the
+ * source of truth + a shared listener set), consumed via
+ * `useSyncExternalStore`. The hook is mounted twice (App.tsx for the
+ * sidebar toggle / Toaster, AppearanceTab for the Settings Select); the
+ * previous per-instance `useState` meant a Settings choice never reached
+ * App's instance, so (a) the sidebar tooltip/icon went stale, (b) the
+ * toggle cycled from the OLD value and persisted it over the Settings
+ * choice, and (c) an OS `prefers-color-scheme` flip re-applied the stale
+ * instance's documentElement classes over the user's explicit choice.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 
 export type ThemePreference =
   | 'light'
@@ -98,12 +108,46 @@ function readPreference(): ThemePreference {
   return 'auto'
 }
 
-function persist(theme: ThemePreference) {
-  try {
-    localStorage.setItem(STORAGE_KEY, theme)
-  } catch {
-    // localStorage unavailable
+// ── #733 — module-level preference store ─────────────────────────────
+// localStorage is the canonical store; the listener set fans a write out
+// to EVERY mounted useTheme instance so the two surfaces (App shell,
+// Settings → Appearance) can never desync. `memoryPreference` only takes
+// over when localStorage itself is unusable (private-mode quota, etc.) —
+// in that degraded mode the preference still propagates across instances
+// for the session, it just doesn't survive a relaunch.
+const preferenceListeners = new Set<() => void>()
+let memoryPreference: ThemePreference = 'auto'
+let localStorageBroken = false
+
+function getPreferenceSnapshot(): ThemePreference {
+  if (localStorageBroken) return memoryPreference
+  return readPreference()
+}
+
+function getPreferenceServerSnapshot(): ThemePreference {
+  return 'auto'
+}
+
+function subscribePreference(callback: () => void): () => void {
+  preferenceListeners.add(callback)
+  return () => {
+    preferenceListeners.delete(callback)
   }
+}
+
+/** Write the preference to the shared store and notify every instance. */
+function setPreference(next: ThemePreference): void {
+  if (getPreferenceSnapshot() === next) return
+  memoryPreference = next
+  try {
+    localStorage.setItem(STORAGE_KEY, next)
+  } catch {
+    // localStorage unavailable — degrade to the in-memory store so the
+    // theme still changes (and stays consistent across instances) for
+    // the rest of the session.
+    localStorageBroken = true
+  }
+  for (const listener of preferenceListeners) listener()
 }
 
 /** Subscribe to OS-level prefers-color-scheme changes. */
@@ -168,14 +212,16 @@ export interface UseThemeReturn {
 }
 
 export function useTheme(): UseThemeReturn {
-  const [theme, setThemeState] = useState<ThemePreference>(readPreference)
+  // #733 — every instance reads the SAME module-level preference store,
+  // so a Settings change reaches the App shell instance synchronously.
+  const theme = useSyncExternalStore(
+    subscribePreference,
+    getPreferenceSnapshot,
+    getPreferenceServerSnapshot,
+  )
 
   // Track OS dark mode for 'auto' — listen for changes via useSyncExternalStore
   const systemDark = useSyncExternalStore(subscribeMediaQuery, getSystemDark, getSystemDarkServer)
-
-  // Keep a ref so toggleTheme can read the latest value without a dependency
-  const systemDarkRef = useRef(systemDark)
-  systemDarkRef.current = systemDark
 
   const resolved = useMemo(() => resolveTheme(theme, systemDark), [theme, systemDark])
   const isDark = useMemo(() => isResolvedDark(resolved), [resolved])
@@ -186,39 +232,46 @@ export function useTheme(): UseThemeReturn {
   }, [resolved])
 
   const setTheme = useCallback((next: ThemePreference) => {
-    setThemeState((prev) => {
-      if (prev === next) return prev
-      persist(next)
-      return next
-    })
+    setPreference(next)
   }, [])
 
   const toggleTheme = useCallback(() => {
-    setThemeState((prev) => {
-      const sd = systemDarkRef.current
-      const prevDark = isResolvedDark(resolveTheme(prev, sd))
-      // Start from prev's position in the classic CYCLE. If prev is outside
-      // CYCLE (one of the custom themes), `indexOf` returns -1 which causes
-      // `(-1 + 1) % 3 === 0 → 'auto'` — a sensible fallback that re-enters the
-      // classic cycle from the beginning.
-      const idx = CYCLE.indexOf(prev)
-      // Smart skip: advance through the cycle until we find a state
-      // that resolves to a different isDark value, avoiding visual no-ops.
-      for (let step = 1; step <= CYCLE.length; step++) {
-        const candidate = CYCLE[(idx + step) % CYCLE.length] as ThemePreference
-        const candidateDark = isResolvedDark(resolveTheme(candidate, sd))
-        if (candidateDark !== prevDark) {
-          persist(candidate)
-          return candidate
-        }
+    // Read both inputs LIVE from their stores — never from a render-time
+    // closure — so the cycle always starts from the preference the user
+    // most recently chose anywhere in the app (#733).
+    const prev = getPreferenceSnapshot()
+    const sd = getSystemDark()
+    const prevDark = isResolvedDark(resolveTheme(prev, sd))
+    // Start from prev's position in the classic CYCLE. If prev is outside
+    // CYCLE (one of the custom themes), `indexOf` returns -1 which causes
+    // `(-1 + 1) % 3 === 0 → 'auto'` — a sensible fallback that re-enters the
+    // classic cycle from the beginning.
+    const idx = CYCLE.indexOf(prev)
+    // Smart skip: advance through the cycle until we find a state
+    // that resolves to a different isDark value, avoiding visual no-ops.
+    for (let step = 1; step <= CYCLE.length; step++) {
+      const candidate = CYCLE[(idx + step) % CYCLE.length] as ThemePreference
+      const candidateDark = isResolvedDark(resolveTheme(candidate, sd))
+      if (candidateDark !== prevDark) {
+        setPreference(candidate)
+        return
       }
-      // Fallback: advance one step (reached only if every cycle candidate
-      // matches prev's isDark, e.g. with 3 states it shouldn't happen).
-      const next = CYCLE[(idx + 1) % CYCLE.length] as ThemePreference
-      persist(next)
-      return next
-    })
+    }
+    // Fallback: advance one step (reached only if every cycle candidate
+    // matches prev's isDark, e.g. with 3 states it shouldn't happen).
+    setPreference(CYCLE[(idx + 1) % CYCLE.length] as ThemePreference)
   }, [])
 
   return { theme, isDark, toggleTheme, setTheme }
+}
+
+/**
+ * Test-only — restore the module-level store's degraded-mode flags so a
+ * test that breaks `localStorage` can't leak the in-memory fallback into
+ * subsequent tests. The happy path needs no reset: localStorage is the
+ * canonical store and tests already clear it between cases.
+ */
+export function __resetThemeStoreForTests(): void {
+  memoryPreference = 'auto'
+  localStorageBroken = false
 }

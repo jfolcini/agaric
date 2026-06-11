@@ -14,21 +14,32 @@ import {
 
 // -- Hoisted mocks (vi.mock factories are hoisted above module scope) ---------
 
-const { mockUnlisten, mockListen, mockNavigateToPage, mockSetView, mockGetCurrentDeepLink } =
-  vi.hoisted(() => {
-    const mockUnlisten = vi.fn()
-    const mockListen = vi.fn().mockResolvedValue(mockUnlisten)
-    const mockNavigateToPage = vi.fn()
-    const mockSetView = vi.fn()
-    const mockGetCurrentDeepLink = vi.fn().mockResolvedValue(null)
-    return {
-      mockUnlisten,
-      mockListen,
-      mockNavigateToPage,
-      mockSetView,
-      mockGetCurrentDeepLink,
-    }
-  })
+const {
+  mockUnlisten,
+  mockListen,
+  mockNavigateToPage,
+  mockSetView,
+  mockSetPendingSettingsTab,
+  mockGetCurrentDeepLink,
+  mockGetBlock,
+} = vi.hoisted(() => {
+  const mockUnlisten = vi.fn()
+  const mockListen = vi.fn().mockResolvedValue(mockUnlisten)
+  const mockNavigateToPage = vi.fn()
+  const mockSetView = vi.fn()
+  const mockSetPendingSettingsTab = vi.fn()
+  const mockGetCurrentDeepLink = vi.fn().mockResolvedValue(null)
+  const mockGetBlock = vi.fn()
+  return {
+    mockUnlisten,
+    mockListen,
+    mockNavigateToPage,
+    mockSetView,
+    mockSetPendingSettingsTab,
+    mockGetCurrentDeepLink,
+    mockGetBlock,
+  }
+})
 
 vi.mock('@tauri-apps/api/event', () => ({
   listen: (...args: unknown[]) => mockListen(...args),
@@ -38,6 +49,7 @@ vi.mock('@/stores/navigation', () => ({
   useNavigationStore: {
     getState: vi.fn(() => ({
       setView: mockSetView,
+      setPendingSettingsTab: mockSetPendingSettingsTab,
     })),
   },
 }))
@@ -55,7 +67,39 @@ vi.mock('@/stores/tabs', () => ({
 
 vi.mock('@/lib/tauri', () => ({
   getCurrentDeepLink: (...args: unknown[]) => mockGetCurrentDeepLink(...args),
+  getBlock: (...args: unknown[]) => mockGetBlock(...args),
 }))
+
+// -- Fixtures -------------------------------------------------------------------
+
+const BLOCK_ID = 'BLOCK01HJKLMN012345VPQRSTW3'
+const PAGE_ID = 'PAGE001HJKLMN012345VPQRSTW'
+const MID_ID = 'MID0001HJKLMN012345VPQRSTW'
+
+/** Minimal BlockRow-shaped fixture for the getBlock mock. `page_id`
+ *  defaults to null so the parent-walk FALLBACK tests below stay on the
+ *  walk path; the short-circuit tests opt in explicitly. */
+function makeBlock(over: {
+  id: string
+  block_type?: string
+  content?: string | null
+  parent_id?: string | null
+  page_id?: string | null
+}) {
+  return {
+    id: over.id,
+    block_type: over.block_type ?? 'page',
+    content: over.content ?? '',
+    parent_id: over.parent_id ?? null,
+    position: null,
+    deleted_at: null,
+    todo_state: null,
+    priority: null,
+    due_date: null,
+    scheduled_date: null,
+    page_id: over.page_id ?? null,
+  }
+}
 
 // -- Setup / teardown ---------------------------------------------------------
 
@@ -75,6 +119,10 @@ beforeEach(() => {
 
   mockListen.mockResolvedValue(mockUnlisten)
   mockGetCurrentDeepLink.mockResolvedValue(null)
+  // Default: every id resolves to a page block titled '' so legacy
+  // `navigateToPage(<id>, '')` expectations hold for the routing tests
+  // that don't care about title resolution (#734).
+  mockGetBlock.mockImplementation(async (id: string) => makeBlock({ id }))
   localStorage.removeItem(SETTINGS_ACTIVE_TAB_KEY)
 })
 
@@ -106,39 +154,250 @@ describe('event-name constants pinned', () => {
 })
 
 describe('handleNavigatePayload', () => {
-  it('forwards a valid block payload to navigateToPage', () => {
-    handleNavigatePayload({ id: 'BLOCK01HJKLMN012345VPQRSTW3' }, 'deeplink:navigate-to-block')
-    expect(mockNavigateToPage).toHaveBeenCalledWith('BLOCK01HJKLMN012345VPQRSTW3', '')
+  it('forwards a valid block payload to navigateToPage', async () => {
+    await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+    expect(mockNavigateToPage).toHaveBeenCalledWith(BLOCK_ID, '')
   })
 
-  it('rejects payloads missing the id field', () => {
-    handleNavigatePayload({}, 'deeplink:navigate-to-block')
+  it('rejects payloads missing the id field', async () => {
+    await handleNavigatePayload({}, 'deeplink:navigate-to-block', 'block')
+    expect(mockNavigateToPage).not.toHaveBeenCalled()
+    expect(mockGetBlock).not.toHaveBeenCalled()
+  })
+
+  it('rejects payloads where id is empty', async () => {
+    await handleNavigatePayload({ id: '' }, 'deeplink:navigate-to-page', 'page')
     expect(mockNavigateToPage).not.toHaveBeenCalled()
   })
 
-  it('rejects payloads where id is empty', () => {
-    handleNavigatePayload({ id: '' }, 'deeplink:navigate-to-page')
+  it('rejects payloads where id is not a string', async () => {
+    await handleNavigatePayload({ id: 42 }, 'deeplink:navigate-to-page', 'page')
     expect(mockNavigateToPage).not.toHaveBeenCalled()
   })
 
-  it('rejects payloads where id is not a string', () => {
-    handleNavigatePayload({ id: 42 }, 'deeplink:navigate-to-page')
+  it('rejects null / undefined payloads', async () => {
+    await handleNavigatePayload(null, 'deeplink:navigate-to-block', 'block')
+    await handleNavigatePayload(undefined, 'deeplink:navigate-to-block', 'block')
     expect(mockNavigateToPage).not.toHaveBeenCalled()
   })
 
-  it('rejects null / undefined payloads', () => {
-    handleNavigatePayload(null, 'deeplink:navigate-to-block')
-    handleNavigatePayload(undefined, 'deeplink:navigate-to-block')
-    expect(mockNavigateToPage).not.toHaveBeenCalled()
-  })
-
-  it('survives navigateToPage throwing', () => {
+  it('survives navigateToPage throwing', async () => {
     mockNavigateToPage.mockImplementationOnce(() => {
       throw new Error('store boom')
     })
-    expect(() =>
-      handleNavigatePayload({ id: 'BLOCK01HJKLMN012345VPQRSTW3' }, 'deeplink:navigate-to-block'),
-    ).not.toThrow()
+    await expect(
+      handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block'),
+    ).resolves.toBeUndefined()
+  })
+
+  // ── #734 — target resolution ────────────────────────────────────────
+
+  describe('page deep links resolve the real title (#734)', () => {
+    it('passes the fetched page title to navigateToPage', async () => {
+      mockGetBlock.mockResolvedValueOnce(makeBlock({ id: PAGE_ID, content: 'Project Plan' }))
+
+      await handleNavigatePayload({ id: PAGE_ID }, 'deeplink:navigate-to-page', 'page')
+
+      expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Project Plan')
+    })
+
+    it('passes a date-formatted title through so the journal redirect can fire', async () => {
+      // tabs.ts keys the UX-242 journal redirect on the TITLE shape — the
+      // pre-#734 hardcoded '' meant daily pages always opened in the page
+      // editor. The router's job is to deliver the real title.
+      mockGetBlock.mockResolvedValueOnce(makeBlock({ id: PAGE_ID, content: '2026-06-11' }))
+
+      await handleNavigatePayload({ id: PAGE_ID }, 'deeplink:navigate-to-page', 'page')
+
+      expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, '2026-06-11')
+    })
+
+    it('falls back to navigateToPage(id, "") when getBlock rejects', async () => {
+      mockGetBlock.mockRejectedValueOnce(new Error('not found'))
+
+      await handleNavigatePayload({ id: PAGE_ID }, 'deeplink:navigate-to-page', 'page')
+
+      expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, '')
+    })
+
+    it('null content degrades to an empty title', async () => {
+      mockGetBlock.mockResolvedValueOnce(makeBlock({ id: PAGE_ID, content: null }))
+
+      await handleNavigatePayload({ id: PAGE_ID }, 'deeplink:navigate-to-page', 'page')
+
+      expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, '')
+    })
+  })
+
+  describe('block deep links resolve the containing page (#734)', () => {
+    it('short-circuits through the denormalized page_id — no parent walk', async () => {
+      // `blocks.page_id` is materializer-maintained; resolution must be
+      // TWO fetches (block + page) regardless of tree depth, never
+      // touching the intermediate parent.
+      mockGetBlock.mockImplementation(async (id: string) => {
+        if (id === BLOCK_ID)
+          return makeBlock({
+            id,
+            block_type: 'text',
+            content: 'leaf',
+            parent_id: MID_ID,
+            page_id: PAGE_ID,
+          })
+        if (id === PAGE_ID) return makeBlock({ id, content: 'Direct Page' })
+        throw new Error(`unexpected fetch: ${id}`)
+      })
+
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+
+      expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Direct Page', BLOCK_ID)
+      expect(mockGetBlock).toHaveBeenCalledTimes(2)
+      expect(mockGetBlock).not.toHaveBeenCalledWith(MID_ID)
+    })
+
+    it('a deleted intermediate ancestor cannot break page_id resolution', async () => {
+      // The pre-fix parent walk died on the first missing link in the
+      // chain; the `page_id` path only needs the block and its page to
+      // exist.
+      mockGetBlock.mockImplementation(async (id: string) => {
+        if (id === BLOCK_ID)
+          return makeBlock({
+            id,
+            block_type: 'text',
+            content: 'leaf',
+            parent_id: MID_ID,
+            page_id: PAGE_ID,
+          })
+        if (id === MID_ID) throw new Error('intermediate ancestor purged')
+        return makeBlock({ id: PAGE_ID, content: 'Still Reachable' })
+      })
+
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+
+      expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Still Reachable', BLOCK_ID)
+    })
+
+    it('falls back to navigateToPage(id, "") when the page_id fetch rejects', async () => {
+      mockGetBlock.mockImplementation(async (id: string) => {
+        if (id === BLOCK_ID)
+          return makeBlock({ id, block_type: 'text', content: 'leaf', page_id: PAGE_ID })
+        throw new Error('page purged')
+      })
+
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+
+      expect(mockNavigateToPage).toHaveBeenCalledWith(BLOCK_ID, '')
+    })
+
+    it('a corrupt self-referential page_id on a non-page block falls back to the walk', async () => {
+      mockGetBlock.mockImplementation(async (id: string) => {
+        if (id === BLOCK_ID)
+          return makeBlock({
+            id,
+            block_type: 'text',
+            content: 'leaf',
+            parent_id: PAGE_ID,
+            page_id: BLOCK_ID,
+          })
+        return makeBlock({ id: PAGE_ID, content: 'Walked Page' })
+      })
+
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+
+      expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Walked Page', BLOCK_ID)
+    })
+
+    it('navigates to the parent page with the block id for scroll-and-highlight', async () => {
+      mockGetBlock.mockImplementation(async (id: string) => {
+        if (id === BLOCK_ID)
+          return makeBlock({ id, block_type: 'text', content: 'a bullet', parent_id: PAGE_ID })
+        return makeBlock({ id: PAGE_ID, content: 'Meeting Notes' })
+      })
+
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+
+      expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Meeting Notes', BLOCK_ID)
+    })
+
+    it('walks a nested parent chain up to the page', async () => {
+      mockGetBlock.mockImplementation(async (id: string) => {
+        if (id === BLOCK_ID)
+          return makeBlock({ id, block_type: 'text', content: 'leaf', parent_id: MID_ID })
+        if (id === MID_ID)
+          return makeBlock({ id, block_type: 'text', content: 'mid', parent_id: PAGE_ID })
+        return makeBlock({ id: PAGE_ID, content: 'Deep Page' })
+      })
+
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+
+      expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Deep Page', BLOCK_ID)
+    })
+
+    it('a block that IS a page navigates directly with its title (no blockId)', async () => {
+      mockGetBlock.mockResolvedValueOnce(makeBlock({ id: BLOCK_ID, content: 'Actually a page' }))
+
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+
+      expect(mockNavigateToPage).toHaveBeenCalledWith(BLOCK_ID, 'Actually a page')
+    })
+
+    it('a date-titled parent page routes with the date title (journal redirect)', async () => {
+      mockGetBlock.mockImplementation(async (id: string) => {
+        if (id === BLOCK_ID)
+          return makeBlock({ id, block_type: 'text', content: 'todo', parent_id: PAGE_ID })
+        return makeBlock({ id: PAGE_ID, content: '2026-06-11' })
+      })
+
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+
+      expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, '2026-06-11', BLOCK_ID)
+    })
+
+    it('an orphaned chain (no page ancestor) lands on the topmost ancestor + blockId', async () => {
+      mockGetBlock.mockImplementation(async (id: string) => {
+        if (id === BLOCK_ID)
+          return makeBlock({ id, block_type: 'text', content: 'leaf', parent_id: MID_ID })
+        return makeBlock({ id: MID_ID, block_type: 'text', content: 'rootless', parent_id: null })
+      })
+
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+
+      expect(mockNavigateToPage).toHaveBeenCalledWith(MID_ID, 'rootless', BLOCK_ID)
+    })
+
+    it('a parentless non-page block navigates to itself without a blockId', async () => {
+      mockGetBlock.mockResolvedValueOnce(
+        makeBlock({ id: BLOCK_ID, block_type: 'text', content: 'floating', parent_id: null }),
+      )
+
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+
+      expect(mockNavigateToPage).toHaveBeenCalledWith(BLOCK_ID, 'floating')
+    })
+
+    it('a cyclic parent chain terminates at the hop cap instead of looping forever', async () => {
+      mockGetBlock.mockImplementation(async (id: string) => {
+        if (id === BLOCK_ID)
+          return makeBlock({ id, block_type: 'text', content: 'a', parent_id: MID_ID })
+        return makeBlock({ id: MID_ID, block_type: 'text', content: 'b', parent_id: BLOCK_ID })
+      })
+
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+
+      // Lands SOMEWHERE deterministic rather than hanging.
+      expect(mockNavigateToPage).toHaveBeenCalledTimes(1)
+    })
+
+    it('falls back to navigateToPage(id, "") when an ancestor fetch rejects', async () => {
+      mockGetBlock.mockImplementation(async (id: string) => {
+        if (id === BLOCK_ID)
+          return makeBlock({ id, block_type: 'text', content: 'leaf', parent_id: PAGE_ID })
+        throw new Error('parent purged')
+      })
+
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+
+      expect(mockNavigateToPage).toHaveBeenCalledWith(BLOCK_ID, '')
+    })
   })
 })
 
@@ -149,9 +408,16 @@ describe('handleOpenSettingsPayload', () => {
     expect(mockSetView).toHaveBeenCalledWith('settings')
   })
 
+  it('writes the pending-tab store slot so an already-open SettingsView updates (#734)', () => {
+    handleOpenSettingsPayload({ tab: 'sync' })
+    expect(mockSetPendingSettingsTab).toHaveBeenCalledWith('sync')
+    expect(mockSetView).toHaveBeenCalledWith('settings')
+  })
+
   it('rejects payloads missing the tab field', () => {
     handleOpenSettingsPayload({})
     expect(mockSetView).not.toHaveBeenCalled()
+    expect(mockSetPendingSettingsTab).not.toHaveBeenCalled()
     expect(localStorage.getItem(SETTINGS_ACTIVE_TAB_KEY)).toBeNull()
   })
 
@@ -172,6 +438,7 @@ describe('handleOpenSettingsPayload', () => {
     })
     try {
       expect(() => handleOpenSettingsPayload({ tab: 'sync' })).not.toThrow()
+      expect(mockSetPendingSettingsTab).toHaveBeenCalledWith('sync')
       expect(mockSetView).toHaveBeenCalledWith('settings')
     } finally {
       Storage.prototype.setItem = original
@@ -259,9 +526,31 @@ describe('useDeepLinkRouter', () => {
       await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
 
       const cb = getListenerCallback(DEEPLINK_EVENT_NAVIGATE_TO_BLOCK)
-      cb({ payload: { id: 'BLOCK01HJKLMN012345VPQRSTW3' } })
+      cb({ payload: { id: BLOCK_ID } })
 
-      expect(mockNavigateToPage).toHaveBeenCalledWith('BLOCK01HJKLMN012345VPQRSTW3', '')
+      await vi.waitFor(() => {
+        expect(mockNavigateToPage).toHaveBeenCalledWith(BLOCK_ID, '')
+      })
+
+      unmount()
+    })
+
+    it('resolves a content block to its containing page (#734)', async () => {
+      mockGetBlock.mockImplementation(async (id: string) => {
+        if (id === BLOCK_ID)
+          return makeBlock({ id, block_type: 'text', content: 'bullet', parent_id: PAGE_ID })
+        return makeBlock({ id: PAGE_ID, content: 'Host Page' })
+      })
+
+      const { unmount } = renderHook(() => useDeepLinkRouter())
+      await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+      const cb = getListenerCallback(DEEPLINK_EVENT_NAVIGATE_TO_BLOCK)
+      cb({ payload: { id: BLOCK_ID } })
+
+      await vi.waitFor(() => {
+        expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Host Page', BLOCK_ID)
+      })
 
       unmount()
     })
@@ -272,6 +561,7 @@ describe('useDeepLinkRouter', () => {
 
       const cb = getListenerCallback(DEEPLINK_EVENT_NAVIGATE_TO_BLOCK)
       cb({ payload: { wrongField: 'X' } })
+      await Promise.resolve()
 
       expect(mockNavigateToPage).not.toHaveBeenCalled()
 
@@ -280,21 +570,25 @@ describe('useDeepLinkRouter', () => {
   })
 
   describe('navigate-to-page handler', () => {
-    it('routes valid page events to navigateToPage', async () => {
+    it('routes valid page events to navigateToPage with the fetched title', async () => {
+      mockGetBlock.mockResolvedValueOnce(makeBlock({ id: PAGE_ID, content: 'Roadmap' }))
+
       const { unmount } = renderHook(() => useDeepLinkRouter())
       await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
 
       const cb = getListenerCallback(DEEPLINK_EVENT_NAVIGATE_TO_PAGE)
-      cb({ payload: { id: 'PAGE001HJKLMN012345VPQRSTW' } })
+      cb({ payload: { id: PAGE_ID } })
 
-      expect(mockNavigateToPage).toHaveBeenCalledWith('PAGE001HJKLMN012345VPQRSTW', '')
+      await vi.waitFor(() => {
+        expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Roadmap')
+      })
 
       unmount()
     })
   })
 
   describe('open-settings handler', () => {
-    it('persists tab and switches to settings view', async () => {
+    it('persists tab, writes the store slot, and switches to settings view', async () => {
       const { unmount } = renderHook(() => useDeepLinkRouter())
       await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
 
@@ -302,6 +596,7 @@ describe('useDeepLinkRouter', () => {
       cb({ payload: { tab: 'sync' } })
 
       expect(localStorage.getItem(SETTINGS_ACTIVE_TAB_KEY)).toBe('sync')
+      expect(mockSetPendingSettingsTab).toHaveBeenCalledWith('sync')
       expect(mockSetView).toHaveBeenCalledWith('settings')
 
       unmount()
@@ -345,6 +640,7 @@ describe('useDeepLinkRouter', () => {
         expect(mockSetView).toHaveBeenCalledWith('settings')
       })
       expect(localStorage.getItem(SETTINGS_ACTIVE_TAB_KEY)).toBe('keyboard')
+      expect(mockSetPendingSettingsTab).toHaveBeenCalledWith('keyboard')
       unmount()
     })
 
@@ -381,57 +677,72 @@ describe('useDeepLinkRouter', () => {
 })
 
 describe('dispatchLaunchUrl', () => {
-  it('routes valid block URLs', () => {
+  it('routes valid block URLs', async () => {
     dispatchLaunchUrl('agaric://block/BLOCK01HJKLMN012345VPQRSTW3')
-    expect(mockNavigateToPage).toHaveBeenCalledWith('BLOCK01HJKLMN012345VPQRSTW3', '')
+    await vi.waitFor(() => {
+      expect(mockNavigateToPage).toHaveBeenCalledWith('BLOCK01HJKLMN012345VPQRSTW3', '')
+    })
   })
 
-  it('routes valid page URLs', () => {
+  it('routes valid page URLs', async () => {
     dispatchLaunchUrl('agaric://page/PAGE001HJKLMN012345VPQRSTW')
-    expect(mockNavigateToPage).toHaveBeenCalledWith('PAGE001HJKLMN012345VPQRSTW', '')
+    await vi.waitFor(() => {
+      expect(mockNavigateToPage).toHaveBeenCalledWith('PAGE001HJKLMN012345VPQRSTW', '')
+    })
   })
 
   it('routes valid settings URLs', () => {
     dispatchLaunchUrl('agaric://settings/sync')
     expect(localStorage.getItem(SETTINGS_ACTIVE_TAB_KEY)).toBe('sync')
+    expect(mockSetPendingSettingsTab).toHaveBeenCalledWith('sync')
     expect(mockSetView).toHaveBeenCalledWith('settings')
   })
 
-  it('rejects malformed URL strings', () => {
+  it('rejects malformed URL strings', async () => {
     dispatchLaunchUrl('not a url')
+    await Promise.resolve()
     expect(mockNavigateToPage).not.toHaveBeenCalled()
     expect(mockSetView).not.toHaveBeenCalled()
   })
 
-  it('rejects wrong-scheme URLs', () => {
+  it('rejects wrong-scheme URLs', async () => {
     dispatchLaunchUrl('https://example.com/block/X')
+    await Promise.resolve()
     expect(mockNavigateToPage).not.toHaveBeenCalled()
   })
 
-  it('rejects unknown hosts', () => {
+  it('rejects unknown hosts', async () => {
     dispatchLaunchUrl('agaric://attack/whatever')
+    await Promise.resolve()
     expect(mockNavigateToPage).not.toHaveBeenCalled()
     expect(mockSetView).not.toHaveBeenCalled()
   })
 
-  it('rejects URLs with no identifier', () => {
+  it('rejects URLs with no identifier', async () => {
     dispatchLaunchUrl('agaric://block/')
+    await Promise.resolve()
     expect(mockNavigateToPage).not.toHaveBeenCalled()
   })
 
-  it('host match is case-insensitive', () => {
+  it('host match is case-insensitive', async () => {
     dispatchLaunchUrl('agaric://BLOCK/BLOCK01HJKLMN012345VPQRSTW3')
-    expect(mockNavigateToPage).toHaveBeenCalledWith('BLOCK01HJKLMN012345VPQRSTW3', '')
+    await vi.waitFor(() => {
+      expect(mockNavigateToPage).toHaveBeenCalledWith('BLOCK01HJKLMN012345VPQRSTW3', '')
+    })
   })
 
-  it('normalises lowercase block ULIDs to uppercase (mirrors Rust router)', () => {
+  it('normalises lowercase block ULIDs to uppercase (mirrors Rust router)', async () => {
     dispatchLaunchUrl('agaric://block/block01hjklmn012345vpqrstw3')
-    expect(mockNavigateToPage).toHaveBeenCalledWith('BLOCK01HJKLMN012345VPQRSTW3', '')
+    await vi.waitFor(() => {
+      expect(mockNavigateToPage).toHaveBeenCalledWith('BLOCK01HJKLMN012345VPQRSTW3', '')
+    })
   })
 
-  it('normalises lowercase page ULIDs to uppercase', () => {
+  it('normalises lowercase page ULIDs to uppercase', async () => {
     dispatchLaunchUrl('agaric://page/page001hjklmn012345vpqrstw')
-    expect(mockNavigateToPage).toHaveBeenCalledWith('PAGE001HJKLMN012345VPQRSTW', '')
+    await vi.waitFor(() => {
+      expect(mockNavigateToPage).toHaveBeenCalledWith('PAGE001HJKLMN012345VPQRSTW', '')
+    })
   })
 
   it('does NOT uppercase the settings tab identifier', () => {

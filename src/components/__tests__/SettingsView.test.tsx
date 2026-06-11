@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { t } from '../../lib/i18n'
+import { useNavigationStore } from '../../stores/navigation'
 import { SettingsView } from '../SettingsView'
 
 // FEAT-13: mock @tauri-apps/plugin-autostart so the AutostartRow's
@@ -121,6 +122,9 @@ beforeEach(() => {
   // `?settings=…` deep-link param (each test that needs a specific URL
   // sets it explicitly).
   window.history.replaceState(null, '', '/')
+  // #734: clear the pending-tab handoff slot so a value left by a prior
+  // test can't flip the active tab here.
+  useNavigationStore.setState({ pendingSettingsTab: null })
   // FEAT-13: default the autostart plugin to "unavailable" so tests
   // that don't care about the launch-on-login row don't have to mock
   // it explicitly. Tests that exercise the row override per-call with
@@ -718,6 +722,100 @@ describe('SettingsView', () => {
     it('has no a11y violations when initialised from a URL deep link', async () => {
       window.history.replaceState(null, '', '/?settings=keyboard')
       const { container } = render(<SettingsView />)
+
+      await waitFor(
+        async () => {
+          const results = await axe(container)
+          expect(results).toHaveNoViolations()
+        },
+        { timeout: 5000 },
+      )
+    })
+  })
+
+  // ── #734: pending-tab handoff slot ───────────────────────────────────
+  // `agaric://settings/<tab>` (and the NoPeersDialog CTA) write
+  // `useNavigationStore.pendingSettingsTab` BEFORE flipping the view. The
+  // panel subscribes while mounted, so the request lands even when
+  // Settings is already open — the localStorage / `?settings=` mechanisms
+  // only run in the useState initializer and need a remount.
+
+  describe('pending settings tab (deep link while already open, #734)', () => {
+    it('switches the active tab when the slot is written while mounted', async () => {
+      render(<SettingsView />)
+      expect(screen.getByTestId('settings-panel-general')).toBeInTheDocument()
+
+      useNavigationStore.getState().setPendingSettingsTab('sync')
+
+      await waitFor(() => {
+        expect(screen.getByTestId('settings-panel-sync')).toBeInTheDocument()
+      })
+      expect(screen.getByTestId('device-management')).toBeInTheDocument()
+      // One-shot: consumed and cleared.
+      expect(useNavigationStore.getState().pendingSettingsTab).toBeNull()
+    })
+
+    it('two deep links in quick succession both land — the LAST one wins', async () => {
+      // The consume effect clears the slot only when it still holds the
+      // value that effect run consumed, so a second request written while
+      // the first is in flight is processed by its own effect run instead
+      // of being swallowed by an unconditional null write.
+      render(<SettingsView />)
+
+      useNavigationStore.getState().setPendingSettingsTab('sync')
+      useNavigationStore.getState().setPendingSettingsTab('keyboard')
+
+      await waitFor(() => {
+        expect(screen.getByTestId('settings-panel-keyboard')).toBeInTheDocument()
+      })
+      expect(useNavigationStore.getState().pendingSettingsTab).toBeNull()
+    })
+
+    it('consumes a slot written BEFORE mount, outranking a stale URL param', async () => {
+      // A lingering `?settings=general` param (the open view mirrors its
+      // own tab into the URL) must not swallow the deep-link request.
+      window.history.replaceState(null, '', '/?settings=general')
+      useNavigationStore.getState().setPendingSettingsTab('keyboard')
+
+      render(<SettingsView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('settings-panel-keyboard')).toBeInTheDocument()
+      })
+      expect(useNavigationStore.getState().pendingSettingsTab).toBeNull()
+    })
+
+    it('drops unknown tab names but still clears the slot', async () => {
+      render(<SettingsView />)
+
+      useNavigationStore.getState().setPendingSettingsTab('not-a-tab')
+
+      await waitFor(() => {
+        expect(useNavigationStore.getState().pendingSettingsTab).toBeNull()
+      })
+      // Still on the default tab — no crash, no bogus panel.
+      expect(screen.getByTestId('settings-panel-general')).toBeInTheDocument()
+    })
+
+    it('mirrors the consumed tab into localStorage + URL like a user click', async () => {
+      render(<SettingsView />)
+
+      useNavigationStore.getState().setPendingSettingsTab('sync')
+
+      await waitFor(() => {
+        expect(screen.getByTestId('settings-panel-sync')).toBeInTheDocument()
+      })
+      expect(localStorage.getItem('agaric-settings-active-tab')).toBe('sync')
+      expect(new URLSearchParams(window.location.search).get('settings')).toBe('sync')
+    })
+
+    it('has no a11y violations after a pending-tab switch', async () => {
+      const { container } = render(<SettingsView />)
+
+      useNavigationStore.getState().setPendingSettingsTab('sync')
+      await waitFor(() => {
+        expect(screen.getByTestId('settings-panel-sync')).toBeInTheDocument()
+      })
 
       await waitFor(
         async () => {

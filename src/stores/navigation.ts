@@ -72,6 +72,17 @@ interface NavigationStore {
    * `useCommandPaletteStore.pendingViewQuery`).
    */
   pendingPageBrowserFilter: string | null
+  /**
+   * #734 — transient handoff slot for the Settings panel's active tab.
+   * Written by the deep-link router (`agaric://settings/<tab>`) and the
+   * NoPeersDialog CTA BEFORE flipping `currentView` to `'settings'`.
+   * `SettingsView` subscribes while mounted, so the request lands even
+   * when Settings is already the current view (the localStorage +
+   * `?settings=` mechanisms are only read in the useState initializer
+   * and therefore no-op without a remount). Consumed-and-cleared
+   * exactly once; NOT persisted (excluded from `partialize`).
+   */
+  pendingSettingsTab: string | null
 
   /** Switch sidebar view. DON'T touch tabs (preserve them across view changes). */
   setView: (view: View) => void
@@ -81,6 +92,8 @@ interface NavigationStore {
   clearSelection: () => void
   /** Write or clear the pending Pages-view filter handoff slot. */
   setPendingPageBrowserFilter: (q: string | null) => void
+  /** Write or clear the pending Settings-tab handoff slot (#734). */
+  setPendingSettingsTab: (tab: string | null) => void
 }
 
 type NavigationState = NavigationStore
@@ -187,6 +200,7 @@ export const useNavigationStore = create<NavigationStore>()(
       currentViewBySpace: {},
       selectedBlockId: null,
       pendingPageBrowserFilter: null,
+      pendingSettingsTab: null,
 
       setView: (view: View) => {
         const state = get()
@@ -207,6 +221,10 @@ export const useNavigationStore = create<NavigationStore>()(
 
       setPendingPageBrowserFilter: (q: string | null) => {
         set({ pendingPageBrowserFilter: q })
+      },
+
+      setPendingSettingsTab: (tab: string | null) => {
+        set({ pendingSettingsTab: tab })
       },
     }),
     {

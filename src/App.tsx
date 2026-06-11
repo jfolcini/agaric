@@ -5,6 +5,7 @@ import { notify } from '@/lib/notify'
 
 import { AppSidebar } from './components/AppSidebar'
 import { BootGate } from './components/BootGate'
+import { FeatureErrorBoundary } from './components/FeatureErrorBoundary'
 import { GcalReauthBanner } from './components/GcalReauthBanner'
 import { GlobalDateControls, JournalControls } from './components/JournalPage'
 import { QuickAccessBar } from './components/QuickAccessBar'
@@ -37,7 +38,6 @@ import { announce } from './lib/announcer'
 import { logger } from './lib/logger'
 import { isOnboardingDone } from './lib/onboarding'
 import { createPageInSpace, listPeerRefs } from './lib/tauri'
-import { setSettingsTabInUrl } from './lib/url-state'
 import { cn } from './lib/utils'
 import { useNavigationStore } from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
@@ -115,6 +115,7 @@ function App() {
   // stable zustand actions, so subscribing here is a zero-rerender cost.
   const currentView = useNavigationStore((s) => s.currentView)
   const setView = useNavigationStore((s) => s.setView)
+  const setPendingSettingsTab = useNavigationStore((s) => s.setPendingSettingsTab)
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const pageStack = useTabsStore(selectPageStack)
   const headerLabel = useHeaderLabel()
@@ -317,15 +318,19 @@ function App() {
     void syncAll()
   }, [syncAll, setShowNoPeersDialog])
 
-  // BUG-2: CTA handler for the NoPeersDialog. Pre-selects the Sync tab
-  // via the `?settings=sync` URL param mechanism (UX-276) — SettingsView
-  // reads the param on mount in `readActiveTab()` so the user lands
-  // directly on the pairing UI without an extra click.
+  // BUG-2: CTA handler for the NoPeersDialog. Pre-selects the Sync tab so
+  // the user lands directly on the pairing UI without an extra click.
+  // #734 — routes through the navigation store's pending-tab handoff slot
+  // (which SettingsView subscribes to while mounted) instead of the
+  // `?settings=sync` URL param: the param is only read in the useState
+  // initializer, so the CTA was a no-op whenever Settings was already the
+  // current view. SettingsView mirrors the consumed tab back into the URL
+  // + localStorage itself.
   const handleOpenSyncSettings = useCallback(() => {
     setShowNoPeersDialog(false)
-    setSettingsTabInUrl('sync')
+    setPendingSettingsTab('sync')
     setView('settings')
-  }, [setView, setShowNoPeersDialog])
+  }, [setView, setShowNoPeersDialog, setPendingSettingsTab])
 
   const activePage = pageStack.length > 0 ? pageStack[pageStack.length - 1] : null
 
@@ -433,8 +438,15 @@ function App() {
              * every sidebar destination (journal, pages, search, …). The
              * autohide guard on `tabs.length <= 1` and the desktop-only
              * mobile gate live inside the component itself.
+             *
+             * #735 — boundary so a TabBar render crash degrades to an
+             * inline panel instead of bubbling to the root boundary and
+             * blanking the entire app (same for every shell-chrome wrap
+             * below: QuickAccessBar, the overlays, the dialogs, Toaster).
              */}
-            <TabBar />
+            <FeatureErrorBoundary name="Tab bar">
+              <TabBar />
+            </FeatureErrorBoundary>
             {/*
              * PEND-68 Part B (#83 recents-only): desktop-only quick-access
              * bar — the MRU recents scroller. The former destinations cluster
@@ -443,7 +455,9 @@ function App() {
              * above and the ViewHeaderOutletSlot below. Returns null on mobile
              * (`useIsMobile()`) and on desktop when there are no recents.
              */}
-            <QuickAccessBar />
+            <FeatureErrorBoundary name="Quick access">
+              <QuickAccessBar />
+            </FeatureErrorBoundary>
             {/*
              * UX-198: view-level sticky headers didn't stick because the
              * nearest scroll ancestor was the <ScrollArea> viewport below,
@@ -492,36 +506,46 @@ function App() {
           showing its in-page segment — the sheet mounts the same
           toolbar inside its body. */}
       {!hideFindOverlay && (
-        <Suspense fallback={null}>
-          <InPageFind />
-        </Suspense>
+        <FeatureErrorBoundary name="Find in page">
+          <Suspense fallback={null}>
+            <InPageFind />
+          </Suspense>
+        </FeatureErrorBoundary>
       )}
       {/* Cmd/Ctrl+K command palette — same overlay shape, same yield
           rule for the sheet's all-pages segment. */}
       {!hidePaletteOverlay && (
-        <Suspense fallback={null}>
-          <CommandPalette />
-        </Suspense>
+        <FeatureErrorBoundary name="Command palette">
+          <Suspense fallback={null}>
+            <CommandPalette />
+          </Suspense>
+        </FeatureErrorBoundary>
       )}
       {/* Mobile unified search sheet — opened via the header trigger
           on mobile viewports. Mounts the InPageFind toolbar or
           PaletteBody inside its body depending on the active segment. */}
-      <Suspense fallback={null}>
-        <SearchSheet />
-      </Suspense>
+      <FeatureErrorBoundary name="Search sheet">
+        <Suspense fallback={null}>
+          <SearchSheet />
+        </Suspense>
+      </FeatureErrorBoundary>
       {/* #754 — both overlays are gate-mounted so their lazy chunks stay
           off the boot path. The `?` / sidebar-button open path lives in
           `useAppDialogs` (the sheet can't open itself while unmounted);
           the welcome gate reads the onboarding flag once per session. */}
       {shortcutsOpen && (
-        <Suspense fallback={null}>
-          <KeyboardShortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
-        </Suspense>
+        <FeatureErrorBoundary name="Keyboard shortcuts">
+          <Suspense fallback={null}>
+            <KeyboardShortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+          </Suspense>
+        </FeatureErrorBoundary>
       )}
       {showWelcome && (
-        <Suspense fallback={null}>
-          <WelcomeModal />
-        </Suspense>
+        <FeatureErrorBoundary name="Welcome">
+          <Suspense fallback={null}>
+            <WelcomeModal />
+          </Suspense>
+        </FeatureErrorBoundary>
       )}
       {/*
        * UX-279: top-level BugReportDialog driven by `BUG_REPORT_EVENT`.
@@ -537,30 +561,34 @@ function App() {
        * truthy the prefill is already in place.
        */}
       {bugReportOpen && (
-        <Suspense fallback={null}>
-          <BugReportDialog
-            open={bugReportOpen}
-            onOpenChange={(open) => {
-              setBugReportOpen(open)
-              if (!open) setBugReportPrefill(null)
-            }}
-            {...(bugReportPrefill != null
-              ? {
-                  initialTitle: bugReportPrefill.message,
-                  initialDescription: bugReportPrefill.stack ?? '',
-                }
-              : {})}
-          />
-        </Suspense>
+        <FeatureErrorBoundary name="Bug report">
+          <Suspense fallback={null}>
+            <BugReportDialog
+              open={bugReportOpen}
+              onOpenChange={(open) => {
+                setBugReportOpen(open)
+                if (!open) setBugReportPrefill(null)
+              }}
+              {...(bugReportPrefill != null
+                ? {
+                    initialTitle: bugReportPrefill.message,
+                    initialDescription: bugReportPrefill.stack ?? '',
+                  }
+                : {})}
+            />
+          </Suspense>
+        </FeatureErrorBoundary>
       )}
       {/* FEAT-12: Quick-capture dialog — driven by the global hotkey
           registered in App's startup effect. Gated on `quickCaptureOpen`
           + lazy-loaded so the editor surface stays off the critical path
           until the chord fires. */}
       {quickCaptureOpen && (
-        <Suspense fallback={null}>
-          <QuickCaptureDialog open={quickCaptureOpen} onOpenChange={setQuickCaptureOpen} />
-        </Suspense>
+        <FeatureErrorBoundary name="Quick capture">
+          <Suspense fallback={null}>
+            <QuickCaptureDialog open={quickCaptureOpen} onOpenChange={setQuickCaptureOpen} />
+          </Suspense>
+        </FeatureErrorBoundary>
       )}
       {/* BUG-2: shell-level dialog opened by the sidebar Sync button when
           there are zero paired peers. Replaces the silent
@@ -568,22 +596,28 @@ function App() {
           links the user to the pairing flow. Lazy + Suspense so the
           alert-dialog tree only ships once the no-peers branch fires. */}
       {showNoPeersDialog && (
-        <Suspense fallback={null}>
-          <NoPeersDialog
-            open={showNoPeersDialog}
-            onOpenChange={setShowNoPeersDialog}
-            onOpenSettings={handleOpenSyncSettings}
-          />
-        </Suspense>
+        <FeatureErrorBoundary name="Sync setup">
+          <Suspense fallback={null}>
+            <NoPeersDialog
+              open={showNoPeersDialog}
+              onOpenChange={setShowNoPeersDialog}
+              onOpenSettings={handleOpenSyncSettings}
+            />
+          </Suspense>
+        </FeatureErrorBoundary>
       )}
       {/* #754 — sonner defaults `theme` to 'light', so without the prop
-          `richColors` toasts rendered the light palette in dark themes. */}
-      <Toaster
-        position={isMobile ? 'top-center' : 'bottom-right'}
-        theme={isDark ? 'dark' : 'light'}
-        richColors
-        closeButton
-      />
+          `richColors` toasts rendered the light palette in dark themes.
+          #733 — `isDark` comes from the now-module-level theme store, so
+          a Settings theme change reaches the toaster without a reload. */}
+      <FeatureErrorBoundary name="Notifications">
+        <Toaster
+          position={isMobile ? 'top-center' : 'bottom-right'}
+          theme={isDark ? 'dark' : 'light'}
+          richColors
+          closeButton
+        />
+      </FeatureErrorBoundary>
     </BootGate>
   )
 }

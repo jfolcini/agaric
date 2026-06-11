@@ -12,7 +12,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useTheme } from '../useTheme'
+import { __resetThemeStoreForTests, useTheme } from '../useTheme'
 
 // Mock matchMedia
 let mockDarkQuery = false
@@ -32,6 +32,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockDarkQuery = false
   localStorage.clear()
+  __resetThemeStoreForTests()
   for (const cls of ALL_THEME_CLASSES) document.documentElement.classList.remove(cls)
 
   Object.defineProperty(window, 'matchMedia', {
@@ -354,6 +355,105 @@ describe('useTheme', () => {
       expect(result.current.isDark).toBe(true)
       expect(document.documentElement.classList.contains('theme-solarized-light')).toBe(false)
       expect(document.documentElement.classList.contains('dark')).toBe(true)
+    })
+  })
+
+  // ── #733: two mounted instances share ONE preference store ─────────
+  // The hook is mounted twice in the real app (App.tsx shell +
+  // Settings → AppearanceTab). With per-instance useState, a Settings
+  // choice never reached the shell instance, whose stale preference then
+  // clobbered the user's pick on the next OS scheme flip or toggle.
+
+  describe('cross-instance sync (#733)', () => {
+    /** Fire every registered prefers-color-scheme change listener. */
+    function flipSystemDark(dark: boolean) {
+      mockDarkQuery = dark
+      act(() => {
+        for (const call of mockAddEventListener.mock.calls) {
+          if (call[0] === 'change') (call[1] as () => void)()
+        }
+      })
+    }
+
+    it('setTheme in one instance updates the other instance', () => {
+      const shell = renderHook(() => useTheme())
+      const settings = renderHook(() => useTheme())
+
+      act(() => settings.result.current.setTheme('dracula'))
+
+      expect(settings.result.current.theme).toBe('dracula')
+      expect(shell.result.current.theme).toBe('dracula')
+      expect(shell.result.current.isDark).toBe(true)
+    })
+
+    it('OS scheme flip does NOT clobber an explicit Settings choice', () => {
+      // Shell instance mounts first (App.tsx), Settings second.
+      const shell = renderHook(() => useTheme())
+      const settings = renderHook(() => useTheme())
+
+      // User picks Dracula in Settings.
+      act(() => settings.result.current.setTheme('dracula'))
+      expect(document.documentElement.classList.contains('theme-dracula')).toBe(true)
+
+      // OS flips to dark — the shell instance's effect re-runs. Before
+      // #733 it still held the boot preference ('auto') and re-applied
+      // plain `.dark`, wiping the Dracula classes.
+      flipSystemDark(true)
+
+      expect(shell.result.current.theme).toBe('dracula')
+      expect(document.documentElement.classList.contains('theme-dracula')).toBe(true)
+      expect(document.documentElement.classList.contains('dark')).toBe(true)
+      expect(localStorage.getItem('theme-preference')).toBe('dracula')
+
+      // And flipping back to light keeps the explicit choice too.
+      flipSystemDark(false)
+      expect(shell.result.current.theme).toBe('dracula')
+      expect(document.documentElement.classList.contains('theme-dracula')).toBe(true)
+    })
+
+    it('sidebar toggle cycles from the Settings choice, not a stale value', () => {
+      mockDarkQuery = false
+      const shell = renderHook(() => useTheme())
+      const settings = renderHook(() => useTheme())
+
+      act(() => settings.result.current.setTheme('dracula'))
+
+      // Toggling via the SHELL instance must start from 'dracula' (dark):
+      // first differing-isDark classic candidate with system=light is
+      // 'auto' (light). Pre-#733 the shell cycled from its stale 'auto'
+      // and persisted 'dark' over the user's Dracula pick.
+      act(() => shell.result.current.toggleTheme())
+
+      expect(shell.result.current.theme).toBe('auto')
+      expect(settings.result.current.theme).toBe('auto')
+      expect(localStorage.getItem('theme-preference')).toBe('auto')
+      expect(document.documentElement.classList.contains('theme-dracula')).toBe(false)
+    })
+
+    it('an instance mounted AFTER a change reads the shared current value', () => {
+      const shell = renderHook(() => useTheme())
+      act(() => shell.result.current.setTheme('solarized-dark'))
+
+      const late = renderHook(() => useTheme())
+      expect(late.result.current.theme).toBe('solarized-dark')
+      expect(late.result.current.isDark).toBe(true)
+    })
+
+    it('keeps instances in sync even when localStorage writes fail', () => {
+      const shell = renderHook(() => useTheme())
+      const settings = renderHook(() => useTheme())
+
+      const original = Storage.prototype.setItem
+      Storage.prototype.setItem = vi.fn(() => {
+        throw new Error('quota exceeded')
+      })
+      try {
+        act(() => settings.result.current.setTheme('one-dark-pro'))
+        expect(shell.result.current.theme).toBe('one-dark-pro')
+        expect(document.documentElement.classList.contains('theme-one-dark-pro')).toBe(true)
+      } finally {
+        Storage.prototype.setItem = original
+      }
     })
   })
 })
