@@ -94,6 +94,19 @@ export interface PageBlockState {
   moveToParent: (blockId: string, newParentId: string | null, newIndex: number) => Promise<void>
 
   /**
+   * #914 — multi-select drag. Move a set of blocks (`ids`, in document order)
+   * under `newParentId`, landing contiguously starting at the 0-based sibling
+   * slot `newIndex`, preserving their relative order. Structural (it issues one
+   * `move_block` IPC per block and then reloads the tree), atomic from the
+   * user's view: a single drag gesture relocates the whole selection.
+   *
+   * Callers pass the SELECTION ROOTS only (see `computeSelectionRoots`) — a
+   * block already nested inside another moved block must NOT be listed; it
+   * travels inside its ancestor's subtree.
+   */
+  moveBlocks: (ids: string[], newParentId: string | null, newIndex: number) => Promise<void>
+
+  /**
    * Indent: make block a child of its previous sibling (same depth).
    * Resolves `true` when the move committed, `false` on a no-op or a caught
    * backend error (which also toasts) — so callers can announce accurately.
@@ -781,6 +794,46 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           err,
         )
         notify.error(i18n.t('error.moveBlockFailed'))
+      }
+    },
+
+    moveBlocks: async (ids: string[], newParentId: string | null, newIndex: number) => {
+      const { rootParentId } = get()
+      if (ids.length === 0) return
+
+      // #914 — order the requested ids by their current document position so the
+      // moved run preserves relative order at the destination. Ids absent from
+      // the current tree (vanished mid-gesture) are dropped — there is nothing
+      // to move and the backend would reject them.
+      const order = new Map(get().blocks.map((b, i) => [b.id, i] as const))
+      const ordered = ids
+        .filter((id) => order.has(id))
+        .sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0))
+      if (ordered.length === 0) return
+
+      try {
+        // Issue one move per block, landing them at consecutive slots
+        // `newIndex, newIndex + 1, …` under the same parent. The backend's
+        // `move_block` slot excludes the block being moved, so once block[k] is
+        // parked at slot `newIndex + k`, moving block[k+1] to slot
+        // `newIndex + k + 1` drops it immediately after — yielding a contiguous,
+        // order-preserving run. Sequential (not parallel) so each move reads the
+        // state the previous one committed (mirrors the #774 mover serialization
+        // rationale). #730 — each call goes through the shared pool_busy retry.
+        for (let k = 0; k < ordered.length; k++) {
+          const id = ordered[k] as string
+          await retryOnPoolBusy(() => moveBlock(id, newParentId, newIndex + k))
+        }
+        // Structural change across N blocks — reload the full tree to get the
+        // authoritative flattened order (mirrors `moveToParent`).
+        await get().load()
+        notifyUndoNewAction(rootParentId)
+      } catch (err) {
+        logger.error('page-blocks', 'Failed to move blocks', { ids, newParentId, newIndex }, err)
+        notify.error(i18n.t('error.moveBlockFailed'))
+        // Reconcile FE with whatever the backend committed before the failure
+        // (a partial multi-move leaves the optimistic-free tree stale).
+        await get().load()
       }
     },
 

@@ -114,6 +114,57 @@ export function getDragDescendants(items: FlatBlock[], activeId: string): Set<st
   return descendants
 }
 
+// ── Selection roots (multi-select drag, #914) ────────────────────────────
+
+/**
+ * Given the flat tree and a set of selected block ids, return the ordered list
+ * of selection "roots" — selected blocks that are NOT a descendant of any
+ * OTHER selected block.
+ *
+ * Multi-select drag (#914) moves the whole selection as one gesture. A selected
+ * block that already lives inside another selected block's subtree must NOT move
+ * independently — it travels inside its ancestor's subtree. Computing the
+ * minimal set of roots (and dropping nested selected descendants) keeps the move
+ * atomic and avoids double-moving / orphaning a block.
+ *
+ * Roots are returned in **document order** (their order in the flat `items`
+ * list), so callers can place them contiguously at the destination while
+ * preserving their relative order.
+ *
+ * Implementation: a selected block at flat index `i` (depth `d`) is a root
+ * unless some selected block appears earlier in the list as an ancestor — i.e.
+ * a selected block at a shallower depth with no intervening block at depth `<= d`
+ * that is NOT that selected ancestor. We detect "is a descendant of a selected
+ * block" by walking the DFS-flattened list: track the most recent selected
+ * block at each depth; a selected block is nested iff any strictly-shallower
+ * depth on the current ancestor chain is itself selected. Because the list is a
+ * DFS flatten, the ancestor chain of the item at index `i` is exactly the
+ * trailing stack of items whose depth strictly decreases as we walk backwards.
+ */
+export function computeSelectionRoots(items: FlatBlock[], selectedIds: Iterable<string>): string[] {
+  const selected = selectedIds instanceof Set ? selectedIds : new Set(selectedIds)
+  if (selected.size === 0) return []
+
+  const roots: string[] = []
+  // `ancestorStack[d]` holds the id of the block currently open at depth `d`
+  // as we DFS-walk the flat list. For the item at index `i`, its ancestors are
+  // exactly `ancestorStack[0 .. depth-1]`.
+  const ancestorStack: string[] = []
+
+  for (const item of items) {
+    // Pop the stack back to this item's depth, then this item owns depth.
+    ancestorStack.length = item.depth
+    if (selected.has(item.id)) {
+      // A root iff none of its ancestors (shallower open blocks) is selected.
+      const nested = ancestorStack.some((ancestorId) => selected.has(ancestorId))
+      if (!nested) roots.push(item.id)
+    }
+    ancestorStack[item.depth] = item.id
+  }
+
+  return roots
+}
+
 // ── Projection ───────────────────────────────────────────────────────────
 
 export interface Projection {

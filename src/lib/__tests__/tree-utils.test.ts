@@ -18,6 +18,7 @@ import { logger } from '../logger'
 import {
   buildFlatTree,
   computeDropIndex,
+  computeSelectionRoots,
   DEAD_ZONE_PX,
   type FlatBlock,
   getDragDescendants,
@@ -567,5 +568,75 @@ describe('getProjection sentinel', () => {
     // activeItem not found → fallback
     expect(result.depth).toBe(0)
     expect(result.parentId).toBeNull()
+  })
+})
+
+// ── computeSelectionRoots (#914) ──────────────────────────────────────────
+
+describe('computeSelectionRoots', () => {
+  it('returns empty array for an empty selection', () => {
+    const items = [mkFlat('A', null, 0, 0), mkFlat('B', null, 1, 0)]
+    expect(computeSelectionRoots(items, [])).toEqual([])
+    expect(computeSelectionRoots(items, new Set())).toEqual([])
+  })
+
+  it('returns all selected ids when none nest (flat siblings)', () => {
+    const items = [mkFlat('A', null, 0, 0), mkFlat('B', null, 1, 0), mkFlat('C', null, 2, 0)]
+    expect(computeSelectionRoots(items, ['A', 'B', 'C'])).toEqual(['A', 'B', 'C'])
+  })
+
+  it('preserves DOCUMENT order regardless of the input id order', () => {
+    const items = [mkFlat('A', null, 0, 0), mkFlat('B', null, 1, 0), mkFlat('C', null, 2, 0)]
+    // Input is shuffled; output follows the flat list order.
+    expect(computeSelectionRoots(items, ['C', 'A', 'B'])).toEqual(['A', 'B', 'C'])
+  })
+
+  it('drops a selected block that is a descendant of another selected block', () => {
+    // A
+    //  └─ A1 (selected, nested under selected A → NOT a root)
+    // B  (selected, root)
+    const items = [mkFlat('A', null, 0, 0), mkFlat('A1', 'A', 0, 1), mkFlat('B', null, 1, 0)]
+    expect(computeSelectionRoots(items, ['A', 'A1', 'B'])).toEqual(['A', 'B'])
+  })
+
+  it('keeps a selected child whose parent is NOT selected', () => {
+    // A (unselected)
+    //  └─ A1 (selected → root, since parent A is not selected)
+    // B (selected → root)
+    const items = [mkFlat('A', null, 0, 0), mkFlat('A1', 'A', 0, 1), mkFlat('B', null, 1, 0)]
+    expect(computeSelectionRoots(items, ['A1', 'B'])).toEqual(['A1', 'B'])
+  })
+
+  it('drops descendants at multiple depths under one selected ancestor', () => {
+    // A (selected)
+    //  └─ A1 (selected, depth 1 → dropped)
+    //      └─ A2 (selected, depth 2 → dropped)
+    const items = [mkFlat('A', null, 0, 0), mkFlat('A1', 'A', 0, 1), mkFlat('A2', 'A1', 0, 2)]
+    expect(computeSelectionRoots(items, ['A', 'A1', 'A2'])).toEqual(['A'])
+  })
+
+  it('treats a deep selected block as a root when only an unselected ancestor sits above it', () => {
+    // A (unselected)
+    //  └─ A1 (unselected)
+    //      └─ A2 (selected → root)
+    const items = [mkFlat('A', null, 0, 0), mkFlat('A1', 'A', 0, 1), mkFlat('A2', 'A1', 0, 2)]
+    expect(computeSelectionRoots(items, ['A2'])).toEqual(['A2'])
+  })
+
+  it('handles two independent selected subtrees, keeping only their roots', () => {
+    // A (selected) ─ A1 (selected → dropped)
+    // B (unselected) ─ B1 (selected → root)
+    const items = [
+      mkFlat('A', null, 0, 0),
+      mkFlat('A1', 'A', 0, 1),
+      mkFlat('B', null, 1, 0),
+      mkFlat('B1', 'B', 0, 1),
+    ]
+    expect(computeSelectionRoots(items, ['A', 'A1', 'B1'])).toEqual(['A', 'B1'])
+  })
+
+  it('ignores selected ids absent from the tree', () => {
+    const items = [mkFlat('A', null, 0, 0)]
+    expect(computeSelectionRoots(items, ['A', 'GHOST'])).toEqual(['A'])
   })
 })

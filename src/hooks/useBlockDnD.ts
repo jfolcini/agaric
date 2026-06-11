@@ -26,6 +26,7 @@ import { logger } from '@/lib/logger'
 
 import {
   computeDropIndex,
+  computeSelectionRoots,
   type FlatBlock,
   getDragDescendants,
   getProjection,
@@ -46,10 +47,23 @@ interface UseBlockDnDParams {
    */
   rootParentId: string | null
   rovingEditor: { activeBlockId: string | null }
+  /**
+   * #914 — global multi-selection. When the dragged block is one of these and
+   * the selection has >1 root, the drag moves the WHOLE selection (see
+   * `handleDragEnd`). Optional/omittable: when absent or single, drag falls back
+   * to the single-block behaviour.
+   */
+  selectedBlockIds?: string[]
   handleFlush: () => string | null
   setFocused: (id: string | null) => void
   reorder: (blockId: string, newIndex: number) => Promise<void>
   moveToParent: (blockId: string, newParentId: string | null, newPosition: number) => Promise<void>
+  /**
+   * #914 — move a contiguous set of selection-root blocks under a new parent at
+   * a 0-based sibling slot. Required for multi-select drag; optional so call
+   * sites that never multi-select can omit it.
+   */
+  moveBlocks?: (ids: string[], newParentId: string | null, newIndex: number) => Promise<void>
   scrollContainerRef?: RefObject<HTMLElement | null>
 }
 
@@ -58,6 +72,16 @@ export interface UseBlockDnDReturn {
   overId: string | null
   projected: Projection | null
   visibleItems: FlatBlock[]
+  /**
+   * #914 — whether the active drag is moving the whole multi-selection (the
+   * dragged block is one of >1 selection roots) rather than a single block.
+   */
+  isMultiDrag: boolean
+  /**
+   * #914 — selection roots being moved by the active multi-select drag, in
+   * document order. Empty unless `isMultiDrag` is true.
+   */
+  dragRoots: string[]
   sensors: ReturnType<typeof useSensors>
   handleDragStart: (event: DragStartEvent) => void
   handleDragMove: (event: DragMoveEvent) => void
@@ -71,10 +95,12 @@ export function useBlockDnD({
   collapsedVisible,
   rootParentId,
   rovingEditor,
+  selectedBlockIds,
   handleFlush,
   setFocused,
   reorder,
   moveToParent,
+  moveBlocks,
   scrollContainerRef,
 }: UseBlockDnDParams): UseBlockDnDReturn {
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -105,6 +131,24 @@ export function useBlockDnD({
     if (!activeId || !overId) return null
     return getProjection(visibleItems, activeId, overId, offsetLeft, INDENT_WIDTH, rootParentId)
   }, [activeId, overId, offsetLeft, visibleItems, rootParentId])
+
+  // #914 — selection roots for the active drag. When the dragged block is part
+  // of a multi-selection, the whole selection moves as one gesture. We collapse
+  // the selection to its top-level "roots" (selected blocks not already nested
+  // inside another selected block) so a nested selected child travels inside its
+  // ancestor's subtree instead of being moved independently. Computed against
+  // the full `blocks` (true tree) so collapsed/zoomed views don't drop roots.
+  // A drag is a multi-drag only when the dragged block is itself a root AND
+  // there is more than one root — otherwise it stays single-block behaviour.
+  const dragRoots = useMemo(() => {
+    if (!activeId || !selectedBlockIds || selectedBlockIds.length <= 1) return []
+    if (!selectedBlockIds.includes(activeId)) return []
+    const roots = computeSelectionRoots(blocks, selectedBlockIds)
+    if (roots.length <= 1 || !roots.includes(activeId)) return []
+    return roots
+  }, [activeId, selectedBlockIds, blocks])
+
+  const isMultiDrag = dragRoots.length > 1
 
   // ── DnD sensors ────────────────────────────────────────────────────
   // PointerSensor with 8px activation distance so clicks still work.
@@ -170,6 +214,25 @@ export function useBlockDnD({
             )
           })
 
+      // #914 — multi-select drag. When the dragged block is one of >1 selection
+      // roots, relocate the WHOLE selection (contiguous, order-preserving) to
+      // the projected slot instead of moving just the active block + its own
+      // subtree. Requires a projection (drop position) and the `moveBlocks`
+      // action; otherwise fall through to single-block behaviour.
+      if (isMultiDrag && projected && activeBlock && moveBlocks) {
+        // The drop slot is computed for the active block as if it alone moved;
+        // the other roots land contiguously after it (moveBlocks fans out the
+        // consecutive slots). #400: 0-based sibling slot under projected parent.
+        const newIndex = computeDropIndex(
+          visibleItems,
+          projected.parentId,
+          over.id as string,
+          blockId,
+        )
+        restoreFocusOnSuccess('moveBlocks', moveBlocks(dragRoots, projected.parentId, newIndex))
+        return
+      }
+
       if (projected && activeBlock) {
         const currentParentId = activeBlock.parent_id ?? rootParentId
         const parentChanged = projected.parentId !== currentParentId
@@ -207,7 +270,18 @@ export function useBlockDnD({
         restoreFocusOnSuccess('reorder', reorder(blockId, newIndex))
       }
     },
-    [blocks, rootParentId, projected, visibleItems, moveToParent, reorder, setFocused],
+    [
+      blocks,
+      rootParentId,
+      projected,
+      visibleItems,
+      moveToParent,
+      reorder,
+      setFocused,
+      isMultiDrag,
+      dragRoots,
+      moveBlocks,
+    ],
   )
 
   const handleDragCancel = useCallback(() => {
@@ -221,6 +295,8 @@ export function useBlockDnD({
     overId,
     projected,
     visibleItems,
+    isMultiDrag,
+    dragRoots,
     sensors,
     handleDragStart,
     handleDragMove,

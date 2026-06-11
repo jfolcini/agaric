@@ -35,6 +35,7 @@ vi.mock('../../lib/tree-utils', () => ({
   getDragDescendants: vi.fn(() => new Set<string>()),
   getProjection: vi.fn(() => null),
   computeDropIndex: vi.fn(() => 0),
+  computeSelectionRoots: vi.fn(() => []),
   SENTINEL_ID: '__drop-after-last__',
 }))
 
@@ -59,13 +60,19 @@ vi.mock('@/lib/logger', () => ({
 
 import { makeBlock } from '../../__tests__/fixtures'
 import type { Projection } from '../../lib/tree-utils'
-import { computeDropIndex, getDragDescendants, getProjection } from '../../lib/tree-utils'
+import {
+  computeDropIndex,
+  computeSelectionRoots,
+  getDragDescendants,
+  getProjection,
+} from '../../lib/tree-utils'
 import { useBlockDnD } from '../useBlockDnD'
 import { useIsMobile } from '../useIsMobile'
 
 const mockedGetDragDescendants = vi.mocked(getDragDescendants)
 const mockedGetProjection = vi.mocked(getProjection)
 const mockedComputeDropIndex = vi.mocked(computeDropIndex)
+const mockedComputeSelectionRoots = vi.mocked(computeSelectionRoots)
 const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -88,6 +95,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockDnD>[0]
     setFocused: vi.fn(),
     reorder: vi.fn(async () => {}),
     moveToParent: vi.fn(async () => {}),
+    moveBlocks: vi.fn(async () => {}),
     ...overrides,
   }
 }
@@ -122,6 +130,7 @@ beforeEach(() => {
   mockedGetDragDescendants.mockReturnValue(new Set<string>())
   mockedGetProjection.mockReturnValue(null as unknown as Projection)
   mockedComputeDropIndex.mockReturnValue(0)
+  mockedComputeSelectionRoots.mockReturnValue([])
 })
 
 describe('useBlockDnD', () => {
@@ -1104,6 +1113,192 @@ describe('useBlockDnD', () => {
       expect(params.moveToParent).not.toHaveBeenCalled()
       expect(params.reorder).not.toHaveBeenCalled()
       expect(params.setFocused).not.toHaveBeenCalledWith('A')
+    })
+  })
+
+  // ── 15. Multi-select drag (#914) ─────────────────────────────────────
+  describe('handleDragEnd (multi-select drag)', () => {
+    const threeBlocks = [
+      makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+      makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+      makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
+      makeBlock({ id: 'D', depth: 0, parent_id: null, position: 3, content: 'Block D' }),
+    ]
+
+    it('moves the whole selection via moveBlocks when the dragged block is one of >1 roots', () => {
+      const params = makeDefaultParams({
+        blocks: threeBlocks,
+        collapsedVisible: threeBlocks,
+        selectedBlockIds: ['A', 'B'],
+      })
+
+      // Roots = [A, B]; dragging A.
+      mockedComputeSelectionRoots.mockReturnValue(['A', 'B'])
+      const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
+      mockedGetProjection.mockReturnValue(projection)
+      mockedComputeDropIndex.mockReturnValue(2)
+
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      expect(result.current.isMultiDrag).toBe(false) // no active drag yet
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('A') as never)
+      })
+
+      expect(result.current.isMultiDrag).toBe(true)
+      expect(result.current.dragRoots).toEqual(['A', 'B'])
+
+      act(() => {
+        result.current.handleDragEnd(makeDragEndEvent('A', 'D') as never)
+      })
+
+      // The whole selection (roots) relocates; single-block paths untouched.
+      expect(params.moveBlocks).toHaveBeenCalledWith(['A', 'B'], null, 2)
+      expect(params.reorder).not.toHaveBeenCalled()
+      expect(params.moveToParent).not.toHaveBeenCalled()
+    })
+
+    it('falls back to single-block drag when the dragged block is NOT in the selection', () => {
+      const params = makeDefaultParams({
+        blocks: threeBlocks,
+        collapsedVisible: threeBlocks,
+        selectedBlockIds: ['A', 'B'],
+      })
+
+      // Selection is A,B but the user drags C → single-block behaviour.
+      mockedComputeSelectionRoots.mockReturnValue(['A', 'B'])
+      const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
+      mockedGetProjection.mockReturnValue(projection)
+      mockedComputeDropIndex.mockReturnValue(1)
+
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('C') as never)
+      })
+
+      expect(result.current.isMultiDrag).toBe(false)
+
+      act(() => {
+        result.current.handleDragEnd(makeDragEndEvent('C', 'A') as never)
+      })
+
+      expect(params.moveBlocks).not.toHaveBeenCalled()
+      // Same-parent reorder path for the single block.
+      expect(params.reorder).toHaveBeenCalledWith('C', 1)
+    })
+
+    it('falls back to single-block drag when only one block is selected', () => {
+      const params = makeDefaultParams({
+        blocks: threeBlocks,
+        collapsedVisible: threeBlocks,
+        selectedBlockIds: ['A'],
+      })
+
+      const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
+      mockedGetProjection.mockReturnValue(projection)
+      mockedComputeDropIndex.mockReturnValue(2)
+
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('A') as never)
+      })
+
+      expect(result.current.isMultiDrag).toBe(false)
+
+      act(() => {
+        result.current.handleDragEnd(makeDragEndEvent('A', 'C') as never)
+      })
+
+      expect(params.moveBlocks).not.toHaveBeenCalled()
+      expect(params.reorder).toHaveBeenCalledWith('A', 2)
+    })
+
+    it('falls back to single-block drag when the selection collapses to a single root', () => {
+      // A selected with its selected child A1 → only one root (A).
+      const nested = [
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0 }),
+        makeBlock({ id: 'A1', depth: 1, parent_id: 'A', position: 0 }),
+      ]
+      const params = makeDefaultParams({
+        blocks: nested,
+        collapsedVisible: nested,
+        selectedBlockIds: ['A', 'A1'],
+      })
+
+      mockedComputeSelectionRoots.mockReturnValue(['A'])
+      const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
+      mockedGetProjection.mockReturnValue(projection)
+      mockedComputeDropIndex.mockReturnValue(0)
+
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('A') as never)
+      })
+
+      expect(result.current.isMultiDrag).toBe(false)
+
+      act(() => {
+        result.current.handleDragEnd(makeDragEndEvent('A', 'A1') as never)
+      })
+
+      expect(params.moveBlocks).not.toHaveBeenCalled()
+    })
+
+    it('passes the projected parent to moveBlocks for a reparenting multi-drag', () => {
+      const params = makeDefaultParams({
+        blocks: threeBlocks,
+        collapsedVisible: threeBlocks,
+        selectedBlockIds: ['B', 'C'],
+      })
+
+      mockedComputeSelectionRoots.mockReturnValue(['B', 'C'])
+      // Projection nests under A.
+      const projection: Projection = { depth: 1, parentId: 'A', maxDepth: 1, minDepth: 0 }
+      mockedGetProjection.mockReturnValue(projection)
+      mockedComputeDropIndex.mockReturnValue(0)
+
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+
+      act(() => {
+        result.current.handleDragEnd(makeDragEndEvent('B', 'A') as never)
+      })
+
+      expect(params.moveBlocks).toHaveBeenCalledWith(['B', 'C'], 'A', 0)
+    })
+
+    it('restores focus on the dragged block after a successful multi-drag', async () => {
+      const params = makeDefaultParams({
+        blocks: threeBlocks,
+        collapsedVisible: threeBlocks,
+        selectedBlockIds: ['A', 'B'],
+      })
+
+      mockedComputeSelectionRoots.mockReturnValue(['A', 'B'])
+      const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
+      mockedGetProjection.mockReturnValue(projection)
+      mockedComputeDropIndex.mockReturnValue(2)
+
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      await act(async () => {
+        result.current.handleDragStart(makeDragStartEvent('A') as never)
+      })
+
+      await act(async () => {
+        result.current.handleDragEnd(makeDragEndEvent('A', 'D') as never)
+        await Promise.resolve()
+      })
+
+      expect(params.moveBlocks).toHaveBeenCalledWith(['A', 'B'], null, 2)
+      expect(params.setFocused).toHaveBeenCalledWith('A')
     })
   })
 })
