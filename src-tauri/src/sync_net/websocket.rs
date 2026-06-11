@@ -391,8 +391,17 @@ impl SyncServer {
                                             })
                                     };
 
+                                    // #611: accept with the shared `ws_config()` so
+                                    // the transport-level message / frame caps match
+                                    // `SyncConnection::MAX_MSG_SIZE` instead of
+                                    // tungstenite's 64 MiB default.
                                     let ws_stream =
-                                        match tokio_tungstenite::accept_async(tls_stream).await {
+                                        match tokio_tungstenite::accept_async_with_config(
+                                            tls_stream,
+                                            Some(super::connection::ws_config()),
+                                        )
+                                        .await
+                                        {
                                             Ok(s) => s,
                                             Err(e) => {
                                                 tracing::debug!(error = %e, "WebSocket upgrade failed");

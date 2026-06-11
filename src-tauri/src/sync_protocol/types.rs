@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::op_log::OpRecord;
-use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
+use crate::sync_protocol::loro_sync_types::{LoroSyncChunkedHeader, LoroSyncMessage};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -169,6 +169,28 @@ pub enum SyncMessage {
     /// `SyncComplete` once it processes the last one. The sole
     /// streaming-phase payload.
     LoroSync { msg: LoroSyncMessage, is_last: bool },
+    /// Transport-level escape hatch for large `LoroSync` payloads
+    /// (#611). Announces that the Loro bytes follow out-of-band as
+    /// exactly `header.size_bytes()` of chunked binary frames, because
+    /// the inline JSON number-array encoding (worst case 4 chars/byte)
+    /// would blow the 10 MB per-message receive cap.
+    ///
+    /// **Never reaches the protocol orchestrator.** The wire layer
+    /// (`sync_daemon::wire`) splits an over-threshold `LoroSync` into
+    /// this header + binary frames on send, and reassembles the frames
+    /// back into a plain [`SyncMessage::LoroSync`] on receive — the
+    /// orchestrator state machine only ever sees `LoroSync`. A
+    /// `LoroSyncChunked` arriving at `handle_message` indicates a
+    /// transport-dispatch regression and fails the session loudly
+    /// (same contract as `SnapshotOffer`).
+    ///
+    /// Position in the message sequence: identical to `LoroSync`
+    /// (step 2 above) — it *is* a `LoroSync`, merely re-encoded for
+    /// transport.
+    LoroSyncChunked {
+        header: LoroSyncChunkedHeader,
+        is_last: bool,
+    },
     /// Responder side-exit: our op log was compacted past the
     /// initiator's heads, so a delta replay is impossible. Triggers
     /// the snapshot sub-flow in [`crate::sync_daemon::snapshot_transfer`].

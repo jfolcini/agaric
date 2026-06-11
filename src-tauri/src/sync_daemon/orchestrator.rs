@@ -66,6 +66,7 @@ use super::discovery::{
 };
 use super::server::handle_incoming_sync;
 use super::snapshot_transfer;
+use super::wire;
 
 // ---------------------------------------------------------------------------
 // daemon_loop — the core async select! loop
@@ -814,8 +815,12 @@ pub(crate) async fn run_sync_session(
     event_sink: &Arc<dyn SyncEventSink>,
 ) -> Result<(), AppError> {
     // Initiator sends first message
+    //
+    // #611: all session-loop sends/recvs go through `wire::{send,recv}_sync_message`
+    // so over-threshold LoroSync payloads ride the chunked binary path instead of
+    // blowing the 10 MB JSON text-frame cap.
     let first_msg = orch.start().await?;
-    conn.send_json(&first_msg).await?;
+    wire::send_sync_message(conn, &first_msg).await?;
 
     // Exchange messages until terminal state
     while !orch.is_terminal() {
@@ -824,7 +829,7 @@ pub(crate) async fn run_sync_session(
             return Err(AppError::InvalidOperation("sync cancelled by user".into()));
         }
 
-        let incoming: SyncMessage = conn.recv_json().await?;
+        let incoming: SyncMessage = wire::recv_sync_message(conn).await?;
         let response = tokio::time::timeout(HANDSHAKE_TIMEOUT, orch.handle_message(incoming))
             .await
             .map_err(|_| {
@@ -835,10 +840,10 @@ pub(crate) async fn run_sync_session(
             })??;
         match response {
             Some(response) => {
-                conn.send_json(&response).await?;
+                wire::send_sync_message(conn, &response).await?;
                 // Drain any pending op batches (B-3)
                 while let Some(batch) = orch.next_message() {
-                    conn.send_json(&batch).await?;
+                    wire::send_sync_message(conn, &batch).await?;
                 }
             }
             None => {

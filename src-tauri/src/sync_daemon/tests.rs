@@ -4065,6 +4065,202 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
 }
 
 // ======================================================================
+// #611 — large Loro payloads ride the chunked binary path end-to-end
+// ======================================================================
+
+/// #611 regression: a per-space Loro snapshot whose JSON number-array
+/// encoding exceeds the 10 MB text-frame cap must still sync. Before
+/// the chunked wire path, `head_exchange_outgoing_loro` shipped the
+/// full snapshot inline; once a space reached ~2.8 MB of Loro bytes
+/// the responder's `LoroSync` blew the initiator's `recv_json` cap,
+/// every session failed, and the scheduler retried forever.
+///
+/// This test seeds the responder with one block holding ~4 MB of
+/// incompressible content (asserting the premise: the exported
+/// snapshot really is over `LORO_INLINE_MAX_BYTES`), drives a full
+/// session through the REAL `handle_incoming_sync` responder over an
+/// in-memory wire (so the production `sync_daemon::wire` chunked send
+/// path runs), pumps the initiator via the same wire helpers
+/// `run_sync_session` uses, and asserts the session completes and the
+/// 4 MB block lands in the initiator's DB byte-for-byte.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
+    use crate::sync_constants::LORO_INLINE_MAX_BYTES;
+    use crate::sync_protocol::{SyncOrchestrator, SyncState, loro_sync};
+
+    const RESP_DEV: &str = "RESP611";
+    const INIT_DEV: &str = "INIT611";
+    const BLOCK: &str = "01HZ611BLKXXXXXXXXXXXXXXXX";
+    let space = crate::space::SpaceId::from_trusted("01HZ611SPACEXXXXXXXXXXXXXX");
+
+    // ~4 MB of LCG-generated printable ASCII — high-entropy enough
+    // that Loro's snapshot encoding cannot compress it back under the
+    // inline threshold (the premise assert below verifies, so a future
+    // Loro compression change fails loudly instead of silently
+    // downgrading this test to the inline path).
+    let big_content: String = {
+        let target = 4_000_000usize;
+        let mut s = String::with_capacity(target);
+        let mut x: u32 = 0x2545_F491;
+        while s.len() < target {
+            x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            s.push(char::from(33 + ((x >> 24) as u8 % 94)));
+        }
+        s
+    };
+
+    // ── Responder: one seeded local edit with the huge content ───────
+    // (Same global-vs-leaked registry split as the #778 test above:
+    // `handle_incoming_sync` reads the process-global Loro state.)
+    let resp_state = crate::loro::shared::install_for_test();
+    let (resp_pool, _resp_dir) = test_pool().await;
+    let resp_mat = Materializer::new(resp_pool.clone());
+    let resp_scheduler = Arc::new(SyncScheduler::new());
+    let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    peer_refs::upsert_peer_ref(&resp_pool, INIT_DEV)
+        .await
+        .unwrap();
+    make_local_edit_602(
+        &resp_pool,
+        &resp_mat,
+        resp_state,
+        RESP_DEV,
+        &space,
+        BLOCK,
+        &big_content,
+        1_736_942_400_000,
+    )
+    .await;
+    // Drain the materializer's background queue (search-index etc. for
+    // the 4 MB block) BEFORE the session: its write transactions are
+    // long at this content size and would contend with the session's
+    // `BEGIN IMMEDIATE` bookkeeping ("database is locked").
+    resp_mat.flush_background().await.unwrap();
+
+    // Premise: the snapshot the responder will ship is over the inline
+    // threshold — i.e. with the pre-#611 wire this session COULD NOT
+    // complete (its JSON number-array form would exceed the 10 MB cap).
+    let outgoing = loro_sync::prepare_outgoing(&resp_state.registry, &space, RESP_DEV, None)
+        .await
+        .expect("prepare_outgoing for premise check");
+    let snapshot_len = match &outgoing {
+        crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot { bytes, .. } => {
+            bytes.len()
+        }
+        other => panic!("peer_vv=None must yield a Snapshot, got {other:?}"),
+    };
+    assert!(
+        snapshot_len > LORO_INLINE_MAX_BYTES,
+        "test premise: the seeded space's snapshot ({snapshot_len} bytes) must exceed \
+         LORO_INLINE_MAX_BYTES ({LORO_INLINE_MAX_BYTES}) so the chunked path is exercised"
+    );
+
+    // ── Initiator: fresh device, its own leaked registry ─────────────
+    let (init_pool, _init_dir) = test_pool().await;
+    let init_mat = Materializer::new(init_pool.clone());
+    let init_state: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    peer_refs::upsert_peer_ref(&init_pool, RESP_DEV)
+        .await
+        .unwrap();
+
+    // ── Wire the two sides together ──────────────────────────────────
+    let (mut server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+    server_conn.set_test_cert(Some(INIT_DEV.to_string()), None);
+
+    let resp_pool_clone = resp_pool.clone();
+    let resp_mat_clone = resp_mat.clone();
+    let server_task = tokio::spawn(handle_incoming_sync(
+        server_conn,
+        resp_pool_clone,
+        RESP_DEV.to_string(),
+        resp_mat_clone,
+        resp_scheduler.clone(),
+        resp_sink.clone(),
+    ));
+
+    // ── Drive the initiator through the SAME wire helpers
+    //    `run_sync_session` uses (#611 reassembly on receive) ─────────
+    let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let init_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(init_sink.clone()));
+    let mut init_orch = SyncOrchestrator::new(init_pool.clone(), INIT_DEV.into(), init_mat.clone())
+        .with_loro_state(init_state)
+        .with_event_sink(init_sink_box)
+        .with_expected_remote_id(RESP_DEV.into());
+
+    let first = init_orch.start().await.expect("initiator start");
+    super::wire::send_sync_message(&mut client_conn, &first)
+        .await
+        .unwrap();
+
+    while !init_orch.is_terminal() {
+        let incoming: SyncMessage = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            super::wire::recv_sync_message(&mut client_conn),
+        )
+        .await
+        .expect("initiator timed out waiting for responder message")
+        .expect("initiator wire recv");
+        if let SyncMessage::Error { message } = &incoming {
+            panic!("responder failed the session: {message}");
+        }
+        if let Some(resp) = init_orch
+            .handle_message(incoming)
+            .await
+            .expect("initiator handle_message")
+        {
+            super::wire::send_sync_message(&mut client_conn, &resp)
+                .await
+                .unwrap();
+            while let Some(m) = init_orch.next_message() {
+                super::wire::send_sync_message(&mut client_conn, &m)
+                    .await
+                    .unwrap();
+            }
+        }
+    }
+
+    assert_eq!(
+        init_orch.session().state,
+        SyncState::Complete,
+        "#611: the initiator must complete a session whose LoroSync \
+         payload exceeds the old inline cap"
+    );
+
+    // Close the client side to end the responder's post-Complete
+    // file-transfer phase (non-fatal by design), then reap it.
+    let _ = client_conn.close().await;
+    let resp_result = tokio::time::timeout(std::time::Duration::from_secs(30), server_task)
+        .await
+        .expect("responder task timed out")
+        .expect("responder task panicked");
+    assert!(
+        resp_result.is_ok(),
+        "responder must complete the oversized-snapshot session, got {resp_result:?}"
+    );
+
+    // ── The 4 MB block landed on the initiator byte-for-byte ─────────
+    let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(BLOCK)
+        .fetch_optional(&init_pool)
+        .await
+        .unwrap();
+    let content = content.expect("#611: the oversized block must reach the initiator's DB");
+    assert_eq!(
+        content.len(),
+        big_content.len(),
+        "synced content length must match the seeded content"
+    );
+    assert_eq!(
+        content, big_content,
+        "synced content must match the seeded content byte-for-byte"
+    );
+
+    resp_mat.shutdown();
+    init_mat.shutdown();
+}
+
+// ======================================================================
 // M-46 — try_sync_with_peer returns bool reflecting cancel observation
 // ======================================================================
 

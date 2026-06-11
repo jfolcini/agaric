@@ -325,6 +325,12 @@ impl SyncOrchestrator {
                 });
                 return Err(AppError::InvalidOperation(msg_str.into()));
             }
+            // LoroSyncChunked must never reach the orchestrator — the
+            // transport layer (`sync_daemon::wire::recv_sync_message`)
+            // reassembles header + binary frames into a plain `LoroSync`
+            // before dispatch (#611). This arm only keeps the match
+            // exhaustive; the dispatch match below rejects it loudly.
+            (_, SyncMessage::LoroSyncChunked { .. }) => {}
             // Snapshot messages accepted in any non-terminal state
             (
                 _,
@@ -646,6 +652,19 @@ impl SyncOrchestrator {
                 "SnapshotOffer must be handled by the sync daemon \
                  snapshot_transfer sub-flow, not by the orchestrator state \
                  machine"
+                    .into(),
+            )),
+
+            // ---- Chunked LoroSync header (#611) ------------------------------
+            // The wire layer reassembles `LoroSyncChunked` + its binary
+            // frames into a plain `LoroSync` before dispatch
+            // (`sync_daemon::wire::recv_sync_message`). One reaching
+            // `handle_message` means a transport-dispatch regression —
+            // fail loudly, same contract as `SnapshotOffer`.
+            SyncMessage::LoroSyncChunked { .. } => Err(AppError::InvalidOperation(
+                "LoroSyncChunked must be reassembled by the sync daemon wire \
+                 layer (sync_daemon::wire::recv_sync_message), not dispatched \
+                 to the orchestrator state machine"
                     .into(),
             )),
             SyncMessage::SnapshotAccept | SyncMessage::SnapshotReject => {
