@@ -158,9 +158,19 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
   return [...matches, ...cacheMatches].slice(0, 20)
 }
 
-/** Populates the resolve cache so page links show titles instead of raw ULIDs. */
-function populatePageResolveCache(matches: PickerItem[]): void {
+/**
+ * Populates the resolve cache so page links show titles instead of raw ULIDs.
+ *
+ * #853 — `batchSet` keys rows by the active space at WRITE time. A stale
+ * in-flight `searchPages` response from the OLD space can resolve after a
+ * space switch and seed old-space rows under the NEW space's keys (silent
+ * cross-space data). Mirror the #732 captured-space guard: the caller passes
+ * the space active at request time, and we drop the seed if the active space
+ * has changed since.
+ */
+function populatePageResolveCache(matches: PickerItem[], requestSpaceId: string | null): void {
   if (matches.length === 0) return
+  if ((useSpaceStore.getState().currentSpaceId ?? null) !== requestSpaceId) return
   useResolveStore
     .getState()
     .batchSet(
@@ -389,6 +399,11 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // Strip trailing ]] so [[text]] resolves to "text", not "text]]"
       const q = query.replace(/\]+$/, '').toLowerCase().trim()
 
+      // #853 — capture the active space at request time so a response that
+      // resolves after a space switch can't seed the resolve cache for the
+      // wrong space (mirrors the #732 captured-space guard).
+      const requestSpaceId = useSpaceStore.getState().currentSpaceId ?? null
+
       // For short/empty queries, use the preloaded pages cache for instant
       // results. For longer queries, use FTS5 server-side search for
       // relevance-ranked results.
@@ -397,7 +412,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
           ? await searchPagesViaCache(q, pagesListRef)
           : await searchPagesViaFts(q, pagesListRef)
 
-      populatePageResolveCache(matches)
+      populatePageResolveCache(matches, requestSpaceId)
       await mergeAliasPrefixMatches(matches, q)
       appendCreatePageOptionIfNeeded(matches, query, q, pagesListRef)
 

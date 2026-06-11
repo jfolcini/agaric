@@ -655,6 +655,28 @@ describe('PageBlockStore', () => {
       expect(store.getState().blocksById.get('A')?.content).toBe('newer typed text')
     })
 
+    it('#824 — a rejected edit does NOT roll back over newer typed text', async () => {
+      store.setState({
+        blocks: [makeBlock({ id: 'A', content: 'old' })],
+      })
+      mockedInvoke.mockImplementationOnce(async () => {
+        // The user keeps typing while edit('A', 'new') is in flight — a newer
+        // optimistic edit lands before this IPC rejects.
+        store.setState({ blocks: [makeBlock({ id: 'A', content: 'newer typed text' })] })
+        throw new Error('edit failed')
+      })
+
+      const ok = await store.getState().edit('A', 'new')
+
+      expect(ok).toBe(false)
+      // Rolling back to 'old' would clobber the newer text the user typed
+      // after this edit was dispatched — the guard must leave it intact.
+      expect(store.getState().blocks[0]?.content).toBe('newer typed text')
+      expect(store.getState().blocksById.get('A')?.content).toBe('newer typed text')
+      // Failure is still surfaced.
+      expect(toast.error).toHaveBeenCalledWith('Failed to save')
+    })
+
     it('rolls back optimistic content and resolves false on backend error', async () => {
       store.setState({
         blocks: [makeBlock({ id: 'A', content: 'old' })],

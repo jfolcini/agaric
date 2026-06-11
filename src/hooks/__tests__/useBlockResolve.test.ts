@@ -1493,6 +1493,89 @@ describe('pagesListRef — space-switch invalidation (#732)', () => {
   })
 })
 
+// ── resolve-store seeding space guard (#853) ────────────────────────────
+//
+// `populatePageResolveCache` seeds the resolve store, which keys rows by the
+// active space at WRITE time (`batchSet` → `activeSpaceId()`). A stale
+// in-flight `searchPages` response from the OLD space could still resolve
+// after a space switch and seed old-space rows under the NEW space's keys —
+// silent cross-space data. The fix captures the active space at request time
+// and drops the seed if the space changed (mirrors the #732 captured-space
+// guard above, but for the resolve store rather than `pagesListRef`).
+
+describe('searchPages — resolve-store space guard (#853)', () => {
+  function ftsPageHit(id: string, content: string) {
+    return {
+      id,
+      block_type: 'page',
+      content,
+      parent_id: null,
+      position: null,
+      deleted_at: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+      page_id: null,
+    }
+  }
+
+  function ftsResponse(items: Array<ReturnType<typeof ftsPageHit>>) {
+    return { items, next_cursor: null, has_more: false, total_count: null }
+  }
+
+  it('does not seed the resolve store for the NEW space with an old-space response', async () => {
+    // Resolve store flushes the old space's entries on switch; emulate the
+    // post-switch empty bucket for SPACE_B.
+    useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+
+    let resolveFetch: (resp: ReturnType<typeof ftsResponse>) => void = () => {}
+    mockedSearchBlocks.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve as typeof resolveFetch
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Start an FTS search (>2 chars) in SPACE_TEST; keep it in flight.
+    let inFlight: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight = result.current.searchPages('alpha')
+    })
+
+    // Switch to SPACE_B while the SPACE_TEST search is still pending.
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    })
+
+    // The OLD space's response lands AFTER the switch.
+    await act(async () => {
+      resolveFetch(ftsResponse([ftsPageHit('PA', 'Alpha (space A page)')]))
+      await inFlight
+    })
+
+    // The resolve store must NOT have seeded PA under SPACE_B's key — doing so
+    // would surface space A's page title while the user is in space B.
+    expect(useResolveStore.getState().cache.has(keyFor('SPACE_B', 'PA'))).toBe(false)
+  })
+
+  it('still seeds the resolve store when the space is unchanged', async () => {
+    useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+    mockedSearchBlocks.mockResolvedValueOnce(ftsResponse([ftsPageHit('PA', 'Alpha')]))
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('alpha')
+    })
+
+    // Same space throughout → the resolve store is seeded under SPACE_TEST.
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'PA'))?.title).toBe('Alpha')
+  })
+})
+
 // ── searchPages alias matching (PEND-34) ────────────────────────────────
 //
 // PEND-34 replaced the exact-match `resolvePageByAlias` call with the

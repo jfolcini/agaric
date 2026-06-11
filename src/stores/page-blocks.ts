@@ -553,8 +553,15 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         return true
       } catch (err) {
         // Rollback optimistic update — also a single-block touch.
+        // #824 — mirror the #753 success-path guard (`cur.content !== content`):
+        // only roll back to `previousContent` if the live content is still the
+        // text THIS edit optimistically wrote. If the user has typed past it
+        // (a newer in-flight edit), restoring `previousContent` would clobber
+        // that newer text — so leave it and just surface the failure toast.
         if (previousContent !== undefined) {
           set((state) => {
+            const cur = state.blocksById.get(blockId)
+            if (!cur || cur.content !== content) return {}
             let restored: FlatBlock | null = null
             const blocks = state.blocks.map((b) => {
               if (b.id !== blockId) return b
