@@ -61,8 +61,17 @@ export function useBlockAutoCreateFirstBlock({
 
     createBlock({ blockType: 'content', content: '', parentId: rootParentId })
       .then((result) => {
+        const current = pageStore.getState()
         // Only apply if we're still on the same page
-        if (pageStore.getState().rootParentId !== rootParentId) return
+        if (current.rootParentId !== rootParentId) return
+        // #752 — the `setState` below is a WHOLESALE replace of `blocks`.
+        // If any block appeared while the create IPC was in flight (the
+        // user typed Enter on a freshly mounted editor, a sync reload
+        // landed), writing `[result]` would clobber it. Skip the store
+        // write instead — the created block is still in the database and
+        // surfaces on the next load; an extra empty block on a no-longer-
+        // empty page is harmless, a vanished user block is not.
+        if (current.blocks.length > 0) return
         // Defensive guard: a malformed result (missing id) must never reach the
         // store, because downstream renderers key by block.id and would emit
         // "Each child in a list should have a unique key" warnings for the

@@ -131,7 +131,83 @@ describe('useBlockCollapse', () => {
     expect(onBeforeCollapse).toHaveBeenCalledTimes(1)
   })
 
-  it('persists collapsed IDs to localStorage', () => {
+  // #752 — persistence is scoped per page (`collapsed_ids:<pageKey>`), not
+  // the old single global `collapsed_ids` key shared across all pages/spaces.
+  it('persists collapsed IDs to the page-scoped localStorage key', () => {
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const { result } = renderHook(() => useBlockCollapse(flatBlocks, { pageKey: 'PAGE_1' }))
+
+    act(() => {
+      result.current.toggleCollapse('A')
+    })
+
+    expect(setItemSpy).toHaveBeenCalledWith('collapsed_ids:PAGE_1', expect.any(String))
+    const stored = JSON.parse(setItemSpy.mock.calls[0]?.[1] as string) as string[]
+    expect(stored).toContain('A')
+    // The legacy global key is never written again.
+    expect(localStorage.getItem('collapsed_ids')).toBeNull()
+  })
+
+  it('restores collapsed IDs from the page-scoped localStorage key on init', () => {
+    localStorage.setItem('collapsed_ids:PAGE_1', JSON.stringify(['B']))
+
+    const { result } = renderHook(() => useBlockCollapse(flatBlocks, { pageKey: 'PAGE_1' }))
+
+    expect(result.current.collapsedIds.has('B')).toBe(true)
+    const visibleIds = result.current.visibleBlocks.map((b) => b.id)
+    // B is collapsed, C is hidden
+    expect(visibleIds).toEqual(['A', 'B', 'D', 'E'])
+  })
+
+  it('falls back to the legacy global key when the page has no scoped entry (#752 migration)', () => {
+    localStorage.setItem('collapsed_ids', JSON.stringify(['B']))
+
+    const { result } = renderHook(() => useBlockCollapse(flatBlocks, { pageKey: 'PAGE_1' }))
+
+    expect(result.current.collapsedIds.has('B')).toBe(true)
+  })
+
+  it('prefers the scoped entry over the legacy global key', () => {
+    localStorage.setItem('collapsed_ids', JSON.stringify(['B']))
+    localStorage.setItem('collapsed_ids:PAGE_1', JSON.stringify(['A']))
+
+    const { result } = renderHook(() => useBlockCollapse(flatBlocks, { pageKey: 'PAGE_1' }))
+
+    expect(result.current.collapsedIds.has('A')).toBe(true)
+    expect(result.current.collapsedIds.has('B')).toBe(false)
+  })
+
+  it('prunes ids no longer on the page when persisting (#752)', () => {
+    // 'GONE' was collapsed once (e.g. inherited from the legacy key or a
+    // since-deleted block) but is not in `flatBlocks` any more.
+    localStorage.setItem('collapsed_ids:PAGE_1', JSON.stringify(['GONE', 'B']))
+    const { result } = renderHook(() => useBlockCollapse(flatBlocks, { pageKey: 'PAGE_1' }))
+
+    act(() => {
+      result.current.toggleCollapse('A')
+    })
+
+    const stored = JSON.parse(localStorage.getItem('collapsed_ids:PAGE_1') as string) as string[]
+    expect(stored.sort()).toEqual(['A', 'B'])
+  })
+
+  it('reloads persisted state when pageKey changes (page switch without remount)', () => {
+    localStorage.setItem('collapsed_ids:PAGE_1', JSON.stringify(['A']))
+    localStorage.setItem('collapsed_ids:PAGE_2', JSON.stringify(['B']))
+
+    const { result, rerender } = renderHook(
+      ({ pageKey }: { pageKey: string }) => useBlockCollapse(flatBlocks, { pageKey }),
+      { initialProps: { pageKey: 'PAGE_1' } },
+    )
+    expect(result.current.collapsedIds.has('A')).toBe(true)
+
+    rerender({ pageKey: 'PAGE_2' })
+
+    expect(result.current.collapsedIds.has('B')).toBe(true)
+    expect(result.current.collapsedIds.has('A')).toBe(false)
+  })
+
+  it('does not persist when pageKey is absent (in-memory only)', () => {
     const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
     const { result } = renderHook(() => useBlockCollapse(flatBlocks))
 
@@ -139,20 +215,8 @@ describe('useBlockCollapse', () => {
       result.current.toggleCollapse('A')
     })
 
-    expect(setItemSpy).toHaveBeenCalledWith('collapsed_ids', expect.any(String))
-    const stored = JSON.parse(setItemSpy.mock.calls[0]?.[1] as string) as string[]
-    expect(stored).toContain('A')
-  })
-
-  it('restores collapsed IDs from localStorage on init', () => {
-    localStorage.setItem('collapsed_ids', JSON.stringify(['B']))
-
-    const { result } = renderHook(() => useBlockCollapse(flatBlocks))
-
-    expect(result.current.collapsedIds.has('B')).toBe(true)
-    const visibleIds = result.current.visibleBlocks.map((b) => b.id)
-    // B is collapsed, C is hidden
-    expect(visibleIds).toEqual(['A', 'B', 'D', 'E'])
+    expect(result.current.collapsedIds.has('A')).toBe(true)
+    expect(setItemSpy).not.toHaveBeenCalled()
   })
 
   it('handles empty block list gracefully', () => {

@@ -166,6 +166,7 @@ export const block: Record<string, string> = {
   'blockTree.treeLabel': 'Block tree',
   'blockTree.createFirstBlockFailed': 'Failed to create first block',
   'blockTree.setDueDateFailed': 'Failed to set due date',
+  'blockTree.insertDateLinkFailed': 'Failed to insert date link',
   'blockTree.repeatUntilMessage': 'Repeat until {{date}}',
   'blockTree.setRepeatEndDateFailed': 'Failed to set repeat end date',
   'blockTree.setScheduledDateFailed': 'Failed to set scheduled date',

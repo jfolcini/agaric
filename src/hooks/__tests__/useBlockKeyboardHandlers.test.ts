@@ -212,6 +212,33 @@ describe('useBlockKeyboardHandlers handleDeleteBlock', () => {
     expect(params.setFocused).toHaveBeenCalledWith('A')
   })
 
+  // #752 — DeleteBlockOpts.cursorPlacement was documented + passed by the
+  // key-rule table but silently dropped; it now reaches mount() so the caret
+  // lands at the END of the previous block after a Backspace-delete.
+  it('forwards the cursorPlacement hint to mount when focusing the previous block', () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    act(() => {
+      result.current.handleDeleteBlock({ cursorPlacement: 'end' })
+    })
+
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('A', 'Alpha', {
+      cursorPlacement: 'end',
+    })
+  })
+
+  it('does not apply the cursorPlacement hint when deleting the first block (next block gets default caret)', () => {
+    const params = makeDefaultParams({ focusedBlockId: 'A' })
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    act(() => {
+      result.current.handleDeleteBlock({ cursorPlacement: 'end' })
+    })
+
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'Beta')
+  })
+
   it('does not delete when delete is already in progress', () => {
     const params = makeDefaultParams()
     // Make remove block so deleteInProgress stays true within the same synchronous act
