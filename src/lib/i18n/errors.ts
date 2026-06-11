@@ -26,4 +26,5 @@ export const errors: Record<string, string> = {
   'error.moveBlockUpFailed': 'Failed to move block up',
   'error.moveBlockDownFailed': 'Failed to move block down',
   'error.createPageFailed': 'Failed to create page',
+  'error.pasteBlocksFailed': 'Failed to paste blocks',
 }

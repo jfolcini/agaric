@@ -3255,4 +3255,137 @@ describe('PageBlockStore', () => {
       expect(mockOnNewAction).not.toHaveBeenCalled()
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // pasteBlocks (#913)
+  // ---------------------------------------------------------------------------
+  describe('pasteBlocks', () => {
+    /**
+     * Dispatch the `invoke` mock by command name: `create_blocks_batch` echoes
+     * created BlockRows (one per spec, ids `NEW0..`), `load_page_subtree`
+     * returns `reloadRows`. Captures every batch's specs for assertions.
+     */
+    function wireBatchAndReload(reloadRows: FlatBlock[]): { batches: unknown[][] } {
+      const batches: unknown[][] = []
+      let created = 0
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'create_blocks_batch') {
+          const specs = ((args as { specs?: unknown })?.specs ?? []) as Array<{
+            content: string
+            parentId: string | null
+          }>
+          batches.push(specs)
+          return specs.map((s) => ({
+            id: `NEW${created++}`,
+            block_type: 'content',
+            content: s.content,
+            parent_id: s.parentId,
+            position: null,
+            deleted_at: null,
+          }))
+        }
+        if (cmd === 'load_page_subtree') return reloadRows
+        return []
+      })
+      return { batches }
+    }
+
+    it('inserts a flat markdown outline as siblings after the anchor', async () => {
+      const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
+      store.setState({ blocks: [anchor] })
+      const { batches } = wireBatchAndReload([anchor])
+
+      const ids = await store.getState().pasteBlocks('A', 'one\ntwo')
+
+      expect(ids).toEqual(['NEW0', 'NEW1'])
+      // One batch (single depth level), both blocks under the anchor's parent.
+      expect(batches).toHaveLength(1)
+      const specs = batches[0] as Array<{
+        content: string
+        parentId: string | null
+        position: number
+      }>
+      expect(specs.map((s) => s.content)).toEqual(['one', 'two'])
+      expect(specs.every((s) => s.parentId === 'PAGE_1')).toBe(true)
+      // Anchor is at sibling slot 0 → wire positions 2, 3 (slot+2, contiguous).
+      expect(specs.map((s) => s.position)).toEqual([2, 3])
+      // Structural insert reloads the tree.
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+      )
+    })
+
+    it('materializes a nested outline level-by-level with resolved parents', async () => {
+      const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
+      store.setState({ blocks: [anchor] })
+      const { batches } = wireBatchAndReload([anchor])
+
+      const ids = await store.getState().pasteBlocks('A', 'parent\n  child\n    grandchild')
+
+      // Three depth levels → three batches.
+      expect(batches).toHaveLength(3)
+      const top = batches[0] as Array<{ content: string; parentId: string | null }>
+      const mid = batches[1] as Array<{ content: string; parentId: string | null }>
+      const deep = batches[2] as Array<{ content: string; parentId: string | null }>
+      expect(top[0]?.content).toBe('parent')
+      expect(top[0]?.parentId).toBe('PAGE_1')
+      // child resolves to the freshly-created parent id from the first batch.
+      expect(mid[0]?.content).toBe('child')
+      expect(mid[0]?.parentId).toBe('NEW0')
+      // grandchild resolves to the child id from the second batch.
+      expect(deep[0]?.content).toBe('grandchild')
+      expect(deep[0]?.parentId).toBe('NEW1')
+      expect(ids).toEqual(['NEW0', 'NEW1', 'NEW2'])
+    })
+
+    it('falls back to a single block for non-markdown / unrecognizable text', async () => {
+      const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
+      store.setState({ blocks: [anchor] })
+      const { batches } = wireBatchAndReload([anchor])
+
+      // A whitespace-only string parses to nothing → single raw-content block.
+      const ids = await store.getState().pasteBlocks('A', '   ')
+
+      expect(ids).toEqual(['NEW0'])
+      expect(batches).toHaveLength(1)
+      const specs = batches[0] as Array<{ content: string }>
+      expect(specs).toHaveLength(1)
+      expect(specs[0]?.content).toBe('   ')
+    })
+
+    it('reloads and returns [] when the anchor vanished before paste', async () => {
+      store.setState({ blocks: [] })
+      mockedInvoke.mockResolvedValueOnce([])
+
+      const ids = await store.getState().pasteBlocks('GONE', 'x')
+
+      expect(ids).toEqual([])
+      // No create batch fired; a reconciling load did.
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+      )
+      expect(mockedInvoke).not.toHaveBeenCalledWith('create_blocks_batch', expect.anything())
+    })
+
+    it('reconciles with a reload when the create batch fails', async () => {
+      const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
+      store.setState({ blocks: [anchor] })
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'create_blocks_batch') throw new Error('batch failed')
+        if (cmd === 'load_page_subtree') return [anchor]
+        return []
+      })
+
+      const ids = await store.getState().pasteBlocks('A', 'one\ntwo')
+
+      expect(ids).toEqual([])
+      expect(toast.error).toHaveBeenCalled()
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+      )
+    })
+  })
 })

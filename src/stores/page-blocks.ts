@@ -28,11 +28,19 @@ import { createStore, type StoreApi, useStore } from 'zustand'
 import { notify } from '@/lib/notify'
 
 import { retryOnPoolBusy } from '../lib/app-error'
+import { parseIndentedMarkdown } from '../lib/block-clipboard'
 import { computeIndentedBlocks, findPrevSiblingAt, planSplit } from '../lib/block-tree-ops'
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
-import type { BlockRow } from '../lib/tauri'
-import { createBlock, deleteBlock, editBlock, loadPageSubtree, moveBlock } from '../lib/tauri'
+import type { BlockRow, CreateBlockSpec } from '../lib/tauri'
+import {
+  createBlock,
+  createBlocksBatch,
+  deleteBlock,
+  editBlock,
+  loadPageSubtree,
+  moveBlock,
+} from '../lib/tauri'
 import { buildFlatTree, type FlatBlock, getDragDescendants } from '../lib/tree-utils'
 import { useBlockStore } from './blocks'
 import { useSpaceStore } from './space'
@@ -119,6 +127,21 @@ export interface PageBlockState {
   moveUp: (blockId: string) => Promise<boolean>
   /** Move block down among its siblings. Returns success (see `indent`). */
   moveDown: (blockId: string) => Promise<boolean>
+
+  /**
+   * #913 — paste an indented-markdown outline as a real block subtree after
+   * the `anchorBlockId`. The parsed top-level blocks land as SIBLINGS of the
+   * anchor (right after it), with nested lines materialized as descendants,
+   * preserving the outline's structure.
+   *
+   * If `markdown` parses to nothing recognizable (empty / whitespace-only), a
+   * single content block is created from the raw text instead of throwing —
+   * paste should never be a silent no-op when the clipboard held text. Routes
+   * through `createBlocksBatch` (one IPC per depth level, like
+   * `insertTemplateBlocks`) and then reloads the tree. Resolves the ids of all
+   * created blocks (empty array on failure or when the anchor vanished).
+   */
+  pasteBlocks: (anchorBlockId: string, markdown: string) => Promise<string[]>
 
   /**
    * PEND-35 Tier 4.2 — append a single backend-returned `BlockRow` to the
@@ -1211,6 +1234,95 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           return false
         }
       }),
+
+    pasteBlocks: async (anchorBlockId: string, markdown: string) => {
+      const { blocks, rootParentId } = get()
+      const anchor = blocks.find((b) => b.id === anchorBlockId)
+      // The anchor (last-selected / focused block) may have vanished between
+      // the keypress and here (a racing sync delete). Reconcile and bail —
+      // there is no valid sibling slot to paste into.
+      if (!anchor) {
+        await get().load()
+        return []
+      }
+
+      // Top-level pasted blocks become SIBLINGS of the anchor (same parent),
+      // landing right after the anchor among its siblings. `position` is 1-based
+      // on the wire (#400: position 1 → engine index 0), so the 0-based slot
+      // right after the anchor (`anchorSlot + 1`) maps to wire position
+      // `anchorSlot + 2`; subsequent top-level blocks step up from there.
+      const parentId = anchor.parent_id ?? null
+      const firstSiblingPosition = siblingSlot(blocks, anchor) + 2
+
+      // Parse the outline. Empty / unrecognizable text → a single content block
+      // from the raw markdown (paste must not be a silent no-op).
+      const parsed = parseIndentedMarkdown(markdown)
+      const effective =
+        parsed.length > 0 ? parsed : [{ content: markdown, parentIndex: null as number | null }]
+
+      // Compute each parsed block's depth so we can batch level-by-level
+      // (children reference parents created in an earlier batch — the
+      // `insertTemplateBlocks` pattern). Depth 0 = top-level paste blocks.
+      const depthByIndex: number[] = effective.map(() => 0)
+      for (let i = 0; i < effective.length; i += 1) {
+        const pIdx = effective[i]?.parentIndex
+        if (pIdx != null) depthByIndex[i] = (depthByIndex[pIdx] ?? 0) + 1
+      }
+      let maxDepth = 0
+      for (const d of depthByIndex) if (d > maxDepth) maxDepth = d
+
+      // parsed-index → created block id (filled as each depth level lands).
+      const createdIds: string[] = Array.from<string>({ length: effective.length })
+      try {
+        for (let level = 0; level <= maxDepth; level += 1) {
+          const indicesAtLevel: number[] = []
+          const specs: CreateBlockSpec[] = []
+          // Count of top-level blocks placed so far, to step their sibling
+          // positions contiguously after the anchor.
+          let topLevelEmitted = 0
+          for (let i = 0; i < effective.length; i += 1) {
+            if ((depthByIndex[i] ?? 0) !== level) continue
+            const entry = effective[i]
+            if (entry == null) continue
+            // Top-level paste blocks go under the anchor's parent; nested
+            // blocks resolve to their just-created parent's id.
+            const resolvedParentId =
+              entry.parentIndex == null ? parentId : (createdIds[entry.parentIndex] ?? parentId)
+            indicesAtLevel.push(i)
+            specs.push({
+              blockType: 'content',
+              content: entry.content,
+              parentId: resolvedParentId,
+              // Top-level blocks land contiguously after the anchor; nested
+              // blocks append under their just-created parent (`null` = append,
+              // order preserved by their order in this batch).
+              position: entry.parentIndex == null ? firstSiblingPosition + topLevelEmitted++ : null,
+              properties: {},
+            })
+          }
+          if (specs.length === 0) continue
+          // #730 — route through the shared pool_busy retry like the other
+          // structural actions.
+          const created = await retryOnPoolBusy(() => createBlocksBatch(specs))
+          for (let k = 0; k < indicesAtLevel.length; k += 1) {
+            const idx = indicesAtLevel[k]
+            const row = created[k]
+            if (idx != null && row != null) createdIds[idx] = row.id
+          }
+        }
+        // Structural insert across N blocks — reload for the authoritative
+        // flattened order (mirrors `moveBlocks` / `moveToParent`).
+        await get().load()
+        notifyUndoNewAction(rootParentId)
+        return createdIds.filter((id): id is string => typeof id === 'string')
+      } catch (err) {
+        logger.error('page-blocks', 'Failed to paste blocks', { anchorBlockId }, err)
+        notify.error(i18n.t('error.pasteBlocksFailed'))
+        // Reconcile FE with whatever the backend committed before the failure.
+        await get().load()
+        return createdIds.filter((id): id is string => typeof id === 'string')
+      }
+    },
 
     appendBlock: (row: BlockRow) => {
       const { blocks } = get()

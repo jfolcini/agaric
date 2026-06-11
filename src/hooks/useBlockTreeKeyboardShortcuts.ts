@@ -16,12 +16,16 @@ import type { RefObject } from 'react'
 import { useEffect } from 'react'
 import type { StoreApi } from 'zustand'
 
+import { serializeBlockSubtree } from '../lib/block-clipboard'
+import { readText, writeText } from '../lib/clipboard'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import {
   clearTreeInteractionIfHolder,
   isLastInteractedTree,
   markTreeInteracted,
 } from '../lib/last-interacted-tree'
+import { logger } from '../lib/logger'
+import { computeSelectionRoots } from '../lib/tree-utils'
 import { useBlockStore } from '../stores/blocks'
 import type { PageBlockState } from '../stores/page-blocks'
 import { storeOwnsBlock } from '../stores/page-blocks'
@@ -143,6 +147,73 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
   }, [focusedBlockId, selectedBlockIds.length, rawSelectAll, blocks, clearSelected])
+
+  // ── Keyboard shortcuts: block cut / copy / paste (#913) ─────────────
+  // Copy/cut serialize the SELECTION ROOTS (+ subtrees) to indented markdown
+  // on the system clipboard; paste reverses it into a real block subtree after
+  // the anchor block. These operate on BLOCK SELECTIONS only, so they must NOT
+  // fire (or `preventDefault`) when a roving editor is focused — the browser's
+  // native text copy/cut/paste owns those keystrokes inside an editor.
+  //
+  // #713 ownership gate: these chords read the GLOBAL `selectedBlockIds` /
+  // `focusedBlockId`, but each mounted tree (journal week/month) must only act
+  // on blocks IN ITS OWN store. Copy/cut filter the selection to ids this store
+  // owns; paste anchors on an owned block. A non-owning tree returns WITHOUT
+  // side effects and WITHOUT `preventDefault()` so the chord passes through.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Only in block-select mode: no block is being edited. A focused block
+      // means the editor is active — leave copy/cut/paste to the browser.
+      if (focusedBlockId) return
+
+      const isCopy = matchesShortcutBinding(e, 'copyBlocks')
+      const isCut = matchesShortcutBinding(e, 'cutBlocks')
+      const isPaste = matchesShortcutBinding(e, 'pasteBlocks')
+      if (!isCopy && !isCut && !isPaste) return
+
+      const state = pageStore.getState()
+
+      if (isCopy || isCut) {
+        if (selectedBlockIds.length === 0) return
+        // Restrict to the selection this store owns (the #713 gate). If none
+        // of the selected blocks live here, another tree owns them — fall
+        // through without claiming the chord.
+        const ownedSelected = selectedBlockIds.filter((id) => state.blocksById.has(id))
+        if (ownedSelected.length === 0) return
+        const markdown = serializeBlockSubtree(state.blocks, ownedSelected)
+        if (markdown.length === 0) return
+        e.preventDefault()
+        void writeText(markdown).catch((err) =>
+          logger.warn('block-clipboard', 'copy writeText failed', undefined, err),
+        )
+        if (isCut) {
+          // Remove only the selection ROOTS — `remove()` cascades each subtree,
+          // so a nested selected descendant travels with its ancestor and must
+          // NOT be deleted independently (avoids a redundant IPC on an
+          // already-cascaded id). `clearSelected` resets the now-stale set.
+          const roots = computeSelectionRoots(state.blocks, ownedSelected)
+          for (const id of roots) void state.remove(id)
+          clearSelected()
+        }
+        return
+      }
+
+      // Paste: anchor on the LAST selected owned block (the user's most recent
+      // selection), insert the clipboard outline after it.
+      const ownedSelected = selectedBlockIds.filter((id) => state.blocksById.has(id))
+      const anchorId = ownedSelected[ownedSelected.length - 1]
+      if (anchorId == null) return
+      e.preventDefault()
+      void readText()
+        .then((text) => {
+          if (text.length === 0) return
+          return state.pasteBlocks(anchorId, text)
+        })
+        .catch((err) => logger.warn('block-clipboard', 'paste readText failed', undefined, err))
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [focusedBlockId, pageStore, selectedBlockIds, clearSelected])
 
   // ── Keyboard shortcut: Escape closes unfocused editor (UX-M8) ──────
   // The TipTap-level Escape handler (use-block-keyboard.ts) only fires when

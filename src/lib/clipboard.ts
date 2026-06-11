@@ -21,3 +21,21 @@ export async function writeText(text: string): Promise<void> {
     await navigator.clipboard.writeText(text)
   }
 }
+
+/**
+ * Read text from the system clipboard.
+ *
+ * Mirror of {@link writeText}: prefers the Tauri clipboard plugin (desktop +
+ * Android) and degrades to `navigator.clipboard.readText` in browser dev mode.
+ * Any rejection from the navigator path is propagated to the caller (block
+ * paste surfaces a "paste failed" notice rather than silently doing nothing).
+ */
+export async function readText(): Promise<string> {
+  try {
+    const { readText: pluginReadText } = await import('@tauri-apps/plugin-clipboard-manager')
+    return await pluginReadText()
+  } catch (err) {
+    logger.warn('clipboard', 'plugin unavailable, falling back to navigator', undefined, err)
+    return await navigator.clipboard.readText()
+  }
+}
