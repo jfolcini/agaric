@@ -89,6 +89,24 @@ describe('SuggestionList', () => {
     expect(command).toHaveBeenCalledWith(sampleItems[1])
   })
 
+  // #924 f7 — selecting an item must not pull focus out of the editor.
+  // The item button calls preventDefault on pointerdown so the editor's
+  // contenteditable keeps the selection, matching the bubble-menu mark
+  // buttons; the actual selection then fires on click/mouseup.
+  it('#924 — item button preventDefaults pointerdown to keep editor focus', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={sampleItems} command={command} />)
+
+    const option = screen.getAllByRole('option')[0] as HTMLElement
+    const event = new MouseEvent('pointerdown', { bubbles: true, cancelable: true })
+    const prevented = !option.dispatchEvent(event)
+
+    // preventDefault() was called → dispatchEvent returns false.
+    expect(prevented).toBe(true)
+    // pointerdown must NOT trigger selection — that happens on click.
+    expect(command).not.toHaveBeenCalled()
+  })
+
   it('pointer enter updates selected index', async () => {
     const user = userEvent.setup()
     const command = vi.fn()

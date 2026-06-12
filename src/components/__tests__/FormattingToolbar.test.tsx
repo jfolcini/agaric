@@ -21,7 +21,7 @@
 
 import { fireEvent, render, screen } from '@testing-library/react'
 import type React from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { t } from '../../lib/i18n'
@@ -44,6 +44,13 @@ vi.mock('@tiptap/react', () => ({
   useEditorState: () => {
     return mockEditorState
   },
+}))
+
+// #925 f3 — control coarse-pointer (touch) detection so the desktop suite stays
+// on the inline layout and the touch test exercises the viewport-pinned path.
+let mockIsTouch = false
+vi.mock('@/hooks/useIsTouch', () => ({
+  useIsTouch: () => mockIsTouch,
 }))
 
 // `CodeLanguageSelector` routes through this helper (see
@@ -184,6 +191,7 @@ describe('FormattingToolbar', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     popoverIdx = 0
+    mockIsTouch = false
     mockEditorState.codeBlock = false
     mockEditorState.codeBlockLanguage = ''
     mockEditorState.blockquote = false
@@ -1184,6 +1192,69 @@ describe('FormattingToolbar', () => {
       expect(screen.getByTestId('table-op-insert-column-right')).toBeInTheDocument()
       expect(screen.getByTestId('table-op-delete-row')).toBeInTheDocument()
       expect(screen.getByTestId('table-op-delete-table')).toBeInTheDocument()
+    })
+  })
+
+  // ── #925 f3 — pin the touch toolbar above the soft keyboard ─────────────
+  //
+  // On coarse-pointer (touch) the inline per-block toolbar is repositioned to
+  // `position: fixed` at the layout-viewport bottom and lifted above the soft
+  // keyboard via `visualViewport`. Desktop keeps the inline (`relative`) layout.
+  // NOTE: final on-device placement wants a real-hardware eyeball — only the
+  // positioning *logic* is unit-tested here.
+  describe('#925 f3 — viewport-pinned toolbar on touch', () => {
+    const realVV = Object.getOwnPropertyDescriptor(window, 'visualViewport')
+
+    function mockVisualViewport(height: number): void {
+      const listeners: Record<string, Set<() => void>> = {}
+      Object.defineProperty(window, 'visualViewport', {
+        configurable: true,
+        value: {
+          height,
+          offsetTop: 0,
+          addEventListener: (type: string, cb: () => void) => {
+            ;(listeners[type] ??= new Set()).add(cb)
+          },
+          removeEventListener: (type: string, cb: () => void) => {
+            listeners[type]?.delete(cb)
+          },
+        },
+      })
+    }
+
+    afterEach(() => {
+      if (realVV) Object.defineProperty(window, 'visualViewport', realVV)
+      else Reflect.deleteProperty(window, 'visualViewport')
+    })
+
+    it('desktop keeps the inline (relative) layout — not pinned', () => {
+      mockIsTouch = false
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const toolbar = screen.getByTestId('formatting-toolbar')
+      expect(toolbar.className).toContain('relative')
+      expect(toolbar.className).not.toContain('fixed')
+      expect(toolbar).not.toHaveAttribute('data-pinned')
+    })
+
+    it('touch pins the toolbar fixed at the viewport bottom', () => {
+      mockIsTouch = true
+      // No keyboard: visualViewport height == innerHeight → 0 inset.
+      mockVisualViewport(window.innerHeight)
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const toolbar = screen.getByTestId('formatting-toolbar')
+      expect(toolbar.className).toContain('fixed')
+      expect(toolbar.className).not.toContain('relative')
+      expect(toolbar).toHaveAttribute('data-pinned', 'true')
+      expect(toolbar.style.bottom).toBe('0px')
+    })
+
+    it('touch lifts the toolbar above the soft keyboard by the keyboard inset', () => {
+      mockIsTouch = true
+      // Keyboard up: visualViewport shrank by 300px → bottom offset = 300px.
+      mockVisualViewport(window.innerHeight - 300)
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const toolbar = screen.getByTestId('formatting-toolbar')
+      expect(toolbar.style.bottom).toBe('300px')
     })
   })
 })

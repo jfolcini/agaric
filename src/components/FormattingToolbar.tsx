@@ -27,9 +27,10 @@ import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
 import { MoreHorizontal } from 'lucide-react'
 import type React from 'react'
-import { useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { type ToolbarItem, useToolbarOverflow } from '@/hooks/useToolbarOverflow'
 import {
   createHistoryButtons,
@@ -37,6 +38,7 @@ import {
   createRefsAndBlocks,
   createStructureButtons,
 } from '@/lib/toolbar-config'
+import { cn } from '@/lib/utils'
 
 import { buildConfigByKey, buildToolbarItems } from './FormattingToolbar/items'
 import { renderCyclePriority } from './FormattingToolbar/MetadataGroup'
@@ -69,12 +71,36 @@ function getHeadingLevel(editor: Editor): number {
   return 0
 }
 
+/**
+ * #925 f3 — compute the `bottom` (px) at which a viewport-pinned toolbar must
+ * sit so it rests just above the on-screen keyboard.
+ *
+ * `window.visualViewport` is the layout viewport MINUS the soft keyboard. Its
+ * `height + offsetTop` is the y of the visible-viewport bottom in layout-viewport
+ * coordinates; `window.innerHeight` minus that is the keyboard's height. We pin
+ * the bar `position: fixed` (anchored to the layout-viewport bottom) and push it
+ * UP by that keyboard height so it hugs the top of the keyboard. Returns 0 when
+ * no keyboard is up or when the API is unavailable (every test under happy-dom,
+ * and desktop browsers we never take the touch path on).
+ */
+export function computeKeyboardInset(): number {
+  const vv = (typeof window !== 'undefined' && window.visualViewport) || null
+  if (!vv) return 0
+  const inset = window.innerHeight - (vv.height + vv.offsetTop)
+  return inset > 0 ? inset : 0
+}
+
 export function FormattingToolbar({
   editor,
   blockId,
   currentPriority,
 }: FormattingToolbarProps): React.ReactElement {
   const { t } = useTranslation()
+  // #925 f3 — on coarse-pointer (touch) devices the inline, per-block toolbar
+  // scrolls away with the block and ends up hidden behind the soft keyboard.
+  // Pin the touch instance to the bottom of the layout viewport and lift it
+  // above the keyboard via `visualViewport`. Desktop keeps the inline layout.
+  const isTouch = useIsTouch()
   const [headingPopoverOpen, setHeadingPopoverOpen] = useState(false)
   const [codeBlockPopoverOpen, setCodeBlockPopoverOpen] = useState(false)
   const [calloutPopoverOpen, setCalloutPopoverOpen] = useState(false)
@@ -85,6 +111,29 @@ export function FormattingToolbar({
   const containerRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const overflowMenuId = useId()
+
+  // #925 f3 — keep the pinned (touch) toolbar resting on top of the soft
+  // keyboard. The bar is `position: fixed` at the layout-viewport bottom; we
+  // set its `bottom` to the keyboard inset so it tracks the keyboard as it
+  // shows/hides (visualViewport `resize`) and as the page scrolls under it
+  // (`scroll`). No-op on desktop (fine pointer) — the inline layout stays put.
+  useEffect(() => {
+    if (!isTouch) return
+    const apply = () => {
+      const el = containerRef.current
+      if (!el) return
+      el.style.bottom = `${computeKeyboardInset()}px`
+    }
+    apply()
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null
+    if (!vv) return
+    vv.addEventListener('resize', apply)
+    vv.addEventListener('scroll', apply)
+    return () => {
+      vv.removeEventListener('resize', apply)
+      vv.removeEventListener('scroll', apply)
+    }
+  }, [isTouch])
 
   const state = useEditorState({
     editor,
@@ -210,8 +259,16 @@ export function FormattingToolbar({
         role="toolbar"
         aria-label={t('toolbar.formatting')}
         aria-controls={blockId ? `editor-${blockId}` : undefined}
-        className="formatting-toolbar relative flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px"
+        className={cn(
+          'formatting-toolbar flex items-center gap-0.5 border-border/40 bg-muted/30 px-2 py-px',
+          // #925 f3 — touch: pin above the keyboard (fixed, lifted via the
+          // visualViewport effect); desktop: inline, just under the block.
+          isTouch
+            ? 'fixed inset-x-0 bottom-0 z-30 overflow-x-auto border-t bg-muted/95 backdrop-blur supports-backdrop-blur:bg-muted/80'
+            : 'relative border-b',
+        )}
         data-testid="formatting-toolbar"
+        data-pinned={isTouch ? 'true' : undefined}
         data-editor-portal=""
       >
         {visible.map((item) => (

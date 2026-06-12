@@ -29,6 +29,7 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { getShortcutKeys, toAriaKeyshortcuts } from '@/lib/keyboard-config'
 import { createMarkToggles, toolbarActiveClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
@@ -112,6 +113,12 @@ export function SelectionBubbleMenu({
   blockId,
 }: SelectionBubbleMenuProps): React.ReactElement {
   const { t } = useTranslation()
+  // #925 f4 — on coarse-pointer (touch) devices the floating bubble fights the
+  // OS's native text-selection UI (Android/iOS selection handles + context
+  // menu), which overlaps it and steals the taps. Suppress the bubble entirely
+  // there and let the always-visible FormattingToolbar own mobile formatting.
+  // Desktop (fine pointer) behaviour is unchanged.
+  const isTouch = useIsTouch()
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
   const [savedSelection, setSavedSelection] = useState<{ from: number; to: number } | null>(null)
   // Snapshot of the existing link captured when the popover opens via Ctrl+K
@@ -239,6 +246,9 @@ export function SelectionBubbleMenu({
     <BubbleMenu
       editor={editor}
       shouldShow={({ state: editorState }) =>
+        // #925 f4 — never float the bubble on touch; it collides with the OS
+        // selection handles. Mobile formatting goes through FormattingToolbar.
+        !isTouch &&
         // #924 — show over a non-empty selection, EXCEPT a NodeSelection (a
         // selected block-link/block-ref chip or image atom), where the mark
         // toggles (Bold/Italic/…) are meaningless. Duck-type on the NodeSelection
