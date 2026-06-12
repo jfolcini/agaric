@@ -251,12 +251,13 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
         <span className="flex-shrink-0 w-5 h-5" aria-hidden />
       ) : null}
 
-      {/* #927 f3: tap-the-bullet zoom (Logseq's signature gesture). Always
-          rendered — on leaves too — so the affordance is consistent across the
-          tree. Tap/click zooms into the block; the bullet also doubles as the
-          collapsed/has-children indicator (a faint ring halo when the block has
-          hidden children). Unobtrusive on desktop: a small muted dot that only
-          brightens on hover/focus. */}
+      {/* #927 f3: tap-the-bullet zoom (Logseq's signature gesture). Rendered on
+          every row (leaves too) for a consistent affordance, but HIDDEN AT REST —
+          it follows the same per-block hover/focus/active contract as the gutter
+          controls (opacity-0 → revealed on group-hover / group-focus-within /
+          .block-active), so it only shows for the hovered or selected block and
+          doesn't clutter the tree. Tap/click zooms into the block; the collapse
+          chevron carries the has-children/collapsed cue. */}
       <Tooltip>
         <TooltipTrigger asChild>
           <button
@@ -264,6 +265,12 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
             className={cn(
               'block-bullet group/bullet flex-shrink-0 flex items-center justify-center w-5 h-5 p-0 text-muted-foreground transition-colors focus-ring-visible active:scale-95 touch-target',
               'hover:text-foreground',
+              // FINE pointers (desktop): hidden at rest, revealed only on this
+              // block's hover / focus-within / active (selection), matching
+              // GUTTER_BUTTON_BASE. COARSE pointers (touch): NOT hidden — there is
+              // no hover, and the bullet is the tap-to-zoom target (#927 f3), so it
+              // must stay visible/tappable at rest (like the touch drag handle).
+              '[@media(pointer:fine)]:opacity-0 [@media(pointer:fine)]:pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto',
             )}
             data-testid="block-bullet"
             data-has-children={hasChildren}
