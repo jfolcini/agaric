@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { getPinnedSearchScope, setPinnedSearchScope } from '../../lib/pinned-search-scope'
 import { useNavigationStore } from '../../stores/navigation'
 import { useSpaceStore } from '../../stores/space'
 import { useTabsStore } from '../../stores/tabs'
@@ -518,5 +519,72 @@ describe('SearchSheet', () => {
       expect(screen.getByTestId('command-palette-input')).toBeInTheDocument()
     })
     expect(await axe(container)).toHaveNoViolations()
+  })
+
+  // ─────────────────────────────────────────────────────────────────
+  // #899 mobile-search polish — scope chip (#136), scope-pin (#135),
+  // pull-to-dismiss (#133)
+  // ─────────────────────────────────────────────────────────────────
+
+  describe('#136 scope chip', () => {
+    it('renders the active scope and re-scopes to the other segment on tap', async () => {
+      const user = userEvent.setup()
+      useSearchSheetStore.getState().open$('all-pages')
+      render(<SearchSheet />)
+      const chip = screen.getByTestId('search-sheet-scope-chip')
+      expect(chip).toHaveAttribute('data-scope', 'all-pages')
+      expect(chip).toHaveTextContent('All pages')
+      await user.click(chip)
+      expect(useSearchSheetStore.getState().mode).toBe('in-page')
+      expect(screen.getByTestId('search-sheet-scope-chip')).toHaveAttribute('data-scope', 'in-page')
+    })
+  })
+
+  describe('#135 scope-pin (long-press)', () => {
+    it('pins a scope as the default on long-press, badges it, and persists it', () => {
+      vi.useFakeTimers()
+      try {
+        useSearchSheetStore.getState().open$('all-pages')
+        render(<SearchSheet />)
+        const segment = screen.getByTestId('search-sheet-segment-all-pages')
+        act(() => {
+          fireEvent.pointerDown(segment, { clientX: 0, clientY: 0 })
+          vi.advanceTimersByTime(600)
+        })
+        // Persisted to localStorage and badged in the UI.
+        expect(getPinnedSearchScope()).toBe('all-pages')
+        expect(screen.getByTestId('search-sheet-segment-all-pages-pin')).toBeInTheDocument()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('un-pins when the already-pinned scope is long-pressed again', () => {
+      vi.useFakeTimers()
+      try {
+        setPinnedSearchScope('in-page')
+        useSearchSheetStore.getState().open$('in-page')
+        render(<SearchSheet />)
+        const segment = screen.getByTestId('search-sheet-segment-in-page')
+        expect(screen.getByTestId('search-sheet-segment-in-page-pin')).toBeInTheDocument()
+        act(() => {
+          fireEvent.pointerDown(segment, { clientX: 0, clientY: 0 })
+          vi.advanceTimersByTime(600)
+        })
+        expect(getPinnedSearchScope()).toBeNull()
+        expect(screen.queryByTestId('search-sheet-segment-in-page-pin')).not.toBeInTheDocument()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
+
+  describe('#133 pull-to-dismiss handle', () => {
+    it('renders a grab handle with an accessible label', () => {
+      useSearchSheetStore.getState().open$('all-pages')
+      render(<SearchSheet />)
+      const handle = screen.getByTestId('search-sheet-drag-handle')
+      expect(handle).toHaveAttribute('aria-label')
+    })
   })
 })

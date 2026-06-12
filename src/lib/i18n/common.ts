@@ -340,4 +340,22 @@ export const common: Record<string, string> = {
   'searchSheet.escalateCtaHint': 'Open full search',
   'searchSheet.escalateCtaTitle': 'Filters & regex',
   'searchSheet.escalateLabel': 'Open full search for filters, regex, and history',
+  // #899 mobile-search polish batch.
+  // #133 — pull-to-dismiss grab handle.
+  'searchSheet.dragHandleLabel': 'Drag down to close search',
+  // #135 — long-press a scope to pin it as the default; aria hint + toasts.
+  'searchSheet.scopePinHint': 'Long-press a scope to pin it as your default',
+  'searchSheet.scopePinned': 'Pinned “{{scope}}” as your default search scope',
+  'searchSheet.scopeUnpinned': 'Unpinned default search scope',
+  'searchSheet.scopePinnedBadge': 'Pinned default',
+  // #136 — active-scope chip shown next to the search input.
+  'searchSheet.scopeChipLabel': 'Searching: {{scope}}',
+  'searchSheet.scopeChipClear': 'Change search scope',
+  // #131 — recent searches empty-state list.
+  'searchSheet.recentSearchesTitle': 'Recent searches',
+  'searchSheet.recentSearchesClear': 'Clear',
+  'searchSheet.recentSearchRunLabel': 'Search again for “{{term}}”',
+  // #132 — voice dictation mic button.
+  'searchSheet.voiceStart': 'Search by voice',
+  'searchSheet.voiceStop': 'Stop voice search',
 }
