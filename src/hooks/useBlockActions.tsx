@@ -50,6 +50,13 @@ export interface BlockActions {
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
   /** #264 — convert a block to another block type ("Turn into ▸"). */
   onTurnInto?: ((blockId: string, blockType: BlockTypeToken) => void) | undefined
+  /**
+   * Fix 6 — single-IPC bulk delete of the active multi-selection (BlockTree's
+   * `handleBatchDelete`: confirm dialog + undo toast). Read by the long-press /
+   * right-click context menu when it opens on a block that is part of a
+   * multi-selection so "Delete N selected" applies to the whole selection.
+   */
+  onBatchDelete?: (() => void) | undefined
 }
 
 const BlockActionsContext = createContext<BlockActions | null>(null)

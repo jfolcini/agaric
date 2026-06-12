@@ -228,6 +228,20 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
     />
   )
 
+  // Multiselect mode (user feedback 2026-06-12 / Fix 6): once a selection is
+  // active, the row is in "select" mode — the only affordance that earns a
+  // place in the gutter is each row's select checkbox (so you can extend /
+  // adjust the selection). The drag handle, history, delete, and (touch)
+  // overflow trigger are suppressed on EVERY row to keep selection mode calm
+  // and unambiguous; bulk ops are reached via the batch toolbar or the
+  // long-press / right-click context menu, which apply to the whole selection.
+  if (hasSelection) {
+    if (isTouch) {
+      return <div className="flex flex-col items-end gap-1">{selectCheckbox}</div>
+    }
+    return <>{selectCheckbox}</>
+  }
+
   // ── Touch render — drag handle + overflow Sheet ─────────────────
   if (isTouch) {
     const hasOverflow = Boolean(onDelete || onShowHistory)

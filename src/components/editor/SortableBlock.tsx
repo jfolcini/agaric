@@ -38,6 +38,7 @@ import { detectBlockType } from '@/lib/block-type-convert'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
+import { useBlockStore } from '@/stores/blocks'
 
 /** Pixels of left padding per depth level. */
 export const INDENT_WIDTH = 24
@@ -112,6 +113,7 @@ function SortableBlockInner({
     onZoomIn: onZoomInResolved,
     onSelect,
     onTurnInto,
+    onBatchDelete,
   } = useBlockActions()
   // Context menu zoom is gated by hasChildren (was previously gated in
   // SortableBlockWrapper before the props chain was collapsed).
@@ -438,6 +440,14 @@ function SortableBlockInner({
             onShowProperties={onShowProperties}
             onZoomIn={onZoomIn}
             onTurnInto={onTurnInto}
+            // Fix 6 — feed the active multi-selection + bulk-delete handler so
+            // the menu, when opened on a selected block, applies Delete / TODO /
+            // Priority / Move to the WHOLE selection. Read as a snapshot via
+            // `getState()` (not a subscription) so every row doesn't re-render
+            // on selection changes — the selection can't change while the menu
+            // is open, so the snapshot at open-time is correct.
+            selectedBlockIds={useBlockStore.getState().selectedBlockIds}
+            onBatchDelete={onBatchDelete}
             activeBlockType={detectBlockType(content)}
             hasChildren={hasChildren}
             isCollapsed={isCollapsed}

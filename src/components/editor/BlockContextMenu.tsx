@@ -78,6 +78,20 @@ export interface BlockContextMenuProps {
   onTurnInto?: ((blockId: string, blockType: BlockTypeToken) => void) | undefined
   /** Current block type, used to indicate the active option in "Turn into". */
   activeBlockType?: BlockTypeToken | undefined
+  /**
+   * Fix 6 — the active multi-selection (global `selectedBlockIds`). When this
+   * contains more than one block AND includes the right-clicked block, the
+   * menu enters "bulk" mode: Delete / TODO / Priority / Move ops apply to the
+   * WHOLE selection instead of just this block. With no (or a single-block)
+   * selection the menu behaves exactly as before — single-block ops only.
+   */
+  selectedBlockIds?: string[] | undefined
+  /**
+   * Fix 6 — single-IPC bulk delete (BlockTree's `handleBatchDelete`, with its
+   * confirm dialog + undo toast). Preferred over looping `onDelete` per id when
+   * the menu is in bulk mode. Falls back to per-id `onDelete` when omitted.
+   */
+  onBatchDelete?: (() => void) | undefined
 }
 
 interface MenuItem {
@@ -145,6 +159,8 @@ export function BlockContextMenu({
   linkUrl,
   onTurnInto,
   activeBlockType,
+  selectedBlockIds,
+  onBatchDelete,
 }: BlockContextMenuProps): React.ReactElement {
   const { t } = useTranslation()
   const menuRef = useRef<HTMLDivElement>(null)
@@ -266,6 +282,16 @@ export function BlockContextMenu({
     return autoUpdate(virtualEl, el, updatePosition)
   }, [position, triggerRef, blockId])
 
+  // Fix 6 — "bulk" mode: the menu was opened on a block that is part of an
+  // active multi-selection of >1 block. In that case Delete / TODO / Priority /
+  // Move apply to EVERY selected block. Single-block behaviour (no selection,
+  // or a selection that does not contain the right-clicked block) is unchanged.
+  const bulkIds =
+    selectedBlockIds && selectedBlockIds.length > 1 && selectedBlockIds.includes(blockId)
+      ? selectedBlockIds
+      : null
+  const isBulk = bulkIds !== null
+
   const handleAction = useCallback(
     (action: ((blockId: string) => void | Promise<void>) | undefined) => {
       if (!action) return
@@ -286,14 +312,66 @@ export function BlockContextMenu({
     [blockId, onClose, t],
   )
 
+  // Fix 6 — apply a per-block action across the whole selection. Each id is
+  // awaited in turn so one failure surfaces a toast but doesn't abort the rest;
+  // the menu closes once the batch is dispatched. Used for ops that have no
+  // dedicated single-IPC batch endpoint (TODO cycle, priority cycle, move).
+  const handleBulkAction = useCallback(
+    (action: ((blockId: string) => void | Promise<void>) | undefined, ids: string[]) => {
+      if (!action) return
+      void (async () => {
+        let anyFailed = false
+        for (const id of ids) {
+          try {
+            await Promise.resolve(action(id))
+          } catch (err) {
+            anyFailed = true
+            logger.error('BlockContextMenu', 'bulk action failed', { id }, err)
+          }
+        }
+        if (anyFailed) notify.error(t('contextMenu.actionFailed'))
+        onClose()
+      })()
+    },
+    [onClose, t],
+  )
+
+  // Route an action through bulk mode when a multi-selection is active, else
+  // run it against the single right-clicked block. `action` is the per-block
+  // callback (e.g. `onTogglePriority`); the returned thunk is dropped into a
+  // menu item's `action` slot.
+  const dispatch = useCallback(
+    (action: ((blockId: string) => void | Promise<void>) | undefined) =>
+      isBulk ? handleBulkAction(action, bulkIds) : handleAction(action),
+    [isBulk, bulkIds, handleBulkAction, handleAction],
+  )
+
   // ── Menu item groups ─────────────────────────────────────────────
 
   // Group 1: Delete
+  // Fix 6 — in bulk mode prefer the dedicated single-IPC batch delete
+  // (`onBatchDelete`: confirm dialog + undo toast) over looping `onDelete`.
+  // The label reflects the selection count so it's clear the whole selection
+  // goes. Outside bulk mode this is the unchanged single-block delete.
+  const deleteAction = isBulk
+    ? onBatchDelete
+      ? () => {
+          onBatchDelete()
+          onClose()
+        }
+      : onDelete
+        ? () => handleBulkAction(onDelete, bulkIds)
+        : undefined
+    : onDelete
+      ? () => handleAction(onDelete)
+      : undefined
   const group1: MenuItem[] = [
     {
-      label: t('contextMenu.delete'),
+      label: isBulk
+        ? t('contextMenu.deleteSelected', { count: bulkIds.length })
+        : t('contextMenu.delete'),
       icon: <Trash2 className="h-3.5 w-3.5" />,
-      action: onDelete ? () => handleAction(onDelete) : undefined,
+      action: deleteAction,
       className: 'text-destructive hover:bg-destructive/10',
     },
   ]
@@ -303,25 +381,25 @@ export function BlockContextMenu({
     {
       label: t('contextMenu.indent'),
       icon: <ArrowRightToLine className="h-3.5 w-3.5" />,
-      action: onIndent ? () => handleAction(onIndent) : undefined,
+      action: onIndent ? () => dispatch(onIndent) : undefined,
       shortcut: 'Ctrl+Shift+→',
     },
     {
       label: t('contextMenu.dedent'),
       icon: <ArrowLeftToLine className="h-3.5 w-3.5" />,
-      action: onDedent ? () => handleAction(onDedent) : undefined,
+      action: onDedent ? () => dispatch(onDedent) : undefined,
       shortcut: 'Ctrl+Shift+←',
     },
     {
       label: t('contextMenu.moveUp'),
       icon: <MoveUp className="h-3.5 w-3.5" />,
-      action: onMoveUp ? () => handleAction(onMoveUp) : undefined,
+      action: onMoveUp ? () => dispatch(onMoveUp) : undefined,
       shortcut: 'Ctrl+Shift+↑',
     },
     {
       label: t('contextMenu.moveDown'),
       icon: <MoveDown className="h-3.5 w-3.5" />,
-      action: onMoveDown ? () => handleAction(onMoveDown) : undefined,
+      action: onMoveDown ? () => dispatch(onMoveDown) : undefined,
       shortcut: 'Ctrl+Shift+↓',
     },
     ...(onMerge
@@ -363,15 +441,18 @@ export function BlockContextMenu({
   // Group 4: TODO cycle, Priority cycle
   const group4: MenuItem[] = [
     {
-      label: getTodoLabel(todoState, t),
+      // In bulk mode the per-block cycle label ("TODO → DOING" etc.) would be
+      // misleading across a heterogeneous selection, so show a neutral
+      // "Cycle task state" label; the action cycles every selected block.
+      label: isBulk ? t('contextMenu.cycleTodoSelected') : getTodoLabel(todoState, t),
       icon: <CheckSquare className="h-3.5 w-3.5" />,
-      action: onToggleTodo ? () => handleAction(onToggleTodo) : undefined,
+      action: onToggleTodo ? () => dispatch(onToggleTodo) : undefined,
       shortcut: 'Ctrl+Enter',
     },
     {
-      label: getPriorityLabel(priority, t),
+      label: isBulk ? t('contextMenu.cyclePrioritySelected') : getPriorityLabel(priority, t),
       icon: <Signal className="h-3.5 w-3.5" />,
-      action: onTogglePriority ? () => handleAction(onTogglePriority) : undefined,
+      action: onTogglePriority ? () => dispatch(onTogglePriority) : undefined,
       shortcut: 'Ctrl+Shift+1-3',
     },
   ]

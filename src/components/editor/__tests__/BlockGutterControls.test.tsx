@@ -659,3 +659,55 @@ describe('BlockGutterControls (touch / pointer:coarse)', () => {
     expect(results).toHaveNoViolations()
   })
 })
+
+/* ── Fix 6: multiselect mode shows ONLY the select checkbox ──────────── */
+
+describe('BlockGutterControls multiselect mode (Fix 6)', () => {
+  afterEach(() => {
+    useBlockStore.setState({ selectedBlockIds: [] })
+  })
+
+  it('desktop: suppresses drag/history/delete and shows only the select checkbox', () => {
+    useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
+    renderWithTooltip(
+      <BlockGutterControls
+        blockId="B1"
+        onSelect={vi.fn()}
+        onDelete={vi.fn()}
+        onShowHistory={vi.fn()}
+      />,
+    )
+    // Only the select checkbox survives.
+    expect(screen.getByTestId('block-select-checkbox')).toBeInTheDocument()
+    expect(screen.queryByTestId('drag-handle')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /delete block/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /block history/i })).not.toBeInTheDocument()
+  })
+
+  it('touch: suppresses the touch grip + overflow trigger, keeps the checkbox', () => {
+    const original = setMatchMedia(true)
+    useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
+    try {
+      renderWithTooltip(
+        <BlockGutterControls
+          blockId="B1"
+          onSelect={vi.fn()}
+          onDelete={vi.fn()}
+          onShowHistory={vi.fn()}
+        />,
+      )
+      expect(screen.getByTestId('block-select-checkbox')).toBeInTheDocument()
+      expect(screen.queryByTestId('drag-handle')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('more-actions')).not.toBeInTheDocument()
+    } finally {
+      if (original) Object.defineProperty(window, 'matchMedia', original)
+    }
+  })
+
+  it('renders the full gutter (drag handle present) when no selection is active', () => {
+    useBlockStore.setState({ selectedBlockIds: [] })
+    renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} onDelete={vi.fn()} />)
+    expect(screen.getByTestId('drag-handle')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /delete block/i })).toBeInTheDocument()
+  })
+})

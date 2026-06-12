@@ -770,6 +770,10 @@ export function BlockTree({
     onZoomIn: handleZoomIn,
     onSelect: handleSelect,
     onTurnInto: handleTurnInto,
+    // Fix 6 — bulk-delete the active multi-selection from the long-press /
+    // right-click context menu (single IPC + undo toast). `void` adapts the
+    // async handler to the bag's `() => void` shape.
+    onBatchDelete: () => void handleBatchDelete(),
     resolveBlockTitle: resolve.resolveBlockTitle,
     resolveTagName: resolve.resolveTagName,
     resolveBlockStatus: resolve.resolveBlockStatus,

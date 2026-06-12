@@ -118,6 +118,7 @@ import {
   TaskCheckbox,
 } from '@/components/editor/BlockInlineControls'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { useBlockStore } from '@/stores/blocks'
 
 function renderControls(props: BlockInlineControlsProps) {
   return render(
@@ -812,5 +813,61 @@ describe('BlockInlineControls', () => {
     expect(collapseToggle.className).toContain('max-sm:')
     expect(taskMarker.className).toContain('max-sm:')
     expect(priorityBadge.className).toContain('max-sm:')
+  })
+})
+
+/* ── Fix 5/6: empty-checkbox gating + multiselect suppression ───────── */
+
+describe('BlockInlineControls empty-checkbox gating (Fix 5)', () => {
+  beforeEach(() => {
+    useBlockStore.setState({ selectedBlockIds: [] })
+  })
+  afterEach(() => {
+    useBlockStore.setState({ selectedBlockIds: [] })
+  })
+
+  it('empty (no todo state) checkbox is hidden at rest (opacity-0)', () => {
+    renderControls(makeProps({ todoState: null }))
+    const taskMarker = screen.getByTestId('task-marker')
+    expect(taskMarker.className).toContain('opacity-0')
+    // …but revealed on row hover / focus-within / .block-active.
+    expect(taskMarker.className).toContain('group-hover:opacity-100')
+    expect(taskMarker.className).toContain('[.block-active_&]:opacity-100')
+  })
+
+  it('a block WITH a todo state keeps its checkbox always visible (no opacity-0)', () => {
+    for (const state of ['TODO', 'DOING', 'DONE', 'CANCELLED'] as const) {
+      const { unmount } = renderControls(makeProps({ todoState: state }))
+      const taskMarker = screen.getByTestId('task-marker')
+      expect(taskMarker.className).not.toContain('opacity-0')
+      unmount()
+    }
+  })
+
+  it('empty checkbox still cycles task state on click (behavior intact)', async () => {
+    const user = userEvent.setup()
+    const onToggle = vi.fn()
+    renderControls(makeProps({ todoState: null, onToggleTodo: onToggle }))
+    await user.click(screen.getByTestId('task-marker'))
+    expect(onToggle).toHaveBeenCalledWith('BLOCK_1')
+  })
+})
+
+describe('BlockInlineControls multiselect suppression (Fix 6)', () => {
+  afterEach(() => {
+    useBlockStore.setState({ selectedBlockIds: [] })
+  })
+
+  it('hides the task checkbox entirely when a multi-selection is active', () => {
+    useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
+    // Even a block WITH a todo state hides its task checkbox in selection mode.
+    renderControls(makeProps({ todoState: 'TODO' }))
+    expect(screen.queryByTestId('task-marker')).not.toBeInTheDocument()
+  })
+
+  it('shows the task checkbox again once the selection clears', () => {
+    useBlockStore.setState({ selectedBlockIds: [] })
+    renderControls(makeProps({ todoState: 'TODO' }))
+    expect(screen.getByTestId('task-marker')).toBeInTheDocument()
   })
 })

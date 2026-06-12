@@ -40,6 +40,9 @@ export interface UseBlockTreeContextBagsParams {
   // #264 — optional so existing callers/tests that don't wire conversion
   // still satisfy the params type.
   onTurnInto?: BlockActions['onTurnInto']
+  // Fix 6 — optional bulk-delete handler for the multi-selection (context
+  // menu "Delete N selected"); optional so existing callers/tests don't break.
+  onBatchDelete?: BlockActions['onBatchDelete']
 
   // ── Resolvers ────────────────────────────────────────────────────
   resolveBlockTitle: BlockResolvers['resolveBlockTitle']
@@ -69,6 +72,7 @@ export function useBlockTreeContextBags({
   onZoomIn,
   onSelect,
   onTurnInto,
+  onBatchDelete,
   resolveBlockTitle,
   resolveTagName,
   resolveBlockStatus,
@@ -91,6 +95,7 @@ export function useBlockTreeContextBags({
       onZoomIn,
       onSelect,
       onTurnInto,
+      onBatchDelete,
     }),
     [
       onNavigate,
@@ -108,6 +113,7 @@ export function useBlockTreeContextBags({
       onZoomIn,
       onSelect,
       onTurnInto,
+      onBatchDelete,
     ],
   )
 
