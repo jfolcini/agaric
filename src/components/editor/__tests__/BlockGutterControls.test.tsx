@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { t } from '@/lib/i18n'
+import { useBlockStore } from '@/stores/blocks'
 
 // Mock lucide-react icons. We extend the original module so transitive
 // dependencies (e.g. Sheet's close button → XIcon) still resolve, while
@@ -326,6 +327,11 @@ describe('BlockGutterControls gutter button classes', () => {
 describe('BlockGutterControls multi-select checkbox (B1, #217)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Default: no multi-selection active.
+    useBlockStore.setState({ selectedBlockIds: [] })
+  })
+  afterEach(() => {
+    useBlockStore.setState({ selectedBlockIds: [] })
   })
 
   it('does not render a checkbox when onSelect is not provided', () => {
@@ -333,15 +339,29 @@ describe('BlockGutterControls multi-select checkbox (B1, #217)', () => {
     expect(screen.queryByTestId('block-select-checkbox')).not.toBeInTheDocument()
   })
 
-  it('renders a hidden-at-rest checkbox when onSelect is provided', () => {
+  // User feedback 2026-06-12: with NO active selection the checkbox must NOT
+  // clutter a casual hover — it's fully out of the way (no hover-reveal).
+  it('keeps the checkbox out of the way on casual hover when no selection is active', () => {
     renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} />)
     const checkbox = screen.getByTestId('block-select-checkbox')
     expect(checkbox).toBeInTheDocument()
     expect(checkbox).toHaveAttribute('type', 'checkbox')
     expect(checkbox).toHaveAttribute('aria-label', t('block.selectBlock'))
-    // Hidden at rest, revealed on row hover/focus-within.
+    expect(checkbox.className).toContain('opacity-0')
+    expect(checkbox.className).toContain('pointer-events-none')
+    // NOT hover-revealed while idle.
+    expect(checkbox.className).not.toContain('group-hover:opacity-100')
+  })
+
+  // Once a multi-selection IS active, other rows hover-reveal their checkbox so
+  // the selection can be extended.
+  it('hover-reveals the checkbox on other rows once a selection is active', () => {
+    useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
+    renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} />)
+    const checkbox = screen.getByTestId('block-select-checkbox')
     expect(checkbox.className).toContain('opacity-0')
     expect(checkbox.className).toContain('group-hover:opacity-100')
+    expect(checkbox.className).not.toContain('pointer-events-none')
   })
 
   it('toggles selection via onSelect(blockId, "toggle") when changed', () => {
@@ -365,6 +385,9 @@ describe('BlockGutterControls multi-select checkbox (B1, #217)', () => {
 
   it('renders the checkbox on touch only when selected (feedback, not chrome)', () => {
     const original = setMatchMedia(true)
+    // An active selection so the unselected-but-revealable branch (which carries
+    // the coarse-pointer hide class) is exercised.
+    useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
     try {
       const { rerender } = renderWithTooltip(
         <BlockGutterControls blockId="B1" onSelect={vi.fn()} />,

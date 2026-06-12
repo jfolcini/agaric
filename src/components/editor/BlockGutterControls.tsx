@@ -31,6 +31,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { cn } from '@/lib/utils'
+import { useBlockStore } from '@/stores/blocks'
 
 /** Shared visibility / interaction classes for every gutter button. */
 const GUTTER_BUTTON_BASE =
@@ -132,16 +133,19 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
   const { t } = useTranslation()
   const isTouch = useIsTouch()
   const [sheetOpen, setSheetOpen] = useState(false)
+  // Whether a multi-selection is currently in progress anywhere. Multi-select
+  // is a rarely-used feature, so the checkbox shouldn't add chrome to the
+  // common hover state — it only earns a place once you're actually selecting.
+  const hasSelection = useBlockStore((s) => s.selectedBlockIds.length > 0)
 
-  // B1 (#217): hover-revealed multi-select checkbox — surfaces the
-  // otherwise-invisible Ctrl/Shift+Click selection affordance. Mirrors the
-  // `TrashRowItem` checkbox pattern. It is hidden at rest and revealed on row
-  // hover / focus-within (via the shared `GUTTER_*` visibility classes), but
-  // forced fully visible whenever the block is *selected* so the checkbox
-  // doubles as selection feedback — it adds feedback, not chrome (the calm↔
-  // discoverability contract from #217). A coarse-pointer device has no hover,
-  // so the checkbox is suppressed there (the long-press context menu owns
-  // touch block-ops) and only appears once selected.
+  // Multi-select checkbox visibility (user feedback 2026-06-12): the checkbox
+  // is NOT shown on a casual hover. It appears only when:
+  //   - this block is selected → forced visible, doubling as selection feedback;
+  //   - a multi-selection is already active → hover-revealed on other rows so
+  //     you can extend the selection by clicking their checkboxes.
+  // With no active selection it stays fully out of the way (the start affordance
+  // is Ctrl/Cmd+Click — the documented chord). Coarse pointers have no hover, so
+  // the checkbox is suppressed there (long-press context menu owns touch ops).
   const selectCheckbox = onSelect ? (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -156,11 +160,14 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
           className={cn(
             'block-select-checkbox flex-shrink-0 h-3.5 w-3.5 rounded border-border cursor-pointer',
             'transition-opacity focus-ring',
-            // Hidden at rest; revealed on hover/focus-within of the row. When
-            // selected, force full visibility so it reads as "I'm selected".
             isSelected
-              ? 'opacity-100'
-              : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:hidden',
+              ? // Selected → always visible (selection feedback).
+                'opacity-100'
+              : hasSelection
+                ? // A selection is active → hover-reveal so you can extend it.
+                  'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:hidden'
+                : // No selection → never clutter a casual hover; Ctrl/Cmd+Click starts one.
+                  'opacity-0 pointer-events-none',
           )}
           aria-label={t('block.selectBlock')}
           data-testid="block-select-checkbox"
