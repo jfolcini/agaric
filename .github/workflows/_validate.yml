@@ -948,7 +948,7 @@ jobs:
         # coverage. The `rust` baseline key is seeded from the first main
         # run via `--update` (no cargo-llvm-cov is available off-CI to
         # measure it locally).
-        run: node scripts/coverage-ratchet.mjs --lcov coverage.lcov --key rust
+        run: node scripts/coverage-ratchet.mjs --lcov coverage.lcov --key rust --gate
 
       - name: Upload merged rust coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -1121,7 +1121,7 @@ jobs:
   # a code diff.
   # ---------------------------------------------------------------------------
   validate-all:
-    needs: [detect-docs-only, lint, docs-lint, vitest, playwright, cargo-tests, mcp-tests]
+    needs: [detect-docs-only, lint, docs-lint, vitest, playwright, cargo-tests, cargo-coverage, mcp-tests]
     if: always()
     runs-on: ubuntu-24.04
     # PEND-41 R1 — trivial jq/bash assertion (~2s observed); 5-min floor.
@@ -1164,7 +1164,7 @@ jobs:
           # skipped            → OK iff docs_only == true (#833 fast path)
           # failure/cancelled  → NEVER OK
           # anything else      → NEVER OK
-          heavy="lint vitest playwright cargo-tests mcp-tests"
+          heavy="lint vitest playwright cargo-tests cargo-coverage mcp-tests"
           for j in $heavy; do
             r="$(result_of "$j")"
             if [ "$r" = "success" ]; then
