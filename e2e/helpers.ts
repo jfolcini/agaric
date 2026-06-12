@@ -291,6 +291,15 @@ export async function openPageMobile(page: Page, title: string) {
 
   await expect(sheet).toHaveCount(0)
   await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
+
+  // The page-title header mounts a beat before the BlockTree finishes its
+  // async fetch+render of the child rows. Under CI parallel load (many specs
+  // sharing one Vite dev server) that gap widens, so a caller that immediately
+  // queries a block — e.g. `sortable-block` `.nth(2)` — can race an empty list
+  // and time out. Wait for the first content row to render so navigation has
+  // truly settled before we return. (`first()` is enough; any seeded page that
+  // this helper navigates to has at least one block.)
+  await expect(page.locator('[data-testid="sortable-block"]').first()).toBeVisible()
 }
 
 // ---------------------------------------------------------------------------

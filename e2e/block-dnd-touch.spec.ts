@@ -81,6 +81,16 @@ test.describe('Block drag-and-drop (touch / narrow viewport)', () => {
   // #929 f2 — a press-and-hold touch drag down one row emits a move_block.
   test('a touch drag reorders a block and emits move_block', async ({ page }) => {
     await openPageMobile(page, PAGE)
+
+    // The drag targets the 3rd row (`.nth(2)`), so wait until at least three
+    // block rows have rendered before reading ids or measuring boxes. Under CI
+    // parallel load the BlockTree's async render can lag behind the page title
+    // (`openPageMobile` only awaits the first row); `blockIds`' raw
+    // `evaluateAll` doesn't auto-wait, so without this the target `.nth(2)`
+    // could be absent and the drag times out (the #929 f2 CI flake).
+    const target = page.locator('[data-testid="sortable-block"]').nth(2) // onto GS_3
+    await expect(target).toBeVisible()
+
     const ids = await blockIds(page)
     const gs1 = ids[0] as string
 
@@ -90,7 +100,6 @@ test.describe('Block drag-and-drop (touch / narrow viewport)', () => {
       .first()
       .locator('[data-testid="drag-handle"]')
     await expect(grip).toBeVisible()
-    const target = page.locator('[data-testid="sortable-block"]').nth(2) // onto GS_3
 
     await dragBlockTouch(page, grip, target)
 
