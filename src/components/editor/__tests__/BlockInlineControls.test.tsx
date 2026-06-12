@@ -286,6 +286,49 @@ describe('BlockInlineControls', () => {
     expect(screen.getByTestId('collapse-toggle')).toBeInTheDocument()
   })
 
+  // ── #927 f3: tap-the-bullet zoom ──────────────────────────────────
+  describe('zoom bullet (#927 f3)', () => {
+    it('renders a bullet even on a leaf block (no children)', () => {
+      renderControls(makeProps({ hasChildren: false }))
+      const bullet = screen.getByTestId('block-bullet')
+      expect(bullet).toBeInTheDocument()
+      expect(bullet.getAttribute('data-has-children')).toBe('false')
+    })
+
+    it('renders a bullet on a parent block too', () => {
+      renderControls(makeProps({ hasChildren: true }))
+      const bullet = screen.getByTestId('block-bullet')
+      expect(bullet).toBeInTheDocument()
+      expect(bullet.getAttribute('data-has-children')).toBe('true')
+    })
+
+    it('calls onZoomIn with the block id when the bullet is clicked', async () => {
+      const user = userEvent.setup()
+      const onZoomIn = vi.fn()
+      renderControls(makeProps({ blockId: 'BLOCK_42', onZoomIn }))
+
+      await user.click(screen.getByTestId('block-bullet'))
+
+      expect(onZoomIn).toHaveBeenCalledOnce()
+      expect(onZoomIn).toHaveBeenCalledWith('BLOCK_42')
+    })
+
+    it('zooms from a leaf bullet as well', async () => {
+      const user = userEvent.setup()
+      const onZoomIn = vi.fn()
+      renderControls(makeProps({ blockId: 'LEAF_1', hasChildren: false, onZoomIn }))
+
+      await user.click(screen.getByTestId('block-bullet'))
+
+      expect(onZoomIn).toHaveBeenCalledWith('LEAF_1')
+    })
+
+    it('marks the bullet as collapsed when the block is collapsed', () => {
+      renderControls(makeProps({ hasChildren: true, isCollapsed: true }))
+      expect(screen.getByTestId('block-bullet').getAttribute('data-collapsed')).toBe('true')
+    })
+  })
+
   it('calls onToggleCollapse with blockId on chevron click', async () => {
     const user = userEvent.setup()
     const onToggle = vi.fn()

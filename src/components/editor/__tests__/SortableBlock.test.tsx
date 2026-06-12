@@ -811,7 +811,11 @@ describe('SortableBlock collapse/expand chevron', () => {
     )
 
     const inlineControls = container.querySelector('.inline-controls')
-    const spacer = inlineControls?.querySelector('.w-5')
+    // The chevron spacer is an aria-hidden <span> with `w-5 h-5`. Scope the
+    // query to a <span> placeholder so it doesn't match the #927 f3 zoom
+    // bullet (a <button> that also carries `w-5`), which is intentionally
+    // always present — including on leaves.
+    const spacer = inlineControls?.querySelector('span.w-5.h-5[aria-hidden]')
     expect(spacer).not.toBeInTheDocument()
   })
 

@@ -1956,7 +1956,11 @@ describe('App', () => {
       expect(barToOutlet & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
 
-    it('is hidden on mobile', async () => {
+    // #927 f6: the recents strip is the mobile page-switch affordance — TabBar
+    // is desktop-only and there is no bottom-nav, so the bar must render on
+    // mobile (when there are recents) so page-switching isn't gated behind the
+    // sidebar Sheet.
+    it('renders on mobile as the page-switch affordance', async () => {
       mockedUseIsMobile.mockReturnValue(true)
 
       useRecentPagesStore.setState({
@@ -1977,7 +1981,7 @@ describe('App', () => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
-      expect(screen.queryByTestId('quick-access-bar')).toBeNull()
+      expect(screen.getByTestId('quick-access-bar')).toBeInTheDocument()
     })
 
     // #83 recents-only render gate: with no recents the bar returns null
