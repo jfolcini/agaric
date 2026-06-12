@@ -3,7 +3,8 @@
  *
  * One nav element holding the recents scroller (the former destinations
  * cluster was removed in #83 — it duplicated the left sidebar). Coverage:
- *  - Render gate: desktop with recents renders; no recents → null; mobile → null.
+ *  - Render gate: desktop AND mobile with recents render; no recents → null
+ *    (#927 f6: the recents strip is the mobile page-switch affordance).
  *  - Currently-open page excluded from recents.
  *  - Recents zone preserves all FEAT-9 / PEND-19 / PEND-32 / UX-256 behaviour.
  *  - Roving tabindex over the recents (wrap, horizontal-only).
@@ -82,9 +83,22 @@ describe('QuickAccessBar', () => {
       expect(screen.queryByTestId('quick-access-bar')).toBeNull()
     })
 
-    it('hides on mobile', () => {
+    // #927 f6: the recents strip is the mobile page-switch affordance now that
+    // TabBar is desktop-only and there is no bottom-nav. It must render on
+    // mobile (when there are recents) so page-switching isn't gated behind the
+    // sidebar Sheet.
+    it('renders on mobile when there are recents (page-switch affordance)', () => {
       mockedUseIsMobile.mockReturnValue(true)
       useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
+      render(<QuickAccessBar />)
+      const bar = screen.getByTestId('quick-access-bar')
+      expect(bar).toBeInTheDocument()
+      // A reachable page-switch control: the recent page chip is a button.
+      expect(within(bar).getByRole('button', { name: /Alpha/ })).toBeInTheDocument()
+    })
+
+    it('still returns null on mobile when there are no recents', () => {
+      mockedUseIsMobile.mockReturnValue(true)
       render(<QuickAccessBar />)
       expect(screen.queryByTestId('quick-access-bar')).toBeNull()
     })

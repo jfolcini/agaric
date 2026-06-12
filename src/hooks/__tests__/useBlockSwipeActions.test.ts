@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   AUTO_DELETE_THRESHOLD,
+  INDENT_THRESHOLD,
+  OUTDENT_MAX,
+  OUTDENT_THRESHOLD,
   REVEAL_THRESHOLD,
   useBlockSwipeActions,
   VERTICAL_CANCEL_THRESHOLD,
@@ -498,6 +501,179 @@ describe('useBlockSwipeActions', () => {
       expect(result.current.thresholdCrossed).toBe(false)
       expect(result.current.translateX).toBe(0)
       expect(result.current.isRevealed).toBe(false)
+
+      unmount()
+    })
+  })
+
+  // ── #927 f4: swipe-to-indent / swipe-to-outdent ───────────────────
+  describe('structural gestures (#927 f4)', () => {
+    it('exports non-overlapping indent/outdent thresholds below the delete band', () => {
+      expect(INDENT_THRESHOLD).toBe(60)
+      expect(OUTDENT_THRESHOLD).toBe(60)
+      expect(OUTDENT_MAX).toBe(110)
+      // The whole outdent band sits clearly below the auto-delete threshold,
+      // with a gap (OUTDENT_MAX < AUTO_DELETE_THRESHOLD).
+      expect(OUTDENT_MAX).toBeLessThan(AUTO_DELETE_THRESHOLD)
+    })
+
+    it('right-swipe past the indent threshold calls onIndent (and not onDelete)', () => {
+      mockCoarsePointer()
+      const onDelete = vi.fn()
+      const onIndent = vi.fn()
+      const onOutdent = vi.fn()
+
+      const { result, unmount } = renderHook(() =>
+        useBlockSwipeActions(onDelete, { onIndent, onOutdent }),
+      )
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(100, 100))
+      })
+      // Swipe right by 80px (past INDENT_THRESHOLD = 60).
+      act(() => {
+        result.current.handlers.onTouchMove(touch(180, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchEnd()
+      })
+
+      expect(onIndent).toHaveBeenCalledOnce()
+      expect(onDelete).not.toHaveBeenCalled()
+      expect(onOutdent).not.toHaveBeenCalled()
+      expect(result.current.translateX).toBe(0)
+
+      unmount()
+    })
+
+    it('does not indent for a right-swipe below the indent threshold', () => {
+      mockCoarsePointer()
+      const onDelete = vi.fn()
+      const onIndent = vi.fn()
+
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(onDelete, { onIndent }))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(100, 100))
+      })
+      // Swipe right by only 40px (below INDENT_THRESHOLD = 60).
+      act(() => {
+        result.current.handlers.onTouchMove(touch(140, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchEnd()
+      })
+
+      expect(onIndent).not.toHaveBeenCalled()
+      expect(result.current.translateX).toBe(0)
+
+      unmount()
+    })
+
+    it('short-left-swipe in the outdent band calls onOutdent (and not onDelete)', () => {
+      mockCoarsePointer()
+      const onDelete = vi.fn()
+      const onIndent = vi.fn()
+      const onOutdent = vi.fn()
+
+      const { result, unmount } = renderHook(() =>
+        useBlockSwipeActions(onDelete, { onIndent, onOutdent }),
+      )
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(300, 100))
+      })
+      // Swipe left by 90px — past OUTDENT_THRESHOLD (60), under OUTDENT_MAX (110).
+      act(() => {
+        result.current.handlers.onTouchMove(touch(210, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchEnd()
+      })
+
+      expect(onOutdent).toHaveBeenCalledOnce()
+      expect(onDelete).not.toHaveBeenCalled()
+      expect(onIndent).not.toHaveBeenCalled()
+      expect(result.current.translateX).toBe(0)
+      expect(result.current.isRevealed).toBe(false)
+
+      unmount()
+    })
+
+    it('long-left-swipe past the delete threshold still deletes (not outdent)', () => {
+      mockCoarsePointer()
+      const onDelete = vi.fn()
+      const onIndent = vi.fn()
+      const onOutdent = vi.fn()
+
+      const { result, unmount } = renderHook(() =>
+        useBlockSwipeActions(onDelete, { onIndent, onOutdent }),
+      )
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(400, 100))
+      })
+      // Swipe left by 210px (past AUTO_DELETE_THRESHOLD = 200).
+      act(() => {
+        result.current.handlers.onTouchMove(touch(190, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchEnd()
+      })
+
+      expect(onDelete).toHaveBeenCalledOnce()
+      expect(onOutdent).not.toHaveBeenCalled()
+      expect(onIndent).not.toHaveBeenCalled()
+
+      unmount()
+    })
+
+    it('mid-left-swipe between the outdent band and delete reveals the delete button', () => {
+      mockCoarsePointer()
+      const onDelete = vi.fn()
+      const onOutdent = vi.fn()
+
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(onDelete, { onOutdent }))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(400, 100))
+      })
+      // Swipe left by 150px — above OUTDENT_MAX (110), below AUTO_DELETE (200).
+      act(() => {
+        result.current.handlers.onTouchMove(touch(250, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchEnd()
+      })
+
+      // Neither structural gesture nor delete fires — the delete button is
+      // revealed, exactly as the delete-only ladder behaves.
+      expect(onOutdent).not.toHaveBeenCalled()
+      expect(onDelete).not.toHaveBeenCalled()
+      expect(result.current.isRevealed).toBe(true)
+      expect(result.current.translateX).toBe(-REVEAL_THRESHOLD)
+
+      unmount()
+    })
+
+    it('without structural handlers, a right swipe is still ignored (backward compatible)', () => {
+      mockCoarsePointer()
+      const onDelete = vi.fn()
+
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(onDelete))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(100, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchMove(touch(220, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchEnd()
+      })
+
+      expect(result.current.translateX).toBe(0)
+      expect(onDelete).not.toHaveBeenCalled()
 
       unmount()
     })

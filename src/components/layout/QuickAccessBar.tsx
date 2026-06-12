@@ -16,9 +16,13 @@
  * Left/Right traverse the recents with wrap; Up/Down are no-ops (horizontal).
  *
  * Render gate:
- *   - Mobile → null (the mobile bottom-nav covers navigation).
- *   - Desktop with no recents → null (recents-only: the empty path is the real
- *     one now that the always-present destinations zone is gone).
+ *   - Renders on BOTH desktop and mobile. #927 f6: the recents strip is the
+ *     mobile page-switch affordance. TabBar is desktop-only and there is no
+ *     bottom-nav, so before this change mobile page-switching was gated behind
+ *     the sidebar Sheet. The strip is a horizontal-scroll touch surface, so it
+ *     works as-is on coarse pointers; enabling it here is the lower-risk fix.
+ *   - No recents → null (recents-only: the empty path is the real one now that
+ *     the always-present destinations zone is gone).
  */
 
 import type React from 'react'
@@ -27,7 +31,6 @@ import { useTranslation } from 'react-i18next'
 
 import { RecentPageChip } from '@/components/ui/recent-page-chip'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { getPageDisplayName } from '@/lib/page-display'
 import { type PageRef, selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
@@ -36,7 +39,6 @@ import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '
 
 export function QuickAccessBar(): React.ReactElement | null {
   const { t } = useTranslation()
-  const isMobile = useIsMobile()
 
   // FEAT-3 Phase 3 — recents are per-space.
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
@@ -124,8 +126,9 @@ export function QuickAccessBar(): React.ReactElement | null {
     return () => ro.disconnect()
   }, [])
 
-  if (isMobile) return null
-  // Recents-only: nothing to show when there are no recents.
+  // #927 f6: renders on mobile too — the recents strip is the mobile
+  // page-switch affordance now that there is no bottom-nav and TabBar is
+  // desktop-only. Recents-only: nothing to show when there are no recents.
   if (visible.length === 0) return null
 
   return (

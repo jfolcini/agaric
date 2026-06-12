@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { PropertyChip } from '@/components/properties/PropertyChip'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useBlockActions } from '@/hooks/useBlockActions'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { dueDateColor, formatCompactDate, MONTH_SHORT } from '@/lib/date-utils'
@@ -135,6 +136,13 @@ export interface BlockInlineControlsProps {
   resolveBlockTitle?: ((id: string) => string) | undefined
   /** Whether any sibling block in the tree has children. When false, skip the caret placeholder. */
   anyBlockHasChildren: boolean
+  /**
+   * #927 f3: tap-the-bullet zoom-in handler. When omitted, falls back to the
+   * `onZoomIn` published on the `BlockActions` context (production wires it
+   * there via `BlockActionsProvider`); the explicit prop lets isolated tests
+   * drive the bullet without standing up a provider.
+   */
+  onZoomIn?: ((blockId: string) => void) | undefined
   attachmentCount: number
   showAttachments: boolean
   onToggleAttachments: () => void
@@ -157,6 +165,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
   filteredProperties,
   resolveBlockTitle,
   anyBlockHasChildren,
+  onZoomIn,
   attachmentCount,
   showAttachments,
   onToggleAttachments,
@@ -164,6 +173,11 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
   onEditKey,
 }: BlockInlineControlsProps): React.ReactElement {
   const { t } = useTranslation()
+
+  // #927 f3: prefer the explicit prop (test fixtures), else read the zoom-in
+  // handler off the action bag the BlockTree publishes in production.
+  const actionsZoomIn = useBlockActions().onZoomIn
+  const zoomIn = onZoomIn ?? actionsZoomIn
 
   // #217 C2 (remainder): relieve inline-control density on narrow viewports.
   // A dense block can carry priority + due + scheduled + repeat + N props +
@@ -228,6 +242,47 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
       anyBlockHasChildren ? (
         <span className="flex-shrink-0 w-5 h-5" aria-hidden />
       ) : null}
+
+      {/* #927 f3: tap-the-bullet zoom (Logseq's signature gesture). Always
+          rendered — on leaves too — so the affordance is consistent across the
+          tree. Tap/click zooms into the block; the bullet also doubles as the
+          collapsed/has-children indicator (a faint ring halo when the block has
+          hidden children). Unobtrusive on desktop: a small muted dot that only
+          brightens on hover/focus. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              'block-bullet group/bullet flex-shrink-0 flex items-center justify-center w-5 h-5 p-0 text-muted-foreground transition-colors focus-ring-visible active:scale-95 touch-target',
+              'hover:text-foreground',
+            )}
+            data-testid="block-bullet"
+            data-has-children={hasChildren}
+            data-collapsed={isCollapsed}
+            aria-label={isCollapsed ? t('block.zoomBulletCollapsed') : t('block.zoomBullet')}
+            onClick={(e) => {
+              e.stopPropagation()
+              zoomIn?.(blockId)
+            }}
+          >
+            {/* The ring halo (visible only when the block has hidden children)
+                is the non-zoom collapsed cue; the inner dot is the bullet. */}
+            <span
+              className={cn(
+                'flex items-center justify-center rounded-full transition-colors',
+                isCollapsed ? 'h-4 w-4 bg-muted/60 ring-1 ring-border' : 'h-4 w-4',
+              )}
+              aria-hidden
+            >
+              <span className="block h-1.5 w-1.5 rounded-full bg-current group-hover/bullet:bg-current" />
+            </span>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" sideOffset={4}>
+          {t('block.zoomBulletTip')}
+        </TooltipContent>
+      </Tooltip>
 
       <Tooltip>
         <TooltipTrigger asChild>
