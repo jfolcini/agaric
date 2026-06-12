@@ -53,10 +53,10 @@ export default defineConfig({
       // observed coverage rises; do not lower them without surfacing a
       // deliberate decision.
       thresholds: {
-        lines: 90,
-        functions: 89,
-        branches: 80,
-        statements: 88,
+        lines: 91,
+        functions: 90,
+        branches: 82,
+        statements: 89,
       },
     },
     include: ['src/**/*.{test,spec}.{ts,tsx}'],

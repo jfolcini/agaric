@@ -1,4 +1,5 @@
 {
-  "_comment": "Coverage ratchet baseline (#648) — total LINE coverage % per suite, MEASURED from a real CI-equivalent run. The coverage-ratchet script compares each run against these and surfaces a drop in the step summary (NON-BLOCKING — coverage is not gated, per #648). Re-baseline on main with `--update` after a deliberate change.",
-  "vitest": 91.58
+  "_comment": "Coverage ratchet baseline — total LINE coverage % per suite, MEASURED from a real CI-equivalent run. The coverage-ratchet script compares each run against these (NOISE_TOLERANCE_PP slack). vitest: informational signal (the vitest.config thresholds are the hard gate). rust: HARD-GATED (the rust ratchet call passes --gate; a drop beyond tolerance fails the cargo-coverage job, which is in validate-all's needs). Re-baseline on main with `--update` after a deliberate change.",
+  "vitest": 91.58,
+  "rust": 92.86
 }

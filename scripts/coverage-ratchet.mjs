@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────
-// Coverage ratchet (#648) — NON-BLOCKING patch-level coverage signal.
+// Coverage ratchet (#648) — patch-level coverage signal; HARD-GATES with `--gate`.
 //
 // Coverage is already produced on every CI run (Rust: `coverage.lcov`
 // merged across the cargo-tests shards; vitest: `coverage-summary.json`)
@@ -8,10 +8,10 @@
 // This script turns it into a ratchet: it computes total LINE coverage from
 // a coverage artifact and compares it against a checked-in baseline
 // (`scripts/coverage-baseline.json`). A DROP beyond a small tolerance is
-// surfaced loudly in the step summary — but the script ALWAYS exits 0
-// (non-blocking). Gating coverage was a deliberate no per #648's flakiness
-// concern; the value here is catching "a new module landed with no tests"
-// without gating.
+// surfaced loudly in the step summary. By default the script exits 0
+// (non-blocking signal); with `--gate` a drop beyond tolerance exits 1 (the
+// rust call uses `--gate` so cargo-coverage — now in validate-all's needs —
+// fails the merge gate). The NOISE_TOLERANCE_PP slack absorbs llvm-cov jitter.
 //
 // Two input shapes are accepted:
 //   --lcov <path>      LLVM/lcov tracefile (Rust) — sums LF/LH records.
@@ -19,10 +19,10 @@
 //
 // Usage:
 //   node scripts/coverage-ratchet.mjs --summary coverage-merged/coverage-summary.json --key vitest
-//   node scripts/coverage-ratchet.mjs --lcov coverage.lcov --key rust
+//   node scripts/coverage-ratchet.mjs --lcov coverage.lcov --key rust --gate
 //   node scripts/coverage-ratchet.mjs --summary <path> --key vitest --update
 //
-// Exit: ALWAYS 0 (non-blocking). A drop is reported, not enforced.
+// Exit: 0 by default; 1 when `--gate` is set AND coverage dropped beyond tolerance.
 // ─────────────────────────────────────────────────────────────────────
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -37,10 +37,11 @@ const BASELINE_PATH = join(__dirname, 'coverage-baseline.json')
 const NOISE_TOLERANCE_PP = 0.5
 
 function parseArgs(argv) {
-  const args = { update: false }
+  const args = { update: false, gate: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--update') args.update = true
+    else if (a === '--gate') args.gate = true
     else if (a === '--lcov') args.lcov = argv[++i]
     else if (a === '--summary') args.summary = argv[++i]
     else if (a === '--key') args.key = argv[++i]
@@ -158,13 +159,17 @@ function main() {
 
   const delta = rounded - base
   const deltaStr = (delta >= 0 ? '+' : '') + delta.toFixed(2)
+  const dropped = delta < -NOISE_TOLERANCE_PP
   let verdict
-  if (delta < -NOISE_TOLERANCE_PP) {
+  if (dropped) {
+    const tail = args.gate
+      ? `**This is a HARD GATE (\`--gate\`) — failing the job.** ` +
+        `If the drop is intentional, re-baseline on main with \`--update\`.`
+      : `This is non-blocking, but check whether a new module landed without tests. ` +
+        `If the drop is intentional, re-baseline on main.`
     verdict =
       `⚠️ **Line coverage dropped ${deltaStr}pp vs baseline** ` +
-      `(${rounded}% < ${base}%). This is non-blocking, but check whether a ` +
-      `new module landed without tests. If the drop is intentional, ` +
-      `re-baseline on main.`
+      `(${rounded}% < ${base}%, tolerance ${NOISE_TOLERANCE_PP}pp). ${tail}`
   } else if (delta > NOISE_TOLERANCE_PP) {
     verdict = `✅ Line coverage up ${deltaStr}pp vs baseline (${rounded}% ≥ ${base}%). Consider re-baselining on main to ratchet the floor.`
   } else {
@@ -172,7 +177,8 @@ function main() {
   }
 
   appendStepSummary(`### Coverage ratchet (${args.key})\n\n${verdict}`)
-  return 0
+  // Hard gate only when --gate is set AND coverage dropped beyond tolerance.
+  return args.gate && dropped ? 1 : 0
 }
 
 process.exit(main())
