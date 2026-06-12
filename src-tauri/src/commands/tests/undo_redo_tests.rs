@@ -2215,7 +2215,11 @@ async fn revert_move_block_restores_original_position() {
     .unwrap();
 
     // Verify it's back at P1. The reverse move reads the original create
-    // op (index 3) and restores that 0-based slot ⇒ provisional rank 4.
+    // op (index 3) and restores that parent. #928: `apply_reverse_in_tx` now
+    // reprojects the restored sibling group to dense 1-based positions (the
+    // same densification the forward engine move runs), so the child — the SOLE
+    // live block under P1 — converges to dense rank 1, NOT the gapped
+    // provisional rank 4 the raw reverse UPDATE used to leave behind.
     let after = get_block_inner(&pool, child.id.clone()).await.unwrap();
     assert_eq!(
         after.parent_id.as_ref().map(crate::ulid::BlockId::as_str),
@@ -2224,8 +2228,8 @@ async fn revert_move_block_restores_original_position() {
     );
     assert_eq!(
         after.position,
-        Some(4),
-        "original index 3 ⇒ provisional dense rank 4 after revert"
+        Some(1),
+        "#928: sole restored child re-densifies to dense rank 1 after revert"
     );
 }
 

@@ -31,6 +31,40 @@ use super::*;
 /// here returns a clean error instead.
 const MAX_REVERT_OPS: usize = 1000;
 
+/// #928: Re-densify the LIVE children of `parent_id` to dense 1-based positions
+/// inside an existing transaction.
+///
+/// Reads the canonical sibling order — `(position ASC, id ASC)`, the same tuple
+/// the read side and engine projection use — over the non-tombstoned children of
+/// `parent_id`, then delegates to
+/// [`crate::loro::projection::reproject_dense_positions`] (a single set-based
+/// `UPDATE … FROM json_each`). This is the SQL-only analogue of the engine
+/// reprojection the foreground apply path runs: the reverse-apply path
+/// ([`apply_reverse_in_tx`]) never enters `apply_op_tx`, so its MoveBlock arm
+/// must re-densify the affected groups itself or leave gaps/dupes.
+///
+/// Tombstoned siblings are excluded: they are not part of the live order a user
+/// sees, and the reverse path has no engine fractional order to anchor their
+/// retained slot to. Live siblings collapse to `1..N` with no duplicates/gaps.
+async fn reproject_live_sibling_group(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    parent_id: Option<&str>,
+) -> Result<(), AppError> {
+    // `parent_id IS ?` matches NULL (top-level blocks) and concrete parents
+    // alike; `deleted_at IS NULL` keeps tombstones out of the dense order.
+    let ordered: Vec<String> = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM blocks \
+         WHERE parent_id IS ? AND deleted_at IS NULL \
+         ORDER BY position ASC, id ASC",
+    )
+    .bind(parent_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    // `reproject_dense_positions` takes `&mut SqliteConnection`; `&mut Transaction`
+    // deref-coerces to it, so pass `tx` directly (clippy::explicit_auto_deref).
+    crate::loro::projection::reproject_dense_positions(tx, &ordered).await
+}
+
 /// Apply the materialized effect of a reverse [`OpPayload`] to the blocks/tags/properties
 /// tables inside an existing transaction.
 ///
@@ -136,6 +170,27 @@ pub async fn apply_reverse_in_tx(
         OpPayload::MoveBlock(p) => {
             let new_parent_id_str = p.new_parent_id.as_ref().map(BlockId::as_str);
             let move_block_id_str = p.block_id.as_str();
+
+            // #928: capture the moved block's CURRENT parent BEFORE the reverse
+            // UPDATE reparents it. The reverse of a move re-homes the block from
+            // its present parent (the forward move's target) back to
+            // `new_parent_id` (the forward move's source). BOTH groups change
+            // membership, so — exactly like the forward `apply_move_block_via_loro`
+            // — both need a dense 1-based reprojection afterward. Without this
+            // the raw UPDATE below leaves the block carrying its PROVISIONAL
+            // `new_position` (`index_to_provisional_position`) while its new
+            // siblings keep their old ranks: duplicates/gaps that never converge
+            // (the foreground engine reproject runs for the forward op-dispatch
+            // path but NOT for this reverse-apply path, which only enqueues a
+            // background CACHE rebuild, never `apply_op_tx`).
+            let old_parent_id: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT parent_id FROM blocks WHERE id = ?",
+            )
+            .bind(move_block_id_str)
+            .fetch_optional(&mut **tx)
+            .await?
+            .flatten();
+
             let result = sqlx::query!(
                 "UPDATE blocks SET parent_id = ?, position = ? \
                  WHERE id = ? AND deleted_at IS NULL",
@@ -150,6 +205,19 @@ pub async fn apply_reverse_in_tx(
                     "block '{}' not found or soft-deleted during undo",
                     p.block_id
                 )));
+            }
+
+            // #928: reproject dense 1-based positions for both affected sibling
+            // groups. The target group (the block's restored parent) always
+            // needs it because the block just (re)joined it at a provisional
+            // rank; the source group (the parent it left) needs it too on a
+            // cross-parent undo because it lost a member and must re-densify.
+            // A same-parent undo touches a single group (old == new), so the
+            // dedup below reprojects it once. This mirrors the forward path's
+            // `reproject_dense_positions(old_siblings)` + `(new_siblings)`.
+            reproject_live_sibling_group(tx, new_parent_id_str).await?;
+            if old_parent_id.as_deref() != new_parent_id_str {
+                reproject_live_sibling_group(tx, old_parent_id.as_deref()).await?;
             }
 
             // #664: refresh `page_id` AND `space_id` for the moved block
