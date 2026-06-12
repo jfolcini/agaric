@@ -58,5 +58,15 @@
     "active": true,
     "expiresOn": "2026-08-14T00:00:00.000Z",
     "notes": "mermaid classDef state-diagram HTML injection; per AGENTS.md threat model the app is single-user local-first with no adversarial input. Expires 90d; re-review on expiry."
+  },
+  "1120679": {
+    "active": true,
+    "expiresOn": "2026-08-14T00:00:00.000Z",
+    "notes": "esbuild GHSA-gv7w-rqvm-qjhr (NPM_CONFIG_REGISTRY RCE via the Deno module) — esbuild is a build/dev-only dep (via vite@8); the shipped Tauri app contains no esbuild and the app is not built through the Deno module path. Inherited on main when the advisory published. Expires 90d; re-review (bump esbuild past 0.28.0 when vite allows)."
+  },
+  "1120680": {
+    "active": true,
+    "expiresOn": "2026-08-14T00:00:00.000Z",
+    "notes": "esbuild GHSA-g7r4-m6w7-qqqr (arbitrary file read via the dev server on Windows) — dev-server-only, not exposed in the production Tauri app (same posture as the excluded vite dev-server advisories). Expires 90d; re-review."
   }
 }
