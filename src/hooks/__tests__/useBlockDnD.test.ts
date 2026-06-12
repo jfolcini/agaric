@@ -895,6 +895,45 @@ describe('useBlockDnD', () => {
       expect(sensors[1]?.sensor).toBe('KeyboardSensor')
       expect(sensors[1]?.opts).toHaveProperty('coordinateGetter')
     })
+
+    // ── #926 f4: a touch drag projects DEPTH (indent/dedent) for free ──
+    // The drag is a full @dnd-kit drag on touch (same PointerSensor, only the
+    // activation constraint differs). `handleDragMove`'s horizontal `delta.x`
+    // feeds `getProjection`'s offsetLeft on EVERY pointer type, so a coarse
+    // pointer changing nesting is the same code path as a mouse — assert it
+    // here so a future touch-only branch can't regress depth projection.
+    it('touch drag projects depth from horizontal offset (indent/dedent — #926 f4)', () => {
+      mockedUseIsTouch.mockReturnValue(true) // coarse pointer / touch sensor
+      const blocks = [
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+      ]
+      const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
+
+      const flat: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
+      const nested: Projection = { depth: 1, parentId: 'A', maxDepth: 1, minDepth: 0 }
+      mockedGetProjection.mockReturnValue(flat)
+
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+      expect(result.current.projected).toEqual(flat)
+
+      // A rightward touch-drag offset → indent projection (nest under A).
+      mockedGetProjection.mockReturnValue(nested)
+      act(() => {
+        result.current.handleDragMove(makeDragMoveEvent(48) as never)
+      })
+      expect(result.current.projected).toEqual(nested)
+      // getProjection received the positive horizontal offset as its 4th
+      // positional arg (offsetLeft) — depth is a function of offsetLeft,
+      // identical to the fine-pointer path.
+      const lastCall = mockedGetProjection.mock.calls.at(-1)
+      expect(lastCall?.[1]).toBe('B') // activeId
+      expect(lastCall?.[3]).toBe(48) // offsetLeft from the touch drag delta.x
+    })
   })
 
   // ── Edge cases ───────────────────────────────────────────────────────
