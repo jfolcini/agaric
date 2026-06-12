@@ -270,10 +270,16 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
   // #910 — `!e.shiftKey`: Shift+Arrow at a boundary must EXTEND the selection
   // (let ProseMirror/the browser handle it), not navigate to the adjacent block
   // and silently drop the selection. Plain Arrow still moves block focus.
+  // #921 — `!ctrlKey && !metaKey && !altKey`: word/line-wise motion
+  // (Ctrl/Alt+Arrow, Cmd+Arrow) must defer to native caret movement rather than
+  // jumping to the adjacent block.
   {
     match: (e, ctx) =>
       (e.key === 'ArrowUp' || e.key === 'ArrowLeft') &&
       !e.shiftKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
       ctx.atStart &&
       !isSuggestionPopupVisible(),
     handle: (e, cb) => {
@@ -283,11 +289,16 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
     },
   },
   // ArrowDown / ArrowRight at end → next block (suppressed when popup open).
-  // #910 — `!e.shiftKey`: see the ArrowUp/ArrowLeft rule above.
+  // #910 — `!e.shiftKey`; #921 — `!ctrlKey && !metaKey && !altKey`: see the
+  // ArrowUp/ArrowLeft rule above (Shift extends selection; word/line modifiers
+  // defer to native caret motion instead of jumping to the next block).
   {
     match: (e, ctx) =>
       (e.key === 'ArrowDown' || e.key === 'ArrowRight') &&
       !e.shiftKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
       ctx.atEnd &&
       !isSuggestionPopupVisible(),
     handle: (e, cb) => {

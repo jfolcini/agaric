@@ -249,6 +249,53 @@ describe('handleBlockKeyDown', () => {
     })
   })
 
+  // #921 — word/line-wise modifiers (Ctrl/Alt+Arrow, Cmd+Arrow) at a boundary
+  // must defer to native caret motion, not jump to the adjacent block.
+  describe('Ctrl/Meta/Alt+Arrow at a boundary does not navigate (#921)', () => {
+    it('Ctrl+ArrowRight at end does NOT focus the next block', () => {
+      const editor = makeEditor({ from: 19, to: 19, selectionEmpty: true, docSize: 20 })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowRight', { ctrlKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls['onFocusNext']).toBeUndefined()
+    })
+
+    it('Meta+ArrowLeft at start does NOT focus the previous block', () => {
+      const editor = makeEditor({ from: 1, to: 1, selectionEmpty: true })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowLeft', { metaKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls['onFocusPrev']).toBeUndefined()
+    })
+
+    it('Alt+ArrowUp at start does NOT focus the previous block', () => {
+      const editor = makeEditor({ from: 1, to: 1, selectionEmpty: true })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowUp', { altKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls['onFocusPrev']).toBeUndefined()
+    })
+
+    it('plain ArrowRight at end still focuses the next block (guard not over-broad)', () => {
+      const editor = makeEditor({ from: 19, to: 19, selectionEmpty: true, docSize: 20 })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowRight')
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(cbs._calls['onFocusNext']).toBe(1)
+    })
+  })
+
   describe('Ctrl+Shift+ArrowRight / ArrowLeft (indent / dedent)', () => {
     it('Ctrl+Shift+ArrowRight calls onFlush + onIndent', () => {
       const editor = makeEditor({})
