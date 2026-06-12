@@ -321,6 +321,12 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   // stale closures inside NodeViews.
   const resolveTagNameRef = useRef(resolveTagName)
   resolveTagNameRef.current = resolveTagName
+  // #921 — the placeholder is computed live per focused block (template hint vs
+  // slash-command hint) but the editor is created once, so a captured string
+  // froze at creation. Keep it in a ref and read it via Placeholder's function
+  // form so the decoration reflects the CURRENT placeholder on every render.
+  const placeholderRef = useRef(placeholder)
+  placeholderRef.current = placeholder
   const resolveBlockTitleRef = useRef(resolveBlockTitle)
   resolveBlockTitleRef.current = resolveBlockTitle
   const onNavigateRef = useRef(onNavigate)
@@ -374,7 +380,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       History,
       ExternalLink,
       PriorityShortcuts,
-      Placeholder.configure({ placeholder }),
+      Placeholder.configure({ placeholder: () => placeholderRef.current }),
       TagRef.configure({
         resolveName: (id: string) => resolveTagNameRef.current(id),
         onClick: (id: string) => onTagClickRef.current?.(id),

@@ -692,14 +692,18 @@ describe('useRovingEditor integration (renderHook)', () => {
   // #544 — the placeholder default is empty; callers own the (i18n-keyed)
   // text and pass it explicitly. A caller that forgets shows no hint rather
   // than leaking a hardcoded English string that bypasses i18n.
+  // #921 — placeholder is the function form (live per focused block), not a
+  // string frozen at editor creation. The fn reads the current ref value.
+  function readPlaceholder(editor: Editor): unknown {
+    const ext = editor.extensionManager.extensions.find((e) => e.name === 'placeholder')
+    const opt = ext?.options.placeholder as unknown
+    return typeof opt === 'function' ? (opt as () => unknown)() : opt
+  }
+
   it('default placeholder is empty (callers supply the i18n text)', async () => {
     const { result, unmount: unmountHook } = await setup()
 
-    const ext = (result.current.editor as Editor).extensionManager.extensions.find(
-      (e) => e.name === 'placeholder',
-    )
-    expect(ext).toBeDefined()
-    expect(ext?.options.placeholder).toBe('')
+    expect(readPlaceholder(result.current.editor as Editor)).toBe('')
 
     result.current.editor?.destroy()
     unmountHook()
@@ -709,10 +713,23 @@ describe('useRovingEditor integration (renderHook)', () => {
     const hook = renderHook(() => useRovingEditor({ placeholder: 'custom hint' }))
     await waitFor(() => expect(hook.result.current.editor).not.toBeNull())
 
-    const ext = (hook.result.current.editor as Editor).extensionManager.extensions.find(
-      (e) => e.name === 'placeholder',
-    )
-    expect(ext?.options.placeholder).toBe('custom hint')
+    expect(readPlaceholder(hook.result.current.editor as Editor)).toBe('custom hint')
+
+    hook.result.current.editor?.destroy()
+    hook.unmount()
+  })
+
+  it('#921 — placeholder updates live when the prop changes (not frozen at creation)', async () => {
+    const hook = renderHook(({ placeholder }) => useRovingEditor({ placeholder }), {
+      initialProps: { placeholder: 'first hint' },
+    })
+    await waitFor(() => expect(hook.result.current.editor).not.toBeNull())
+    expect(readPlaceholder(hook.result.current.editor as Editor)).toBe('first hint')
+
+    // Re-render with a new placeholder (as BlockTree does when focus moves to a
+    // different block). The SAME editor instance must report the new value.
+    hook.rerender({ placeholder: 'second hint' })
+    expect(readPlaceholder(hook.result.current.editor as Editor)).toBe('second hint')
 
     hook.result.current.editor?.destroy()
     hook.unmount()
