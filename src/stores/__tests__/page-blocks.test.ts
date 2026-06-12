@@ -1243,6 +1243,26 @@ describe('PageBlockStore', () => {
       expect(mockedInvoke).not.toHaveBeenCalled()
     })
 
+    it('#928 — does NOT indent when it would push the subtree past MAX_BLOCK_DEPTH', async () => {
+      // Parent chain P0..P17 (depths 0..17), two siblings S1 & B at depth 18
+      // under P17, and B has a child BC at depth 19. Indenting B under S1 would
+      // put B at depth 19 and BC at depth 20 (> MAX_BLOCK_DEPTH-1=19) — reject
+      // up front (no move_block IPC, no error toast) instead of letting the
+      // backend bounce it.
+      const chain = Array.from({ length: 18 }, (_, d) =>
+        makeBlock({ id: `P${d}`, parent_id: d === 0 ? null : `P${d - 1}`, position: 0, depth: d }),
+      )
+      const s1 = makeBlock({ id: 'S1', parent_id: 'P17', position: 0, depth: 18 })
+      const b = makeBlock({ id: 'B', parent_id: 'P17', position: 1, depth: 18 })
+      const bc = makeBlock({ id: 'BC', parent_id: 'B', position: 0, depth: 19 })
+      store.setState({ blocks: [...chain, s1, b, bc] })
+
+      const ok = await store.getState().indent('B')
+
+      expect(ok).toBe(false)
+      expect(mockedInvoke).not.toHaveBeenCalledWith('move_block', expect.anything())
+    })
+
     it('does nothing when block not found', async () => {
       store.setState({ blocks: [makeBlock({ id: 'A' })] })
 
