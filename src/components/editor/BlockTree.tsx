@@ -38,6 +38,7 @@ import { TemplatePicker } from '@/components/block-tree/TemplatePicker'
 import { useBlockAutoCreateFirstBlock } from '@/components/block-tree/use-block-auto-create-first-block'
 import { useBlockFlush } from '@/components/block-tree/use-block-flush'
 import { useBlockTreeContextBags } from '@/components/block-tree/use-block-tree-context-bags'
+import { useBlockZoomEmptySeed } from '@/components/block-tree/use-block-zoom-empty-seed'
 import { QueryBuilderModal } from '@/components/dialogs/QueryBuilderModal'
 import { BlockHistorySheet } from '@/components/editor/BlockHistorySheet'
 import { BlockListRenderer } from '@/components/editor/BlockListRenderer'
@@ -424,6 +425,18 @@ export function BlockTree({
     loading,
     blocksLength: blocks.length,
     rootParentId,
+    pageStore,
+    t,
+  })
+
+  // ── #922: seed a first child when zoomed into an empty (leaf) block ──
+  // Keyboard zoom-in no longer requires children, so a zoomed leaf would
+  // otherwise show a blank pane. Insert a child UNDER the zoom root via a
+  // non-wholesale splice (the page outside the zoom root is preserved).
+  useBlockZoomEmptySeed({
+    enabled: autoCreateFirstBlock,
+    loading,
+    zoomedBlockId,
     pageStore,
     t,
   })

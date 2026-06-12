@@ -2317,7 +2317,7 @@ describe('PageBlockStore', () => {
       expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
     })
 
-    it('is no-op when block is the first sibling', async () => {
+    it('is no-op when block is the first sibling at ROOT (nowhere to pop out)', async () => {
       const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
@@ -2325,6 +2325,76 @@ describe('PageBlockStore', () => {
       await store.getState().moveUp('A')
 
       expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('#922 — first child pops OUT to become the parent previous sibling', async () => {
+      // GRAND > P > {C1, C2}; P is GRAND's 2nd child (after S).
+      const grand = makeBlock({ id: 'GRAND', position: 0, parent_id: null, depth: 0 })
+      const sibBeforeP = makeBlock({ id: 'S', position: 0, parent_id: 'GRAND', depth: 1 })
+      const parent = makeBlock({ id: 'P', position: 1, parent_id: 'GRAND', depth: 1 })
+      const child1 = makeBlock({ id: 'C1', position: 0, parent_id: 'P', depth: 2 })
+      const child2 = makeBlock({ id: 'C2', position: 1, parent_id: 'P', depth: 2 })
+      store.setState({ blocks: [grand, sibBeforeP, parent, child1, child2] })
+
+      // move_block — the cross-parent pop-out. C1 lands under GRAND at the
+      // parent P's own sibling slot (1), i.e. right BEFORE P.
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'C1',
+        new_parent_id: 'GRAND',
+        new_position: 1,
+      })
+      // load() reload after the structural move.
+      mockedInvoke.mockResolvedValueOnce([
+        makeBlock({ id: 'GRAND', parent_id: 'PAGE_1', depth: 0 }),
+        makeBlock({ id: 'S', parent_id: 'GRAND', depth: 1 }),
+        makeBlock({ id: 'C1', parent_id: 'GRAND', depth: 1 }),
+        makeBlock({ id: 'P', parent_id: 'GRAND', depth: 1 }),
+        makeBlock({ id: 'C2', parent_id: 'P', depth: 2 }),
+      ])
+
+      const ok = await store.getState().moveUp('C1')
+
+      expect(ok).toBe(true)
+      // The pop-out targets the grandparent at parent P's sibling slot (1).
+      expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
+        blockId: 'C1',
+        newParentId: 'GRAND',
+        newIndex: 1,
+      })
+      // Structural move → a follow-up reload (mirrors moveToParent).
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+      )
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+    })
+
+    it('#922 — first child pop-out under a ROOT parent uses newParentId null', async () => {
+      // P (root) > {C1, C2}. C1 pops out to root, right before P (slot 0).
+      const parent = makeBlock({ id: 'P', position: 0, parent_id: null, depth: 0 })
+      const child1 = makeBlock({ id: 'C1', position: 0, parent_id: 'P', depth: 1 })
+      const child2 = makeBlock({ id: 'C2', position: 1, parent_id: 'P', depth: 1 })
+      store.setState({ blocks: [parent, child1, child2] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'C1',
+        new_parent_id: null,
+        new_position: 0,
+      })
+      mockedInvoke.mockResolvedValueOnce([
+        makeBlock({ id: 'C1', parent_id: 'PAGE_1', depth: 0 }),
+        makeBlock({ id: 'P', parent_id: 'PAGE_1', depth: 0 }),
+        makeBlock({ id: 'C2', parent_id: 'P', depth: 1 }),
+      ])
+
+      const ok = await store.getState().moveUp('C1')
+
+      expect(ok).toBe(true)
+      expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
+        blockId: 'C1',
+        newParentId: null,
+        newIndex: 0,
+      })
     })
 
     it('is no-op when block is not found', async () => {
@@ -2434,7 +2504,7 @@ describe('PageBlockStore', () => {
       expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
     })
 
-    it('is no-op when block is the last sibling', async () => {
+    it('is no-op when block is the last sibling at ROOT (nowhere to pop out)', async () => {
       const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
@@ -2442,6 +2512,72 @@ describe('PageBlockStore', () => {
       await store.getState().moveDown('B')
 
       expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('#922 — last child pops OUT to become the parent next sibling', async () => {
+      // GRAND > {P, S}; P > {C1, C2}. moveDown(C2) pops C2 out to GRAND right
+      // AFTER P (parent P's sibling slot 0 + 1 = 1).
+      const grand = makeBlock({ id: 'GRAND', position: 0, parent_id: null, depth: 0 })
+      const parent = makeBlock({ id: 'P', position: 0, parent_id: 'GRAND', depth: 1 })
+      const sibAfterP = makeBlock({ id: 'S', position: 1, parent_id: 'GRAND', depth: 1 })
+      const child1 = makeBlock({ id: 'C1', position: 0, parent_id: 'P', depth: 2 })
+      const child2 = makeBlock({ id: 'C2', position: 1, parent_id: 'P', depth: 2 })
+      store.setState({ blocks: [grand, parent, sibAfterP, child1, child2] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'C2',
+        new_parent_id: 'GRAND',
+        new_position: 1,
+      })
+      mockedInvoke.mockResolvedValueOnce([
+        makeBlock({ id: 'GRAND', parent_id: 'PAGE_1', depth: 0 }),
+        makeBlock({ id: 'P', parent_id: 'GRAND', depth: 1 }),
+        makeBlock({ id: 'C1', parent_id: 'P', depth: 2 }),
+        makeBlock({ id: 'C2', parent_id: 'GRAND', depth: 1 }),
+        makeBlock({ id: 'S', parent_id: 'GRAND', depth: 1 }),
+      ])
+
+      const ok = await store.getState().moveDown('C2')
+
+      expect(ok).toBe(true)
+      // Pop-out under the grandparent, right after parent P (slot 0 + 1).
+      expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
+        blockId: 'C2',
+        newParentId: 'GRAND',
+        newIndex: 1,
+      })
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+      )
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+    })
+
+    it('#922 — single-child pop-out under a ROOT parent uses newParentId null', async () => {
+      // P (root) > {C1}. C1 is both first AND last; moveDown pops it out to
+      // root right after P (parent slot 0 + 1 = 1).
+      const parent = makeBlock({ id: 'P', position: 0, parent_id: null, depth: 0 })
+      const child1 = makeBlock({ id: 'C1', position: 0, parent_id: 'P', depth: 1 })
+      store.setState({ blocks: [parent, child1] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'C1',
+        new_parent_id: null,
+        new_position: 1,
+      })
+      mockedInvoke.mockResolvedValueOnce([
+        makeBlock({ id: 'P', parent_id: 'PAGE_1', depth: 0 }),
+        makeBlock({ id: 'C1', parent_id: 'PAGE_1', depth: 0 }),
+      ])
+
+      const ok = await store.getState().moveDown('C1')
+
+      expect(ok).toBe(true)
+      expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
+        blockId: 'C1',
+        newParentId: null,
+        newIndex: 1,
+      })
     })
 
     it('is no-op when block is not found', async () => {

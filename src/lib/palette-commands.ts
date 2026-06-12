@@ -26,12 +26,14 @@ import {
   Clock,
   FileSearch,
   FileText,
+  Keyboard,
   type LucideIcon,
   Settings as SettingsIcon,
   Tag as TagIcon,
   Trash2,
 } from 'lucide-react'
 
+import { SHOW_SHORTCUTS_EVENT } from '@/lib/overlay-events'
 import { useNavigationStore } from '@/stores/navigation'
 
 export type PaletteCommandCategory = 'navigate' | 'action'
@@ -121,6 +123,22 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
       // Escalate with an empty seed — SearchPanel mounts with its
       // input ready for the user to type, same as Ctrl+Shift+F.
       onEscalate('')
+    },
+  },
+  {
+    id: 'keyboard-shortcuts',
+    labelKey: 'palette.cmdKeyboardShortcuts',
+    category: 'action',
+    icon: Keyboard,
+    // #922 — the `?` chord is suppressed while an editor is focused (so a
+    // literal `?` types during outlining), leaving the cheatsheet unreachable
+    // mid-outline. This command opens it via the editor-agnostic
+    // `SHOW_SHORTCUTS_EVENT`, so it works whether or not an editor is focused.
+    // The chip still advertises the `?` chord for the non-editing case.
+    shortcutId: 'showShortcuts',
+    run: ({ onClose }) => {
+      window.dispatchEvent(new CustomEvent(SHOW_SHORTCUTS_EVENT))
+      onClose()
     },
   },
 ]
