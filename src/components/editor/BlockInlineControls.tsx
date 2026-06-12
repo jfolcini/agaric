@@ -79,7 +79,7 @@ const TASK_CHECKBOX_STYLES: Record<string, CheckboxStyle> = {
   DONE: {
     className: 'task-checkbox-done border-task-done bg-task-done flex items-center justify-center',
     testId: 'task-checkbox-done',
-    icon: <Check className="h-3 w-3 text-white" />,
+    icon: <Check className="h-3 w-3 text-task-done-foreground" />,
   },
   DOING: {
     className:

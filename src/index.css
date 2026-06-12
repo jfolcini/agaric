@@ -86,6 +86,7 @@
   --color-alert-note-border: var(--alert-note-border);
   /* Task checkbox state colors */
   --color-task-done: var(--task-done);
+  --color-task-done-foreground: var(--task-done-foreground);
   --color-task-doing: var(--task-doing);
   --color-task-cancelled: var(--task-cancelled);
   --color-task-custom: var(--task-custom);
@@ -180,6 +181,12 @@
   --priority-high: oklch(0.8 0.16 90);
   --priority-normal: oklch(0.62 0.22 265);
   --priority-foreground: oklch(1 0 0);
+  /* #929 — paired foreground for the DONE checkbox glyph, mirroring
+     --priority-foreground (was a hardcoded text-white). The task-done bg is a
+     saturated green across all themes, so a near-white glyph reads on every one.
+     Defined once in the base :root; it cascades to every theme (none override it
+     today) and a theme can override it if it ever needs a different contrast. */
+  --task-done-foreground: oklch(1 0 0);
   /* Operation type colors */
   --op-create: oklch(0.97 0.02 163);
   --op-create-foreground: oklch(0.53 0.15 163);
