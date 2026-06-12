@@ -23,6 +23,7 @@ import { type RefObject, useCallback, useMemo, useRef, useState } from 'react'
 
 import { INDENT_WIDTH } from '@/components/editor/SortableBlock'
 import { logger } from '@/lib/logger'
+import { consumePreDragFocus } from '@/lib/pre-drag-focus'
 
 import {
   computeDropIndex,
@@ -249,10 +250,23 @@ export function useBlockDnD({
       setIndentWidth(resolveIndentWidth())
 
       // #923 — capture the pre-drag focused block so a cancel/no-op can restore it.
-      preDragFocusedIdRef.current = rovingEditorRef.current.activeBlockId
+      //
+      // #966 — for a HANDLE-initiated drag, the handle's `pointerdown` already
+      // blurred the contenteditable and `useEditorBlur` tore the editor down
+      // (`activeBlockId` → null, `setFocused(null)`) BEFORE this `handleDragStart`
+      // runs past the 8px threshold. So `rovingEditor.activeBlockId` is already
+      // null here and #923 had nothing to restore. The drag handle snapshots the
+      // focus in its `pointerdown` (before that blur) via `capturePreDragFocus`;
+      // consume it as the fallback. The live `activeBlockId` is still preferred
+      // (keyboard-initiated drags keep focus and never press the handle), and we
+      // ALWAYS consume so a handle press that never became a drag can't leak a
+      // stale id into a later keyboard drag.
+      const liveFocus = rovingEditorRef.current.activeBlockId
+      const capturedFocus = consumePreDragFocus()
+      preDragFocusedIdRef.current = liveFocus ?? capturedFocus
 
       // Flush editor if active
-      if (rovingEditorRef.current.activeBlockId) {
+      if (liveFocus) {
         handleFlush()
         setFocused(null)
       }

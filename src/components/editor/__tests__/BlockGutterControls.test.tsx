@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { t } from '@/lib/i18n'
+import { consumePreDragFocus } from '@/lib/pre-drag-focus'
 import { useBlockStore } from '@/stores/blocks'
 
 // Mock lucide-react icons. We extend the original module so transitive
@@ -216,6 +217,32 @@ describe('BlockGutterControls', () => {
 
     const dragHandle = screen.getByTestId('drag-handle')
     expect(dragHandle).toHaveAttribute('aria-describedby', 'dnd-desc')
+  })
+
+  // #966 — pressing the drag handle blurs the editor (tearing focus down)
+  // before the drag activates, so the handle must snapshot the pre-drag focus
+  // in its own `pointerdown` for restore-on-cancel. It must ALSO still invoke
+  // dnd-kit's `onPointerDown` so the drag actually activates.
+  it('captures the focused block and still forwards dnd-kit onPointerDown on handle pointerDown', () => {
+    consumePreDragFocus() // drain any prior capture
+    useBlockStore.setState({ focusedBlockId: 'A' })
+    const dndPointerDown = vi.fn()
+
+    renderWithTooltip(
+      <BlockGutterControls
+        blockId="B1"
+        dragListeners={{ onPointerDown: dndPointerDown } as unknown as DraggableSyntheticListeners}
+      />,
+    )
+
+    fireEvent.pointerDown(screen.getByTestId('drag-handle'))
+
+    // dnd-kit's activator still ran (drag can start) …
+    expect(dndPointerDown).toHaveBeenCalledTimes(1)
+    // … and the pre-drag focus was snapshotted before the press-blur clears it.
+    expect(consumePreDragFocus()).toBe('A')
+
+    useBlockStore.setState({ focusedBlockId: null })
   })
 
   it('renders all three buttons when all callbacks are provided', () => {
