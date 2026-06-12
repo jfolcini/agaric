@@ -115,6 +115,12 @@ function SortableBlockInner({
     onTurnInto,
     onBatchDelete,
   } = useBlockActions()
+  // Fix 6 (review): SUBSCRIBE to the active multi-selection so this row
+  // re-renders when other blocks are added/removed — a `getState()` snapshot is
+  // stale (the row only re-renders on `selectedBlockIds.length > 0` flips, not
+  // on count changes), so the context menu would receive a frozen selection and
+  // bulk mode would silently never engage on the 2nd+ selected block.
+  const selectedBlockIds = useBlockStore((s) => s.selectedBlockIds)
   // Context menu zoom is gated by hasChildren (was previously gated in
   // SortableBlockWrapper before the props chain was collapsed).
   const onZoomIn = hasChildren ? onZoomInResolved : undefined
@@ -440,13 +446,10 @@ function SortableBlockInner({
             onShowProperties={onShowProperties}
             onZoomIn={onZoomIn}
             onTurnInto={onTurnInto}
-            // Fix 6 — feed the active multi-selection + bulk-delete handler so
-            // the menu, when opened on a selected block, applies Delete / TODO /
-            // Priority / Move to the WHOLE selection. Read as a snapshot via
-            // `getState()` (not a subscription) so every row doesn't re-render
-            // on selection changes — the selection can't change while the menu
-            // is open, so the snapshot at open-time is correct.
-            selectedBlockIds={useBlockStore.getState().selectedBlockIds}
+            // Fix 6 — feed the (subscribed) active multi-selection + bulk-delete
+            // handler so the menu, when opened on a selected block, applies
+            // Delete / TODO / Priority / Move to the WHOLE selection.
+            selectedBlockIds={selectedBlockIds}
             onBatchDelete={onBatchDelete}
             activeBlockType={detectBlockType(content)}
             hasChildren={hasChildren}

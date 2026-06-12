@@ -667,7 +667,7 @@ describe('BlockGutterControls multiselect mode (Fix 6)', () => {
     useBlockStore.setState({ selectedBlockIds: [] })
   })
 
-  it('desktop: suppresses drag/history/delete and shows only the select checkbox', () => {
+  it('desktop: suppresses history/delete, keeps the select checkbox + drag handle (#914)', () => {
     useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
     renderWithTooltip(
       <BlockGutterControls
@@ -677,9 +677,11 @@ describe('BlockGutterControls multiselect mode (Fix 6)', () => {
         onShowHistory={vi.fn()}
       />,
     )
-    // Only the select checkbox survives.
+    // The select checkbox AND the drag handle survive (the handle is kept so a
+    // multi-selection can still be dragged to move — #914); history/delete are
+    // suppressed to keep selection mode uncluttered.
     expect(screen.getByTestId('block-select-checkbox')).toBeInTheDocument()
-    expect(screen.queryByTestId('drag-handle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('drag-handle')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /delete block/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /block history/i })).not.toBeInTheDocument()
   })
