@@ -149,6 +149,14 @@ export async function resolveAndMergeTitles(
 export interface UseDuePanelDataOptions {
   date: string
   sourceFilter: string | null
+  /**
+   * Page id of the journal day whose own note is rendered above this
+   * panel. Agenda items that live ON that page are filtered out so a
+   * todo written in today's note isn't shown twice — once in the note
+   * body, once in the Agenda list (UX live-review #7). `undefined`
+   * disables the exclusion (e.g. past days that auto-create no page).
+   */
+  excludePageId?: string | undefined
 }
 
 export interface UseDuePanelDataReturn {
@@ -170,6 +178,7 @@ export interface UseDuePanelDataReturn {
 export function useDuePanelData({
   date,
   sourceFilter,
+  excludePageId,
 }: UseDuePanelDataOptions): UseDuePanelDataReturn {
   const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
@@ -529,17 +538,48 @@ export function useDuePanelData({
     }
   }, [nextCursor, fetchBlocks])
 
+  // UX live-review #7 — exclude agenda items that live on the journal
+  // day's own page. The query layer (`listBlocks` agenda mode /
+  // `query_by_property`) has no `excludeParentId` knob, so we scrub the
+  // fetched lists here. Every downstream computation in DuePanel (the
+  // "N Agenda" header count, per-source counts, grouping, projected
+  // dedup, keyboard-nav flat list) derives from these returned arrays,
+  // so a single filter keeps the count and the rendered rows consistent.
+  // When `excludePageId` is undefined (e.g. a past day with no page),
+  // the lists pass through unchanged.
+  const filteredBlocks = useMemo(
+    () => (excludePageId ? blocks.filter((b) => b.page_id !== excludePageId) : blocks),
+    [blocks, excludePageId],
+  )
+  const filteredOverdueBlocks = useMemo(
+    () =>
+      excludePageId ? overdueBlocks.filter((b) => b.page_id !== excludePageId) : overdueBlocks,
+    [overdueBlocks, excludePageId],
+  )
+  const filteredUpcomingBlocks = useMemo(
+    () =>
+      excludePageId ? upcomingBlocks.filter((b) => b.page_id !== excludePageId) : upcomingBlocks,
+    [upcomingBlocks, excludePageId],
+  )
+  const filteredProjectedEntries = useMemo(
+    () =>
+      excludePageId
+        ? projectedEntries.filter((e) => e.block.page_id !== excludePageId)
+        : projectedEntries,
+    [projectedEntries, excludePageId],
+  )
+
   return {
-    blocks,
+    blocks: filteredBlocks,
     loading,
     nextCursor,
     hasMore,
     totalCount,
     pageTitles,
-    projectedEntries,
+    projectedEntries: filteredProjectedEntries,
     projectedLoading,
-    overdueBlocks,
-    upcomingBlocks,
+    overdueBlocks: filteredOverdueBlocks,
+    upcomingBlocks: filteredUpcomingBlocks,
     isToday,
     warningDays,
     loadMore,

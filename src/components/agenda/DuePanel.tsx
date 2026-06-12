@@ -41,6 +41,12 @@ import { cn } from '@/lib/utils'
 export interface DuePanelProps {
   date: string // YYYY-MM-DD
   onNavigateToPage?: NavigateToPageFn | undefined
+  /**
+   * Journal day's own page id. Agenda items that live on that page are
+   * excluded so a todo written in today's note isn't shown twice — once
+   * in the note body, once in the Agenda list (UX live-review #7).
+   */
+  excludePageId?: string | undefined
 }
 
 const GROUP_ORDER = ['DOING', 'TODO', 'DONE', null] as const
@@ -53,7 +59,11 @@ function priorityKey(p: string | null): number {
   return 4
 }
 
-export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.ReactElement | null {
+export function DuePanel({
+  date,
+  onNavigateToPage,
+  excludePageId,
+}: DuePanelProps): React.ReactElement | null {
   const { t } = useTranslation()
   const callbacks = useRichContentCallbacks()
   const onTagClick = useTagClickHandler()
@@ -84,7 +94,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     upcomingBlocks,
     isToday,
     loadMore,
-  } = useDuePanelData({ date, sourceFilter })
+  } = useDuePanelData({ date, sourceFilter, excludePageId })
 
   const todayStr = useMemo(() => getTodayString(), [])
 
@@ -376,7 +386,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                 {virtualRows.length > 0 && (
                   <ScrollArea
                     viewportRef={scrollParentRef}
-                    viewportClassName="due-panel-scroll max-h-[calc(100dvh-260px)]"
+                    viewportClassName="due-panel-scroll max-h-[calc(100dvh-260px)] pr-2.5"
                   >
                     <ul
                       className="due-panel-blocks relative m-0 p-0 list-none"

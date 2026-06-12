@@ -6,7 +6,6 @@
  * Uses cursor-based pagination with a `t('references.loadMore')` button.
  */
 
-import { Link } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -14,7 +13,6 @@ import { useTranslation } from 'react-i18next'
 import { BacklinkFilterBuilder } from '@/components/BacklinkFilterBuilder'
 import { BacklinkGroupRenderer } from '@/components/backlinks/BacklinkGroupRenderer'
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
-import { EmptyState } from '@/components/common/EmptyState'
 import { ListViewState } from '@/components/common/ListViewState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { SourcePageFilter } from '@/components/filters/SourcePageFilter'
@@ -286,23 +284,17 @@ export function LinkedReferences({
   const headerLabel =
     totalCount === 1 ? t('references.headerOne') : t('references.header', { count: totalCount })
 
-  // UX-152: When no references (and not loading), render an EmptyState
-  // explaining *why* the panel is empty (UX/AGENTS mandate: never silently
-  // `return null` for empty state). When filters are active, keep the full
-  // panel visible so the user can clear/adjust filters — otherwise the
-  // filter controls vanish.
+  // Render nothing when there are no backlinks (and not loading): an empty
+  // "no backlinks yet" panel is clutter at the bottom of every page. This
+  // intentionally overrides the older UX-152 empty-state mandate for this
+  // panel (user decision, live UX review). When filters are active, keep the
+  // full panel visible so the user can clear/adjust filters — otherwise the
+  // filter controls vanish. The loading branch below still renders so nothing
+  // flashes mid-fetch.
   const hasActiveFilters =
     filters.length > 0 || sourcePageIncluded.length > 0 || sourcePageExcluded.length > 0
   if (!loading && totalCount === 0 && groups.length === 0 && !hasActiveFilters) {
-    return (
-      <section
-        className="linked-references"
-        data-testid="linked-references"
-        aria-label={t('references.panelLabel')}
-      >
-        <EmptyState compact icon={Link} message={t('linkedReferences.empty')} />
-      </section>
-    )
+    return null
   }
 
   return (

@@ -616,8 +616,9 @@ describe('UnlinkedReferences', () => {
     })
   })
 
-  // 11. UX-152 / empty-state mandate: renders EmptyState when totalCount is 0
-  it('renders EmptyState when no unlinked references', async () => {
+  // 11. Empty panels are clutter (live UX review): the panel renders nothing
+  // (returns null) when totalCount is 0 — no EmptyState placeholder.
+  it('renders nothing when no unlinked references', async () => {
     mockedListUnlinked.mockResolvedValue(emptyResponse)
 
     const { container } = renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
@@ -629,13 +630,13 @@ describe('UnlinkedReferences', () => {
       )
     })
 
-    // Panel section is present, but renders an EmptyState (no header, no list).
+    // The whole panel section is suppressed — no header, no list, no EmptyState.
     await waitFor(() => {
-      expect(container.querySelector('.unlinked-references')).toBeInTheDocument()
+      expect(container.querySelector('.unlinked-references')).not.toBeInTheDocument()
     })
     expect(screen.queryByText('No Unlinked References')).not.toBeInTheDocument()
     expect(screen.queryByText('No unlinked references found.')).not.toBeInTheDocument()
-    expect(screen.getByText(t('unlinkedReferences.empty'))).toBeInTheDocument()
+    expect(screen.queryByText(t('unlinkedReferences.empty'))).not.toBeInTheDocument()
   })
 
   // 11b. Shows loading indicator when expanding and fetching
@@ -1147,11 +1148,11 @@ describe('UnlinkedReferences', () => {
         expect.objectContaining({ id: 'unlinked-refs-load-failed' }),
       )
     })
-    // UX-152 / empty-state mandate: component renders EmptyState when
-    // totalCount=0 and no filters active — that's the graceful fallback
+    // Empty panels are clutter (live UX review): component renders nothing
+    // when totalCount=0 and no filters active — that's the graceful fallback
     // behaviour when the initial fetch fails.
-    expect(container.querySelector('.unlinked-references')).toBeInTheDocument()
-    expect(screen.getByText(t('unlinkedReferences.empty'))).toBeInTheDocument()
+    expect(container.querySelector('.unlinked-references')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('unlinkedReferences.empty'))).not.toBeInTheDocument()
   })
 
   // ---------------------------------------------------------------------------

@@ -178,9 +178,9 @@ function renderLinkedReferences(props: LinkedReferencesProps) {
 }
 
 describe('LinkedReferences', () => {
-  // 1. UX-152 / empty-state mandate: renders EmptyState when no backlinks
-  // (not `return null`) so the user sees *why* the panel is empty.
-  it('renders EmptyState when no backlinks', async () => {
+  // 1. Empty panels are clutter (live UX review): the panel renders nothing
+  // (returns null) when there are no backlinks — no EmptyState placeholder.
+  it('renders nothing when no backlinks', async () => {
     mockInvokeWith(emptyGrouped)
 
     const { container } = renderLinkedReferences({ pageId: 'PAGE1' })
@@ -189,12 +189,13 @@ describe('LinkedReferences', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_backlinks_grouped', expect.anything())
     })
 
-    // Panel section is present, but renders an EmptyState (no header, no list).
+    // The whole panel section is suppressed — no header, no list, no EmptyState.
     await waitFor(() => {
-      expect(container.querySelector('.linked-references')).toBeInTheDocument()
+      expect(container.querySelector('.linked-references')).not.toBeInTheDocument()
     })
+    expect(screen.queryByTestId('linked-references')).not.toBeInTheDocument()
     expect(screen.queryByText('0 References')).not.toBeInTheDocument()
-    expect(screen.getByText(t('linkedReferences.empty'))).toBeInTheDocument()
+    expect(screen.queryByText(t('linkedReferences.empty'))).not.toBeInTheDocument()
   })
 
   // 2. renders header with correct count
@@ -1226,8 +1227,8 @@ describe('LinkedReferences', () => {
   // Error path tests (mockRejectedValue coverage)
   // ---------------------------------------------------------------------------
 
-  // 35. initial backlinks load failure: shows toast and renders EmptyState (UX-152)
-  it('error: initial backlinks load failure shows toast and renders EmptyState', async () => {
+  // 35. initial backlinks load failure: shows toast and renders nothing
+  it('error: initial backlinks load failure shows toast and renders nothing', async () => {
     // oxlint-disable-next-line typescript/no-explicit-any -- invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') return Promise.reject(new Error('backend unavailable'))
@@ -1252,11 +1253,11 @@ describe('LinkedReferences', () => {
       expect(container.querySelector('[data-slot="skeleton"]')).not.toBeInTheDocument()
     })
 
-    // UX-152 / empty-state mandate: Component renders EmptyState when empty
-    // (even after error) so the user knows why the panel is bare.
-    expect(container.querySelector('.linked-references')).toBeInTheDocument()
+    // Empty panels are clutter (live UX review): the panel renders nothing
+    // when empty (even after error) instead of an EmptyState placeholder.
+    expect(container.querySelector('.linked-references')).not.toBeInTheDocument()
     expect(screen.queryByText('0 References')).not.toBeInTheDocument()
-    expect(screen.getByText(t('linkedReferences.empty'))).toBeInTheDocument()
+    expect(screen.queryByText(t('linkedReferences.empty'))).not.toBeInTheDocument()
   })
 
   // 36. pagination failure: shows toast and preserves existing groups
