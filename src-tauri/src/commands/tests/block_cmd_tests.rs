@@ -3030,6 +3030,59 @@ async fn move_block_to_non_ancestor_succeeds() {
     );
 }
 
+// ── #928: subtree-aware depth clamp ──────────────────────────────
+//
+// Finding 1c's depth-clamp case: the clamp must account for the MOVED
+// block's own subtree depth, not just the target parent's depth. A
+// shallow target + a deep moved subtree can still overflow
+// MAX_BLOCK_DEPTH. `move_block_inner` computes
+// `parent_depth + 1 + subtree_depth` and rejects when it exceeds the
+// bound — this pins the subtree dimension the single-block test above
+// (a depth-1 loose block) does not exercise.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_block_with_deep_subtree_exceeding_max_depth_returns_validation_error() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Target chain: page → t1 → … → t10 (target leaf at depth 10).
+    let target_depth = MAX_BLOCK_DEPTH / 2; // 10
+    insert_block(&pool, "SUB_PAGE", "page", "root", None, Some(1)).await;
+    let mut target_parent = "SUB_PAGE".to_string();
+    for i in 1..=target_depth {
+        let id = format!("SUB_T{i:02}");
+        insert_block(&pool, &id, "content", "t", Some(&target_parent), Some(1)).await;
+        target_parent = id;
+    }
+
+    // Moved subtree: a separate chain m_root → m1 → … → m11 whose own
+    // depth (subtree_depth = 11) plus the target leaf's depth (10) plus 1
+    // for the move exceeds MAX_BLOCK_DEPTH (20).
+    insert_block(&pool, "SUB_MROOT", "content", "m", None, Some(99)).await;
+    let mut moved_parent = "SUB_MROOT".to_string();
+    for i in 1..=(MAX_BLOCK_DEPTH / 2 + 1) {
+        let id = format!("SUB_M{i:02}");
+        insert_block(&pool, &id, "content", "m", Some(&moved_parent), Some(1)).await;
+        moved_parent = id;
+    }
+
+    // parent_depth(target leaf)=10, subtree_depth(m_root)=11 ⇒
+    // 10 + 1 + 11 = 22 > 20 ⇒ Validation.
+    let result = move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "SUB_MROOT".into(),
+        Some(target_parent.into()),
+        0,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "moving a deep subtree past MAX_BLOCK_DEPTH must return Validation, got: {result:?}"
+    );
+}
+
 // ── #74: max nesting depth guard ─────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
