@@ -655,7 +655,7 @@ describe('useBlockDnD', () => {
         result.current.handleDragStart(makeDragStartEvent('B') as never)
       })
 
-      // getProjection should have been called with visibleItems, activeId, overId, offsetLeft=0, INDENT_WIDTH=24, rootParentId='ROOT'
+      // getProjection should have been called with visibleItems, activeId, overId, offsetLeft=0, INDENT_WIDTH=24, rootParentId='ROOT', subtreeHeight
       expect(mockedGetProjection).toHaveBeenCalledWith(
         expect.any(Array), // visibleItems
         'B', // activeId
@@ -663,6 +663,7 @@ describe('useBlockDnD', () => {
         0, // offsetLeft (reset on drag start)
         24, // INDENT_WIDTH
         'ROOT', // rootParentId
+        expect.any(Number), // #928 subtreeHeight
       )
 
       expect(result.current.projected).toEqual(projection)

@@ -26,6 +26,17 @@ export const DEAD_ZONE_PX = 20
  */
 const MAX_TREE_DEPTH = 1000
 
+/**
+ * Maximum nesting depth the backend permits for a block subtree (#928). Mirrors
+ * the Rust `MAX_BLOCK_DEPTH` in `src-tauri/src/domain/block_ops.rs` (pinned by
+ * the `move_block` depth-limit tests in `commands/tests/block_cmd_tests.rs`).
+ * Depth is 0-based here (root-level blocks are depth 0), so the deepest legal
+ * block depth is `MAX_BLOCK_DEPTH - 1`. The frontend uses this to PREVENT an
+ * over-deep drop/indent up front instead of letting the IPC fail with an error
+ * toast after the fact.
+ */
+export const MAX_BLOCK_DEPTH = 20
+
 /** A block with its depth in the visual tree. */
 export interface FlatBlock extends BlockRow {
   depth: number
@@ -201,7 +212,17 @@ export function getProjection(
   dragOffset: number,
   indentWidth: number,
   rootParentId: string | null = null,
+  /**
+   * Height of the dragged subtree (max descendant depth − active depth), so the
+   * projection never offers a depth whose descendants would exceed
+   * MAX_BLOCK_DEPTH and be rejected by the backend (#928). 0 for a leaf.
+   */
+  subtreeHeight = 0,
 ): Projection {
+  // The deepest depth the DRAGGED HEAD may legally occupy: its tallest
+  // descendant must still satisfy `headDepth + subtreeHeight <= MAX_BLOCK_DEPTH
+  // - 1` (0-based). Clamp to ≥0 so a pathologically tall subtree still projects.
+  const depthCeiling = Math.max(0, MAX_BLOCK_DEPTH - 1 - subtreeHeight)
   const overIndex = items.findIndex((item) => item.id === overId)
   const activeIndex = items.findIndex((item) => item.id === activeId)
 
@@ -225,7 +246,7 @@ export function getProjection(
   // Sentinel: drop after last item — compute depth/parent from drag offset
   if (overId === SENTINEL_ID) {
     const lastItem = items[items.length - 1]
-    const maxEndDepth = lastItem ? lastItem.depth + 1 : 0
+    const maxEndDepth = Math.min(lastItem ? lastItem.depth + 1 : 0, depthCeiling)
     // Use drag offset to allow indentation even at the end
     const effectiveOffset =
       Math.abs(dragOffset) > DEAD_ZONE_PX ? dragOffset - Math.sign(dragOffset) * DEAD_ZONE_PX : 0
@@ -264,8 +285,10 @@ export function getProjection(
   const dragDepth = Math.round(effectiveOffset / indentWidth)
   const projectedDepth = activeItem.depth + dragDepth
 
-  // Max depth: can be a child of the previous item (previous.depth + 1)
-  const maxDepth = previousItem ? previousItem.depth + 1 : 0
+  // Max depth: can be a child of the previous item (previous.depth + 1),
+  // clamped so the dragged subtree's deepest descendant stays within
+  // MAX_BLOCK_DEPTH (#928).
+  const maxDepth = Math.min(previousItem ? previousItem.depth + 1 : 0, depthCeiling)
 
   // Min depth: must be at least the depth of the next item (to maintain tree structure)
   const minDepth = nextItem ? nextItem.depth : 0

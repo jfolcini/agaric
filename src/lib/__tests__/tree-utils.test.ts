@@ -23,6 +23,7 @@ import {
   type FlatBlock,
   getDragDescendants,
   getProjection,
+  MAX_BLOCK_DEPTH,
   SENTINEL_ID,
 } from '../tree-utils'
 
@@ -398,6 +399,33 @@ describe('getProjection', () => {
     const result = getProjection(flat, 'B', 'X', DEAD_ZONE_PX + INDENT, INDENT)
     expect(result.depth).toBe(1)
     expect(result.parentId).toBe('GP')
+  })
+
+  // #928 — the projection must not offer a depth whose dragged subtree would
+  // exceed MAX_BLOCK_DEPTH (deepest legal block depth is MAX_BLOCK_DEPTH - 1).
+  describe('MAX_BLOCK_DEPTH clamp (#928)', () => {
+    // X(d0) first, then a deep chain D0(d0) > D1(d1) > … > D18(d18). Dragging X
+    // over the end sentinel projects it relative to the deepest item, D18.
+    const deepChain: FlatBlock[] = [
+      mkFlat('X', null, 1, 0),
+      ...Array.from({ length: 19 }, (_, d) => mkFlat(`D${d}`, d === 0 ? null : `D${d - 1}`, 2, d)),
+    ]
+
+    it('clamps a leaf drop to depth MAX_BLOCK_DEPTH - 1', () => {
+      // Drop X after D18 (depth 18) with a large rightward offset → would project
+      // to depth 19, exactly MAX_BLOCK_DEPTH - 1; a leaf (subtreeHeight 0) is OK.
+      const result = getProjection(deepChain, 'X', SENTINEL_ID, INDENT * 10, INDENT)
+      expect(result.maxDepth).toBe(MAX_BLOCK_DEPTH - 1)
+      expect(result.depth).toBeLessThanOrEqual(MAX_BLOCK_DEPTH - 1)
+    })
+
+    it('subtracts the dragged subtree height from the allowed depth', () => {
+      // The same drop, but X carries a 3-deep subtree → its head may go no
+      // deeper than MAX_BLOCK_DEPTH - 1 - 3 = 16.
+      const result = getProjection(deepChain, 'X', SENTINEL_ID, INDENT * 10, INDENT, null, 3)
+      expect(result.maxDepth).toBe(MAX_BLOCK_DEPTH - 1 - 3)
+      expect(result.depth).toBeLessThanOrEqual(MAX_BLOCK_DEPTH - 1 - 3)
+    })
   })
 })
 

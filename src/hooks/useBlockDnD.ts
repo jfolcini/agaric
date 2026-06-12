@@ -126,11 +126,32 @@ export function useBlockDnD({
     [collapsedVisible, activeId, activeDescendants],
   )
 
+  // Height of the dragged subtree (max descendant depth − active depth), so the
+  // projection can't offer a depth whose descendants would exceed
+  // MAX_BLOCK_DEPTH and get rejected by the backend (#928).
+  const subtreeHeight = useMemo(() => {
+    if (!activeId || activeDescendants.size === 0) return 0
+    const activeDepth = collapsedVisible.find((b) => b.id === activeId)?.depth ?? 0
+    let h = 0
+    for (const b of collapsedVisible) {
+      if (activeDescendants.has(b.id)) h = Math.max(h, b.depth - activeDepth)
+    }
+    return h
+  }, [activeId, activeDescendants, collapsedVisible])
+
   // Projection of where the dragged item would land
   const projected = useMemo(() => {
     if (!activeId || !overId) return null
-    return getProjection(visibleItems, activeId, overId, offsetLeft, INDENT_WIDTH, rootParentId)
-  }, [activeId, overId, offsetLeft, visibleItems, rootParentId])
+    return getProjection(
+      visibleItems,
+      activeId,
+      overId,
+      offsetLeft,
+      INDENT_WIDTH,
+      rootParentId,
+      subtreeHeight,
+    )
+  }, [activeId, overId, offsetLeft, visibleItems, rootParentId, subtreeHeight])
 
   // #914 — selection roots for the active drag. When the dragged block is part
   // of a multi-selection, the whole selection moves as one gesture. We collapse
