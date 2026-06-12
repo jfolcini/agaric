@@ -1646,13 +1646,18 @@ describe('code blocks', () => {
 // -- hardening: link scan depth -----------------------------------------------
 
 describe('hardening: link scan depth', () => {
-  it('unclosed [ with 20KB of text does not hang (completes < 100ms)', () => {
+  it('unclosed [ with 20KB of text does not hang (capped scan, not O(n^2))', () => {
     const huge = `[${'a'.repeat(20_000)}`
     const start = performance.now()
     const result = parse(huge)
     const elapsed = performance.now() - start
-    // Should complete quickly — the scan is capped at MAX_LINK_SCAN
-    expect(elapsed).toBeLessThan(100)
+    // The scan is capped at MAX_LINK_SCAN, so the capped path completes in
+    // ~100ms; a removed cap would be O(n^2) over 20KB → multiple SECONDS. The
+    // budget only needs to distinguish those two regimes. The earlier 100ms was
+    // too tight for CI jitter (observed 111ms → flaky cancellation of the whole
+    // run); 1000ms keeps a clean regression signal with no flake (measure,
+    // don't imagine).
+    expect(elapsed).toBeLessThan(1000)
     // The unclosed bracket is treated as literal text
     expect(result.content).toHaveLength(1)
     expect(result.content?.[0]?.type).toBe('paragraph')
