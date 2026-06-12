@@ -43,6 +43,7 @@ import { CheckboxInputRule } from './extensions/checkbox-input-rule'
 import { EmojiPicker, emojiPickerPluginKey } from './extensions/emoji-picker'
 import { ExternalLink } from './extensions/external-link'
 import { PropertyPicker, propertyPickerPluginKey } from './extensions/property-picker'
+import { QueryHint } from './extensions/query-hint'
 import { SlashCommand, slashCommandPluginKey } from './extensions/slash-command'
 import { TagRef } from './extensions/tag-ref'
 import { Underline } from './extensions/underline'
@@ -423,6 +424,10 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // #130 — inline `:` emoji picker. Self-contained (static emoji data +
       // internal insert), so no options to wire.
       EmojiPicker,
+      // #907 — passive inline `{{query …}}` syntax hint. Ghost-text only
+      // (no `.suggestion-popup`), Tab-to-accept; never intercepts Enter, so
+      // block-save always works. Self-contained (vocabulary from query-utils).
+      QueryHint,
       CheckboxInputRule.configure({
         onCheckbox: (state: 'TODO' | 'DONE') => onCheckboxRef.current?.(state),
       }),

@@ -27,6 +27,40 @@ export const OPERATOR_SYMBOLS: Record<string, string> = {
   gte: '≥',
 }
 
+/**
+ * Canonical comparison operators recognised inside `property:key{op}value`
+ * shorthand. Kept in the same multi-char-first order the parser matches them
+ * (`>=`, `<=`, `!=` before the single-char `>`, `<`, `=`) so an autocomplete
+ * hint never offers a single-char operator that would shadow a two-char one.
+ *
+ * Single source of truth: `parseQueryExpression`'s opMatch regex
+ * (`^(\w+)(>=|<=|!=|>|<|=)(.+)$`). Update both together.
+ */
+export const QUERY_OPERATORS = ['>=', '<=', '!=', '>', '<', '='] as const
+
+/**
+ * Canonical token *prefixes* (the part before the first `:`) that
+ * `parseQueryExpression` understands. `tag` and `property` are the modern
+ * shorthand; `type`, `expr`, `key`, `value`, `target` are the legacy explicit
+ * form. An autocomplete hint sources its key vocabulary from here so it can
+ * never diverge from what the parser actually accepts.
+ */
+export const QUERY_KEYS = ['tag', 'property', 'type', 'expr', 'key', 'value', 'target'] as const
+
+/**
+ * Values the legacy `type:` key accepts (`type:tag`, `type:property`,
+ * `type:backlinks`). Mirrors the `explicitType` cast in
+ * `parseQueryExpression`.
+ */
+export const QUERY_TYPE_VALUES = ['tag', 'property', 'backlinks'] as const
+
+/**
+ * Well-known property keys that `buildFilters` maps to specialised filter
+ * variants (everything else falls through to `PropertyText`). Offered as
+ * completions for the `property:` shorthand's key segment.
+ */
+export const QUERY_PROPERTY_KEYS = ['todo_state', 'priority', 'due_date'] as const
+
 /** Parse a query expression string into structured params.
  *
  * Supports both the legacy explicit-type syntax and the new shorthand:

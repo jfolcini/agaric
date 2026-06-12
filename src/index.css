@@ -1088,6 +1088,13 @@
   content: attr(data-placeholder);
 }
 
+/* #907 — inline `{{query …}}` syntax hint (ghost text). Rendered as a
+   ProseMirror widget decoration, NOT a suggestion popup, so it never
+   intercepts Enter. Muted + non-interactive; Tab accepts it. */
+.ProseMirror .query-hint {
+  @apply text-muted-foreground/60 pointer-events-none select-none;
+}
+
 /* ── Inline token chip styles ──────────────────────────────────────── */
 
 /* Broken / deleted block link: visual affordance for [[ULID]] pointing
