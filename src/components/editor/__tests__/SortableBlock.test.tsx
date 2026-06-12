@@ -1625,6 +1625,36 @@ describe('SortableBlock visibility controls', () => {
     expect(handle.className).toContain('[.block-active_&]:opacity-100')
   })
 
+  // #929 — the focused/active block row carries a calm visual treatment (faint
+  // tint + accent bar), not just the gutter-reveal hook class.
+  it('focused row carries the active-row treatment (block-active + tint)', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={true}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+    const row = container.querySelector('.sortable-block') as HTMLElement
+    expect(row.className).toContain('block-active')
+    expect(row.className).toContain('bg-accent/30')
+  })
+
+  it('unfocused row has no active-row tint', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+    const row = container.querySelector('.sortable-block') as HTMLElement
+    expect(row.className).not.toContain('block-active')
+    expect(row.className).not.toContain('bg-accent/30')
+  })
+
   it('delete handle has opacity-0 class (hidden by default)', () => {
     render(
       <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
