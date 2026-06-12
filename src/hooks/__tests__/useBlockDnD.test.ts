@@ -544,6 +544,37 @@ describe('useBlockDnD', () => {
       expect(result.current.projected).toBeNull()
       expect(result.current.activeId).toBeNull()
     })
+
+    // #923 — Esc-cancel restores the block that was being edited before the drag.
+    it('restores the pre-drag focused block on cancel', () => {
+      const params = makeDefaultParams({ rovingEditor: { activeBlockId: 'A' } })
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+      // Drag start cleared focus.
+      expect(params.setFocused).toHaveBeenCalledWith(null)
+
+      act(() => {
+        result.current.handleDragCancel()
+      })
+      // Cancel restored the originally-focused block.
+      expect(params.setFocused).toHaveBeenLastCalledWith('A')
+    })
+
+    it('does not restore focus on cancel when no block was focused pre-drag', () => {
+      const params = makeDefaultParams({ rovingEditor: { activeBlockId: null } })
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+      act(() => {
+        result.current.handleDragCancel()
+      })
+      expect(params.setFocused).not.toHaveBeenCalled()
+    })
   })
 
   // ── 10. activeDescendants memo ───────────────────────────────────────

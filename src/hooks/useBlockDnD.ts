@@ -114,6 +114,12 @@ export function useBlockDnD({
   const rovingEditorRef = useRef(rovingEditor)
   rovingEditorRef.current = rovingEditor
 
+  // #923 — the block that was being edited when the drag began. `handleDragStart`
+  // clears focus (flush + setFocused(null)); if the drag is then CANCELLED (Esc)
+  // or ends as a no-op (released over nothing), we restore this focus so the user
+  // lands back where they were instead of with no focused block.
+  const preDragFocusedIdRef = useRef<string | null>(null)
+
   // Items visible during drag: exclude descendants of the active item
   const activeDescendants = useMemo(
     () => (activeId ? getDragDescendants(collapsedVisible, activeId) : new Set<string>()),
@@ -189,6 +195,9 @@ export function useBlockDnD({
       setOverId(id)
       setOffsetLeft(0)
 
+      // #923 — capture the pre-drag focused block so a cancel/no-op can restore it.
+      preDragFocusedIdRef.current = rovingEditorRef.current.activeBlockId
+
       // Flush editor if active
       if (rovingEditorRef.current.activeBlockId) {
         handleFlush()
@@ -215,7 +224,14 @@ export function useBlockDnD({
       setOverId(null)
       setOffsetLeft(0)
 
-      if (!over) return
+      // #923 — released over nothing: no move, so restore the pre-drag focus
+      // (a successful move below restores focus on the dragged block instead).
+      if (!over) {
+        if (preDragFocusedIdRef.current) setFocused(preDragFocusedIdRef.current)
+        preDragFocusedIdRef.current = null
+        return
+      }
+      preDragFocusedIdRef.current = null
 
       const blockId = active.id as string
       const activeBlock = blocks.find((b) => b.id === blockId)
@@ -309,7 +325,10 @@ export function useBlockDnD({
     setActiveId(null)
     setOverId(null)
     setOffsetLeft(0)
-  }, [])
+    // #923 — Esc-cancel returns the user to the block they were editing.
+    if (preDragFocusedIdRef.current) setFocused(preDragFocusedIdRef.current)
+    preDragFocusedIdRef.current = null
+  }, [setFocused])
 
   return {
     activeId,
