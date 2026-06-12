@@ -15,7 +15,9 @@ import { computeQueryHint, queryExprAtCaret } from '../query-hint'
 function hintAt(s: string) {
   const caret = s.indexOf('|')
   if (caret < 0) throw new Error('test string must contain a | caret marker')
-  return computeQueryHint({ text: s.replace('|', ''), caret })
+  // Remove exactly the marker char at `caret` (not a global/first-occurrence replace —
+  // the body may contain real `|` table-pipes; js/incomplete-sanitization guard).
+  return computeQueryHint({ text: s.slice(0, caret) + s.slice(caret + 1), caret })
 }
 
 describe('queryExprAtCaret', () => {
