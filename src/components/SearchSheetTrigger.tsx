@@ -14,6 +14,7 @@ import { Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { getPinnedSearchScope } from '@/lib/pinned-search-scope'
 
 import { useNavigationStore } from '../stores/navigation'
 import { defaultModeForView, useSearchSheetStore } from '../stores/useSearchSheetStore'
@@ -29,7 +30,11 @@ export function SearchSheetTrigger(): React.ReactElement {
       aria-label={t('searchSheet.openButton')}
       data-testid="search-sheet-trigger"
       onClick={() => {
-        useSearchSheetStore.getState().open$(defaultModeForView(currentView))
+        // #135 — a pinned scope overrides the context-aware default.
+        // The user explicitly chose a preferred scope via long-press;
+        // honour it regardless of the current view.
+        const pinned = getPinnedSearchScope()
+        useSearchSheetStore.getState().open$(pinned ?? defaultModeForView(currentView))
       }}
     >
       <Search className="h-5 w-5" aria-hidden />

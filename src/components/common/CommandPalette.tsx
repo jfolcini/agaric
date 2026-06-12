@@ -35,7 +35,7 @@
  * re-exported below for the existing test import path.
  */
 
-import { ChevronRight, Clock, Pin } from 'lucide-react'
+import { ChevronRight, Clock, Mic, Pin, Search as SearchIcon } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -78,6 +78,7 @@ import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { useFailedOnce } from '@/hooks/useFailedOnce'
 import { useGenerationGuard } from '@/hooks/useGenerationGuard'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useVoiceInput } from '@/hooks/useVoiceInput'
 import { isCancellation } from '@/lib/app-error'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -88,6 +89,7 @@ import {
   removeRecentPage,
   togglePinRecentPage,
 } from '@/lib/recent-pages'
+import { addRecentSearch, clearRecentSearches, getRecentSearches } from '@/lib/recent-searches'
 import type { SearchBlockRow } from '@/lib/tauri'
 import { searchBlocksPartitioned } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
@@ -435,6 +437,47 @@ export function PaletteBody({
     setRecents(getRecentPages())
   }, [])
 
+  // #131 — recent search TERMS (distinct from recent pages). Surfaced
+  // in the mobile empty state so a tap re-runs a prior query. Mobile
+  // only: desktop search already has the find-in-files history surface.
+  const [recentSearches, setRecentSearches] = useState<string[]>([])
+  useEffect(() => {
+    if (isMobile) setRecentSearches(getRecentSearches())
+  }, [isMobile])
+
+  // #131 — record a run term so it shows up next time. Called on
+  // escalation (the user committed to this query) and when tapping a
+  // recent term re-runs it.
+  function rememberSearch(term: string): void {
+    const trimmed = term.trim()
+    if (trimmed.length === 0) return
+    addRecentSearch(trimmed)
+    if (isMobile) setRecentSearches(getRecentSearches())
+  }
+
+  function handleRecentSearchClick(term: string): void {
+    rememberSearch(term)
+    handleInputChange(term)
+    inputRef.current?.focus()
+  }
+
+  function handleClearRecentSearches(): void {
+    clearRecentSearches()
+    setRecentSearches([])
+  }
+
+  // #132 — voice dictation. `supported` gates whether the mic button
+  // renders at all (hidden on iOS Safari / jsdom / any UA without the
+  // Web Speech API). On a result we fill the query and run it through
+  // the same path a keystroke takes.
+  const voice = useVoiceInput({
+    onResult: (transcript) => {
+      handleInputChange(transcript)
+      inputRef.current?.focus()
+    },
+  })
+  const showVoiceButton = isMobile && voice.supported
+
   function handleNavigateToPage(pageId: string, pageTitle: string, newTab: boolean): void {
     if (linkMode) {
       const ok = insertPageLinkInto(previousFocusedElement, pageTitle, previousSelectionRange)
@@ -477,6 +520,9 @@ export function PaletteBody({
   }
 
   function escalate(q: string): void {
+    // #131 — escalating is the clearest "I committed to this query"
+    // signal; record it so it surfaces in the recent-searches list.
+    rememberSearch(q)
     setPendingViewQuery(q)
     onClose()
     useNavigationStore.getState().setView('search')
@@ -717,12 +763,16 @@ export function PaletteBody({
 
   // Empty / no-result detection for the search-mode placeholder.
   const showRecents = mode === 'search' && query.length === 0 && recents.length > 0
+  // #131 — recent search terms, mobile-only, only on a cold (empty) input.
+  const showRecentSearches =
+    isMobile && mode === 'search' && query.length === 0 && recentSearches.length > 0
   const showNoLinkMatch = linkMode && groups.length === 0 && linkQuery.length > 0
   const trimmedQuery = query.trim()
   // PEND-61 CR — distinguish "welcome state" (cold open, no query, no
   // recents) from "no results for query" (user typed something, got
   // nothing). PEND-51 lumped both into one blank panel.
-  const showWelcomeEmpty = mode === 'search' && query.length === 0 && !showRecents && !linkMode
+  const showWelcomeEmpty =
+    mode === 'search' && query.length === 0 && !showRecents && !showRecentSearches && !linkMode
   const showNoResults =
     mode === 'search' &&
     !linkMode &&
@@ -769,7 +819,27 @@ export function PaletteBody({
           aria-label={t('palette.inputLabel')}
           data-testid="command-palette-input"
           onKeyDown={handleListKeyDown}
+          className={cn(showVoiceButton && 'pr-10')}
         />
+        {/* #132 — voice dictation mic. Hidden entirely when the Web
+            Speech API is unavailable (no dead control). Toggles
+            start/stop; `aria-pressed` reflects the live listening
+            state for SR users. */}
+        {showVoiceButton && (
+          <button
+            type="button"
+            onClick={() => (voice.listening ? voice.stop() : voice.start())}
+            aria-pressed={voice.listening}
+            aria-label={voice.listening ? t('searchSheet.voiceStop') : t('searchSheet.voiceStart')}
+            data-testid="palette-voice-button"
+            className={cn(
+              'absolute right-2 top-1/2 -translate-y-1/2 inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/60 focus-ring-visible',
+              voice.listening && 'text-destructive motion-safe:animate-pulse',
+            )}
+          >
+            <Mic aria-hidden className="size-4" />
+          </button>
+        )}
         {/* PEND-61 CR-2 — visible loading affordance during the
             debounce → IPC window. The shimmer is purely decorative
             (`aria-hidden`); SR users get the assistive announcement
@@ -824,6 +894,48 @@ export function PaletteBody({
           <HelpModeBody onClose={onClose} t={t} />
         ) : (
           <>
+            {showRecentSearches && (
+              <CommandGroup
+                heading={
+                  <span className="flex items-center justify-between gap-2">
+                    <span>{t('searchSheet.recentSearchesTitle')}</span>
+                    <button
+                      type="button"
+                      // cmdk treats keydown on items specially; this lives
+                      // in the heading (not an item), so a plain onClick is
+                      // safe. stopPropagation keeps the list from also
+                      // reacting.
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleClearRecentSearches()
+                      }}
+                      data-testid="palette-recent-searches-clear"
+                      className="rounded px-1 text-xs font-normal text-muted-foreground hover:text-foreground focus-ring-visible"
+                    >
+                      {t('searchSheet.recentSearchesClear')}
+                    </button>
+                  </span>
+                }
+                data-testid="palette-recent-searches-group"
+              >
+                {recentSearches.map((term) => (
+                  <CommandItem
+                    key={term}
+                    value={`recentsearch:${term}`}
+                    onSelect={() => handleRecentSearchClick(term)}
+                    data-testid={`palette-recent-search-${term}`}
+                    aria-label={t('searchSheet.recentSearchRunLabel', { term })}
+                    className="gap-2"
+                  >
+                    <SearchIcon
+                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <span className="flex-1 truncate">{term}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
             {showRecents && (
               <CommandGroup heading={t('palette.recentTitle')} data-testid="palette-recents-group">
                 {recents.map((page) => {
