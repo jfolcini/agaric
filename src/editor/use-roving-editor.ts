@@ -433,6 +433,16 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         role: 'textbox',
         'aria-multiline': 'true',
         'aria-label': 'Block editor',
+        // #925 — deliberate soft-keyboard configuration for the prose-first
+        // block editor (previously unset, so mobile keyboards guessed). Enter
+        // creates a new block, so hint the keyboard's action key as "enter";
+        // notes are prose, so capitalize sentences and enable autocorrect /
+        // spellcheck. `inputmode: text` keeps the standard text keyboard.
+        enterkeyhint: 'enter',
+        autocapitalize: 'sentences',
+        autocorrect: 'on',
+        spellcheck: 'true',
+        inputmode: 'text',
       },
     },
     content: { type: 'doc', content: [{ type: 'paragraph' }] },

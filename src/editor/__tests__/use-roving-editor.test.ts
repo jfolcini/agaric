@@ -689,6 +689,25 @@ describe('useRovingEditor integration (renderHook)', () => {
     unmountHook()
   })
 
+  // #925 — the contenteditable carries deliberate soft-keyboard attributes so
+  // mobile keyboards don't guess the action key / capitalization.
+  it('sets soft-keyboard attributes on the contenteditable', async () => {
+    const { result, unmount: unmountHook } = await setup()
+    const dom = (result.current.editor as Editor).view.dom
+
+    expect(dom.getAttribute('enterkeyhint')).toBe('enter')
+    expect(dom.getAttribute('autocapitalize')).toBe('sentences')
+    expect(dom.getAttribute('autocorrect')).toBe('on')
+    expect(dom.getAttribute('spellcheck')).toBe('true')
+    expect(dom.getAttribute('inputmode')).toBe('text')
+    // ARIA attributes preserved.
+    expect(dom.getAttribute('role')).toBe('textbox')
+    expect(dom.getAttribute('aria-label')).toBe('Block editor')
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
   // #544 — the placeholder default is empty; callers own the (i18n-keyed)
   // text and pass it explicitly. A caller that forgets shows no hint rather
   // than leaking a hardcoded English string that bypasses i18n.
