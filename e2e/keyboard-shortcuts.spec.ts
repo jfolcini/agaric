@@ -319,6 +319,135 @@ test.describe('Task and priority shortcuts', () => {
     // Verify the chevron now shows collapsed (aria-expanded=false)
     await expect(chevron).toHaveAttribute('aria-expanded', 'false')
   })
+
+  // #922 f6 — keyboard-driven collapse. The test above CLICKS the chevron;
+  // this one exercises the actual Ctrl+. (`collapseExpand`) key path, which
+  // the click-based test never touched.
+  //
+  // Key model (verified against src): pressing Ctrl+. is handled by the
+  // EDITOR keymap (`src/editor/use-block-keyboard.ts` `collapseExpand` rule)
+  // while a block is focused. That handler runs on the editor container in the
+  // CAPTURE phase and calls `stopPropagation()` after `preventDefault()`
+  // (use-block-keyboard.ts:405-410), so the document-level collapse listener
+  // in `useBlockTreeKeyboardShortcuts` never also fires — no double-toggle.
+  // The document-level handler additionally requires `focusedBlockId` to be
+  // set and `storeOwnsBlock` to pass (the #713 ownership gate), so the parent
+  // MUST stay focused — escaping out (which calls `setFocused(null)`) would
+  // make BOTH handlers no-op. We therefore keep the parent focused and press
+  // the chord, asserting a single net toggle each press.
+  test('Ctrl+. (keyboard) toggles collapse on the focused parent (#713 gate)', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+
+    // Indent GS_4 (index 3) under GS_3 (index 2, plain text) so GS_3 becomes a
+    // parent with one child. focusBlock(page, 3) is safe here (no other block
+    // focused yet), and the indent shortcut re-parents under the prev sibling.
+    await focusBlock(page, 3)
+    await page.keyboard.press('Control+Shift+ArrowRight')
+
+    // The third block (GS_3) now owns a collapse chevron (hasChildren).
+    const parentBlock = page.locator('[data-testid="sortable-block"]').nth(2)
+    const chevron = parentBlock.locator('[data-testid="collapse-toggle"]')
+    await expect(chevron).toBeVisible()
+    await expect(chevron).toHaveAttribute('aria-expanded', 'true')
+
+    // Record the child's block id so we can assert it hides/reappears. GS_4 is
+    // the indented block — capture it from the 4th sortable-block wrapper
+    // (wrappers render regardless of focus state, unlike block-static).
+    const childId = await page
+      .locator('[data-testid="sortable-block"]')
+      .nth(3)
+      .getAttribute('data-block-id')
+    expect(childId).toBeTruthy()
+    const childBlock = page.locator(`[data-testid="sortable-block"][data-block-id="${childId}"]`)
+    await expect(childBlock).toBeVisible()
+
+    // Focus the PARENT (GS_3) in the editor — keyboard collapse only fires for
+    // the focused, store-owned block. Switching focus from GS_4 to GS_3 goes
+    // via Escape first to drain GS_4's blur path deterministically (matches the
+    // breadcrumb-navigation.spec.ts focus-switch convention), then we re-enter
+    // GS_3 so it is the focused/owned block when Ctrl+. fires.
+    await page.keyboard.press('Escape')
+    await focusBlock(page, 2)
+
+    // Press Ctrl+Period → collapse. aria-expanded flips to false; child hides.
+    await page.keyboard.press('Control+Period')
+    await expect(chevron).toHaveAttribute('aria-expanded', 'false')
+    await expect(childBlock).toBeHidden()
+
+    // Press Ctrl+Period again → expand. aria-expanded back to true; child shows.
+    await page.keyboard.press('Control+Period')
+    await expect(chevron).toHaveAttribute('aria-expanded', 'true')
+    await expect(childBlock).toBeVisible()
+  })
+
+  // #922 f7 — keyboard zoom-in / zoom-out (#217 zoom-in, #774 zoom-out
+  // Escape tie-break). Mirrors the context-menu zoom covered by
+  // breadcrumb-navigation.spec.ts, but drives it entirely from the keyboard:
+  // Alt+. (`zoomIn`) zooms into the focused parent, Escape (`zoomOut`) returns
+  // to the page root. Both are gated by `storeOwnsBlock(pageStore,
+  // focusedBlockId)`; Alt+. also calls `setFocused(null)` after flushing, so
+  // after the zoom no block is focused and Escape is free to zoom out (the
+  // #774 tie-break only matters with multiple mounted trees — a single page
+  // editor here is unambiguous).
+  test('Alt+. zooms into the focused parent and Escape zooms back out', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+
+    // Capture the root sibling ids so we can assert non-subtree blocks vanish
+    // while zoomed. sortable-block wrappers are stable across focus changes.
+    const rootBlocks = page.locator('[data-testid="sortable-block"]')
+    const rootIds = await rootBlocks.evaluateAll((els) =>
+      els.map((el) => el.getAttribute('data-block-id') ?? ''),
+    )
+    expect(rootIds).toHaveLength(5)
+    const [gs1Id, , gs3Id, gs4Id] = rootIds
+
+    // Indent GS_4 (index 3) under GS_3 (index 2) so GS_3 is a zoomable parent.
+    await focusBlock(page, 3)
+    await page.keyboard.press('Control+Shift+ArrowRight')
+
+    // Confirm GS_3 gained a child (chevron appears).
+    const parentBlock = rootBlocks.nth(2)
+    await expect(parentBlock.locator('[data-testid="collapse-toggle"]')).toBeVisible()
+
+    // Focus the PARENT (GS_3) — Alt+. zooms into the focused, owned block.
+    // Escape first to drain GS_4's blur path before re-focusing GS_3.
+    await page.keyboard.press('Escape')
+    await focusBlock(page, 2)
+
+    // Alt+Period → zoom into GS_3.
+    await page.keyboard.press('Alt+Period')
+
+    // The BlockZoomBar breadcrumb trail renders, with GS_3 as the active crumb.
+    const breadcrumbNav = page.getByRole('navigation', { name: /zoom breadcrumbs/i })
+    await expect(breadcrumbNav).toBeVisible()
+    const activeCrumb = breadcrumbNav.locator('[aria-current="page"]')
+    await expect(activeCrumb).toBeVisible()
+    await expect(activeCrumb).toHaveAttribute('data-zoom-crumb', gs3Id ?? '')
+
+    // Only GS_3's subtree is shown: the child (GS_4) is still rendered, but the
+    // other root siblings (GS_1, GS_2, GS_5) are filtered out of the zoomed view.
+    await expect(
+      page.locator(`[data-testid="sortable-block"][data-block-id="${gs4Id}"]`),
+    ).toBeVisible()
+    await expect(
+      page.locator(`[data-testid="sortable-block"][data-block-id="${gs1Id}"]`),
+    ).toHaveCount(0)
+
+    // Zoom-in already called setFocused(null) (it flushes + clears focus before
+    // navigating), so no editor holds focus here. Defensively blur any stray
+    // active element to document.body, then Escape → zoom out to the page root
+    // (the #774 tie-break path). The breadcrumb trail disappears and all root
+    // siblings render again.
+    await page.evaluate(() => {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    })
+    await page.keyboard.press('Escape')
+
+    await expect(breadcrumbNav).toBeHidden()
+    await expect(
+      page.locator(`[data-testid="sortable-block"][data-block-id="${gs1Id}"]`),
+    ).toBeVisible()
+  })
 })
 
 // ===========================================================================
