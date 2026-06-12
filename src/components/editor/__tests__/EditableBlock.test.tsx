@@ -227,7 +227,7 @@ describe('EditableBlock', () => {
       expect(wrapper?.classList.contains('block-editor')).toBe(true)
     })
 
-    it('applies selection ring and primary tint on focused branch when isSelected (UX-302)', () => {
+    it('applies the block-selected recipe when isSelected (UX-302, recipe unified UX-929)', () => {
       render(
         <EditableBlock
           blockId="B1"
@@ -238,10 +238,10 @@ describe('EditableBlock', () => {
         />,
       )
 
+      // UX-929 F4: selection now uses the single `block-selected` @utility
+      // (src/index.css) instead of the inlined ring-primary/bg-primary cluster.
       const wrapper = screen.getByTestId('block-editor')
-      expect(wrapper.className).toContain('ring-2')
-      expect(wrapper.className).toContain('ring-primary/50')
-      expect(wrapper.className).toContain('bg-primary/5')
+      expect(wrapper.className).toContain('block-selected')
     })
   })
 

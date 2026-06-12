@@ -323,6 +323,19 @@ describe('SelectionBubbleMenu', () => {
   // ── Rendering ────────────────────────────────────────────────────────
 
   describe('rendering', () => {
+    // UX-929 F5: the bubble container gains an entry animation matching the
+    // tooltip/suggestion popups (animate-in fade-in-0 zoom-in-95). The
+    // duration-fast token collapses to 0 under prefers-reduced-motion.
+    it('carries the enter-animation utility classes on the container', () => {
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      const container = screen.getByTestId('selection-bubble-menu')
+      expect(container.className).toContain('animate-in')
+      expect(container.className).toContain('fade-in-0')
+      expect(container.className).toContain('zoom-in-95')
+      expect(container.className).toContain('duration-fast')
+      expect(container.className).toContain('ease-smooth')
+    })
+
     it('renders the 5 mark toggles + External link button', () => {
       render(<SelectionBubbleMenu editor={makeEditor()} />)
       expect(screen.getByRole('button', { name: t('toolbar.bold') })).toBeInTheDocument()

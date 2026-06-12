@@ -315,7 +315,7 @@ function StaticBlockInner({
       <div
         className={cn(
           'block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 text-left text-sm transition-colors hover:bg-accent/50 [@media(pointer:coarse)]:min-h-[2.75rem]',
-          isSelected && 'ring-2 ring-primary/50 bg-primary/5',
+          isSelected && 'block-selected',
         )}
         data-testid="block-static"
         data-block-id={blockId}

@@ -536,7 +536,9 @@ describe('BlockListItem', () => {
 
 // ─── isFocused prop ────────────────────────────────────────────────────────
 describe('BlockListItem — isFocused prop', () => {
-  it('applies ring styling when isFocused is true', () => {
+  // UX-929 F4: selection/focus feedback is now the single `block-selected`
+  // recipe @utility (src/index.css), not an inlined ring/bg class cluster.
+  it('applies the block-selected recipe when isFocused is true', () => {
     render(
       <ul>
         <BlockListItem {...defaultProps({ isFocused: true })} />
@@ -544,11 +546,10 @@ describe('BlockListItem — isFocused prop', () => {
     )
 
     const li = screen.getByRole('listitem')
-    expect(li.className).toContain('ring-2')
-    expect(li.className).toContain('bg-accent/30')
+    expect(li.className).toContain('block-selected')
   })
 
-  it('does not apply ring styling when isFocused is false', () => {
+  it('does not apply the block-selected recipe when isFocused is false', () => {
     render(
       <ul>
         <BlockListItem {...defaultProps({ isFocused: false })} />
@@ -556,11 +557,10 @@ describe('BlockListItem — isFocused prop', () => {
     )
 
     const li = screen.getByRole('listitem')
-    expect(li.className).not.toContain('ring-2')
-    expect(li.className).not.toContain('bg-accent/30')
+    expect(li.className).not.toContain('block-selected')
   })
 
-  it('does not apply ring styling by default (prop omitted)', () => {
+  it('does not apply the block-selected recipe by default (prop omitted)', () => {
     render(
       <ul>
         <BlockListItem {...defaultProps()} />
@@ -568,8 +568,7 @@ describe('BlockListItem — isFocused prop', () => {
     )
 
     const li = screen.getByRole('listitem')
-    expect(li.className).not.toContain('ring-2')
-    expect(li.className).not.toContain('bg-accent/30')
+    expect(li.className).not.toContain('block-selected')
   })
 })
 

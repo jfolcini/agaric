@@ -445,7 +445,7 @@ function BlockListItemInner({
         // with touch-device padding don't get clipped at the bottom (UX-195).
         '[@media(pointer:coarse)]:min-h-11',
         blockId && 'cursor-grab',
-        isFocused && 'ring-2 ring-inset ring-ring/50 bg-accent/30',
+        isFocused && 'block-selected',
         className,
       )}
       data-testid={testId}

@@ -252,7 +252,7 @@ export function SelectionBubbleMenu({
       role="toolbar"
       aria-label={t('toolbar.selectionFormatting')}
       aria-controls={blockId ? `editor-${blockId}` : undefined}
-      className="selection-bubble-menu flex items-center gap-0.5 rounded-md border border-border bg-popover px-1 py-0.5 shadow-md"
+      className="selection-bubble-menu flex items-center gap-0.5 rounded-md border border-border bg-popover px-1 py-0.5 shadow-md animate-in fade-in-0 zoom-in-95 duration-fast ease-smooth"
       data-testid="selection-bubble-menu"
     >
       <TooltipProvider delayDuration={200}>
