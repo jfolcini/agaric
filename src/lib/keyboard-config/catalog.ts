@@ -264,6 +264,27 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     rebindable: false,
   },
   {
+    // #922 — keyboard range-select. Documentation-only: the Shift+Arrow
+    // trigger is hardcoded in `useBlockTreeKeyboardShortcuts` (positional,
+    // block-select-mode-only) and NOT routed through matchesShortcutBinding,
+    // like the positional Enter/Backspace navigation rules.
+    id: 'extendSelectionDown',
+    keys: 'Shift + Arrow Down',
+    category: 'keyboard.category.blockSelection',
+    description: 'keyboard.extendSelectionDown',
+    condition: 'keyboard.condition.notEditing',
+    rebindable: false,
+  },
+  {
+    // #922 — see `extendSelectionDown`. Documentation-only mirror upward.
+    id: 'extendSelectionUp',
+    keys: 'Shift + Arrow Up',
+    category: 'keyboard.category.blockSelection',
+    description: 'keyboard.extendSelectionUp',
+    condition: 'keyboard.condition.notEditing',
+    rebindable: false,
+  },
+  {
     id: 'selectAllBlocks',
     keys: 'Ctrl + A',
     category: 'keyboard.category.blockSelection',

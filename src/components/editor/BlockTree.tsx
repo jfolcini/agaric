@@ -154,7 +154,11 @@ export function BlockTree({
   } = pageStore.getState()
   // Global focus/selection actions
   const { setFocused, toggleSelected, clearSelected } = useBlockStore.getState()
-  const { rangeSelect: rawRangeSelect, selectAll: rawSelectAll } = useBlockStore.getState()
+  const {
+    rangeSelect: rawRangeSelect,
+    selectAll: rawSelectAll,
+    extendSelection,
+  } = useBlockStore.getState()
 
   // ── Collapse hook (state + visible block filtering) ────────────────
   // onBeforeCollapse needs handleFlush (defined later), so use a ref indirection.
@@ -681,8 +685,13 @@ export function BlockTree({
     selectedBlockIds,
     hasChildrenSet,
     blocks,
+    // #922 — Shift+Arrow keyboard range-select steps through the RENDERED list
+    // (`zoomedVisible` == `collapsedVisible` at root view), so it matches what
+    // the user sees and respects collapsed/zoomed visibility.
+    visibleIds: zoomedVisible.map((b) => b.id),
     toggleCollapse,
     rawSelectAll,
+    extendSelection,
     clearSelected,
     handleFlush,
     setFocused,
