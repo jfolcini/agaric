@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Clock,
   Copy,
+  ExternalLink,
   Merge,
   MoveDown,
   MoveUp,
@@ -36,6 +37,7 @@ import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { openUrl } from '@/lib/open-url'
 import { TURN_INTO_OPTIONS } from '@/lib/slash-commands'
 import { cn } from '@/lib/utils'
 
@@ -397,7 +399,29 @@ export function BlockContextMenu({
       : []),
   ]
 
-  // Copy URL item (shown only when right-clicking/long-pressing an external link)
+  // Link group (shown only when right-clicking/long-pressing an external link):
+  // "Open link" (→ system browser) and "Copy URL". #924 — discoverable,
+  // non-modifier counterpart to the editor's Ctrl/Cmd+Click open path.
+  const openLinkItem: MenuItem | null = linkUrl
+    ? {
+        label: t('contextMenu.openLink'),
+        icon: <ExternalLink className="h-3.5 w-3.5" />,
+        action: () => {
+          void (async () => {
+            // openUrl never rejects — it returns false when neither the
+            // Tauri shell nor window.open could open a tab. Surface that
+            // as a toast rather than silently closing on a no-op.
+            const opened = await openUrl(linkUrl)
+            if (!opened) {
+              logger.warn('BlockContextMenu', 'Failed to open external link', { url: linkUrl })
+              notify.error(t('contextMenu.actionFailed'))
+            }
+            onClose()
+          })()
+        },
+      }
+    : null
+
   const copyUrlItem: MenuItem | null = linkUrl
     ? {
         label: t('contextMenu.copyUrl'),
@@ -420,7 +444,7 @@ export function BlockContextMenu({
       }
     : null
 
-  const copyUrlGroup = copyUrlItem ? [copyUrlItem] : []
+  const linkGroup = [openLinkItem, copyUrlItem].filter((item): item is MenuItem => item !== null)
 
   // #264 — "Turn into" group. A parent toggle row ("Turn into ▸/▾") that
   // expands to the block-type options inline. Each option converts the block
@@ -459,12 +483,12 @@ export function BlockContextMenu({
   // Filter out items without actions and empty groups.
   //
   // #217 A1 — order for calm scannability and mis-click safety: contextual
-  // Copy-URL · Tasks (TODO/Priority) · Block ops (indent/move/merge) ·
-  // View (collapse/zoom) · History/Properties · Delete LAST. The destructive
-  // Delete previously sat at the very top (group1) — the easiest item to
-  // mis-click; it now lives at the bottom, visually separated by the
-  // existing inter-group divider and its `text-destructive` styling.
-  const groups = [copyUrlGroup, group4, turnIntoGroup, group2, group3, group5, group1]
+  // link actions (Open link / Copy URL) · Tasks (TODO/Priority) · Block ops
+  // (indent/move/merge) · View (collapse/zoom) · History/Properties · Delete
+  // LAST. The destructive Delete previously sat at the very top (group1) — the
+  // easiest item to mis-click; it now lives at the bottom, visually separated
+  // by the existing inter-group divider and its `text-destructive` styling.
+  const groups = [linkGroup, group4, turnIntoGroup, group2, group3, group5, group1]
     // Keep actionable items, plus the active "Turn into" indicator row (which
     // has no action by design — it shows the block's current type).
     .map((group) => group.filter((item) => item.action !== undefined || item.active))

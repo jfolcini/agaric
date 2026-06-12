@@ -33,6 +33,7 @@ import { BlockContextMenu, type BlockContextMenuProps } from '@/components/edito
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { openUrl } from '@/lib/open-url'
 
 vi.mock('@floating-ui/dom', () => ({
   computePosition: vi.fn().mockResolvedValue({ x: 0, y: 0 }),
@@ -56,9 +57,17 @@ vi.mock('@/lib/clipboard', () => ({
 }))
 const mockedWriteText = vi.mocked(writeText)
 
+// Mock the openUrl wrapper used by the "Open link" menu item so the test does
+// not depend on `@tauri-apps/plugin-shell` IPC.
+vi.mock('@/lib/open-url', () => ({
+  openUrl: vi.fn().mockResolvedValue(true),
+}))
+const mockedOpenUrl = vi.mocked(openUrl)
+
 beforeEach(() => {
   vi.clearAllMocks()
   mockedWriteText.mockResolvedValue(undefined)
+  mockedOpenUrl.mockResolvedValue(true)
 })
 
 type MenuOverrides = { [K in keyof BlockContextMenuProps]?: BlockContextMenuProps[K] | undefined }
@@ -646,6 +655,52 @@ describe('BlockContextMenu', () => {
     expect(props.onClose).toHaveBeenCalled()
   })
 
+  // ── Open link menu item (#924) ──────────────────────────────────
+
+  it('renders "Open link" item when linkUrl is provided', () => {
+    renderMenu({ linkUrl: 'https://example.com' })
+
+    expect(screen.getByText(t('contextMenu.openLink'))).toBeInTheDocument()
+  })
+
+  it('does not render "Open link" item when linkUrl is undefined', () => {
+    renderMenu({ linkUrl: undefined })
+
+    expect(screen.queryByText(t('contextMenu.openLink'))).not.toBeInTheDocument()
+  })
+
+  it('clicking "Open link" calls openUrl with the href and closes the menu', async () => {
+    const { props } = renderMenu({ linkUrl: 'https://example.com/page' })
+
+    fireEvent.click(screen.getByText(t('contextMenu.openLink')))
+
+    await waitFor(() => {
+      expect(mockedOpenUrl).toHaveBeenCalledWith('https://example.com/page')
+    })
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
+  it('"Open link" surfaces an error toast and closes when openUrl reports failure', async () => {
+    const errorSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    mockedOpenUrl.mockResolvedValueOnce(false)
+    const { props } = renderMenu({ linkUrl: 'https://example.com/page' })
+
+    fireEvent.click(screen.getByText(t('contextMenu.openLink')))
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(t('contextMenu.actionFailed'))
+    })
+    expect(props.onClose).toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
+  it('"Open link" is the first menu item when linkUrl is provided', () => {
+    renderMenu({ linkUrl: 'https://example.com' })
+
+    const items = screen.getAllByRole('menuitem')
+    expect(items[0]).toHaveTextContent(t('contextMenu.openLink'))
+  })
+
   // ── Copy URL menu item ──────────────────────────────────────────
 
   it('renders "Copy URL" item when linkUrl is provided', () => {
@@ -671,11 +726,13 @@ describe('BlockContextMenu', () => {
     expect(props.onClose).toHaveBeenCalled()
   })
 
-  it('"Copy URL" appears as the first menu item when linkUrl is provided', () => {
+  it('"Copy URL" appears right after "Open link" in the link group when linkUrl is provided', () => {
     renderMenu({ linkUrl: 'https://example.com' })
 
     const items = screen.getAllByRole('menuitem')
-    expect(items[0]).toHaveTextContent(t('contextMenu.copyUrl'))
+    // #924 — the link group leads the menu: Open link, then Copy URL.
+    expect(items[0]).toHaveTextContent(t('contextMenu.openLink'))
+    expect(items[1]).toHaveTextContent(t('contextMenu.copyUrl'))
   })
 
   // ── Floating UI safeguards (MAINT-121) ───────────────────────────
@@ -917,17 +974,18 @@ describe('BlockContextMenu', () => {
       expect(updatedItems[0]).toHaveFocus()
     })
 
-    it('refocuses the new first item when linkUrl appears (Copy URL becomes first)', async () => {
-      // No linkUrl initially → Copy URL is absent and the Tasks group leads
-      // (#217 A1); the first item is some non-Copy-URL action with focus.
+    it('refocuses the new first item when linkUrl appears (Open link becomes first)', async () => {
+      // No linkUrl initially → the link group (Open link / Copy URL) is absent
+      // and the Tasks group leads (#217 A1); the first item is some non-link
+      // action with focus.
       const { rerender, props } = renderMenu()
 
       const initialItems = screen.getAllByRole('menuitem')
-      expect(initialItems[0]).not.toHaveTextContent(t('contextMenu.copyUrl'))
+      expect(initialItems[0]).not.toHaveTextContent(t('contextMenu.openLink'))
       expect(initialItems[0]).toHaveFocus()
       const initialCount = initialItems.length
 
-      // Add linkUrl → Copy URL is prepended and should now own focus.
+      // Add linkUrl → Open link + Copy URL are prepended; Open link owns focus.
       rerender(
         <BlockContextMenu
           {...(props as BlockContextMenuProps)}
@@ -936,11 +994,12 @@ describe('BlockContextMenu', () => {
       )
 
       await waitFor(() => {
-        expect(screen.getAllByRole('menuitem').length).toBe(initialCount + 1)
+        // Two items join: Open link and Copy URL.
+        expect(screen.getAllByRole('menuitem').length).toBe(initialCount + 2)
       })
 
       const updatedItems = screen.getAllByRole('menuitem')
-      expect(updatedItems[0]).toHaveTextContent(t('contextMenu.copyUrl'))
+      expect(updatedItems[0]).toHaveTextContent(t('contextMenu.openLink'))
       expect(updatedItems[0]).toHaveFocus()
     })
   })
