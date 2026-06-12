@@ -55,6 +55,11 @@ export const editor: Record<string, string> = {
   // UX-304: label shown over the swipe-to-delete overlay on coarse-pointer
   // devices once the auto-delete threshold (200 px) is crossed mid-drag.
   'block.swipe.releaseToDelete': 'Release to delete',
+  // #927 f7: Gmail-style undo affordance after a swipe-to-delete. The 200 px
+  // swipe deletes immediately (no blocking confirm — worse on mobile), so the
+  // toast's Undo action is the recoverability net. Its onClick replays the
+  // same page-op undo the keyboard Ctrl+Z uses.
+  'block.swipe.deleted': 'Block deleted',
   'editor.unknownNodeType':
     "Some content (type: {{type}}) couldn't be saved as Markdown and was dropped.",
   'editor.brokenLinkTooltip': 'Broken link or in another space — click to remove',

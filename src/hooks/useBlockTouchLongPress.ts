@@ -85,6 +85,13 @@ export function useBlockTouchLongPress({
       if (!touch) return
       const dx = touch.clientX - touchStartPos.current.x
       const dy = touch.clientY - touchStartPos.current.y
+      // #927 f5: scroll intent wins over long-press. If the finger travels
+      // past LONG_PRESS_MOVE_THRESHOLD (10 px) in ANY direction before the
+      // 400 ms timer fires, the user is dragging — almost always a vertical
+      // scroll — not holding a stationary press. Cancel the timer so the
+      // scroll isn't hijacked into a context menu. The radial (Euclidean)
+      // check covers vertical, horizontal, and diagonal drags alike; a
+      // near-stationary press (jitter < 10 px) still opens the menu at 400 ms.
       if (Math.sqrt(dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD) {
         clearLongPress()
       }

@@ -9,6 +9,7 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { t as translate } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
 import { useNavigationStore } from '@/stores/navigation'
 import { pageBlockRegistry } from '@/stores/page-blocks'
@@ -45,6 +46,49 @@ function snakeToCamel(s: string | null | undefined): string {
   return s.replace(/_([a-z0-9])/g, (_, ch: string) => ch.toUpperCase())
 }
 
+/**
+ * Undo the last page op for `pageId` and surface the standard feedback
+ * (per-op-type toast, screen-reader announcement, store reload). Shared by
+ * the Ctrl+Z keyboard shortcut and the swipe-to-delete "Undo" toast action
+ * (#927 finding 7) so both routes are byte-for-byte identical — the gesture's
+ * safety net replays the exact same reverse op the keyboard would.
+ *
+ * Uses the standalone `t` (not the React `useTranslation` hook) so it is
+ * safe to call from a toast action callback outside the component tree.
+ * Returns a promise that resolves once the undo + reload settle (rejections
+ * are surfaced as an error toast and swallowed).
+ */
+export async function performPageUndo(pageId: string): Promise<void> {
+  try {
+    const result = await useUndoStore.getState().undo(pageId)
+    if (!result) return
+    const opKey = `undo.op.${snakeToCamel(result.reversed_op_type)}`
+    const message = translate(opKey, { defaultValue: translate('undo.undoneMessage') })
+    notify(message, { duration: 1500 })
+    announce(translate('announce.undone'))
+    await refreshAfterUndoRedo(pageId)
+  } catch {
+    notify.error(translate('undo.undoFailedMessage'))
+    announce(translate('announce.undoFailed'))
+  }
+}
+
+/**
+ * Resolve the currently-active page (top of the page stack, page-editor view
+ * only) and undo its last op. Returns `false` when there is no active page to
+ * act on (so callers can decide whether to no-op). Mirrors the pageId
+ * derivation used by the Ctrl+Z shortcut handler.
+ */
+export async function performActivePageUndo(): Promise<boolean> {
+  const navState = useNavigationStore.getState()
+  const pageStack = selectPageStack(useTabsStore.getState())
+  if (navState.currentView !== 'page-editor' || pageStack.length === 0) return false
+  const pageId = pageStack[pageStack.length - 1]?.pageId
+  if (!pageId) return false
+  await performPageUndo(pageId)
+  return true
+}
+
 export function useUndoShortcuts(): void {
   const { t } = useTranslation()
   useEffect(() => {
@@ -67,23 +111,9 @@ export function useUndoShortcuts(): void {
       // (page-level redo, handled below) does not match it.
       if (matchesShortcutBinding(e, 'undoLastPageOp')) {
         e.preventDefault()
-        useUndoStore
-          .getState()
-          .undo(pageId)
-          .then(async (result) => {
-            if (result) {
-              // Use per-op-type translation; fall back to generic t('undo.undoneMessage') if unknown.
-              const opKey = `undo.op.${snakeToCamel(result.reversed_op_type)}`
-              const message = t(opKey, { defaultValue: t('undo.undoneMessage') })
-              notify(message, { duration: 1500 })
-              announce(t('announce.undone'))
-              await refreshAfterUndoRedo(pageId)
-            }
-          })
-          .catch(() => {
-            notify.error(t('undo.undoFailedMessage'))
-            announce(t('announce.undoFailed'))
-          })
+        // Delegate to the shared helper so the keyboard route and the
+        // swipe-to-delete "Undo" toast (#927 f7) stay identical.
+        void performPageUndo(pageId)
         return
       }
 
