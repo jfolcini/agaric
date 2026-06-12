@@ -2126,6 +2126,48 @@ describe('PageBlockStore', () => {
       expect(mockedInvoke).not.toHaveBeenCalled()
     })
 
+    it('is no-op at the adjacent-slot boundary — reorder to own current slot (#928 f6)', async () => {
+      // siblingSlot returns the index INCLUDING self (B is at slot 1), while
+      // newIndex is the backend slot-basis EXCLUDING self. The guard relies on
+      // these coinciding at the block's own position: reorder('B', 1) must NOT
+      // emit a move_block IPC and must leave the order untouched.
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null })
+      const blockC = makeBlock({ id: 'C', position: 2, parent_id: null })
+      store.setState({ blocks: [blockA, blockB, blockC] })
+
+      await store.getState().reorder('B', 1)
+
+      // No-op assertion: the move_block IPC was never invoked.
+      expect(mockedInvoke).not.toHaveBeenCalledWith('move_block', expect.anything())
+      // Store order is unchanged.
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'B', 'C'])
+    })
+
+    it('moves to the adjacent slot just past its own (#928 f6)', async () => {
+      // reorder('B', 2): one slot past B's current slot — must actually move.
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null })
+      const blockC = makeBlock({ id: 'C', position: 2, parent_id: null })
+      store.setState({ blocks: [blockA, blockB, blockC] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'B',
+        new_parent_id: null,
+        new_position: 3,
+      })
+
+      await store.getState().reorder('B', 2)
+
+      // The move IPC fires with the expected newIndex.
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'move_block',
+        expect.objectContaining({ blockId: 'B', newParentId: null, newIndex: 2 }),
+      )
+      // B lands after C: [A, C, B].
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'C', 'B'])
+    })
+
     it('is no-op when blockId not found', async () => {
       store.setState({ blocks: [makeBlock({ id: 'A' })] })
 
