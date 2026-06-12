@@ -59,6 +59,7 @@ vi.mock('@/lib/logger', () => ({
 // ── Imports ──────────────────────────────────────────────────────────────
 
 import { makeBlock } from '../../__tests__/fixtures'
+import { capturePreDragFocus, consumePreDragFocus } from '../../lib/pre-drag-focus'
 import type { Projection } from '../../lib/tree-utils'
 import {
   computeDropIndex,
@@ -131,6 +132,10 @@ beforeEach(() => {
   mockedGetProjection.mockReturnValue(null as unknown as Projection)
   mockedComputeDropIndex.mockReturnValue(0)
   mockedComputeSelectionRoots.mockReturnValue([])
+  // #966 — drain any pre-drag focus captured by a prior test (the module-level
+  // store is single-shot but a test that captures without starting a drag would
+  // otherwise leak its value into the next test's `handleDragStart`).
+  consumePreDragFocus()
 })
 
 describe('useBlockDnD', () => {
@@ -569,6 +574,69 @@ describe('useBlockDnD', () => {
 
       act(() => {
         result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+      act(() => {
+        result.current.handleDragCancel()
+      })
+      expect(params.setFocused).not.toHaveBeenCalled()
+    })
+
+    // #966 — HANDLE-initiated drag regression. Pressing the gutter grip blurs
+    // the contenteditable, and `useEditorBlur` tears the editor down (unmount +
+    // setFocused(null)) BEFORE the 8px threshold fires `handleDragStart`. So by
+    // the time `handleDragStart` runs, `rovingEditor.activeBlockId` is ALREADY
+    // null and #923 captured nothing — Esc/cancel had no focus to restore. The
+    // drag handle now snapshots the focus in its `pointerdown` (before that
+    // blur) via `capturePreDragFocus`; `handleDragStart` consumes it as the
+    // fallback so cancel still restores the pre-drag focus.
+    it('restores pre-drag focus on cancel for a handle-initiated drag (editor already torn down)', () => {
+      // activeBlockId is null at drag-start time — the handle-press blur already
+      // ran `unmount()` + `setFocused(null)`, exactly as in production.
+      const params = makeDefaultParams({ rovingEditor: { activeBlockId: null } })
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      // The drag handle's `onPointerDown` (which runs BEFORE the blur teardown)
+      // snapshotted the focused block 'A'.
+      capturePreDragFocus('A')
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+      // No live focus to flush/clear — the editor was already torn down, so we
+      // must NOT re-clear focus here.
+      expect(params.setFocused).not.toHaveBeenCalled()
+
+      act(() => {
+        result.current.handleDragCancel()
+      })
+      // Cancel restored the block that was focused before the handle press,
+      // recovered from the pre-drag capture rather than the (null) live focus.
+      expect(params.setFocused).toHaveBeenCalledTimes(1)
+      expect(params.setFocused).toHaveBeenLastCalledWith('A')
+    })
+
+    // #966 — the captured focus is single-shot: a handle press that never became
+    // a drag must not leak its snapshot into a LATER keyboard-initiated drag
+    // (which never presses the handle and keeps its live focus).
+    it('does not leak a stale handle capture into a later keyboard drag', () => {
+      const params = makeDefaultParams({ rovingEditor: { activeBlockId: null } })
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      // First drag consumes the captured 'A'.
+      capturePreDragFocus('A')
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+      act(() => {
+        result.current.handleDragCancel()
+      })
+      expect(params.setFocused).toHaveBeenLastCalledWith('A')
+
+      // Second drag: no new capture (keyboard drag) and no live focus → nothing
+      // to restore. The stale 'A' must NOT resurface.
+      ;(params.setFocused as ReturnType<typeof vi.fn>).mockClear()
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('C') as never)
       })
       act(() => {
         result.current.handleDragCancel()

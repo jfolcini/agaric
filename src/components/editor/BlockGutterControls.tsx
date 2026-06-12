@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { capturePreDragFocus } from '@/lib/pre-drag-focus'
 import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
 
@@ -138,6 +139,20 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
   // common hover state — it only earns a place once you're actually selecting.
   const hasSelection = useBlockStore((s) => s.selectedBlockIds.length > 0)
 
+  // #966 — a handle-initiated drag blurs the contenteditable on `pointerdown`,
+  // and `useEditorBlur` tears the editor down (unmount + setFocused(null))
+  // BEFORE dnd-kit's 8px threshold fires `handleDragStart`. So the focus is
+  // already gone by the time #923 tries to capture it for restore-on-cancel.
+  // This `onPointerDown` runs in the same `pointerdown` BEFORE that blur, so it
+  // is the last instant the pre-drag focus is still live — snapshot it now.
+  // We compose with dnd-kit's own `pointerdown` listener so the drag still
+  // activates. `getState()` (not a reactive subscription) reads the value at
+  // press time without re-rendering the gutter on every focus change.
+  const handleDragHandlePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    capturePreDragFocus(useBlockStore.getState().focusedBlockId)
+    dragListeners?.['onPointerDown']?.(e)
+  }
+
   // Multi-select checkbox visibility (user feedback 2026-06-12): the checkbox
   // is NOT shown on a casual hover. It appears only when:
   //   - this block is selected → forced visible, doubling as selection feedback;
@@ -206,6 +221,10 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
       data-context-trigger="true"
       {...dragAttributes}
       {...dragListeners}
+      // #966 — capture pre-drag focus before the press-blur clears it. Must
+      // come AFTER `{...dragListeners}` so it wins the `onPointerDown` slot;
+      // it re-invokes dnd-kit's own listener so the drag still activates.
+      onPointerDown={handleDragHandlePointerDown}
     />
   )
 
@@ -232,6 +251,8 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
         data-context-trigger="true"
         {...dragAttributes}
         {...dragListeners}
+        // #966 — same pre-drag focus capture as the desktop handle (see above).
+        onPointerDown={handleDragHandlePointerDown}
       >
         <GripVertical className="h-4 w-4" />
       </button>
