@@ -465,6 +465,33 @@ function insertAtSlotAndRenumber(parentId: string | null, blockId: string, slot:
   renumberSiblings(parentId)
 }
 
+/**
+ * #957 — after a cross-parent move, the moved block's `page_id` is recomputed
+ * from its new parent (the page root, or `null` when orphaned). The Rust
+ * backend (#664) ALSO refreshes every transitive descendant's `page_id` so the
+ * whole subtree carries the new page root. Mirror that here: walk descendants
+ * via `parent_id` chains over the `blocks` map and set each one's `page_id` to
+ * the moved block's (already-updated) `page_id`. Without this, a moved subtree's
+ * descendants keep a stale `page_id`, diverging from the backend (and breaking
+ * `load_page_subtree`, which keys on `page_id`).
+ */
+function refreshDescendantPageIds(rootBlockId: string): void {
+  const root = blocks.get(rootBlockId)
+  if (!root) return
+  const newPageId = (root['page_id'] as string | null) ?? null
+  const all = Array.from(blocks.values())
+  // BFS over parent_id edges from the moved block down through its subtree.
+  const queue: string[] = [rootBlockId]
+  while (queue.length > 0) {
+    const parentId = queue.shift() as string
+    const children = all.filter((b) => ((b['parent_id'] as string | null) ?? null) === parentId)
+    for (const child of children) {
+      child['page_id'] = newPageId
+      queue.push(child['id'] as string)
+    }
+  }
+}
+
 export const HANDLERS: Record<string, Handler> = {
   // ---------------------------------------------------------------------------
   // Block listing & CRUD
@@ -1238,6 +1265,9 @@ export const HANDLERS: Record<string, Handler> = {
     } else {
       b['page_id'] = null
     }
+    // #957 — refresh the moved subtree's descendants to the new page root
+    // (mirrors the Rust backend's #664 descendant `page_id` refresh).
+    refreshDescendantPageIds(blockId)
     insertAtSlotAndRenumber(newParentId, blockId, newIndex)
     // Renumber the old sibling group too (the vacated slot collapses). Skip
     // when the parent didn't change — the insert already renumbered it.
@@ -2086,6 +2116,9 @@ export const HANDLERS: Record<string, Handler> = {
         } else {
           b['page_id'] = null
         }
+        // #957 — undoing a cross-parent move must also restore the subtree's
+        // descendant `page_id`s to the (now-restored) page root.
+        refreshDescendantPageIds(payload['block_id'] as string)
         insertAtSlotAndRenumber(oldParentId, payload['block_id'] as string, oldSlot)
         // Collapse the vacated source group too (skip when same parent — the
         // insert already renumbered it).
@@ -2153,6 +2186,9 @@ export const HANDLERS: Record<string, Handler> = {
         } else {
           b['page_id'] = null
         }
+        // #957 — re-applying a cross-parent move must also re-refresh the
+        // subtree's descendant `page_id`s to the new page root.
+        refreshDescendantPageIds(payload['block_id'] as string)
         insertAtSlotAndRenumber(newParentId, payload['block_id'] as string, newSlot)
         if (curParentId !== newParentId) renumberSiblings(curParentId)
       }
