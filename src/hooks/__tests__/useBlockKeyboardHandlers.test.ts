@@ -513,6 +513,62 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
     expect(params.setFocused).toHaveBeenCalledWith('A')
   })
 
+  // #921 f2 — a plain string concat would re-parse the current block's leading
+  // block-marker (`- `, `# `, `> `, `1. `) as a NEW construct appended to the
+  // previous paragraph. The merge must strip that leading marker so the text
+  // joins inline.
+  it('strips a leading list marker so merged content does not become a list item', async () => {
+    const params = makeDefaultParams()
+    params.collapsedVisible = [
+      makeBlock({ id: 'A', depth: 0, content: 'foo' }),
+      makeBlock({ id: 'B', depth: 0, content: '- bar' }),
+    ]
+    params.rovingEditor.unmount = vi.fn(() => '- bar')
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleMergeWithPrev()
+    })
+
+    // No leading "- " / list structure carried into the merged content.
+    expect(params.edit).toHaveBeenCalledWith('A', 'foobar')
+    const merged = vi.mocked(params.edit).mock.calls[0]?.[1] as string
+    expect(merged).not.toMatch(/^- /)
+    expect(merged).not.toContain('- bar')
+  })
+
+  it('strips a leading heading marker on merge', async () => {
+    const params = makeDefaultParams()
+    params.collapsedVisible = [
+      makeBlock({ id: 'A', depth: 0, content: 'foo' }),
+      makeBlock({ id: 'B', depth: 0, content: '# h' }),
+    ]
+    params.rovingEditor.unmount = vi.fn(() => '# h')
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleMergeWithPrev()
+    })
+
+    expect(params.edit).toHaveBeenCalledWith('A', 'fooh')
+  })
+
+  it('leaves plain (marker-free) content as a simple concat', async () => {
+    const params = makeDefaultParams()
+    params.collapsedVisible = [
+      makeBlock({ id: 'A', depth: 0, content: 'foo' }),
+      makeBlock({ id: 'B', depth: 0, content: 'bar' }),
+    ]
+    params.rovingEditor.unmount = vi.fn(() => 'bar')
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleMergeWithPrev()
+    })
+
+    expect(params.edit).toHaveBeenCalledWith('A', 'foobar')
+  })
+
   it('does nothing when at first block', async () => {
     const params = makeDefaultParams({ focusedBlockId: 'A' })
     const { result } = renderHook(() => useBlockKeyboardHandlers(params))

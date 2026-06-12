@@ -52,6 +52,52 @@ function announceMoveResult(
     })
 }
 
+/**
+ * #921 f2 — Backspace-at-start merge must not let the current block's text
+ * re-parse as a NEW block construct once it is concatenated onto the previous
+ * block's paragraph.
+ *
+ * The merge stores `prevContent + currentContent` as the previous block's
+ * markdown. If `currentContent` begins with a LEADING block-markdown token
+ * (`- bar`, `# h`, `> q`, `1. x`, `- [ ] task`), a plain concat would turn the
+ * joined-in text into a list item / heading / blockquote appended to (or
+ * absorbing) the previous paragraph — mangling the markup. Backspace at the
+ * start of a block is a textual join, so the leading construct marker should be
+ * dropped and only its inline text carried over.
+ *
+ * This strips exactly ONE leading block-marker from the FIRST line so the
+ * joined content stays inline. It is intentionally conservative: it only fires
+ * when the previous block is non-empty (a real join) and only touches the
+ * leading token — interior lines and inline marks (`**bold**`, `_em_`) are
+ * untouched.
+ */
+const LEADING_BLOCK_MARKER_RE =
+  /^(?:\s{0,3})(?:#{1,6}\s+|>\s?|[-*+]\s+(?:\[[ xX]\]\s+)?|\d{1,9}[.)]\s+)/
+
+export function stripLeadingBlockMarker(content: string): string {
+  // Operate only on the first line so a multi-line current block keeps its
+  // remaining structure; the join only affects where it meets the prev block.
+  const newlineIdx = content.indexOf('\n')
+  const firstLine = newlineIdx === -1 ? content : content.slice(0, newlineIdx)
+  const rest = newlineIdx === -1 ? '' : content.slice(newlineIdx)
+  const stripped = firstLine.replace(LEADING_BLOCK_MARKER_RE, '')
+  // Only rewrite when a marker was actually present (avoid mangling plain text
+  // and avoid trimming legitimate leading whitespace on unmarked lines).
+  return stripped === firstLine ? content : stripped + rest
+}
+
+/**
+ * Build the merged markdown for a Backspace-at-start join: the previous
+ * block's content followed by the current block's content with any leading
+ * block-construct marker neutralized (see {@link stripLeadingBlockMarker}).
+ * When the previous block is empty there is no paragraph to absorb the text,
+ * so the current content is carried over verbatim (nothing to mangle).
+ */
+function joinMergedContent(prevContent: string, currentContent: string): string {
+  if (prevContent === '') return currentContent
+  return prevContent + stripLeadingBlockMarker(currentContent)
+}
+
 export interface UseBlockKeyboardHandlersParams {
   focusedBlockId: string | null
   collapsedVisible: FlatBlock[]
@@ -343,7 +389,9 @@ export function useBlockKeyboardHandlers({
     const currentContent = rovingEditorRef.current.unmount() ?? collapsedVisible[idx]?.content ?? ''
     const prevContent = prevBlock.content ?? ''
 
-    const mergedContent = prevContent + currentContent
+    // #921 f2 — neutralize a leading block-marker so the joined-in text doesn't
+    // re-parse as a list item / heading / blockquote on the previous block.
+    const mergedContent = joinMergedContent(prevContent, currentContent)
     const prevDoc = parse(prevContent)
     const joinPoint = pmEndOfFirstBlock(prevDoc)
 
@@ -389,7 +437,9 @@ export function useBlockKeyboardHandlers({
       const currentContent = editorContent ?? collapsedVisible[idx]?.content ?? ''
       const prevContent = prevBlock.content ?? ''
 
-      const mergedContent = prevContent + currentContent
+      // #921 f2 — see handleMergeWithPrev: strip a leading block-marker so the
+      // joined-in text stays inline instead of forming a new construct.
+      const mergedContent = joinMergedContent(prevContent, currentContent)
 
       const remountIfNeeded = () => {
         if (editorContent !== null) {
