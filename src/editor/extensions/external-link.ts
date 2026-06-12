@@ -4,7 +4,8 @@
  * Wraps @tiptap/extension-link with app-specific defaults:
  * - autolink: detect bare URLs as the user types
  * - linkOnPaste: pasting a URL over selected text creates a link
- * - openOnClick: false — links open on Ctrl+Click (default browser behavior)
+ * - openOnClick: false — a plain click places the caret (to edit the link);
+ *   Ctrl/Cmd+Click opens the URL via the `handleClick` plugin prop (#924).
  * - Mod-k keyboard shortcut: dispatches a custom DOM event so the React
  *   FormattingToolbar can open the link edit popover.
  * - Paste-to-link: pasting a bare URL with empty selection inserts a linked
@@ -19,6 +20,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 
 import { configKeyToTipTap, getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
+import { openUrl } from '@/lib/open-url'
 import { fetchLinkMetadata } from '@/lib/tauri'
 
 /**
@@ -65,6 +67,24 @@ export const ExternalLink = Link.extend({
       new Plugin({
         key: pastePluginKey,
         props: {
+          // #924 — open an external link while editing. `openOnClick:false`
+          // means a plain click places the caret (so the user can edit the
+          // link text); a Ctrl/Cmd+Click opens it — the behaviour the docstring
+          // claimed but never actually wired (the base Link extension registers
+          // NO click handler when openOnClick is false).
+          handleClick: (_view, _pos, event) => {
+            if (!event.ctrlKey && !event.metaKey) return false
+            const anchor = (event.target as HTMLElement | null)?.closest(
+              'a.external-link',
+            ) as HTMLAnchorElement | null
+            const href = anchor?.getAttribute('href')
+            if (!href) return false
+            event.preventDefault()
+            void openUrl(href).catch((err: unknown) => {
+              logger.warn('ExternalLink', 'openUrl failed', { href }, err)
+            })
+            return true
+          },
           handlePaste: (view, event) => {
             // Only act when there is no selection (cursor only).
             if (!view.state.selection.empty) return false
