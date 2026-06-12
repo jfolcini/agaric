@@ -24,12 +24,36 @@ const NUM_RUNS = 500
  * all delimiter characters so fast-check explores edge cases with them.
  * `_ | ~ =` were added with #710 — the round-trip corruption family showed
  * the old alphabet couldn't catch underscore/pipe/strike/highlight bugs.
+ * `< > u` were added with #898 so `<u>` / `</u>` underline tokens (#211 P2-5)
+ * emerge from the single-char alphabet too.
  */
-const INTERESTING_CHARS = 'abcXY 012*`#[\\]()_|~='
+const INTERESTING_CHARS = 'abcXY 012*`#[\\]()_|~=<>u'
 
-/** A non-empty string from the interesting character alphabet. */
+/**
+ * Multi-character tokens for the #898 alphabet extension — the non-CommonMark
+ * delimiter families behind the #710/#711 corruption set. Splicing them in as
+ * atomic units (rather than relying on the single-char alphabet to randomly
+ * assemble them) makes fast-check reliably explore the mark-delimiter
+ * collisions: strikethrough (`~~`), highlight (`==`), underline tags
+ * (`<u>` / `</u>`), and the escape/hard-break interaction (`\` runs).
+ */
+const INTERESTING_TOKENS = ['~~', '==', '<u>', '</u>', '\\', '\\\\', '\\\\\\']
+
+/**
+ * A non-empty string from the interesting character alphabet, occasionally
+ * spliced with one of the multi-char delimiter tokens. The tokens land mid-text
+ * (not at the start) so this generator keeps producing *inline* content — the
+ * leading-marker block-production cases (`#`, `N. `, `|`) are exercised through
+ * arbMarkdownString, which the fixed-point properties normalize.
+ */
 const arbText: fc.Arbitrary<string> = fc
-  .array(fc.constantFrom(...INTERESTING_CHARS.split('')), { minLength: 1, maxLength: 8 })
+  .array(
+    fc.oneof(
+      { weight: 6, arbitrary: fc.constantFrom(...INTERESTING_CHARS.split('')) },
+      { weight: 1, arbitrary: fc.constantFrom(...INTERESTING_TOKENS) },
+    ),
+    { minLength: 1, maxLength: 8 },
+  )
   .map((chars) => chars.join(''))
 
 /** Uppercase ULID (26 Crockford base32 chars). */
@@ -192,7 +216,30 @@ const arbMarkdownString: fc.Arbitrary<string> = fc
         '\\|',
         '1. ',
         '2. ',
+        // #898 alphabet extension: underline storage tokens (#211 P2-5),
+        // multi-char escape / hard-break runs, and the strike/highlight escapes.
+        '<u>',
+        '</u>',
+        '\\\\',
+        '\\\\\\',
+        '\\~',
+        '\\=',
+        '\\<',
       ),
+      // #898: leading block markers at paragraph start. These reparse into a
+      // *different block kind* (heading / ordered-list / table) on the first
+      // round-trip — exactly the block-production-on-reparse asymmetry behind
+      // the #710/#711 family. Generated as a marker + a short clean tail so the
+      // construct is well-formed; the fixed-point/idempotence properties
+      // (which normalize) must still stabilise on these.
+      fc
+        .tuple(
+          fc.constantFrom('# ', '## ', '### ', '1. ', '2. ', '|'),
+          fc
+            .array(fc.constantFrom(...'abcXY 012'.split('')), { minLength: 1, maxLength: 6 })
+            .map((chars) => chars.join('')),
+        )
+        .map(([marker, tail]) => `${marker}${tail}`),
       fc
         .array(fc.constantFrom(...'abcXY 012'.split('')), { minLength: 1, maxLength: 6 })
         .map((chars) => chars.join('')),
@@ -277,6 +324,15 @@ function normalizeDoc(doc: DocNode): DocNode {
   const paragraphs = doc.content
     .map((p) => {
       if (p.type === 'paragraph') return normalizeParagraphNode(p)
+      // #898: a leading `# ` token now produces headings, whose inline content
+      // is subject to the same adjacent-same-mark merge as paragraphs — e.g.
+      // `# a[t](u)[t](u)` serializes to one merged `[tt](u)` and reparses as a
+      // single node. Merge heading children so the fixed-point comparison sees
+      // the parser-canonical form. (Serializer output is already a fixed point;
+      // only the un-merged generated/intermediate doc differs structurally.)
+      if (p.type === 'heading' && p.content) {
+        return { ...p, content: mergeAdjacentTextNodes(p.content) }
+      }
       if (p.type === 'orderedList' && p.content) {
         return {
           ...p,
@@ -337,6 +393,18 @@ function paragraphStartsWithAmbiguousSyntax(block: ParagraphNode): boolean {
   if (!firstText) return false
   if (/^#{1,6} /.test(firstText.text)) return true
   if (firstText.text.startsWith('```')) return true
+  // #898: leading block markers reparse a *paragraph* into a different block
+  // kind, so a paragraph carrying one is structurally ambiguous on round-trip
+  // and must be excluded from doc→text→doc structural-equality properties:
+  //   `>`  → blockquote        (the `>` char entered the alphabet with `<u>`)
+  //   `N. ` → ordered list
+  //   `|`  → table row
+  // The fixed-point / idempotence properties (which compare serializer output,
+  // not structure) still exercise these — they just stabilise rather than
+  // round-trip the original block kind.
+  if (firstText.text.startsWith('>')) return true
+  if (/^\d+\. /.test(firstText.text)) return true
+  if (firstText.text.startsWith('|')) return true
   return false
 }
 
@@ -712,6 +780,26 @@ describe('hasStructuralAmbiguity helpers', () => {
         content: [{ type: 'text', text: 'plain content' }],
       }),
     ).toBe(false)
+    // #898: leading block markers (blockquote `>`, ordered-list `N. `, table
+    // `|`) reparse a paragraph into a different block kind — also ambiguous.
+    expect(
+      paragraphStartsWithAmbiguousSyntax({
+        type: 'paragraph',
+        content: [{ type: 'text', text: '> quote' }],
+      }),
+    ).toBe(true)
+    expect(
+      paragraphStartsWithAmbiguousSyntax({
+        type: 'paragraph',
+        content: [{ type: 'text', text: '1. item' }],
+      }),
+    ).toBe(true)
+    expect(
+      paragraphStartsWithAmbiguousSyntax({
+        type: 'paragraph',
+        content: [{ type: 'text', text: '| cell' }],
+      }),
+    ).toBe(true)
     // Edge case: empty paragraph has no ambiguity signal.
     expect(paragraphStartsWithAmbiguousSyntax({ type: 'paragraph' })).toBe(false)
   })
@@ -760,5 +848,106 @@ describe('hasStructuralAmbiguity helpers', () => {
 
     // Edge case: empty doc has no ambiguity.
     expect(hasStructuralAmbiguity({ type: 'doc' })).toBe(false)
+  })
+})
+
+// -- Serializer-level idempotence firewall (#711 zero-edit rewrite) -----------
+
+/**
+ * A golden corpus of realistic *stored* markdown — the shape of strings that
+ * actually live in the database/content layer. Each snippet exercises one or
+ * more of the constructs the #898 alphabet extension targets: headings,
+ * ordered / unordered lists, tables, strike / highlight / underline, links,
+ * inline code & code blocks, blockquotes, nested marks, and hard breaks.
+ *
+ * These are NOT random — they are hand-authored canonical forms (already a
+ * serializer fixed point) so the guard below is a tight, fast firewall rather
+ * than a fuzzer. It complements the property tests above.
+ */
+const GOLDEN_CORPUS: readonly string[] = [
+  // Headings
+  '# Heading one',
+  '## Heading two\n### Heading three',
+  '# Title\nA paragraph beneath the title.',
+  // Unordered list
+  '- alpha\n- beta\n- gamma',
+  '- item with **bold**\n- item with `code`',
+  // Ordered list
+  '1. first\n2. second\n3. third',
+  '1. **bold item**\n2. *italic item*',
+  // Tables
+  '| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |',
+  '| **Header** | *Cell* |\n| --- | --- |\n| a | b |',
+  // Table with escaped pipe in a cell
+  '| A\\|B | plain |\n| --- | --- |\n| 1\\|2 | ok |',
+  // Strike / highlight / underline (the non-CommonMark marks)
+  '~~deleted~~',
+  '==important==',
+  '<u>underlined</u>',
+  'mix of ~~strike~~ and ==highlight== and <u>underline</u>',
+  // Nested marks (underline outermost, then bold/italic, then strike/highlight)
+  '<u>**bold underline**</u>',
+  '**bold and ~~struck~~ together**',
+  // Mark-nesting order is canonicalized on the first pass (italic ends up
+  // outside highlight: `*==highlighted italic==*`) and stable thereafter —
+  // the firewall asserts the SECOND pass is byte-identical, not that the input
+  // is already canonical.
+  '==*highlighted italic*==',
+  // Links
+  '[external link](https://example.com)',
+  'see [the docs](https://example.com/docs) for more',
+  // Inline code & code blocks
+  'use `inline code` here',
+  '```js\nconst x = 1\nconsole.log(x)\n```',
+  '```\nplain fenced block\n```',
+  // Code block whose content contains a backtick run (variable-length fence)
+  '````\na ``` fence inside\n````',
+  // Blockquotes
+  '> a simple quote',
+  '> line one\n> line two',
+  '> **strong** quote with [a link](https://example.com)',
+  // Callout (blockquote variant)
+  '> [!INFO] an informational callout',
+  // Hard break inside a paragraph
+  'line one\\\nline two',
+  // Tokens (tag_ref / block_link)
+  '#[01ARZ3NDEKTSV4RRFFQ69G5FAV]',
+  '[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]',
+  // Mixed realistic document
+  '# Project notes\n\nSome intro text.',
+  // Literal `[ ]` is outside the locked subset, so it is escaped to `\[ \]` on
+  // the first pass (the serializer has no task-list checkbox); stable after.
+  '## Tasks\n- [ ] one\n- [ ] two',
+  // Plain paragraphs
+  'just a plain paragraph with no markup at all',
+  'a paragraph\nfollowed by another paragraph',
+]
+
+describe('serializer idempotence firewall: serialize(parse(x)) is a byte-for-byte fixed point (#711)', () => {
+  /**
+   * The #711 "zero-edit rewrite" guarantee at the serializer boundary: once a
+   * stored string has been normalized by one parse→serialize pass, a SECOND
+   * pass must be byte-identical. If this ever drifts, opening-and-closing a
+   * document silently rewrites its bytes — the exact corruption class behind
+   * #710/#711. We assert on the serialized string (not the parsed structure)
+   * because the *bytes* are what get written back to storage.
+   */
+  it.each(GOLDEN_CORPUS.map((md, i) => [i, md] as const))(
+    'corpus[%i] stabilizes after one normalization pass',
+    (_i, md) => {
+      const once = serialize(parse(md))
+      const twice = serialize(parse(once))
+      expect(twice).toBe(once)
+    },
+  )
+
+  it('the whole corpus concatenated into one document is also a fixed point', () => {
+    // Realistic stored content is multi-block; concatenating exercises
+    // block-boundary interactions (e.g. a heading immediately after a table)
+    // that single snippets miss.
+    const combined = GOLDEN_CORPUS.join('\n\n')
+    const once = serialize(parse(combined))
+    const twice = serialize(parse(once))
+    expect(twice).toBe(once)
   })
 })
