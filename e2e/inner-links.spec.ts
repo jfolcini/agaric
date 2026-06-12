@@ -294,6 +294,70 @@ test.describe('Inner links — [[ picker', () => {
   })
 })
 
+test.describe('Inner links — editor-mode chip navigation (#924 f6)', () => {
+  // f6 — the static/rendered tree already has click-to-navigate coverage
+  // (see "clicking a link chip navigates…" above), but the EDITOR-mode chips
+  // (tag_ref onClick + block_ref onNavigate, wired in src/editor/use-roving-editor.ts)
+  // had none. These focus the block first (entering TipTap edit mode) and then
+  // click the chip, guarding the preventDefault/stopPropagation wiring that
+  // stops ProseMirror placing a caret instead of navigating.
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  // FIXME(#958): the tag-chip editor onClick wiring is present in source
+  // (BlockTree → useRovingEditor({ onTagClick }) → TagRef.configure), but navigation is
+  // not observable in the e2e — the tauri-mock appears not to resolve a navigable page
+  // for a tag id (navigateToPage(tagId)). Block-ref editor nav (below) passes. Repro kept
+  // executable; either teach the mock to navigate tag pages or assert the click intent.
+  test.fixme('clicking a tag chip in the editor navigates to the tag view', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+
+    // GS_4 ("Try tagging blocks with #work / #personal") is the 4th block.
+    // Focus it to mount the editor; its tag-ref chips become live NodeViews.
+    const editor = await focusBlock(page, 3)
+    const tagChip = editor.locator('[data-testid="tag-ref-chip"]', { hasText: 'work' })
+    await expect(tagChip).toBeVisible()
+
+    // Clicking the chip routes through useTagClickHandler → navigateToPage(tagId, name).
+    // The resolved tag title depends on the resolve-store cache (falls back to
+    // "Tag"), so assert that navigation OCCURRED — the editor left "Getting
+    // Started" — rather than pinning the exact tag-view title. This is the f6
+    // point (the editor-mode chip click navigates) and guards the tag-ref
+    // preventDefault wiring (#924 f3).
+    const pageTitle = page.locator('[aria-label="Page title"]')
+    await expect
+      .poll(async () => (await pageTitle.textContent())?.trim() ?? '')
+      .not.toBe('Getting Started')
+  })
+
+  test('clicking a block-ref chip in the editor navigates to its target page', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+
+    // Insert a block_ref pointing at QN_1 (on the Quick Notes page, which
+    // contains "These notes complement…") via the (( picker, so the chip's
+    // target lives on a DIFFERENT page and navigation is observable.
+    await focusBlock(page)
+    await page.keyboard.press('End')
+    await page.keyboard.type(' ((complement', { delay: 30 })
+    const list = activeSuggestionList(page)
+    await expect(list).toBeVisible({ timeout: 5000 })
+    await expect(list.locator('[data-testid="suggestion-item"]').first()).toBeVisible()
+    await page.keyboard.press('Enter')
+
+    const refChip = page.locator('[data-testid="block-editor"] [data-testid="block-ref-chip"]')
+    await expect(refChip).toBeVisible()
+
+    // block_ref onNavigate → handleNavigate: the target's parent (Quick Notes)
+    // differs from the current page, so it navigates to that parent page.
+    await refChip.click()
+
+    await expect(
+      page.locator('[aria-label="Page title"]', { hasText: 'Quick Notes' }),
+    ).toBeVisible()
+  })
+})
+
 test.describe('Inner links — link persistence', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
