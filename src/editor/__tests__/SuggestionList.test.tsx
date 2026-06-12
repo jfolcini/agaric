@@ -225,13 +225,14 @@ describe('SuggestionList', () => {
     const plusIcon = createBtn.querySelector('.text-primary')
     expect(plusIcon).toBeInTheDocument()
 
-    // UX-311: stronger background + left primary-accent border replaces the
-    // earlier subtle `bg-accent/5` tint so the create-new option stays
-    // visible on long mobile lists.
+    // The create row renders like a normal row (clean `[[`-picker look):
+    // only a subtle top divider when mid-list, with the `+`/Plus + "Create"
+    // affordance carrying the meaning. The heavy left primary-accent bar and
+    // accent background were dropped so the `@` and `[[` pickers match.
     expect(createBtn.className).toContain('border-t')
-    expect(createBtn.className).toContain('border-l-2')
-    expect(createBtn.className).toContain('border-l-primary')
-    expect(createBtn.className).toContain('bg-accent/15')
+    expect(createBtn.className).not.toContain('border-l-2')
+    expect(createBtn.className).not.toContain('border-l-primary')
+    expect(createBtn.className).not.toContain('bg-accent/15')
   })
 
   it('resets selected index when items change', () => {
@@ -745,9 +746,9 @@ describe('SuggestionList', () => {
     expect(screen.getByText('Item 0')).toHaveAttribute('aria-selected', 'true')
   })
 
-  // -- UX-311: Stronger create-new visibility ----------------------------------
+  // -- Create-new row matches the clean `[[` list look -------------------------
 
-  it('"Create new" item carries left primary-accent border + bg-accent/15 (UX-311)', () => {
+  it('"Create new" row drops the heavy left-accent bar + accent background', () => {
     const command = vi.fn()
     const items: PickerItem[] = [
       { id: '1', label: 'Existing Page' },
@@ -757,12 +758,17 @@ describe('SuggestionList', () => {
     render(<SuggestionList items={items} command={command} />)
 
     const createBtn = screen.getAllByRole('option')[1] as HTMLElement
-    expect(createBtn.className).toContain('border-l-2')
-    expect(createBtn.className).toContain('border-l-primary')
-    expect(createBtn.className).toContain('bg-accent/15')
+    // Mid-list create row keeps a subtle top divider only.
+    expect(createBtn.className).toContain('border-t')
+    expect(createBtn.className).not.toContain('border-l-2')
+    expect(createBtn.className).not.toContain('border-l-primary')
+    expect(createBtn.className).not.toContain('bg-accent/15')
+    // The create affordance is still identifiable by its Plus icon + label.
+    expect(createBtn.querySelector('svg.text-primary')).toBeInTheDocument()
+    expect(createBtn).toHaveTextContent('Create My New Page')
   })
 
-  it('non-create items do NOT receive the create-new accent classes (UX-311)', () => {
+  it('non-create items do NOT receive any create-row accent classes', () => {
     const command = vi.fn()
     const items: PickerItem[] = [
       { id: '1', label: 'Existing Page' },

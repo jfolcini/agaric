@@ -31,10 +31,10 @@
  * Layout variants:
  *   - 'header' — `icon-sm`, always visible. The page header has plenty
  *     of room and the star is a primary affordance.
- *   - 'journal' — `icon-xs`, hover-reveal on desktop, always-visible on
- *     touch. Mirrors `DensityRow`'s `opacity-0 group-hover:opacity-100
- *     [@media(pointer:coarse)]:opacity-100` pattern. The host renders
- *     this inside a `group` ancestor.
+ *   - 'journal' — `icon-xs`, always visible. The star + delete in the
+ *     journal day header were too easy to miss when gated behind
+ *     group-hover, so a live UX review asked for them to render
+ *     unconditionally (same as 'header', just the smaller `icon-xs` size).
  *   - 'row' — `icon-xs`, same hover-reveal as journal. Kept here so a
  *     future `DensityRow` refactor (PEND-68 A4, deferred) can switch
  *     without touching this file's surface area.
@@ -94,7 +94,10 @@ const PRESETS: Record<PageQuickActionsVariant, VariantPreset> = {
   journal: {
     size: 'icon-xs',
     iconClass: 'h-3.5 w-3.5',
-    hoverReveal: true,
+    // Always visible (not hover-only): the star + delete in the journal day
+    // header were too easy to miss when gated behind group-hover. Live UX
+    // review asked for them to render unconditionally.
+    hoverReveal: false,
   },
   row: {
     size: 'icon-xs',

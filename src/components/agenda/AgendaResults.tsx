@@ -392,7 +392,13 @@ export function AgendaResults({
             (which would also have failed the rule for nested `<li>`s). */}
         <ScrollArea
           viewportRef={scrollParentRef}
-          viewportClassName="agenda-results-scroll max-h-[calc(100dvh-260px)]"
+          // pr-2.5 reserves room for the classic 10px scrollbar gutter so a
+          // focused/selected row's full rounded border (the right side in
+          // particular) renders inside the viewport instead of being clipped
+          // under the scrollbar. The `<ul>` is a block child of the viewport,
+          // so this right padding narrows the `width:100%` absolute rows with
+          // it — keeping all four border sides visible.
+          viewportClassName="agenda-results-scroll max-h-[calc(100dvh-260px)] pr-2.5"
         >
           <ul
             className="agenda-results-list relative m-0 p-0 list-none"
