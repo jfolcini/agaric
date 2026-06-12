@@ -3,7 +3,9 @@
  *
  * Hosts the 5 mark toggles (Bold, Italic, Code, Strike, Highlight) plus the
  * External Link button + popover. Visibility predicate: shows only when the
- * editor selection is non-empty (via TipTap's `shouldShow`).
+ * editor selection is a non-empty TEXT selection (via TipTap's `shouldShow`);
+ * it stays hidden over a NodeSelection (chips / image atoms) where the mark
+ * toggles would be meaningless (#924).
  *
  * Hoisted out of FormattingToolbar (PEND-33 Layer A) — every action in this
  * group requires a selection to be meaningful, so a contextual hover bar is
@@ -14,6 +16,7 @@
  */
 
 import { getMarkRange, posToDOMRect } from '@tiptap/core'
+import { TextSelection } from '@tiptap/pm/state'
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
@@ -236,7 +239,13 @@ export function SelectionBubbleMenu({
   return (
     <BubbleMenu
       editor={editor}
-      shouldShow={({ state: editorState }) => !editorState.selection.empty}
+      shouldShow={({ state: editorState }) =>
+        // #924 — only over a non-empty TEXT selection. A NodeSelection (a
+        // selected block-link/block-ref chip or image atom) is also "non-empty",
+        // but the mark toggles (Bold/Italic/…) are meaningless on an atom — so
+        // the mark bubble must not appear there.
+        editorState.selection instanceof TextSelection && !editorState.selection.empty
+      }
       role="toolbar"
       aria-label={t('toolbar.selectionFormatting')}
       aria-controls={blockId ? `editor-${blockId}` : undefined}

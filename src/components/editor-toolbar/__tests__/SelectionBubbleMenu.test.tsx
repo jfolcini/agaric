@@ -21,6 +21,7 @@
 
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { TextSelection } from '@tiptap/pm/state'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -34,6 +35,9 @@ import { t } from '@/lib/i18n'
 // can assert show/hide behaviour. The real BubbleMenu portals into a
 // generated div; we render `children` inline conditionally on `shouldShow`.
 let bubbleMenuSelectionEmpty = false
+// #924 — whether the mocked selection is a TextSelection (true) or a
+// NodeSelection-like over an atom/chip (false). The bubble must hide for the latter.
+let bubbleMenuIsTextSelection = true
 
 vi.mock('@tiptap/react/menus', () => ({
   BubbleMenu: ({
@@ -47,7 +51,7 @@ vi.mock('@tiptap/react/menus', () => ({
   }: {
     children: React.ReactNode
     shouldShow?: (props: {
-      state: { selection: { empty: boolean } }
+      state: { selection: { empty: boolean } | TextSelection }
       editor: unknown
       element: HTMLElement
       view: unknown
@@ -61,8 +65,18 @@ vi.mock('@tiptap/react/menus', () => ({
     className?: string
     'data-testid'?: string
   }) => {
+    let fakeSelection: { empty: boolean } | TextSelection
+    if (bubbleMenuIsTextSelection) {
+      // `empty` is a getter-only on Selection.prototype, so shadow it with an
+      // own data property; the object still passes `instanceof TextSelection`.
+      const sel = Object.create(TextSelection.prototype) as TextSelection
+      Object.defineProperty(sel, 'empty', { value: bubbleMenuSelectionEmpty, configurable: true })
+      fakeSelection = sel
+    } else {
+      fakeSelection = { empty: bubbleMenuSelectionEmpty } // NodeSelection-like
+    }
     const fakeProps = {
-      state: { selection: { empty: bubbleMenuSelectionEmpty } },
+      state: { selection: fakeSelection },
       editor: {} as unknown,
       element: document.createElement('div'),
       view: {} as unknown,
@@ -250,8 +264,10 @@ describe('SelectionBubbleMenu', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     popoverIdx = 0
-    // Default to "selection is non-empty" so the bubble renders for most tests.
+    // Default to "selection is a non-empty TextSelection" so the bubble renders
+    // for most tests.
     bubbleMenuSelectionEmpty = false
+    bubbleMenuIsTextSelection = true
     mockEditorState.bold = false
     mockEditorState.italic = false
     mockEditorState.code = false
@@ -282,6 +298,15 @@ describe('SelectionBubbleMenu', () => {
       render(<SelectionBubbleMenu editor={makeEditor()} />)
       expect(screen.queryByTestId('selection-bubble-menu')).toBeNull()
       expect(screen.queryByRole('button', { name: t('toolbar.bold') })).toBeNull()
+    })
+
+    // #924 — a non-empty NodeSelection (a selected block-link/block-ref chip or
+    // image atom) must NOT show the mark bubble; the toggles are meaningless there.
+    it('does not render over a non-empty NodeSelection (atom/chip)', () => {
+      bubbleMenuSelectionEmpty = false
+      bubbleMenuIsTextSelection = false
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      expect(screen.queryByTestId('selection-bubble-menu')).toBeNull()
     })
 
     it('hides all mark toggles when selection is empty', () => {

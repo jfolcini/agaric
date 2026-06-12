@@ -280,6 +280,10 @@ export const SuggestionList = ({
       )}
       data-testid="suggestion-item"
       onClick={() => selectItem(index)}
+      // #924 — preventDefault on pointerdown so focus never leaves the editor
+      // when an item is clicked (belt-and-suspenders with the portal blur-guard,
+      // matching the bubble-menu mark buttons).
+      onPointerDown={(e) => e.preventDefault()}
       onPointerEnter={() => setSelectedIndex(index)}
       type="button"
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="option" on the clickable suggestion <button>; native <option> can't host the rich item content + click/pointer handlers
