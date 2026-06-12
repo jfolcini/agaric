@@ -355,17 +355,15 @@ export function UnlinkedReferences({
         ? t('unlinkedRefs.headerOne')
         : t('unlinkedRefs.header', { count: totalCount })
 
-  // UX-152: When no unlinked references (and not loading), render an
-  // EmptyState explaining *why* the panel is empty (UX/AGENTS mandate:
-  // never silently `return null` for empty state). When filters are active,
-  // keep the full panel visible so the user can clear/adjust filters —
-  // otherwise the filter controls vanish.
+  // Render nothing when there are no unlinked references (and not loading): an
+  // empty panel is clutter at the bottom of every page. This intentionally
+  // overrides the older UX-152 empty-state mandate for this panel (user
+  // decision, live UX review). When filters are active, keep the full panel
+  // visible so the user can clear/adjust filters — otherwise the filter
+  // controls vanish. The loading branch below still renders so nothing flashes
+  // mid-fetch.
   if (!loading && totalCount === 0 && groups.length === 0 && filters.length === 0) {
-    return (
-      <section className="unlinked-references" aria-label={t('unlinkedRefs.panelLabel')}>
-        <EmptyState compact icon={Link2} message={t('unlinkedReferences.empty')} />
-      </section>
-    )
+    return null
   }
 
   return (

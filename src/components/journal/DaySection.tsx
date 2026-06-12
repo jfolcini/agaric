@@ -313,7 +313,11 @@ function DaySectionInner({
       {mode === 'daily' && (
         <>
           <div id="journal-due-panel">
-            <DuePanel date={entry.dateStr} onNavigateToPage={onNavigateToPage} />
+            <DuePanel
+              date={entry.dateStr}
+              onNavigateToPage={onNavigateToPage}
+              excludePageId={entry.pageId ?? undefined}
+            />
           </div>
           {entry.pageId && (
             <div id="journal-references-panel">

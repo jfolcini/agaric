@@ -8,7 +8,6 @@
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { CheckCircle2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -19,7 +18,6 @@ import {
   mergeResolvedTitles,
 } from '@/components/agenda/DonePanel.helpers'
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
-import { EmptyState } from '@/components/common/EmptyState'
 import { ListViewState } from '@/components/common/ListViewState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { BlockListItem } from '@/components/editor/BlockListItem'
@@ -265,15 +263,12 @@ export function DonePanel({
   const headerLabel =
     totalCount === 1 ? t('donePanel.headerOne') : t('donePanel.header', { count: totalCount })
 
-  // UX-130 / UX empty-state mandate: render an EmptyState explaining
-  // *why* the panel is empty rather than returning null. AGENTS.md/docs/UX.md
-  // ban silent `return null` for empty panels.
+  // Render nothing when empty (and not loading): an empty "none yet" panel is
+  // visual clutter on every journal day. This intentionally overrides the older
+  // UX-130 empty-state mandate for this panel (user decision, live UX review).
+  // The loading branch stays so the panel doesn't flash an EmptyState mid-fetch.
   if (!loading && blocks.length === 0) {
-    return (
-      <section className="done-panel" aria-label={t('donePanel.completedItems')}>
-        <EmptyState compact icon={CheckCircle2} message={t('donePanel.noneYet')} />
-      </section>
-    )
+    return null
   }
 
   return (

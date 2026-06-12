@@ -736,4 +736,84 @@ describe('useDuePanelData', () => {
       warnSpy.mockRestore()
     })
   })
+
+  // UX live-review #7 — exclude agenda items that live on the journal
+  // day's own page so a todo written in today's note isn't shown twice.
+  describe('excludePageId', () => {
+    it('filters out due/scheduled blocks on the current day page, keeps others', async () => {
+      mockedListBlocks.mockResolvedValue({
+        items: [
+          makeBlock({ id: 'OWN', page_id: 'DAY_PAGE' }),
+          makeBlock({ id: 'OTHER', page_id: 'OTHER_PAGE' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      const { result } = renderHook(() =>
+        useDuePanelData({ date: '2026-04-15', sourceFilter: null, excludePageId: 'DAY_PAGE' }),
+      )
+
+      await waitFor(() => {
+        expect(result.current.blocks).toHaveLength(1)
+      })
+      const ids = result.current.blocks.map((b) => b.id)
+      expect(ids).toEqual(['OTHER'])
+      expect(ids).not.toContain('OWN')
+    })
+
+    it('filters the current day page out of overdue blocks (isToday)', async () => {
+      // isToday: date === frozen system date (2026-04-15).
+      mockedQueryByProperty.mockResolvedValue({
+        items: [
+          makeBlock({
+            id: 'OWN_OD',
+            page_id: 'DAY_PAGE',
+            due_date: '2026-04-10',
+            todo_state: 'TODO',
+          }),
+          makeBlock({
+            id: 'OTHER_OD',
+            page_id: 'OTHER_PAGE',
+            due_date: '2026-04-10',
+            todo_state: 'TODO',
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      const { result } = renderHook(() =>
+        useDuePanelData({ date: '2026-04-15', sourceFilter: null, excludePageId: 'DAY_PAGE' }),
+      )
+
+      await waitFor(() => {
+        expect(result.current.overdueBlocks).toHaveLength(1)
+      })
+      expect(result.current.overdueBlocks.map((b) => b.id)).toEqual(['OTHER_OD'])
+    })
+
+    it('does not filter when excludePageId is undefined', async () => {
+      mockedListBlocks.mockResolvedValue({
+        items: [
+          makeBlock({ id: 'OWN', page_id: 'DAY_PAGE' }),
+          makeBlock({ id: 'OTHER', page_id: 'OTHER_PAGE' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      const { result } = renderHook(() =>
+        useDuePanelData({ date: '2026-04-15', sourceFilter: null }),
+      )
+
+      await waitFor(() => {
+        expect(result.current.blocks).toHaveLength(2)
+      })
+      expect(result.current.blocks.map((b) => b.id).sort()).toEqual(['OTHER', 'OWN'])
+    })
+  })
 })
