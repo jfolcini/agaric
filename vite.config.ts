@@ -115,7 +115,14 @@ function manualChunks(id: string): string | undefined {
 export default defineConfig({
   plugins: [
     react(),
-    ...(reactCompiler ? [babel({ presets: [reactCompilerPreset()] })] : []),
+    // Scope babel (React Compiler) to component files only. The default
+    // include matches all .ts files too; running babel over plain .ts emits
+    // codegen (e.g. dropping disambiguating parens around `(x as T) ? a : b`)
+    // that the dev server's vite:oxc transformer then fails to re-parse,
+    // breaking every e2e run. .jsx/.tsx is where components/hooks live.
+    ...(reactCompiler
+      ? [babel({ include: /\.[jt]sx(?:$|\?)/, presets: [reactCompilerPreset()] })]
+      : []),
     tailwindcss(),
     ...(analyze
       ? [
