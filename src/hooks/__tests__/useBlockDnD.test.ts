@@ -43,8 +43,8 @@ vi.mock('@/components/editor/SortableBlock', () => ({
   INDENT_WIDTH: 24,
 }))
 
-vi.mock('../useIsMobile', () => ({
-  useIsMobile: vi.fn(() => false),
+vi.mock('../useIsTouch', () => ({
+  useIsTouch: vi.fn(() => false),
 }))
 
 vi.mock('@/lib/logger', () => ({
@@ -67,13 +67,13 @@ import {
   getProjection,
 } from '../../lib/tree-utils'
 import { useBlockDnD } from '../useBlockDnD'
-import { useIsMobile } from '../useIsMobile'
+import { useIsTouch } from '../useIsTouch'
 
 const mockedGetDragDescendants = vi.mocked(getDragDescendants)
 const mockedGetProjection = vi.mocked(getProjection)
 const mockedComputeDropIndex = vi.mocked(computeDropIndex)
 const mockedComputeSelectionRoots = vi.mocked(computeSelectionRoots)
-const mockedUseIsMobile = vi.mocked(useIsMobile)
+const mockedUseIsTouch = vi.mocked(useIsTouch)
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -735,7 +735,7 @@ describe('useBlockDnD', () => {
 
   describe('sensors', () => {
     it('configures PointerSensor with distance constraint on desktop', () => {
-      mockedUseIsMobile.mockReturnValue(false)
+      mockedUseIsTouch.mockReturnValue(false)
       const params = makeDefaultParams()
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -755,8 +755,8 @@ describe('useBlockDnD', () => {
       expect(sensors[1]?.opts).toHaveProperty('coordinateGetter')
     })
 
-    it('configures PointerSensor with delay constraint on mobile', () => {
-      mockedUseIsMobile.mockReturnValue(true)
+    it('configures PointerSensor with delay constraint on touch (coarse pointer)', () => {
+      mockedUseIsTouch.mockReturnValue(true)
       const params = makeDefaultParams()
       const { result } = renderHook(() => useBlockDnD(params))
 

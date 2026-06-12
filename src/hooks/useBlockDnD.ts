@@ -34,7 +34,7 @@ import {
   SENTINEL_ID,
 } from '../lib/tree-utils'
 import { useAutoScrollOnDrag } from './useAutoScrollOnDrag'
-import { useIsMobile } from './useIsMobile'
+import { useIsTouch } from './useIsTouch'
 
 interface UseBlockDnDParams {
   blocks: FlatBlock[]
@@ -178,11 +178,18 @@ export function useBlockDnD({
   const isMultiDrag = dragRoots.length > 1
 
   // ── DnD sensors ────────────────────────────────────────────────────
-  // PointerSensor with 8px activation distance so clicks still work.
-  const isMobile = useIsMobile()
+  // #926 — discriminate the drag-activation by POINTER COARSENESS, not viewport
+  // width. The gutter/drag-handle already renders on `useIsTouch()` (pointer:
+  // coarse); using `useIsMobile()` (width < 768) here disagreed with it — a
+  // narrow desktop window got the 250ms press-and-hold sensor with a mouse
+  // (laggy), and a large touch tablet (width ≥ 768) got the 8px mouse sensor
+  // (drag fights scroll). Aligning to pointer:coarse fixes both edges.
+  // Coarse pointer → press-and-hold (250ms) so a drag doesn't fight scroll;
+  // fine pointer → 8px distance so a click still works.
+  const isTouch = useIsTouch()
   const sensors = useSensors(
     useSensor(PointerSensor, {
-      activationConstraint: isMobile ? { delay: 250, tolerance: 5 } : { distance: 8 },
+      activationConstraint: isTouch ? { delay: 250, tolerance: 5 } : { distance: 8 },
     }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
