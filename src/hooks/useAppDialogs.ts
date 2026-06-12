@@ -38,7 +38,7 @@ import { useEffect, useState } from 'react'
 
 import { BUG_REPORT_EVENT, type BugReportEventDetail } from '../lib/bug-report-events'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
-import { CLOSE_ALL_OVERLAYS_EVENT } from '../lib/overlay-events'
+import { CLOSE_ALL_OVERLAYS_EVENT, SHOW_SHORTCUTS_EVENT } from '../lib/overlay-events'
 
 export interface UseAppDialogsReturn {
   // bug-report (UX-279)
@@ -101,6 +101,20 @@ export function useAppDialogs(): UseAppDialogsReturn {
     }
     document.addEventListener('keydown', handleShowShortcuts)
     return () => document.removeEventListener('keydown', handleShowShortcuts)
+  }, [])
+
+  // ── Global `show-shortcuts` event listener (#922) ───────────────────
+  // The `?` keydown handler above deliberately ignores `?` while an editor
+  // is focused (so a literal `?` types during outlining), which left the
+  // cheatsheet unreachable mid-outline. The command palette's "Keyboard
+  // shortcuts" entry dispatches this editor-agnostic event so the sheet opens
+  // regardless of focus — this hook is the always-mounted dialog-state owner.
+  useEffect(() => {
+    function handleShowShortcutsEvent() {
+      setShortcutsOpen(true)
+    }
+    window.addEventListener(SHOW_SHORTCUTS_EVENT, handleShowShortcutsEvent)
+    return () => window.removeEventListener(SHOW_SHORTCUTS_EVENT, handleShowShortcutsEvent)
   }, [])
 
   // ── Close the shortcuts sheet when "close all overlays" fires ───────

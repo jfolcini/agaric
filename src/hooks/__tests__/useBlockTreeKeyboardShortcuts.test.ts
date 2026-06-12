@@ -509,13 +509,17 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       expect(opts.setFocused).toHaveBeenCalledWith(null)
     })
 
-    it('does not zoom in when the focused block has no children', () => {
+    it('#922 — zooms into a LEAF (childless) block too — the gate is gone', () => {
+      // Previously childless blocks were rejected; #922 drops that gate so any
+      // block can be zoomed (BlockTree seeds a first child under the leaf).
       const opts = makeOptions({ focusedBlockId: 'BLOCK_1', hasChildrenSet: new Set() })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       fireEvent.keyDown(document, { key: '.', altKey: true })
 
-      expect(opts.zoomIn).not.toHaveBeenCalled()
+      expect(opts.zoomIn).toHaveBeenCalledWith('BLOCK_1')
+      expect(opts.handleFlush).toHaveBeenCalled()
+      expect(opts.setFocused).toHaveBeenCalledWith(null)
     })
 
     it('does not zoom in when no block is focused', () => {

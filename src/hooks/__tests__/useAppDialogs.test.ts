@@ -14,7 +14,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import { BUG_REPORT_EVENT, type BugReportEventDetail } from '../../lib/bug-report-events'
 import { setCustomShortcut } from '../../lib/keyboard-config/storage'
-import { CLOSE_ALL_OVERLAYS_EVENT } from '../../lib/overlay-events'
+import { CLOSE_ALL_OVERLAYS_EVENT, SHOW_SHORTCUTS_EVENT } from '../../lib/overlay-events'
 import { useAppDialogs } from '../useAppDialogs'
 
 beforeEach(() => {
@@ -171,6 +171,38 @@ describe('useAppDialogs — CLOSE_ALL_OVERLAYS_EVENT', () => {
     expect(result.current.bugReportOpen).toBe(true)
     expect(result.current.quickCaptureOpen).toBe(true)
     expect(result.current.showNoPeersDialog).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 4a. SHOW_SHORTCUTS_EVENT listener (#922)
+// ---------------------------------------------------------------------------
+
+describe('useAppDialogs — SHOW_SHORTCUTS_EVENT (#922)', () => {
+  it('opens the shortcuts sheet when the event fires (editor-agnostic path)', () => {
+    const { result } = renderHook(() => useAppDialogs())
+    expect(result.current.shortcutsOpen).toBe(false)
+
+    // The command-palette "Keyboard shortcuts" entry dispatches this event,
+    // so the cheatsheet opens regardless of editor focus (where the `?` chord
+    // is deliberately suppressed).
+    act(() => {
+      window.dispatchEvent(new CustomEvent(SHOW_SHORTCUTS_EVENT))
+    })
+
+    expect(result.current.shortcutsOpen).toBe(true)
+  })
+
+  it('removes the SHOW_SHORTCUTS_EVENT listener on unmount', () => {
+    const { result, unmount } = renderHook(() => useAppDialogs())
+    unmount()
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(SHOW_SHORTCUTS_EVENT))
+    })
+
+    // No throw, and the (now-unmounted) hook's last state stays closed.
+    expect(result.current.shortcutsOpen).toBe(false)
   })
 })
 

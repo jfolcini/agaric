@@ -1065,7 +1065,34 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           (b) => (b.parent_id ?? null) === (parentId ?? null) && b.depth === block.depth,
         )
         const sibIndex = siblings.findIndex((b) => b.id === blockId)
-        if (sibIndex <= 0) return false
+        if (sibIndex < 0) return false
+
+        // #922 — outline-edge pop-out (Logseq/Workflowy): moveUp on a FIRST
+        // child escapes the sibling group to become its parent's PREVIOUS
+        // sibling (same depth as the parent, positioned just before it). A
+        // first child at the ROOT (no parent) keeps the legacy no-op — there
+        // is nowhere to pop out to.
+        if (sibIndex === 0) {
+          if (parentId == null) return false
+          const parent = blocksById.get(parentId)
+          if (!parent) return false
+          // The pop-out parent is the grandparent; the target slot is the
+          // parent's own sibling slot, dropping the block right BEFORE the
+          // parent among the grandparent's children. Structural (cross-parent)
+          // → `move_block` IPC + full `load()`, mirroring `moveToParent`.
+          const newParentId = parent.parent_id ?? null
+          const newIndex = siblingSlot(blocks, parent)
+          try {
+            await retryOnPoolBusy(() => moveBlock(blockId, newParentId, newIndex))
+            await get().load()
+            notifyUndoNewAction(rootParentId)
+            return true
+          } catch (err) {
+            logger.error('page-blocks', 'Failed to move block up', { blockId }, err)
+            notify.error(i18n.t('error.moveBlockUpFailed'))
+            return false
+          }
+        }
 
         const prevSibling = siblings[sibIndex - 1] as FlatBlock
         // #400: target slot is the previous sibling's slot (sibIndex - 1) among
@@ -1165,7 +1192,32 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           (b) => (b.parent_id ?? null) === (parentId ?? null) && b.depth === block.depth,
         )
         const sibIndex = siblings.findIndex((b) => b.id === blockId)
-        if (sibIndex < 0 || sibIndex >= siblings.length - 1) return false
+        if (sibIndex < 0) return false
+
+        // #922 — outline-edge pop-out (Logseq/Workflowy): moveDown on a LAST
+        // child escapes the sibling group to become its parent's NEXT sibling
+        // (same depth as the parent, positioned just after it). A last child at
+        // the ROOT (no parent) keeps the legacy no-op.
+        if (sibIndex >= siblings.length - 1) {
+          if (parentId == null) return false
+          const parent = blocksById.get(parentId)
+          if (!parent) return false
+          // Pop out under the grandparent, landing right AFTER the parent among
+          // the grandparent's children → slot = parent's sibling slot + 1.
+          // Structural (cross-parent) → `move_block` IPC + full `load()`.
+          const newParentId = parent.parent_id ?? null
+          const newIndex = siblingSlot(blocks, parent) + 1
+          try {
+            await retryOnPoolBusy(() => moveBlock(blockId, newParentId, newIndex))
+            await get().load()
+            notifyUndoNewAction(rootParentId)
+            return true
+          } catch (err) {
+            logger.error('page-blocks', 'Failed to move block down', { blockId }, err)
+            notify.error(i18n.t('error.moveBlockDownFailed'))
+            return false
+          }
+        }
 
         const nextSibling = siblings[sibIndex + 1] as FlatBlock
         // #400: moving down swaps with the next sibling. `newIndex` is a slot

@@ -274,21 +274,22 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   }, [zoomedBlockId, zoomToRoot, pageStore])
 
   // ── Keyboard shortcut: zoom IN to the focused block (D1, #217) ──
-  // Mirrors the context-menu "Zoom in" action, which is gated on
-  // `hasChildren` (a leaf has nothing to zoom into). Fires only when:
+  // Mirrors the context-menu "Zoom in" action. Fires only when:
   //   - a block is focused (the zoom target)
-  //   - that block actually has children
   //   - the binding matches (`Alt + .`, layout-stable — see catalog note)
   // Zoom-out stays on Escape; this completes the in/out pair.
+  //
+  // #922 — the `hasChildrenSet` gate is GONE: any block, leaf or not, may be
+  // zoomed (matching Logseq/Workflowy). A zoomed leaf shows an empty view, so
+  // BlockTree seeds a first child under the zoom root (`useBlockZoomEmptySeed`)
+  // — keyboard zoom-in must not pre-reject leaves or that seeding never runs.
   useEffect(() => {
     const handleZoomInKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return
       if (!matchesShortcutBinding(e, 'zoomIn')) return
-      // #713 — ownership gate (hasChildrenSet only holds this tree's ids,
-      // but the explicit check keeps the flush/zoom side effects provably
-      // scoped to the owning tree).
+      // #713 — ownership gate keeps the flush/zoom side effects provably
+      // scoped to the tree whose store owns the focused block.
       if (!storeOwnsBlock(pageStore, focusedBlockId)) return
-      if (!hasChildrenSet.has(focusedBlockId)) return
       e.preventDefault()
       // Flush any pending editor edits before navigating so the zoom
       // doesn't strand an unsaved buffer (mirrors the drag/zoom-out paths).
@@ -298,7 +299,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     }
     document.addEventListener('keydown', handleZoomInKey)
     return () => document.removeEventListener('keydown', handleZoomInKey)
-  }, [focusedBlockId, pageStore, hasChildrenSet, zoomIn, handleFlush, setFocused])
+  }, [focusedBlockId, pageStore, zoomIn, handleFlush, setFocused])
 
   // ── Keyboard shortcut for task cycling (`cycleTaskState`, default
   // Ctrl+Enter / Cmd+Enter — routed through matchesShortcutBinding, #724) ──
