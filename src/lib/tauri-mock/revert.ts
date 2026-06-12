@@ -20,6 +20,66 @@ type Properties = Map<string, Map<string, Record<string, unknown>>>
 type BlockTags = Map<string, Set<string>>
 
 /**
+ * #958 — assign dense 1-based `position` to every live child of `parentId`,
+ * in `position ASC, id ASC` order. Mirrors `renumberSiblings` in
+ * `handlers.ts`: reverting a move must collapse the moved block AND the
+ * sibling group it rejoins back to dense ranks, otherwise the restored raw
+ * `old_position` collides with the sibling now occupying that slot and the
+ * `position ASC, id ASC` load ordering breaks (order/depth fails to revert
+ * in place — #958).
+ */
+function renumberSiblingsIn(blocks: Blocks, parentId: string | null): void {
+  const siblings = [...blocks.values()].filter(
+    (b) => ((b['parent_id'] as string | null) ?? null) === parentId && !b['deleted_at'],
+  )
+  siblings.sort((x, y) => {
+    const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+    const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+    if (px !== py) return px - py
+    return (x['id'] as string).localeCompare(y['id'] as string)
+  })
+  siblings.forEach((b, i) => {
+    b['position'] = i + 1
+  })
+}
+
+/**
+ * #958 — place `blockId` at the 0-based `slot` among `parentId`'s OTHER live
+ * children, then collapse the whole group to dense 1-based positions. Mirrors
+ * `insertAtSlotAndRenumber` in `handlers.ts`. Restoring a move's raw
+ * `old_position` directly collides with the sibling now in that slot; giving
+ * the moved block a fractional key that sorts JUST before the slot's current
+ * occupant, then renumbering, lands it back at the intended rank.
+ */
+function insertAtSlotIn(
+  blocks: Blocks,
+  parentId: string | null,
+  blockId: string,
+  slot: number,
+): void {
+  const moved = blocks.get(blockId)
+  if (!moved) return
+  const others = [...blocks.values()].filter(
+    (b) =>
+      ((b['parent_id'] as string | null) ?? null) === parentId &&
+      !b['deleted_at'] &&
+      b['id'] !== blockId,
+  )
+  others.sort((x, y) => {
+    const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+    const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+    if (px !== py) return px - py
+    return (x['id'] as string).localeCompare(y['id'] as string)
+  })
+  const clamped = Math.max(0, Math.min(slot, others.length))
+  others.forEach((b, i) => {
+    b['position'] = i + 1
+  })
+  moved['position'] = clamped + 0.5
+  renumberSiblingsIn(blocks, parentId)
+}
+
+/**
  * Optional auxiliary state for reverting op types that touch `properties` or
  * `block_tags` instead of fields on the block row itself. Callers without
  * access to these maps can omit the parameter; the corresponding op types
@@ -50,10 +110,9 @@ function revertBlockRowField(
     case 'edit_block':
       b['content'] = (payload['from_text'] as string | null) ?? null
       return true
-    case 'move_block':
-      b['parent_id'] = payload['old_parent_id'] as string | null
-      b['position'] = payload['old_position'] as number
-      return true
+    // NOTE: `move_block` is intentionally handled in `applyRevertForOp`
+    // (it needs the whole `blocks` map to renumber both sibling groups) and
+    // is therefore NOT a case here. See the #958 fix.
     case 'restore_block':
       b['deleted_at'] = new Date().toISOString()
       return true
@@ -157,6 +216,24 @@ export function applyRevertForOp(
 
   // Block-row reverts: silent no-op if the block is missing from the map.
   const b = blocks.get(blockId)
+
+  // #958 — move reverts need the whole `blocks` map to renumber sibling groups
+  // (see `renumberSiblingsIn`). Restore the old parent + raw old position, then
+  // collapse both the source and destination groups back to dense ranks so the
+  // `position ASC, id ASC` load order reverts in place (no reopen needed).
+  if (target.op_type === 'move_block') {
+    if (b) {
+      const curParentId = (b['parent_id'] as string | null) ?? null
+      const oldParentId = (payload['old_parent_id'] as string | null) ?? null
+      // `old_position` is a 1-based dense rank → 0-based slot is `- 1`.
+      const oldSlot = ((payload['old_position'] as number) ?? 1) - 1
+      b['parent_id'] = oldParentId
+      insertAtSlotIn(blocks, oldParentId, blockId, oldSlot)
+      if (curParentId !== oldParentId) renumberSiblingsIn(blocks, curParentId)
+    }
+    return
+  }
+
   if (b && revertBlockRowField(target.op_type, payload, b)) return
 
   // Property and tag reverts: silent no-op if the relevant aux map wasn't

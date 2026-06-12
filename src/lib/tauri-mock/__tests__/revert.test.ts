@@ -93,7 +93,8 @@ describe('applyRevertForOp', () => {
     expect(b['content']).toBeNull()
   })
 
-  it('reverts move_block by restoring old parent and position', () => {
+  it('reverts move_block by restoring old parent and renumbering to a dense rank', () => {
+    // Lone child of PARENT_OLD → dense renumber collapses to position 1.
     const b = makeBlockRow('BLK_4', { parent_id: 'PARENT_NEW', position: 7 })
     blocks.set('BLK_4', b)
     const op = makeOp('move_block', {
@@ -105,12 +106,13 @@ describe('applyRevertForOp', () => {
     applyRevertForOp(op, blocks)
 
     expect(b['parent_id']).toBe('PARENT_OLD')
-    expect(b['position']).toBe(2)
+    // #958 — dense 1-based rank, not the raw old_position.
+    expect(b['position']).toBe(1)
     // content untouched
     expect(b['content']).toBe('hello')
   })
 
-  it('reverts move_block with null old_parent_id (root move)', () => {
+  it('reverts move_block with null old_parent_id (root move) to a dense rank', () => {
     const b = makeBlockRow('BLK_4B', { parent_id: 'PARENT_NEW', position: 7 })
     blocks.set('BLK_4B', b)
     const op = makeOp('move_block', {
@@ -122,7 +124,69 @@ describe('applyRevertForOp', () => {
     applyRevertForOp(op, blocks)
 
     expect(b['parent_id']).toBeNull()
-    expect(b['position']).toBe(0)
+    // #958 — lone root child collapses to dense rank 1.
+    expect(b['position']).toBe(1)
+  })
+
+  // ---------------------------------------------------------------------------
+  // #958 — reverting a reorder must restore the ORDER, not just write a raw
+  // position that collides with the sibling now in the old slot. Without the
+  // renumber, both blocks share a position and the load order (position ASC,
+  // id ASC) breaks → order fails to revert in place.
+  // ---------------------------------------------------------------------------
+
+  it('reverts a same-parent reorder so the two siblings end at distinct dense ranks', () => {
+    // Pre-move: A at slot 0 (pos 1), B at slot 1 (pos 2).
+    // Forward "move A down" renumbered to B=1, A=2. Now undo A's move.
+    // ZZ_A > AA_B lexically, so a raw old_position=1 write would collide
+    // (both pos 1) and the id-tiebreak would keep B first — the bug.
+    const a = makeBlockRow('ZZ_A', { parent_id: 'P', page_id: 'P', position: 2 })
+    const bsib = makeBlockRow('AA_B', { parent_id: 'P', page_id: 'P', position: 1 })
+    blocks.set('ZZ_A', a)
+    blocks.set('AA_B', bsib)
+
+    const op = makeOp('move_block', {
+      block_id: 'ZZ_A',
+      old_parent_id: 'P',
+      old_position: 1,
+      new_parent_id: 'P',
+      new_position: 2,
+    })
+
+    applyRevertForOp(op, blocks)
+
+    // Distinct dense ranks, A before B (the reverted order).
+    expect(a['position']).toBe(1)
+    expect(bsib['position']).toBe(2)
+    expect(a['position']).not.toBe(bsib['position'])
+  })
+
+  it('reverts a reparent (dedent) so source and destination groups are both dense', () => {
+    // Tree before undo (post-dedent): CHILD is at root next to PARENT.
+    //   PARENT (root, pos 1) ; CHILD (root, pos 2)
+    // The forward op was a dedent of CHILD out of PARENT. Undo re-nests CHILD
+    // under PARENT and must renumber BOTH root (PARENT alone) and PARENT's
+    // children (CHILD alone) to dense ranks.
+    const parent = makeBlockRow('PARENT', { parent_id: null, page_id: 'PG', position: 1 })
+    const child = makeBlockRow('CHILD', { parent_id: null, page_id: 'PG', position: 2 })
+    blocks.set('PARENT', parent)
+    blocks.set('CHILD', child)
+
+    const op = makeOp('move_block', {
+      block_id: 'CHILD',
+      old_parent_id: 'PARENT',
+      old_position: 1,
+      new_parent_id: null,
+      new_position: 2,
+    })
+
+    applyRevertForOp(op, blocks)
+
+    // CHILD re-nested under PARENT at dense rank 1.
+    expect(child['parent_id']).toBe('PARENT')
+    expect(child['position']).toBe(1)
+    // Root group renumbered (PARENT alone → rank 1).
+    expect(parent['position']).toBe(1)
   })
 
   it('reverts restore_block by setting deleted_at', () => {

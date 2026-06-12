@@ -2060,8 +2060,36 @@ export const HANDLERS: Record<string, Handler> = {
     } else if (target.op_type === 'move_block') {
       const b = blocks.get(payload['block_id'] as string)
       if (b) {
-        b['parent_id'] = payload['old_parent_id'] as string | null
-        b['position'] = payload['old_position'] as number
+        // #958 — reverse a move by RE-INSERTING the block at its old SLOT in the
+        // old parent group, exactly like the forward `move_block` handler. The
+        // old code wrote the raw `old_position` back without re-slotting: the
+        // moved block then collided (same `position`) with the sibling now in
+        // its old slot, and `load_page_subtree` orders by `position ASC, id
+        // ASC`, so the tie broke on id — NOT the intended pre-move order. The
+        // "Undone" toast fired but the order/depth did not revert in place (it
+        // only "healed" on a full reopen, where the backend re-materializes
+        // dense ranks). `old_position` is a 1-based dense rank, so the 0-based
+        // insertion slot among the OTHER siblings is `old_position - 1`.
+        const curParentId = (b['parent_id'] as string | null) ?? null
+        const oldParentId = (payload['old_parent_id'] as string | null) ?? null
+        const oldSlot = ((payload['old_position'] as number) ?? 1) - 1
+        b['parent_id'] = oldParentId
+        // Recompute page_id from the restored parent (mirrors `move_block`).
+        if (oldParentId) {
+          const oldParent = blocks.get(oldParentId)
+          if (oldParent) {
+            b['page_id'] =
+              oldParent['block_type'] === 'page'
+                ? (oldParent['id'] as string)
+                : (oldParent['page_id'] as string | null)
+          }
+        } else {
+          b['page_id'] = null
+        }
+        insertAtSlotAndRenumber(oldParentId, payload['block_id'] as string, oldSlot)
+        // Collapse the vacated source group too (skip when same parent — the
+        // insert already renumbered it).
+        if (curParentId !== oldParentId) renumberSiblings(curParentId)
       }
       reverseOpType = 'move_block'
     } else if (target.op_type === 'restore_block') {
@@ -2106,8 +2134,27 @@ export const HANDLERS: Record<string, Handler> = {
     } else if (originalOp.op_type === 'move_block') {
       const b = blocks.get(payload['block_id'] as string)
       if (b) {
-        b['parent_id'] = payload['new_parent_id'] as string | null
-        b['position'] = payload['new_position'] as number
+        // #958 — re-apply a move by RE-INSERTING at the new SLOT (see the undo
+        // path above for why a raw `new_position` write collides and breaks
+        // `position ASC, id ASC`). `new_position` is a 1-based dense rank → the
+        // 0-based insertion slot among the OTHER siblings is `new_position - 1`.
+        const curParentId = (b['parent_id'] as string | null) ?? null
+        const newParentId = (payload['new_parent_id'] as string | null) ?? null
+        const newSlot = ((payload['new_position'] as number) ?? 1) - 1
+        b['parent_id'] = newParentId
+        if (newParentId) {
+          const newParent = blocks.get(newParentId)
+          if (newParent) {
+            b['page_id'] =
+              newParent['block_type'] === 'page'
+                ? (newParent['id'] as string)
+                : (newParent['page_id'] as string | null)
+          }
+        } else {
+          b['page_id'] = null
+        }
+        insertAtSlotAndRenumber(newParentId, payload['block_id'] as string, newSlot)
+        if (curParentId !== newParentId) renumberSiblings(curParentId)
       }
       redoOpType = 'move_block'
     } else if (originalOp.op_type === 'restore_block') {
