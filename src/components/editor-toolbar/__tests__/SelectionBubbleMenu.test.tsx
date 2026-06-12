@@ -118,6 +118,13 @@ vi.mock('@tiptap/react', () => ({
   useEditorState: () => mockEditorState,
 }))
 
+// #925 f4 — control the coarse-pointer (touch) detection so we can assert the
+// bubble is suppressed on touch and unchanged on desktop.
+let mockIsTouch = false
+vi.mock('@/hooks/useIsTouch', () => ({
+  useIsTouch: () => mockIsTouch,
+}))
+
 // Mock Separator — Radix UI Separator needs browser APIs
 vi.mock('@/components/ui/separator', () => ({
   Separator: ({ orientation, className }: { orientation?: string; className?: string }) => (
@@ -263,6 +270,7 @@ describe('SelectionBubbleMenu', () => {
     // for most tests.
     bubbleMenuSelectionEmpty = false
     bubbleMenuIsTextSelection = true
+    mockIsTouch = false
     mockEditorState.bold = false
     mockEditorState.italic = false
     mockEditorState.code = false
@@ -302,6 +310,25 @@ describe('SelectionBubbleMenu', () => {
       bubbleMenuIsTextSelection = false
       render(<SelectionBubbleMenu editor={makeEditor()} />)
       expect(screen.queryByTestId('selection-bubble-menu')).toBeNull()
+    })
+
+    // #925 f4 — on coarse-pointer (touch) devices the floating bubble collides
+    // with the OS's native selection handles, so it must be suppressed even over
+    // a non-empty text selection; mobile formatting goes through the toolbar.
+    it('does not render on touch (coarse pointer) even with a non-empty selection', () => {
+      mockIsTouch = true
+      bubbleMenuSelectionEmpty = false
+      bubbleMenuIsTextSelection = true
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      expect(screen.queryByTestId('selection-bubble-menu')).toBeNull()
+    })
+
+    it('still renders on desktop (fine pointer) for a non-empty selection', () => {
+      mockIsTouch = false
+      bubbleMenuSelectionEmpty = false
+      bubbleMenuIsTextSelection = true
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      expect(screen.getByTestId('selection-bubble-menu')).toBeInTheDocument()
     })
 
     it('hides all mark toggles when selection is empty', () => {
