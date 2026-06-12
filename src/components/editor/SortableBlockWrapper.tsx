@@ -34,6 +34,12 @@ export interface SortableBlockWrapperProps {
   projected: Projection | null
   activeId: string | null
   overId: string | null
+  /**
+   * #923 — true when the projected drop lands AFTER this over-row (the user is
+   * dragging downward). The drop indicator then renders BELOW `<SortableBlock>`
+   * instead of above it, so the bar sits where the block will actually land.
+   */
+  dropAfter: boolean
 
   // ── Viewport + editor ─────────────────────────────────────────────
   viewport: ViewportObserver
@@ -68,6 +74,7 @@ function SortableBlockWrapperInner({
   projected,
   activeId,
   overId,
+  dropAfter,
   viewport,
   rovingEditor,
   hasChildren,
@@ -97,6 +104,21 @@ function SortableBlockWrapperInner({
   // renders for a given block.id, and unobserves the exact element
   // on unmount (BUG-29).
   const observeRef = viewport.createObserveRef(block.id)
+
+  // #923 — the drop indicator shows where the dragged block will land. It
+  // renders for the over-row only (overId === block.id) and never on the
+  // active drag row itself. `dropAfter` decides placement: ABOVE the row when
+  // the drop is before it (dragging upward) and BELOW it (after
+  // `<SortableBlock>`) when the drop is after it (dragging downward), so the
+  // bar always sits at the true landing edge. The indent (marginLeft) is kept
+  // on both placements.
+  const showDropIndicator = projected != null && overId === block.id && activeId !== block.id
+  const dropIndicator = showDropIndicator ? (
+    <div
+      className="drop-indicator h-[5px] bg-primary rounded-full ring-2 ring-primary/20"
+      style={{ marginLeft: `calc(var(--indent-width) * ${projected.depth})` }}
+    />
+  ) : null
 
   // Focused block is never virtualized — always render fully
   if (!isFocused && viewport.isOffscreen(block.id)) {
@@ -137,13 +159,8 @@ function SortableBlockWrapperInner({
       aria-expanded={hasChildren ? !isCollapsed : undefined}
       className={cn('list-none m-0 p-0', isAnimating && 'block-children-enter')}
     >
-      {/* Drop indicator: shows where the dragged block will land */}
-      {projected && overId === block.id && activeId !== block.id && (
-        <div
-          className="drop-indicator h-[5px] bg-primary rounded-full ring-2 ring-primary/20"
-          style={{ marginLeft: `calc(var(--indent-width) * ${projected.depth})` }}
-        />
-      )}
+      {/* #923 — drop indicator ABOVE the row when the drop lands before it. */}
+      {!dropAfter && dropIndicator}
       <SortableBlock
         blockId={block.id}
         content={block.content ?? ''}
@@ -160,6 +177,8 @@ function SortableBlockWrapperInner({
         properties={properties}
         isSelected={isSelected}
       />
+      {/* #923 — drop indicator BELOW the row when the drop lands after it. */}
+      {dropAfter && dropIndicator}
     </li>
   )
 }

@@ -61,6 +61,7 @@ function makeProps(
     projected: null,
     activeId: null,
     overId: null,
+    dropAfter: false,
     viewport: {
       isOffscreen: () => false,
       createObserveRef: () => vi.fn(),
@@ -225,6 +226,62 @@ describe('SortableBlockWrapper', () => {
     const indicators = container.querySelectorAll('.drop-indicator')
     expect(indicators).toHaveLength(1)
     expect((indicators[0] as HTMLElement).style.marginLeft).toBe('calc(var(--indent-width) * 2)')
+  })
+
+  it('renders the drop indicator ABOVE the row when dropAfter is false (#923)', () => {
+    const { container } = renderInList(
+      makeProps({
+        activeId: 'BLK999',
+        overId: 'BLK001',
+        dropAfter: false,
+        projected: { depth: 0, parentId: null, maxDepth: 3, minDepth: 0 },
+      }),
+    )
+
+    const li = container.querySelector('li[data-block-id="BLK001"]')
+    const indicatorEl = li?.querySelector('.drop-indicator')
+    const blockEl = container.querySelector('[data-testid="sortable-block-BLK001"]')
+    expect(indicatorEl).toBeInTheDocument()
+    expect(blockEl).toBeInTheDocument()
+    // DOCUMENT_POSITION_FOLLOWING (4) means blockEl comes after indicatorEl.
+    expect(indicatorEl?.compareDocumentPosition(blockEl as Node)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+  })
+
+  it('renders the drop indicator BELOW the row when dropAfter is true (#923)', () => {
+    const { container } = renderInList(
+      makeProps({
+        activeId: 'BLK999',
+        overId: 'BLK001',
+        dropAfter: true,
+        projected: { depth: 0, parentId: null, maxDepth: 3, minDepth: 0 },
+      }),
+    )
+
+    const li = container.querySelector('li[data-block-id="BLK001"]')
+    const indicatorEl = li?.querySelector('.drop-indicator')
+    const blockEl = container.querySelector('[data-testid="sortable-block-BLK001"]')
+    expect(indicatorEl).toBeInTheDocument()
+    expect(blockEl).toBeInTheDocument()
+    // DOCUMENT_POSITION_PRECEDING (2) means blockEl comes before indicatorEl.
+    expect(indicatorEl?.compareDocumentPosition(blockEl as Node)).toBe(
+      Node.DOCUMENT_POSITION_PRECEDING,
+    )
+  })
+
+  it('keeps the projected indent on the indicator regardless of placement (#923)', () => {
+    const { container } = renderInList(
+      makeProps({
+        activeId: 'BLK999',
+        overId: 'BLK001',
+        dropAfter: true,
+        projected: { depth: 2, parentId: null, maxDepth: 3, minDepth: 0 },
+      }),
+    )
+
+    const indicator = container.querySelector('.drop-indicator') as HTMLElement
+    expect(indicator.style.marginLeft).toBe('calc(var(--indent-width) * 2)')
   })
 
   it('does not render drop indicator when this block is the active drag target', () => {
