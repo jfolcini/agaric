@@ -191,11 +191,16 @@ test.describe('Block-level undo/redo', () => {
       .toBe(indentedPadding)
   })
 
-  // FIXME(#958): even after the tauri-mock move undo/redo re-slot+renumber fix (this
-  // branch), the keyboard indent→dedent→undo sequence still doesn't re-nest in place in
-  // e2e (depth stays 0). The mock-level unit test (undo-move.test.ts) passes, so the
-  // residual cause is in the full keyboard-dedent→undo flow and needs a trace dig.
-  test.fixme('undo a dedent restores the nested depth in place (no reopen)', async ({ page }) => {
+  // #958: undoing a dedent must re-nest the block to its prior depth IN PLACE
+  // (no reopen). The indent here is only scaffolding to create a depth to dedent
+  // FROM; it must NOT be part of the same undo group as the dedent, or the single
+  // Ctrl+Z reverts BOTH (indent + dedent are both `move_block` by the same device,
+  // and undo batches same-device ops within UNDO_GROUP_WINDOW_MS=500ms — see
+  // undo.ts / find_undo_group). The earlier "depth stays 0" trace failure was
+  // exactly that group: undo reverted the dedent AND the scaffolding indent, so
+  // the block landed back at root. Waiting past the 500ms window puts the dedent
+  // in its own undo group, so Ctrl+Z reverts only the dedent.
+  test('undo a dedent restores the nested depth in place (no reopen)', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
     const targetBlock = page.locator('[data-testid="sortable-block"]').nth(2)
@@ -219,6 +224,10 @@ test.describe('Block-level undo/redo', () => {
       await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft),
       10,
     )
+
+    // Let the undo-group window (500ms) lapse so the scaffolding indent and the
+    // dedent below are SEPARATE undo groups — otherwise one Ctrl+Z reverts both.
+    await page.waitForTimeout(700)
 
     // Dedent it back to root (Ctrl+Shift+ArrowLeft); editor is still open.
     await page.keyboard.press('Control+Shift+ArrowLeft')
@@ -247,11 +256,10 @@ test.describe('Block-level undo/redo', () => {
       .toBe(indentedPadding)
   })
 
-  // FIXME(#958): the tauri-mock move undo/redo re-slot+renumber fix (this branch) makes
-  // the mock-level reorder undo correct (undo-move.test.ts), but this e2e wasn't
-  // re-confirmed green end-to-end; kept fixme'd with its sibling dedent case until the
-  // full keyboard-driven flow is traced.
-  test.fixme('undo/redo a move reverts block order in place (no reopen)', async ({ page }) => {
+  // #958: a single keyboard move (Ctrl+Shift+ArrowUp) is its own undo group, so
+  // Ctrl+Z reverts exactly that move in place (no reopen). Confirmed green e2e
+  // after the tauri-mock move undo/redo re-slot+renumber fix (undo-move.test.ts).
+  test('undo/redo a move reverts block order in place (no reopen)', async ({ page }) => {
     // Quick Notes has exactly 2 blocks — the simplest, most reliable move case.
     await openPage(page, 'Quick Notes')
 

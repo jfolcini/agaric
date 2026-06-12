@@ -240,6 +240,59 @@ export async function openPage(page: Page, title: string) {
   await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
 }
 
+/**
+ * Navigate to the page editor for a given page title at a MOBILE / coarse-
+ * pointer viewport (iPhone-class, ≤ md breakpoint).
+ *
+ * The desktop sidebar (`[data-slot="sidebar"]`) is `hidden` below the `md`
+ * breakpoint, so `openPage`'s "click the Pages button, then the page title"
+ * path is unreachable on a 390px touch context — its `getByText(title).click()`
+ * fails with "element is not visible". The mobile chrome instead exposes the
+ * unified search sheet (`search-sheet-trigger`); its all-pages segment mounts
+ * the command palette, whose page-header result row calls `navigateToPage`
+ * exactly like the desktop sidebar click does.
+ *
+ * Flow: tap the sheet trigger → force the all-pages (palette) segment on (the
+ * sheet defaults to in-page on page-style views like Journal) → type the page
+ * title → click the matching page-header row → assert the editor's
+ * `[aria-label="Page title"]` is visible. The seeded "Getting Started" /
+ * "Quick Notes" pages are reachable this way at 390px.
+ */
+export async function openPageMobile(page: Page, title: string) {
+  const trigger = page.getByTestId('search-sheet-trigger')
+  await expect(trigger).toBeVisible()
+  await trigger.click()
+
+  const sheet = page.getByTestId('search-sheet')
+  await expect(sheet).toBeVisible()
+
+  // Force the all-pages (palette) segment — page-style views (Journal) default
+  // to in-page, which has no cross-page search. The palette is where page-title
+  // navigation lives.
+  const allPagesSegment = page.getByTestId('search-sheet-segment-all-pages')
+  if ((await allPagesSegment.getAttribute('data-state')) !== 'on') {
+    await allPagesSegment.click()
+    await expect(allPagesSegment).toHaveAttribute('data-state', 'on')
+  }
+
+  const paletteInput = page.getByTestId('command-palette-input')
+  await expect(paletteInput).toBeVisible()
+  await paletteInput.fill(title)
+
+  // The page-header result row (`palette-page-header-<id>`) carries the page
+  // title; click the one whose accessible text matches. Navigating closes the
+  // sheet and mounts the page editor.
+  const pageRow = page
+    .locator('[data-testid^="palette-page-header-"]')
+    .filter({ hasText: title })
+    .first()
+  await expect(pageRow).toBeVisible()
+  await pageRow.click()
+
+  await expect(sheet).toHaveCount(0)
+  await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
+}
+
 // ---------------------------------------------------------------------------
 // Search-view helpers (PEND-58f).
 //
@@ -446,56 +499,207 @@ export async function saveBlock(page: Page) {
   }
 }
 
-// dnd-kit PointerSensor activation delay; do not lower without checking PointerSensor config
-const DND_ACTIVATION_DELAY_MS = 350
+// ---------------------------------------------------------------------------
+// dnd-kit drag helpers — split by sensor (#926 f6).
+//
+// The product wires ONE @dnd-kit PointerSensor whose activation constraint is
+// chosen at runtime by pointer coarseness (`src/hooks/useBlockDnD.ts`):
+//
+//   - FINE pointer (mouse / desktop): `{ distance: 8 }` — the drag activates as
+//     soon as the pointer travels 8 px. There is NO time delay, so the desktop
+//     helper must NOT burn an artificial hold (the old single helper paid the
+//     touch sensor's 250 ms on every desktop drag for no reason).
+//   - COARSE pointer (touch / narrow): `{ delay: 250, tolerance: 5 }` — a
+//     press-and-hold so a drag doesn't fight scrolling. The touch helper holds
+//     still past 250 ms BEFORE moving so the sensor latches the drag.
+//
+// Both paths still drive @dnd-kit through Playwright's pointer stream
+// (`page.mouse`), which under a `hasTouch` context emits the pointer events the
+// PointerSensor listens to. (@dnd-kit does NOT consume raw `touchstart` — those
+// belong to the product's own long-press / swipe React handlers, exercised via
+// `touchGesture` below, not these drag helpers.)
+// ---------------------------------------------------------------------------
+
+// Coarse-pointer PointerSensor delay (250 ms) + headroom; the touch drag must
+// out-wait it before moving. Do not lower without checking the sensor config.
+const DND_TOUCH_HOLD_MS = 350
+
+interface PointerDragOptions {
+  /** Hold still after pointerdown before moving (touch sensor delay). */
+  holdMs?: number
+  /** Final horizontal pixel delta from source X (indent/dedent projection). */
+  offsetX?: number
+}
 
 /**
- * Drag one element to another using manual pointer events.
+ * Shared pointer-drag primitive backing both the desktop and touch helpers.
  *
- * Playwright's built-in `dragTo()` doesn't work with dnd-kit because the
- * PointerSensor requires a delay (≥ 250 ms) with a tolerance (≤ 5 px)
- * before it activates a drag. This helper reproduces that sequence:
- *   1. Move to the source center and press down.
- *   2. Hold still for the activation delay.
- *   3. Move to the target in small increments (vertical only to avoid
- *      dnd-kit interpreting horizontal offset as indent/dedent).
- *   4. Pause for the "over" state, then release.
+ * Sequence: move to source center → pointerdown → (optional hold) → step
+ * vertically to the target row → (optional) step horizontally for the
+ * indent/dedent offset → settle → pointerup. Small inter-step pauses let
+ * @dnd-kit's collision detection observe each new position.
  */
-export async function dragBlock(page: Page, source: Locator, target: Locator): Promise<void> {
+async function performPointerDrag(
+  page: Page,
+  source: Locator,
+  target: Locator,
+  { holdMs = 0, offsetX = 0 }: PointerDragOptions = {},
+): Promise<void> {
   const sourceBox = await source.boundingBox()
   const targetBox = await target.boundingBox()
-
   if (!sourceBox || !targetBox)
     throw new Error('Could not get bounding boxes for drag source/target')
 
   const sx = sourceBox.x + sourceBox.width / 2
   const sy = sourceBox.y + sourceBox.height / 2
-  // Keep same X to avoid horizontal offset (which dnd-kit interprets as indent/dedent)
-  const tx = sx
   const ty = targetBox.y + targetBox.height / 2
 
-  // pointerdown on the drag handle
   await page.mouse.move(sx, sy)
   await page.mouse.down()
 
-  // Hold still for the delay activation constraint (250 ms delay, 5 px tolerance)
-  await page.waitForTimeout(DND_ACTIVATION_DELAY_MS)
+  // Touch path: hold still past the 250 ms press-and-hold activation delay.
+  // Desktop path (holdMs 0): the `{ distance: 8 }` sensor latches on movement
+  // alone, so we skip straight to the move.
+  if (holdMs > 0) await page.waitForTimeout(holdMs)
 
-  // Move vertically to target in small increments
-  const moveSteps = 20
-  for (let i = 1; i <= moveSteps; i++) {
-    const x = sx + (tx - sx) * (i / moveSteps)
-    const y = sy + (ty - sy) * (i / moveSteps)
-    await page.mouse.move(x, y)
-    // Inter-step pause for HitTest update — lets dnd-kit's collision detection
-    // observe the new pointer position before the next move event arrives
+  const steps = 20
+  // Phase 1 — vertical travel to the target row (no horizontal drift so the
+  // projected depth stays put until we deliberately push sideways).
+  for (let i = 1; i <= steps; i++) {
+    const y = sy + (ty - sy) * (i / steps)
+    await page.mouse.move(sx, y)
     if (i % 5 === 0) await page.waitForTimeout(50)
   }
 
-  // Post-drop ProseMirror DOM settle — pause for dnd-kit to process the final
-  // "over" state and let any pending DOM updates flush before the mouse-up
+  // Phase 2 — horizontal offset for indent/dedent projection (skipped at 0).
+  if (offsetX !== 0) {
+    for (let i = 1; i <= steps; i++) {
+      const x = sx + offsetX * (i / steps)
+      await page.mouse.move(x, ty)
+      if (i % 5 === 0) await page.waitForTimeout(50)
+    }
+  }
+
+  // Settle so @dnd-kit processes the final "over" state before release.
   await page.waitForTimeout(150)
   await page.mouse.up()
+}
+
+/**
+ * DESKTOP drag (#926 f6) — distance-activated, no artificial hold.
+ *
+ * Drives the fine-pointer `{ distance: 8 }` sensor. Moves vertically only so
+ * @dnd-kit doesn't read a horizontal delta as indent/dedent.
+ */
+export async function dragBlock(page: Page, source: Locator, target: Locator): Promise<void> {
+  await performPointerDrag(page, source, target)
+}
+
+/**
+ * TOUCH drag (#926 f6) — press-and-hold past the 250 ms coarse-pointer delay,
+ * then move. Use under a `hasTouch` / coarse-pointer context (the product
+ * picks the press-and-hold sensor there). Vertical-only by default.
+ */
+export async function dragBlockTouch(page: Page, source: Locator, target: Locator): Promise<void> {
+  await performPointerDrag(page, source, target, { holdMs: DND_TOUCH_HOLD_MS })
+}
+
+// ---------------------------------------------------------------------------
+// Raw TouchEvent dispatch for the product's React touch handlers (#927 / #926).
+//
+// The block row's long-press → context-menu (`useBlockTouchLongPress`) and
+// swipe gestures (`useBlockSwipeActions`) bind to React `onTouchStart` /
+// `onTouchMove` / `onTouchEnd`. Those are NOT pointer events — Playwright's
+// `page.mouse` / `page.touchscreen` stream won't drive them. We instead build
+// real `Touch` + `TouchEvent` objects in the page and dispatch them on the
+// target element; React's delegated listener at the document root picks them
+// up like a genuine finger. (@dnd-kit's PointerSensor is unaffected — it
+// listens for pointer events, so these touch streams don't trip a drag.)
+//
+// `selector` must resolve to a single element in the page (e.g. a
+// `data-testid`/`data-block-id` query). Coordinates are viewport CSS pixels.
+// ---------------------------------------------------------------------------
+
+/** Dispatch a single native touch event of `type` at `(x, y)` on `selector`. */
+async function dispatchTouch(
+  page: Page,
+  selector: string,
+  type: 'touchstart' | 'touchmove' | 'touchend',
+  x: number,
+  y: number,
+): Promise<void> {
+  await page.evaluate(
+    ({ selector, type, x, y }) => {
+      const el = document.querySelector(selector)
+      if (!el) throw new Error(`dispatchTouch: no element for selector ${selector}`)
+      const touch = new Touch({
+        identifier: 1,
+        target: el,
+        clientX: x,
+        clientY: y,
+        pageX: x,
+        pageY: y,
+      })
+      // touchend carries no live `touches`, only `changedTouches`.
+      const active = type === 'touchend' ? [] : [touch]
+      const ev = new TouchEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        touches: active,
+        targetTouches: active,
+        changedTouches: [touch],
+      })
+      el.dispatchEvent(ev)
+    },
+    { selector, type, x, y },
+  )
+}
+
+/**
+ * Long-press the center of `selector` and hold past the 400 ms recognition
+ * delay (`LONG_PRESS_DELAY`) WITHOUT moving, so `useBlockTouchLongPress` opens
+ * the BlockContextMenu. The press point doubles as the menu's anchor.
+ *
+ * Returns the press coordinates so callers can assert anchor placement.
+ */
+export async function touchLongPress(
+  page: Page,
+  selector: string,
+  holdMs = 550,
+): Promise<{ x: number; y: number }> {
+  const box = await page.locator(selector).first().boundingBox()
+  if (!box) throw new Error(`touchLongPress: no bounding box for ${selector}`)
+  const x = box.x + box.width / 2
+  const y = box.y + box.height / 2
+  await dispatchTouch(page, selector, 'touchstart', x, y)
+  // Hold still past the 400 ms long-press threshold. No touchmove is sent, so
+  // the move-cancel guard never trips.
+  await page.waitForTimeout(holdMs)
+  await dispatchTouch(page, selector, 'touchend', x, y)
+  return { x, y }
+}
+
+/**
+ * Horizontal swipe across `selector` for `useBlockSwipeActions`.
+ *
+ * `dx` is the total horizontal travel in CSS px (negative = left / delete,
+ * positive = right / indent). Movement is stepped so the hook's running-delta
+ * math (reveal vs auto-delete bands) sees a realistic gesture. Vertical drift
+ * is kept at 0 so the `VERTICAL_CANCEL_THRESHOLD` guard never fires.
+ */
+export async function touchSwipe(page: Page, selector: string, dx: number): Promise<void> {
+  const box = await page.locator(selector).first().boundingBox()
+  if (!box) throw new Error(`touchSwipe: no bounding box for ${selector}`)
+  // Start from the side opposite the swipe direction so the full `dx` stays on-row.
+  const startX = dx < 0 ? box.x + box.width * 0.85 : box.x + box.width * 0.15
+  const y = box.y + box.height / 2
+  await dispatchTouch(page, selector, 'touchstart', startX, y)
+  const steps = 12
+  for (let i = 1; i <= steps; i++) {
+    await dispatchTouch(page, selector, 'touchmove', startX + (dx * i) / steps, y)
+  }
+  await dispatchTouch(page, selector, 'touchend', startX + dx, y)
 }
 
 /**
@@ -515,37 +719,8 @@ export async function dragBlockWithOffset(
   target: Locator,
   offsetX: number,
 ): Promise<void> {
-  const sourceBox = await source.boundingBox()
-  const targetBox = await target.boundingBox()
-  if (!sourceBox || !targetBox)
-    throw new Error('Could not get bounding boxes for drag source/target')
-
-  const sx = sourceBox.x + sourceBox.width / 2
-  const sy = sourceBox.y + sourceBox.height / 2
-  const ty = targetBox.y + targetBox.height / 2
-
-  await page.mouse.move(sx, sy)
-  await page.mouse.down()
-  await page.waitForTimeout(DND_ACTIVATION_DELAY_MS)
-
-  // Phase 1: move vertically to the target row (no horizontal drift, so the
-  // projected depth stays put until we deliberately push sideways).
-  const steps = 20
-  for (let i = 1; i <= steps; i++) {
-    const y = sy + (ty - sy) * (i / steps)
-    await page.mouse.move(sx, y)
-    if (i % 5 === 0) await page.waitForTimeout(50)
-  }
-
-  // Phase 2: apply the horizontal offset for indent/dedent projection.
-  for (let i = 1; i <= steps; i++) {
-    const x = sx + offsetX * (i / steps)
-    await page.mouse.move(x, ty)
-    if (i % 5 === 0) await page.waitForTimeout(50)
-  }
-
-  await page.waitForTimeout(150)
-  await page.mouse.up()
+  // Desktop indent/dedent: distance-activated sensor, no artificial hold (#926 f6).
+  await performPointerDrag(page, source, target, { offsetX })
 }
 
 /**

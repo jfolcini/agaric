@@ -1245,7 +1245,28 @@ export const HANDLERS: Record<string, Handler> = {
     const b = blocks.get(blockId)
     if (!b) throw new Error('not found')
     const oldParentId = (b['parent_id'] as string | null) ?? null
-    const oldPosition = b['position']
+    // #958 — record `old_position` as the block's 1-based DENSE RANK among its
+    // current siblings, NOT its raw stored `position`. The seed stores some
+    // positions 0-based (seed.ts `makeBlock(..., 0|1)`) while every renumber
+    // (`insertAtSlotAndRenumber`/`renumberSiblings`) and `new_position` are
+    // 1-based dense ranks. `undo_page_op` reverses a move by inserting at slot
+    // `old_position - 1`, so a raw seed `position` is off by one and the undo
+    // lands the block back where the move put it (a no-op). Concretely: moving
+    // the 2nd of two root blocks up read the raw stored `position` of 1 (seeded
+    // 0-based) which collided with the renumbered `new_position` of 1, so undo
+    // re-inserted at slot 0 = unchanged. Ranking among live siblings makes
+    // `old_position` the true 1-based slot the undo must restore to.
+    const oldSiblings = [...blocks.values()]
+      .filter(
+        (s) => ((s['parent_id'] as string | null) ?? null) === oldParentId && !s['deleted_at'],
+      )
+      .sort((x, y) => {
+        const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+        const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+        if (px !== py) return px - py
+        return (x['id'] as string).localeCompare(y['id'] as string)
+      })
+    const oldPosition = oldSiblings.findIndex((s) => s['id'] === blockId) + 1
     const newParentId = (a['newParentId'] as string | null) ?? null
     // #400: `newIndex` is a 0-based insertion slot among the target parent's
     // OTHER children. Set the new parent, place the block at the slot, and

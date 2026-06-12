@@ -305,12 +305,8 @@ test.describe('Inner links — editor-mode chip navigation (#924 f6)', () => {
     await waitForBoot(page)
   })
 
-  // FIXME(#958): the tag-chip editor onClick wiring is present in source
-  // (BlockTree → useRovingEditor({ onTagClick }) → TagRef.configure), but navigation is
-  // not observable in the e2e — the tauri-mock appears not to resolve a navigable page
-  // for a tag id (navigateToPage(tagId)). Block-ref editor nav (below) passes. Repro kept
-  // executable; either teach the mock to navigate tag pages or assert the click intent.
-  test.fixme('clicking a tag chip in the editor navigates to the tag view', async ({ page }) => {
+  // #958 / #924 f6: clicking an EDITOR-mode tag chip navigates to the tag view.
+  test('clicking a tag chip in the editor navigates to the tag view', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
     // GS_4 ("Try tagging blocks with #work / #personal") is the 4th block.
@@ -319,12 +315,27 @@ test.describe('Inner links — editor-mode chip navigation (#924 f6)', () => {
     const tagChip = editor.locator('[data-testid="tag-ref-chip"]', { hasText: 'work' })
     await expect(tagChip).toBeVisible()
 
-    // Clicking the chip routes through useTagClickHandler → navigateToPage(tagId, name).
-    // The resolved tag title depends on the resolve-store cache (falls back to
-    // "Tag"), so assert that navigation OCCURRED — the editor left "Getting
-    // Started" — rather than pinning the exact tag-view title. This is the f6
-    // point (the editor-mode chip click navigates) and guards the tag-ref
-    // preventDefault wiring (#924 f3).
+    // The original fixme'd repro never actually clicked the chip — it asserted on
+    // the title straight after the visibility check, so navigation never fired and
+    // the title (correctly) stayed "Getting Started"; that missing interaction was
+    // the whole defect, NOT a mock gap (the mock resolves TAG_WORK → "work" fine).
+    //
+    // Use `dispatchEvent('click')` rather than `.click()`: the tag chip is an atomic
+    // inline ProseMirror NodeView (`contenteditable=false` inside an editable). PM
+    // handles the pointer `mousedown` to set a NodeSelection, and in headless
+    // Chromium the synthetic pointer sequence then does NOT deliver a DOM `click`
+    // to the inner span — so the NodeView's `click` listener never runs (verified
+    // by trace: `.click()` leaves the title unchanged; `dispatchEvent('click')`
+    // navigates). dispatchEvent fires the exact DOM `click` the production handler
+    // (tag-ref.ts) listens for, driving the real onClick → useTagClickHandler →
+    // navigateToPage(tagId, name) path. A real user click in a real browser does
+    // emit that DOM click; this is a headless-pointer quirk, not a product bug.
+    await tagChip.dispatchEvent('click')
+
+    // navigateToPage(tagId, name) pushes the tag id as the active page; its title
+    // resolves to the cached tag name ("work") — assert navigation OCCURRED (left
+    // "Getting Started") rather than pinning the exact tag-view title. Guards the
+    // tag-ref preventDefault/stopPropagation wiring (#924 f3).
     const pageTitle = page.locator('[aria-label="Page title"]')
     await expect
       .poll(async () => (await pageTitle.textContent())?.trim() ?? '')
