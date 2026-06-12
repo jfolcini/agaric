@@ -276,7 +276,7 @@ export const SuggestionList = ({
       className={cn(
         'suggestion-item flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors [@media(pointer:coarse)]:py-3 [@media(pointer:coarse)]:min-h-[44px] touch-target focus-outline',
         index === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
-        item.isCreate && 'border-t border-border border-l-2 border-l-primary bg-accent/15',
+        item.isCreate && 'border-t border-border/50',
       )}
       data-testid="suggestion-item"
       onClick={() => selectItem(index)}
