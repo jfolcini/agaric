@@ -837,6 +837,7 @@ export function BlockTree({
               projected={dnd.projected}
               activeId={dnd.activeId}
               overId={dnd.overId}
+              dropAfter={dnd.dropAfter}
               viewport={viewport}
               rovingEditor={rovingEditor}
               onContainerPointerDown={handleContainerPointerDown}

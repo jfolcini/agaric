@@ -1,9 +1,16 @@
+// @vitest-environment jsdom
+// #923: the ghost's `paddingLeft` is `calc(var(--indent-width) * N)`. happy-dom's
+// CSS parser rejects `var()`/`calc()` so the property never lands — pin to jsdom
+// (same rationale as SortableBlockWrapper.test.tsx).
+
 /**
  * Tests for BlockDndOverlay component.
  *
  * Validates:
- *  - Renders the tiny cursor-following marker when activeBlock is provided
- *  - Marker is empty (no content) so list reflow is visible underneath
+ *  - Renders the translucent ghost of the dragged row when activeBlock is provided (#923)
+ *  - Ghost shows the dragged block's content text at the projected indent
+ *  - Subtree drag shows the count badge
+ *  - Forwards a drop-settle animation to DragOverlay (not null) (#923)
  *  - Renders nothing inside DragOverlay when activeBlock is null
  *  - Renders SR live region when activeId + projected are set
  *  - Does not render SR live region when activeId is null
@@ -14,17 +21,26 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-// Mock @dnd-kit/core DragOverlay as a transparent wrapper
+// Mock @dnd-kit/core DragOverlay as a transparent wrapper that records the
+// dropAnimation prop so we can assert the ghost gets a settle animation (#923).
+const dropAnimationCalls: Array<unknown> = []
 vi.mock('@dnd-kit/core', () => ({
-  DragOverlay: ({ children }: { children: React.ReactNode }) => (
-    <div data-testid="drag-overlay">{children}</div>
-  ),
+  DragOverlay: ({
+    children,
+    dropAnimation,
+  }: {
+    children: React.ReactNode
+    dropAnimation?: unknown
+  }) => {
+    dropAnimationCalls.push(dropAnimation)
+    return <div data-testid="drag-overlay">{children}</div>
+  },
 }))
 
 import { BlockDndOverlay } from '../block-tree/BlockDndOverlay'
 
 describe('BlockDndOverlay', () => {
-  it('renders the marker when activeBlock is provided', () => {
+  it('renders the ghost when activeBlock is provided', () => {
     render(
       <BlockDndOverlay
         activeBlock={{ content: 'Hello world' }}
@@ -36,7 +52,7 @@ describe('BlockDndOverlay', () => {
     expect(screen.getByTestId('sortable-block-overlay')).toBeInTheDocument()
   })
 
-  it('marker has no text content (so list reflow stays visible)', () => {
+  it('ghost renders the dragged block content text (#923)', () => {
     render(
       <BlockDndOverlay
         activeBlock={{ content: 'Hello world' }}
@@ -45,7 +61,38 @@ describe('BlockDndOverlay', () => {
       />,
     )
 
-    expect(screen.getByTestId('sortable-block-overlay').textContent).toBe('')
+    expect(screen.getByTestId('sortable-block-overlay')).toHaveTextContent('Hello world')
+  })
+
+  it('ghost indents by the projected depth via --indent-width (#923)', () => {
+    render(
+      <BlockDndOverlay
+        activeBlock={{ content: 'Nested' }}
+        projected={{ depth: 2 }}
+        activeId="BLK001"
+      />,
+    )
+
+    expect(screen.getByTestId('sortable-block-overlay').style.paddingLeft).toBe(
+      'calc(var(--indent-width) * 2)',
+    )
+  })
+
+  it('forwards a drop-settle animation (not null) to DragOverlay (#923)', () => {
+    dropAnimationCalls.length = 0
+    render(
+      <BlockDndOverlay
+        activeBlock={{ content: 'Hello world' }}
+        projected={{ depth: 0 }}
+        activeId="BLK001"
+      />,
+    )
+
+    const anim = dropAnimationCalls[dropAnimationCalls.length - 1] as {
+      duration?: number
+    } | null
+    expect(anim).not.toBeNull()
+    expect(typeof anim?.duration).toBe('number')
   })
 
   it('renders nothing inside DragOverlay when activeBlock is null', () => {
@@ -66,6 +113,32 @@ describe('BlockDndOverlay', () => {
     const srRegion = screen.getByRole('status')
     expect(srRegion).toHaveTextContent('Moving to depth 2')
     expect(srRegion).toHaveClass('sr-only')
+  })
+
+  it('shows the count badge for a subtree drag (count > 1)', () => {
+    render(
+      <BlockDndOverlay
+        activeBlock={{ content: 'Parent' }}
+        projected={{ depth: 0 }}
+        activeId="BLK001"
+        count={3}
+      />,
+    )
+
+    expect(screen.getByTestId('sortable-block-overlay-count')).toHaveTextContent('3')
+  })
+
+  it('omits the count badge for a single-block drag (count = 1)', () => {
+    render(
+      <BlockDndOverlay
+        activeBlock={{ content: 'Leaf' }}
+        projected={{ depth: 0 }}
+        activeId="BLK001"
+        count={1}
+      />,
+    )
+
+    expect(screen.queryByTestId('sortable-block-overlay-count')).not.toBeInTheDocument()
   })
 
   it('does not render SR live region when activeId is null', () => {

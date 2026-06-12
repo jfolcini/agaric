@@ -731,6 +731,127 @@ describe('useBlockDnD', () => {
     })
   })
 
+  // ── 11b. dropAfter (#923) ────────────────────────────────────────────
+  describe('dropAfter (#923 finding 3)', () => {
+    const blocks = [
+      makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+      makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+      makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
+    ]
+
+    it('is false before any drag', () => {
+      const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
+      const { result } = renderHook(() => useBlockDnD(params))
+      expect(result.current.dropAfter).toBe(false)
+    })
+
+    it('is true when dragging DOWN (active above over-row)', () => {
+      const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('A') as never)
+      })
+      // A (index 0) dragged over C (index 2) → downward → after.
+      act(() => {
+        result.current.handleDragOver(makeDragOverEvent('C') as never)
+      })
+
+      expect(result.current.dropAfter).toBe(true)
+    })
+
+    it('is false when dragging UP (active below over-row)', () => {
+      const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('C') as never)
+      })
+      // C (index 2) dragged over A (index 0) → upward → before.
+      act(() => {
+        result.current.handleDragOver(makeDragOverEvent('A') as never)
+      })
+
+      expect(result.current.dropAfter).toBe(false)
+    })
+
+    it('is false when over the active row itself', () => {
+      const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+      // drag-start sets overId = activeId = 'B'.
+      expect(result.current.dropAfter).toBe(false)
+    })
+
+    it('is false when over the sentinel (not in visibleItems)', () => {
+      const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('A') as never)
+      })
+      act(() => {
+        result.current.handleDragOver(makeDragOverEvent('__drop-after-last__') as never)
+      })
+
+      expect(result.current.dropAfter).toBe(false)
+    })
+  })
+
+  // ── 11c. computed --indent-width (#929 finding 8) ────────────────────
+  describe('computed --indent-width (#929 finding 8)', () => {
+    it('falls back to INDENT_WIDTH (24) when the CSS var is unset', () => {
+      const blocks = [
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+      ]
+      const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
+      const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
+      mockedGetProjection.mockReturnValue(projection)
+
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('A') as never)
+      })
+
+      // jsdom/happy-dom report an empty `--indent-width`, so the resolver
+      // falls back to INDENT_WIDTH (24) — passed as the 5th getProjection arg.
+      const calls = mockedGetProjection.mock.calls
+      const lastCall = calls[calls.length - 1]
+      expect(lastCall?.[4]).toBe(24)
+    })
+
+    it('reads the computed --indent-width when set on :root', () => {
+      const blocks = [
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+      ]
+      const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
+      const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
+      mockedGetProjection.mockReturnValue(projection)
+
+      // Coarse/narrow viewport recipe sets --indent-width to 12px.
+      document.documentElement.style.setProperty('--indent-width', '12px')
+      try {
+        const { result } = renderHook(() => useBlockDnD(params))
+
+        act(() => {
+          result.current.handleDragStart(makeDragStartEvent('A') as never)
+        })
+
+        const calls = mockedGetProjection.mock.calls
+        const lastCall = calls[calls.length - 1]
+        expect(lastCall?.[4]).toBe(12)
+      } finally {
+        document.documentElement.style.removeProperty('--indent-width')
+      }
+    })
+  })
+
   // ── 12. sensors ──────────────────────────────────────────────────────
 
   describe('sensors', () => {

@@ -72,6 +72,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof BlockListRende
     projected: null,
     activeId: null,
     overId: null,
+    dropAfter: false,
     viewport: {
       isOffscreen: () => false,
       createObserveRef: () => vi.fn(),

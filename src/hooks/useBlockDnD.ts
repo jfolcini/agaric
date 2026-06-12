@@ -67,10 +67,34 @@ interface UseBlockDnDParams {
   scrollContainerRef?: RefObject<HTMLElement | null>
 }
 
+/**
+ * #929 — resolve the *rendered* indent width (the CSS `--indent-width` custom
+ * property) so the drag's pointer-distance-per-level matches the indent guides.
+ * The JS `INDENT_WIDTH` constant is 24, but the CSS var drops to 16px on coarse
+ * pointers and 12px on ≤640px viewports (see index.css). Reading the constant
+ * made the drag disagree with the guides on those viewports. Falls back to
+ * `INDENT_WIDTH` when unset / unparseable / SSR (no `window`/`document`).
+ */
+function resolveIndentWidth(): number {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return INDENT_WIDTH
+  }
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--indent-width').trim()
+  const parsed = Number.parseFloat(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : INDENT_WIDTH
+}
+
 export interface UseBlockDnDReturn {
   activeId: string | null
   overId: string | null
   projected: Projection | null
+  /**
+   * #923 — whether the projected drop lands AFTER the over-row (i.e. the user
+   * is dragging downward, with the active block currently above the over-row in
+   * document order). The drop indicator renders BELOW the over-row when true,
+   * ABOVE it when false. Null when there is no active drag / over-target.
+   */
+  dropAfter: boolean
   visibleItems: FlatBlock[]
   /**
    * #914 — whether the active drag is moving the whole multi-selection (the
@@ -106,6 +130,10 @@ export function useBlockDnD({
   const [activeId, setActiveId] = useState<string | null>(null)
   const [overId, setOverId] = useState<string | null>(null)
   const [offsetLeft, setOffsetLeft] = useState(0)
+  // #929 — the rendered `--indent-width` resolved at drag start, so the
+  // projection's pointer-distance-per-level matches the visible indent guides
+  // on coarse/narrow viewports (where the CSS var differs from INDENT_WIDTH).
+  const [indentWidth, setIndentWidth] = useState<number>(() => resolveIndentWidth())
 
   // Auto-scroll when dragging near viewport edges
   const fallbackRef = useRef<HTMLElement | null>(null)
@@ -153,11 +181,26 @@ export function useBlockDnD({
       activeId,
       overId,
       offsetLeft,
-      INDENT_WIDTH,
+      indentWidth,
       rootParentId,
       subtreeHeight,
     )
-  }, [activeId, overId, offsetLeft, visibleItems, rootParentId, subtreeHeight])
+  }, [activeId, overId, offsetLeft, visibleItems, rootParentId, subtreeHeight, indentWidth])
+
+  // #923 — direction of the projected drop relative to the over-row. The drop
+  // lands AFTER the over-row when the active block currently sits ABOVE it in
+  // document order (dragging downward). Derived from indices in `visibleItems`
+  // (descendants of the active block are already excluded, so the comparison is
+  // purely between the head and the over-row). False when over the active row
+  // itself, the sentinel, or either id is absent — the indicator then renders
+  // above, matching the prior always-top behaviour.
+  const dropAfter = useMemo(() => {
+    if (!activeId || !overId || activeId === overId) return false
+    const activeIndex = visibleItems.findIndex((b) => b.id === activeId)
+    const overIndex = visibleItems.findIndex((b) => b.id === overId)
+    if (activeIndex < 0 || overIndex < 0) return false
+    return activeIndex < overIndex
+  }, [activeId, overId, visibleItems])
 
   // #914 — selection roots for the active drag. When the dragged block is part
   // of a multi-selection, the whole selection moves as one gesture. We collapse
@@ -201,6 +244,9 @@ export function useBlockDnD({
       setActiveId(id)
       setOverId(id)
       setOffsetLeft(0)
+      // #929 — re-resolve the rendered indent width at the start of each drag
+      // so a viewport/media-query change since mount is reflected.
+      setIndentWidth(resolveIndentWidth())
 
       // #923 — capture the pre-drag focused block so a cancel/no-op can restore it.
       preDragFocusedIdRef.current = rovingEditorRef.current.activeBlockId
@@ -341,6 +387,7 @@ export function useBlockDnD({
     activeId,
     overId,
     projected,
+    dropAfter,
     visibleItems,
     isMultiDrag,
     dragRoots,

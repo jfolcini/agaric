@@ -43,6 +43,12 @@ export interface BlockListRendererProps {
   projected: Projection | null
   activeId: string | null
   overId: string | null
+  /**
+   * #923 — true when the projected drop lands after the over-row (dragging
+   * downward); the drop indicator then renders below the over-row instead of
+   * above it.
+   */
+  dropAfter: boolean
 
   // ── Viewport observer ──────────────────────────────────────────────
   viewport: ViewportObserver
@@ -70,6 +76,7 @@ export function BlockListRenderer({
   projected,
   activeId,
   overId,
+  dropAfter,
   viewport,
   rovingEditor,
   onContainerPointerDown,
@@ -203,6 +210,7 @@ export function BlockListRenderer({
                   projected={projected}
                   activeId={activeId}
                   overId={overId}
+                  dropAfter={dropAfter}
                   viewport={viewport}
                   rovingEditor={rovingEditor}
                   hasChildren={hasChildrenSet.has(block.id)}
