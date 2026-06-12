@@ -162,6 +162,7 @@ export const block: Record<string, string> = {
   'blockTree.mergeBlocksFailed': 'Failed to merge blocks',
   'blockTree.changesDiscarded': 'Changes discarded',
   'blockTree.noBlocks': 'No blocks yet. Click + Add block below to start writing.',
+  'blockTree.emptyPageHint': 'Type / for commands',
   'blockTree.emptyPage': 'Creating first block\u2026',
   'blockTree.treeLabel': 'Block tree',
   'blockTree.createFirstBlockFailed': 'Failed to create first block',

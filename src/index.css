@@ -1519,6 +1519,16 @@
   }
 }
 
+/* UX-929 F4: single selection/focus recipe for block surfaces. Previously the
+ * keyboard-focus / selection feedback was spelled three different ways
+ * (`ring-2 ring-primary/50 bg-primary/5` on StaticBlock/EditableBlock vs
+ * `ring-2 ring-inset ring-ring/50 bg-accent/30` on BlockListItem). Consumers
+ * now apply the single `block-selected` class so selection looks identical
+ * everywhere; surface-specific classes (rounded, etc.) stay at the call site. */
+@utility block-selected {
+  @apply ring-2 ring-inset ring-ring/50 bg-accent/30;
+}
+
 /* ── Touch-target utility ──────────────────────────────────────────── */
 @utility touch-target {
   @media (pointer: coarse) {

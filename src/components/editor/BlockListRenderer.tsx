@@ -13,6 +13,7 @@
 
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { FileText } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -170,7 +171,15 @@ export function BlockListRenderer({
   return (
     <SortableContext items={sortableItems} strategy={verticalListSortingStrategy}>
       {blocks.length === 0 && !loading ? (
-        <EmptyState message={rootParentId ? t('blockTree.emptyPage') : t('blockTree.noBlocks')} />
+        rootParentId ? (
+          <EmptyState message={t('blockTree.emptyPage')} />
+        ) : (
+          <EmptyState
+            icon={FileText}
+            message={t('blockTree.noBlocks')}
+            description={t('blockTree.emptyPageHint')}
+          />
+        )
       ) : (
         <div className="relative">
           {/* B4 (#290): faint indent-boundary guides during a drag so the

@@ -25,9 +25,24 @@ vi.mock('../SortableBlock', () => ({
   INDENT_WIDTH: 24,
 }))
 
-// Mock EmptyState
+// Mock EmptyState — expose icon + description so UX-929 F7 (richer empty state)
+// can be asserted. The icon is a component; render a marker when present.
 vi.mock('@/components/common/EmptyState', () => ({
-  EmptyState: ({ message }: { message: string }) => <div data-testid="empty-state">{message}</div>,
+  EmptyState: ({
+    icon: Icon,
+    message,
+    description,
+  }: {
+    icon?: React.ComponentType<Record<string, unknown>>
+    message: string
+    description?: string
+  }) => (
+    <div data-testid="empty-state">
+      {Icon ? <span data-testid="empty-state-icon" /> : null}
+      <span data-testid="empty-state-message">{message}</span>
+      {description ? <span data-testid="empty-state-description">{description}</span> : null}
+    </div>
+  ),
 }))
 
 // Mock @dnd-kit/sortable
@@ -99,6 +114,19 @@ describe('BlockListRenderer', () => {
     )
 
     expect(screen.getByTestId('empty-state')).toBeInTheDocument()
+  })
+
+  // UX-929 F7: the page-root empty state (rootParentId falsy → `noBlocks`)
+  // advertises the slash-command entry path with an icon + description.
+  it('renders icon + slash-command hint in the page-root empty state', () => {
+    render(
+      <BlockListRenderer
+        {...makeProps({ visibleItems: [], blocks: [], loading: false, rootParentId: null })}
+      />,
+    )
+
+    expect(screen.getByTestId('empty-state-icon')).toBeInTheDocument()
+    expect(screen.getByTestId('empty-state-description')).toHaveTextContent('Type / for commands')
   })
 
   it('does not render empty state when loading', () => {

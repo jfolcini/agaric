@@ -16,7 +16,7 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  *
  * Selection mechanics:
  *   - Ctrl+Click on a static block toggles it in/out of selection
- *   - Selected blocks get `ring-2 ring-primary/50 bg-primary/5` on [data-testid="block-static"]
+ *   - Selected blocks get the `block-selected` utility (ring-2 ring-inset ring-ring/50 bg-accent/30) on [data-testid="block-static"]
  *   - Batch toolbar (`.batch-toolbar`) appears when selectedBlockIds.length > 0
  *   - Ctrl+A selects all blocks (only when no block is focused/editing)
  */
@@ -41,17 +41,17 @@ test.describe('Batch block operations', () => {
     const secondStatic = blocks.nth(1).locator('[data-testid="block-static"]')
 
     // Initially, blocks should NOT have the selection highlight
-    await expect(firstStatic).not.toHaveClass(/bg-primary/)
-    await expect(secondStatic).not.toHaveClass(/bg-primary/)
+    await expect(firstStatic).not.toHaveClass(/block-selected/)
+    await expect(secondStatic).not.toHaveClass(/block-selected/)
 
     // Ctrl+Click first block to toggle it into selection
     await firstStatic.click({ modifiers: ['Control'] })
-    await expect(firstStatic).toHaveClass(/bg-primary/)
+    await expect(firstStatic).toHaveClass(/block-selected/)
 
     // Ctrl+Click second block to add it to selection
     await secondStatic.click({ modifiers: ['Control'] })
-    await expect(firstStatic).toHaveClass(/bg-primary/)
-    await expect(secondStatic).toHaveClass(/bg-primary/)
+    await expect(firstStatic).toHaveClass(/block-selected/)
+    await expect(secondStatic).toHaveClass(/block-selected/)
   })
 
   // =========================================================================
@@ -141,7 +141,9 @@ test.describe('Batch block operations', () => {
 
     // All static blocks should have the selection highlight indicator
     for (let i = 0; i < blockCount; i++) {
-      await expect(blocks.nth(i).locator('[data-testid="block-static"]')).toHaveClass(/bg-primary/)
+      await expect(blocks.nth(i).locator('[data-testid="block-static"]')).toHaveClass(
+        /block-selected/,
+      )
     }
   })
 })
