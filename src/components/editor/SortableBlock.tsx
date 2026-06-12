@@ -33,8 +33,10 @@ import { useBlockResolvers } from '@/hooks/useBlockResolvers'
 import { useBlockSwipeActions } from '@/hooks/useBlockSwipeActions'
 import { useBlockTouchLongPress } from '@/hooks/useBlockTouchLongPress'
 import { usePropertyDefForEdit } from '@/hooks/usePropertyDefForEdit'
+import { performActivePageUndo } from '@/hooks/useUndoShortcuts'
 import { detectBlockType } from '@/lib/block-type-convert'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
+import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 
 /** Pixels of left padding per depth level. */
@@ -165,9 +167,24 @@ function SortableBlockInner({
     useBlockTouchLongPress({ openContextMenu, isDraggingRef })
 
   // ── Swipe-to-delete (mobile only) ─────────────────────────────
+  // #927 f7: a 200 px left-swipe deletes immediately — best on mobile, where
+  // a blocking confirm dialog is worse — but that makes a silent 200 px drag
+  // destructive. Surface a Gmail-style "Undo" toast as the recoverability net.
+  // Its action replays the SAME page-op undo the keyboard Ctrl+Z uses
+  // (`performActivePageUndo`), so the gesture is fully reversible.
   const handleSwipeDelete = useCallback(() => {
-    onDelete?.(blockId)
-  }, [onDelete, blockId])
+    if (!onDelete) return
+    onDelete(blockId)
+    notify(t('block.swipe.deleted'), {
+      duration: 5000,
+      action: {
+        label: t('action.undo'),
+        onClick: () => {
+          void performActivePageUndo()
+        },
+      },
+    })
+  }, [onDelete, blockId, t])
 
   const {
     translateX: swipeTranslateX,

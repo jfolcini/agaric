@@ -136,6 +136,80 @@ describe('useBlockTouchLongPress', () => {
     unmount()
   })
 
+  // #927 f5: the canonical scroll-conflict scenario — the user starts a
+  // vertical scroll. Pure vertical movement past the threshold must cancel
+  // the long-press so the scroll is not hijacked into a context menu.
+  it('cancels long press on vertical scroll (scroll intent wins)', () => {
+    const openContextMenu = vi.fn()
+    const isDraggingRef = { current: false }
+
+    const { result, unmount } = renderHook(() =>
+      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+    )
+
+    act(() => {
+      result.current.handleTouchStart({
+        touches: [{ clientX: 100, clientY: 200 }],
+      } as unknown as React.TouchEvent)
+    })
+
+    // Pure vertical drag (no horizontal component) past the threshold —
+    // the classic "I'm scrolling" gesture, fired BEFORE the 400ms timer.
+    act(() => {
+      result.current.handleTouchMove({
+        touches: [{ clientX: 100, clientY: 200 + LONG_PRESS_MOVE_THRESHOLD + 1 }],
+      } as unknown as React.TouchEvent)
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY)
+    })
+
+    expect(openContextMenu).not.toHaveBeenCalled()
+
+    unmount()
+  })
+
+  // #927 f5: a multi-step scroll — several small moves that individually stay
+  // under the threshold but cumulatively pass it — must still cancel, because
+  // the threshold is measured against the original touchstart, not the prior
+  // move. (Documents that we compare to the START, not the last position.)
+  it('cancels long press once cumulative vertical travel passes the threshold', () => {
+    const openContextMenu = vi.fn()
+    const isDraggingRef = { current: false }
+
+    const { result, unmount } = renderHook(() =>
+      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+    )
+
+    act(() => {
+      result.current.handleTouchStart({
+        touches: [{ clientX: 100, clientY: 200 }],
+      } as unknown as React.TouchEvent)
+    })
+
+    // First small move stays within threshold — does not cancel yet.
+    act(() => {
+      result.current.handleTouchMove({
+        touches: [{ clientX: 100, clientY: 205 }],
+      } as unknown as React.TouchEvent)
+    })
+    // Second move crosses the threshold relative to the START position.
+    act(() => {
+      result.current.handleTouchMove({
+        touches: [{ clientX: 100, clientY: 212 }],
+      } as unknown as React.TouchEvent)
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY)
+    })
+
+    expect(openContextMenu).not.toHaveBeenCalled()
+
+    unmount()
+  })
+
   it('does not cancel long press for small movements within threshold', () => {
     const openContextMenu = vi.fn()
     const isDraggingRef = { current: false }

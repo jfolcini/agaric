@@ -196,6 +196,40 @@ vi.mock('sonner', () => ({
   toast: { error: (...args: unknown[]) => mockToastError(...args) },
 }))
 
+// #927 f7: capture the swipe-delete undo toast. `notify` is mocked as a
+// callable + method bag so SortableBlock's `handleSwipeDelete` can fire the
+// "Block deleted — Undo" toast without reaching the (intentionally partial)
+// sonner mock above. `vi.hoisted` keeps the spies available to the hoisted
+// `vi.mock` factories below.
+const { mockNotify, mockPerformActivePageUndo } = vi.hoisted(() => {
+  const notifyFn = Object.assign(vi.fn(), {
+    success: vi.fn(),
+    error: vi.fn(),
+    warning: vi.fn(),
+    info: vi.fn(),
+    message: vi.fn(),
+    loading: vi.fn(),
+    promise: vi.fn(),
+    custom: vi.fn(),
+    dismiss: vi.fn(),
+    retry: vi.fn(),
+  })
+  return {
+    mockNotify: notifyFn,
+    mockPerformActivePageUndo: vi.fn(() => Promise.resolve(true)),
+  }
+})
+vi.mock('@/lib/notify', () => ({
+  notify: mockNotify,
+}))
+
+// #927 f7: stub the shared undo helper so the toast's Undo action is
+// observable without standing up the page/tab/undo stores.
+vi.mock('@/hooks/useUndoShortcuts', () => ({
+  performActivePageUndo: () => mockPerformActivePageUndo(),
+  useUndoShortcuts: vi.fn(),
+}))
+
 // Controlled mock for the swipe-actions hook (UX-304). Default mirrors the
 // "no swipe in progress" state so existing tests that don't care about the
 // swipe overlay render exactly as before. Per-test overrides drive the
@@ -4670,5 +4704,109 @@ describe('SortableBlock swipe-to-delete progressive cue (UX-304)', () => {
 
     expect(screen.queryByTestId('swipe-delete-action')).not.toBeInTheDocument()
     expect(screen.queryByTestId('swipe-release-hint')).not.toBeInTheDocument()
+  })
+})
+
+// ── #927 f7: swipe-to-delete shows a recoverable "Undo" toast ───────────
+//
+// A 200 px left-swipe auto-deletes with no confirm (intentional — a blocking
+// dialog is worse on mobile). The safety net is a Gmail-style undo toast whose
+// action replays the same page-op undo as Ctrl+Z. `useBlockSwipeActions` is
+// mocked, so we capture the `onDelete` callback SortableBlock hands it
+// (`handleSwipeDelete`) and invoke it directly — that is the exact code path
+// the real hook runs at the auto-delete threshold.
+describe('SortableBlock swipe-to-delete undo toast (#927 f7)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+    mockUseBlockSwipeActions.mockImplementation((..._args: unknown[]) => ({
+      translateX: 0,
+      isRevealed: false,
+      thresholdCrossed: false,
+      handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
+      reset: vi.fn(),
+    }))
+  })
+
+  /** Render SortableBlock and return the `handleSwipeDelete` it passed to the hook. */
+  function renderAndGetSwipeDelete(onDelete: (id: string) => void): () => void {
+    render(
+      <TestBlockActionsOverride actions={{ onDelete }}>
+        <SortableBlock
+          blockId="BLOCK_SWIPE"
+          content="swipe test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
+    )
+    // The hook is called with `handleSwipeDelete` as its sole argument.
+    const lastCall = mockUseBlockSwipeActions.mock.calls.at(-1)
+    const swipeDelete = lastCall?.[0]
+    expect(typeof swipeDelete).toBe('function')
+    return swipeDelete as () => void
+  }
+
+  it('deletes the block AND shows a "Block deleted" toast with an Undo action', () => {
+    const onDelete = vi.fn()
+    const handleSwipeDelete = renderAndGetSwipeDelete(onDelete)
+
+    act(() => {
+      handleSwipeDelete()
+    })
+
+    // The block is still deleted immediately (no blocking confirm).
+    expect(onDelete).toHaveBeenCalledOnce()
+    expect(onDelete).toHaveBeenCalledWith('BLOCK_SWIPE')
+
+    // A toast was surfaced with an action button.
+    expect(mockNotify).toHaveBeenCalledOnce()
+    const [message, opts] = mockNotify.mock.calls[0] as [
+      string,
+      { action?: { onClick?: () => void } },
+    ]
+    expect(message).toBe('Block deleted')
+    expect(opts?.action).toBeDefined()
+    expect(typeof opts.action?.onClick).toBe('function')
+  })
+
+  it("the toast's Undo action invokes the shared page-op undo", () => {
+    const onDelete = vi.fn()
+    const handleSwipeDelete = renderAndGetSwipeDelete(onDelete)
+
+    act(() => {
+      handleSwipeDelete()
+    })
+
+    const opts = mockNotify.mock.calls[0]?.[1] as { action: { onClick: () => void } }
+    expect(mockPerformActivePageUndo).not.toHaveBeenCalled()
+
+    // Simulate the user tapping "Undo".
+    act(() => {
+      opts.action.onClick()
+    })
+
+    expect(mockPerformActivePageUndo).toHaveBeenCalledOnce()
+  })
+
+  it('does nothing (no toast, no undo) when onDelete is not provided', () => {
+    render(
+      <TestBlockActionsOverride actions={{}}>
+        <SortableBlock
+          blockId="BLOCK_SWIPE"
+          content="swipe test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
+    )
+    const swipeDelete = mockUseBlockSwipeActions.mock.calls.at(-1)?.[0] as () => void
+
+    act(() => {
+      swipeDelete()
+    })
+
+    expect(mockNotify).not.toHaveBeenCalled()
+    expect(mockPerformActivePageUndo).not.toHaveBeenCalled()
   })
 })
