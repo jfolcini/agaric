@@ -1038,3 +1038,96 @@ describe('BlockContextMenu', () => {
     })
   })
 })
+
+/* ── Fix 6: bulk ops apply to the whole multi-selection ──────────────── */
+
+describe('BlockContextMenu bulk mode (Fix 6)', () => {
+  const SELECTION = ['BLOCK_01', 'B2', 'B3']
+
+  it('Delete applies to EVERY selected id via the batch handler when in bulk mode', async () => {
+    const user = userEvent.setup()
+    const onBatchDelete = vi.fn()
+    const { props } = renderMenu({ selectedBlockIds: SELECTION, onBatchDelete })
+
+    // Label reflects the selection count.
+    await user.click(screen.getByText(t('contextMenu.deleteSelected', { count: SELECTION.length })))
+
+    expect(onBatchDelete).toHaveBeenCalledTimes(1)
+    // The per-block onDelete is NOT looped when a batch handler is available.
+    expect(props.onDelete).not.toHaveBeenCalled()
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
+  it('Delete loops per-block onDelete for every selected id when no batch handler', async () => {
+    const user = userEvent.setup()
+    const { props } = renderMenu({ selectedBlockIds: SELECTION })
+
+    await user.click(screen.getByText(t('contextMenu.deleteSelected', { count: SELECTION.length })))
+
+    expect(props.onDelete).toHaveBeenCalledTimes(SELECTION.length)
+    for (const id of SELECTION) {
+      expect(props.onDelete).toHaveBeenCalledWith(id)
+    }
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
+  it('TODO cycle applies to every selected id in bulk mode', async () => {
+    const user = userEvent.setup()
+    const { props } = renderMenu({ selectedBlockIds: SELECTION })
+
+    await user.click(screen.getByText(t('contextMenu.cycleTodoSelected')))
+
+    expect(props.onToggleTodo).toHaveBeenCalledTimes(SELECTION.length)
+    for (const id of SELECTION) {
+      expect(props.onToggleTodo).toHaveBeenCalledWith(id)
+    }
+  })
+
+  it('Priority cycle applies to every selected id in bulk mode', async () => {
+    const user = userEvent.setup()
+    const { props } = renderMenu({ selectedBlockIds: SELECTION })
+
+    await user.click(screen.getByText(t('contextMenu.cyclePrioritySelected')))
+
+    expect(props.onTogglePriority).toHaveBeenCalledTimes(SELECTION.length)
+    for (const id of SELECTION) {
+      expect(props.onTogglePriority).toHaveBeenCalledWith(id)
+    }
+  })
+
+  it('Move applies to every selected id in bulk mode', async () => {
+    const user = userEvent.setup()
+    const { props } = renderMenu({ selectedBlockIds: SELECTION })
+
+    await user.click(screen.getByText(t('contextMenu.moveUp')))
+
+    expect(props.onMoveUp).toHaveBeenCalledTimes(SELECTION.length)
+    for (const id of SELECTION) {
+      expect(props.onMoveUp).toHaveBeenCalledWith(id)
+    }
+  })
+
+  it('stays single-block when the right-clicked block is NOT in the selection', async () => {
+    const user = userEvent.setup()
+    // Selection of others; the menu opened on BLOCK_01 which is not selected.
+    const { props } = renderMenu({ selectedBlockIds: ['B2', 'B3'] })
+
+    // The single-block delete label is shown, not the "N selected" one.
+    expect(
+      screen.queryByText(t('contextMenu.deleteSelected', { count: 2 })),
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByText(t('contextMenu.delete')))
+
+    expect(props.onDelete).toHaveBeenCalledTimes(1)
+    expect(props.onDelete).toHaveBeenCalledWith('BLOCK_01')
+  })
+
+  it('stays single-block for a selection of exactly one block', async () => {
+    const user = userEvent.setup()
+    const { props } = renderMenu({ selectedBlockIds: ['BLOCK_01'] })
+
+    await user.click(screen.getByText(t('contextMenu.delete')))
+    expect(props.onDelete).toHaveBeenCalledWith('BLOCK_01')
+    expect(props.onDelete).toHaveBeenCalledTimes(1)
+  })
+})

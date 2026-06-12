@@ -13,6 +13,7 @@ import { dueDateColor, formatCompactDate, MONTH_SHORT } from '@/lib/date-utils'
 import { priorityColor } from '@/lib/priority-color'
 import { formatRepeatLabel } from '@/lib/repeat-utils'
 import { cn } from '@/lib/utils'
+import { useBlockStore } from '@/stores/blocks'
 
 /**
  * Display label for a priority level. UX-201b: priority levels are
@@ -179,6 +180,13 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
   const actionsZoomIn = useBlockActions().onZoomIn
   const zoomIn = onZoomIn ?? actionsZoomIn
 
+  // Fix 6 — when a multi-selection is active the row is in "select" mode: the
+  // per-row gutter checkbox is the only control that should show, so suppress
+  // the task checkbox here too (it's the one inline control that doubles as an
+  // action target). Bulk task-state changes go through the batch toolbar /
+  // context menu, which apply to the whole selection.
+  const hasSelection = useBlockStore((s) => s.selectedBlockIds.length > 0)
+
   // #217 C2 (remainder): relieve inline-control density on narrow viewports.
   // A dense block can carry priority + due + scheduled + repeat + N props +
   // attachments; on phones that wraps badly. Show only 2 inline property chips
@@ -284,25 +292,45 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
         </TooltipContent>
       </Tooltip>
 
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            className="task-marker flex-shrink-0 p-0.5 transition-colors focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
-            data-testid="task-marker"
-            onClick={(e) => {
-              e.stopPropagation()
-              onToggleTodo?.(blockId)
-            }}
-            aria-label={todoState ? t('block.taskCycle', { state: todoState }) : t('block.setTodo')}
-          >
-            <TaskCheckbox state={todoState} />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" sideOffset={4}>
-          {todoState ? t('block.todoCycleTip', { state: todoState }) : t('block.setTodoTip')}
-        </TooltipContent>
-      </Tooltip>
+      {/* Fix 6: in multiselect mode the task checkbox is suppressed on every
+          row (only the gutter select checkbox shows). */}
+      {!hasSelection && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                'task-marker flex-shrink-0 p-0.5 transition-colors focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center',
+                // Fix 5: a block with NO todo_state renders the EMPTY checkbox,
+                // which is a pure affordance ("set a task here"), not meaningful
+                // state. Showing it on every row at rest clutters the whole tree,
+                // so gate it behind the same per-block hover/active contract as
+                // the gutter buttons — hidden at rest, revealed only when the
+                // block is hovered / focus-within / `.block-active`. A block that
+                // DOES carry a todo_state keeps its checkbox always visible (the
+                // TODO/DOING/DONE/CANCELLED glyph IS meaningful state). On coarse
+                // pointers there is no hover and the long-press menu owns setting
+                // task state, so the empty checkbox stays hidden at rest there too.
+                !todoState &&
+                  'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100 [.block-active_&]:opacity-100',
+              )}
+              data-testid="task-marker"
+              onClick={(e) => {
+                e.stopPropagation()
+                onToggleTodo?.(blockId)
+              }}
+              aria-label={
+                todoState ? t('block.taskCycle', { state: todoState }) : t('block.setTodo')
+              }
+            >
+              <TaskCheckbox state={todoState} />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" sideOffset={4}>
+            {todoState ? t('block.todoCycleTip', { state: todoState }) : t('block.setTodoTip')}
+          </TooltipContent>
+        </Tooltip>
+      )}
 
       {priority && (
         <Tooltip>
