@@ -32,6 +32,30 @@ function isSuggestionPopupVisible(): boolean {
     : popup.offsetParent !== null
 }
 
+/**
+ * #907 — is an inline `{{query …}}` ghost-text hint currently on screen?
+ *
+ * The QueryHint extension (src/editor/extensions/query-hint.ts) renders its
+ * completion as a `.query-hint` widget decoration and accepts it on Tab via
+ * the editor's own ProseMirror `handleKeyDown`. But this block-level handler
+ * is attached capture-phase (see the `attach()` comment below), so it runs
+ * BEFORE ProseMirror and — with Tab-indent enabled — would dedent/indent the
+ * block before the hint plugin ever sees the Tab. Let Tab fall through while a
+ * hint is active so the ghost text is accepted instead. Mirrors the
+ * `isSuggestionPopupVisible()` guard but for the popup-less ghost hint.
+ *
+ * Crucially this gates ONLY Tab. Enter is never routed through here — the
+ * hint plugin doesn't render a `.suggestion-popup`, so `isSuggestionPopupVisible`
+ * stays false and Enter always reaches `onEnterSave`.
+ */
+function isQueryHintActive(): boolean {
+  const hint = document.querySelector('.query-hint') as HTMLElement | null
+  if (!hint || !hint.isConnected) return false
+  return typeof hint.checkVisibility === 'function'
+    ? hint.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+    : hint.offsetParent !== null
+}
+
 export interface DeleteBlockOpts {
   /**
    * Where to place the cursor when deletion focuses the PREVIOUS block
@@ -383,7 +407,11 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       //   2. The accessibility opt-out is OFF → restore Tab as the focus-
       //      navigation key for keyboard/AT users (indent stays on
       //      Ctrl/Cmd+Shift+Arrow). See `isTabIndentEnabled`.
-      if (event.key === 'Tab' && (isSuggestionPopupVisible() || !isTabIndentEnabled())) return
+      if (
+        event.key === 'Tab' &&
+        (isSuggestionPopupVisible() || isQueryHintActive() || !isTabIndentEnabled())
+      )
+        return
 
       handleBlockKeyDown(event, editor, {
         onFocusPrev,
