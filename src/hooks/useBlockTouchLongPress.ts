@@ -3,6 +3,29 @@ import { useCallback, useEffect, useRef } from 'react'
 export const LONG_PRESS_DELAY = 400
 export const LONG_PRESS_MOVE_THRESHOLD = 10
 
+/**
+ * #926 f2 — DOCUMENTED gesture precedence: long-press (this hook, 400 ms) vs
+ * drag (the @dnd-kit PointerSensor, 250 ms — see `useBlockDnD`). The two timers
+ * are independent, so we encode an explicit, deterministic precedence rather
+ * than let both fire:
+ *
+ *   1. ON THE DRAG HANDLE — the DRAG WINS. The sensor's 250 ms delay elapses
+ *      first; when the drag activates, `useSortable().isDragging` flips true and
+ *      the consumer (`SortableBlock`) immediately calls `clearLongPress()`,
+ *      cancelling the still-pending 400 ms timer so no context menu opens behind
+ *      the lift. Belt-and-suspenders: even if the timer somehow survives, its
+ *      callback re-checks `isDraggingRef.current` at the 400 ms mark and bails.
+ *
+ *   2. ELSEWHERE (block body / content, no drag activator) — the LONG-PRESS
+ *      WINS. No drag sensor is wired to those targets, so the 400 ms timer fires
+ *      uncontested and opens the context menu (which itself offers Indent /
+ *      Dedent / Move so touch users still get reorder + nesting — #926 f4).
+ *
+ * The single source of truth for "a drag is in progress" is `isDraggingRef`,
+ * read both eagerly (cancel-on-drag-start via `clearLongPress`) and lazily (the
+ * timer-callback guard). This is a pragmatic guard, not a full gesture arbiter.
+ */
+
 export interface UseBlockTouchLongPressOptions {
   openContextMenu: (x: number, y: number, linkUrl?: string) => void
   isDraggingRef: React.RefObject<boolean>
@@ -45,6 +68,10 @@ export function useBlockTouchLongPress({
       touchStartPos.current = { x: touch.clientX, y: touch.clientY }
       touchStartEvent.current = e
       longPressTimer.current = setTimeout(() => {
+        // #926 f2 (precedence guard 2/2): the lazy re-check. If a drag activated
+        // between touchstart and now (250 ms < 400 ms), the drag wins — bail
+        // without opening the menu. The eager cancel (`clearLongPress` on
+        // drag-start) is the primary path; this covers any timer that outraced it.
         if (!isDraggingRef.current) {
           // BUG-37: prevent the native text-select / magnifier that Android /
           // iOS WebViews trigger on long-press. Best-effort even on passive

@@ -269,6 +269,77 @@ describe('useBlockTouchLongPress', () => {
     unmount()
   })
 
+  // ── #926 f2: documented gesture precedence — DRAG WINS over long-press ──
+  // The drag sensor's 250 ms delay elapses before the 400 ms long-press timer.
+  // When the drag activates, the consumer calls `clearLongPress()` (the eager
+  // cancel path). This asserts that cancelling the PENDING timer at t≈250 ms
+  // prevents the context menu even after the full 400 ms would have elapsed —
+  // distinct from the lazy `isDraggingRef` re-check at the 400 ms mark.
+  it('drag activation cancels the pending long-press timer (drag wins — #926 f2)', () => {
+    const openContextMenu = vi.fn()
+    const isDraggingRef = { current: false }
+
+    const { result, unmount } = renderHook(() =>
+      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+    )
+
+    act(() => {
+      result.current.handleTouchStart({
+        touches: [{ clientX: 100, clientY: 200 }],
+      } as unknown as React.TouchEvent)
+    })
+
+    // Drag sensor activates at its 250 ms delay (< the 400 ms long-press).
+    act(() => {
+      vi.advanceTimersByTime(250)
+    })
+    expect(openContextMenu).not.toHaveBeenCalled() // timer still pending, hasn't fired
+
+    // Consumer's isDragging effect fires `clearLongPress()` on drag-start: the
+    // pending long-press timer is cancelled eagerly.
+    isDraggingRef.current = true
+    act(() => {
+      result.current.clearLongPress()
+    })
+
+    // Advance well past 400 ms: the cancelled timer must NOT open the menu.
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY)
+    })
+    expect(openContextMenu).not.toHaveBeenCalled()
+
+    unmount()
+  })
+
+  // ── #926 f2: the complementary case — ELSEWHERE the long-press WINS ──
+  // With no drag activator (block body), no drag ever activates, so the timer
+  // fires uncontested at 400 ms and opens the context menu (the touch path to
+  // Indent/Dedent/Move — #926 f4).
+  it('long-press wins when no drag activates (block body — #926 f2)', () => {
+    const openContextMenu = vi.fn()
+    const isDraggingRef = { current: false }
+
+    const { result, unmount } = renderHook(() =>
+      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+    )
+
+    act(() => {
+      result.current.handleTouchStart({
+        touches: [{ clientX: 300, clientY: 400 }],
+        target: document.createElement('div'),
+      } as unknown as React.TouchEvent)
+    })
+
+    // No drag activates: advance to the full long-press delay.
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY)
+    })
+
+    expect(openContextMenu).toHaveBeenCalledTimes(1)
+
+    unmount()
+  })
+
   it('handleContextMenu prevents default and opens context menu', () => {
     const openContextMenu = vi.fn()
     const isDraggingRef = { current: false }
