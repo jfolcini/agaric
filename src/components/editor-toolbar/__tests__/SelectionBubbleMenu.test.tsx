@@ -21,7 +21,6 @@
 
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TextSelection } from '@tiptap/pm/state'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -51,7 +50,7 @@ vi.mock('@tiptap/react/menus', () => ({
   }: {
     children: React.ReactNode
     shouldShow?: (props: {
-      state: { selection: { empty: boolean } | TextSelection }
+      state: { selection: { empty: boolean; node?: unknown } }
       editor: unknown
       element: HTMLElement
       view: unknown
@@ -65,16 +64,12 @@ vi.mock('@tiptap/react/menus', () => ({
     className?: string
     'data-testid'?: string
   }) => {
-    let fakeSelection: { empty: boolean } | TextSelection
-    if (bubbleMenuIsTextSelection) {
-      // `empty` is a getter-only on Selection.prototype, so shadow it with an
-      // own data property; the object still passes `instanceof TextSelection`.
-      const sel = Object.create(TextSelection.prototype) as TextSelection
-      Object.defineProperty(sel, 'empty', { value: bubbleMenuSelectionEmpty, configurable: true })
-      fakeSelection = sel
-    } else {
-      fakeSelection = { empty: bubbleMenuSelectionEmpty } // NodeSelection-like
-    }
+    // #924 — a NodeSelection carries a `node` property; a TextSelection /
+    // AllSelection does not. The component duck-types on that (module-copy-safe,
+    // unlike `instanceof TextSelection`).
+    const fakeSelection = bubbleMenuIsTextSelection
+      ? { empty: bubbleMenuSelectionEmpty }
+      : { empty: bubbleMenuSelectionEmpty, node: {} }
     const fakeProps = {
       state: { selection: fakeSelection },
       editor: {} as unknown,

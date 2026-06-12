@@ -16,7 +16,6 @@
  */
 
 import { getMarkRange, posToDOMRect } from '@tiptap/core'
-import { TextSelection } from '@tiptap/pm/state'
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
@@ -240,11 +239,15 @@ export function SelectionBubbleMenu({
     <BubbleMenu
       editor={editor}
       shouldShow={({ state: editorState }) =>
-        // #924 — only over a non-empty TEXT selection. A NodeSelection (a
-        // selected block-link/block-ref chip or image atom) is also "non-empty",
-        // but the mark toggles (Bold/Italic/…) are meaningless on an atom — so
-        // the mark bubble must not appear there.
-        editorState.selection instanceof TextSelection && !editorState.selection.empty
+        // #924 — show over a non-empty selection, EXCEPT a NodeSelection (a
+        // selected block-link/block-ref chip or image atom), where the mark
+        // toggles (Bold/Italic/…) are meaningless. Duck-type on the NodeSelection
+        // `node` property instead of `instanceof TextSelection`: ProseMirror's
+        // `@tiptap/pm/state` can resolve to a different module copy than the one
+        // the running editor uses, so `instanceof` is unreliable across the
+        // bundle (it silently hid the bubble for ALL text selections).
+        !editorState.selection.empty &&
+        !('node' in editorState.selection && editorState.selection.node)
       }
       role="toolbar"
       aria-label={t('toolbar.selectionFormatting')}
