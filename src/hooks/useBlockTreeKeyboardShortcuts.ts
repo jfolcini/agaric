@@ -44,8 +44,16 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
   selectedBlockIds: string[]
   hasChildrenSet: Set<string>
   blocks: Array<{ id: string }>
+  /**
+   * Visible block ids in rendered order (collapsed/zoomed filtering already
+   * applied — `collapsedVisible`, or the zoomed slice). Keyboard range-select
+   * (#922) steps through THIS list so Shift+Arrow matches what the user sees.
+   */
+  visibleIds: string[]
   toggleCollapse: (id: string) => void
   rawSelectAll: (ids: string[]) => void
+  /** Extend the block selection by one visible block (#922 — Shift+Arrow). */
+  extendSelection: (direction: 'up' | 'down', visibleIds: string[]) => void
   clearSelected: () => void
   handleFlush: () => string | null
   setFocused: (id: string | null) => void
@@ -72,8 +80,10 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     selectedBlockIds,
     hasChildrenSet,
     blocks,
+    visibleIds,
     toggleCollapse,
     rawSelectAll,
+    extendSelection,
     clearSelected,
     handleFlush,
     setFocused,
@@ -147,6 +157,43 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
   }, [focusedBlockId, selectedBlockIds.length, rawSelectAll, blocks, clearSelected])
+
+  // ── Keyboard shortcut: extend selection (#922 — Shift+Arrow) ────────
+  // Shift+ArrowDown / Shift+ArrowUp grow (or shrink) a contiguous block
+  // selection from a single selected block, the keyboard counterpart to
+  // Shift+Click. The built selection IS the same `selectedBlockIds` the
+  // batch-action toolbar + Ctrl/Shift+Click drive, so the toolbar lights up
+  // with no extra wiring.
+  //
+  // Only fires in BLOCK-SELECT mode: when a block is focused the editor is
+  // active and Shift+Arrow is the editor's own text selection — leave it to
+  // the browser (do not intercept, do not preventDefault).
+  //
+  // #713 ownership gate: each mounted tree (journal week/month) shares the
+  // GLOBAL selection but renders its OWN `visibleIds`. Only the tree whose
+  // store owns the anchoring selected block may extend (and preventDefault);
+  // a non-owning tree falls through so the chord isn't double-handled.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Editor active → browser owns Shift+Arrow text selection.
+      if (focusedBlockId) return
+      if (e.defaultPrevented) return
+      if (!e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return
+      const direction = e.key === 'ArrowDown' ? 'down' : e.key === 'ArrowUp' ? 'up' : null
+      if (direction === null) return
+      // Need a selection to anchor on (block-select mode entry point).
+      if (selectedBlockIds.length === 0) return
+      // #713 — only act when this tree's store owns the anchoring block (the
+      // last selected). Otherwise another tree owns the selection; fall
+      // through WITHOUT preventDefault so it isn't claimed here.
+      const anchorId = selectedBlockIds[selectedBlockIds.length - 1]
+      if (anchorId == null || !storeOwnsBlock(pageStore, anchorId)) return
+      e.preventDefault()
+      extendSelection(direction, visibleIds)
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [focusedBlockId, pageStore, selectedBlockIds, visibleIds, extendSelection])
 
   // ── Keyboard shortcuts: block cut / copy / paste (#913) ─────────────
   // Copy/cut serialize the SELECTION ROOTS (+ subtrees) to indented markdown

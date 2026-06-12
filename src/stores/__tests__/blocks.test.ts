@@ -86,4 +86,107 @@ describe('useBlockStore', () => {
       expect(useBlockStore.getState().selectedBlockIds).toEqual([])
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // keyboard range extension (#922 — Shift+Arrow)
+  // ---------------------------------------------------------------------------
+  describe('extendSelection (#922)', () => {
+    const visible = ['A', 'B', 'C', 'D']
+
+    beforeEach(() => {
+      useBlockStore.setState({
+        selectedBlockIds: [],
+        focusedBlockId: null,
+        selectionAnchorId: null,
+        selectionFocusId: null,
+      })
+    })
+
+    it('seeds the anchor from a single selected block and extends down', () => {
+      useBlockStore.setState({ selectedBlockIds: ['B'] })
+      useBlockStore.getState().extendSelection('down', visible)
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['B', 'C'])
+      expect(useBlockStore.getState().selectionAnchorId).toBe('B')
+      expect(useBlockStore.getState().selectionFocusId).toBe('C')
+    })
+
+    it('extends further down on a second press, keeping the anchor fixed', () => {
+      useBlockStore.setState({ selectedBlockIds: ['A'] })
+      const { extendSelection } = useBlockStore.getState()
+      extendSelection('down', visible)
+      extendSelection('down', visible)
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B', 'C'])
+      expect(useBlockStore.getState().selectionAnchorId).toBe('A')
+      expect(useBlockStore.getState().selectionFocusId).toBe('C')
+    })
+
+    it('shrinks back toward the anchor when the opposite direction is pressed', () => {
+      useBlockStore.setState({ selectedBlockIds: ['A'] })
+      const { extendSelection } = useBlockStore.getState()
+      extendSelection('down', visible) // A,B
+      extendSelection('down', visible) // A,B,C
+      extendSelection('up', visible) // back to A,B
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B'])
+      expect(useBlockStore.getState().selectionFocusId).toBe('B')
+    })
+
+    it('crosses the anchor — extending up past the start flips the range below→above', () => {
+      useBlockStore.setState({ selectedBlockIds: ['C'] })
+      const { extendSelection } = useBlockStore.getState()
+      extendSelection('up', visible) // anchor C, focus B → B,C
+      extendSelection('up', visible) // focus A → A,B,C
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B', 'C'])
+      expect(useBlockStore.getState().selectionAnchorId).toBe('C')
+      expect(useBlockStore.getState().selectionFocusId).toBe('A')
+    })
+
+    it('clamps at the bottom edge (no wrap, state unchanged)', () => {
+      useBlockStore.setState({ selectedBlockIds: ['D'] })
+      useBlockStore.getState().extendSelection('down', visible)
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['D'])
+    })
+
+    it('clamps at the top edge (no wrap, state unchanged)', () => {
+      useBlockStore.setState({ selectedBlockIds: ['A'] })
+      useBlockStore.getState().extendSelection('up', visible)
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A'])
+    })
+
+    it('is a no-op when there is no selection to anchor on', () => {
+      useBlockStore.getState().extendSelection('down', visible)
+      expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+    })
+
+    it('re-seeds the anchor after a toggle resets the keyboard range', () => {
+      useBlockStore.setState({ selectedBlockIds: ['A'] })
+      useBlockStore.getState().extendSelection('down', visible) // anchor A, focus B
+      // A discrete toggle clears the keyboard anchor.
+      useBlockStore.getState().toggleSelected('B') // now ['A'] (B removed)
+      expect(useBlockStore.getState().selectionAnchorId).toBeNull()
+      // Next Shift+Arrow re-seeds from the last selected (A).
+      useBlockStore.getState().extendSelection('down', visible)
+      expect(useBlockStore.getState().selectionAnchorId).toBe('A')
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B'])
+    })
+
+    it('setFocused / clearSelected / setSelected reset the keyboard anchor', () => {
+      useBlockStore.setState({ selectedBlockIds: ['A'] })
+      useBlockStore.getState().extendSelection('down', visible)
+      expect(useBlockStore.getState().selectionAnchorId).not.toBeNull()
+
+      useBlockStore.getState().clearSelected()
+      expect(useBlockStore.getState().selectionAnchorId).toBeNull()
+      expect(useBlockStore.getState().selectionFocusId).toBeNull()
+
+      useBlockStore.setState({ selectedBlockIds: ['B'] })
+      useBlockStore.getState().extendSelection('down', visible)
+      useBlockStore.getState().setSelected(['C'])
+      expect(useBlockStore.getState().selectionAnchorId).toBeNull()
+
+      useBlockStore.setState({ selectedBlockIds: ['B'] })
+      useBlockStore.getState().extendSelection('down', visible)
+      useBlockStore.getState().setFocused('B')
+      expect(useBlockStore.getState().selectionAnchorId).toBeNull()
+    })
+  })
 })

@@ -79,6 +79,8 @@ export const shortcuts: Record<string, string> = {
   'keyboard.condition.emptyDaily': 'When daily page is empty',
   'keyboard.toggleBlockSelection': 'Toggle block selection',
   'keyboard.rangeSelectBlocks': 'Range select blocks',
+  'keyboard.extendSelectionDown': 'Extend block selection down',
+  'keyboard.extendSelectionUp': 'Extend block selection up',
   'keyboard.selectAllBlocks': 'Select all blocks',
   'keyboard.clearSelection': 'Clear selection',
   'keyboard.copyBlocks': 'Copy selected blocks (as markdown outline)',

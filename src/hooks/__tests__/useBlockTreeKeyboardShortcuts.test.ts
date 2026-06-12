@@ -66,8 +66,10 @@ function makeOptions(
     selectedBlockIds: [],
     hasChildrenSet: new Set(['BLOCK_1']),
     blocks: [{ id: 'BLOCK_1' }, { id: 'BLOCK_2' }],
+    visibleIds: ['BLOCK_1', 'BLOCK_2'],
     toggleCollapse: vi.fn(),
     rawSelectAll: vi.fn(),
+    extendSelection: vi.fn(),
     clearSelected: vi.fn(),
     handleFlush: vi.fn(() => null),
     setFocused: vi.fn(),
@@ -164,6 +166,115 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       fireEvent.keyDown(document, { key: 'Escape' })
 
       expect(opts.clearSelected).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('Keyboard range-select (#922 — Shift+Arrow)', () => {
+    /** Three owned, visible blocks; a single block pre-selected as the anchor. */
+    function selectOpts(overrides: Partial<UseBlockTreeKeyboardShortcutsOptions> = {}) {
+      return makeOptions({
+        focusedBlockId: null,
+        pageStore: makePageStore(['B1', 'B2', 'B3']),
+        selectedBlockIds: ['B1'],
+        blocks: [{ id: 'B1' }, { id: 'B2' }, { id: 'B3' }],
+        visibleIds: ['B1', 'B2', 'B3'],
+        ...overrides,
+      })
+    }
+
+    it('Shift+ArrowDown extends the selection down through the visible list', () => {
+      const opts = selectOpts()
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      const e = new KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+      document.dispatchEvent(e)
+
+      expect(opts.extendSelection).toHaveBeenCalledWith('down', ['B1', 'B2', 'B3'])
+      expect(e.defaultPrevented).toBe(true)
+    })
+
+    it('Shift+ArrowUp extends the selection up (shrink/grow handled by the store)', () => {
+      const opts = selectOpts({ selectedBlockIds: ['B3'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      const e = new KeyboardEvent('keydown', {
+        key: 'ArrowUp',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+      document.dispatchEvent(e)
+
+      expect(opts.extendSelection).toHaveBeenCalledWith('up', ['B1', 'B2', 'B3'])
+      expect(e.defaultPrevented).toBe(true)
+    })
+
+    it('does nothing when an editor is focused (browser owns Shift+Arrow)', () => {
+      const opts = selectOpts({ focusedBlockId: 'B1' })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      const e = new KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+      document.dispatchEvent(e)
+
+      expect(opts.extendSelection).not.toHaveBeenCalled()
+      expect(e.defaultPrevented).toBe(false)
+    })
+
+    it('does nothing with no active selection (no anchor to extend from)', () => {
+      const opts = selectOpts({ selectedBlockIds: [] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'ArrowDown', shiftKey: true })
+
+      expect(opts.extendSelection).not.toHaveBeenCalled()
+    })
+
+    it('ignores a bare ArrowDown without Shift', () => {
+      const opts = selectOpts()
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'ArrowDown' })
+
+      expect(opts.extendSelection).not.toHaveBeenCalled()
+    })
+
+    it('ignores Shift+Arrow with an extra modifier (Ctrl/Meta/Alt)', () => {
+      const opts = selectOpts()
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'ArrowDown', shiftKey: true, ctrlKey: true })
+      fireEvent.keyDown(document, { key: 'ArrowDown', shiftKey: true, metaKey: true })
+      fireEvent.keyDown(document, { key: 'ArrowDown', shiftKey: true, altKey: true })
+
+      expect(opts.extendSelection).not.toHaveBeenCalled()
+    })
+
+    it('#713 — only the tree owning the anchoring selection acts (no double-extend)', () => {
+      // Selection lives in another store; this tree does NOT own 'OTHER'.
+      const opts = selectOpts({ selectedBlockIds: ['OTHER'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      const e = new KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+      document.dispatchEvent(e)
+
+      expect(opts.extendSelection).not.toHaveBeenCalled()
+      // Non-owning tree must not swallow the chord.
+      expect(e.defaultPrevented).toBe(false)
     })
   })
 
