@@ -191,10 +191,10 @@ test.describe('Block-level undo/redo', () => {
       .toBe(indentedPadding)
   })
 
-  // FIXME(#958): undo of a dedent fires the "Undone" toast but does NOT re-nest the
-  // block in place (paddingLeft stays 0). The sibling indent-undo (de-nest) passes, so
-  // this is re-nest-on-undo specific. Repro kept executable; needs a trace dig to
-  // classify tauri-mock revert vs production reverse-apply refresh.
+  // FIXME(#958): even after the tauri-mock move undo/redo re-slot+renumber fix (this
+  // branch), the keyboard indent→dedent→undo sequence still doesn't re-nest in place in
+  // e2e (depth stays 0). The mock-level unit test (undo-move.test.ts) passes, so the
+  // residual cause is in the full keyboard-dedent→undo flow and needs a trace dig.
   test.fixme('undo a dedent restores the nested depth in place (no reopen)', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
@@ -247,10 +247,10 @@ test.describe('Block-level undo/redo', () => {
       .toBe(indentedPadding)
   })
 
-  // FIXME(#958): same class as the dedent case — the "Undone" toast fires but the
-  // reordered blocks do NOT revert in place (refreshAfterUndoRedo doesn't reproject
-  // sibling ORDER). Only the indent-undo (single-block depth) refreshes. This is the
-  // "possibly-stale refresh" the #922 f5 finding flagged; repro kept executable.
+  // FIXME(#958): the tauri-mock move undo/redo re-slot+renumber fix (this branch) makes
+  // the mock-level reorder undo correct (undo-move.test.ts), but this e2e wasn't
+  // re-confirmed green end-to-end; kept fixme'd with its sibling dedent case until the
+  // full keyboard-driven flow is traced.
   test.fixme('undo/redo a move reverts block order in place (no reopen)', async ({ page }) => {
     // Quick Notes has exactly 2 blocks — the simplest, most reliable move case.
     await openPage(page, 'Quick Notes')
