@@ -114,6 +114,10 @@ export const TagRef = Node.create<TagRefOptions>({
       const clickHandler = (event: MouseEvent) => {
         const onClick = options.onClick
         if (!onClick) return
+        // #924 — match block-link / block-ref: preventDefault as well as
+        // stopPropagation so the click navigates without ProseMirror also
+        // placing the caret inside the chip.
+        event.preventDefault()
         event.stopPropagation()
         onClick(currentId)
       }

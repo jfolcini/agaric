@@ -3,7 +3,9 @@
  *
  * Hosts the 5 mark toggles (Bold, Italic, Code, Strike, Highlight) plus the
  * External Link button + popover. Visibility predicate: shows only when the
- * editor selection is non-empty (via TipTap's `shouldShow`).
+ * editor selection is a non-empty TEXT selection (via TipTap's `shouldShow`);
+ * it stays hidden over a NodeSelection (chips / image atoms) where the mark
+ * toggles would be meaningless (#924).
  *
  * Hoisted out of FormattingToolbar (PEND-33 Layer A) — every action in this
  * group requires a selection to be meaningful, so a contextual hover bar is
@@ -236,7 +238,17 @@ export function SelectionBubbleMenu({
   return (
     <BubbleMenu
       editor={editor}
-      shouldShow={({ state: editorState }) => !editorState.selection.empty}
+      shouldShow={({ state: editorState }) =>
+        // #924 — show over a non-empty selection, EXCEPT a NodeSelection (a
+        // selected block-link/block-ref chip or image atom), where the mark
+        // toggles (Bold/Italic/…) are meaningless. Duck-type on the NodeSelection
+        // `node` property instead of `instanceof TextSelection`: ProseMirror's
+        // `@tiptap/pm/state` can resolve to a different module copy than the one
+        // the running editor uses, so `instanceof` is unreliable across the
+        // bundle (it silently hid the bubble for ALL text selections).
+        !editorState.selection.empty &&
+        !('node' in editorState.selection && editorState.selection.node)
+      }
       role="toolbar"
       aria-label={t('toolbar.selectionFormatting')}
       aria-controls={blockId ? `editor-${blockId}` : undefined}
