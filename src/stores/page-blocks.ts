@@ -715,6 +715,12 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
 
       // #400: `newIndex` is a 0-based sibling slot among the block's OTHER
       // same-parent children. A reorder to the block's current slot is a no-op.
+      //
+      // #928 (f6): the two bases coincide at the block's own slot even though
+      // they count differently — `siblingSlot` returns the index INCLUDING the
+      // block itself, while `newIndex` is the backend slot-basis EXCLUDING self.
+      // Dropping a block onto its own position yields the same count whether
+      // self is counted before it or excluded, so equality here is exact.
       const currentSlot = siblingSlot(blocks, block)
       if (newIndex === currentSlot) return
 

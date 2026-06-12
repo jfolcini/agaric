@@ -611,3 +611,152 @@ async fn conformance_fixtures_match_backend() {
         run_fixture(path).await;
     }
 }
+
+/// #928 f7 — FE-`newIndex` ↔ engine-clamp parity at the sibling-group TAIL.
+///
+/// The engine's `move_block_impl` (`src/loro/engine.rs`) clamps a SAME-PARENT
+/// (already-child) move's slot to `count - 1`: the node vacates its own slot
+/// first, so the addressable range among the OTHER children shrinks by one.
+/// The FE replicates the symmetric slot math separately — `moveDown`
+/// (`src/stores/page-blocks.ts:1233`) emits `newIndex = sibIndex + 1`, which
+/// for the LAST sibling lands one past the shrunk range. Nothing cross-checks
+/// that the FE-emitted `newIndex` and the engine clamp agree at the tail.
+///
+/// This drives the SAME engine path production runs (seed → `dispatch_op` →
+/// foreground engine apply + dense reproject → settle) for a same-parent group
+/// `S1 > {A, B, C}` and pins:
+///   1. `move_block(C, S1, 0)` — last child to the HEAD (slot 0, no clamp).
+///   2. `move_block(A, S1, 2)` — A to the TAIL using the exact `sibIndex + 1`
+///      basis `moveDown` emits for the last position (3 children, A vacates
+///      slot 0 ⇒ 2 others ⇒ engine clamps slot 2 → `count - 1 = 1`… i.e. the
+///      tail of the remaining group, NOT out of range / panic / a gap).
+/// After settle, asserts the engine placed C at the head and A at the last
+/// slot, and that the sibling group is dense 1-based with no duplicates.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_same_parent_tail_clamp_matches_fe_new_index() {
+    // 26-char ids so `seed_label_to_id` / `apply_op` treat them as literal ids.
+    let s1 = seed_label_to_id("S1");
+    let a = seed_label_to_id("BA");
+    let b = seed_label_to_id("BB");
+    let c = seed_label_to_id("BC");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Install the process-global engine so ops route through the production
+    // `apply_*_via_loro` ENGINE path (dense reproject), not the SQL-only
+    // fallback. `registry.clear()` gives this test a fresh per-space tree.
+    let state = crate::loro::shared::install_for_test();
+    state.registry.clear();
+
+    // Seed S1 > {A, B, C} into BOTH SQL and the engine tree (parent-first so the
+    // engine's parent-before-child requirement holds), then scope to one space.
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+        json!({"id": "BB", "block_type": "content", "content": "B",    "parent_id": "S1", "position": 2}),
+        json!({"id": "BC", "block_type": "content", "content": "C",    "parent_id": "S1", "position": 3}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    // Read the settled dense 1-based rank for each child of S1 from the DB
+    // (the engine reproject writes `blocks.position`). Returns (parent, pos).
+    async fn child_pos(pool: &SqlitePool, id: &str) -> (Option<String>, Option<i64>) {
+        let row = sqlx::query_as::<_, (Option<String>, Option<i64>)>(
+            "SELECT parent_id, position FROM blocks WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        (row.0, row.1)
+    }
+
+    // 1. Move LAST child C to the HEAD (slot 0 — no clamp engages). Expected
+    //    settled order: C, A, B → ranks C=1, A=2, B=3.
+    apply_op(
+        &pool,
+        &mat,
+        &json!({"command": "move_block", "args": {"blockId": "BC", "newParentId": "S1", "newIndex": 0}}),
+    )
+    .await;
+
+    {
+        let (cp, cpos) = child_pos(&pool, &c).await;
+        let (_, apos) = child_pos(&pool, &a).await;
+        let (_, bpos) = child_pos(&pool, &b).await;
+        assert_eq!(cp.as_deref(), Some(s1.as_str()), "C stays under S1");
+        assert_eq!(cpos, Some(1), "C moved to slot 0 ⇒ dense head rank 1");
+        assert_eq!(apos, Some(2), "A slides to rank 2 after C jumps the head");
+        assert_eq!(bpos, Some(3), "B slides to rank 3");
+    }
+
+    // 2. Move A to the TAIL with the exact FE `moveDown` last-position basis:
+    //    `newIndex = sibIndex + 1`. Group is now [C, A, B]; A is at sibIndex 1,
+    //    so the next slot is 2. A vacates its own slot first (already-child) ⇒
+    //    only {C, B} remain addressable (count - 1 = 1), so the engine CLAMPS
+    //    slot 2 → the last remaining slot. A must land at the TAIL, not out of
+    //    range / panic / a gap. Expected settled order: C, B, A.
+    apply_op(
+        &pool,
+        &mat,
+        &json!({"command": "move_block", "args": {"blockId": "BA", "newParentId": "S1", "newIndex": 2}}),
+    )
+    .await;
+
+    let (cp, cpos) = child_pos(&pool, &c).await;
+    let (bp, bpos) = child_pos(&pool, &b).await;
+    let (ap, apos) = child_pos(&pool, &a).await;
+
+    // All three remain children of S1 (no reparent, no orphan).
+    assert_eq!(cp.as_deref(), Some(s1.as_str()), "C stays under S1");
+    assert_eq!(bp.as_deref(), Some(s1.as_str()), "B stays under S1");
+    assert_eq!(ap.as_deref(), Some(s1.as_str()), "A stays under S1");
+
+    // A clamped to the LAST slot — the engine did NOT honor the raw `newIndex`
+    // of 2 against the FULL count (which would be a gap / past-the-end), it
+    // clamped to `count - 1` so A sits at the dense tail.
+    assert_eq!(cpos, Some(1), "C remains at the head (rank 1)");
+    assert_eq!(bpos, Some(2), "B slides up to rank 2 after A vacates");
+    assert_eq!(
+        apos,
+        Some(3),
+        "A clamped to the TAIL (rank 3 of 3) — FE newIndex 2 == engine clamp"
+    );
+
+    // Dense 1-based with NO duplicates / NO gaps across the whole group.
+    let mut ranks = [cpos, apos, bpos]
+        .into_iter()
+        .map(|p| p.expect("every child has a settled position"))
+        .collect::<Vec<_>>();
+    ranks.sort_unstable();
+    assert_eq!(
+        ranks,
+        vec![1, 2, 3],
+        "sibling group must be dense 1-based {{1,2,3}} with no duplicate / out-of-range rank after the tail clamp",
+    );
+
+    // ENGINE-PATH GUARD: A is present in the per-space engine tree, proving the
+    // moves ran the production engine path (clamp + reproject), not the
+    // SQL-only fallback (which never clamps and never touches the engine).
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        assert!(
+            guard
+                .engine_mut()
+                .read_block(&a)
+                .expect("read_block")
+                .is_some(),
+            "moved block A absent from the engine tree — the move took the SQL-only FALLBACK, not the engine clamp path",
+        );
+        drop(guard);
+    }
+}
