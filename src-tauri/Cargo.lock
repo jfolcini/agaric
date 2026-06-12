@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "agaric"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "aho-corasick",
  "async-trait",
