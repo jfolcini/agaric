@@ -391,20 +391,21 @@ function paragraphStartsWithAmbiguousSyntax(block: ParagraphNode): boolean {
   if (!block.content) return false
   const firstText = block.content.find((n): n is TextNode => n.type === 'text')
   if (!firstText) return false
-  if (/^#{1,6} /.test(firstText.text)) return true
-  if (firstText.text.startsWith('```')) return true
-  // #898: leading block markers reparse a *paragraph* into a different block
-  // kind, so a paragraph carrying one is structurally ambiguous on round-trip
-  // and must be excluded from doc→text→doc structural-equality properties:
-  //   `>`  → blockquote        (the `>` char entered the alphabet with `<u>`)
-  //   `N. ` → ordered list
-  //   `|`  → table row
-  // The fixed-point / idempotence properties (which compare serializer output,
-  // not structure) still exercise these — they just stabilise rather than
-  // round-trip the original block kind.
-  if (firstText.text.startsWith('>')) return true
-  if (/^\d+\. /.test(firstText.text)) return true
-  if (firstText.text.startsWith('|')) return true
+  // #984: a leading run of mark delimiters (`==` highlight, `~~` strike) can form
+  // a degenerate/empty pair (e.g. `====# a`) that collapses on round-trip, exposing
+  // a following block marker (`# a` → heading). Strip such a run first so these
+  // reparse-into-a-different-block cases are flagged. (No leading run → unchanged.)
+  const lead = firstText.text.replace(/^[=~]+/, '')
+  // #898: leading block markers reparse a *paragraph* into a different block kind
+  // (heading / fenced code / blockquote / ordered list / table row), so a paragraph
+  // carrying one is structurally ambiguous on round-trip and must be excluded from
+  // doc→text→doc structural-equality properties. The fixed-point / idempotence
+  // properties (which compare serializer output, not structure) still exercise them.
+  if (/^#{1,6} /.test(lead)) return true
+  if (lead.startsWith('```')) return true
+  if (lead.startsWith('>')) return true
+  if (/^\d+\. /.test(lead)) return true
+  if (lead.startsWith('|')) return true
   return false
 }
 
