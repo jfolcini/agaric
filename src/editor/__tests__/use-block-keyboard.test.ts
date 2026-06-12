@@ -1091,6 +1091,67 @@ describe('useBlockKeyboard — beforeinput fallback (#915)', () => {
     expect(callbacks._calls['onEnterSave']).toBeUndefined()
     cleanup()
   })
+
+  // #925 f1 — the Gboard (Android) path: a Backspace/Enter arrives as a keydown
+  // with `keyCode === 229` (the IME sentinel). `handleKeyDown` must BAIL on that
+  // keydown (no callback, no preventDefault) so it is the FOLLOWING `beforeinput`
+  // — which carries a reliable semantic `inputType` — that drives the structural
+  // delete/merge/split. These tests assert both halves of the documented
+  // contract: keydown swallowed, beforeinput acts.
+  function fireKeydown(target: HTMLElement, key: string, extra?: KeyboardEventInit) {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra })
+    const preventDefaultSpy = vi.spyOn(event, 'preventDefault')
+    target.dispatchEvent(event)
+    return preventDefaultSpy
+  }
+
+  it('keyCode-229 Backspace keydown is swallowed; beforeinput drives the delete (empty block)', () => {
+    const { callbacks, dom, cleanup } = setup()
+    const container = dom.parentElement as HTMLElement
+
+    // 1. The Gboard keydown (keyCode 229) bails before KEY_RULES run: no
+    //    callback fires and the event is NOT preventDefault-ed (so the browser
+    //    still emits the matching `beforeinput`).
+    const keydownSpy = fireKeydown(container, 'Backspace', { keyCode: 229 })
+    expect(callbacks._calls['onDeleteBlock']).toBeUndefined()
+    expect(keydownSpy).not.toHaveBeenCalled()
+
+    // 2. The follow-up beforeinput (deleteContentBackward) is what actually
+    //    drives the block delete on an empty block.
+    const beforeInputSpy = fireBeforeInput(dom, 'deleteContentBackward')
+    expect(callbacks._calls['onDeleteBlock']).toBe(1)
+    expect(beforeInputSpy).toHaveBeenCalled()
+    cleanup()
+  })
+
+  it('keyCode-229 Backspace keydown is swallowed; beforeinput drives the merge (start of non-empty block)', () => {
+    const { editor, callbacks, dom, cleanup } = setup('hello')
+    editor.commands.setTextSelection(1) // caret at the very start
+    const container = dom.parentElement as HTMLElement
+
+    const keydownSpy = fireKeydown(container, 'Backspace', { keyCode: 229 })
+    expect(callbacks._calls['onMergeWithPrev']).toBeUndefined()
+    expect(keydownSpy).not.toHaveBeenCalled()
+
+    const beforeInputSpy = fireBeforeInput(dom, 'deleteContentBackward')
+    expect(callbacks._calls['onMergeWithPrev']).toBe(1)
+    expect(beforeInputSpy).toHaveBeenCalled()
+    cleanup()
+  })
+
+  it('keyCode-229 Enter keydown is swallowed; beforeinput drives the split (insertParagraph)', () => {
+    const { callbacks, dom, cleanup } = setup()
+    const container = dom.parentElement as HTMLElement
+
+    const keydownSpy = fireKeydown(container, 'Enter', { keyCode: 229 })
+    expect(callbacks._calls['onEnterSave']).toBeUndefined()
+    expect(keydownSpy).not.toHaveBeenCalled()
+
+    const beforeInputSpy = fireBeforeInput(dom, 'insertParagraph')
+    expect(callbacks._calls['onEnterSave']).toBe(1)
+    expect(beforeInputSpy).toHaveBeenCalled()
+    cleanup()
+  })
 })
 
 // -- #725: Enter/Backspace inside code blocks and tables ------------------------
