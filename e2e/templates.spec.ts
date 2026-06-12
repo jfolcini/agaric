@@ -54,23 +54,16 @@ async function openKebabMenu(page: import('@playwright/test').Page) {
  * Open the template picker via the /template slash command and return its
  * dialog locator.
  *
- * The previous pattern — type `template`, then click the TEMPLATE
- * suggestion-list item — was unreliable under parallel load. The slash
- * extension's `AUTO_EXEC_DELAY_MS = 200ms` single-match auto-execute timer
- * (see `src/editor/extensions/slash-command.ts:23`) reliably fires for a
- * single-match query like `template`. The auto-exec dispatches
- * `ctx.openTemplatePicker()` (`src/hooks/useBlockSlashCommands/`) which
- * opens the dialog AND closes the suggestion popover. The follow-up
- * `.click({ force: true })` on the suggestion item then races the timer:
- * if auto-exec fires first the click target is gone, Playwright keeps
- * waiting for the locator until the 30s test timeout. force:true does NOT
- * bypass the locator's existence wait — only the actionability check.
- *
- * Mirroring real user behaviour (and the existing auto-exec UX) is more
- * deterministic — wait for the dialog the timer opens, no click race.
+ * Types `/template`, then presses Enter to select the single match (#924
+ * removed the un-cued 200ms auto-execute, so selection is now always explicit).
+ * Selecting the TEMPLATE command dispatches `ctx.openTemplatePicker()`, which
+ * opens the dialog — we then wait for it.
  */
 async function openTemplatePicker(page: import('@playwright/test').Page) {
   await typeSlashCommand(page, 'template')
+  // #924 — slash commands no longer auto-execute; select the single match
+  // explicitly (the un-cued 200ms auto-fire was removed).
+  await page.keyboard.press('Enter')
   const dialog = activeRoleDialog(page)
   await expect(dialog).toBeVisible({ timeout: 5000 })
   return dialog

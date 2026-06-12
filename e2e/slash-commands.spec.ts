@@ -31,9 +31,9 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 //
-// The canonical race-free `typeSlashCommand` helper lives in `./helpers` and
-// is imported above. See the JSDoc there for the split-keystroke rationale
-// (it avoids the slash-extension's 200ms single-match auto-execute timer).
+// The canonical `typeSlashCommand` helper lives in `./helpers` and is imported
+// above. Slash commands NEVER auto-fire: selection is always explicit (Enter or
+// click), so each test below presses Enter / clicks the desired suggestion.
 
 // ===========================================================================
 // 1. Slash menu basics
