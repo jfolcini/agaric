@@ -39,7 +39,13 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockKeyboar
     ],
     rovingEditor: {
       editor: null as null,
-      mount: vi.fn(),
+      // #976 f22 — `mount` updates `activeBlockId` to mirror the real roving
+      // editor, so the post-merge cursor guard (which checks
+      // `activeBlockId === <merge target>`) behaves as it does in production.
+      activeBlockId: null as string | null,
+      mount: vi.fn(function (this: { activeBlockId: string | null }, id: string) {
+        this.activeBlockId = id
+      }),
       unmount: vi.fn(() => null as string | null),
       getMarkdown: vi.fn(() => null as string | null),
       splitAtCaret: vi.fn(() => null as { before: string; after: string } | null),
@@ -714,6 +720,55 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
         })
 
         expect(setTextSelection).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // ----------------------------------------------------------------------
+    // #976 f22: if the user arrow-navigates before the 0ms post-merge timer
+    // fires, the roving editor has remounted onto a DIFFERENT block. The
+    // deferred setTextSelection must be a no-op so the caret is never placed
+    // in the wrong block. The guard keys on `activeBlockId === <merge target>`.
+    // ----------------------------------------------------------------------
+    it('does NOT call setTextSelection when focus moved to another block before the timer fires', async () => {
+      vi.useFakeTimers()
+      try {
+        const setTextSelection = vi.fn()
+        const fakeEditor = {
+          state: { doc: { content: { size: 20 } } },
+          commands: { setTextSelection },
+        } as unknown as NonNullable<
+          Parameters<typeof useBlockKeyboardHandlers>[0]['rovingEditor']['editor']
+        >
+
+        const params = makeDefaultParams()
+        params.rovingEditor.unmount = vi.fn(() => 'Beta')
+        ;(params.rovingEditor as { editor: unknown }).editor = fakeEditor
+
+        const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+        await act(async () => {
+          // Merge 'B' into 'A' — the post-merge mount sets activeBlockId = 'A'
+          // and the deferred caret targets 'A'.
+          await result.current.handleMergeWithPrev()
+        })
+
+        // Simulate an arrow-navigation that remounts the editor onto a DIFFERENT
+        // block before the queued 0ms timer runs — exactly the race the guard
+        // protects against (handleFocusNext/Prev would do this).
+        act(() => {
+          result.current.handleFocusNext()
+        })
+        expect(params.rovingEditor.activeBlockId).toBe('C')
+
+        // Flush the queued timer. Because activeBlockId ('C') no longer matches
+        // the merge target ('A'), the cursor placement must be skipped.
+        act(() => {
+          vi.advanceTimersByTime(10)
+        })
+
+        expect(setTextSelection).not.toHaveBeenCalled()
       } finally {
         vi.useRealTimers()
       }

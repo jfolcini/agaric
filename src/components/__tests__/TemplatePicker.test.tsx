@@ -48,6 +48,18 @@ describe('TemplatePicker', () => {
     expect(screen.getByText('Empty title template')).toBeInTheDocument()
   })
 
+  it('#976 f23 — header label vertical padding matches the menu items (py-1.5)', () => {
+    render(<TemplatePicker templatePages={templatePages} onSelect={onSelect} onClose={onClose} />)
+
+    // Header label and the option buttons must share the same vertical rhythm
+    // (py-1.5), matching the `command.tsx` group-heading precedent.
+    const header = screen.getByText('Select a template')
+    expect(header).toHaveClass('py-1.5')
+
+    const firstOption = screen.getByText('Meeting Notes').closest('button')
+    expect(firstOption).toHaveClass('py-1.5')
+  })
+
   it('calls onSelect when a template is clicked', async () => {
     const user = userEvent.setup()
 

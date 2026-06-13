@@ -93,6 +93,17 @@ describe('BlockDatePicker', () => {
     expect(dialog).toBeInTheDocument()
   })
 
+  it('#976 f24 — date input uses the shared focus-ring-soft utility, not inline !important overrides', () => {
+    render(<BlockDatePicker onSelect={onSelect} onClose={onClose} />)
+
+    const input = screen.getByRole('textbox', { name: 'Type a date' })
+    // The soft focus treatment is now formalized in `focus-ring-soft`
+    // (index.css). The component must consume that shared class instead of the
+    // previous inline `focus-visible:!border-ring/40 ...` overrides.
+    expect(input).toHaveClass('focus-ring-soft')
+    expect(input.className).not.toContain('focus-visible:!')
+  })
+
   // ── 2. Escape key closes picker (via Radix) ────────────────────────
 
   it('calls onClose when Escape is pressed (Radix onOpenChange)', async () => {

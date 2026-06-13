@@ -1541,6 +1541,20 @@
   }
 }
 
+/* #976 f24: soft focus treatment for date pickers. The default `focus-ring-visible`
+ * (border-ring + 3px ring-ring/50) reads as an error/"alarm" inside the red theme
+ * (ring ≈ destructive). This soft variant — a low-opacity border + a 2px
+ * low-opacity ring — keeps a clear focus cue without the alarm. Formalized from
+ * the inline `!important` overrides that previously lived on `BlockDatePicker`'s
+ * Input. The `!important` is intentional and CENTRALIZED here: it overrides the
+ * `focus-ring-visible` that `Input` always applies internally, so consumers add a
+ * single class instead of repeating three `!`-prefixed utilities at the call site. */
+@utility focus-ring-soft {
+  &:focus-visible {
+    @apply !border-ring/40 !ring-2 !ring-ring/30;
+  }
+}
+
 /* UX-929 F4: single selection/focus recipe for block surfaces. Previously the
  * keyboard-focus / selection feedback was spelled three different ways
  * (`ring-2 ring-primary/50 bg-primary/5` on StaticBlock/EditableBlock vs

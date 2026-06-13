@@ -71,9 +71,11 @@ export function BlockDatePicker({
               type="text"
               // Tame the focus treatment: the default red `border-ring` + 3px
               // `ring-ring/50` doubles up into something that reads as an error
-              // in the red theme (ring ≈ destructive). A soft border + a 2px
-              // low-opacity ring keeps a clear focus cue without the alarm.
-              className="w-full focus-visible:!border-ring/40 focus-visible:!ring-2 focus-visible:!ring-ring/30"
+              // in the red theme (ring ≈ destructive). The shared
+              // `focus-ring-soft` utility (index.css, #976 f24) keeps a clear
+              // focus cue without the alarm — replacing the inline `!important`
+              // overrides this previously inlined.
+              className="w-full focus-ring-soft"
               placeholder={t('dateChip.placeholder')}
               value={dateTextInput}
               onChange={(e) => {
