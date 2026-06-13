@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { t } from '@/lib/i18n'
 
 // Mock SortableBlock
 vi.mock('../SortableBlock', () => ({
@@ -115,6 +116,31 @@ describe('BlockListRenderer', () => {
     )
 
     expect(screen.getByTestId('empty-state')).toBeInTheDocument()
+  })
+
+  // #976 finding 6 — when `rootParentId` is a non-null (truthy) ULID, the
+  // empty state renders the `blockTree.emptyPage` message (the zoomed-in
+  // "creating first block" affordance), NOT the page-root `noBlocks` copy.
+  // The existing test above asserts only the empty-state PRESENCE for this
+  // branch; here we pin the actual translated message text so a future copy
+  // swap between the two branches is caught.
+  it('renders the emptyPage message when rootParentId is a non-null ULID', () => {
+    render(
+      <BlockListRenderer
+        {...makeProps({
+          visibleItems: [],
+          blocks: [],
+          loading: false,
+          rootParentId: '00000000000000000000PAGE01',
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('empty-state-message')).toHaveTextContent(t('blockTree.emptyPage'))
+    // The richer page-root affordances (icon + slash-command hint) are absent
+    // in this branch — only the bare message renders.
+    expect(screen.queryByTestId('empty-state-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('empty-state-description')).not.toBeInTheDocument()
   })
 
   // UX-929 F7: the page-root empty state (rootParentId falsy → `noBlocks`)

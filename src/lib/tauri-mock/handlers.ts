@@ -38,6 +38,20 @@ type Handler = (args: unknown) => unknown
 // `returnEmptyArray` for it crashes consumers that read `response.items`.
 const returnNull: Handler = () => null
 const returnUndefined: Handler = () => undefined
+
+// In-memory system clipboard for the browser/e2e harness. The real
+// `src/lib/clipboard.ts` prefers the Tauri clipboard plugin over
+// `navigator.clipboard`, so block copy/cut/paste round-trips through these
+// `plugin:clipboard-manager|write_text` / `read_text` IPCs — NOT navigator.
+// Persisting the text here (instead of a `write_text` no-op + unhandled
+// `read_text`) lets e2e drive the genuine copy→paste pipeline through the
+// production clipboard lib. (#976 finding 1 testability.)
+let mockClipboardText = ''
+const clipboardWriteText: Handler = (args) => {
+  mockClipboardText = ((args as Record<string, unknown>)['text'] as string | undefined) ?? ''
+  return null
+}
+const clipboardReadText: Handler = () => mockClipboardText
 const returnEmptyArray: Handler = () => []
 const returnEmptyPage: Handler = () => ({
   items: [],
@@ -3572,7 +3586,8 @@ export const PLUGIN_HANDLERS: Record<string, Handler> = {
   'plugin:deep-link|get_current': returnNull,
   // Clipboard / opener / shell are registered on desktop AND mobile;
   // copy-link and external-link e2e flows rely on the success path.
-  'plugin:clipboard-manager|write_text': returnNull,
+  'plugin:clipboard-manager|write_text': clipboardWriteText,
+  'plugin:clipboard-manager|read_text': clipboardReadText,
   'plugin:shell|open': returnNull,
   'plugin:opener|open_url': returnNull,
   // Global-shortcut is desktop-only but the browser harness emulates a

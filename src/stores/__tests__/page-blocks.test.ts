@@ -13,6 +13,7 @@ import {
   type PageBlockState,
   PageBlockStoreProvider,
   pageBlockRegistry,
+  storeOwnsBlock,
   usePageBlockStore,
 } from '../page-blocks'
 import { useSpaceStore } from '../space'
@@ -1031,6 +1032,59 @@ describe('PageBlockStore', () => {
 
       // Original block should revert to its original content after the failed createBelow
       expect(store.getState().blocks[0]?.content).toBe(previousContent)
+    })
+
+    // #976 finding 7 — the `splitInProgress` re-entrancy guard is cleared in a
+    // `finally` block, so a `createBelow` failure must NOT leave the block
+    // permanently wedged. The existing happy-path "clears guard after
+    // completion" test and the rollback test above cover their cases, but
+    // neither asserts the guard is freed on the ERROR path. This complements
+    // them: after a failed createBelow, a SECOND splitBlock on the same block
+    // must execute (the guard was cleared) rather than early-return as a no-op.
+    it('clears the re-entrancy guard even when createBelow fails — next splitBlock executes', async () => {
+      const block = makeBlock({ id: 'A', position: 0, content: 'original' })
+      store.setState({ blocks: [block] })
+
+      // First split: edit('A','line1') succeeds, createBelow('A','line2') rejects.
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: 'line1',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
+      mockedInvoke.mockRejectedValueOnce(new Error('create failed'))
+
+      await store.getState().splitBlock('A', 'line1\nline2')
+      // edit + failed create = 2 IPCs.
+      expect(mockedInvoke).toHaveBeenCalledTimes(2)
+
+      // Second split on the SAME block must run — if the guard were still set,
+      // splitBlock would early-return and issue zero further IPCs.
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: 'x',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'B',
+        block_type: 'text',
+        content: 'y',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+
+      await store.getState().splitBlock('A', 'x\ny')
+
+      // Two more IPCs (edit + create) fired → the guard was cleared on the error path.
+      expect(mockedInvoke).toHaveBeenCalledTimes(4)
+      const blocks = store.getState().blocks
+      expect(blocks.map((b) => b.content)).toEqual(['x', 'y'])
     })
 
     it('rejects a second concurrent splitBlock on the same block (re-entrancy guard)', async () => {
@@ -3451,6 +3505,68 @@ describe('PageBlockStore', () => {
         expect.objectContaining({ rootBlockId: 'PAGE_1' }),
       )
       expect(mockOnNewAction).not.toHaveBeenCalled()
+    })
+
+    // #976 finding 4 — the `moveBlocks` docstring requires callers pass the
+    // SELECTION ROOTS only (a nested descendant must NOT be listed; it travels
+    // inside its ancestor's subtree). The implementation performs NO such
+    // validation: it accepts any ids, filters absent ones, sorts by document
+    // order, and issues `move_block` for each. This test PINS that current,
+    // un-validated behavior — passing a parent AND its child moves BOTH
+    // independently — so any future contract-tightening (e.g. dropping
+    // descendants of moved roots) is a deliberate, test-breaking change rather
+    // than a silent behavior shift. The real caller (`useBlockDnD`) always
+    // pre-filters via `computeSelectionRoots`, so production is unaffected.
+    it('does NOT enforce the "selection roots only" contract — a parent + its child both move (pinned)', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+          // A1 is a CHILD of A — a non-root descendant the docstring says must
+          // not be passed. The implementation moves it anyway.
+          makeBlock({ id: 'A1', position: 0, parent_id: 'A', depth: 1 }),
+          makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 2 })
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'A1', new_parent_id: null, new_position: 3 })
+      mockedInvoke.mockResolvedValueOnce([])
+
+      // Pass BOTH the parent (A) and its child (A1) — violating the contract.
+      await store.getState().moveBlocks(['A', 'A1'], null, 2)
+
+      // Both ids get their own `move_block`, in document order, at consecutive
+      // slots. No filtering of the descendant occurred.
+      expect(moveCalls()).toEqual([
+        { blockId: 'A', newParentId: null, newIndex: 2 },
+        { blockId: 'A1', newParentId: null, newIndex: 3 },
+      ])
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // storeOwnsBlock (#713 ownership gate — #976 finding 2)
+  // ---------------------------------------------------------------------------
+  // The gate (`page-blocks.ts`) is read 20+ times by document-level listeners
+  // and keyboard hooks to keep multi-page journal views (week/month) from
+  // racing conflicting IPCs: a chord reads the GLOBAL focus/selection, but each
+  // mounted store must only act on blocks IN ITS OWN `blocksById`. It is
+  // exercised only indirectly via `load()` integration tests; this block tests
+  // the ownership contract directly.
+  describe('storeOwnsBlock (#713)', () => {
+    it('returns true when the block id is in the store', () => {
+      store.setState({ blocks: [makeBlock({ id: 'OWNED' })] })
+      expect(storeOwnsBlock(store, 'OWNED')).toBe(true)
+    })
+
+    it('returns false when the block is not in the store', () => {
+      store.setState({ blocks: [makeBlock({ id: 'OWNED' })] })
+      expect(storeOwnsBlock(store, 'FOREIGN')).toBe(false)
+    })
+
+    it('returns false when the block id is null', () => {
+      store.setState({ blocks: [makeBlock({ id: 'OWNED' })] })
+      expect(storeOwnsBlock(store, null)).toBe(false)
     })
   })
 
