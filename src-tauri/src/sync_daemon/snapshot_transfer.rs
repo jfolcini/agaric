@@ -79,7 +79,7 @@ use tokio::io::AsyncWriteExt;
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::peer_refs;
-use crate::snapshot::{apply_snapshot, decode_snapshot, get_latest_snapshot};
+use crate::snapshot::{apply_snapshot, get_latest_snapshot_with_frontier};
 use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
 use crate::sync_events::{SyncEvent, SyncEventSink};
 use crate::sync_files::app_data_dir_from_pool;
@@ -173,7 +173,9 @@ pub(crate) async fn try_offer_snapshot_catchup(
     remote_device_id: &str,
     remote_heads: &[DeviceHead],
 ) -> Result<OfferOutcome, AppError> {
-    let Some((snapshot_id, compressed)) = get_latest_snapshot(pool).await? else {
+    let Some((snapshot_id, compressed, snapshot_up_to_seqs)) =
+        get_latest_snapshot_with_frontier(pool).await?
+    else {
         tracing::info!(
             peer_id = %remote_device_id,
             "responder has no snapshot available; cannot offer catch-up"
@@ -203,12 +205,15 @@ pub(crate) async fn try_offer_snapshot_catchup(
     // this invariant could quietly break and we would re-apply an
     // older snapshot on the initiator — silent data regression.
     //
-    // Decode the snapshot's frontier and compare against the remote
-    // heads we received in `HeadExchange`. Mismatch → `Error` instead
-    // of `SnapshotOffer` so the initiator fails loudly and the
-    // operator can spot the regression in logs.
-    let snapshot_frontier = decode_snapshot(compressed.as_slice())?;
-    if let Err(reason) = snapshot_covers_remote_heads(&snapshot_frontier.up_to_seqs, remote_heads) {
+    // Compare the snapshot's frontier against the remote heads we
+    // received in `HeadExchange`. Mismatch → `Error` instead of
+    // `SnapshotOffer` so the initiator fails loudly and the operator
+    // can spot the regression in logs.
+    //
+    // #705: read `up_to_seqs` straight from the `log_snapshots` column
+    // (persisted by `create_snapshot`) instead of zstd+CBOR-decoding the
+    // whole snapshot blob — every table — just to reach the frontier.
+    if let Err(reason) = snapshot_covers_remote_heads(&snapshot_up_to_seqs, remote_heads) {
         tracing::warn!(
             peer_id = %remote_device_id,
             snapshot_id = %snapshot_id,
@@ -833,7 +838,7 @@ mod tests {
     use crate::op_log::append_local_op;
     use crate::snapshot::{
         BlockSnapshot, SCHEMA_VERSION, SnapshotData, SnapshotTables, create_snapshot,
-        encode_snapshot,
+        encode_snapshot, get_latest_snapshot,
     };
     use crate::sync_events::RecordingEventSink;
     use crate::sync_net::test_connection_pair;

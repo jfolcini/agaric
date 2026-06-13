@@ -104,15 +104,16 @@ impl From<OpTransfer> for OpRecord {
 /// snapshot and file-transfer sub-flows. The valid order on the wire
 /// is:
 ///
-/// 1. **`HeadExchange`** — exactly once per session, in both
-///    directions. Sent first by the initiator, replied by the
-///    responder. Carries the latest `(device_id, seq, hash)` tuple per
-///    advertised device. A second `HeadExchange` mid-session is a
+/// 1. **`HeadExchange`** — exactly once per session, sent by the
+///    initiator only. Carries the latest `(device_id, seq, hash)` tuple
+///    per advertised device. The responder processes it and replies
+///    with the streaming phase below (it does not send its own
+///    `HeadExchange`). A second `HeadExchange` mid-session is a
 ///    protocol violation and transitions to
 ///    [`SyncState::Failed`](super::SyncState::Failed).
 ///
-/// 2. **`LoroSync`** — zero or more, in either direction, after the
-///    peer-relevant `HeadExchange` has been processed. Each message
+/// 2. **`LoroSync`** — zero or more, sent by the responder only, after
+///    it has processed the initiator's `HeadExchange`. Each message
 ///    carries one [`LoroSyncMessage`] (Snapshot or Update) for one
 ///    [`crate::space::SpaceId`]; `is_last: true` on the final
 ///    per-space message tells the receiver to transition to

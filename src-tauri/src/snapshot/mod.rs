@@ -28,7 +28,7 @@ mod tests;
 pub use codec::{decode_snapshot, encode_snapshot};
 pub use create::{
     DEFAULT_RETENTION_DAYS, cleanup_old_snapshots, compact_op_log, create_snapshot,
-    get_latest_snapshot,
+    get_latest_snapshot, get_latest_snapshot_with_frontier,
 };
 #[allow(unused_imports)]
 pub(crate) use create::{
