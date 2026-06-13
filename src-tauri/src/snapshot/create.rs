@@ -525,6 +525,38 @@ pub async fn get_latest_snapshot(pool: &SqlitePool) -> Result<Option<(String, Ve
     Ok(row.map(|r| (r.id, r.data)))
 }
 
+/// Like [`get_latest_snapshot`] but also returns the snapshot's op
+/// frontier (`up_to_seqs`) read directly from the `log_snapshots`
+/// column that [`create_snapshot`] persists.
+///
+/// #705: callers that only need the frontier (e.g. the responder's
+/// M-58 covering check in `sync_daemon::snapshot_transfer`) previously
+/// ran a full zstd+CBOR `decode_snapshot` over the entire blob just to
+/// reach `up_to_seqs`. The column already stores that map as JSON, so
+/// reading it back avoids decoding every table.
+///
+/// Returns the parsed `up_to_seqs` (`BTreeMap<device_id, max_seq>`)
+/// alongside the snapshot id and compressed bytes. The column is
+/// `TEXT NOT NULL` and always holds the JSON map `create_snapshot`
+/// serialised; an unparsable value (corruption) maps to an empty
+/// frontier, which the covering check treats as "covers nothing" —
+/// fail-safe for the responder's M-58 guard.
+pub async fn get_latest_snapshot_with_frontier(
+    pool: &SqlitePool,
+) -> Result<Option<(String, Vec<u8>, BTreeMap<String, i64>)>, AppError> {
+    let row = sqlx::query!(
+        "SELECT id, data, up_to_seqs FROM log_snapshots \
+         WHERE status = 'complete' ORDER BY id DESC LIMIT 1"
+    )
+    .fetch_optional(pool)
+    .await?;
+    let Some(r) = row else {
+        return Ok(None);
+    };
+    let up_to_seqs: BTreeMap<String, i64> = serde_json::from_str(&r.up_to_seqs).unwrap_or_default();
+    Ok(Some((r.id, r.data, up_to_seqs)))
+}
+
 /// Shared core of snapshot retention cleanup — accepts any sqlx executor so it
 /// works both inside a transaction (`compact_op_log` phase 3) and with a bare
 /// pool connection (`cleanup_old_snapshots`).
@@ -795,5 +827,66 @@ mod tests_m69 {
             complete, 2,
             "both concurrent create_snapshot calls must commit in 'complete' state"
         );
+    }
+
+    /// #705: `get_latest_snapshot_with_frontier` must return the same
+    /// `up_to_seqs` map that `create_snapshot` persisted in the
+    /// `log_snapshots.up_to_seqs` column — read straight from the column,
+    /// without decoding the snapshot blob. It must also pick the latest
+    /// complete snapshot (highest id) and return its compressed data.
+    #[tokio::test]
+    async fn get_latest_snapshot_with_frontier_reads_persisted_column() {
+        let (pool, _dir) = test_pool().await;
+        let device_id = "dev-frontier";
+
+        insert_block(&pool, "block-1", "first").await;
+        insert_op_at(&pool, device_id, "block-1", 1_735_689_600_000).await;
+        let snap1 = create_snapshot(&pool, device_id).await.unwrap();
+
+        // A second op + snapshot so we can assert "latest" selection.
+        insert_op_at(&pool, device_id, "block-2", 1_735_689_600_001).await;
+        let snap2 = create_snapshot(&pool, device_id).await.unwrap();
+        assert!(
+            snap2 > snap1,
+            "ULIDs are monotonic; snap2 must sort after snap1"
+        );
+
+        let (id, data, up_to_seqs) = get_latest_snapshot_with_frontier(&pool)
+            .await
+            .unwrap()
+            .expect("a complete snapshot must exist");
+
+        assert_eq!(id, snap2, "must return the latest complete snapshot");
+        assert!(
+            !data.is_empty(),
+            "compressed snapshot bytes must be returned"
+        );
+
+        // The frontier read from the column must match the JSON the
+        // INSERT serialised — i.e. the same value `decode_snapshot` would
+        // have produced, but without decoding the blob.
+        let stored_json: String =
+            sqlx::query_scalar!("SELECT up_to_seqs FROM log_snapshots WHERE id = ?", snap2)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let expected: BTreeMap<String, i64> = serde_json::from_str(&stored_json).unwrap();
+        assert_eq!(
+            up_to_seqs, expected,
+            "frontier must equal the persisted up_to_seqs column"
+        );
+        assert_eq!(
+            up_to_seqs.get(device_id).copied(),
+            Some(2),
+            "device frontier should reflect the second op's seq"
+        );
+    }
+
+    /// Empty `log_snapshots` → `None`, mirroring `get_latest_snapshot`.
+    #[tokio::test]
+    async fn get_latest_snapshot_with_frontier_none_when_empty() {
+        let (pool, _dir) = test_pool().await;
+        let out = get_latest_snapshot_with_frontier(&pool).await.unwrap();
+        assert!(out.is_none(), "no snapshots → None");
     }
 }

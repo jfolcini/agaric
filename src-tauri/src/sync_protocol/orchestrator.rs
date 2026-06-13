@@ -456,6 +456,13 @@ impl SyncOrchestrator {
                             .await?;
                             match outcome {
                                 ApplyOutcome::Imported { changed_blocks, .. } => {
+                                    // #705: this counts inbound LoroSync
+                                    // *messages* (one per space, each a full
+                                    // CRDT snapshot/update), not individual
+                                    // CRDT operations. The UI surfaces it as
+                                    // "Ops Received"; see the i18n tooltip,
+                                    // which is worded as "sync messages" to
+                                    // match this semantics.
                                     self.session.ops_received =
                                         self.session.ops_received.saturating_add(1);
                                     // PEND-81 §2A #4: `apply_remote` wrote the
@@ -511,11 +518,24 @@ impl SyncOrchestrator {
                             }
                         }
                         None => {
-                            tracing::warn!(
-                                device_id = %self.device_id,
-                                "loro: shared state not initialised; \
-                                 dropping incoming LoroSync"
-                            );
+                            // #705: the registry must be initialised before
+                            // any session runs (init is synchronous and
+                            // pre-recovery in `lib.rs`), so this branch is
+                            // unreachable in production. If it is ever hit,
+                            // the payload cannot be imported — silently
+                            // dropping it and proceeding to `SyncComplete`
+                            // would fake convergence and let the responder
+                            // record a bogus `synced_at`. Fail the session
+                            // loudly instead.
+                            let msg_str = "loro: shared state not initialised; \
+                                           cannot import incoming LoroSync";
+                            self.state = SyncState::Failed(msg_str.into());
+                            self.session.state = self.state.clone();
+                            self.emit(crate::sync_events::SyncEvent::Error {
+                                message: msg_str.into(),
+                                remote_device_id: self.session.remote_device_id.clone(),
+                            });
+                            return Err(AppError::InvalidOperation(msg_str.into()));
                         }
                     }
                 }
@@ -779,6 +799,10 @@ impl SyncOrchestrator {
                 .await?;
             messages.push_back(m);
         }
+        // #705: this counts outbound LoroSync *messages* (one per
+        // registered space, each a full CRDT snapshot/update), not
+        // individual CRDT operations. Surfaced in the UI as "Ops Sent";
+        // the i18n tooltip is worded as "sync messages" to match.
         self.session.ops_sent = messages.len();
 
         self.state = SyncState::StreamingOps;

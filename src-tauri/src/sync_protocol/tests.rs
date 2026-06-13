@@ -700,6 +700,57 @@ async fn orchestrator_handles_reset_required() {
     materializer.shutdown();
 }
 
+/// #705: when the Loro registry is not initialised, an incoming
+/// `LoroSync` cannot be imported. The orchestrator must FAIL the
+/// session (transition to `Failed`, return an error) rather than
+/// silently dropping the payload and proceeding to `SyncComplete` —
+/// the latter would fake convergence and let the responder record a
+/// bogus `synced_at`.
+///
+/// In a unit test the process-global `loro::shared::get()` is `None`
+/// (no bootstrap ran) and no `with_loro_state` override is attached, so
+/// `loro_state()` returns `None` — exactly the defensive branch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_loro_sync_without_registry_fails_session() {
+    use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+
+    // `start()` drives Idle → ExchangingHeads; `LoroSync` is accepted in
+    // ExchangingHeads (responder's first post-HeadExchange message).
+    let _start = orch.start().await.unwrap();
+
+    let loro_msg = LoroSyncMessage::Snapshot {
+        protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+        space_id: crate::space::SpaceId::from_trusted("00000000000000000000000000"),
+        bytes: vec![1, 2, 3],
+    };
+    let result = orch
+        .handle_message(SyncMessage::LoroSync {
+            msg: loro_msg,
+            is_last: true,
+        })
+        .await;
+
+    assert!(
+        result.is_err(),
+        "registry-None LoroSync must error, not fake success; got {result:?}"
+    );
+    assert!(
+        matches!(orch.session().state, SyncState::Failed(_)),
+        "registry-None LoroSync must transition to Failed, got {:?}",
+        orch.session().state
+    );
+    assert!(
+        !orch.is_succeeded(),
+        "a failed session must NOT report success (no fake convergence / synced_at)"
+    );
+
+    materializer.shutdown();
+}
+
 // ── State validation tests ──────────────────────────────────────────
 
 /// Regression test for MAINT-86: `handle_message` must not silently
