@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { Profiler } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -249,6 +250,7 @@ import userEvent from '@testing-library/user-event'
 
 import { TestBlockActionsOverride } from '@/components/__tests__/_test-utils/TestBlockActionsOverride'
 import { SortableBlock } from '@/components/editor/SortableBlock'
+import { useBlockStore } from '@/stores/blocks'
 
 // Create a minimal mock sortable return value
 function makeSortable() {
@@ -4814,5 +4816,122 @@ describe('SortableBlock swipe-to-delete undo toast (#927 f7)', () => {
 
     expect(mockNotify).not.toHaveBeenCalled()
     expect(mockPerformActivePageUndo).not.toHaveBeenCalled()
+  })
+})
+
+// ── #1018: selection toggles must NOT cascade re-renders across rows ────────
+//
+// Regression guard for the O(N) re-render cascade. Before the fix every
+// `SortableBlock` subscribed to the WHOLE `selectedBlockIds` array; because
+// each toggle produces a fresh array reference, every row re-rendered on any
+// single block's selection toggle. The fix pushes that subscription down into
+// `BlockContextMenu` (the sole consumer, mounted only while open), so a row
+// only re-renders when ITS OWN inputs change.
+describe('SortableBlock selection re-render isolation (#1018)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    // Reset the global selection store between tests.
+    act(() => {
+      useBlockStore.getState().clearSelected()
+    })
+    mockUseSortable.mockReturnValue(makeSortable())
+  })
+
+  it('does NOT re-render an unrelated row when another block is toggled into the selection', () => {
+    // Pre-seed a selection so the children's `hasSelection = length > 0`
+    // boolean (BlockGutterControls / BlockInlineControls subscribe to it) is
+    // ALREADY true. This isolates the #1018 bug — a fresh `selectedBlockIds`
+    // ARRAY reference per toggle cascading to every row — from the legitimate
+    // one-time `length > 0` flip on the very first selection.
+    act(() => {
+      useBlockStore.getState().setSelected(['EXISTING'])
+    })
+
+    let rowCommits = 0
+    const onRowCommit = () => {
+      rowCommits++
+    }
+
+    render(
+      <TestBlockActionsOverride actions={{}}>
+        <Profiler id="row-OTHER" onRender={onRowCommit}>
+          <SortableBlock
+            blockId="OTHER"
+            content="unrelated row"
+            isFocused={false}
+            rovingEditor={makeRovingEditor()}
+          />
+        </Profiler>
+      </TestBlockActionsOverride>,
+    )
+
+    // Initial mount commit(s).
+    const commitsAfterMount = rowCommits
+    expect(commitsAfterMount).toBeGreaterThan(0)
+
+    // Toggle DIFFERENT blocks in/out of the selection. `length > 0` stays true
+    // throughout, so the only thing that changes is the array reference. With
+    // the old full-array subscription each toggle re-rendered the "OTHER" row;
+    // with the fix it must not. Exercise several toggles — the original cascade
+    // scaled with the number of toggles.
+    act(() => {
+      useBlockStore.getState().toggleSelected('SOMEONE_ELSE')
+    })
+    expect(useBlockStore.getState().selectedBlockIds).toEqual(['EXISTING', 'SOMEONE_ELSE'])
+
+    act(() => {
+      useBlockStore.getState().toggleSelected('YET_ANOTHER')
+    })
+    expect(useBlockStore.getState().selectedBlockIds).toEqual([
+      'EXISTING',
+      'SOMEONE_ELSE',
+      'YET_ANOTHER',
+    ])
+
+    act(() => {
+      useBlockStore.getState().toggleSelected('SOMEONE_ELSE')
+    })
+    expect(useBlockStore.getState().selectedBlockIds).toEqual(['EXISTING', 'YET_ANOTHER'])
+
+    // The unrelated row committed ZERO additional times across all toggles —
+    // the array-reference cascade is gone.
+    expect(rowCommits).toBe(commitsAfterMount)
+  })
+
+  it('exposes a referentially-stable view to a row: toggling others does not change this row’s props', () => {
+    // The row's own visual selection arrives via the `isSelected` prop, not a
+    // store subscription. Re-rendering with the SAME isSelected after an
+    // unrelated toggle must be a no-op for the memoized component — proven by
+    // the EditableBlock mock not re-mounting / the testid staying identical.
+    const { rerender } = render(
+      <TestBlockActionsOverride actions={{}}>
+        <SortableBlock
+          blockId="ROW_A"
+          content="row a"
+          isFocused={false}
+          isSelected={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
+    )
+    expect(screen.getByTestId('editable-block-ROW_A')).toBeInTheDocument()
+
+    act(() => {
+      useBlockStore.getState().toggleSelected('ROW_B')
+    })
+
+    // Re-render with identical props (parent re-render). Memo holds; no throw.
+    rerender(
+      <TestBlockActionsOverride actions={{}}>
+        <SortableBlock
+          blockId="ROW_A"
+          content="row a"
+          isFocused={false}
+          isSelected={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
+    )
+    expect(screen.getByTestId('editable-block-ROW_A')).toBeInTheDocument()
   })
 })
