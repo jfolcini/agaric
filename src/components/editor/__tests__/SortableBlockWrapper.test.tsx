@@ -316,6 +316,64 @@ describe('SortableBlockWrapper', () => {
     expect(container.querySelectorAll('.drop-indicator')).toHaveLength(0)
   })
 
+  // ── #991 — committed row-level drop-over tint ──────────────────────
+
+  it('tints the over-row with bg-primary/8 when showDropIndicator is true (#991)', () => {
+    const { container } = renderInList(
+      makeProps({
+        activeId: 'BLK999',
+        overId: 'BLK001',
+        projected: { depth: 0, parentId: null, maxDepth: 3, minDepth: 0 },
+      }),
+    )
+
+    const li = container.querySelector('li[data-block-id="BLK001"]')
+    expect(li?.className).toContain('bg-primary/8')
+    // Must NOT add a left border that would collide with the focused block's
+    // inset-shadow accent.
+    expect(li?.className).not.toContain('border-l')
+  })
+
+  it('tints the over-row independent of focus state (#991)', () => {
+    const { container } = renderInList(
+      makeProps({
+        focusedBlockId: 'BLK001',
+        activeId: 'BLK999',
+        overId: 'BLK001',
+        projected: { depth: 0, parentId: null, maxDepth: 3, minDepth: 0 },
+      }),
+    )
+
+    const li = container.querySelector('li[data-block-id="BLK001"]')
+    expect(li?.className).toContain('bg-primary/8')
+  })
+
+  it('does not tint the row when it is the active drag target (#991)', () => {
+    const { container } = renderInList(
+      makeProps({
+        activeId: 'BLK001',
+        overId: 'BLK001',
+        projected: { depth: 0, parentId: null, maxDepth: 3, minDepth: 0 },
+      }),
+    )
+
+    const li = container.querySelector('li[data-block-id="BLK001"]')
+    expect(li?.className).not.toContain('bg-primary/8')
+  })
+
+  it('does not tint the row when it is not the over-target (#991)', () => {
+    const { container } = renderInList(
+      makeProps({
+        activeId: 'BLK999',
+        overId: 'BLK_OTHER',
+        projected: { depth: 0, parentId: null, maxDepth: 3, minDepth: 0 },
+      }),
+    )
+
+    const li = container.querySelector('li[data-block-id="BLK001"]')
+    expect(li?.className).not.toContain('bg-primary/8')
+  })
+
   it('uses projected depth for the active drag target', () => {
     const block = makeBlock({ id: 'BLK001', depth: 0 })
     renderInList(

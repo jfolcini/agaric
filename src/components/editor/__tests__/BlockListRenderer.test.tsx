@@ -157,6 +157,106 @@ describe('BlockListRenderer', () => {
     expect(guides.querySelectorAll('span')).toHaveLength(3)
   })
 
+  // ── #993 — drag indent guide highlights only the projected target level ──
+
+  it('highlights only the projected target indent guide, leaving others faint (#993)', () => {
+    const blocks = [
+      makeBlock({ id: 'A', depth: 0 }),
+      makeBlock({ id: 'B', depth: 1 }),
+      makeBlock({ id: 'C', depth: 2 }),
+    ]
+    // Drag active, projection lands at depth 1 → the level-1 guide is bold,
+    // the rest stay faint.
+    render(
+      <BlockListRenderer
+        {...makeProps({
+          visibleItems: blocks,
+          blocks,
+          activeId: 'A',
+          overId: 'B',
+          projected: { depth: 1, parentId: 'A', maxDepth: 2, minDepth: 0 },
+        })}
+      />,
+    )
+
+    const target = screen.getByTestId('drag-indent-guide-1')
+    expect(target).toHaveAttribute('data-target', 'true')
+    expect(target.className).toContain('w-0.5')
+    expect(target.className).toContain('bg-primary/70')
+
+    // Non-target guides stay faint and thin.
+    for (const level of [2, 3]) {
+      const guide = screen.getByTestId(`drag-indent-guide-${level}`)
+      expect(guide).not.toHaveAttribute('data-target')
+      expect(guide.className).toContain('w-px')
+      expect(guide.className).toContain('bg-primary/15')
+    }
+  })
+
+  it('leaves all indent guides faint when there is no projection (#993)', () => {
+    const blocks = [makeBlock({ id: 'A', depth: 0 }), makeBlock({ id: 'B', depth: 1 })]
+    render(
+      <BlockListRenderer
+        {...makeProps({ visibleItems: blocks, blocks, activeId: 'A', projected: null })}
+      />,
+    )
+
+    const guides = screen.getAllByTestId(/^drag-indent-guide-/)
+    expect(guides.length).toBeGreaterThan(0)
+    for (const guide of guides) {
+      expect(guide).not.toHaveAttribute('data-target')
+      expect(guide.className).toContain('bg-primary/15')
+    }
+  })
+
+  // ── #992 — single-source-of-truth block row gap ──────────────────────
+
+  it('applies the --block-row-gap vertical rhythm to the block tree (#992)', () => {
+    const blocks = [makeBlock({ id: 'BLK001', content: 'Test' })]
+    const { container } = render(
+      <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks })} />,
+    )
+
+    const tree = container.querySelector('.block-tree')
+    // The divergent space-y-0.5 / space-y-1.5 literals are replaced by a single
+    // CSS-var-driven gap (4px desktop, 6px touch, defined in index.css).
+    expect(tree?.className).toContain('space-y-[var(--block-row-gap)]')
+    expect(tree?.className).not.toContain('space-y-0.5')
+    expect(tree?.className).not.toContain('space-y-1.5')
+  })
+
+  // ── #991 — sentinel drop zone carries the committed row-level tint ──
+
+  it('tints the sentinel drop zone when it is the over-target (#991)', () => {
+    const blocks = [makeBlock({ id: 'BLK001', content: 'First' })]
+    const { container } = render(
+      <BlockListRenderer
+        {...makeProps({
+          visibleItems: blocks,
+          blocks,
+          activeId: 'BLK001',
+          overId: '__drop-after-last__',
+          projected: { depth: 0, parentId: null, maxDepth: 0, minDepth: 0 },
+        })}
+      />,
+    )
+
+    const sentinelLi = container.querySelector('li[aria-hidden]')
+    expect(sentinelLi?.className).toContain('bg-primary/8')
+  })
+
+  it('does not tint the sentinel drop zone when it is not the over-target (#991)', () => {
+    const blocks = [makeBlock({ id: 'BLK001', content: 'First' })]
+    const { container } = render(
+      <BlockListRenderer
+        {...makeProps({ visibleItems: blocks, blocks, activeId: 'BLK001', overId: 'BLK001' })}
+      />,
+    )
+
+    const sentinelLi = container.querySelector('li[aria-hidden]')
+    expect(sentinelLi?.className).not.toContain('bg-primary/8')
+  })
+
   it('does not render empty state when blocks exist', () => {
     const blocks = [makeBlock({ id: 'BLK001' })]
     render(<BlockListRenderer {...makeProps({ visibleItems: blocks, blocks })} />)

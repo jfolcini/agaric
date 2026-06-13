@@ -272,7 +272,8 @@ test.describe('Drag visual layer (#923 f2)', () => {
     // The drop-indicator bar paints on GS_4's row (the over-row), indented to
     // depth 1. It is a sibling of <SortableBlock> inside GS_4's wrapper <li>
     // (the row's `data-block-id` is on the <li>).
-    const bar = page.locator(`li[data-block-id="${gs4}"] .drop-indicator`).first()
+    const overRow = page.locator(`li[data-block-id="${gs4}"]`)
+    const bar = overRow.locator('.drop-indicator').first()
     await expect(bar).toBeVisible()
     // marginLeft is `var(--indent-width) * depth`; at depth ≥ 1 it is indented
     // from the gutter (non-zero left margin).
@@ -281,6 +282,14 @@ test.describe('Drag visual layer (#923 f2)', () => {
     )
     expect(marginLeft).toBeGreaterThan(0)
 
+    // #991 — the whole over-row carries the committed faint tint (Notion/Logseq
+    // landing-row idiom), not just the 5px bar. The class resolves to a
+    // non-transparent background-color while the drag is in flight.
+    await expect(overRow).toHaveClass(/bg-primary\/8/)
+
     await page.mouse.up()
+
+    // …and the tint is dropped once the drag ends (no over-target).
+    await expect(overRow).not.toHaveClass(/bg-primary\/8/)
   })
 })

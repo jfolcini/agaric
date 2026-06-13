@@ -841,10 +841,17 @@
 /* ── Indent width (responsive) ─────────────────────────────────────── */
 :root {
   --indent-width: 24px;
+  /* #992 — single source of truth for the vertical rhythm between sibling
+   * block rows. Desktop = 4px; touch = desktop + exactly one scale step (6px).
+   * Applied via `.block-tree` so every BlockTree mount (page, journal day /
+   * week / month sections) shares one harmonic pair instead of bare,
+   * divergent Tailwind `space-y-*` literals. */
+  --block-row-gap: 0.25rem; /* 4px */
 }
 @media (pointer: coarse) {
   :root {
     --indent-width: 16px;
+    --block-row-gap: 0.375rem; /* 6px — desktop + one scale step */
   }
 }
 /* PEND-28b M6 — narrow-desktop / split-screen tablet windows in fine-pointer
