@@ -152,12 +152,18 @@ function EditableBlockInner({
   const [liveContent, setLiveContent] = useState('')
 
   useEffect(() => {
-    if (!isFocused || rovingEditorRef.current.activeBlockId !== blockId) {
+    if (!isFocused) {
       setLiveContent('')
       return
     }
+    // Register whenever focused — do NOT gate on `activeBlockId === blockId`
+    // here. On a block→block focus switch React runs this effect before the
+    // auto-mount effect (:179), so `activeBlockId` still points at the OLD
+    // block and the newly-focused block would never register its callback
+    // (silent draft-autosave loss, #1015). Block identity is enforced inside
+    // the callback instead, so late/cross-block fires are ignored.
     rovingEditorRef.current.setOnMarkdownChange((md) => {
-      setLiveContent(md)
+      if (rovingEditorRef.current.activeBlockId === blockId) setLiveContent(md)
     })
     return () => {
       rovingEditorRef.current.setOnMarkdownChange(null)

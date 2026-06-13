@@ -346,13 +346,19 @@ export function BlockTree({
   }, [])
 
   const handleQuerySave = async (expression: string) => {
-    if (!queryBuilderBlockId) return
+    // Capture the target block once at entry; `queryBuilderBlockId` is read
+    // from closure and may change while we await the write (#1016).
+    const blockId = queryBuilderBlockId
+    if (!blockId) return
     // `edit()` handles its own error path (rollback + generic save-failed
     // toast) and resolves `false` on failure rather than throwing. Keep the
     // dialog open in that case so the user doesn't lose the query they built;
     // only close + reload once the write actually landed.
-    const ok = await pageStore.getState().edit(queryBuilderBlockId, `{{query ${expression}}}`)
+    const ok = await pageStore.getState().edit(blockId, `{{query ${expression}}}`)
     if (!ok) return
+    // Re-validate after the await: if the dialog closed or moved to a
+    // different block mid-flight, don't clobber the now-current state.
+    if (queryBuilderBlockId !== blockId) return
     setQueryBuilderOpen(false)
     await load()
   }
