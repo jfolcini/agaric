@@ -217,6 +217,16 @@ vi.mock('../SortableBlock', async () => {
               Select
             </button>
           )}
+          {/* #1063 — exercise the Shift+Click range branch of handleSelect. */}
+          {onSelect && (
+            <button
+              data-testid={`select-range-${props.blockId}`}
+              onClick={() => onSelect(props.blockId, 'range')}
+              type="button"
+            >
+              Select Range
+            </button>
+          )}
           SortableBlock
         </div>
       )
@@ -5818,6 +5828,44 @@ describe('BlockTree multi-selection (#657)', () => {
     await userEvent.setup().click(selectA)
 
     expect(useBlockStore.getState().selectedBlockIds).toContain('A')
+  })
+
+  // #1063 — Shift+Click range-select must slice the RENDERED rows only.
+  // Doc order here is A, B (child of A), C. Collapsing A hides B, so the
+  // visible rows are [A, C]. A Shift+Click range from A (pre-selected anchor)
+  // to C must select ONLY [A, C] — never the hidden B between them in full
+  // doc order (the old bug fed the unfiltered block list to rangeSelect,
+  // silently pulling collapsed/zoomed-out blocks into the batch).
+  it('Shift+Click range-select excludes collapsed (hidden) blocks between the endpoints', async () => {
+    const user = userEvent.setup()
+    const tree = [
+      makeBlock({ id: 'A', content: 'Alpha (parent)' }),
+      makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Beta (hidden child)' }),
+      makeBlock({ id: 'C', content: 'Gamma' }),
+    ]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [] })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    // Collapse A so its child B is no longer rendered.
+    await user.click(screen.getByTestId('toggle-A'))
+    expect(screen.queryByTestId('sortable-block-B')).not.toBeInTheDocument()
+    expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-is-collapsed', 'true')
+
+    // First click selects the anchor A (the "last selected" range anchor).
+    await user.click(screen.getByTestId('select-A'))
+    expect(useBlockStore.getState().selectedBlockIds).toContain('A')
+
+    // Shift+Click C → range-select from A to C.
+    await user.click(screen.getByTestId('select-range-C'))
+
+    // Only the two VISIBLE rows are selected; the hidden B is excluded even
+    // though it sits between A and C in full document order.
+    const selected = useBlockStore.getState().selectedBlockIds
+    expect(new Set(selected)).toEqual(new Set(['A', 'C']))
+    expect(selected).not.toContain('B')
   })
 
   it('isSelected prop is passed to SortableBlock', async () => {

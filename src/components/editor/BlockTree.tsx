@@ -185,6 +185,13 @@ export function BlockTree({
     zoomedVisible,
   } = useBlockZoom(blocks, collapsedVisible)
 
+  // #1063 — the ids of the rows actually rendered (collapsed/zoomed-out blocks
+  // filtered out). Both mouse Shift+Click range-select (handleSelect) and the
+  // Shift+Arrow keyboard range-select slice against this so neither ever pulls
+  // an invisible block into the selection. Memoized so the document keydown
+  // listener (useBlockTreeKeyboardShortcuts) doesn't re-attach every render.
+  const visibleIds = useMemo(() => zoomedVisible.map((b) => b.id), [zoomedVisible])
+
   // ── Enter-creates-block refs ───────────────────────────────────────
   const justCreatedBlockIds = useRef(new Set<string>())
   const prevFocusedRef = useRef<string | null>(null)
@@ -638,13 +645,14 @@ export function BlockTree({
       if (mode === 'toggle') {
         toggleSelected(blockId)
       } else {
-        rawRangeSelect(
-          blockId,
-          blocks.map((b) => b.id),
-        )
+        // #1063 — slice against the RENDERED rows only. Passing the full
+        // `blocks` list silently pulled every collapsed/zoomed-out block
+        // between the two clicked rows into the selection (then batch
+        // deleted/modified). Matches the keyboard range-select path.
+        rawRangeSelect(blockId, visibleIds)
       }
     },
-    [toggleSelected, rawRangeSelect, blocks],
+    [toggleSelected, rawRangeSelect, visibleIds],
   )
 
   // Stable identities so `useBlockKeyboard` doesn't detach/re-attach the
@@ -723,7 +731,7 @@ export function BlockTree({
     // #922 — Shift+Arrow keyboard range-select steps through the RENDERED list
     // (`zoomedVisible` == `collapsedVisible` at root view), so it matches what
     // the user sees and respects collapsed/zoomed visibility.
-    visibleIds: zoomedVisible.map((b) => b.id),
+    visibleIds,
     toggleCollapse,
     rawSelectAll,
     extendSelection,
