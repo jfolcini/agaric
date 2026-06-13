@@ -369,12 +369,19 @@ function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) 
     }
   }
 
-  // A paragraph whose text begins with an ordered-list marker (`N. `) would
-  // re-parse as an orderedList — escape the dot (the parser accepts `\.`)
-  // so the text stays a paragraph. Only the start of the paragraph can
-  // trigger the list production (hard-break continuation lines are consumed
-  // by the paragraph parser before the list production ever sees them).
-  return result.replace(/^(\d+)\. /, '$1\\. ')
+  // A paragraph whose text begins with a leading BLOCK marker would re-parse
+  // as that other block kind, breaking serialize→parse→serialize idempotence
+  // (#711): the first serialize emits the marker verbatim, the reparse turns
+  // the paragraph into a heading / ordered list, and the second serialize then
+  // escapes the marker — a byte drift. Escape the marker on the way out so the
+  // text stays a paragraph. The parser accepts `\#` and `\.` as literal escapes
+  // (verified: `\>` / `\-` are NOT recognized escapes, but the parser only
+  // produces blockquote / HR from `> ` / `-{3,}`, and `escapeText` already
+  // escapes a leading `|` table gate, so heading + ordered-list are the
+  // remaining gaps). Only the START of the paragraph can trigger a block
+  // production (hard-break continuation lines are consumed by the paragraph
+  // parser before any block production sees them).
+  return result.replace(/^(\d+)\. /, '$1\\. ').replace(/^(#{1,6}) /, '\\$1 ')
 }
 
 function serializeHeading(node: HeadingNode, onUnknownNode?: (type: string) => void): string {
@@ -458,12 +465,23 @@ function serializeTable(node: TableNode, onUnknownNode?: (type: string) => void)
         // (#725) can leave multiple paragraphs in a PM cell — serialize all
         // of them (joined with a space) instead of silently dropping
         // everything after the first.
+        // Trim surrounding whitespace from the serialized cell BEFORE pipe-
+        // escaping: the table parser trims each cell (`c.trim()` in
+        // parseTable), so a cell whose content has leading/trailing spaces
+        // (e.g. paragraph text ending in `"2. "`) would serialize to
+        // `...2.  |`, re-parse to the trimmed `...2.`, and re-serialize to
+        // `...2. |` — a one-space drift that breaks serialize→parse→serialize
+        // idempotence (#711). Trimming here makes the emitted cell already the
+        // parser-canonical form, so the round-trip is a fixed point. (Interior
+        // whitespace is untouched; only the cell boundaries are normalized,
+        // matching the parser.)
         const text =
           cell.content && cell.content.length > 0
             ? escapeCellPipes(
                 cell.content
                   .map((p) => serializeParagraph(p as ParagraphNode, onUnknownNode))
-                  .join(' '),
+                  .join(' ')
+                  .trim(),
               )
             : ''
         cells.push(text)

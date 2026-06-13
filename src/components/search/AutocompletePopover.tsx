@@ -80,13 +80,29 @@ type Measurable = { getBoundingClientRect: () => DOMRect }
  * parent props races the DOM. Re-running `onSync` whenever cmdk's
  * own `selectedItemId` changes keeps `aria-activedescendant` pinned
  * to the live DOM id.
+ *
+ * We watch BOTH `selectedItemId` AND `value`. cmdk only recomputes
+ * `selectedItemId` inside its `setState('value', …)` path (keyboard nav
+ * *inside* cmdk, hover, item mount/unmount). When the highlight is driven
+ * by the PARENT's controlled `value` prop — as it is here, where SearchPanel
+ * owns arrow-key navigation and feeds the chosen value down — cmdk's
+ * controlled-value layout effect updates `r.current.value` and re-emits
+ * (moving `aria-selected` in the DOM) WITHOUT going through the
+ * `selectedItemId` recompute. So a `selectedItemId`-only subscription never
+ * fires for a parent-driven move, and under loaded-CI commit orderings the
+ * parent's per-render `syncAriaIds` can run before cmdk's store-emit has
+ * flipped `aria-selected` on the new option — leaving `aria-activedescendant`
+ * stranded on the previous id (the intermittent flake). Subscribing to
+ * `value` re-runs the sync after cmdk propagates the new `aria-selected` to
+ * the DOM, so the id always advances.
  */
 function SelectedItemBridge({ onSync }: { onSync: () => void }): null {
   const selectedItemId = useCommandState((s) => s.selectedItemId as string | undefined)
+  const value = useCommandState((s) => s.value as string | undefined)
   useEffect(() => {
     onSync()
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- `selectedItemId` is the trigger; `onSync` is recreated each render and would re-fire every render if listed — we re-sync ids only when cmdk moves the highlight.
-  }, [selectedItemId])
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- `selectedItemId` / `value` are the triggers; `onSync` is recreated each render and would re-fire every render if listed — we re-sync ids only when cmdk moves the highlight or the controlled value changes.
+  }, [selectedItemId, value])
   return null
 }
 
