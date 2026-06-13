@@ -51,6 +51,46 @@ pub(crate) const SNAPSHOT_WARN_ROW_COUNT: i64 = 100_000;
 /// is exactly the regime where the user should be warned.
 pub(crate) const SNAPSHOT_WARN_PAYLOAD_BYTES: i64 = 64 * 1024 * 1024;
 
+/// #706 item 3 — pending-snapshot deletion grace window (defense in depth).
+///
+/// The retention DELETE's `status = 'pending'` arm purges crash-leftover
+/// pending rows. That arm is only *unconditionally* safe because M-69
+/// makes create's INSERT-pending → UPDATE-complete a single transaction:
+/// a cleanup running concurrently can never observe a legitimate, still
+/// in-flight pending row, because it is invisible until the same tx flips
+/// it to complete. If that invariant were ever split back into two
+/// transactions, an interleaved cleanup could delete a brand-new pending
+/// snapshot mid-write — silent data loss.
+///
+/// As cheap insurance we gate the pending arm on an age threshold: a
+/// pending row is only deleted once it is older than this window. A
+/// genuine crash leftover is always older than the grace period by the
+/// time the next compaction runs (compactions are minutes-to-days apart),
+/// so legitimate cleanup is unaffected; a freshly written pending row is
+/// spared even under a hypothetical split-tx interleave. Snapshot row ids
+/// are ULIDs (millisecond-timestamped, lexically time-sortable), so the
+/// age check is a pure `id < <cutoff-ulid>` comparison — no schema
+/// change, no extra column.
+///
+/// One hour is far larger than any plausible single-snapshot write
+/// (sub-second to low seconds even on large vaults) yet far smaller than
+/// the inter-compaction interval, so it never strands a real leftover.
+pub(crate) const PENDING_SNAPSHOT_DELETE_GRACE_MS: i64 = 60 * 60 * 1000;
+
+/// #706 item 3 — build the lexical lower-bound ULID for "older than
+/// `grace_ms` ago". A ULID with the cutoff timestamp and an all-zero
+/// random component sorts at-or-below every ULID minted at or after that
+/// instant, so `id < cutoff` selects exactly the snapshot rows created
+/// before the cutoff. Returned as the canonical uppercase string the
+/// `log_snapshots.id` column stores.
+fn pending_delete_cutoff_ulid(now_ms: i64, grace_ms: i64) -> String {
+    let cutoff_ms = now_ms.saturating_sub(grace_ms).max(0);
+    // i64 ms → u64 ms for the 48-bit ULID timestamp field; the .max(0)
+    // above guarantees non-negativity.
+    let ts = u64::try_from(cutoff_ms).unwrap_or(0);
+    ulid::Ulid::from_parts(ts, 0).to_string()
+}
+
 /// L-105: probe the op_log for the row count and total payload-byte
 /// size that the upcoming snapshot creation will buffer in memory.
 ///
@@ -497,13 +537,34 @@ where
     if keep == 0 {
         return Ok(0);
     }
+    // #706 item 3: split the delete into two explicit, status-scoped arms
+    // so a *recent* pending row is spared by BOTH arms.
+    //
+    //   * pending arm — delete a pending row ONLY if it is older than the
+    //     grace window (`PENDING_SNAPSHOT_DELETE_GRACE_MS`). ULID ids are
+    //     lexically time-sortable, so `id < ?2` means "created before the
+    //     cutoff instant".
+    //   * complete arm — delete a complete row only if it is NOT among the
+    //     `keep` newest completes (unchanged retention behaviour).
+    //
+    // The previous single `OR id NOT IN (top-keep completes)` arm matched
+    // *any* row outside the kept completes — including every pending row —
+    // so it would have deleted a brand-new pending snapshot regardless of
+    // the age gate. Scoping each arm to its own status fixes that: a
+    // recent pending row matches neither arm and survives. (M-68: when
+    // `keep == 0` we already returned above, so the complete arm's
+    // subquery is never empty here.)
+    let pending_cutoff =
+        pending_delete_cutoff_ulid(crate::db::now_ms(), PENDING_SNAPSHOT_DELETE_GRACE_MS);
     let result = sqlx::query(
-        "DELETE FROM log_snapshots WHERE status = 'pending' \
-         OR id NOT IN \
-         (SELECT id FROM log_snapshots WHERE status = 'complete' \
-          ORDER BY id DESC LIMIT ?1)",
+        "DELETE FROM log_snapshots \
+         WHERE (status = 'pending' AND id < ?2) \
+            OR (status = 'complete' AND id NOT IN \
+                (SELECT id FROM log_snapshots WHERE status = 'complete' \
+                 ORDER BY id DESC LIMIT ?1))",
     )
     .bind(keep)
+    .bind(&pending_cutoff)
     .execute(exec)
     .await?;
     Ok(result.rows_affected())

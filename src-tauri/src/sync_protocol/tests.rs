@@ -608,7 +608,10 @@ fn sync_message_serde_roundtrip() {
         SyncMessage::ResetRequired {
             reason: "compacted".into(),
         },
-        SyncMessage::SnapshotOffer { size_bytes: 1024 },
+        SyncMessage::SnapshotOffer {
+            size_bytes: 1024,
+            blob_blake3: "deadbeef".into(),
+        },
         SyncMessage::SnapshotAccept,
         SyncMessage::SnapshotReject,
         SyncMessage::SyncComplete {
@@ -722,7 +725,10 @@ async fn orchestrator_rejects_snapshot_offer_as_unreachable_protocol_state() {
     );
 
     let result = orch
-        .handle_message(SyncMessage::SnapshotOffer { size_bytes: 1024 })
+        .handle_message(SyncMessage::SnapshotOffer {
+            size_bytes: 1024,
+            blob_blake3: "deadbeef".into(),
+        })
         .await;
 
     let err = match result {
@@ -1354,6 +1360,7 @@ fn serde_roundtrip_sync_message_reset_required() {
 fn serde_roundtrip_sync_message_snapshot_offer() {
     let msg = SyncMessage::SnapshotOffer {
         size_bytes: 1_048_576,
+        blob_blake3: "abc123".into(),
     };
     let json = serde_json::to_string(&msg).expect("serialize SnapshotOffer");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize SnapshotOffer");
@@ -1458,7 +1465,10 @@ fn json_shape_all_variants_have_type_tag() {
         ),
         (
             "SnapshotOffer",
-            SyncMessage::SnapshotOffer { size_bytes: 0 },
+            SyncMessage::SnapshotOffer {
+                size_bytes: 0,
+                blob_blake3: String::new(),
+            },
         ),
         ("SnapshotAccept", SyncMessage::SnapshotAccept),
         ("SnapshotReject", SyncMessage::SnapshotReject),
@@ -1491,6 +1501,7 @@ fn json_shape_all_variants_have_type_tag() {
 fn json_shape_snapshot_offer_has_size_bytes() {
     let msg = SyncMessage::SnapshotOffer {
         size_bytes: 999_999,
+        blob_blake3: "abc123".into(),
     };
     let json: serde_json::Value = serde_json::to_value(&msg).expect("serialize SnapshotOffer");
     assert_eq!(
@@ -1623,7 +1634,10 @@ fn serde_roundtrip_empty_string_fields() {
 
 #[test]
 fn serde_roundtrip_zero_size_snapshot_offer() {
-    let msg = SyncMessage::SnapshotOffer { size_bytes: 0 };
+    let msg = SyncMessage::SnapshotOffer {
+        size_bytes: 0,
+        blob_blake3: String::new(),
+    };
     let json = serde_json::to_string(&msg).expect("serialize zero-size SnapshotOffer");
     let deser: SyncMessage =
         serde_json::from_str(&json).expect("deserialize zero-size SnapshotOffer");
@@ -1637,6 +1651,7 @@ fn serde_roundtrip_zero_size_snapshot_offer() {
 fn serde_roundtrip_max_u64_snapshot_offer() {
     let msg = SyncMessage::SnapshotOffer {
         size_bytes: u64::MAX,
+        blob_blake3: "f".repeat(64),
     };
     let json = serde_json::to_string(&msg).expect("serialize max-u64 SnapshotOffer");
     let deser: SyncMessage =

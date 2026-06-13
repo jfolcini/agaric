@@ -196,8 +196,21 @@ pub enum SyncMessage {
     /// the snapshot sub-flow in [`crate::sync_daemon::snapshot_transfer`].
     ResetRequired { reason: String },
     /// Snapshot sub-flow only (post-`ResetRequired`). Responder offers
-    /// the latest local snapshot blob's size; initiator decides.
-    SnapshotOffer { size_bytes: u64 },
+    /// the latest local snapshot blob's size + integrity hash; initiator
+    /// decides.
+    ///
+    /// `blob_blake3` (#706 item 2) is the hex blake3 of the *compressed*
+    /// snapshot blob, mirroring [`FileOffer::blake3_hash`]. The transfer
+    /// already rides authenticated mTLS and an atomic decode-or-rollback
+    /// apply, so this guards the one remaining gap: responder-side disk
+    /// corruption of the blob between read and send. The initiator
+    /// re-hashes the received bytes and rejects on mismatch before the
+    /// expensive decode/apply, so a corrupted blob fails fast and loud
+    /// instead of surfacing as an opaque CBOR/zstd decode error.
+    SnapshotOffer {
+        size_bytes: u64,
+        blob_blake3: String,
+    },
     /// Initiator accepts the offered snapshot; responder follows up with
     /// `size_bytes` of binary frames.
     SnapshotAccept,

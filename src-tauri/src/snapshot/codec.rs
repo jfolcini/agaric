@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::io::Read;
 use std::rc::Rc;
 
-use super::types::{SCHEMA_VERSION, SnapshotData};
+use super::types::SnapshotData;
 use crate::error::AppError;
 
 // ---------------------------------------------------------------------------
@@ -186,13 +186,16 @@ pub fn decode_snapshot<R: Read>(reader: R) -> Result<SnapshotData, AppError> {
         compressed_consumed,
         decompressed: 0,
     };
+    // #706 item 1 — the version gate now lives in `SnapshotData`'s
+    // `schema_version` deserializer (`deserialize_gated_schema_version`),
+    // which runs BEFORE the `tables` field is decoded. An unsupported /
+    // pre-layout version is therefore rejected up front, in the same
+    // streaming pass, with an honest "unsupported schema version …"
+    // message — surfaced here as `AppError::Snapshot("CBOR decode: …")`
+    // — instead of failing deep inside `tables` as a misleading raw
+    // decode error after the old post-decode check had nominally
+    // admitted it. No separate post-decode range check is needed.
     let snapshot: SnapshotData = ciborium::from_reader(bounded)
         .map_err(|e| AppError::Snapshot(format!("CBOR decode: {e}")))?;
-    if snapshot.schema_version < 1 || snapshot.schema_version > SCHEMA_VERSION {
-        return Err(AppError::Snapshot(format!(
-            "unsupported schema version {} (expected 1..={SCHEMA_VERSION})",
-            snapshot.schema_version
-        )));
-    }
     Ok(snapshot)
 }
