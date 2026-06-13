@@ -137,6 +137,16 @@ describe('<EmojiPicker>', () => {
 
   it('has no axe violations', async () => {
     const { container } = render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+    // The grid is virtualized: `useVirtualizer`'s layout effects
+    // (`getVirtualItems` / `measureElement`) commit AFTER the first paint, so
+    // the gridcell buttons mount one tick later. Auditing `container`
+    // synchronously races that commit — under full-suite worker contention axe
+    // can begin traversing the tree while the virtualizer is still inserting
+    // rows, and axe-core throws mid-walk (the intermittent STACK_TRACE_ERROR,
+    // which surfaces as an audit failure rather than a real violation). Wait
+    // for the grid's content to settle (first emoji cell present) before
+    // auditing the now-stable DOM.
+    await screen.findByRole('gridcell', { name: 'grinning' })
     expect(await axe(container)).toHaveNoViolations()
   })
 })
