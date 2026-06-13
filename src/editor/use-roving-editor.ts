@@ -6,6 +6,7 @@
  * via addToHistory:false on content replacement transactions.
  */
 
+import type { Content } from '@tiptap/core'
 import Bold from '@tiptap/extension-bold'
 import Code from '@tiptap/extension-code'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
@@ -108,6 +109,34 @@ export function shouldSplitOnBlur(markdown: string): boolean {
 // Share the curated lowlight instance with `RichContentRenderer` so bundlers
 // only ship one copy of the grammars (see `src/lib/lowlight-curated.ts`).
 const lowlight = curatedLowlight
+
+// #726 — `editorProps` and the initial `content` are STATIC. They were inline
+// object literals inside the `useEditor({...})` call, so each render produced
+// fresh identities. `@tiptap/react`'s `useEditor` (empty-deps path) diffs the
+// supplied options against the live editor's via `compareOptions`, which does a
+// reference check (`a[key] !== b[key]`) on `content` and `editorProps`. Fresh
+// literals therefore failed the diff every render → `setOptions` + view churn on
+// every BlockTree render, independent of the extensions array. Hoisting both to
+// module-level constants gives them stable identities so the diff short-circuits.
+const EDITOR_PROPS = {
+  attributes: {
+    role: 'textbox',
+    'aria-multiline': 'true',
+    'aria-label': 'Block editor',
+    // #925 — deliberate soft-keyboard configuration for the prose-first
+    // block editor (previously unset, so mobile keyboards guessed). Enter
+    // creates a new block, so hint the keyboard's action key as "enter";
+    // notes are prose, so capitalize sentences and enable autocorrect /
+    // spellcheck. `inputmode: text` keeps the standard text keyboard.
+    enterkeyhint: 'enter',
+    autocapitalize: 'sentences',
+    autocorrect: 'on',
+    spellcheck: 'true',
+    inputmode: 'text',
+  },
+} as const
+
+const INITIAL_CONTENT: Content = { type: 'doc', content: [{ type: 'paragraph' }] }
 
 // ── Configurable formatting shortcuts ────────────────────────────────────
 // NOTE (#752): the bindings below are FROZEN at editor creation. TipTap
@@ -355,8 +384,21 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const searchPropertyKeysRef = useRef(searchPropertyKeys)
   searchPropertyKeysRef.current = searchPropertyKeys
 
-  const editor = useEditor({
-    extensions: [
+  // #726 — build the extensions array EXACTLY ONCE and keep its identity stable
+  // across renders. `@tiptap/react`'s `useEditor` (called below with the default
+  // empty deps array) takes the `deps.length === 0` path: on every render it
+  // diffs the supplied options against the live editor's via `compareOptions`,
+  // which compares the extensions array element-by-element by reference. A fresh
+  // array of fresh `.configure()` instances each render therefore failed the
+  // diff unconditionally → `setOptions` + `view.updateState` churned on EVERY
+  // BlockTree render. This file is plain `.ts` (no JSX), so the React Compiler —
+  // which only transforms `.tsx`/`.jsx` — does NOT auto-memoize it; the churn is
+  // genuine. Every configured option already reads from a ref (`*.current`), so
+  // the instances have no reactive inputs and an empty dep list is correct: the
+  // placeholder, callbacks and resolvers all stay live via their refs.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- refs are provider-lifetime stable; every configured instance reads live values via `*.current`, so an empty dep list keeps the array identity stable without ever staling
+  const extensions = useMemo(
+    () => [
       Document,
       Paragraph,
       Text,
@@ -432,25 +474,14 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         onCheckbox: (state: 'TODO' | 'DONE') => onCheckboxRef.current?.(state),
       }),
     ],
+    [],
+  )
+
+  const editor = useEditor({
+    extensions,
     editable: true,
-    editorProps: {
-      attributes: {
-        role: 'textbox',
-        'aria-multiline': 'true',
-        'aria-label': 'Block editor',
-        // #925 — deliberate soft-keyboard configuration for the prose-first
-        // block editor (previously unset, so mobile keyboards guessed). Enter
-        // creates a new block, so hint the keyboard's action key as "enter";
-        // notes are prose, so capitalize sentences and enable autocorrect /
-        // spellcheck. `inputmode: text` keeps the standard text keyboard.
-        enterkeyhint: 'enter',
-        autocapitalize: 'sentences',
-        autocorrect: 'on',
-        spellcheck: 'true',
-        inputmode: 'text',
-      },
-    },
-    content: { type: 'doc', content: [{ type: 'paragraph' }] },
+    editorProps: EDITOR_PROPS,
+    content: INITIAL_CONTENT,
   })
 
   // PEND-30 L-4: B-77 cleanup layer 5 — when the host component unmounts

@@ -754,6 +754,79 @@ describe('useRovingEditor integration (renderHook)', () => {
     hook.unmount()
   })
 
+  // #726 — the extensions array is built once (useMemo with []) and keeps a
+  // stable identity across renders. Without this, `useEditor` (deps.length===0
+  // path) diffed a fresh array of fresh `.configure()` instances every render,
+  // `compareOptions` failed unconditionally, and `setOptions` + view.updateState
+  // churned on EVERY BlockTree render. This file is plain `.ts`, so the React
+  // Compiler (which only transforms `.tsx`/`.jsx`) does NOT memoize it for us.
+  it('#726 — editor identity + extensions array are stable across benign re-renders', async () => {
+    const hook = renderHook(({ placeholder }) => useRovingEditor({ placeholder }), {
+      initialProps: { placeholder: 'hint' },
+    })
+    await waitFor(() => expect(hook.result.current.editor).not.toBeNull())
+
+    const editor = hook.result.current.editor as Editor
+    const firstExtensions = editor.options.extensions
+    // setOptions is what view.updateState churn flows through; on a re-render
+    // with unchanged inputs it must NOT be called (compareOptions short-circuits
+    // because the memoized extensions array keeps its identity).
+    const setOptionsSpy = vi.spyOn(editor, 'setOptions')
+
+    // Several re-renders that change nothing observable about the editor.
+    hook.rerender({ placeholder: 'hint' })
+    hook.rerender({ placeholder: 'hint' })
+    hook.rerender({ placeholder: 'hint' })
+
+    // Same editor instance — never destroyed/recreated.
+    expect(hook.result.current.editor).toBe(editor)
+    // Same extensions array reference — the memo held.
+    expect((hook.result.current.editor as Editor).options.extensions).toBe(firstExtensions)
+    // No churn: setOptions never fired across the benign re-renders.
+    expect(setOptionsSpy).not.toHaveBeenCalled()
+
+    setOptionsSpy.mockRestore()
+    hook.result.current.editor?.destroy()
+    hook.unmount()
+  })
+
+  // #726 (both halves together) — when the placeholder SOURCE changes (locale
+  // switch / template hint moving with focus, as BlockTree drives it), the
+  // displayed text must go LIVE on the same editor WITHOUT recreating the editor
+  // and WITHOUT `setOptions` churn. The live text rides the ref'd-callback
+  // (`placeholder: () => placeholderRef.current`) inside the *stable* memoized
+  // extensions array — proving the identity-stability fix did NOT re-freeze the
+  // placeholder the way a captured string would have.
+  it('#726 — placeholder goes live on placeholder change without editor recreation or setOptions churn', async () => {
+    const hook = renderHook(({ placeholder }) => useRovingEditor({ placeholder }), {
+      initialProps: { placeholder: 'en hint' },
+    })
+    await waitFor(() => expect(hook.result.current.editor).not.toBeNull())
+
+    const editor = hook.result.current.editor as Editor
+    const firstExtensions = editor.options.extensions
+    expect(readPlaceholder(editor)).toBe('en hint')
+
+    const setOptionsSpy = vi.spyOn(editor, 'setOptions')
+
+    // Locale/template source changes — exactly what BlockTree does when focus
+    // moves or `t(...)` resolves a different string.
+    hook.rerender({ placeholder: 'fr indice' })
+
+    // Live text: the SAME editor now reports the new placeholder.
+    expect(readPlaceholder(hook.result.current.editor as Editor)).toBe('fr indice')
+    // Same editor instance — the placeholder change did NOT recreate it.
+    expect(hook.result.current.editor).toBe(editor)
+    // Same extensions array reference — liveness rides the ref, not a rebuild.
+    expect((hook.result.current.editor as Editor).options.extensions).toBe(firstExtensions)
+    // And no churn: liveness costs zero `setOptions`/`view.updateState` calls.
+    expect(setOptionsSpy).not.toHaveBeenCalled()
+
+    setOptionsSpy.mockRestore()
+    hook.result.current.editor?.destroy()
+    hook.unmount()
+  })
+
   // #539 — mount() resets undo history by finding ProseMirror's history plugin
   // via its private `history$`-prefixed key. That key is @internal, so a PM
   // upgrade could rename it and silently break history reset. This regression
