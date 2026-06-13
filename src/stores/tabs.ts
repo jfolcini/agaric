@@ -270,6 +270,31 @@ function coerceIndexBySpace(raw: unknown): Record<string, number> {
   return out
 }
 
+/**
+ * CR-PERSIST (#823) — coerce an entire persisted tabs blob field-by-field.
+ * Shared by `migrate` (version-mismatched blobs) and `merge` (same-version
+ * blobs): zustand's persist middleware only calls `migrate` when the stored
+ * version DIFFERS from `options.version`, so a corrupt blob that still
+ * carries `version: 1` (or a non-numeric version) bypasses `migrate`
+ * entirely and reaches the default shallow `merge` raw — coercing in `merge`
+ * as well closes that path. The coercion is idempotent, so the
+ * migrate→merge double pass on version-mismatched blobs is harmless.
+ */
+function coercePersistedTabs(
+  persisted: unknown,
+): Pick<TabsState, 'tabs' | 'activeTabIndex' | 'tabsBySpace' | 'activeTabIndexBySpace'> {
+  const blob = (persisted != null && typeof persisted === 'object' ? persisted : {}) as Record<
+    string,
+    unknown
+  >
+  return {
+    tabs: coerceTabList(blob['tabs']),
+    activeTabIndex: coerceIndex(blob['activeTabIndex']),
+    tabsBySpace: coerceTabsBySpace(blob['tabsBySpace']),
+    activeTabIndexBySpace: coerceIndexBySpace(blob['activeTabIndexBySpace']),
+  }
+}
+
 export const useTabsStore = create<TabsStore>()(
   persist(
     (set, get) => ({
@@ -522,18 +547,21 @@ export const useTabsStore = create<TabsStore>()(
       // user loses every open tab and per-space page stack. It also runs
       // on any legacy/version-mismatched blob, validating each field so a
       // corrupt `localStorage` payload can't poison the reducers.
-      migrate: (
-        persisted,
-        _version,
-      ): Pick<TabsState, 'tabs' | 'activeTabIndex' | 'tabsBySpace' | 'activeTabIndexBySpace'> => {
-        const blob = (persisted ?? {}) as Record<string, unknown>
-        return {
-          tabs: coerceTabList(blob['tabs']),
-          activeTabIndex: coerceIndex(blob['activeTabIndex']),
-          tabsBySpace: coerceTabsBySpace(blob['tabsBySpace']),
-          activeTabIndexBySpace: coerceIndexBySpace(blob['activeTabIndexBySpace']),
-        }
-      },
+      //
+      // CR-PERSIST (#823): the field-by-field coercion is shared with
+      // `merge` below. zustand only invokes `migrate` on a version
+      // MISMATCH — same-version blobs are coerced by `merge`.
+      migrate: (persisted, _version) => coercePersistedTabs(persisted),
+      // CR-PERSIST (#823) — zustand skips `migrate` when the stored
+      // version equals `options.version` (or isn't a number), handing the
+      // raw blob straight to `merge`. Coerce here too so a corrupt
+      // `localStorage` payload that still says `version: 1` (e.g.
+      // `activeTabIndex: -3`, a non-string tab `id`, garbage `pageStack`
+      // entries) can't poison the tab reducers / selectors.
+      merge: (persisted, current) => ({
+        ...current,
+        ...coercePersistedTabs(persisted),
+      }),
       onRehydrateStorage: () => (state) => {
         // Derive nextTabId from every persisted tab (across all spaces) to
         // avoid ID collisions after a per-space rehydrate.
