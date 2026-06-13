@@ -113,6 +113,7 @@ const ACTION_KEYS = [
   'onShowProperties',
   'onZoomIn',
   'onTurnInto',
+  'onDuplicate',
   'onBatchDelete',
 ] as const satisfies ReadonlyArray<keyof BlockActions>
 
@@ -431,7 +432,9 @@ describe('BlockContextMenu', () => {
   // ── Shortcut hints ──────────────────────────────────────────────
 
   it('renders shortcut hints for items', () => {
-    renderMenu()
+    // #976 (items 16-19) — wire the actions whose hints were previously missing
+    // (merge, zoom-in) so we can assert their newly-added shortcut hints too.
+    renderMenu({ onMerge: vi.fn(), onZoomIn: vi.fn(), onShowHistory: vi.fn() })
 
     const menu = screen.getByRole('menu')
     expect(within(menu).getByText('Ctrl+Shift+→')).toBeInTheDocument()
@@ -440,7 +443,48 @@ describe('BlockContextMenu', () => {
     expect(within(menu).getByText('Ctrl+Shift+↓')).toBeInTheDocument()
     expect(within(menu).getByText('Ctrl+.')).toBeInTheDocument()
     expect(within(menu).getByText('Ctrl+Enter')).toBeInTheDocument()
-    expect(within(menu).getByText('Ctrl+Shift+1-3')).toBeInTheDocument()
+    // #976 (item 19) — alternation notation, no longer the ambiguous "1-3".
+    expect(within(menu).getByText('Ctrl+Shift+1/2/3')).toBeInTheDocument()
+    expect(within(menu).queryByText('Ctrl+Shift+1-3')).not.toBeInTheDocument()
+    // #976 (item 16) — delete hint (positional: Backspace when empty).
+    expect(within(menu).getByText('Backspace (when empty)')).toBeInTheDocument()
+    // #976 (item 17) — merge hint (positional: Backspace at block start).
+    expect(within(menu).getByText('Backspace (at start)')).toBeInTheDocument()
+    // #976 (item 18) — zoom-in hint (Alt+.).
+    expect(within(menu).getByText('Alt+.')).toBeInTheDocument()
+    // #976 (item 15) — block-history keyboard binding hint.
+    expect(within(menu).getByText('Ctrl+Shift+Y')).toBeInTheDocument()
+  })
+
+  // #976 (item 13) — Duplicate action: present in the menu and dispatches.
+  describe('duplicate action (#976)', () => {
+    it('renders a Duplicate item when onDuplicate is wired', () => {
+      renderMenu({ onDuplicate: vi.fn() })
+      const menu = screen.getByRole('menu')
+      expect(within(menu).getByText(t('contextMenu.duplicate'))).toBeInTheDocument()
+    })
+
+    it('omits Duplicate when onDuplicate is not wired', () => {
+      renderMenu()
+      expect(screen.queryByText(t('contextMenu.duplicate'))).not.toBeInTheDocument()
+    })
+
+    it('dispatches onDuplicate with the block id on click', async () => {
+      const user = userEvent.setup()
+      const onDuplicate = vi.fn()
+      renderMenu({ onDuplicate, blockId: 'BLOCK_99' })
+      await user.click(screen.getByText(t('contextMenu.duplicate')))
+      expect(onDuplicate).toHaveBeenCalledWith('BLOCK_99')
+    })
+
+    it('omits Duplicate in bulk (multi-selection) mode', () => {
+      renderMenu({
+        onDuplicate: vi.fn(),
+        blockId: 'BLOCK_01',
+        selectedBlockIds: ['BLOCK_01', 'BLOCK_02'],
+      })
+      expect(screen.queryByText(t('contextMenu.duplicate'))).not.toBeInTheDocument()
+    })
   })
 
   // ── Separators ──────────────────────────────────────────────────

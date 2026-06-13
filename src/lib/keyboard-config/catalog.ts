@@ -148,6 +148,17 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.openPropertiesDrawer',
   },
   {
+    // #976 (item 15) — open the block-specific history drawer from a focused
+    // block, mirroring the `openPropertiesDrawer` discoverability path. The
+    // palette's `go-history` opens the GLOBAL history view; this is the
+    // per-block drawer. `Ctrl + Shift + H` is taken by `highlight`, so this
+    // uses the free `Ctrl + Shift + Y` chord.
+    id: 'openBlockHistory',
+    keys: 'Ctrl + Shift + Y',
+    category: 'keyboard.category.blockTree',
+    description: 'keyboard.openBlockHistory',
+  },
+  {
     id: 'heading1',
     keys: 'Ctrl + 1',
     category: 'keyboard.category.blockTree',

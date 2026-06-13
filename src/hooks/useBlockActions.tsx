@@ -51,6 +51,14 @@ export interface BlockActions {
   /** #264 — convert a block to another block type ("Turn into ▸"). */
   onTurnInto?: ((blockId: string, blockType: BlockTypeToken) => void) | undefined
   /**
+   * #976 (item 13) — duplicate a block and its subtree, inserting the copy
+   * immediately after the original at the same depth. Implemented in BlockTree
+   * by serializing the subtree to indented markdown and pasting it after the
+   * original (reusing the existing copy/paste-outline store ops), so no new
+   * store op is required.
+   */
+  onDuplicate?: ((blockId: string) => void) | undefined
+  /**
    * Fix 6 — single-IPC bulk delete of the active multi-selection (BlockTree's
    * `handleBatchDelete`: confirm dialog + undo toast). Read by the long-press /
    * right-click context menu when it opens on a block that is part of a

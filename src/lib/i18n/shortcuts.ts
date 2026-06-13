@@ -62,6 +62,7 @@ export const shortcuts: Record<string, string> = {
   'keyboard.insertLineBreak': 'Insert line break (soft return)',
   'keyboard.openDatePicker': 'Open date picker',
   'keyboard.openPropertiesDrawer': 'Open block properties drawer',
+  'keyboard.openBlockHistory': 'Open block history',
   'keyboard.heading1': 'Heading 1',
   'keyboard.heading2': 'Heading 2',
   'keyboard.heading3': 'Heading 3',

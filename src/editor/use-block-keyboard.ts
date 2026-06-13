@@ -95,6 +95,8 @@ export interface BlockKeyboardCallbacks {
   onToggleCollapse?: (() => void) | undefined
   /** Show block properties drawer (Ctrl/Cmd+Shift+P). */
   onShowProperties?: (() => void) | undefined
+  /** Show block history drawer (#976 item 15 — default Ctrl/Cmd+Shift+Y). */
+  onShowHistory?: (() => void) | undefined
   /**
    * Whether the current block is the sole remaining block on the page.
    * When true, Backspace on an empty block is a no-op (prevents empty page).
@@ -268,6 +270,15 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
     handle: (e, cb) => {
       e.preventDefault()
       cb.onShowProperties?.()
+    },
+  },
+  // #976 (item 15) — configurable shortcut (default Ctrl/Cmd+Shift+Y): show the
+  // block-specific history drawer, mirroring the properties-drawer rule above.
+  {
+    match: (e) => matchesShortcutBinding(e, 'openBlockHistory'),
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onShowHistory?.()
     },
   },
   // Enter (without Shift): save + create new sibling. Suppressed inside
