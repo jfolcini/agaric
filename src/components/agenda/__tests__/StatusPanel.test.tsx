@@ -625,7 +625,7 @@ describe('StatusPanel', () => {
       const label = screen.getByText('Ops Received')
       await user.hover(label)
       await waitFor(() => {
-        const matches = screen.getAllByText(/operations received from peers/i)
+        const matches = screen.getAllByText(/sync messages received from peers/i)
         expect(matches.length).toBeGreaterThanOrEqual(1)
       })
     })

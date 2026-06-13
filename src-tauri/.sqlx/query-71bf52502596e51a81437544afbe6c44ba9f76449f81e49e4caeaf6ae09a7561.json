@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT up_to_seqs FROM log_snapshots WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "up_to_seqs",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "log_snapshots",
+            "name": "up_to_seqs"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "71bf52502596e51a81437544afbe6c44ba9f76449f81e49e4caeaf6ae09a7561"
+}

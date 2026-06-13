@@ -109,8 +109,10 @@ export const block: Record<string, string> = {
   'status.backgroundDispatchedTooltip': 'Total background cache tasks completed since app start.',
   'status.peerCountTooltip': 'Number of paired devices',
   'status.lastSyncedTooltip': 'Time since last successful sync',
-  'status.opsReceivedTooltip': 'Total operations received from peers (resets on app restart)',
-  'status.opsSentTooltip': 'Total operations sent to peers (resets on app restart)',
+  'status.opsReceivedTooltip':
+    'Total sync messages received from peers, one per synced space (resets on app restart)',
+  'status.opsSentTooltip':
+    'Total sync messages sent to peers, one per synced space (resets on app restart)',
   'status.importedMessage': 'Imported {{totalBlocks}} blocks from {{fileCount}} file(s)',
   'status.materializerStatusTitle': 'Materializer Status',
   'status.loadingLabel': 'Loading status',
