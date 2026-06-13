@@ -10,6 +10,7 @@
  */
 
 import { render, screen } from '@testing-library/react'
+import type * as React from 'react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -133,6 +134,31 @@ describe('Button', () => {
       expect(btn.className).toContain('active:scale-95')
       expect(btn.className).not.toContain('active:scale-[0.98]')
     }
+  })
+
+  // -- children (#1030) -------------------------------------------------------
+
+  it('renders text children', () => {
+    render(<Button>Save</Button>)
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
+  })
+
+  it('renders element/fragment children', () => {
+    render(
+      <Button>
+        <span aria-hidden="true">+</span>
+        <span>Add item</span>
+      </Button>,
+    )
+    // The aria-hidden icon span is excluded from the accessible name.
+    expect(screen.getByRole('button', { name: 'Add item' })).toBeInTheDocument()
+  })
+
+  it('accepts children typed as React.ReactNode (type-level)', () => {
+    // `children` is explicit in the prop type, so any ReactNode is accepted.
+    const node: React.ReactNode = <span>typed</span>
+    render(<Button>{node}</Button>)
+    expect(screen.getByRole('button', { name: 'typed' })).toBeInTheDocument()
   })
 
   // -- a11y -------------------------------------------------------------------

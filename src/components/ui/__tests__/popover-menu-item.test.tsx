@@ -89,4 +89,46 @@ describe('PopoverMenuItem', () => {
     // `type="button"` must NOT leak onto the anchor (invalid HTML).
     expect(link).not.toHaveAttribute('type')
   })
+
+  // -- disabled under asChild (#1031) -----------------------------------------
+
+  it('honors disabled on the native button: aria-disabled-equivalent + non-clickable', async () => {
+    const user = userEvent.setup()
+    const handleClick = vi.fn()
+    render(
+      <PopoverMenuItem disabled onClick={handleClick}>
+        Disabled item
+      </PopoverMenuItem>,
+    )
+    const btn = screen.getByRole('button', { name: 'Disabled item' })
+    expect(btn).toBeDisabled()
+    await user.click(btn)
+    expect(handleClick).not.toHaveBeenCalled()
+  })
+
+  it('combining `asChild` with `disabled` is a compile error (type guard)', () => {
+    const bad = (
+      // @ts-expect-error — `disabled` is `never` when `asChild` is true, because
+      // the visual-only CVA styling cannot make the child link non-interactive.
+      <PopoverMenuItem asChild disabled>
+        <a href="/x">Nope</a>
+      </PopoverMenuItem>
+    )
+    expect(bad).toBeTruthy()
+  })
+
+  it('warns in dev when disabled is forced through asChild (runtime backstop)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      render(
+        // Spread erases the static type guard; the runtime warning backstops it.
+        <PopoverMenuItem {...({ asChild: true, disabled: true } as Record<string, unknown>)}>
+          <a href="/x">Link</a>
+        </PopoverMenuItem>,
+      )
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('has no effect with `asChild`'))
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })

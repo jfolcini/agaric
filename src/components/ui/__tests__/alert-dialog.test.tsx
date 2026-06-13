@@ -115,6 +115,37 @@ describe('AlertDialogContent viewport cap', () => {
 })
 
 // ---------------------------------------------------------------------------
+// AlertDialogBody attribute forwarding (#1029)
+// ---------------------------------------------------------------------------
+
+describe('AlertDialogBody attribute forwarding', () => {
+  it('forwards aria-* / data-* onto the scroll container', () => {
+    const { baseElement } = render(
+      <AlertDialog open>
+        <AlertDialogContent>
+          <AlertDialogTitle>Title</AlertDialogTitle>
+          <AlertDialogDescription>Description</AlertDialogDescription>
+          <AlertDialogBody
+            aria-label="Body region"
+            aria-describedby="body-desc"
+            data-testid="alert-dialog-body"
+            data-custom="x"
+          >
+            <p>Body</p>
+          </AlertDialogBody>
+        </AlertDialogContent>
+      </AlertDialog>,
+    )
+    const body = baseElement.querySelector('[data-slot="alert-dialog-body"]')
+    expect(body).not.toBeNull()
+    expect(body?.getAttribute('aria-label')).toBe('Body region')
+    expect(body?.getAttribute('aria-describedby')).toBe('body-desc')
+    expect(body?.getAttribute('data-testid')).toBe('alert-dialog-body')
+    expect(body?.getAttribute('data-custom')).toBe('x')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // a11y
 // ---------------------------------------------------------------------------
 

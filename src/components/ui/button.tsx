@@ -49,6 +49,13 @@ const Button = ({
 }: React.ComponentProps<'button'> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean
+    /**
+     * Button contents — text, icons, or fragments. Explicit (rather than
+     * relying on the implicit `children` from `ComponentProps<'button'>`) so
+     * the signature documents intent. For icon-only buttons use `IconButton`,
+     * which enforces a tooltip + accessible name.
+     */
+    children?: React.ReactNode
   }) => {
   const Comp = asChild ? Slot.Root : 'button'
 

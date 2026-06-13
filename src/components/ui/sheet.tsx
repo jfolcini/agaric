@@ -258,14 +258,26 @@ SheetDescription.displayName = 'SheetDescription'
  * wrappers continue to work since SheetContent's base padding/overflow
  * was added defensively. Prefer SheetBody for new code.
  */
-interface SheetBodyProps {
-  ref?: React.Ref<HTMLDivElement>
-  className?: string
+// Extends the full `<div>` prop surface (like SheetHeader/SheetFooter) so
+// callers can forward `aria-*` / `role` / `data-*` onto the scroll container —
+// the body is the scrollable region and a frequent target for a11y attributes.
+interface SheetBodyProps extends Omit<React.ComponentProps<'div'>, 'children'> {
   children?: React.ReactNode
+  ref?: React.Ref<HTMLDivElement>
 }
 
-const SheetBody = ({ ref, className, children }: SheetBodyProps) => (
-  <ScrollArea ref={ref} className={cn('flex-1 min-h-0 -mx-6', className)} viewportClassName="px-6">
+const SheetBody = ({ ref, className, children, dir, ...props }: SheetBodyProps) => (
+  <ScrollArea
+    ref={ref}
+    data-slot="sheet-body"
+    // `dir` on a `<div>` is `string`; ScrollArea's Radix Root narrows it to
+    // 'ltr' | 'rtl' (no `undefined` under exactOptionalPropertyTypes), so
+    // forward it only when it's a valid direction.
+    {...(dir === 'ltr' || dir === 'rtl' ? { dir } : {})}
+    className={cn('flex-1 min-h-0 -mx-6', className)}
+    viewportClassName="px-6"
+    {...props}
+  >
     <div className="space-y-4 min-w-0">{children}</div>
   </ScrollArea>
 )

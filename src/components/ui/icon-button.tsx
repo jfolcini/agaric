@@ -27,7 +27,18 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './tool
 
 type IconSize = 'icon-xs' | 'icon-sm' | 'icon' | 'icon-lg'
 
-export interface IconButtonProps extends Omit<React.ComponentProps<typeof Button>, 'size'> {
+export interface IconButtonProps extends Omit<
+  React.ComponentProps<typeof Button>,
+  'size' | 'children'
+> {
+  /**
+   * The icon slot — pass a single icon element (e.g. a Lucide icon). Text
+   * content does NOT belong here: it would render unlabelled next to the
+   * icon and break the icon-only contract. Visible text goes in `tooltip`;
+   * the accessible name goes in `ariaLabel`. Explicit (rather than inherited)
+   * so the signature documents that this is an icon-only slot.
+   */
+  children?: React.ReactNode
   /** Text shown inside the Radix tooltip — mandatory by design. */
   tooltip: string
   /**

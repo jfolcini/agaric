@@ -129,6 +129,54 @@ describe('DialogContent viewport cap', () => {
 })
 
 // ---------------------------------------------------------------------------
+// DialogBody attribute forwarding (#1028 / #1029)
+// ---------------------------------------------------------------------------
+
+describe('DialogBody attribute forwarding', () => {
+  it('forwards aria-* / data-* onto the scroll container', () => {
+    const { baseElement } = render(
+      <Dialog open>
+        <DialogContent>
+          <DialogTitle>Title</DialogTitle>
+          <DialogDescription>Description</DialogDescription>
+          <DialogBody
+            aria-label="Body region"
+            aria-describedby="body-desc"
+            data-testid="dialog-body"
+            data-custom="x"
+          >
+            <p>Body</p>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>,
+    )
+    const body = baseElement.querySelector('[data-slot="dialog-body"]')
+    expect(body).not.toBeNull()
+    expect(body?.getAttribute('aria-label')).toBe('Body region')
+    expect(body?.getAttribute('aria-describedby')).toBe('body-desc')
+    expect(body?.getAttribute('data-testid')).toBe('dialog-body')
+    expect(body?.getAttribute('data-custom')).toBe('x')
+  })
+
+  it('forwards ref to the scroll container', () => {
+    const ref = React.createRef<HTMLDivElement>()
+    render(
+      <Dialog open>
+        <DialogContent>
+          <DialogTitle>Title</DialogTitle>
+          <DialogDescription>Description</DialogDescription>
+          <DialogBody ref={ref}>
+            <p>Body</p>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>,
+    )
+    expect(ref.current).toBeInstanceOf(HTMLDivElement)
+    expect(ref.current?.getAttribute('data-slot')).toBe('dialog-body')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // a11y
 // ---------------------------------------------------------------------------
 

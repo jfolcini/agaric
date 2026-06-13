@@ -94,7 +94,10 @@ describe('HistorySheet', () => {
   it('wraps HistoryPanel in a SheetBody (ScrollArea with `flex-1 min-h-0`)', () => {
     render(<HistorySheet blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
     const panel = screen.getByTestId('history-panel')
-    const scrollRoot = panel.closest('[data-slot="scroll-area"]')
+    // SheetBody now stamps `data-slot="sheet-body"` on the ScrollArea root
+    // (#1028/#1029) — that overrides the primitive's default `scroll-area`
+    // slot, so query the body slot to reach the scroll container.
+    const scrollRoot = panel.closest('[data-slot="sheet-body"]')
     expect(scrollRoot).not.toBeNull()
     expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-6')
   })
