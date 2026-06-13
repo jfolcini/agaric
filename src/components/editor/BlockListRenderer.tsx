@@ -24,6 +24,7 @@ import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import type { FlatBlock, Projection } from '@/lib/tree-utils'
 import { SENTINEL_ID } from '@/lib/tree-utils'
+import { cn } from '@/lib/utils'
 
 export interface BlockListRendererProps {
   /** Blocks visible during drag (descendants of active item excluded). */
@@ -192,9 +193,16 @@ export function BlockListRenderer({
           {/* B4 (#290): faint indent-boundary guides during a drag so the
               20px DEAD_ZONE_PX reads as deliberate snap-to-grid and the indent
               width is legible. Behind the rows (z-0) and pointer-events-none. */}
-          {activeId !== null && <DragIndentGuides levels={maxDepth + 1} />}
+          {activeId !== null && (
+            <DragIndentGuides levels={maxDepth + 1} activeDepth={projected?.depth ?? null} />
+          )}
           <ul
-            className="block-tree relative z-10 list-none m-0 p-0 space-y-0.5 [@media(pointer:coarse)]:space-y-1.5"
+            // #992 — vertical rhythm comes from the single-source-of-truth
+            // `--block-row-gap` CSS var (defined in index.css alongside
+            // `--indent-width`): 4px desktop, 6px touch (one scale step up).
+            // Replaces the divergent `space-y-0.5` / `space-y-1.5` literals so
+            // every BlockTree mount (page + journal day/week/month) shares it.
+            className="block-tree relative z-10 list-none m-0 p-0 space-y-[var(--block-row-gap)]"
             data-testid="block-tree"
             aria-label={t('blockTree.treeLabel')}
             onPointerDown={onContainerPointerDown}
@@ -244,8 +252,20 @@ export function BlockListRenderer({
  * indent width. Aligned to `--indent-width` so they sit exactly where each
  * depth's content begins (`SortableBlock` pads by `--indent-width * depth`).
  * Decorative: `aria-hidden`, `pointer-events-none`, painted behind the rows.
+ *
+ * #993 — resting guides stay faint (`w-px bg-primary/15`); the single line at
+ * the level the projection will land on (`activeDepth`) is drawn bold
+ * (`w-0.5 bg-primary/70`) so the snap target is legible during rapid moves
+ * without darkening every line into clutter. No animation. `activeDepth` is
+ * the in-scope `projected.depth` (0-based) or null when there's no projection.
  */
-function DragIndentGuides({ levels }: { levels: number }): React.ReactElement | null {
+function DragIndentGuides({
+  levels,
+  activeDepth,
+}: {
+  levels: number
+  activeDepth: number | null
+}): React.ReactElement | null {
   if (levels <= 0) return null
   return (
     <div
@@ -253,13 +273,21 @@ function DragIndentGuides({ levels }: { levels: number }): React.ReactElement | 
       data-testid="drag-indent-guides"
       className="pointer-events-none absolute inset-0 z-0"
     >
-      {Array.from({ length: levels }, (_, i) => i + 1).map((level) => (
-        <span
-          key={level}
-          className="absolute inset-y-0 w-px bg-primary/15"
-          style={{ left: `calc(var(--indent-width) * ${level})` }}
-        />
-      ))}
+      {Array.from({ length: levels }, (_, i) => i + 1).map((level) => {
+        const isTarget = activeDepth != null && level === activeDepth
+        return (
+          <span
+            key={level}
+            data-testid={`drag-indent-guide-${level}`}
+            data-target={isTarget ? 'true' : undefined}
+            className={cn(
+              'absolute inset-y-0',
+              isTarget ? 'w-0.5 bg-primary/70' : 'w-px bg-primary/15',
+            )}
+            style={{ left: `calc(var(--indent-width) * ${level})` }}
+          />
+        )
+      })}
     </div>
   )
 }
@@ -277,10 +305,19 @@ function SentinelDropZone({
 }): React.ReactElement {
   const { setNodeRef } = useDroppable({ id: SENTINEL_ID })
 
+  // #991 — committed faint row-level tint so dropping after the last block
+  // matches the over-row affordance in SortableBlockWrapper. Static class (no
+  // transition), reduced-motion safe by construction.
+  const showDropIndicator = projected != null && overId === SENTINEL_ID && activeId != null
+
   return (
-    <li ref={setNodeRef} className="list-none m-0 p-0" aria-hidden>
+    <li
+      ref={setNodeRef}
+      className={cn('list-none m-0 p-0', showDropIndicator && 'bg-primary/8')}
+      aria-hidden
+    >
       {/* Drop indicator when hovering over sentinel */}
-      {projected && overId === SENTINEL_ID && activeId && (
+      {showDropIndicator && (
         <div
           className="drop-indicator h-[5px] bg-primary rounded-full ring-2 ring-primary/20"
           style={{ marginLeft: 0 }}

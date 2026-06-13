@@ -157,7 +157,17 @@ function SortableBlockWrapperInner({
       // BlockInlineControls.
       // oxlint-disable-next-line jsx-a11y/role-supports-aria-props -- see note above; canonical control lives in BlockInlineControls
       aria-expanded={hasChildren ? !isCollapsed : undefined}
-      className={cn('list-none m-0 p-0', isAnimating && 'block-children-enter')}
+      className={cn(
+        'list-none m-0 p-0',
+        isAnimating && 'block-children-enter',
+        // #991 — committed faint row-level drop-over tint so the whole
+        // landing row reads as the target (Notion/Logseq idiom), not just the
+        // 5px bar. Gated on the existing `showDropIndicator`, independent of
+        // `isFocused`. Static class (no transition) — reduced-motion safe; no
+        // `border-l-2` so it never collides with the focused block's
+        // `shadow-[inset_2px_0_0_var(--primary)]` left accent.
+        showDropIndicator && 'bg-primary/8',
+      )}
     >
       {/* #923 — drop indicator ABOVE the row when the drop lands before it. */}
       {!dropAfter && dropIndicator}
