@@ -229,6 +229,31 @@ vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
+// #1016 — wrap the real QueryBuilderModal so a test can drive its `onSave`
+// with controlled timing (re-open the builder for a different block while the
+// save promise is still in flight) and read back `open` to assert whether the
+// dialog was closed. The real component still renders (existing "Build Query"
+// tests keep working); we only intercept the props.
+let capturedQuerySave: ((expression: string) => void) | undefined
+let capturedQueryOpen = false
+vi.mock('@/components/dialogs/QueryBuilderModal', async () => {
+  const actual = await vi.importActual<typeof import('@/components/dialogs/QueryBuilderModal')>(
+    '@/components/dialogs/QueryBuilderModal',
+  )
+  return {
+    ...actual,
+    QueryBuilderModal: (props: {
+      open: boolean
+      onOpenChange: (open: boolean) => void
+      onSave: (expression: string) => void
+    }) => {
+      capturedQuerySave = props.onSave
+      capturedQueryOpen = props.open
+      return <actual.QueryBuilderModal {...props} />
+    },
+  }
+})
+
 // Mock Calendar to immediately invoke onSelect with a known date when rendered
 let mockCalendarOnSelect: ((day: Date | undefined) => void) | undefined
 vi.mock('@/components/ui/calendar', () => ({
@@ -305,6 +330,8 @@ beforeEach(() => {
   capturedSearchSlashCommands = undefined
   capturedOnSlashCommand = undefined
   capturedBlockKeyboardOpts = undefined
+  capturedQuerySave = undefined
+  capturedQueryOpen = false
   mockCalendarOnSelect = undefined
   useMockEditor = false
   mockActiveBlockId = null
@@ -1917,6 +1944,129 @@ describe('BlockTree slash command wiring', () => {
 
     const dialog = await screen.findByRole('dialog')
     expect(dialog.className).toContain('max-w-[calc(100vw-2rem)]')
+  })
+})
+
+// =========================================================================
+// #1016 (C2): handleQuerySave must not act on a stale queryBuilderBlockId
+// across the `await pageStore.edit()`.
+// =========================================================================
+
+describe('BlockTree query builder save (#1016)', () => {
+  /**
+   * Open the query builder for `focusedBlockId` via the /query slash command,
+   * returning once the modal is reported open and onSave is captured.
+   */
+  async function openQueryBuilderFor(blockId: string) {
+    // Set focus, then let the component re-render so the captured
+    // `onSlashCommand` closure (and thus `openQueryBuilder`) sees the new
+    // focusedBlockId before we fire the slash command.
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: blockId })
+    })
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'query', label: 'QUERY' })
+    })
+    // openQueryBuilder defers `setQueryBuilderOpen(true)` via startTransition.
+    await waitFor(() => expect(capturedQueryOpen).toBe(true))
+  }
+
+  // NOTE on scope (#1016): under React's closure semantics the issue's
+  // re-validation `if (queryBuilderBlockId !== blockId) return` is effectively
+  // inert — `blockId` is captured from the SAME render's `queryBuilderBlockId`,
+  // so the two are always equal inside one in-flight handler (a later render's
+  // state change does not mutate this closure's captured value). The genuinely
+  // load-bearing part of the fix is capturing `const blockId` at entry and
+  // routing the write through it, which guarantees the query expression is
+  // written to the block the dialog was opened for — never to a block that
+  // became "current" while the write was awaiting. That data-corruption guard
+  // is what this test pins down; the harmless re-check is also exercised.
+  it('writes the query to the block the dialog opened for, even if focus moves mid-await', async () => {
+    useMockEditor = true
+    // Seed two editable blocks so both ids exist for edit().
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'BLOCK_A' }), makeBlock({ id: 'BLOCK_B' })],
+      loading: false,
+    })
+
+    // Capture every edit_block target, and hang the write until we resolve it
+    // so we can move focus to a different block while it is in flight.
+    const editTargets: Array<{ blockId: string; toText: string }> = []
+    let resolveEdit: ((v: unknown) => void) | undefined
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
+      if (cmd === 'list_all_pages_in_space') return []
+      if (cmd === 'edit_block') {
+        const a = args as { blockId: string; toText: string }
+        editTargets.push({ blockId: a.blockId, toText: a.toText })
+        return new Promise((resolve) => {
+          resolveEdit = resolve
+        })
+      }
+      return emptyPage
+    })
+
+    renderBlockTree({ autoCreateFirstBlock: false })
+    await waitFor(() => expect(capturedOnSlashCommand).toBeDefined())
+
+    // Open the builder for BLOCK_A → queryBuilderBlockId === 'BLOCK_A'.
+    await openQueryBuilderFor('BLOCK_A')
+
+    // Kick off the save for BLOCK_A — it suspends on the pending edit_block.
+    let savePromise: Promise<void> | undefined
+    await act(async () => {
+      savePromise = (capturedQuerySave as unknown as (e: string) => Promise<void>)?.(
+        'status = "done"',
+      )
+    })
+
+    // Move focus / re-open the builder for a DIFFERENT block mid-flight.
+    await openQueryBuilderFor('BLOCK_B')
+
+    // Let the in-flight write resolve (echo the same content we sent so the
+    // store's echo-adopt path is a no-op).
+    await act(async () => {
+      resolveEdit?.({ id: 'BLOCK_A', content: '{{query status = "done"}}' })
+      await savePromise
+    })
+
+    // The write must have targeted the entry block (BLOCK_A), never BLOCK_B —
+    // the captured `blockId` is what protects against cross-block corruption.
+    expect(editTargets).toHaveLength(1)
+    expect(editTargets[0]).toEqual({ blockId: 'BLOCK_A', toText: '{{query status = "done"}}' })
+  })
+
+  it('closes the dialog and reloads when the target block is unchanged across the await', async () => {
+    useMockEditor = true
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'BLOCK_A' })],
+      loading: false,
+    })
+
+    let loadCalls = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'load_page_subtree') {
+        loadCalls += 1
+        return []
+      }
+      if (cmd === 'list_all_pages_in_space') return []
+      if (cmd === 'edit_block') return { id: 'BLOCK_A', content: '{{query status = "done"}}' }
+      return emptyPage
+    })
+
+    renderBlockTree({ autoCreateFirstBlock: false })
+    await waitFor(() => expect(capturedOnSlashCommand).toBeDefined())
+
+    await openQueryBuilderFor('BLOCK_A')
+
+    const loadsBefore = loadCalls
+    await act(async () => {
+      await (capturedQuerySave as unknown as (e: string) => Promise<void>)?.('status = "done"')
+    })
+
+    // Happy path: write landed, block unchanged → dialog closes + reload runs.
+    expect(capturedQueryOpen).toBe(false)
+    expect(loadCalls).toBeGreaterThan(loadsBefore)
   })
 })
 

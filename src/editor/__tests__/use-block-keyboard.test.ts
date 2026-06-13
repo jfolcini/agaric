@@ -1390,3 +1390,65 @@ describe('#725 — node-type guards (code block / table)', () => {
     })
   })
 })
+
+// =========================================================================
+// #1017 (C3): the effect cleanup must not touch a destroyed editor — calling
+// editor.off('mount', attach) on a torn-down view can no-op and leak the
+// 'mount' listener. The cleanup guards on `editor.isDestroyed` (which returns
+// `editorView?.isDestroyed ?? true`) — NOT `editor.view?.isDestroyed`, because
+// in TipTap v3 `editor.view` becomes a Proxy stub reporting `isDestroyed: false`
+// after destroy, so that check would miss the destroy-before-cleanup case.
+// =========================================================================
+
+describe('useBlockKeyboard — cleanup on a destroyed editor (#1017)', () => {
+  it('does not throw and skips editor.off() when the editor was destroyed before cleanup', () => {
+    const element = document.createElement('div')
+    document.body.appendChild(element)
+    const editor = new Editor({
+      element,
+      extensions: [Document, Paragraph, Text],
+      content: { type: 'doc', content: [{ type: 'paragraph' }] },
+    })
+    const offSpy = vi.spyOn(editor, 'off')
+
+    const callbacks = makeCallbacks()
+    const { unmount } = renderHook(() => useBlockKeyboard(editor, callbacks))
+
+    // Destroy the editor BEFORE React runs the effect cleanup (mirrors a
+    // concurrent-render / exception-recovery teardown order). NB: in TipTap
+    // v3 `editor.view` becomes a Proxy stub reporting `isDestroyed: false`
+    // after destroy; `editor.isDestroyed` is the reliable signal (it returns
+    // `editorView?.isDestroyed ?? true`), which is what the cleanup guards on.
+    editor.destroy()
+    expect(editor.isDestroyed).toBe(true)
+
+    // Effect cleanup runs here — must early-return on the destroyed view.
+    expect(() => unmount()).not.toThrow()
+    expect(offSpy).not.toHaveBeenCalled()
+
+    offSpy.mockRestore()
+    element.remove()
+  })
+
+  it('still detaches the mount listener when the editor is alive at cleanup', () => {
+    const element = document.createElement('div')
+    document.body.appendChild(element)
+    const editor = new Editor({
+      element,
+      extensions: [Document, Paragraph, Text],
+      content: { type: 'doc', content: [{ type: 'paragraph' }] },
+    })
+    const offSpy = vi.spyOn(editor, 'off')
+
+    const callbacks = makeCallbacks()
+    const { unmount } = renderHook(() => useBlockKeyboard(editor, callbacks))
+
+    // Live editor at cleanup → the 'mount' listener is removed normally.
+    unmount()
+    expect(offSpy).toHaveBeenCalledWith('mount', expect.any(Function))
+
+    offSpy.mockRestore()
+    editor.destroy()
+    element.remove()
+  })
+})

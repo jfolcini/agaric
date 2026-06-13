@@ -546,6 +546,19 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
     editor.on('mount', attach)
 
     return () => {
+      // Don't touch a destroyed editor — `editor.off()` on a torn-down editor
+      // can no-op and leak the 'mount' listener across destroy/recreate
+      // cycles (#1017). The issue cited `editor.view?.isDestroyed`
+      // (suggestion-renderer.ts:199's pattern), but in TipTap v3 `editor.view`
+      // is a Proxy stub once the editor is destroyed (`editorView` is null) and
+      // its `isDestroyed` reports `false` — so that check misses the
+      // `editor.destroy()`-before-cleanup case this bug is about. `Editor.
+      // isDestroyed` is the correct signal: it returns `editorView?.isDestroyed
+      // ?? true`, covering BOTH a destroyed ProseMirror view and a fully
+      // destroyed editor. The DOM listeners were attached to the (now-gone)
+      // view's container, so they are released with it; on a live editor we
+      // still run `listenerCleanup` to detach them.
+      if (editor.isDestroyed) return
       editor.off('mount', attach)
       listenerCleanup?.()
     }

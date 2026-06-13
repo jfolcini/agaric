@@ -1466,6 +1466,83 @@ describe('EditableBlock', () => {
 
       expect(mockFlushDraft).toHaveBeenCalledWith('B1')
     })
+
+    // ── #1015 (C1): focus-transition race must NOT disable autosave ────
+    //
+    // On a block→block focus switch React runs the markdown-change
+    // subscription effect BEFORE the auto-mount effect, so at registration
+    // time `rovingEditor.activeBlockId` still points at the OLD block. The
+    // old guard (`activeBlockId !== blockId` early-return) therefore skipped
+    // registration on the newly-focused block, silently disabling its draft
+    // autosave. We model that exact moment by rendering a focused block whose
+    // `activeBlockId` reports the previous block.
+    it('registers the markdown-change callback even when activeBlockId still points at the old block (#1015)', async () => {
+      let onChange: ((md: string) => void) | null = null
+      const mockSetOnMarkdownChange = vi.fn((cb: ((md: string) => void) | null) => {
+        if (cb) onChange = cb
+      })
+      const roving = makeRovingEditor({
+        // The destination block is focused, but the roving editor has not yet
+        // re-mounted — activeBlockId is still the previously-focused block.
+        activeBlockId: 'OLD_BLOCK',
+        setOnMarkdownChange: mockSetOnMarkdownChange,
+      })
+
+      render(
+        <EditableBlock
+          blockId="NEW_BLOCK"
+          content="original"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      // Regression: with the old early-return guard this was never called.
+      expect(mockSetOnMarkdownChange).toHaveBeenCalled()
+      expect(onChange).toBeTypeOf('function')
+
+      // Once the editor actually mounts on the new block, edits autosave.
+      roving.activeBlockId = 'NEW_BLOCK'
+      await act(async () => {
+        onChange?.('typed on new block')
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(mockSaveDraft).toHaveBeenCalledWith('NEW_BLOCK', 'typed on new block')
+    })
+
+    // The identity check now lives inside the callback: a markdown-change
+    // event that arrives while activeBlockId still reports a different block
+    // must be ignored, so it can't write the new block's keystrokes under a
+    // stale id.
+    it('ignores markdown-change events while activeBlockId does not match the block (#1015)', async () => {
+      let onChange: ((md: string) => void) | null = null
+      const roving = makeRovingEditor({
+        activeBlockId: 'OLD_BLOCK',
+        setOnMarkdownChange: vi.fn((cb: ((md: string) => void) | null) => {
+          if (cb) onChange = cb
+        }),
+      })
+
+      render(
+        <EditableBlock
+          blockId="NEW_BLOCK"
+          content="original"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      // Event fires before the mount swaps activeBlockId → must be dropped.
+      await act(async () => {
+        onChange?.('stale fire')
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(mockSaveDraft).not.toHaveBeenCalled()
+    })
   })
 
   // ── F-27: Drag-and-drop and paste file attachments ─────────────────
