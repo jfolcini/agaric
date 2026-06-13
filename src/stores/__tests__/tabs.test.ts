@@ -121,6 +121,131 @@ describe('tabs persist migrate', () => {
     expect(({} as Record<string, unknown>)['id']).toBeUndefined()
     expect(Object.hasOwn(result.tabsBySpace, '__proto__')).toBe(false)
   })
+
+  it('is idempotent — coercing an already-valid blob is a no-op', () => {
+    const blob = {
+      tabs: [{ id: '3', pageStack: [{ pageId: 'P1', title: 'One' }], label: 'One' }],
+      activeTabIndex: 0,
+      tabsBySpace: {
+        SPACE_A: [{ id: '3', pageStack: [{ pageId: 'P1', title: 'One' }], label: 'One' }],
+      },
+      activeTabIndexBySpace: { SPACE_A: 0 },
+    }
+    const once = run(blob)
+    const twice = run(once)
+    expect(twice).toEqual(once)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// CR-PERSIST (#823) — coercing `merge`. zustand's persist middleware only
+// invokes `migrate` when the stored version DIFFERS from `options.version`.
+// A corrupt blob that still carries the CURRENT `version: 1` (or a
+// non-numeric version) bypasses `migrate` entirely and is handed RAW to the
+// default shallow `merge`, letting a malformed `localStorage` payload reach
+// the tab reducers / selectors. The coercion therefore also lives in a
+// custom `merge` — this block pins that seam (mirrors navigation.test.ts).
+// ---------------------------------------------------------------------------
+describe('tabs persist merge (#823 — same-version blobs bypass migrate)', () => {
+  const options = useTabsStore.persist.getOptions()
+  const defaults = {
+    tabs: [{ id: '0', pageStack: [], label: '' }],
+    activeTabIndex: 0,
+    tabsBySpace: {},
+    activeTabIndexBySpace: {},
+  } as unknown as Parameters<NonNullable<typeof options.merge>>[1]
+
+  function mergeRun(blob: unknown): PersistedTabs {
+    return options.merge?.(blob, defaults) as unknown as PersistedTabs
+  }
+
+  it('is wired into the persist options', () => {
+    expect(typeof options.merge).toBe('function')
+  })
+
+  // The headline #823 case: a same-version (v1) blob carrying garbage
+  // fields. Previously this flowed raw through the default shallow merge.
+  it('coerces a corrupt same-version blob instead of passing it through', () => {
+    const result = mergeRun({
+      tabs: [
+        { id: 7, pageStack: [], label: 'bad-id' },
+        {
+          id: '1',
+          pageStack: [{ pageId: 'P1', title: 'ok' }, { pageId: 5, title: 'bad' }, 'garbage'],
+          label: 'kept',
+        },
+      ],
+      activeTabIndex: -3,
+      tabsBySpace: { SPACE_OK: [{ id: '1', pageStack: [], label: '' }], SPACE_BAD: 'not-an-array' },
+      activeTabIndexBySpace: { SPACE_OK: 0, SPACE_FLOAT: 1.5 },
+    })
+    // garbage tab dropped, bad pageStack entries dropped
+    expect(result.tabs).toHaveLength(1)
+    expect(result.tabs[0]?.id).toBe('1')
+    expect(result.tabs[0]?.pageStack).toEqual([{ pageId: 'P1', title: 'ok' }])
+    // negative index repaired to 0
+    expect(result.activeTabIndex).toBe(0)
+    // invalid per-space slots dropped
+    expect(Object.keys(result.tabsBySpace)).toEqual(['SPACE_OK'])
+    expect(result.activeTabIndexBySpace).toEqual({ SPACE_OK: 0 })
+  })
+
+  it('passes a well-formed blob through unchanged', () => {
+    const blob = {
+      tabs: [{ id: '3', pageStack: [{ pageId: 'P1', title: 'One' }], label: 'One' }],
+      activeTabIndex: 0,
+      tabsBySpace: {
+        SPACE_A: [{ id: '3', pageStack: [{ pageId: 'P1', title: 'One' }], label: 'One' }],
+      },
+      activeTabIndexBySpace: { SPACE_A: 0 },
+    }
+    const result = mergeRun(blob)
+    expect(result.tabs).toEqual(blob.tabs)
+    expect(result.tabsBySpace).toEqual(blob.tabsBySpace)
+    expect(result.activeTabIndexBySpace).toEqual({ SPACE_A: 0 })
+  })
+
+  it('falls back to a single empty tab when storage is empty (undefined persisted)', () => {
+    const result = mergeRun(undefined)
+    expect(result.tabs).toEqual([{ id: '0', pageStack: [], label: '' }])
+    expect(result.activeTabIndex).toBe(0)
+    expect(result.tabsBySpace).toEqual({})
+    expect(result.activeTabIndexBySpace).toEqual({})
+  })
+
+  it('does not throw on a wholly non-object blob', () => {
+    expect(() => mergeRun('corrupt')).not.toThrow()
+    expect(mergeRun('corrupt').tabs).toEqual([{ id: '0', pageStack: [], label: '' }])
+  })
+
+  // The corrupt-blob path actually demonstrated end-to-end: seed
+  // localStorage with a same-version blob and rehydrate the live store.
+  it('end-to-end: rehydrating a same-version corrupt blob repairs the store', () => {
+    const STORAGE_KEY = 'agaric:tabs'
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          tabs: [{ id: 9, pageStack: [{ pageId: 5, title: 'bad' }], label: 'x' }],
+          activeTabIndex: -1,
+          tabsBySpace: { SPACE_BAD: 'not-an-array' },
+          activeTabIndexBySpace: { SPACE_BAD: 'y' },
+        },
+        version: 1,
+      }),
+    )
+
+    expect(() => useTabsStore.persist.rehydrate()).not.toThrow()
+
+    const state = useTabsStore.getState()
+    // The bad tab (numeric id) was dropped → fell back to a single empty tab.
+    expect(state.tabs).toEqual([{ id: '0', pageStack: [], label: '' }])
+    expect(state.activeTabIndex).toBe(0)
+    expect(state.tabsBySpace).toEqual({})
+    expect(state.activeTabIndexBySpace).toEqual({})
+
+    localStorage.removeItem(STORAGE_KEY)
+  })
 })
 
 // ---------------------------------------------------------------------------

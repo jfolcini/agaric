@@ -114,6 +114,29 @@ function coerceModeBySpace(raw: unknown): Record<string, JournalMode> {
   return out
 }
 
+/**
+ * CR-PERSIST (#823) — coerce an entire persisted journal blob
+ * field-by-field. Shared by `migrate` (version-mismatched blobs) and
+ * `merge` (same-version blobs): zustand's persist middleware only calls
+ * `migrate` when the stored version DIFFERS from `options.version`, so a
+ * corrupt blob that still carries `version: 1` (or a non-numeric version)
+ * bypasses `migrate` entirely and reaches the default shallow `merge` raw —
+ * coercing in `merge` as well closes that path. The coercion is idempotent,
+ * so the migrate→merge double pass on version-mismatched blobs is harmless.
+ */
+function coercePersistedJournal(
+  persisted: unknown,
+): Pick<JournalStore, 'currentDateBySpace' | 'modeBySpace'> {
+  const blob = (persisted != null && typeof persisted === 'object' ? persisted : {}) as Record<
+    string,
+    unknown
+  >
+  return {
+    currentDateBySpace: coerceDateBySpace(blob['currentDateBySpace']),
+    modeBySpace: coerceModeBySpace(blob['modeBySpace']),
+  }
+}
+
 export const useJournalStore = create<JournalStore>()(
   persist(
     (set) => ({
@@ -192,13 +215,21 @@ export const useJournalStore = create<JournalStore>()(
       // on any legacy/version-mismatched blob, dropping entries with
       // invalid dates / unknown modes so a corrupt payload can't poison
       // the rehydrate path.
-      migrate: (persisted, _version): Pick<JournalStore, 'currentDateBySpace' | 'modeBySpace'> => {
-        const blob = (persisted ?? {}) as Record<string, unknown>
-        return {
-          currentDateBySpace: coerceDateBySpace(blob['currentDateBySpace']),
-          modeBySpace: coerceModeBySpace(blob['modeBySpace']),
-        }
-      },
+      //
+      // CR-PERSIST (#823): the field-by-field coercion is shared with
+      // `merge` below. zustand only invokes `migrate` on a version
+      // MISMATCH — same-version blobs are coerced by `merge`.
+      migrate: (persisted, _version) => coercePersistedJournal(persisted),
+      // CR-PERSIST (#823) — zustand skips `migrate` when the stored
+      // version equals `options.version` (or isn't a number), handing the
+      // raw blob straight to `merge`. Coerce here too so a corrupt
+      // `localStorage` payload that still says `version: 1` (e.g. an
+      // invalid-calendar-date string, an unknown mode) can't poison the
+      // date / mode selectors on rehydrate.
+      merge: (persisted, current) => ({
+        ...current,
+        ...coercePersistedJournal(persisted),
+      }),
     },
   ),
 )

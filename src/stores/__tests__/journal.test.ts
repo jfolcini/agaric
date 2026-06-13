@@ -183,4 +183,100 @@ describe('journal persist migrate', () => {
     const result = run({ modeBySpace: { OK: 'daily', BAD: 'yearly', X: 1 } })
     expect(result.modeBySpace).toEqual({ OK: 'daily' })
   })
+
+  it('is idempotent — coercing an already-valid blob is a no-op', () => {
+    const blob = {
+      currentDateBySpace: { SPACE_A: '2026-05-25', SPACE_B: '2026-01-01' },
+      modeBySpace: { SPACE_A: 'weekly', SPACE_B: 'agenda' },
+    }
+    const once = run(blob)
+    const twice = run(once)
+    expect(twice).toEqual(once)
+    expect(once).toEqual(blob)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// CR-PERSIST (#823) — coercing `merge`. zustand's persist middleware only
+// invokes `migrate` when the stored version DIFFERS from `options.version`.
+// A corrupt blob that still carries the CURRENT `version: 1` (or a
+// non-numeric version) bypasses `migrate` entirely and is handed RAW to the
+// default shallow `merge`, letting a malformed `localStorage` payload reach
+// the date / mode selectors. The coercion therefore also lives in a custom
+// `merge` — this block pins that seam (mirrors navigation.test.ts).
+// ---------------------------------------------------------------------------
+describe('journal persist merge (#823 — same-version blobs bypass migrate)', () => {
+  const options = useJournalStore.persist.getOptions()
+  const defaults = {
+    currentDateBySpace: {},
+    modeBySpace: {},
+  } as unknown as Parameters<NonNullable<typeof options.merge>>[1]
+
+  type MergedJournal = {
+    currentDateBySpace: Record<string, string>
+    modeBySpace: Record<string, string>
+  }
+  function mergeRun(blob: unknown): MergedJournal {
+    return options.merge?.(blob, defaults) as unknown as MergedJournal
+  }
+
+  it('is wired into the persist options', () => {
+    expect(typeof options.merge).toBe('function')
+  })
+
+  // The headline #823 case: a same-version (v1) blob carrying garbage
+  // fields. Previously this flowed raw through the default shallow merge.
+  it('coerces a corrupt same-version blob instead of passing it through', () => {
+    const result = mergeRun({
+      currentDateBySpace: { OK: '2026-05-25', BAD: '2026-13-45', WRAP: '2026-02-30', X: 5 },
+      modeBySpace: { OK: 'daily', BAD: 'yearly', Y: 1 },
+    })
+    expect(result.currentDateBySpace).toEqual({ OK: '2026-05-25' })
+    expect(result.modeBySpace).toEqual({ OK: 'daily' })
+  })
+
+  it('passes a well-formed blob through unchanged', () => {
+    const blob = {
+      currentDateBySpace: { SPACE_A: '2026-05-25' },
+      modeBySpace: { SPACE_A: 'weekly' },
+    }
+    const result = mergeRun(blob)
+    expect(result.currentDateBySpace).toEqual({ SPACE_A: '2026-05-25' })
+    expect(result.modeBySpace).toEqual({ SPACE_A: 'weekly' })
+  })
+
+  it('falls back to empty slices when storage is empty (undefined persisted)', () => {
+    const result = mergeRun(undefined)
+    expect(result.currentDateBySpace).toEqual({})
+    expect(result.modeBySpace).toEqual({})
+  })
+
+  it('does not throw on a wholly non-object blob', () => {
+    expect(() => mergeRun('corrupt')).not.toThrow()
+    expect(mergeRun('corrupt')).toMatchObject({ currentDateBySpace: {}, modeBySpace: {} })
+  })
+
+  // The corrupt-blob path actually demonstrated end-to-end: seed
+  // localStorage with a same-version blob and rehydrate the live store.
+  it('end-to-end: rehydrating a same-version corrupt blob repairs the store', () => {
+    const STORAGE_KEY = 'agaric:journal'
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          currentDateBySpace: { OK: '2026-05-25', BAD: '2026-13-45' },
+          modeBySpace: { OK: 'weekly', BAD: 'yearly' },
+        },
+        version: 1,
+      }),
+    )
+
+    expect(() => useJournalStore.persist.rehydrate()).not.toThrow()
+
+    const state = useJournalStore.getState()
+    expect(state.currentDateBySpace).toEqual({ OK: '2026-05-25' })
+    expect(state.modeBySpace).toEqual({ OK: 'weekly' })
+
+    localStorage.removeItem(STORAGE_KEY)
+  })
 })
