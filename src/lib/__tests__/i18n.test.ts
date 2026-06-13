@@ -23,6 +23,7 @@ import { settings } from '../i18n/settings'
 import { shortcuts } from '../i18n/shortcuts'
 import { sync } from '../i18n/sync'
 import { toolbar } from '../i18n/toolbar'
+import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '../slash-commands'
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -184,6 +185,24 @@ describe('key existence', () => {
     expect(typeof value).toBe('string')
     expect(value.length).toBeGreaterThan(0)
   })
+
+  // #986 regression: the "Turn into" submenu rendered raw key strings
+  // (contextMenu.turnInto / contextMenu.turnIntoType.*) because the keys were
+  // never defined. Drive the assertion off TURN_INTO_OPTIONS so any new
+  // turn-into target must ship its label key too.
+  it('contextMenu.turnInto resolves (not the raw key)', () => {
+    expect(i18n.t('contextMenu.turnInto')).not.toBe('contextMenu.turnInto')
+  })
+
+  it.each(TURN_INTO_OPTIONS.map((o) => o.blockType))(
+    'turn-into label key for "%s" resolves to a real label',
+    (blockType) => {
+      const key = turnIntoTypeKey(blockType)
+      const value = i18n.t(key)
+      expect(value).not.toBe(key)
+      expect(value.length).toBeGreaterThan(0)
+    },
+  )
 
   it('covers every top-level namespace in the translation bundle', () => {
     const translations = getTranslations()
