@@ -33,6 +33,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
+import type { BlockActions } from '@/hooks/useBlockActions'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { writeText } from '@/lib/clipboard'
@@ -49,35 +50,33 @@ export interface BlockContextMenuProps {
   onClose: () => void
   /** Ref to the element that triggered the menu, for focus restoration. */
   triggerRef?: React.RefObject<HTMLElement | null> | undefined
-  onDelete?: ((blockId: string) => void) | undefined
-  onIndent?: ((blockId: string) => void) | undefined
-  onDedent?: ((blockId: string) => void) | undefined
-  onToggleTodo?: ((blockId: string) => void) | undefined
-  onTogglePriority?: ((blockId: string) => void) | undefined
-  onToggleCollapse?: ((blockId: string) => void) | undefined
-  onMoveUp?: ((blockId: string) => void) | undefined
-  onMoveDown?: ((blockId: string) => void) | undefined
-  onMerge?: ((blockId: string) => void) | undefined
+  /**
+   * A2 (#1020) — the per-block action callbacks, passed as a single cohesive
+   * bag instead of ~15 individual optional props. This is the same `BlockActions`
+   * registry that `useBlockActions()` publishes, so `SortableBlock` forwards it
+   * verbatim (`actions={useBlockActions()}`) rather than re-drilling each
+   * callback by hand.
+   *
+   * The prop is REQUIRED: a caller can no longer silently forget to wire the
+   * actions and end up with a dead menu — the type system forces the bag to be
+   * present. Individual entries inside the bag remain optional; a missing key
+   * means "this affordance is not available here" and the corresponding menu
+   * item is omitted (the long-standing conditional-group behaviour).
+   *
+   * The action keys consumed by this menu are: `onDelete`, `onIndent`,
+   * `onDedent`, `onToggleTodo`, `onTogglePriority`, `onToggleCollapse`,
+   * `onMoveUp`, `onMoveDown`, `onMerge`, `onShowHistory`, `onShowProperties`,
+   * `onZoomIn`, `onTurnInto`, and `onBatchDelete`.
+   */
+  actions: BlockActions
   hasChildren?: boolean | undefined
   isCollapsed?: boolean | undefined
   todoState?: (string | null) | undefined
   priority?: (string | null) | undefined
   /** Due date in YYYY-MM-DD format (for future use). */
   dueDate?: (string | null) | undefined
-  /** Show block history */
-  onShowHistory?: ((blockId: string) => void) | undefined
-  /** Show block properties drawer */
-  onShowProperties?: ((blockId: string) => void) | undefined
-  /** Zoom in to show only this block's children */
-  onZoomIn?: ((blockId: string) => void) | undefined
   /** URL of external link under cursor (for Copy URL action). */
   linkUrl?: string | undefined
-  /**
-   * #264 — convert this block to another block type ("Turn into ▸"). When
-   * provided, the menu renders a "Turn into" group listing the block-type
-   * options. `activeBlockType` highlights the block's current type.
-   */
-  onTurnInto?: ((blockId: string, blockType: BlockTypeToken) => void) | undefined
   /** Current block type, used to indicate the active option in "Turn into". */
   activeBlockType?: BlockTypeToken | undefined
   /**
@@ -96,12 +95,6 @@ export interface BlockContextMenuProps {
    * provided, fully replaces the store read.
    */
   selectedBlockIds?: string[] | undefined
-  /**
-   * Fix 6 — single-IPC bulk delete (BlockTree's `handleBatchDelete`, with its
-   * confirm dialog + undo toast). Preferred over looping `onDelete` per id when
-   * the menu is in bulk mode. Falls back to per-id `onDelete` when omitted.
-   */
-  onBatchDelete?: (() => void) | undefined
 }
 
 interface MenuItem {
@@ -165,36 +158,44 @@ export function BlockContextMenu({
   position,
   onClose,
   triggerRef,
-  onDelete,
-  onIndent,
-  onDedent,
-  onToggleTodo,
-  onTogglePriority,
-  onToggleCollapse,
-  onMoveUp,
-  onMoveDown,
-  onMerge,
+  actions,
   hasChildren,
   isCollapsed,
   todoState,
   priority,
   dueDate: _dueDate,
-  onShowHistory,
-  onShowProperties,
-  onZoomIn,
   linkUrl,
-  onTurnInto,
   activeBlockType,
   selectedBlockIds: selectedBlockIdsProp,
-  onBatchDelete,
 }: BlockContextMenuProps): React.ReactElement {
   const { t } = useTranslation()
+
+  // A2 (#1020) — destructure the action bag once. Each entry is optional; a
+  // missing key gates its menu item off (the conditional-group behaviour).
+  const {
+    onDelete,
+    onIndent,
+    onDedent,
+    onToggleTodo,
+    onTogglePriority,
+    onToggleCollapse,
+    onMoveUp,
+    onMoveDown,
+    onMerge,
+    onShowHistory,
+    onShowProperties,
+    onZoomIn,
+    onTurnInto,
+    onBatchDelete,
+  } = actions
+
   // #1018 — subscribe to the global multi-selection HERE (the menu is the only
   // consumer and only mounts while open) instead of in every `SortableBlock`
   // row. This is a LIVE reactive read, so it preserves the Fix 6 correctness:
   // when the menu is open, growing the selection (e.g. the 2nd selected block)
   // re-renders the menu and bulk mode engages — no stale `getState()` snapshot.
-  // An explicit `selectedBlockIds` prop (tests) overrides the store read.
+  // `selectedBlockIds` stays a STATE prop (not an action in the bag); an
+  // explicit prop (tests) overrides the store read.
   const selectedBlockIdsFromStore = useBlockStore((s) => s.selectedBlockIds)
   const selectedBlockIds = selectedBlockIdsProp ?? selectedBlockIdsFromStore
   const menuRef = useRef<HTMLDivElement>(null)

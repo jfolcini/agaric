@@ -121,6 +121,22 @@ export function TaskCheckbox({ state }: { state: string | null | undefined }) {
   )
 }
 
+/**
+ * #217 C2 / A3 (#1021) — the responsive cap on how many property chips render
+ * inline before collapsing the rest into the `+N` overflow pill. A dense block
+ * can carry priority + due + scheduled + repeat + N props + attachments; on
+ * phones that wraps badly, so narrow viewports show fewer chips. Exporting the
+ * limits (rather than burying `isMobile ? 2 : 3` in the component body) makes
+ * the responsive display contract inspectable and testable, and keeps the
+ * breakpoint values in one named place if they ever change.
+ */
+export const INLINE_PROPERTY_LIMITS = { mobile: 2, desktop: 3 } as const
+
+/** Resolve the inline-property cap for the current viewport. */
+export function getInlinePropertyLimit(isMobile: boolean): number {
+  return isMobile ? INLINE_PROPERTY_LIMITS.mobile : INLINE_PROPERTY_LIMITS.desktop
+}
+
 export interface BlockInlineControlsProps {
   blockId: string
   hasChildren: boolean
@@ -134,6 +150,14 @@ export interface BlockInlineControlsProps {
   scheduledDate?: (string | null) | undefined
   properties?: Array<{ key: string; value: string }> | undefined
   filteredProperties: Array<{ key: string; value: string }>
+  /**
+   * A3 (#1021) — max number of property chips to render inline before the `+N`
+   * overflow pill. When omitted, falls back to `getInlinePropertyLimit(isMobile)`
+   * (the responsive default). A parent that already knows the viewport can pass
+   * it explicitly so the display contract is inspectable at the call site rather
+   * than hidden inside this component.
+   */
+  maxInlineProperties?: number | undefined
   resolveBlockTitle?: ((id: string) => string) | undefined
   /** Whether any sibling block in the tree has children. When false, skip the caret placeholder. */
   anyBlockHasChildren: boolean
@@ -164,6 +188,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
   scheduledDate,
   properties,
   filteredProperties,
+  maxInlineProperties,
   resolveBlockTitle,
   anyBlockHasChildren,
   onZoomIn,
@@ -199,12 +224,12 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
   // overloaded onto the row chevron.
   const hasSelection = useBlockStore((s) => s.selectedBlockIds.length > 0)
 
-  // #217 C2 (remainder): relieve inline-control density on narrow viewports.
-  // A dense block can carry priority + due + scheduled + repeat + N props +
-  // attachments; on phones that wraps badly. Show only 2 inline property chips
-  // before the `+N` overflow pill on narrow viewports (≥768px keeps 3).
+  // #217 C2 / A3 (#1021): cap how many property chips render inline before the
+  // `+N` overflow pill, relieving inline-control density on narrow viewports.
+  // The parent may pass `maxInlineProperties` explicitly (inspectable contract);
+  // otherwise we derive it from the viewport via the named limits.
   const isMobile = useIsMobile()
-  const inlinePropLimit = isMobile ? 2 : 3
+  const inlinePropLimit = maxInlineProperties ?? getInlinePropertyLimit(isMobile)
 
   // UX-308: Play a one-shot bump animation when the attachment count changes
   // (file dropped/pasted). `animKey` starts as null so the very first render

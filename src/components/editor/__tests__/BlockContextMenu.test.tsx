@@ -30,6 +30,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { BlockContextMenu, type BlockContextMenuProps } from '@/components/editor/BlockContextMenu'
+import type { BlockActions } from '@/hooks/useBlockActions'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
@@ -92,13 +93,51 @@ beforeEach(() => {
   useBlockStore.getState().clearSelected()
 })
 
-type MenuOverrides = { [K in keyof BlockContextMenuProps]?: BlockContextMenuProps[K] | undefined }
+// A2 (#1020) — the menu now takes a single `actions: BlockActions` bag instead
+// of ~15 individual callback props. To keep the (many) existing test call sites
+// readable, `renderMenu` still accepts the action callbacks FLAT (e.g.
+// `renderMenu({ onMerge: vi.fn() })`) and folds them into the bag internally;
+// the returned `props` re-expose those callbacks flat too, so assertions like
+// `expect(props.onDelete).toHaveBeenCalledWith(...)` keep working.
+const ACTION_KEYS = [
+  'onDelete',
+  'onIndent',
+  'onDedent',
+  'onToggleTodo',
+  'onTogglePriority',
+  'onToggleCollapse',
+  'onMoveUp',
+  'onMoveDown',
+  'onMerge',
+  'onShowHistory',
+  'onShowProperties',
+  'onZoomIn',
+  'onTurnInto',
+  'onBatchDelete',
+] as const satisfies ReadonlyArray<keyof BlockActions>
+
+type ActionKey = (typeof ACTION_KEYS)[number]
+const ACTION_KEY_SET = new Set<string>(ACTION_KEYS)
+
+// Structural / non-action props of the menu.
+type StructuralOverrides = Omit<BlockContextMenuProps, 'actions'>
+// Flat-action overrides: any BlockActions key, individually settable.
+type ActionOverrides = { [K in ActionKey]?: BlockActions[K] | undefined }
+type MenuOverrides = { [K in keyof StructuralOverrides]?: StructuralOverrides[K] | undefined } & {
+  [K in keyof ActionOverrides]?: ActionOverrides[K]
+} & { actions?: BlockActions | undefined }
 
 function renderMenu(overrides: MenuOverrides = {}) {
-  const defaults: BlockContextMenuProps = {
-    blockId: 'BLOCK_01',
+  const structuralDefaults = {
+    blockId: 'BLOCK_01' as string,
     position: { x: 100, y: 200 },
     onClose: vi.fn(),
+    hasChildren: true,
+    isCollapsed: false,
+    todoState: null as string | null,
+    priority: null as string | null,
+  }
+  const actionDefaults: BlockActions = {
     onDelete: vi.fn(),
     onIndent: vi.fn(),
     onDedent: vi.fn(),
@@ -107,21 +146,46 @@ function renderMenu(overrides: MenuOverrides = {}) {
     onToggleCollapse: vi.fn(),
     onMoveUp: vi.fn(),
     onMoveDown: vi.fn(),
-    hasChildren: true,
-    isCollapsed: false,
-    todoState: null,
-    priority: null,
   }
-  const merged = { ...defaults, ...overrides }
-  // Remove keys explicitly set to undefined so they are truly absent
-  // (satisfies exactOptionalPropertyTypes)
-  for (const key of Object.keys(merged) as (keyof typeof merged)[]) {
-    if (merged[key] === undefined) {
-      delete merged[key]
+
+  // Split the flat overrides into action vs. structural buckets.
+  const actionOverrides: Partial<BlockActions> = {}
+  const structuralOverrides: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(overrides)) {
+    if (key === 'actions') continue
+    if (ACTION_KEY_SET.has(key)) {
+      ;(actionOverrides as Record<string, unknown>)[key] = value
+    } else {
+      structuralOverrides[key] = value
     }
   }
-  const result = render(<BlockContextMenu {...(merged as BlockContextMenuProps)} />)
-  return { ...result, props: merged }
+
+  // Build the action bag (defaults + per-action overrides + an explicit
+  // `actions` bag override, the last winning). Drop keys explicitly set to
+  // undefined so a missing action is truly absent from the bag.
+  const actions: BlockActions = {
+    ...actionDefaults,
+    ...actionOverrides,
+    ...overrides.actions,
+  }
+  for (const key of Object.keys(actions) as (keyof BlockActions)[]) {
+    if (actions[key] === undefined) {
+      delete actions[key]
+    }
+  }
+
+  const structural = { ...structuralDefaults, ...structuralOverrides }
+  for (const key of Object.keys(structural) as (keyof typeof structural)[]) {
+    if (structural[key] === undefined) {
+      delete structural[key]
+    }
+  }
+
+  const finalProps = { ...structural, actions } as BlockContextMenuProps
+  const result = render(<BlockContextMenu {...finalProps} />)
+  // Re-expose the action callbacks flat on `props` so existing assertions
+  // (`props.onDelete`, `props.onMerge`, …) keep working unchanged.
+  return { ...result, props: { ...finalProps, ...actions } }
 }
 
 describe('BlockContextMenu', () => {
@@ -1161,6 +1225,82 @@ describe('BlockContextMenu', () => {
       expect(onTurnInto).toHaveBeenCalledWith('BLOCK_01', 'paragraph')
       expect(props.onClose).toHaveBeenCalled()
     })
+  })
+})
+
+/* ── A2 (#1020): single `actions` bag prop ───────────────────────────── */
+
+describe('BlockContextMenu actions bag (#1020)', () => {
+  it('accepts the action callbacks via a single `actions: BlockActions` prop', async () => {
+    const user = userEvent.setup()
+    const onDelete = vi.fn()
+    const onMerge = vi.fn()
+    const onClose = vi.fn()
+
+    // No flat callbacks — the menu receives ONLY the structural props plus the
+    // cohesive `actions` bag (the production shape that SortableBlock forwards
+    // verbatim from `useBlockActions()`).
+    const actions: BlockActions = { onDelete, onMerge }
+    render(
+      <BlockContextMenu
+        blockId="BLOCK_01"
+        position={{ x: 0, y: 0 }}
+        onClose={onClose}
+        actions={actions}
+        hasChildren={false}
+      />,
+    )
+
+    // Both wired actions render and dispatch with the block id.
+    await user.click(screen.getByText(t('contextMenu.merge')))
+    expect(onMerge).toHaveBeenCalledWith('BLOCK_01')
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('renders only the items whose action is present in the bag — a missing action is omitted, never a dead row', () => {
+    // A deliberately partial bag: only Delete + Indent are wired. Every OTHER
+    // action key is absent, so the menu must NOT render those items at all
+    // (no dead/no-op buttons that would silently fail when clicked).
+    render(
+      <BlockContextMenu
+        blockId="BLOCK_01"
+        position={{ x: 0, y: 0 }}
+        onClose={vi.fn()}
+        actions={{ onDelete: vi.fn(), onIndent: vi.fn() }}
+        hasChildren={true}
+      />,
+    )
+
+    const menu = screen.getByRole('menu')
+    // Present:
+    expect(within(menu).getByText(t('contextMenu.delete'))).toBeInTheDocument()
+    expect(within(menu).getByText(t('contextMenu.indent'))).toBeInTheDocument()
+    // Absent (their bag keys were never provided):
+    expect(within(menu).queryByText(t('contextMenu.dedent'))).not.toBeInTheDocument()
+    expect(within(menu).queryByText(t('contextMenu.moveUp'))).not.toBeInTheDocument()
+    expect(within(menu).queryByText(t('contextMenu.moveDown'))).not.toBeInTheDocument()
+    expect(within(menu).queryByText(t('contextMenu.setTodo'))).not.toBeInTheDocument()
+    expect(within(menu).queryByText(t('contextMenu.setPriority1'))).not.toBeInTheDocument()
+    // hasChildren=true but no onToggleCollapse → no Collapse row.
+    expect(within(menu).queryByText(t('contextMenu.collapse'))).not.toBeInTheDocument()
+
+    // Exactly the two wired items are interactive — no extra dead rows.
+    expect(screen.getAllByRole('menuitem')).toHaveLength(2)
+  })
+
+  it('renders nothing when the actions bag is empty (no dead menu)', () => {
+    render(
+      <BlockContextMenu
+        blockId="BLOCK_01"
+        position={{ x: 0, y: 0 }}
+        onClose={vi.fn()}
+        actions={{}}
+        hasChildren={false}
+      />,
+    )
+    // An empty bag means no actionable items → the menu short-circuits to null
+    // rather than showing an empty, dead-end popover.
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 })
 

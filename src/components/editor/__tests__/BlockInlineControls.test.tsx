@@ -114,6 +114,8 @@ import {
   DateChip,
   dueDateColor,
   formatCompactDate,
+  getInlinePropertyLimit,
+  INLINE_PROPERTY_LIMITS,
   MONTH_SHORT,
   TaskCheckbox,
 } from '@/components/editor/BlockInlineControls'
@@ -665,6 +667,31 @@ describe('BlockInlineControls', () => {
       expect(screen.queryByTestId('property-chip-c')).not.toBeInTheDocument()
       const overflow = screen.getByTestId('property-overflow')
       expect(overflow).toHaveTextContent('+1')
+    })
+
+    // A3 (#1021): the responsive limit is now a named, exported contract rather
+    // than an inline magic number.
+    describe('INLINE_PROPERTY_LIMITS / getInlinePropertyLimit (#1021)', () => {
+      it('exposes the mobile and desktop caps as named constants', () => {
+        expect(INLINE_PROPERTY_LIMITS.mobile).toBe(2)
+        expect(INLINE_PROPERTY_LIMITS.desktop).toBe(3)
+      })
+
+      it('getInlinePropertyLimit resolves the cap from the viewport flag', () => {
+        expect(getInlinePropertyLimit(true)).toBe(INLINE_PROPERTY_LIMITS.mobile)
+        expect(getInlinePropertyLimit(false)).toBe(INLINE_PROPERTY_LIMITS.desktop)
+      })
+
+      it('an explicit maxInlineProperties prop overrides the responsive default', () => {
+        // Wide viewport would normally show 3, but the explicit cap of 1 wins —
+        // proving the contract is driven by the prop, not just the hook.
+        setViewportWidth(1024)
+        renderControls(makeProps({ filteredProperties: threeProps, maxInlineProperties: 1 }))
+        expect(screen.getByTestId('property-chip-a')).toBeInTheDocument()
+        expect(screen.queryByTestId('property-chip-b')).not.toBeInTheDocument()
+        expect(screen.queryByTestId('property-chip-c')).not.toBeInTheDocument()
+        expect(screen.getByTestId('property-overflow')).toHaveTextContent('+2')
+      })
     })
   })
 
