@@ -64,23 +64,33 @@ vi.mock('@/hooks/useIpcCommand', async () => {
   }
 })
 
-vi.mock('@/stores/sync', () => ({
-  useSyncStore: (selector: (s: Record<string, unknown>) => unknown) =>
-    selector({
-      state: 'idle',
-      error: null,
-      peers: [],
-      lastSyncedAt: null,
-      opsReceived: 0,
-      opsSent: 0,
-      setState: vi.fn(),
-      setPeers: vi.fn(),
-      updateLastSynced: vi.fn(),
-      incrementOpsReceived: vi.fn(),
-      incrementOpsSent: vi.fn(),
-      reset: vi.fn(),
-    }),
+// #1076: the component now also calls `useSyncStore.getState().setPeers`
+// to mirror the dialog's local peer list into the shared store. The mock
+// must expose `getState` in addition to the selector-call form. Hoisted
+// so the same state object is reachable from the (also-hoisted) factory.
+const { mockSyncStoreState } = vi.hoisted(() => ({
+  mockSyncStoreState: {
+    state: 'idle',
+    error: null,
+    peers: [],
+    lastSyncedAt: null,
+    opsReceived: 0,
+    opsSent: 0,
+    setState: vi.fn(),
+    setPeers: vi.fn(),
+    updateLastSynced: vi.fn(),
+    incrementOpsReceived: vi.fn(),
+    incrementOpsSent: vi.fn(),
+    reset: vi.fn(),
+  },
 }))
+
+vi.mock('@/stores/sync', () => {
+  const useSyncStore = (selector: (s: Record<string, unknown>) => unknown) =>
+    selector(mockSyncStoreState)
+  useSyncStore.getState = () => mockSyncStoreState
+  return { useSyncStore }
+})
 
 const mockedInvoke = vi.mocked(invoke)
 

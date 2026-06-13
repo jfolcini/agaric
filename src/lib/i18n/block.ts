@@ -130,8 +130,6 @@ export const block: Record<string, string> = {
   'status.cacheStaleHint': 'Cache data may be stale. Restart the app to retry.',
   'status.syncStatusTitle': 'Sync Status',
   'status.syncIdle': 'Idle',
-  'status.syncDiscovering': 'Discovering...',
-  'status.syncPairing': 'Pairing...',
   'status.syncSyncing': 'Syncing...',
   'status.syncError': 'Error',
   'status.syncOffline': 'Offline',

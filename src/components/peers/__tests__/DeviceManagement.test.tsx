@@ -67,23 +67,33 @@ vi.mock('@/components/dialogs/RenameDialog', () => ({
     ) : null,
 }))
 
-vi.mock('@/stores/sync', () => ({
-  useSyncStore: (selector: (s: Record<string, unknown>) => unknown) =>
-    selector({
-      state: 'idle',
-      error: null,
-      peers: [],
-      lastSyncedAt: null,
-      opsReceived: 0,
-      opsSent: 0,
-      setState: vi.fn(),
-      setPeers: vi.fn(),
-      updateLastSynced: vi.fn(),
-      incrementOpsReceived: vi.fn(),
-      incrementOpsSent: vi.fn(),
-      reset: vi.fn(),
-    }),
+// #1076: DeviceManagement now mirrors its backend peer list into the
+// shared store via `useSyncStore.getState().setPeers`, so the mock must
+// expose `getState` alongside the selector-call form. Hoisted so the
+// same state object is reachable from the (also-hoisted) factory.
+const { mockSyncStoreState } = vi.hoisted(() => ({
+  mockSyncStoreState: {
+    state: 'idle',
+    error: null,
+    peers: [],
+    lastSyncedAt: null,
+    opsReceived: 0,
+    opsSent: 0,
+    setState: vi.fn(),
+    setPeers: vi.fn(),
+    updateLastSynced: vi.fn(),
+    incrementOpsReceived: vi.fn(),
+    incrementOpsSent: vi.fn(),
+    reset: vi.fn(),
+  },
 }))
+
+vi.mock('@/stores/sync', () => {
+  const useSyncStore = (selector: (s: Record<string, unknown>) => unknown) =>
+    selector(mockSyncStoreState)
+  useSyncStore.getState = () => mockSyncStoreState
+  return { useSyncStore }
+})
 
 const mockedInvoke = vi.mocked(invoke)
 

@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
+import { mapPeerRefToInfo } from '@/hooks/useSyncTrigger'
 import { useSyncWithTimeout } from '@/hooks/useSyncWithTimeout'
 import { writeText } from '@/lib/clipboard'
 import { truncateId } from '@/lib/format'
@@ -34,6 +35,7 @@ import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import type { PeerRefRow } from '@/lib/tauri'
 import { deletePeerRef, getDeviceId, listPeerRefs, startSync, updatePeerName } from '@/lib/tauri'
+import { useSyncStore } from '@/stores/sync'
 
 export function DeviceManagement(): React.ReactElement {
   const { t } = useTranslation()
@@ -79,6 +81,10 @@ export function DeviceManagement(): React.ReactElement {
         return 0 // preserve backend synced_at ordering for unnamed peers
       })
       setPeers(peerList)
+      // #1076: mirror the backend peer list into the shared sync store so
+      // the StatusPanel Sync panel and the sidebar status dot reflect the
+      // actual paired devices (they read `useSyncStore.peers`).
+      useSyncStore.getState().setPeers(peerList.map(mapPeerRefToInfo))
     },
     onError: () => {
       setError('Failed to load device info')
@@ -104,7 +110,13 @@ export function DeviceManagement(): React.ReactElement {
     module: 'DeviceManagement',
     errorLogMessage: 'Failed to unpair device',
     onSuccess: (_result, { peerId }) => {
-      setPeers((prev) => prev.filter((p) => p.peer_id !== peerId))
+      setPeers((prev) => {
+        const next = prev.filter((p) => p.peer_id !== peerId)
+        // #1076: mirror the removal into the shared store so the sidebar
+        // dot flips back to "no peers" the moment the last device unpairs.
+        useSyncStore.getState().setPeers(next.map(mapPeerRefToInfo))
+        return next
+      })
       setUnpairPeerId(null)
     },
     onError: () => {

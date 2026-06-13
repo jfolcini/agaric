@@ -1,14 +1,20 @@
 /**
  * Sync store -- manages peer-to-peer sync state.
  *
- * Tracks sync lifecycle (idle/discovering/pairing/syncing/error),
- * connected peers, and operation counters. The backend sync protocol
- * is not yet implemented; this store provides the frontend scaffolding.
+ * Tracks sync lifecycle (idle/syncing/error/offline), connected peers,
+ * and operation counters.
+ *
+ * #1076: the `discovering` and `pairing` members were removed — they
+ * were dead. The only writers of `state` are `mapBackendState`
+ * (useSyncEvents.ts, returns idle/syncing/error) and the offline guard
+ * in `useSyncTrigger`; nothing ever produced `discovering`/`pairing`, so
+ * every UI branch keyed on them was unreachable. Do NOT re-add a member
+ * here without a corresponding writer, or you reintroduce dead UI.
  */
 
 import { create } from 'zustand'
 
-export type SyncState = 'idle' | 'discovering' | 'pairing' | 'syncing' | 'error' | 'offline'
+export type SyncState = 'idle' | 'syncing' | 'error' | 'offline'
 
 export interface PeerInfo {
   peerId: string

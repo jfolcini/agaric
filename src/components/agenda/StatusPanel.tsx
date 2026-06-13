@@ -6,15 +6,7 @@
  * total ops dispatched, total background dispatched.
  */
 
-import {
-  Activity,
-  AlertCircle,
-  AlertTriangle,
-  CheckCircle2,
-  Link2,
-  RefreshCw,
-  Search,
-} from 'lucide-react'
+import { Activity, AlertCircle, AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react'
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -29,7 +21,7 @@ import { formatRelativeTime } from '@/lib/format-relative-time'
 import type { StatusInfo } from '@/lib/tauri'
 import { getStatus } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
-import { useSyncStore } from '@/stores/sync'
+import { type SyncState, useSyncStore } from '@/stores/sync'
 
 function queueHealthClasses(depth: number): string {
   if (depth === 0) return 'border-status-done text-status-done-foreground'
@@ -56,14 +48,10 @@ function MetricLabel({ label, tooltip }: { label: string; tooltip: string }): Re
   )
 }
 
-function syncStateLabel(state: string, t: (key: string) => string): string {
+function syncStateLabel(state: SyncState, t: (key: string) => string): string {
   switch (state) {
     case 'idle':
       return t('status.syncIdle')
-    case 'discovering':
-      return t('status.syncDiscovering')
-    case 'pairing':
-      return t('status.syncPairing')
     case 'syncing':
       return t('status.syncSyncing')
     case 'error':
@@ -75,13 +63,11 @@ function syncStateLabel(state: string, t: (key: string) => string): string {
   }
 }
 
-function syncStateDotClasses(state: string): string {
+function syncStateDotClasses(state: SyncState): string {
   switch (state) {
     case 'idle':
       return 'bg-status-done-foreground'
     case 'syncing':
-    case 'discovering':
-    case 'pairing':
       return 'bg-status-pending-foreground'
     case 'error':
       return 'bg-destructive'
@@ -94,26 +80,16 @@ function syncStateDotClasses(state: string): string {
 
 /**
  * Per-state icon next to the sync-state dot. Adds a non-color signal so
- * `discovering` and `pairing` are distinguishable beyond the (identical)
- * amber dot. The icon is decorative — the adjacent text label carries
- * the canonical state name for assistive tech, so we mark it
- * `aria-hidden`. See UX-266.
+ * states are distinguishable beyond colour. The icon is decorative — the
+ * adjacent text label carries the canonical state name for assistive
+ * tech, so we mark it `aria-hidden`. See UX-266.
+ *
+ * #1076: the `discovering` / `pairing` branches were removed alongside
+ * those (dead, never-written) SyncState members.
  */
-function SyncStateIcon({ state }: { state: string }): React.ReactElement {
+function SyncStateIcon({ state }: { state: SyncState }): React.ReactElement {
   const className = 'sync-state-icon h-3 w-3 shrink-0 text-muted-foreground'
   switch (state) {
-    case 'discovering':
-      return (
-        <Search
-          className={className}
-          data-testid="sync-state-icon-discovering"
-          aria-hidden="true"
-        />
-      )
-    case 'pairing':
-      return (
-        <Link2 className={className} data-testid="sync-state-icon-pairing" aria-hidden="true" />
-      )
     case 'syncing':
       return (
         <RefreshCw

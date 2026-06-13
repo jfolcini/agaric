@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/dialog'
 import { Spinner } from '@/components/ui/spinner'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
+import { mapPeerRefToInfo } from '@/hooks/useSyncTrigger'
 import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -119,6 +120,9 @@ export function PairingDialog({
     onSuccess: ([info, peerList]) => {
       setPairingInfo(info)
       setPeers(peerList)
+      // #1076: keep the shared sync store in step with the dialog's local
+      // peer list so StatusPanel / sidebar dot stay correct.
+      useSyncStore.getState().setPeers(peerList.map(mapPeerRefToInfo))
       setCountdown(PAIRING_TIMEOUT_SECONDS)
     },
     onError: (err) => {
@@ -300,6 +304,9 @@ export function PairingDialog({
       // Refresh peer list
       const peerList = await listPeerRefs()
       setPeers(peerList)
+      // #1076: a freshly paired device must show up in the sidebar dot /
+      // StatusPanel immediately, not only after the next sync cycle.
+      useSyncStore.getState().setPeers(peerList.map(mapPeerRefToInfo))
     },
     module: 'PairingDialog',
     errorLogMessage: 'Pairing failed',
@@ -393,7 +400,13 @@ export function PairingDialog({
     module: 'PairingDialog',
     errorLogMessage: 'Failed to unpair device',
     onSuccess: (_result, { peerId }) => {
-      setPeers((prev) => prev.filter((p) => p.peer_id !== peerId))
+      setPeers((prev) => {
+        const next = prev.filter((p) => p.peer_id !== peerId)
+        // #1076: mirror the removal into the shared store so the sidebar
+        // dot flips back to "no peers" the moment the last device unpairs.
+        useSyncStore.getState().setPeers(next.map(mapPeerRefToInfo))
+        return next
+      })
       setUnpairPeerId(null)
     },
     onError: (err) => {

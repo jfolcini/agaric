@@ -25,10 +25,26 @@ vi.mock('../../lib/announcer', () => ({
 }))
 
 import { announce } from '../../lib/announcer'
-import type { SyncSessionInfo } from '../../lib/tauri'
+import type { PeerRefRow, SyncSessionInfo } from '../../lib/tauri'
 import { listPeerRefs, startSync } from '../../lib/tauri'
 import { useSyncStore } from '../../stores/sync'
-import { useSyncTrigger } from '../useSyncTrigger'
+import { mapPeerRefToInfo, useSyncTrigger } from '../useSyncTrigger'
+
+/** Build a `PeerRefRow` with sensible defaults for tests (#1076). */
+function makePeerRow(overrides: Partial<PeerRefRow> = {}): PeerRefRow {
+  return {
+    peer_id: 'PEER1',
+    last_hash: null,
+    last_sent_hash: null,
+    synced_at: null,
+    reset_count: 0,
+    last_reset_at: null,
+    cert_hash: null,
+    device_name: null,
+    last_address: null,
+    ...overrides,
+  }
+}
 
 const mockListPeerRefs = vi.mocked(listPeerRefs)
 const mockStartSync = vi.mocked(startSync)
@@ -719,6 +735,58 @@ describe('useSyncTrigger', () => {
       })
 
       expect(mockedAnnounce).toHaveBeenCalledWith('Sync failed')
+    })
+  })
+
+  // #1076: the sync store's `peers` slice must reflect the real backend
+  // peer list (it was permanently `[]` because nothing ever called
+  // `setPeers`). StatusPanel's Sync panel and the sidebar dot gate on it.
+  describe('store peers reflect backend (#1076)', () => {
+    it('mapPeerRefToInfo maps row → PeerInfo (epoch ms → ISO string)', () => {
+      const row = makePeerRow({
+        peer_id: 'PEER_MAP',
+        synced_at: Date.UTC(2025, 0, 15, 12, 0, 0),
+        reset_count: 3,
+      })
+      expect(mapPeerRefToInfo(row)).toEqual({
+        peerId: 'PEER_MAP',
+        lastSyncedAt: '2025-01-15T12:00:00.000Z',
+        resetCount: 3,
+      })
+    })
+
+    it('mapPeerRefToInfo keeps lastSyncedAt null when never synced', () => {
+      expect(mapPeerRefToInfo(makePeerRow({ synced_at: null })).lastSyncedAt).toBeNull()
+    })
+
+    it('populates store peers from listPeerRefs after syncAll', async () => {
+      mockListPeerRefs.mockResolvedValue([
+        makePeerRow({ peer_id: 'PEER_A', synced_at: Date.UTC(2025, 0, 1), reset_count: 1 }),
+        makePeerRow({ peer_id: 'PEER_B', synced_at: null, reset_count: 0 }),
+      ])
+
+      const { result } = renderHook(() => useSyncTrigger())
+      await act(async () => {
+        await result.current.syncAll()
+      })
+
+      expect(useSyncStore.getState().peers).toEqual([
+        { peerId: 'PEER_A', lastSyncedAt: '2025-01-01T00:00:00.000Z', resetCount: 1 },
+        { peerId: 'PEER_B', lastSyncedAt: null, resetCount: 0 },
+      ])
+    })
+
+    it('clears stale store peers when backend returns none', async () => {
+      // Seed a stale peer to prove the empty backend result clears it.
+      useSyncStore.getState().setPeers([{ peerId: 'OLD', lastSyncedAt: null, resetCount: 0 }])
+      mockListPeerRefs.mockResolvedValue([])
+
+      const { result } = renderHook(() => useSyncTrigger())
+      await act(async () => {
+        await result.current.syncAll()
+      })
+
+      expect(useSyncStore.getState().peers).toEqual([])
     })
   })
 })
