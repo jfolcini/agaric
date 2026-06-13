@@ -89,7 +89,7 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
     <div className="space-y-4 max-w-xl">
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">{t('help.reportBugTitle')}</CardTitle>
+          <CardTitle>{t('help.reportBugTitle')}</CardTitle>
           <CardDescription>{t('help.reportBugDescription')}</CardDescription>
         </CardHeader>
         <CardContent>
@@ -104,7 +104,7 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
       </Card>
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">{t('help.updateTitle')}</CardTitle>
+          <CardTitle>{t('help.updateTitle')}</CardTitle>
           <CardDescription>{t('help.updateDescription')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">

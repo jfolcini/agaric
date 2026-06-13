@@ -265,7 +265,7 @@ export function AgentAccessSettingsTab(): React.ReactElement {
     <div className="agent-access-tab space-y-4 max-w-xl">
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">{t('agentAccess.title')}</CardTitle>
+          <CardTitle>{t('agentAccess.title')}</CardTitle>
           <CardDescription>{t('agentAccess.description')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">

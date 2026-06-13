@@ -121,6 +121,20 @@ describe('Button', () => {
     expect(btn.className).toContain('[@media(pointer:coarse)]:size-11')
   })
 
+  // -- active-press scale (#1012) ---------------------------------------------
+
+  // #1012: the press-compress scale lives once in the cva base as
+  // `active:scale-95` (matching the 26 app-wide scale-95 usages); icon
+  // variants no longer re-declare it.
+  it('applies active:scale-95 from the base on every size', () => {
+    for (const size of ['default', 'sm', 'icon', 'icon-sm', 'icon-lg'] as const) {
+      render(<Button size={size}>{`press-${size}`}</Button>)
+      const btn = screen.getByRole('button', { name: `press-${size}` })
+      expect(btn.className).toContain('active:scale-95')
+      expect(btn.className).not.toContain('active:scale-[0.98]')
+    }
+  })
+
   // -- a11y -------------------------------------------------------------------
 
   it('has no a11y violations with default variant', async () => {

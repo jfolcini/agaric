@@ -5,7 +5,7 @@ import type * as React from 'react'
 import { cn } from '@/lib/utils'
 
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-all active:scale-[0.98] focus-ring-visible disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-[1.2em]",
+  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-all active:scale-95 focus-ring-visible disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-[1.2em]",
   {
     variants: {
       variant: {
@@ -25,11 +25,11 @@ const buttonVariants = cva(
         xs: "h-6 gap-1 rounded-md px-2 text-xs [&_svg:not([class*='size-'])]:size-3 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:px-3",
         sm: 'h-8 gap-1.5 rounded-md px-3 [@media(pointer:coarse)]:h-11',
         lg: 'h-10 rounded-md px-6 [@media(pointer:coarse)]:h-11',
-        icon: 'size-9 active:scale-95 [@media(pointer:coarse)]:size-11',
+        icon: 'size-9 [@media(pointer:coarse)]:size-11',
         'icon-xs':
-          "size-6 rounded-md active:scale-95 [&_svg:not([class*='size-'])]:size-3 [@media(pointer:coarse)]:size-11",
-        'icon-sm': 'size-8 active:scale-95 [@media(pointer:coarse)]:size-11',
-        'icon-lg': 'size-10 active:scale-95 [@media(pointer:coarse)]:size-11',
+          "size-6 rounded-md [&_svg:not([class*='size-'])]:size-3 [@media(pointer:coarse)]:size-11",
+        'icon-sm': 'size-8 [@media(pointer:coarse)]:size-11',
+        'icon-lg': 'size-10 [@media(pointer:coarse)]:size-11',
       },
     },
     defaultVariants: {

@@ -179,7 +179,7 @@ export function StatusPanel(): React.ReactElement {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="status-panel-title flex items-center gap-2 text-base">
+            <CardTitle className="status-panel-title flex items-center gap-2">
               <Activity className="h-4 w-4" />
               {t('status.materializerStatusTitle')}
             </CardTitle>
@@ -303,7 +303,7 @@ export function StatusPanel(): React.ReactElement {
         <Card>
           <CardHeader className="pb-3">
             <CardTitle
-              className="sync-panel-title flex items-center gap-2 text-base"
+              className="sync-panel-title flex items-center gap-2"
               data-testid="sync-panel-title"
             >
               <RefreshCw className="h-4 w-4" />

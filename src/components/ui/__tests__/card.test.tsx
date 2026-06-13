@@ -30,6 +30,16 @@ describe('Card', () => {
     expect(el).toHaveAttribute('data-slot', 'card')
   })
 
+  // #1010: radius-by-prominence — in-flow cards sit at the lg tier, below
+  // the modal xl tier (dialog/alert-dialog/sheet) so a card never reads
+  // rounder than the modal floating above it.
+  it('uses the in-flow card radius tier (rounded-lg)', () => {
+    render(<Card data-testid="card">Content</Card>)
+    const el = screen.getByTestId('card')
+    expect(el).toHaveClass('rounded-lg')
+    expect(el).not.toHaveClass('rounded-xl')
+  })
+
   it('forwards ref', () => {
     const ref = React.createRef<HTMLDivElement>()
     render(<Card ref={ref}>Content</Card>)
@@ -62,6 +72,16 @@ describe('CardTitle', () => {
     const ref = React.createRef<HTMLDivElement>()
     render(<CardTitle ref={ref}>Title</CardTitle>)
     expect(ref.current).toBeInstanceOf(HTMLDivElement)
+  })
+
+  // #1011: CardTitle codifies the de-facto convention as the primitive
+  // default — text-base (a smaller sibling of the text-lg modal titles),
+  // leading-none, font-semibold, tracking-tight — so call sites no longer
+  // re-state `text-base`.
+  it('applies the default title recipe (text-base, no override needed)', () => {
+    render(<CardTitle data-testid="title">Title</CardTitle>)
+    const el = screen.getByTestId('title')
+    expect(el).toHaveClass('text-base', 'leading-none', 'font-semibold', 'tracking-tight')
   })
 })
 

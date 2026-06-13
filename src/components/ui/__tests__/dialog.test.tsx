@@ -92,6 +92,23 @@ describe('DialogContent viewport cap', () => {
     expect(content?.className).toContain('overflow-hidden')
   })
 
+  // #1010: dialogs sit at the modal radius tier (rounded-xl, 14px) — rounder
+  // than in-flow cards (rounded-lg) so a modal never reads softer than the
+  // card beneath it.
+  it('uses the modal radius tier (rounded-xl)', () => {
+    const { baseElement } = render(
+      <Dialog open>
+        <DialogContent>
+          <DialogTitle>Title</DialogTitle>
+          <DialogDescription>Description</DialogDescription>
+        </DialogContent>
+      </Dialog>,
+    )
+    const content = baseElement.querySelector('[data-slot="dialog-content"]')
+    expect(content?.className).toContain('rounded-xl')
+    expect(content?.className).not.toContain('rounded-lg')
+  })
+
   it('DialogBody renders a ScrollArea-backed slot with the flex-1 min-h-0 scroll pattern', () => {
     const { baseElement } = render(
       <Dialog open>
