@@ -13,6 +13,7 @@ import { autoUpdate, computePosition, flip, offset, shift, size } from '@floatin
 import {
   ArrowLeftToLine,
   ArrowRightToLine,
+  Check,
   CheckSquare,
   ChevronDown,
   ChevronRight,
@@ -28,7 +29,7 @@ import {
   Trash2,
   ZoomIn,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
@@ -102,6 +103,22 @@ interface MenuItem {
   shortcut?: string
   /** #264 — marks the active block type inside the "Turn into" group. */
   active?: boolean
+  /**
+   * #999 — indent the whole row one level (e.g. the "Turn into" child type
+   * options nested under the parent toggle). Declared at the row level so the
+   * indent is applied identically to both the actionable button and the
+   * non-interactive active indicator (the flat render loop + roving-focus
+   * forbid a wrapping `<div>`).
+   */
+  indented?: boolean
+  /**
+   * #1003 — marks the "Turn into" disclosure toggle. When set, the row renders
+   * a trailing chevron (right when collapsed, down when expanded) in place of a
+   * shortcut hint, and carries `aria-expanded` + `aria-controls` so screen
+   * readers announce the parent/child relationship to the inline-expanded
+   * options group.
+   */
+  expanded?: boolean
 }
 
 // ── State-aware label helpers ─────────────────────────────────────────
@@ -169,6 +186,9 @@ export function BlockContextMenu({
   // the block-type options inline (no nested floating popover, so the existing
   // single-list keyboard navigation keeps working).
   const [turnIntoOpen, setTurnIntoOpen] = useState(false)
+  // #1003 — stable id linking the "Turn into" toggle (`aria-controls`) to the
+  // inline-expanded options group, so screen readers announce the relationship.
+  const turnIntoGroupId = useId()
 
   const handleCloseWithFocus = useCallback(() => {
     // If the trigger element has been removed from the DOM during the menu's
@@ -542,7 +562,7 @@ export function BlockContextMenu({
 
   const linkGroup = [openLinkItem, copyUrlItem].filter((item): item is MenuItem => item !== null)
 
-  // #264 — "Turn into" group. A parent toggle row ("Turn into ▸/▾") that
+  // #264 — "Turn into" group. A parent toggle row ("Turn into" + chevron) that
   // expands to the block-type options inline. Each option converts the block
   // via `onTurnInto` and closes the menu; the block's current type is marked
   // active and rendered as a non-interactive indicator (converting to the
@@ -553,7 +573,7 @@ export function BlockContextMenu({
           label: t('contextMenu.turnInto'),
           icon: <Replace className="h-3.5 w-3.5" />,
           action: () => setTurnIntoOpen((o) => !o),
-          shortcut: turnIntoOpen ? '▾' : '▸',
+          expanded: turnIntoOpen,
         },
         ...(turnIntoOpen
           ? TURN_INTO_OPTIONS.map((opt): MenuItem => {
@@ -562,8 +582,12 @@ export function BlockContextMenu({
               const isActive = activeBlockType === blockType
               return {
                 label: t(turnIntoTypeKey(opt.blockType)),
-                icon: Icon ? <Icon className="ml-3 h-3.5 w-3.5" /> : <span className="ml-3" />,
+                // #999 — keep the type icon at the file-wide size; indentation
+                // is applied once at the row level via `indented` (below), not
+                // via an ad-hoc per-icon `ml-3`.
+                icon: Icon ? <Icon className="h-3.5 w-3.5" /> : <span className="h-3.5 w-3.5" />,
                 active: isActive,
+                indented: true,
                 action: isActive
                   ? undefined
                   : () => {
@@ -626,6 +650,86 @@ export function BlockContextMenu({
 
   let itemIndex = 0
 
+  // #999/#1002/#1003 — the trailing slot of an interactive row holds exactly
+  // one of: a disclosure chevron (the "Turn into" toggle), or a keyboard
+  // shortcut hint (suppressed on coarse pointers, which have no keyboard).
+  const renderTrailing = (item: MenuItem): React.ReactNode => {
+    if (item.expanded !== undefined) {
+      const Chevron = item.expanded ? ChevronDown : ChevronRight
+      return <Chevron aria-hidden="true" className="h-3.5 w-3.5 text-muted-foreground" />
+    }
+    if (!item.shortcut) return null
+    return (
+      // #1002 — no magic `ml-4`; the label's `flex-1` + button `gap-2`
+      // right-align the hint. `tabular-nums` keeps glyph widths even.
+      <span className="text-xs text-muted-foreground tabular-nums [@media(pointer:coarse)]:hidden">
+        {item.shortcut}
+      </span>
+    )
+  }
+
+  // Render a single menu row. #999 — `indented` rows get `pl-7` (28px) applied
+  // once at the row level (not via per-icon `ml-3`) so the checked and
+  // unchecked variants of a child option indent identically; ~28px aligns the
+  // child icon under the parent label (icon 14px + `gap-2` 8px + `px-2` 8px).
+  const renderItem = (item: MenuItem): React.ReactElement => {
+    // #264 — the active "Turn into" type renders as a non-interactive
+    // indicator: no action, no `itemIndex`, skipped by roving focus. It stays
+    // ring-less (#1000) — only interactive rows carry the focus ring.
+    if (item.action === undefined && item.active) {
+      return (
+        <div
+          key={item.label}
+          role="menuitem"
+          aria-disabled="true"
+          aria-current="true"
+          className={cn(
+            'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-accent-foreground bg-accent/60',
+            item.indented && 'pl-7',
+          )}
+        >
+          {item.icon}
+          <span className="flex-1">{item.label}</span>
+          {/* #1001 — lucide Check (not a bare ✓), `aria-hidden` since the
+              container's `aria-current` carries the semantic. #1002 — unlike a
+              shortcut hint, the state indicator is NOT suppressed on touch. */}
+          <Check aria-hidden="true" className="h-3.5 w-3.5 text-accent-foreground" />
+        </div>
+      )
+    }
+    const idx = itemIndex++
+    return (
+      <button
+        key={item.label}
+        ref={(el) => {
+          itemRefs.current[idx] = el
+        }}
+        type="button"
+        role="menuitem"
+        tabIndex={idx === focusedIndex ? 0 : -1}
+        // #1003 — the "Turn into" toggle announces its expand state and the
+        // inline-expanded options group it controls.
+        {...(item.expanded !== undefined
+          ? { 'aria-expanded': item.expanded, 'aria-controls': turnIntoGroupId }
+          : {})}
+        className={cn(
+          // #1000 — `focus-ring-visible` is the app-wide keyboard-focus signal
+          // (ring, not just bg). `ring-inset` keeps the 3px ring from clipping
+          // against the popover edge / `hr` separators. Hover stays bg-only so
+          // focus and hover are visually distinct (WCAG 2.4.7).
+          'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground focus-ring-visible [&:focus-visible]:ring-inset transition-colors touch-target',
+          item.indented && 'pl-7',
+          item.className,
+        )}
+        onClick={item.action}
+      >
+        {item.icon}
+        <span className="flex-1">{item.label}</span>
+        {renderTrailing(item)}
+      </button>
+    )
+  }
+
   const menu = (
     <div
       ref={menuRef}
@@ -640,55 +744,28 @@ export function BlockContextMenu({
       onKeyDown={handleKeyDown}
       data-editor-portal=""
     >
-      {groups.map((group, groupIdx) => (
-        // oxlint-disable-next-line react/no-array-index-key -- groups are static per render, never reorder
-        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- menu-item group inside a custom menu; <fieldset>/<optgroup> etc. would inject form/list semantics that conflict with the menu role
-        <div key={groupIdx} role="group">
-          {groupIdx > 0 && <hr className="my-1 h-px border-0 bg-border" />}
-          {group.map((item) => {
-            // #264 — the active "Turn into" type renders as a non-interactive
-            // indicator: no action, no `itemIndex`, skipped by roving focus.
-            if (item.action === undefined && item.active) {
-              return (
-                <div
-                  key={item.label}
-                  role="menuitem"
-                  aria-disabled="true"
-                  aria-current="true"
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-accent-foreground bg-accent/60"
-                >
-                  {item.icon}
-                  <span className="flex-1">{item.label}</span>
-                  <span className="ml-4 text-xs text-muted-foreground">✓</span>
-                </div>
-              )
-            }
-            const idx = itemIndex++
-            return (
-              <button
-                key={item.label}
-                ref={(el) => {
-                  itemRefs.current[idx] = el
-                }}
-                type="button"
-                role="menuitem"
-                tabIndex={idx === focusedIndex ? 0 : -1}
-                className={cn(
-                  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground focus-visible:outline-none transition-colors touch-target',
-                  item.className,
-                )}
-                onClick={item.action}
-              >
-                {item.icon}
-                <span className="flex-1">{item.label}</span>
-                {item.shortcut && (
-                  <span className="ml-4 text-xs text-muted-foreground">{item.shortcut}</span>
-                )}
-              </button>
-            )
-          })}
-        </div>
-      ))}
+      {groups.map((group, groupIdx) => {
+        // #1003 — the "Turn into" child options (marked `indented`) are wrapped
+        // in their own `role="group" aria-label="Turn into"` so the nesting is
+        // exposed to screen readers. They're always contiguous at the tail of
+        // their group; the non-indented rows render flat above them.
+        const flatItems = group.filter((item) => !item.indented)
+        const indentedItems = group.filter((item) => item.indented)
+        return (
+          // oxlint-disable-next-line react/no-array-index-key -- groups are static per render, never reorder
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- menu-item group inside a custom menu; <fieldset>/<optgroup> etc. would inject form/list semantics that conflict with the menu role
+          <div key={groupIdx} role="group">
+            {groupIdx > 0 && <hr className="my-1 h-px border-0 bg-border" />}
+            {flatItems.map(renderItem)}
+            {indentedItems.length > 0 && (
+              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- nested menu-item subgroup; see above
+              <div id={turnIntoGroupId} role="group" aria-label={t('contextMenu.turnInto')}>
+                {indentedItems.map(renderItem)}
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 

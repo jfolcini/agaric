@@ -538,15 +538,19 @@ describe('BlockContextMenu', () => {
     expect(menu).toHaveAttribute('aria-label', t('contextMenu.blockActions'))
   })
 
-  it('focused menu item has focus-visible highlight classes', () => {
+  it('#1000 — interactive menu items carry the focus-visible ring (WCAG 2.4.7)', () => {
     renderMenu()
 
     const items = screen.getAllByRole('menuitem')
-    // All items should have focus-visible:bg-accent for keyboard highlight
+    // Every actionable row uses the app-wide `focus-ring-visible` recipe (a
+    // visible ring, decoupled from hover) and contains the ring (`ring-inset`)
+    // so it doesn't clip at the popover edge / separators. The redundant
+    // `focus-visible:outline-none` is folded into the utility and removed.
     for (const item of items) {
-      expect(item.className).toContain('focus-visible:bg-accent')
-      expect(item.className).toContain('focus-visible:text-accent-foreground')
-      expect(item.className).toContain('focus-visible:outline-none')
+      expect(item.className).toContain('focus-ring-visible')
+      expect(item.className).toContain('ring-inset')
+      expect(item.className).not.toContain('focus-visible:outline-none')
+      expect(item.className).not.toContain('focus-visible:bg-accent')
     }
   })
 
@@ -1063,6 +1067,94 @@ describe('BlockContextMenu', () => {
       expect(chipFocusSpy).not.toHaveBeenCalled()
 
       document.body.removeChild(blockEl)
+    })
+  })
+
+  // ── "Turn into" context-menu UX (#999/#1001/#1003) ──────────────────
+  describe('Turn into submenu UX (#999/#1001/#1003)', () => {
+    const TEXT = t('contextMenu.turnIntoType.paragraph')
+
+    function expandTurnInto() {
+      const toggle = screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.turnInto')) })
+      fireEvent.click(toggle)
+      return toggle
+    }
+
+    it('#1003 — the toggle exposes aria-expanded and aria-controls, toggling with the submenu', () => {
+      renderMenu({ onTurnInto: vi.fn(), activeBlockType: 'h1' })
+
+      const toggle = screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.turnInto')) })
+      // Collapsed by default.
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      const controls = toggle.getAttribute('aria-controls')
+      expect(controls).toBeTruthy()
+      // No options rendered yet.
+      expect(screen.queryByText(TEXT)).not.toBeInTheDocument()
+
+      fireEvent.click(toggle)
+
+      expect(toggle).toHaveAttribute('aria-expanded', 'true')
+      // The expanded options live in their own labelled group, linked via id.
+      const group = screen.getByRole('group', { name: t('contextMenu.turnInto') })
+      expect(group.id).toBe(controls)
+      expect(within(group).getByText(TEXT)).toBeInTheDocument()
+
+      // Collapses again.
+      fireEvent.click(toggle)
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.queryByText(TEXT)).not.toBeInTheDocument()
+    })
+
+    it('#999 — child type rows carry the row-level indent class (not a per-icon ml-3)', () => {
+      renderMenu({ onTurnInto: vi.fn(), activeBlockType: 'h1' })
+      expandTurnInto()
+
+      // Unchecked option (paragraph): an actionable button, indented at the row.
+      const option = screen.getByRole('menuitem', { name: TEXT })
+      expect(option.className).toContain('pl-7')
+      // The old ad-hoc per-icon indent must be gone.
+      expect(option.querySelector('.ml-3')).toBeNull()
+    })
+
+    it('#999/#1001 — the active type renders an indented, ring-less lucide Check (no bare ✓)', () => {
+      // h1 is active → its row is the non-interactive indicator.
+      renderMenu({ onTurnInto: vi.fn(), activeBlockType: 'h1' })
+      expandTurnInto()
+
+      const h1Label = t('contextMenu.turnIntoType.h1')
+      const indicator = screen.getByText(h1Label).closest('[role="menuitem"]')
+      expect(indicator).not.toBeNull()
+      const row = indicator as HTMLElement
+      // aria-current marks the active type; no bare unicode tick.
+      expect(row).toHaveAttribute('aria-current', 'true')
+      expect(row.textContent).not.toContain('✓')
+      // Renders a lucide svg icon (the Check), and is indented at the row level.
+      expect(row.querySelector('svg')).not.toBeNull()
+      expect(row.className).toContain('pl-7')
+      // The non-interactive indicator stays ring-less.
+      expect(row.className).not.toContain('focus-ring-visible')
+    })
+
+    it('#1003 — the toggle shows a lucide chevron, not a unicode triangle', () => {
+      renderMenu({ onTurnInto: vi.fn() })
+      const toggle = screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.turnInto')) })
+      // No raw ▸/▾ glyph in the shortcut slot; a lucide chevron svg instead.
+      expect(toggle.textContent).not.toContain('▸')
+      expect(toggle.textContent).not.toContain('▾')
+      // svgs present: the leading Replace icon + the trailing chevron.
+      expect(toggle.querySelectorAll('svg').length).toBeGreaterThanOrEqual(2)
+    })
+
+    it('clicking a non-active type converts the block and closes the menu', async () => {
+      const user = userEvent.setup()
+      const onTurnInto = vi.fn()
+      const { props } = renderMenu({ onTurnInto, activeBlockType: 'h1' })
+      expandTurnInto()
+
+      await user.click(screen.getByRole('menuitem', { name: TEXT }))
+
+      expect(onTurnInto).toHaveBeenCalledWith('BLOCK_01', 'paragraph')
+      expect(props.onClose).toHaveBeenCalled()
     })
   })
 })
