@@ -21,7 +21,10 @@ import { useTranslation } from 'react-i18next'
 import { AttachmentList } from '@/components/attachments/AttachmentList'
 import { BlockContextMenu } from '@/components/editor/BlockContextMenu'
 import { BlockGutterControls } from '@/components/editor/BlockGutterControls'
-import { BlockInlineControls } from '@/components/editor/BlockInlineControls'
+import {
+  BlockInlineControls,
+  getInlinePropertyLimit,
+} from '@/components/editor/BlockInlineControls'
 import { BlockPropertyEditor } from '@/components/editor/BlockPropertyEditor'
 import { EditableBlock } from '@/components/editor/EditableBlock'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -32,6 +35,7 @@ import { useBlockContextMenu } from '@/hooks/useBlockContextMenu'
 import { useBlockResolvers } from '@/hooks/useBlockResolvers'
 import { useBlockSwipeActions } from '@/hooks/useBlockSwipeActions'
 import { useBlockTouchLongPress } from '@/hooks/useBlockTouchLongPress'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { usePropertyDefForEdit } from '@/hooks/usePropertyDefForEdit'
 import { performActivePageUndo } from '@/hooks/useUndoShortcuts'
 import { detectBlockType } from '@/lib/block-type-convert'
@@ -96,24 +100,17 @@ function SortableBlockInner({
   // tests via the `<TestBlockActionsOverride>` wrapper. SortableBlock
   // no longer accepts these as props (D-1 dropped 14 action + 4
   // resolver props from the interface).
+  const actions = useBlockActions()
   const {
     onNavigate,
     onDelete,
-    onIndent,
-    onDedent,
     onToggleCollapse,
     onToggleTodo,
     onTogglePriority,
-    onMoveUp,
-    onMoveDown,
-    onMerge,
     onShowHistory,
-    onShowProperties,
     onZoomIn: onZoomInResolved,
     onSelect,
-    onTurnInto,
-    onBatchDelete,
-  } = useBlockActions()
+  } = actions
   // #1018 — the row no longer subscribes to the whole `selectedBlockIds`
   // array. Doing so re-rendered EVERY row on any single toggle (a new array
   // ref per mutation → O(N) cascade). The only consumer was the context menu,
@@ -168,6 +165,12 @@ function SortableBlockInner({
     () => (properties ?? []).filter((p) => !INTERNAL_PROPERTY_KEYS.has(p.key)),
     [properties],
   )
+
+  // A3 (#1021): resolve the inline-property cap here so the responsive display
+  // contract (how many chips render before the `+N` overflow) is visible at the
+  // call site, not buried as a magic number inside BlockInlineControls.
+  const isMobile = useIsMobile()
+  const maxInlineProperties = getInlinePropertyLimit(isMobile)
 
   // Keep a ref in sync with isDragging so the long-press setTimeout closure
   // can read the current value without capturing a stale boolean.
@@ -372,6 +375,7 @@ function SortableBlockInner({
             scheduledDate={scheduledDate}
             properties={properties}
             filteredProperties={filteredProperties}
+            maxInlineProperties={maxInlineProperties}
             resolveBlockTitle={resolveBlockTitle}
             anyBlockHasChildren={anyBlockHasChildren}
             attachmentCount={attachmentCount}
@@ -435,25 +439,16 @@ function SortableBlockInner({
             position={contextMenu}
             onClose={closeContextMenu}
             triggerRef={blockRef}
-            onDelete={onDelete}
-            onIndent={onIndent}
-            onDedent={onDedent}
-            onToggleTodo={onToggleTodo}
-            onTogglePriority={onTogglePriority}
-            onToggleCollapse={onToggleCollapse}
-            onMoveUp={onMoveUp}
-            onMoveDown={onMoveDown}
-            onMerge={onMerge}
-            onShowHistory={onShowHistory}
-            onShowProperties={onShowProperties}
-            onZoomIn={onZoomIn}
-            onTurnInto={onTurnInto}
+            // A2 (#1020) — forward the whole action bag instead of re-drilling
+            // each callback. `onZoomIn` is gated by `hasChildren` (zoom-in only
+            // makes sense for a block with children), so spread the bag and
+            // override that one key with the gated value.
+            actions={{ ...actions, onZoomIn }}
             // Fix 6 / #1018 — the menu reads the active multi-selection from the
             // store itself (it's the only consumer and only mounts while open),
             // so we no longer thread `selectedBlockIds` through here. Bulk mode
             // (Delete / TODO / Priority / Move across the WHOLE selection) still
             // engages via the menu's own live subscription.
-            onBatchDelete={onBatchDelete}
             activeBlockType={detectBlockType(content)}
             hasChildren={hasChildren}
             isCollapsed={isCollapsed}
