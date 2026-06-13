@@ -34,8 +34,8 @@ import { useDuePanelData } from '@/hooks/useDuePanelData'
 import { useKeyboardNavigableList } from '@/hooks/useKeyboardNavigableList'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
+import { useToday } from '@/hooks/useToday'
 import type { NavigateToPageFn } from '@/lib/block-events'
-import { getTodayString } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 
 export interface DuePanelProps {
@@ -96,7 +96,7 @@ export function DuePanel({
     loadMore,
   } = useDuePanelData({ date, sourceFilter, excludePageId })
 
-  const todayStr = useMemo(() => getTodayString(), [])
+  const todayStr = useToday()
 
   const toggleCollapsed = useCallback(() => {
     setCollapsed((prev) => !prev)

@@ -3,11 +3,10 @@
  */
 
 import type React from 'react'
-import { useMemo } from 'react'
 
 import { useScrollToFocus } from '../../hooks/useScrollToFocus'
+import { useToday } from '../../hooks/useToday'
 import type { DayEntry } from '../../lib/date-utils'
-import { getTodayString } from '../../lib/date-utils'
 import { useBlockStore } from '../../stores/blocks'
 import { useNavigationStore } from '../../stores/navigation'
 import { DaySection } from './DaySection'
@@ -24,7 +23,7 @@ export function DailyView({
   onNavigateToPage,
   onAddBlock,
 }: DailyViewProps): React.ReactElement {
-  const isToday = useMemo(() => entry.dateStr === getTodayString(), [entry.dateStr])
+  const isToday = entry.dateStr === useToday()
 
   // UX-258: when navigating into a date-titled page with a target
   // selectedBlockId (search result, breadcrumb, graph node click, …),
