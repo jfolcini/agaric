@@ -77,19 +77,23 @@ const DialogContent = ({
 }
 DialogContent.displayName = 'DialogContent'
 
-interface DialogBodyProps {
-  ref?: React.Ref<HTMLDivElement>
-  className?: string
+// Extends the full `<div>` prop surface (like DialogHeader/DialogFooter) so
+// callers can forward `aria-*` / `role` / `data-*` onto the scroll container —
+// the body is the scrollable region and a frequent target for a11y attributes.
+interface DialogBodyProps extends Omit<React.ComponentProps<'div'>, 'children'> {
   children?: React.ReactNode
-  'data-testid'?: string
+  ref?: React.Ref<HTMLDivElement>
 }
 
-const DialogBody = ({ ref, className, children, ...rest }: DialogBodyProps) => {
+const DialogBody = ({ ref, className, children, dir, ...props }: DialogBodyProps) => {
   return (
     <ScrollArea
       ref={ref}
       data-slot="dialog-body"
-      data-testid={rest['data-testid']}
+      // `dir` on a `<div>` is `string`; ScrollArea's Radix Root narrows it to
+      // 'ltr' | 'rtl' (no `undefined` under exactOptionalPropertyTypes), so
+      // forward it only when it's a valid direction.
+      {...(dir === 'ltr' || dir === 'rtl' ? { dir } : {})}
       className={cn('flex-1 min-h-0 -mx-6', className)}
       // Radix's ScrollArea Viewport wraps children in an inner
       // `<div style="min-width:100%; display:table">`. `display:table`
@@ -100,6 +104,7 @@ const DialogBody = ({ ref, className, children, ...rest }: DialogBodyProps) => {
       // wrapper to `block` (beats the non-important inline style) makes it
       // honour the viewport width so children wrap normally.
       viewportClassName="px-6 [&>div]:!block"
+      {...props}
     >
       <div className="space-y-4 min-w-0">{children}</div>
     </ScrollArea>

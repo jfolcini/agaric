@@ -68,19 +68,26 @@ const AlertDialogContent = ({
 }
 AlertDialogContent.displayName = 'AlertDialogContent'
 
-interface AlertDialogBodyProps {
-  ref?: React.Ref<HTMLDivElement>
-  className?: string
+// Extends the full `<div>` prop surface (like AlertDialogHeader/Footer) so
+// callers can forward `aria-*` / `role` / `data-*` onto the scroll container —
+// the body is the scrollable region and a frequent target for a11y attributes.
+interface AlertDialogBodyProps extends Omit<React.ComponentProps<'div'>, 'children'> {
   children?: React.ReactNode
+  ref?: React.Ref<HTMLDivElement>
 }
 
-const AlertDialogBody = ({ ref, className, children }: AlertDialogBodyProps) => {
+const AlertDialogBody = ({ ref, className, children, dir, ...props }: AlertDialogBodyProps) => {
   return (
     <ScrollArea
       ref={ref}
       data-slot="alert-dialog-body"
+      // `dir` on a `<div>` is `string`; ScrollArea's Radix Root narrows it to
+      // 'ltr' | 'rtl' (no `undefined` under exactOptionalPropertyTypes), so
+      // forward it only when it's a valid direction.
+      {...(dir === 'ltr' || dir === 'rtl' ? { dir } : {})}
       className={cn('flex-1 min-h-0 -mx-6', className)}
       viewportClassName="px-6"
+      {...props}
     >
       <div className="space-y-4 min-w-0">{children}</div>
     </ScrollArea>

@@ -129,9 +129,9 @@ describe('SheetBody', () => {
     )
     const child = screen.getByTestId('body-child')
     // SheetBody renders a ScrollArea wrapping a content div. Walk up to
-    // the ScrollArea root (which carries data-slot="scroll-area") to
+    // the ScrollArea root (which carries data-slot="sheet-body") to
     // assert the height contract.
-    const scrollRoot = child.closest('[data-slot="scroll-area"]')
+    const scrollRoot = child.closest('[data-slot="sheet-body"]')
     expect(scrollRoot).not.toBeNull()
     expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-6')
   })
@@ -170,7 +170,34 @@ describe('SheetBody', () => {
       </Sheet>,
     )
     expect(ref.current).toBeInstanceOf(HTMLDivElement)
-    expect(ref.current?.getAttribute('data-slot')).toBe('scroll-area')
+    expect(ref.current?.getAttribute('data-slot')).toBe('sheet-body')
+  })
+
+  // #1028 / #1029 — SheetBody extends ComponentProps<'div'> so a11y / test
+  // attributes reach the scroll container (the body owns the scrollable region).
+  it('forwards aria-* / data-* onto the scroll container', () => {
+    render(
+      <Sheet open>
+        <SheetContent>
+          <SheetHeader>
+            <SheetTitle>Test Sheet</SheetTitle>
+          </SheetHeader>
+          <SheetBody
+            aria-label="Body region"
+            aria-describedby="body-desc"
+            data-testid="sheet-body"
+            data-custom="x"
+          >
+            <p>Body content</p>
+          </SheetBody>
+        </SheetContent>
+      </Sheet>,
+    )
+    const body = screen.getByTestId('sheet-body')
+    expect(body.getAttribute('data-slot')).toBe('sheet-body')
+    expect(body.getAttribute('aria-label')).toBe('Body region')
+    expect(body.getAttribute('aria-describedby')).toBe('body-desc')
+    expect(body.getAttribute('data-custom')).toBe('x')
   })
 })
 
