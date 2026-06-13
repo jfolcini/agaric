@@ -869,6 +869,71 @@ describe('SuggestionList', () => {
     expect(footer).toHaveTextContent('Esc to close')
   })
 
+  // -- #1006: footer is pointer-conditional, not width-conditional -------------
+
+  it('keyboard-hint footer is gated on a fine pointer (not a width breakpoint)', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={sampleItems} command={command} />)
+
+    const fineFooter = screen.getByTestId('suggestion-list-footer')
+    // No longer hidden behind a width breakpoint (`sm:flex`); a large tablet
+    // is still touch. The keyboard hints reveal only on a fine pointer.
+    expect(fineFooter.className).not.toContain('sm:flex')
+    expect(fineFooter.className).toContain('[@media(pointer:fine)]:flex')
+    expect(fineFooter.className).toContain('hidden')
+  })
+
+  it('renders a coarse-pointer touch footer with touch copy and aria-hidden (#1006)', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={sampleItems} command={command} />)
+
+    const touchFooter = screen.getByTestId('suggestion-list-footer-touch')
+    expect(touchFooter).toBeInTheDocument()
+    expect(touchFooter).toHaveAttribute('aria-hidden', 'true')
+    // Touch copy — no keyboard glyphs (↑↓ / ↵⇥ / Esc are meaningless on touch).
+    expect(touchFooter).toHaveTextContent('Tap to select')
+    expect(touchFooter).not.toHaveTextContent('↑↓')
+    expect(touchFooter).not.toHaveTextContent('Esc')
+    // Revealed only on a coarse pointer; same chrome as the fine footer.
+    expect(touchFooter.className).toContain('[@media(pointer:coarse)]:flex')
+    expect(touchFooter.className).toContain('hidden')
+    expect(touchFooter.className).toContain('border-t')
+    expect(touchFooter.className).toContain('px-2')
+    expect(touchFooter.className).toContain('py-1')
+    expect(touchFooter.className).toContain('text-xs')
+  })
+
+  // -- #1007: hover state matches the canonical context-menu token ------------
+
+  it('selected row uses the canonical full accent token (#1007)', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={sampleItems} command={command} />)
+    const selected = screen.getAllByRole('option')[0] as HTMLElement
+    expect(selected).toHaveAttribute('aria-selected', 'true')
+    expect(selected.className).toContain('bg-accent')
+    expect(selected.className).toContain('text-accent-foreground')
+  })
+
+  it('unselected rows use the canonical full hover token, not a muted opacity (#1007)', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={sampleItems} command={command} />)
+    const unselected = screen.getAllByRole('option')[1] as HTMLElement
+    expect(unselected).toHaveAttribute('aria-selected', 'false')
+    expect(unselected.className).toContain('hover:bg-accent')
+    expect(unselected.className).toContain('hover:text-accent-foreground')
+    // The old muted `hover:bg-accent/50` divergence must be gone.
+    expect(unselected.className).not.toContain('hover:bg-accent/50')
+  })
+
+  // -- #1009: list scales up on coarse pointers -------------------------------
+
+  it('scales the list text up on coarse pointers so label/breadcrumb/kbd grow in lockstep (#1009)', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={sampleItems} command={command} />)
+    const list = screen.getByTestId('suggestion-list')
+    expect(list.className).toContain('[@media(pointer:coarse)]:text-base')
+  })
+
   // -- #211 P0-5: per-row keyboard shortcut chips -----------------------------
 
   describe('per-row keyboard shortcut (#211 P0-5)', () => {

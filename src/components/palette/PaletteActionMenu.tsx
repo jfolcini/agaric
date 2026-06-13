@@ -25,6 +25,7 @@
 import type React from 'react'
 import { useEffect, useRef } from 'react'
 
+import { Kbd } from '@/components/ui/kbd'
 import { cn } from '@/lib/utils'
 
 export interface PaletteAction {
@@ -137,9 +138,9 @@ export function PaletteActionMenu({
         >
           <span className="flex-1 text-left">{a.label}</span>
           {a.hint != null && (
-            <kbd className="rounded border border-border bg-muted/40 px-1 py-px font-mono text-[10px]">
-              {a.hint}
-            </kbd>
+            // #1005 — canonical chip; legible on the menu item's focus/hover
+            // accent fill. Decorative within an interactive row → aria-hidden.
+            <Kbd aria-hidden="true">{a.hint}</Kbd>
           )}
         </button>
       ))}

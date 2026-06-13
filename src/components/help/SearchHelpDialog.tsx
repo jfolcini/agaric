@@ -23,6 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Kbd } from '@/components/ui/kbd'
 
 interface SearchHelpDialogProps {
   open: boolean
@@ -297,7 +298,10 @@ function BooleanOperatorsBody() {
 /** PEND-55 — Tips section body. */
 function TipsBody() {
   const { t } = useTranslation()
-  const kbd = <kbd className="rounded border px-1 font-mono text-xs" />
+  // #1005 — canonical chip. This is a standalone help kbd inside descriptive
+  // prose (not an interactive row), so it stays readable to assistive tech;
+  // no blanket `aria-hidden`.
+  const kbd = <Kbd size="md" />
   return (
     <div className="text-muted-foreground text-sm space-y-2">
       <p>

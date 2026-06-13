@@ -10,6 +10,7 @@ import { Plus } from 'lucide-react'
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Kbd } from '@/components/ui/kbd'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { formatChordTokens } from '@/lib/keyboard-config/format-chord'
@@ -235,7 +236,7 @@ export const SuggestionList = ({
     if (Icon) {
       return (
         <span className={cn('flex items-center', item.breadcrumb && 'items-start')}>
-          <Icon className="mr-2 mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          <Icon className="mr-2 mt-0.5 h-4 w-4 shrink-0 text-muted-foreground [@media(pointer:coarse)]:h-[18px] [@media(pointer:coarse)]:w-[18px]" />
           {labelNode}
         </span>
       )
@@ -258,12 +259,9 @@ export const SuggestionList = ({
         data-testid={`suggestion-shortcut-${item.id}`}
       >
         {tokens.map((tok) => (
-          <kbd
-            key={tok}
-            className="rounded border border-border bg-muted/40 px-1 py-px font-mono text-[10px]"
-          >
-            {tok}
-          </kbd>
+          // #1004 — the canonical <Kbd> carries its own bg/fg so the chip
+          // stays legible on a selected (`bg-accent`) row.
+          <Kbd key={tok}>{tok}</Kbd>
         ))}
       </span>
     )
@@ -275,7 +273,9 @@ export const SuggestionList = ({
       id={`suggestion-${item.id}`}
       className={cn(
         'suggestion-item flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors [@media(pointer:coarse)]:py-3 [@media(pointer:coarse)]:min-h-[44px] touch-target focus-outline',
-        index === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+        index === selectedIndex
+          ? 'bg-accent text-accent-foreground'
+          : 'hover:bg-accent hover:text-accent-foreground',
         item.isCreate && 'border-t border-border/50',
       )}
       data-testid="suggestion-item"
@@ -300,7 +300,10 @@ export const SuggestionList = ({
       <ScrollArea className="max-h-[min(300px,40vh)]">
         <div
           ref={listRef}
-          className="flex flex-col gap-0.5"
+          // #1009 — scale the whole list up on coarse pointers so the label,
+          // breadcrumb and kbd chip grow in lockstep with the `py-3` rows
+          // (the footer keeps its own `text-xs` outside this container).
+          className="flex flex-col gap-0.5 [@media(pointer:coarse)]:text-base"
           data-testid="suggestion-list"
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- custom editor-suggestion listbox driven by aria-activedescendant; <datalist>/<select> can't host the grouped clickable <button> options
           role="listbox"
@@ -317,7 +320,7 @@ export const SuggestionList = ({
                     <>
                       {groupIdx > 0 && <hr className="border-t border-border/50 my-1" />}
                       <h3
-                        className="px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground uppercase tracking-wider"
+                        className="px-2 pt-1.5 pb-1 text-xs font-medium text-muted-foreground uppercase tracking-wider"
                         data-testid="suggestion-category"
                       >
                         {t(group.category)}
@@ -330,8 +333,14 @@ export const SuggestionList = ({
             : items.map((item, index) => renderItem(item, index))}
         </div>
       </ScrollArea>
+      {/* #1006 — the footer is pointer-conditional, not width-conditional: a
+          large tablet is still touch. Fine pointers keep the keyboard hints
+          (↑↓ / ↵⇥ / Esc — meaningless on touch); coarse pointers get touch
+          copy. Both share identical chrome (`px-2 py-1 text-xs … border-t`);
+          only the text differs. The strip is non-interactive, so no touch
+          target padding. Decorative → `aria-hidden`. */}
       <div
-        className="border-t border-border/50 px-2 py-1 text-xs text-muted-foreground select-none hidden sm:flex items-center gap-2"
+        className="border-t border-border/50 px-2 py-1 text-xs text-muted-foreground select-none hidden items-center gap-2 [@media(pointer:fine)]:flex"
         data-testid="suggestion-list-footer"
         aria-hidden="true"
       >
@@ -340,6 +349,13 @@ export const SuggestionList = ({
         <span>{t('suggestion.footer.select')}</span>
         <span className="text-border">·</span>
         <span>{t('suggestion.footer.close')}</span>
+      </div>
+      <div
+        className="border-t border-border/50 px-2 py-1 text-xs text-muted-foreground select-none hidden items-center gap-2 [@media(pointer:coarse)]:flex"
+        data-testid="suggestion-list-footer-touch"
+        aria-hidden="true"
+      >
+        <span>{t('suggestion.footer.touch.select')}</span>
       </div>
     </div>
   )
