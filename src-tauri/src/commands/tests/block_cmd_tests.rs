@@ -4021,10 +4021,6 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
     )
     .await
     .unwrap();
-    // `now_rfc3339()` resolves to millisecond precision; sleep so the two
-    // block_a attachments get strictly increasing `created_at` values and
-    // the ORDER BY-driven assertion below is deterministic.
-    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     add_attachment_inner(
         &pool,
         DEV,
@@ -4063,16 +4059,41 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
         .get(block_a.id.as_str())
         .expect("block_a must be present");
     assert_eq!(a_rows.len(), 2, "block_a should have 2 attachments");
+
+    // The batch query orders each block's Vec by `(created_at, id)`. We assert
+    // the returned order matches that key rather than hard-coding `a1` first:
+    // attachment ids are generated with the non-monotonic `Ulid::new()`, so two
+    // rows that land in the same `created_at` millisecond have an `id` order
+    // decided by random ULID bits — assuming insertion order would equal id
+    // order is the exact flake this test must not reintroduce. We instead
+    // verify (a) the content set is correct and (b) the rows are sorted by the
+    // query's actual ordering key, which is the contract the frontend relies on.
+    let returned: Vec<(i64, &str)> = a_rows
+        .iter()
+        .map(|r| (r.created_at, r.id.as_str()))
+        .collect();
+    let mut sorted = returned.clone();
+    sorted.sort();
     assert_eq!(
-        a_rows[0].filename, "a1.png",
-        "block_a's first attachment (by created_at) should be a1.png"
+        returned, sorted,
+        "block_a's attachments must be returned sorted by (created_at, id)"
     );
-    assert_eq!(a_rows[0].mime_type, "image/png");
+    let filenames: std::collections::HashSet<&str> =
+        a_rows.iter().map(|r| r.filename.as_str()).collect();
     assert_eq!(
-        a_rows[1].filename, "a2.pdf",
-        "block_a's second attachment (by created_at) should be a2.pdf"
+        filenames,
+        ["a1.png", "a2.pdf"].into_iter().collect(),
+        "block_a must contain exactly a1.png and a2.pdf"
     );
-    assert_eq!(a_rows[1].mime_type, "application/pdf");
+    let mime_for = |name: &str| {
+        a_rows
+            .iter()
+            .find(|r| r.filename == name)
+            .map(|r| r.mime_type.as_str())
+            .unwrap_or("<missing>")
+    };
+    assert_eq!(mime_for("a1.png"), "image/png");
+    assert_eq!(mime_for("a2.pdf"), "application/pdf");
 
     let b_rows = grouped
         .get(block_b.id.as_str())

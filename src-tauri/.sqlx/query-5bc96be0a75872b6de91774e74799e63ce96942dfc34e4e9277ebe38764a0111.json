@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at FROM attachments WHERE block_id IN (SELECT value FROM json_each(?)) ORDER BY created_at",
+  "query": "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at FROM attachments WHERE block_id IN (SELECT value FROM json_each(?)) ORDER BY created_at, id",
   "describe": {
     "columns": [
       {
@@ -94,5 +94,5 @@
       false
     ]
   },
-  "hash": "f7f8e946cce32138df8ca1e6aec61a293e6628babdadcd59d2fd9f0b9ddc0812"
+  "hash": "5bc96be0a75872b6de91774e74799e63ce96942dfc34e4e9277ebe38764a0111"
 }
