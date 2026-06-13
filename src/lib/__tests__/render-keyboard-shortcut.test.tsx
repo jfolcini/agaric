@@ -71,7 +71,10 @@ describe('renderKeys', () => {
     const kbd = container.querySelector('kbd')
     expect(kbd?.className).toContain('rounded')
     expect(kbd?.className).toContain('border-border')
-    expect(kbd?.className).toContain('bg-muted')
+    // #1005/#1004 — the canonical chip carries its own absolute background
+    // token (`bg-background`) so it contrasts on selected rows, replacing the
+    // former row-relative `bg-muted`.
+    expect(kbd?.className).toContain('bg-background')
     expect(kbd?.className).toContain('font-mono')
   })
 })

@@ -25,6 +25,7 @@ import { useShallow } from 'zustand/react/shallow'
 
 import { JournalCalendarDropdown } from '@/components/journal/JournalCalendarDropdown'
 import { Button } from '@/components/ui/button'
+import { Kbd } from '@/components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import {
@@ -208,7 +209,10 @@ export function JournalControls(): React.ReactElement {
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {navLabels.prev} <kbd className="ml-1 text-xs">Alt+←</kbd>
+                  {navLabels.prev}{' '}
+                  <Kbd className="ml-1" aria-hidden="true">
+                    Alt+←
+                  </Kbd>
                 </TooltipContent>
               </Tooltip>
               <span
@@ -230,7 +234,10 @@ export function JournalControls(): React.ReactElement {
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {navLabels.next} <kbd className="ml-1 text-xs">Alt+→</kbd>
+                  {navLabels.next}{' '}
+                  <Kbd className="ml-1" aria-hidden="true">
+                    Alt+→
+                  </Kbd>
                 </TooltipContent>
               </Tooltip>
             </>
@@ -258,7 +265,10 @@ export function JournalControls(): React.ReactElement {
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                {t('journal.goToToday')} <kbd className="ml-1 text-xs">Alt+T</kbd>
+                {t('journal.goToToday')}{' '}
+                <Kbd className="ml-1" aria-hidden="true">
+                  Alt+T
+                </Kbd>
               </TooltipContent>
             </Tooltip>
           )}

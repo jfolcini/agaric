@@ -91,6 +91,10 @@ export const editor: Record<string, string> = {
   // both keys rather than implying Enter is the only way to select.
   'suggestion.footer.select': '↵ or ⇥ select',
   'suggestion.footer.close': 'Esc to close',
+  // #1006 — touch users get no keyboard glyphs; the strip has no
+  // dismiss-on-tap-away affordance of its own (the picker closes when the
+  // editor selection moves), so the copy stays minimal.
+  'suggestion.footer.touch.select': 'Tap to select',
   'link.opensInNewTab': '(opens in new tab)',
   'lightbox.description': 'Fullscreen preview of {{filename}}',
   'lightbox.openExternal': 'Open externally',

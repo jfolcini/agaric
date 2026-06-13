@@ -7,6 +7,7 @@ import { ArrowLeftRight } from 'lucide-react'
 import type React from 'react'
 import type { useTranslation } from 'react-i18next'
 
+import { Kbd } from '@/components/ui/kbd'
 import type { PaletteMode } from '@/stores/useCommandPaletteStore'
 
 /**
@@ -105,22 +106,18 @@ export function PaletteFooterHint({
       className="flex items-center gap-3 border-t px-3 py-1.5 text-xs text-muted-foreground"
       data-testid="palette-footer-hint"
     >
+      {/* #1005 — canonical <Kbd>. The adjacent text labels the action, so
+          the glyph chips are decorative → aria-hidden. */}
       <span className="inline-flex items-center gap-1">
-        <kbd className="rounded border border-border bg-muted/40 px-1 py-px font-mono text-[10px]">
-          ↵
-        </kbd>
+        <Kbd aria-hidden="true">↵</Kbd>
         {t('palette.footerHintOpen')}
       </span>
       <span className="inline-flex items-center gap-1">
-        <kbd className="rounded border border-border bg-muted/40 px-1 py-px font-mono text-[10px]">
-          ⌘↵
-        </kbd>
+        <Kbd aria-hidden="true">⌘↵</Kbd>
         {t('palette.footerHintNewTab')}
       </span>
       <span className="inline-flex items-center gap-1">
-        <kbd className="rounded border border-border bg-muted/40 px-1 py-px font-mono text-[10px]">
-          esc
-        </kbd>
+        <Kbd aria-hidden="true">esc</Kbd>
         {t('palette.footerHintClose')}
       </span>
     </div>

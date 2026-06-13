@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { useTranslation } from 'react-i18next'
 
 import { CommandEmpty, CommandGroup, CommandItem } from '@/components/ui/command'
+import { Kbd } from '@/components/ui/kbd'
 import { formatChordTokens } from '@/lib/keyboard-config/format-chord'
 import { getShortcutKeys } from '@/lib/keyboard-config/storage'
 import { PALETTE_COMMANDS, type PaletteCommandSpec } from '@/lib/palette-commands'
@@ -35,13 +36,10 @@ function ShortcutChips({ shortcutId }: { shortcutId: string }): React.ReactEleme
       {tokens.map((tok) => (
         // Tokens within a chord are unique in practice (Ctrl+Shift+F,
         // not Ctrl+Ctrl+F). Using `tok` as key avoids the index-as-key
-        // lint while staying stable across rebind re-renders.
-        <kbd
-          key={tok}
-          className="rounded border border-border bg-muted/40 px-1 py-px font-mono text-[10px]"
-        >
-          {tok}
-        </kbd>
+        // lint while staying stable across rebind re-renders. #1004 — the
+        // canonical <Kbd> carries its own bg/fg so the chip stays legible
+        // on a selected (`bg-accent`) command row.
+        <Kbd key={tok}>{tok}</Kbd>
       ))}
     </span>
   )
