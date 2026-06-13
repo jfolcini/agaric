@@ -41,6 +41,7 @@ import { notify } from '@/lib/notify'
 import { openUrl } from '@/lib/open-url'
 import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '@/lib/slash-commands'
 import { cn } from '@/lib/utils'
+import { useBlockStore } from '@/stores/blocks'
 
 export interface BlockContextMenuProps {
   blockId: string
@@ -85,6 +86,14 @@ export interface BlockContextMenuProps {
    * menu enters "bulk" mode: Delete / TODO / Priority / Move ops apply to the
    * WHOLE selection instead of just this block. With no (or a single-block)
    * selection the menu behaves exactly as before — single-block ops only.
+   *
+   * #1018 — normally OMITTED. The menu subscribes to the global selection
+   * itself (below), so the per-row `SortableBlock` no longer has to subscribe
+   * to the whole `selectedBlockIds` array (that caused an O(N) re-render
+   * cascade on every toggle). The subscription lives here because the menu is
+   * the only consumer and it only mounts while open — closed-menu rows pay
+   * nothing. This prop remains an explicit override (used by tests) and, when
+   * provided, fully replaces the store read.
    */
   selectedBlockIds?: string[] | undefined
   /**
@@ -176,10 +185,18 @@ export function BlockContextMenu({
   linkUrl,
   onTurnInto,
   activeBlockType,
-  selectedBlockIds,
+  selectedBlockIds: selectedBlockIdsProp,
   onBatchDelete,
 }: BlockContextMenuProps): React.ReactElement {
   const { t } = useTranslation()
+  // #1018 — subscribe to the global multi-selection HERE (the menu is the only
+  // consumer and only mounts while open) instead of in every `SortableBlock`
+  // row. This is a LIVE reactive read, so it preserves the Fix 6 correctness:
+  // when the menu is open, growing the selection (e.g. the 2nd selected block)
+  // re-renders the menu and bulk mode engages — no stale `getState()` snapshot.
+  // An explicit `selectedBlockIds` prop (tests) overrides the store read.
+  const selectedBlockIdsFromStore = useBlockStore((s) => s.selectedBlockIds)
+  const selectedBlockIds = selectedBlockIdsProp ?? selectedBlockIdsFromStore
   const menuRef = useRef<HTMLDivElement>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
   // #264 — the "Turn into" group is collapsed by default; expanding reveals

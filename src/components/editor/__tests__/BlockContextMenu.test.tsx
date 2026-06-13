@@ -34,6 +34,7 @@ import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { openUrl } from '@/lib/open-url'
+import { useBlockStore } from '@/stores/blocks'
 
 vi.mock('@floating-ui/dom', () => ({
   // Base impl resolves anchor coords AND runs any size() middleware's `apply`
@@ -85,6 +86,10 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockedWriteText.mockResolvedValue(undefined)
   mockedOpenUrl.mockResolvedValue(true)
+  // #1018 — the menu now reads the global selection from the store when no
+  // explicit `selectedBlockIds` prop is passed. Reset it so prop-less tests see
+  // an empty (single-block) selection and don't leak between cases.
+  useBlockStore.getState().clearSelected()
 })
 
 type MenuOverrides = { [K in keyof BlockContextMenuProps]?: BlockContextMenuProps[K] | undefined }
@@ -1249,5 +1254,62 @@ describe('BlockContextMenu bulk mode (Fix 6)', () => {
     await user.click(screen.getByText(t('contextMenu.delete')))
     expect(props.onDelete).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onDelete).toHaveBeenCalledTimes(1)
+  })
+})
+
+/* ── #1018: the menu reads the LIVE store selection (no per-row array sub) ── */
+//
+// The perf fix moved the `selectedBlockIds` subscription out of every
+// `SortableBlock` row and INTO this menu. These tests pass NO `selectedBlockIds`
+// prop, so the menu must read the global store directly — proving bulk mode
+// still engages purely from store state, AND that the original stale-snapshot
+// regression (bulk mode silently not engaging on the 2nd selected block) does
+// not return: the menu reflects whatever the store holds at render time.
+describe('BlockContextMenu store-driven bulk mode (#1018)', () => {
+  it('reads the global selection from the store when no prop is passed (bulk mode)', async () => {
+    const user = userEvent.setup()
+    // Two blocks selected in the GLOBAL store, including the right-clicked one.
+    // This is the exact state after selecting a 2nd block — the regression the
+    // original full-array subscription was added to fix.
+    useBlockStore.getState().setSelected(['BLOCK_01', 'B2'])
+
+    const { props } = renderMenu({ onBatchDelete: vi.fn() })
+
+    // Bulk-delete label reflects the store count — bulk mode engaged from the
+    // store alone, with no `selectedBlockIds` prop.
+    await user.click(screen.getByText(t('contextMenu.deleteSelected', { count: 2 })))
+    expect(props.onBatchDelete).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays single-block when the store selection does not include this block', () => {
+    // Selection of OTHER blocks; menu opened on BLOCK_01 (not selected).
+    useBlockStore.getState().setSelected(['B2', 'B3'])
+
+    renderMenu()
+
+    expect(
+      screen.queryByText(t('contextMenu.deleteSelected', { count: 2 })),
+    ).not.toBeInTheDocument()
+    expect(screen.getByText(t('contextMenu.delete'))).toBeInTheDocument()
+  })
+
+  it('stays single-block for an empty store selection', () => {
+    // Default beforeEach already cleared the store.
+    renderMenu()
+    expect(screen.getByText(t('contextMenu.delete'))).toBeInTheDocument()
+  })
+
+  it('an explicit selectedBlockIds prop overrides the store read', async () => {
+    const user = userEvent.setup()
+    // Store says single-block, but the explicit prop says bulk — prop wins.
+    useBlockStore.getState().setSelected(['BLOCK_01'])
+
+    const { props } = renderMenu({
+      selectedBlockIds: ['BLOCK_01', 'B2', 'B3'],
+      onBatchDelete: vi.fn(),
+    })
+
+    await user.click(screen.getByText(t('contextMenu.deleteSelected', { count: 3 })))
+    expect(props.onBatchDelete).toHaveBeenCalledTimes(1)
   })
 })

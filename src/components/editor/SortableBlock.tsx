@@ -38,7 +38,6 @@ import { detectBlockType } from '@/lib/block-type-convert'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
-import { useBlockStore } from '@/stores/blocks'
 
 /** Pixels of left padding per depth level. */
 export const INDENT_WIDTH = 24
@@ -115,12 +114,15 @@ function SortableBlockInner({
     onTurnInto,
     onBatchDelete,
   } = useBlockActions()
-  // Fix 6 (review): SUBSCRIBE to the active multi-selection so this row
-  // re-renders when other blocks are added/removed — a `getState()` snapshot is
-  // stale (the row only re-renders on `selectedBlockIds.length > 0` flips, not
-  // on count changes), so the context menu would receive a frozen selection and
-  // bulk mode would silently never engage on the 2nd+ selected block.
-  const selectedBlockIds = useBlockStore((s) => s.selectedBlockIds)
+  // #1018 — the row no longer subscribes to the whole `selectedBlockIds`
+  // array. Doing so re-rendered EVERY row on any single toggle (a new array
+  // ref per mutation → O(N) cascade). The only consumer was the context menu,
+  // which now subscribes to the global selection ITSELF (and only while it's
+  // open). That keeps the Fix 6 correctness — the live subscription re-renders
+  // the open menu when the selection grows, so bulk mode still engages on the
+  // 2nd+ selected block — without a stale snapshot and without the per-row
+  // cascade. This row's own visual selected state arrives via the `isSelected`
+  // prop (computed once by the parent list).
   // Context menu zoom is gated by hasChildren (was previously gated in
   // SortableBlockWrapper before the props chain was collapsed).
   const onZoomIn = hasChildren ? onZoomInResolved : undefined
@@ -446,10 +448,11 @@ function SortableBlockInner({
             onShowProperties={onShowProperties}
             onZoomIn={onZoomIn}
             onTurnInto={onTurnInto}
-            // Fix 6 — feed the (subscribed) active multi-selection + bulk-delete
-            // handler so the menu, when opened on a selected block, applies
-            // Delete / TODO / Priority / Move to the WHOLE selection.
-            selectedBlockIds={selectedBlockIds}
+            // Fix 6 / #1018 — the menu reads the active multi-selection from the
+            // store itself (it's the only consumer and only mounts while open),
+            // so we no longer thread `selectedBlockIds` through here. Bulk mode
+            // (Delete / TODO / Priority / Move across the WHOLE selection) still
+            // engages via the menu's own live subscription.
             onBatchDelete={onBatchDelete}
             activeBlockType={detectBlockType(content)}
             hasChildren={hasChildren}
