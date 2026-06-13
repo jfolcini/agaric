@@ -302,6 +302,90 @@ export async function openPageMobile(page: Page, title: string) {
   await expect(page.locator('[data-testid="sortable-block"]').first()).toBeVisible()
 }
 
+/**
+ * Wait until the BlockTree has FULLY settled at `expectedRows` hydrated content
+ * rows — the count must REACH `expectedRows` AND then hold STILL across
+ * consecutive samples (with no loading skeleton present) before we return.
+ *
+ * Why this exists (#968): `BlockTree` renders a loading skeleton with ZERO
+ * `sortable-block` rows whenever the per-page store's `loading` flag is true
+ * (`store.load()` flips `loading: true` → fetch → `loading: false`). The
+ * mobile navigation path can fire a SECOND `load()` shortly AFTER the first
+ * content row paints (a re-mount of `PageEditor`/`BlockTree` as the search
+ * sheet tears down and the tab settles, giving a fresh store whose initial
+ * `loading: true` blanks the tree again). Under the GH runner's parallel/
+ * headless contention on one shared Vite dev server that second blank window
+ * widens, so a test that reads `sortable-block.nth(2)` right after
+ * `openPageMobile` (which only awaits the FIRST row) can capture the tree
+ * during the transient empty render and the drag lands on nothing — the #968
+ * "rows render then vanish mid-test" flake.
+ *
+ * `expect.poll` auto-waits and retries, and the `block-tree-loading` skeleton
+ * absence check ensures we are not sampling a count of 0 that merely hasn't
+ * repainted yet. Requiring the count to repeat (`stableSamples` identical
+ * reads) guards against catching a value mid-transition.
+ *
+ * On `expectedRows`: this is the number of HYDRATED `sortable-block` rows the
+ * caller needs, NOT the page's seed-child count. `SortableBlockWrapper`
+ * virtualizes the tree — off-screen blocks render as empty `block-placeholder`
+ * <li>s and only promote to `sortable-block` rows once on-screen — so a 5-child
+ * page on a phone viewport hydrates only the rows that fit (e.g. 3). The caller
+ * passes that on-screen count.
+ *
+ * Why this changed (#1045): the helper previously asserted a bare
+ * `>= expectedRows` MINIMUM on a 15000ms budget. Under CI parallelism the rows
+ * hydrate incrementally and the resource-starved GH runner was observed at only
+ * 2 of the expected 3 still climbing when the 15s budget expired — a partial
+ * paint that the `>=` check on a too-short budget could neither satisfy nor
+ * outlast. We now (a) keep polling until the count REACHES `expectedRows`
+ * (`last < expectedRows` returns the partial count, which fails the assertion
+ * and keeps the poll going), then require it to hold steady, so an incremental
+ * 1→2→3 paint settles to 3 before returning; and (b) raise the timeout to
+ * 30000ms — twice the old 15s budget, grounded in the CI observation of the
+ * count still climbing at 15s — with longer polling intervals so we keep
+ * retrying across the full budget instead of burning it in the first seconds.
+ * Callers must allow a per-test timeout above 30s for this budget to be usable.
+ */
+export async function waitForStableBlockRows(page: Page, expectedRows = 1): Promise<void> {
+  const rows = page.locator('[data-testid="sortable-block"]')
+  const skeleton = page.locator('.block-tree-loading')
+  const stableSamples = 3
+
+  await expect
+    .poll(
+      async () => {
+        // A visible loading skeleton means the store is mid-(re)load → the row
+        // list is (or is about to be) empty; treat as not-yet-stable.
+        if ((await skeleton.count()) > 0) return -1
+        let last = await rows.count()
+        // Not yet fully painted: keep polling until every expected row has
+        // hydrated. Returning the partial count fails the assertion below and
+        // lets `expect.poll` retry across the full budget.
+        if (last < expectedRows) return last
+        // Re-sample: the count must hold across consecutive reads, otherwise we
+        // may be observing a value that is about to be blanked by a pending
+        // `load()` or that is still climbing as more rows hydrate. A short
+        // settle between reads lets a queued re-render commit.
+        for (let i = 0; i < stableSamples; i++) {
+          await page.waitForTimeout(60)
+          if ((await skeleton.count()) > 0) return -1
+          const next = await rows.count()
+          if (next !== last) {
+            last = next
+            i = -1 // restart the stability window on any change
+          }
+        }
+        return last
+      },
+      { timeout: 30000, intervals: [200, 400, 800, 1000] },
+    )
+    .toBeGreaterThanOrEqual(expectedRows)
+
+  // Belt-and-braces: the last expected row must still be attached + visible at
+  // the moment this helper returns.
+  await expect(rows.nth(expectedRows - 1)).toBeVisible()
+}
+
 // ---------------------------------------------------------------------------
 // Search-view helpers (PEND-58f).
 //
