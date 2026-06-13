@@ -302,6 +302,66 @@ export async function openPageMobile(page: Page, title: string) {
   await expect(page.locator('[data-testid="sortable-block"]').first()).toBeVisible()
 }
 
+/**
+ * Wait until the BlockTree has rendered AT LEAST `minRows` content rows AND
+ * that count has held STILL across consecutive samples — i.e. the tree is not
+ * mid-(re)load.
+ *
+ * Why this exists (#968): `BlockTree` renders a loading skeleton with ZERO
+ * `sortable-block` rows whenever the per-page store's `loading` flag is true
+ * (`store.load()` flips `loading: true` → fetch → `loading: false`). The
+ * mobile navigation path can fire a SECOND `load()` shortly AFTER the first
+ * content row paints (a re-mount of `PageEditor`/`BlockTree` as the search
+ * sheet tears down and the tab settles, giving a fresh store whose initial
+ * `loading: true` blanks the tree again). Under the GH runner's parallel/
+ * headless contention on one shared Vite dev server that second blank window
+ * widens, so a test that reads `sortable-block.nth(2)` right after
+ * `openPageMobile` (which only awaits the FIRST row) can capture the tree
+ * during the transient empty render and the drag lands on nothing — the #968
+ * "rows render then vanish mid-test" flake.
+ *
+ * `expect.poll` auto-waits and retries, and the `block-tree-loading` skeleton
+ * absence check ensures we are not sampling a count of 0 that merely hasn't
+ * repainted yet. Requiring the count to repeat (`stableSamples` identical
+ * reads) guards against catching a value mid-transition. This waits for a
+ * STABLE populated tree without weakening any assertion the caller makes.
+ */
+export async function waitForStableBlockRows(page: Page, minRows = 1): Promise<void> {
+  const rows = page.locator('[data-testid="sortable-block"]')
+  const skeleton = page.locator('.block-tree-loading')
+  const stableSamples = 3
+
+  await expect
+    .poll(
+      async () => {
+        // A visible loading skeleton means the store is mid-(re)load → the row
+        // list is (or is about to be) empty; treat as not-yet-stable.
+        if ((await skeleton.count()) > 0) return -1
+        let last = await rows.count()
+        if (last < minRows) return last
+        // Re-sample: the count must hold across consecutive reads, otherwise we
+        // may be observing a value that is about to be blanked by a pending
+        // `load()`. A short settle between reads lets a queued re-render commit.
+        for (let i = 0; i < stableSamples; i++) {
+          await page.waitForTimeout(60)
+          if ((await skeleton.count()) > 0) return -1
+          const next = await rows.count()
+          if (next !== last) {
+            last = next
+            i = -1 // restart the stability window on any change
+          }
+        }
+        return last
+      },
+      { timeout: 15000, intervals: [100, 200, 300, 500] },
+    )
+    .toBeGreaterThanOrEqual(minRows)
+
+  // Belt-and-braces: the row we will act on must still be attached + visible
+  // at the moment this helper returns.
+  await expect(rows.nth(minRows - 1)).toBeVisible()
+}
+
 // ---------------------------------------------------------------------------
 // Search-view helpers (PEND-58f).
 //

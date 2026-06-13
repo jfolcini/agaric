@@ -29,6 +29,7 @@ import {
   test,
   touchLongPress,
   waitForBoot,
+  waitForStableBlockRows,
 } from './helpers'
 
 const PAGE = 'Getting Started'
@@ -79,46 +80,54 @@ test.describe('Block drag-and-drop (touch / narrow viewport)', () => {
   })
 
   // #929 f2 — a press-and-hold touch drag down one row emits a move_block.
-  // SKIPPED in CI only: under the CI runner's parallel/headless load this one test
-  // intermittently loses its rendered BlockTree rows mid-test (the failure snapshot shows
-  // the editor shell with zero sortable-block rows) — not reproducible locally even under
-  // `CI=1` (workers:2, fullyParallel). The touch-DRAG mechanic is covered by the desktop
-  // drag suite (block-dnd-mouse.spec.ts) and the touch grip-visible test above; the
-  // touch-specific reorder path is also covered by the long-press → Move Down test below.
-  // Tracked for re-enable once the CI dev-server render flake is understood.
-  // eslint-disable-next-line no-process-env
-  ;(process.env['CI'] ? test.skip : test)(
-    'a touch drag reorders a block and emits move_block',
-    async ({ page }) => {
-      await openPageMobile(page, PAGE)
+  //
+  // #968: this test was previously `test.skip`'d IN CI ONLY because under the
+  // GH runner's parallel/headless load it intermittently lost its rendered
+  // BlockTree rows mid-test (the failure snapshot showed the editor shell with
+  // ZERO sortable-block rows). Root cause: `BlockTree` renders a loading
+  // skeleton with no rows whenever the per-page store's `loading` flag is true,
+  // and the mobile navigation path can fire a SECOND `load()` (a fresh per-page
+  // store on a `PageEditor`/`BlockTree` re-mount as the search sheet tears down)
+  // shortly AFTER the first content row paints. `openPageMobile` only awaits the
+  // FIRST row, so the old test read `.nth(2)` straight into that transient blank
+  // window. The fix waits for a STABLE populated tree (`waitForStableBlockRows`
+  // — count ≥ 3 held across consecutive samples with the skeleton gone) before
+  // reading ids / measuring boxes, then re-asserts the grip + target are still
+  // attached immediately before the drag. No assertion is weakened.
+  test('a touch drag reorders a block and emits move_block', async ({ page }) => {
+    await openPageMobile(page, PAGE)
 
-      // The drag targets the 3rd row (`.nth(2)`), so wait until at least three
-      // block rows have rendered before reading ids or measuring boxes. Under CI
-      // parallel load the BlockTree's async render can lag behind the page title
-      // (`openPageMobile` only awaits the first row); `blockIds`' raw
-      // `evaluateAll` doesn't auto-wait, so without this the target `.nth(2)`
-      // could be absent and the drag times out (the #929 f2 CI flake).
-      const target = page.locator('[data-testid="sortable-block"]').nth(2) // onto GS_3
-      await expect(target).toBeVisible()
+    // The drag targets the 3rd row (`.nth(2)`), so wait until at least three
+    // block rows have rendered AND that count has held still — i.e. the tree is
+    // not mid-(re)load (the #968 transient-empty-render guard).
+    await waitForStableBlockRows(page, 3)
 
-      const ids = await blockIds(page)
-      const gs1 = ids[0] as string
+    const target = page.locator('[data-testid="sortable-block"]').nth(2) // onto GS_3
+    await expect(target).toBeVisible()
 
-      await clearInvokeCalls(page)
-      const grip = page
-        .locator('[data-testid="sortable-block"]')
-        .first()
-        .locator('[data-testid="drag-handle"]')
-      await expect(grip).toBeVisible()
+    const ids = await blockIds(page)
+    const gs1 = ids[0] as string
 
-      await dragBlockTouch(page, grip, target)
+    await clearInvokeCalls(page)
+    const grip = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="drag-handle"]')
 
-      await expect.poll(async () => (await moveCalls(page)).length).toBeGreaterThan(0)
-      const calls = await moveCalls(page)
-      const mine = calls.find((c) => c.blockId === gs1) ?? calls[calls.length - 1]
-      expect(mine?.blockId).toBe(gs1)
-    },
-  )
+    // Re-assert both endpoints are still attached + visible at the instant we
+    // begin the drag: if a late `load()` blanked the tree between the stable-row
+    // wait and here, this surfaces it deterministically instead of letting
+    // `dragBlockTouch`'s `boundingBox()` resolve against a detached node.
+    await expect(grip).toBeVisible()
+    await expect(target).toBeVisible()
+
+    await dragBlockTouch(page, grip, target)
+
+    await expect.poll(async () => (await moveCalls(page)).length).toBeGreaterThan(0)
+    const calls = await moveCalls(page)
+    const mine = calls.find((c) => c.blockId === gs1) ?? calls[calls.length - 1]
+    expect(mine?.blockId).toBe(gs1)
+  })
 
   // #926 f3 — a stationary long-press on the block body opens the
   // BlockContextMenu (no drag activator there → long-press wins), and "Move
