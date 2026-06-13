@@ -25,8 +25,9 @@
 //! ### Responder (the peer that issued `ResetRequired`)
 //!
 //! 1. Look up the most recent complete snapshot in `log_snapshots`.
-//! 2. If present: send [`SyncMessage::SnapshotOffer { size_bytes }`]
-//!    with the compressed blob length.
+//! 2. If present: send [`SyncMessage::SnapshotOffer { size_bytes,
+//!    blob_blake3 }`] with the compressed blob length and its blake3
+//!    integrity hash (#706 item 2).
 //! 3. Await [`SyncMessage::SnapshotAccept`] or
 //!    [`SyncMessage::SnapshotReject`] from the initiator.
 //! 4. On accept: send the blob in binary frames of
@@ -185,6 +186,13 @@ pub(crate) async fn try_offer_snapshot_catchup(
     // target.
     let size_bytes: u64 = compressed.len() as u64;
 
+    // #706 item 2 — transfer integrity hash. blake3 of the *compressed*
+    // blob, advertised in the offer so the initiator can verify the bytes
+    // it receives match what we read off disk. Catches responder-side disk
+    // corruption between read and send (the one gap left by mTLS +
+    // atomic-apply). Mirrors `FileOffer::blake3_hash`.
+    let blob_blake3 = blake3::hash(&compressed).to_hex().to_string();
+
     // M-58: defensive covering check.
     //
     // `ResetRequired` means our op_log was compacted past the remote's
@@ -246,8 +254,11 @@ pub(crate) async fn try_offer_snapshot_catchup(
         ops_sent: 0,
     });
 
-    conn.send_json(&SyncMessage::SnapshotOffer { size_bytes })
-        .await?;
+    conn.send_json(&SyncMessage::SnapshotOffer {
+        size_bytes,
+        blob_blake3,
+    })
+    .await?;
 
     // Await the initiator's decision. Reuse the orchestrator's 120 s
     // timeout-by-receive-cycle semantics: the underlying recv has its
@@ -403,8 +414,11 @@ pub(crate) async fn try_receive_snapshot_catchup(
     engine_reload: Option<EngineReloadCtx<'_>>,
 ) -> Result<CatchupOutcome, AppError> {
     let offer: SyncMessage = conn.recv_json().await?;
-    let size_bytes = match offer {
-        SyncMessage::SnapshotOffer { size_bytes } => size_bytes,
+    let (size_bytes, expected_blob_blake3) = match offer {
+        SyncMessage::SnapshotOffer {
+            size_bytes,
+            blob_blake3,
+        } => (size_bytes, blob_blake3),
         SyncMessage::Error { message } => {
             return Err(AppError::InvalidOperation(format!(
                 "peer reported error instead of snapshot offer: {message}"
@@ -461,6 +475,33 @@ pub(crate) async fn try_receive_snapshot_catchup(
     // (success, decode failure, panic) — see the type's docs.
     let app_data_dir = app_data_dir_from_pool(pool).await?;
     let temp = receive_snapshot_to_temp(conn, &app_data_dir, size_bytes).await?;
+
+    // #706 item 2 — verify the transfer integrity hash BEFORE the
+    // expensive decode/apply. Re-hash the received compressed bytes and
+    // compare against the blake3 the responder advertised in its offer.
+    // A mismatch means the blob was corrupted (responder-side disk error
+    // before send, or a transport defect mTLS didn't catch) — fail fast
+    // and loud here rather than letting it surface as an opaque
+    // CBOR/zstd decode error inside `apply_snapshot`. `temp` drops (and
+    // unlinks) on the early return.
+    let actual_blob_blake3 = blake3_of_file(temp.path()).await?;
+    if actual_blob_blake3 != expected_blob_blake3 {
+        tracing::warn!(
+            peer_id = %remote_device_id,
+            expected = %expected_blob_blake3,
+            actual = %actual_blob_blake3,
+            "received snapshot blob failed blake3 integrity check; rejecting (#706)"
+        );
+        let msg = format!(
+            "snapshot blob integrity check failed: expected blake3 {expected_blob_blake3}, \
+             got {actual_blob_blake3}"
+        );
+        event_sink.on_sync_event(SyncEvent::Error {
+            message: msg.clone(),
+            remote_device_id: remote_device_id.to_string(),
+        });
+        return Err(AppError::Snapshot(msg));
+    }
 
     event_sink.on_sync_event(SyncEvent::Progress {
         state: "snapshot_applying".into(),
@@ -683,6 +724,42 @@ impl Drop for SnapshotTempFile {
         // errors so a panic-on-drop never masks the real failure.
         let _ = std::fs::remove_file(&self.path);
     }
+}
+
+/// #706 item 2 — stream a file through a blake3 hasher and return the
+/// lowercase hex digest. Reads in `BINARY_FRAME_CHUNK_SIZE` chunks so the
+/// integrity check inherits the same bounded-memory profile as the
+/// L-67 receive path (never buffers the whole compressed blob). The hash
+/// is computed on a blocking thread so the receive loop's executor is not
+/// stalled on a multi-hundred-MB read.
+async fn blake3_of_file(path: &Path) -> Result<String, AppError> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || -> Result<String, AppError> {
+        use std::io::Read;
+        let mut file = std::fs::File::open(&path).map_err(|e| {
+            AppError::Io(std::io::Error::new(
+                e.kind(),
+                format!("opening snapshot temp for hashing {}: {e}", path.display()),
+            ))
+        })?;
+        let mut hasher = blake3::Hasher::new();
+        let mut buf = vec![0u8; BINARY_FRAME_CHUNK_SIZE];
+        loop {
+            let n = file.read(&mut buf).map_err(|e| {
+                AppError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("reading snapshot temp for hashing {}: {e}", path.display()),
+                ))
+            })?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+        }
+        Ok(hasher.finalize().to_hex().to_string())
+    })
+    .await
+    .map_err(|e| AppError::Snapshot(format!("blake3 hashing task panicked: {e}")))?
 }
 
 /// Stream `size_bytes` of a compressed snapshot from `conn` straight
@@ -945,10 +1022,20 @@ mod tests {
         // Client side: expect SnapshotOffer, reply Accept, drain bytes.
         let offer: SyncMessage = client_conn.recv_json().await.unwrap();
         match offer {
-            SyncMessage::SnapshotOffer { size_bytes } => {
+            SyncMessage::SnapshotOffer {
+                size_bytes,
+                blob_blake3,
+            } => {
                 assert_eq!(
                     size_bytes, expected_size,
                     "offered size_bytes must match on-disk snapshot blob length"
+                );
+                // #706 item 2: the offer must carry the blake3 of the
+                // compressed blob the responder is about to stream.
+                assert_eq!(
+                    blob_blake3,
+                    blake3::hash(&latest_bytes).to_hex().to_string(),
+                    "offered blob_blake3 must hash the snapshot blob"
                 );
             }
             other => panic!("expected SnapshotOffer, got {:?}", other),
@@ -1188,10 +1275,12 @@ mod tests {
 
         // Server side (responder): send offer + bytes.
         let bytes_clone = snap_bytes.clone();
+        let snap_hash = blake3::hash(&snap_bytes).to_hex().to_string();
         let server_task = tokio::spawn(async move {
             server_conn
                 .send_json(&SyncMessage::SnapshotOffer {
                     size_bytes: expected_size,
+                    blob_blake3: snap_hash,
                 })
                 .await
                 .unwrap();
@@ -1283,6 +1372,8 @@ mod tests {
             server_conn
                 .send_json(&SyncMessage::SnapshotOffer {
                     size_bytes: oversized,
+                    // Rejected on size before any receive/checksum.
+                    blob_blake3: String::new(),
                 })
                 .await
                 .unwrap();
@@ -1350,9 +1441,16 @@ mod tests {
         let size_bytes = garbage.len() as u64;
 
         let garbage_clone = garbage.clone();
+        // #706 item 2: advertise the CORRECT blake3 of the garbage so the
+        // integrity check passes and the failure is the *decode* failure
+        // this test pins (not an early checksum rejection).
+        let garbage_hash = blake3::hash(&garbage).to_hex().to_string();
         let server_task = tokio::spawn(async move {
             server_conn
-                .send_json(&SyncMessage::SnapshotOffer { size_bytes })
+                .send_json(&SyncMessage::SnapshotOffer {
+                    size_bytes,
+                    blob_blake3: garbage_hash,
+                })
                 .await
                 .unwrap();
             let accept: SyncMessage = server_conn.recv_json().await.unwrap();
@@ -1394,6 +1492,93 @@ mod tests {
             "failed apply must NOT populate peer_refs (no successful catch-up)"
         );
         materializer.shutdown();
+    }
+
+    // -----------------------------------------------------------------
+    // #706 item 2: transfer checksum mismatch → reject before apply
+    // -----------------------------------------------------------------
+
+    /// A VALID, fully-decodable snapshot blob is streamed, but the offer
+    /// advertises the WRONG blake3 (simulating responder-side disk
+    /// corruption of the bytes between hashing and send, OR a transport
+    /// defect). The initiator must detect the mismatch and refuse to
+    /// apply — leaving the DB untouched and peer_refs unset — even though
+    /// the bytes would otherwise decode and apply cleanly.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn try_receive_snapshot_catchup_rejects_on_checksum_mismatch() {
+        // Responder DB with a real, valid snapshot.
+        let (resp_pool, _resp_dir) = test_pool().await;
+        let resp_materializer = Materializer::new(resp_pool.clone());
+        seed_one_block(&resp_pool, &resp_materializer, REMOTE_DEV).await;
+        create_snapshot(&resp_pool, REMOTE_DEV).await.unwrap();
+        let (_snap_id, snap_bytes) = get_latest_snapshot(&resp_pool).await.unwrap().unwrap();
+        let expected_size = snap_bytes.len() as u64;
+
+        let (init_pool, _init_dir) = test_pool().await;
+        let materializer = Materializer::new(init_pool.clone());
+
+        let (mut server_conn, mut client_conn) = test_connection_pair().await;
+        let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+        let bytes_clone = snap_bytes.clone();
+        // Deliberately WRONG hash (all zeros) — does not match the bytes.
+        let wrong_hash = "0".repeat(64);
+        let server_task = tokio::spawn(async move {
+            server_conn
+                .send_json(&SyncMessage::SnapshotOffer {
+                    size_bytes: expected_size,
+                    blob_blake3: wrong_hash,
+                })
+                .await
+                .unwrap();
+            let accept: SyncMessage = server_conn.recv_json().await.unwrap();
+            assert_eq!(accept, SyncMessage::SnapshotAccept);
+            for chunk in bytes_clone.chunks(BINARY_FRAME_CHUNK_SIZE) {
+                server_conn.send_binary(chunk).await.unwrap();
+            }
+        });
+
+        let result = try_receive_snapshot_catchup(
+            &mut client_conn,
+            &init_pool,
+            &materializer,
+            &event_sink,
+            REMOTE_DEV,
+            None,
+            None,
+        )
+        .await;
+
+        server_task.await.unwrap();
+
+        // The mismatch must surface as an Err naming the integrity check.
+        let err = result.expect_err("checksum mismatch must return Err");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("integrity check failed"),
+            "error must name the integrity check, got: {msg}"
+        );
+
+        // DB untouched — the valid bytes were NEVER applied because the
+        // checksum gate fired first.
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&init_pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "checksum-rejected snapshot must not be applied; blocks stay empty"
+        );
+        let peer = peer_refs::get_peer_ref(&init_pool, REMOTE_DEV)
+            .await
+            .unwrap();
+        assert!(
+            peer.is_none(),
+            "checksum-rejected catch-up must NOT populate peer_refs"
+        );
+
+        materializer.shutdown();
+        resp_materializer.shutdown();
     }
 
     // -----------------------------------------------------------------
@@ -1444,6 +1629,9 @@ mod tests {
             server_conn
                 .send_json(&SyncMessage::SnapshotOffer {
                     size_bytes: promised_size,
+                    // Hash is irrelevant: the receive errors on EOF before
+                    // the integrity check runs.
+                    blob_blake3: String::new(),
                 })
                 .await
                 .unwrap();
@@ -1652,10 +1840,12 @@ mod tests {
         let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
         let bytes_clone = snap_bytes.clone();
+        let snap_hash = blake3::hash(&snap_bytes).to_hex().to_string();
         let server_task = tokio::spawn(async move {
             server_conn
                 .send_json(&SyncMessage::SnapshotOffer {
                     size_bytes: expected_size,
+                    blob_blake3: snap_hash,
                 })
                 .await
                 .unwrap();
@@ -1801,10 +1991,12 @@ mod tests {
         let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
         let bytes_clone = snap_bytes.clone();
+        let snap_hash = blake3::hash(&snap_bytes).to_hex().to_string();
         let server_task = tokio::spawn(async move {
             server_conn
                 .send_json(&SyncMessage::SnapshotOffer {
                     size_bytes: expected_size,
+                    blob_blake3: snap_hash,
                 })
                 .await
                 .unwrap();
@@ -1914,9 +2106,15 @@ mod tests {
         let garbage: Vec<u8> = vec![0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
         let size_bytes = garbage.len() as u64;
         let garbage_clone = garbage.clone();
+        // #706 item 2: correct hash so the failure is the decode failure
+        // this test pins (the temp must still be unlinked on that path).
+        let garbage_hash = blake3::hash(&garbage).to_hex().to_string();
         let server_task = tokio::spawn(async move {
             server_conn
-                .send_json(&SyncMessage::SnapshotOffer { size_bytes })
+                .send_json(&SyncMessage::SnapshotOffer {
+                    size_bytes,
+                    blob_blake3: garbage_hash,
+                })
                 .await
                 .unwrap();
             let accept: SyncMessage = server_conn.recv_json().await.unwrap();
@@ -2123,10 +2321,12 @@ mod tests {
         let (mut server_conn, mut client_conn) = test_connection_pair().await;
         let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
         let bytes_clone = snap_bytes.clone();
+        let snap_hash = blake3::hash(&snap_bytes).to_hex().to_string();
         let server_task = tokio::spawn(async move {
             server_conn
                 .send_json(&SyncMessage::SnapshotOffer {
                     size_bytes: expected_size,
+                    blob_blake3: snap_hash,
                 })
                 .await
                 .unwrap();

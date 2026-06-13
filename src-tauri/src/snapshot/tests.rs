@@ -2243,14 +2243,16 @@ async fn cleanup_old_snapshots_deletes_pending_snapshots() {
         create_snapshot(&pool, dev).await.unwrap();
     }
 
-    // Insert a pending snapshot directly via SQL (simulating a crash leftover)
-    sqlx::query(
-        "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
-             VALUES ('PENDING_SNAP_01', 'pending', 'h', '{}', X'00')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    // Insert a pending snapshot directly via SQL (simulating a crash leftover).
+    // #706 item 3: the pending arm only deletes rows older than the grace
+    // window, so the leftover id must be an OLD ULID (here 2024-01-01) — a
+    // genuine crash leftover always pre-dates the next compaction's cutoff.
+    let old_pending_id = ulid::Ulid::from_parts(1_704_067_200_000, 0).to_string();
+    sqlx::query("INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) VALUES (?, 'pending', 'h', '{}', X'00')")
+        .bind(&old_pending_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     // Verify: 3 complete + 1 pending = 4 total
     let total: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
@@ -2307,21 +2309,21 @@ async fn cleanup_old_snapshots_mixed_pending_and_complete() {
         create_snapshot(&pool, dev).await.unwrap();
     }
 
-    // Insert 2 pending snapshots directly via SQL
-    sqlx::query(
-        "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
-             VALUES ('PENDING_MIX_01', 'pending', 'h1', '{}', X'00')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
-             VALUES ('PENDING_MIX_02', 'pending', 'h2', '{}', X'00')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    // Insert 2 pending snapshots directly via SQL (crash leftovers).
+    // #706 item 3: must be OLD ULIDs (past the grace window) to be eligible
+    // for the age-gated pending-delete arm.
+    let old_pending_1 = ulid::Ulid::from_parts(1_704_067_200_000, 1).to_string();
+    let old_pending_2 = ulid::Ulid::from_parts(1_704_153_600_000, 2).to_string();
+    sqlx::query("INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) VALUES (?, 'pending', 'h1', '{}', X'00')")
+        .bind(&old_pending_1)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) VALUES (?, 'pending', 'h2', '{}', X'00')")
+        .bind(&old_pending_2)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     // Verify: 5 complete + 2 pending = 7 total
     let total: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
@@ -2365,6 +2367,53 @@ async fn cleanup_old_snapshots_mixed_pending_and_complete() {
         .await
         .unwrap();
     assert_eq!(remaining_total, 3, "total remaining should be exactly 3");
+}
+
+/// #706 item 3: the pending-delete arm is age-gated. A pending row inside
+/// the grace window (a snapshot that *could* be mid-write under a
+/// hypothetical split-tx interleave) is spared; only a leftover older than
+/// the grace window is purged. This is defense in depth on top of M-69's
+/// single-tx INSERT-pending → UPDATE-complete invariant.
+#[tokio::test]
+async fn cleanup_spares_recent_pending_but_deletes_old_pending() {
+    let (pool, _dir) = test_pool().await;
+
+    // A RECENT pending row (now-ish) — well inside the grace window, so it
+    // must survive cleanup even though there are no complete rows to keep.
+    let recent_pending =
+        ulid::Ulid::from_parts(u64::try_from(crate::db::now_ms()).unwrap(), 7).to_string();
+    sqlx::query("INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) VALUES (?, 'pending', 'hr', '{}', X'00')")
+        .bind(&recent_pending)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // An OLD pending row (2024) — past the grace window, so it must be
+    // deleted as a genuine crash leftover.
+    let old_pending = ulid::Ulid::from_parts(1_704_067_200_000, 8).to_string();
+    sqlx::query("INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) VALUES (?, 'pending', 'ho', '{}', X'00')")
+        .bind(&old_pending)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let deleted = cleanup_old_snapshots(&pool, 3).await.unwrap();
+    assert_eq!(
+        deleted, 1,
+        "only the old pending leftover should be deleted; the recent \
+         pending row is within the grace window"
+    );
+
+    let survivor: Option<String> =
+        sqlx::query_scalar("SELECT id FROM log_snapshots WHERE status = 'pending'")
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        survivor.as_deref(),
+        Some(recent_pending.as_str()),
+        "the recent pending row must survive the age-gated cleanup"
+    );
 }
 
 #[tokio::test]
@@ -2466,12 +2515,19 @@ struct SnapshotDataV1 {
 
 #[test]
 fn snapshot_v1_deserializes_with_default_fields() {
-    // Build a v1 snapshot (no todo_state/priority/due_date)
+    // #706 item 1: this exercises serde(default) forward-compat — a blob
+    // missing the newer optional columns (todo_state/priority/due_date/
+    // scheduled_date/space_id) must still decode. The oldest version with
+    // today's *column types* (i64 epoch-ms deleted_at/created_at) is
+    // MIN_SCHEMA_VERSION, so the synthetic "older" blob is tagged with the
+    // floor rather than the now-rejected v1. `BlockSnapshotV1` already uses
+    // the modern `deleted_at: Option<i64>`; only the missing-fields aspect
+    // is under test here.
     let mut up_to_seqs = BTreeMap::new();
     up_to_seqs.insert("dev".to_string(), 1);
 
     let v1 = SnapshotDataV1 {
-        schema_version: 1,
+        schema_version: MIN_SCHEMA_VERSION,
         snapshot_device_id: "dev".to_string(),
         up_to_seqs,
         up_to_hash: "h".to_string(),
@@ -2498,11 +2554,11 @@ fn snapshot_v1_deserializes_with_default_fields() {
     ciborium::into_writer(&v1, &mut cbor_buf).unwrap();
     let compressed = zstd::encode_all(cbor_buf.as_slice(), 3).unwrap();
 
-    // Decode using the real decode_snapshot (which accepts v1..=SCHEMA_VERSION)
+    // Decode using the real decode_snapshot (accepts MIN_SCHEMA_VERSION..=SCHEMA_VERSION)
     let decoded = decode_snapshot(&compressed[..]).unwrap();
     assert_eq!(
-        decoded.schema_version, 1,
-        "v1 snapshot schema version must be preserved"
+        decoded.schema_version, MIN_SCHEMA_VERSION,
+        "oldest-supported snapshot schema version must be preserved"
     );
     assert_eq!(
         decoded.tables.blocks.len(),
@@ -2751,6 +2807,97 @@ fn snapshot_version_above_max_rejected() {
     assert!(
         err_msg.contains("unsupported schema version"),
         "error should mention unsupported version, got: {err_msg}"
+    );
+}
+
+// =======================================================================
+// #706 item 1 — version gate runs BEFORE the table decode
+// =======================================================================
+
+/// The old gate ran AFTER `ciborium::from_reader` fully decoded
+/// `SnapshotData`, so an incompatible-version blob whose *table* shape no
+/// longer matches the current structs (e.g. the pre-0080
+/// `deleted_at TEXT` column) failed as a raw "CBOR decode" error deep
+/// inside `tables`, never reaching the version check.
+///
+/// With the gate moved onto `SnapshotData::schema_version`'s
+/// deserializer (which, because `schema_version` is the FIRST field, runs
+/// before `tables` is parsed), a sub-`MIN_SCHEMA_VERSION` blob is
+/// rejected with the honest "unsupported schema version" message even
+/// when its tables carry an old, undecodable column shape — proving the
+/// version was vetted before any table bytes were decoded.
+#[test]
+fn version_gate_rejects_incompatible_version_before_decoding_tables() {
+    // A pre-layout block row: `deleted_at` is the old TEXT/string shape
+    // (not today's `Option<i64>` epoch-ms), so decoding it INTO the
+    // modern `BlockSnapshot` would fail as a CBOR type mismatch — IF the
+    // table decode were ever reached.
+    #[derive(Serialize)]
+    struct OldShapeBlock<'a> {
+        id: &'a str,
+        block_type: &'a str,
+        content: Option<&'a str>,
+        parent_id: Option<&'a str>,
+        position: Option<i64>,
+        // pre-0080 TEXT timestamp — string, not i64
+        deleted_at: Option<&'a str>,
+    }
+    #[derive(Serialize)]
+    struct OldShapeTables<'a> {
+        blocks: Vec<OldShapeBlock<'a>>,
+        block_tags: Vec<BlockTagSnapshot>,
+        block_properties: Vec<BlockPropertySnapshot>,
+        block_links: Vec<BlockLinkSnapshot>,
+        attachments: Vec<AttachmentSnapshot>,
+    }
+    #[derive(Serialize)]
+    struct OldShapeData<'a> {
+        schema_version: u32,
+        snapshot_device_id: &'a str,
+        up_to_seqs: BTreeMap<String, i64>,
+        up_to_hash: &'a str,
+        tables: OldShapeTables<'a>,
+    }
+
+    let blob = OldShapeData {
+        // below the supported floor
+        schema_version: MIN_SCHEMA_VERSION - 1,
+        snapshot_device_id: "dev-old",
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "h",
+        tables: OldShapeTables {
+            blocks: vec![OldShapeBlock {
+                id: "BLK-OLD",
+                block_type: "content",
+                content: Some("hi"),
+                parent_id: None,
+                position: Some(1),
+                // TEXT timestamp that the modern Option<i64> can't decode
+                deleted_at: Some("2024-01-01T00:00:00Z"),
+            }],
+            block_tags: vec![],
+            block_properties: vec![],
+            block_links: vec![],
+            attachments: vec![],
+        },
+    };
+
+    let mut cbor_buf = Vec::new();
+    ciborium::into_writer(&blob, &mut cbor_buf).unwrap();
+    let encoded = zstd::encode_all(cbor_buf.as_slice(), 3).unwrap();
+
+    let err = decode_snapshot(&encoded[..]).unwrap_err();
+    let msg = err.to_string();
+    // The gate fired on the version FIRST: the message is the honest
+    // version rejection, not a column-type decode failure.
+    assert!(
+        msg.contains("unsupported schema version"),
+        "incompatible version must be rejected by the pre-decode version \
+         gate (not a raw table decode error), got: {msg}"
+    );
+    assert!(
+        msg.contains(&(MIN_SCHEMA_VERSION - 1).to_string()),
+        "error should name the rejected version, got: {msg}"
     );
 }
 

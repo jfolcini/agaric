@@ -42,4 +42,4 @@ pub use types::{
 };
 // Re-export for tests and internal use
 #[allow(unused_imports)]
-pub(crate) use types::SCHEMA_VERSION;
+pub(crate) use types::{MIN_SCHEMA_VERSION, SCHEMA_VERSION};
