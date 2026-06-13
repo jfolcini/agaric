@@ -43,6 +43,20 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
+// BUG #746: a controllable mock of `applyGraphFilters` so a test can force
+// the "filtered to zero" case deterministically without driving the full
+// filter-popover UI. Defaults to the real implementation (pass-through), so
+// every other test is unaffected; the #746 test flips `forceEmptyFilter`.
+let forceEmptyFilter = false
+vi.mock('@/lib/graph-filters', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/graph-filters')>()
+  return {
+    ...actual,
+    applyGraphFilters: (nodes: unknown[], filters: unknown) =>
+      forceEmptyFilter ? [] : actual.applyGraphFilters(nodes as never, filters as never),
+  }
+})
+
 // Mock d3 modules to avoid SVG rendering issues in jsdom
 vi.mock('d3-force', () => ({
   forceSimulation: vi.fn(() => ({
@@ -202,6 +216,7 @@ const OriginalWorker = globalThis['Worker'] as typeof Worker | undefined
 beforeEach(() => {
   vi.clearAllMocks()
   clearGraphCache()
+  forceEmptyFilter = false
   MockWorker.instances = []
   // Stub the global Worker with our MockWorker by default
   vi.stubGlobal('Worker', MockWorker)
@@ -1517,6 +1532,56 @@ describe('GraphView', () => {
         (m: any) => m.type === 'start',
       )
       expect(startMsg).toBeDefined()
+    })
+
+    // BUG #746: a filter combination matching nothing previously left the
+    // full graph painted with the simulation still running. Now the SVG
+    // stays mounted (so the filter bar remains usable) but the empty-state
+    // overlay surfaces, and the simulation is torn down by the hook.
+    it('shows the no-matches overlay when filters exclude every page (#746)', async () => {
+      forceEmptyFilter = true
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_all_pages_in_space')
+          return Promise.resolve([
+            { id: 'page-1', content: 'Page One' },
+            { id: 'page-2', content: 'Page Two' },
+          ])
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_tags_by_prefix') return Promise.resolve([])
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      // The graph chrome stays mounted (filter bar still usable to widen).
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+      // The no-matches overlay is shown with the localized message.
+      expect(screen.getByTestId('graph-no-matches')).toBeInTheDocument()
+      expect(
+        screen.getByRole('heading', { level: 2, name: t('graph.noMatches') }),
+      ).toBeInTheDocument()
+    })
+
+    it('does not show the no-matches overlay when pages do match', async () => {
+      forceEmptyFilter = false
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_all_pages_in_space')
+          return Promise.resolve([{ id: 'page-1', content: 'Page One' }])
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_tags_by_prefix') return Promise.resolve([])
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      render(<GraphView />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+      expect(screen.queryByTestId('graph-no-matches')).not.toBeInTheDocument()
     })
   })
 })

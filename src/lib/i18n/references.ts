@@ -41,6 +41,7 @@ export const references: Record<string, string> = {
   'unlinkedRefs.mentionsFrom': 'Unlinked mentions from {{title}}',
   'unlinkedRefs.truncated': 'Results truncated — refine search',
   'graph.noPages': 'No pages to visualize',
+  'graph.noMatches': 'No pages match the current filters',
   'graph.loadFailed': 'Failed to load graph data',
   'graph.title': 'Page Relationships',
   'graph.keyboardHint': 'Use Tab to focus a node, then Enter or Space to open the page.',

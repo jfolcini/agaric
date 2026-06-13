@@ -405,7 +405,31 @@ export function useGraphSimulation({
   useEffect(() => {
     const state = stateRef.current
     if (!svgRef.current) return
-    if (nodes.length === 0) return
+    if (nodes.length === 0) {
+      // BUG #746: a filter combination that matches nothing leaves the
+      // previous graph painted with its worker/main-thread simulation
+      // still ticking. Pre-fix this branch early-returned BEFORE the
+      // exit join and BEFORE handle.cleanup(), so the stale graph + live
+      // simulation persisted. Now: clear the rendered node/edge layers
+      // (the exit join with an empty data set removes every element) and
+      // tear down the simulation handle. The persistent `g` group, zoom
+      // behavior, and ResizeObserver stay attached so a later non-empty
+      // filter re-populates without rebuilding the SVG layer.
+      if (state && (state.handledNodes.length > 0 || state.handledEdges.length > 0)) {
+        patchGraphSelections(state.rendered.g, [], [], navigateToPageRef.current)
+        state.handle.cleanup()
+        state.handle = { cleanup: () => {}, onResize: () => {} }
+        state.rendered = {
+          ...state.rendered,
+          simNodes: [],
+          simEdges: [],
+          nodeById: new Map(),
+        }
+        state.handledNodes = nodes
+        state.handledEdges = edges
+      }
+      return
+    }
     if (!state) {
       // Setup hasn't run yet (mount happened with empty nodes, or
       // the previous setup bailed). Trigger setup by bumping the
