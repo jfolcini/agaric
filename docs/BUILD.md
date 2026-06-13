@@ -259,7 +259,7 @@ There is **no Play Store upload step** in the release pipeline. The `android-bui
 ## Signing posture
 
 - **Updater signing**: not currently active. `bundle.createUpdaterArtifacts` is unset in `tauri.conf.json`, so no updater artifacts (or minisign signatures) are produced, and the `TAURI_SIGNING_PRIVATE_KEY` CI secret is deliberately NOT exposed to the build step ([#815](https://github.com/jfolcini/agaric/issues/815)); enabling updater artifacts + a minimal signing step is tracked in [#808](https://github.com/jfolcini/agaric/issues/808). The key-rotation procedure (cadence, revocation, user notification) still applies once enabled: see [`../SECURITY.md`](../SECURITY.md#updater-signing-key-rotation) § "Updater signing-key rotation".
-- **Desktop code signing**: not enabled. macOS bundles trip Gatekeeper's first-launch warning (right-click → *Open*); Windows bundles trip SmartScreen (*More info* → *Run anyway*). User-facing install steps live in the README install section.
+- **Desktop code signing**: not enabled. macOS bundles trip Gatekeeper's first-launch warning (right-click → *Open*); Windows bundles trip SmartScreen (*More info* → *Run anyway*). User-facing install steps live in the [README § Install](../README.md#install).
 - **Linux** `.deb` / `.AppImage`: intentionally not signed.
 
 ## sqlx compile-time queries

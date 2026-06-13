@@ -15,13 +15,21 @@ How the system is built. Companion to:
 | Area | File |
 | --- | --- |
 | Stack + data model + database + op log + materializer | [`architecture/data-and-events.md`](architecture/data-and-events.md) |
+| ↳ Op-log wire format (byte layout, versioning) | [`architecture/op-log-format.md`](architecture/op-log-format.md) |
+| ↳ Schema-design lessons learned | [`architecture/schema-lessons.md`](architecture/schema-lessons.md) |
 | Content format, serializer, editor architecture, undo/redo | [`architecture/editor-and-content.md`](architecture/editor-and-content.md) |
 | Frontend architecture + spaces (stores, ViewDispatcher, per-space slicing) | [`architecture/frontend.md`](architecture/frontend.md) |
+| Pages view (density, sort modes, grooming) | [`architecture/pages-view.md`](architecture/pages-view.md) |
+| Filters (compound grooming + agenda filter model) | [`architecture/filters.md`](architecture/filters.md) |
 | CRDT convergence + snapshots + crash recovery | [`architecture/crdt-and-recovery.md`](architecture/crdt-and-recovery.md) |
 | Sync transport + protocol + Android constraints | [`architecture/sync-and-network.md`](architecture/sync-and-network.md) |
+| ↳ Sync protocol specification (message framing, handshake) | [`architecture/sync-protocol-spec.md`](architecture/sync-protocol-spec.md) |
 | Integrations (Google Calendar, MCP / agent access) | [`architecture/integrations.md`](architecture/integrations.md) |
 | Search + query system | [`architecture/queries.md`](architecture/queries.md) |
+| ↳ Full-text search engine (FTS5, trigram, ranking) | [`architecture/search.md`](architecture/search.md) |
 | Bindings + dev tooling + security boundary | [`architecture/tooling.md`](architecture/tooling.md) |
+| ↳ CI + tooling pipeline | [`architecture/ci-and-tooling.md`](architecture/ci-and-tooling.md) |
+| ↳ Threat model (trust boundaries, accepted risks) | [`architecture/threat-model.md`](architecture/threat-model.md) |
 | Performance posture + scalability + roadmap pointer | [`architecture/operations.md`](architecture/operations.md) |
 | Rejected alternatives (decision archaeology) | [`architecture/rejected.md`](architecture/rejected.md) |
 

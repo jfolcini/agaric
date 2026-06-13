@@ -26,7 +26,7 @@ Think Logseq or Notion, but:
 - **Local-first** — SQLite database on your filesystem, no server required
 - **Offline-first** — works without internet, syncs peer-to-peer over local WiFi
 - **Fast** — Rust backend, instant search via FTS5, sub-millisecond operations
-- **Private** — no cloud telemetry / no external analytics, no cloud, filesystem-level encryption (the local logger in `src/lib/logger.ts` writes errors to disk so the in-app `BugReportDialog` can attach them — nothing leaves your machine)
+- **Private** — no cloud telemetry, no external analytics, no cloud. Your vault is a plain SQLite file on disk (no at-rest encryption) — rely on OS full-disk encryption (LUKS / FileVault / BitLocker) for confidentiality; only OAuth tokens are encrypted, in the OS keychain. (The local logger in `src/lib/logger.ts` writes errors to disk so the in-app `BugReportDialog` can attach them — nothing leaves your machine.)
 
 ## Core Concepts
 
@@ -112,7 +112,7 @@ Peer-to-peer sync over local WiFi — no cloud server needed. Append-only operat
 | Desktop shell | [Tauri 2](https://v2.tauri.app/) |
 | Frontend | React 19 + Vite + TipTap + Tailwind CSS 4 |
 | Backend | Rust + SQLite (via sqlx) |
-| Database | SQLite in WAL mode, 18 application tables + 1 FTS5 virtual table (plus a handful of internal/cache tables), 32 indexes across 41 migrations |
+| Database | SQLite in WAL mode + an FTS5 virtual table for full-text search |
 | State | Zustand stores |
 | Linting | OXC — oxlint + oxfmt (no ESLint/Prettier/Biome) |
 | Testing | Vitest + vitest-axe + fast-check (frontend), cargo-nextest + insta + Criterion (backend), Playwright (E2E) |
@@ -125,6 +125,16 @@ Peer-to-peer sync over local WiFi — no cloud server needed. Append-only operat
 | **macOS** | macOS 11 Big Sur or later (Apple Silicon native; Intel via Rosetta-free SDK build). |
 | **Linux** | glibc 2.31+ (Ubuntu 20.04+ / Debian 11+ / Fedora 33+); `libwebkit2gtk-4.1` runtime. The AppImage bundles GTK; the `.deb` declares the WebKit dep. |
 | **Android** | Android 11 (API 30) and above. |
+
+## Install
+
+Download the latest installer for your OS from the [**GitHub Releases**](https://github.com/jfolcini/agaric/releases) page (`.AppImage` / `.deb` / `.rpm` for Linux, `.dmg` for macOS, `.msi` for Windows, `.apk` for Android).
+
+Desktop bundles are **not code-signed** (see [docs/BUILD.md § Signing posture](docs/BUILD.md#signing-posture)), so the OS will warn on first launch:
+
+- **macOS (Gatekeeper)** — right-click the app → *Open* → *Open* in the dialog. Alternatively, clear the quarantine flag from a terminal: `xattr -dr com.apple.quarantine /Applications/Agaric.app`.
+- **Windows (SmartScreen)** — click *More info* → *Run anyway*. WebView2 is installed automatically by the bundled installer.
+- **Linux** — the AppImage bundles GTK; the `.deb` declares the `libwebkit2gtk-4.1` runtime dependency.
 
 ## Development
 
@@ -140,9 +150,9 @@ cargo tauri dev              # Launch app with hot reload
 ### Testing
 
 ```bash
-npm test                     # Frontend tests (~8700 tests, Vitest)
-cd src-tauri && cargo nextest run   # Rust tests (~3400 tests)
-npx playwright test          # E2E tests (29 spec files, Playwright + Chromium)
+npm test                     # Frontend tests (Vitest)
+cd src-tauri && cargo nextest run   # Rust tests
+npx playwright test          # E2E tests (Playwright + Chromium)
 ```
 
 ### Building
@@ -196,18 +206,18 @@ src/                         # React frontend
     journal/                 #   Journal-specific components (MonthlyDayCell, etc.)
   editor/                    #   TipTap editor setup and extensions
     extensions/              #   Custom TipTap extensions (tag-ref, block-link, etc.)
-  stores/                    #   Zustand state stores (11 stores: blocks, boot, journal, navigation, page-blocks, recent-pages, resolve, space, sync, tabs, undo)
-  hooks/                     #   Custom React hooks (~53 hooks)
+  stores/                    #   Zustand state stores (blocks, journal, navigation, page-blocks, tabs, sync, …)
+  hooks/                     #   Custom React hooks
   lib/                       #   Tauri API wrappers, utilities, and bindings
   index.css                  #   Tailwind theme (OKLch colors, semantic tokens)
 src-tauri/                   # Rust backend
   src/                       #   Commands, database, materializer, sync, merge
-  migrations/                #   SQLite migrations (41 files, auto-run on startup)
+  migrations/                #   SQLite migrations (auto-run on startup)
   tests/                     #   Integration tests
-  benches/                   #   Criterion benchmarks (24 bench files)
+  benches/                   #   Criterion benchmarks
   icons/                     #   App icons (all platforms)
   tauri.conf.json            #   Tauri configuration
-e2e/                         # Playwright E2E tests (29 spec files)
+e2e/                         # Playwright E2E tests
 public/                      # Static assets (agaric.svg icon)
 docs/BUILD.md                     # Complete build guide
 AGENTS.md                    # Developer conventions
