@@ -97,9 +97,15 @@ test.describe('Block drag-and-drop (touch / narrow viewport)', () => {
   test('a touch drag reorders a block and emits move_block', async ({ page }) => {
     await openPageMobile(page, PAGE)
 
-    // The drag targets the 3rd row (`.nth(2)`), so wait until at least three
-    // block rows have rendered AND that count has held still — i.e. the tree is
-    // not mid-(re)load (the #968 transient-empty-render guard).
+    // The drag targets the 3rd row (`.nth(2)`). The BlockTree virtualizes, so
+    // on this phone viewport only the on-screen rows hydrate into
+    // `sortable-block`s (the seeded "Getting Started" page's later children stay
+    // as off-screen placeholders) — three hydrate here, which is exactly what
+    // the drag needs. Wait until all three have hydrated AND that count has held
+    // still, i.e. the tree is fully settled, not mid-(re)load and not a partial
+    // CI paint (the #968 transient-empty-render + #1045 incremental-paint
+    // guard). The 30s settle budget needs a per-test timeout above 30s.
+    test.setTimeout(45_000)
     await waitForStableBlockRows(page, 3)
 
     const target = page.locator('[data-testid="sortable-block"]').nth(2) // onto GS_3
