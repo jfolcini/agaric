@@ -156,6 +156,19 @@ function makeRovingEditor(
   }
 }
 
+/**
+ * The focused block's editor wrapper `<section>`, looked up by the stable
+ * `data-testid="block-editor"` (EditableBlock.tsx). Replaces the brittle
+ * `container.querySelector('.block-editor')` / `'#editor-B1'` lookups (#1027):
+ * a CSS-class/ID rename used to make those return `null`, silently skipping the
+ * blur/focus/drag simulation rather than failing. `getByTestId` throws a
+ * descriptive error when the wrapper is absent, so the simulation can never be
+ * silently no-op'd.
+ */
+function getBlockEditorWrapper(): HTMLElement {
+  return screen.getByTestId('block-editor')
+}
+
 describe('EditableBlock', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -379,7 +392,7 @@ describe('EditableBlock', () => {
         activeBlockId: 'B1',
       })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="original text"
@@ -389,8 +402,7 @@ describe('EditableBlock', () => {
       )
 
       // Simulate blur on the editor wrapper via React event system
-      const wrapper = container.querySelector('.block-editor')
-      expect(wrapper).not.toBeNull()
+      const wrapper = getBlockEditorWrapper()
       fireEvent.blur(wrapper as Element)
 
       expect(mockUnmount).toHaveBeenCalledOnce()
@@ -405,7 +417,7 @@ describe('EditableBlock', () => {
         activeBlockId: 'B1',
       })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="original"
@@ -414,8 +426,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor')
-      expect(wrapper).not.toBeNull()
+      const wrapper = getBlockEditorWrapper()
       fireEvent.blur(wrapper as Element)
 
       expect(mockSplitBlock).toHaveBeenCalledWith('B1', 'line1\nline2\nline3')
@@ -429,7 +440,7 @@ describe('EditableBlock', () => {
         activeBlockId: 'B1',
       })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="same text"
@@ -438,8 +449,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor')
-      expect(wrapper).not.toBeNull()
+      const wrapper = getBlockEditorWrapper()
       fireEvent.blur(wrapper as Element)
 
       expect(mockUnmount).toHaveBeenCalledOnce()
@@ -455,7 +465,7 @@ describe('EditableBlock', () => {
         activeBlockId: null,
       })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="text"
@@ -464,8 +474,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor')
-      expect(wrapper).not.toBeNull()
+      const wrapper = getBlockEditorWrapper()
       fireEvent.blur(wrapper as Element)
 
       expect(mockUnmount).not.toHaveBeenCalled()
@@ -485,7 +494,7 @@ describe('EditableBlock', () => {
         activeBlockId: 'B1',
       })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="original"
@@ -494,7 +503,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor')
+      const wrapper = getBlockEditorWrapper()
       fireEvent.blur(wrapper as Element)
 
       expect(mockShouldSplitOnBlur).toHaveBeenCalledWith(codeBlock)
@@ -513,7 +522,7 @@ describe('EditableBlock', () => {
         activeBlockId: 'B1',
       })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="original"
@@ -522,7 +531,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor')
+      const wrapper = getBlockEditorWrapper()
       fireEvent.blur(wrapper as Element)
 
       expect(mockShouldSplitOnBlur).toHaveBeenCalledWith(multiParagraph)
@@ -566,7 +575,7 @@ describe('EditableBlock', () => {
       const mockUnmount = vi.fn(() => 'changed')
       const roving = makeRovingEditor({ activeBlockId: 'B1', unmount: mockUnmount })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="Hello"
@@ -581,7 +590,7 @@ describe('EditableBlock', () => {
       ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(portal)
 
-      const editorWrapper = container.querySelector('.block-editor') as HTMLElement
+      const editorWrapper = getBlockEditorWrapper()
       fireEvent.blur(editorWrapper, { relatedTarget: null })
 
       expect(mockUnmount).not.toHaveBeenCalled()
@@ -593,7 +602,7 @@ describe('EditableBlock', () => {
       const mockUnmount = vi.fn(() => 'changed')
       const roving = makeRovingEditor({ activeBlockId: 'B1', unmount: mockUnmount })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="Hello"
@@ -608,7 +617,7 @@ describe('EditableBlock', () => {
       ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => false
       document.body.appendChild(portal)
 
-      const editorWrapper = container.querySelector('.block-editor') as HTMLElement
+      const editorWrapper = getBlockEditorWrapper()
       fireEvent.blur(editorWrapper, { relatedTarget: null })
 
       // Should unmount because the portal is not visible
@@ -623,7 +632,7 @@ describe('EditableBlock', () => {
       const mockUnmount = vi.fn(() => 'changed')
       const roving = makeRovingEditor({ activeBlockId: 'B1', unmount: mockUnmount })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="Hello"
@@ -639,7 +648,7 @@ describe('EditableBlock', () => {
       portal.appendChild(input)
       document.body.appendChild(portal)
 
-      const editorWrapper = container.querySelector('.block-editor') as HTMLElement
+      const editorWrapper = getBlockEditorWrapper()
       fireEvent.blur(editorWrapper, { relatedTarget: input })
 
       expect(mockUnmount).not.toHaveBeenCalled()
@@ -654,7 +663,7 @@ describe('EditableBlock', () => {
     it('calls scrollIntoView with block: nearest when focused', async () => {
       const scrollIntoViewMock = vi.fn()
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="Hello"
@@ -663,7 +672,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor') as HTMLElement
+      const wrapper = getBlockEditorWrapper()
       wrapper.scrollIntoView = scrollIntoViewMock
 
       // The useEffect with requestAnimationFrame fires after render.
@@ -699,7 +708,7 @@ describe('EditableBlock', () => {
 
   describe('aria-controls linking', () => {
     it('applies id="editor-{blockId}" on the editor wrapper section', () => {
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="Hello"
@@ -708,9 +717,11 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('#editor-B1')
-      expect(wrapper).not.toBeNull()
-      expect(wrapper?.tagName).toBe('SECTION')
+      // Look the wrapper up by its stable test id, then assert the id attribute
+      // (the aria-controls target) and that it is a <section> (#1027).
+      const wrapper = getBlockEditorWrapper()
+      expect(wrapper).toHaveAttribute('id', 'editor-B1')
+      expect(wrapper.tagName).toBe('SECTION')
     })
 
     it('passes blockId to FormattingToolbar', () => {
@@ -739,7 +750,7 @@ describe('EditableBlock', () => {
       const mockUnmount = vi.fn(() => 'changed')
       const roving = makeRovingEditor({ activeBlockId: 'B1', unmount: mockUnmount })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="Hello"
@@ -756,7 +767,7 @@ describe('EditableBlock', () => {
       popup.appendChild(btn)
       document.body.appendChild(popup)
 
-      const editorWrapper = container.querySelector('.block-editor') as HTMLElement
+      const editorWrapper = getBlockEditorWrapper()
       fireEvent.blur(editorWrapper, { relatedTarget: btn })
 
       expect(mockUnmount).not.toHaveBeenCalled()
@@ -918,7 +929,7 @@ describe('EditableBlock', () => {
         originalMarkdown: '',
       })
 
-      const { container } = render(
+      render(
         <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
       )
 
@@ -929,7 +940,7 @@ describe('EditableBlock', () => {
       ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(popup)
 
-      const editorWrapper = container.querySelector('.block-editor') as HTMLElement
+      const editorWrapper = getBlockEditorWrapper()
       fireEvent.blur(editorWrapper, { relatedTarget: null })
 
       // Content should be saved even though popup causes early return
@@ -951,12 +962,12 @@ describe('EditableBlock', () => {
         originalMarkdown: '',
       })
 
-      const { container } = render(
+      render(
         <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
       )
 
       // No popup in DOM — blur runs fully (early save + unmount save)
-      const editorWrapper = container.querySelector('.block-editor') as HTMLElement
+      const editorWrapper = getBlockEditorWrapper()
       fireEvent.blur(editorWrapper, { relatedTarget: null })
 
       // Early save fires once (from the new-block guard)
@@ -976,7 +987,7 @@ describe('EditableBlock', () => {
         originalMarkdown: 'original',
       })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="original"
@@ -992,7 +1003,7 @@ describe('EditableBlock', () => {
       ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(popup)
 
-      const editorWrapper = container.querySelector('.block-editor') as HTMLElement
+      const editorWrapper = getBlockEditorWrapper()
       fireEvent.blur(editorWrapper, { relatedTarget: null })
 
       // originalMarkdown is not empty, so the early-save guard should NOT fire
@@ -1013,7 +1024,7 @@ describe('EditableBlock', () => {
         originalMarkdown: '',
       })
 
-      const { container } = render(
+      render(
         <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
       )
 
@@ -1024,7 +1035,7 @@ describe('EditableBlock', () => {
       ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(popup)
 
-      const editorWrapper = container.querySelector('.block-editor') as HTMLElement
+      const editorWrapper = getBlockEditorWrapper()
       fireEvent.blur(editorWrapper, { relatedTarget: null })
 
       // getMarkdown returned empty string — nothing to save
@@ -1053,7 +1064,7 @@ describe('EditableBlock', () => {
         activeBlockId: 'B1',
       })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="original text"
@@ -1062,7 +1073,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor')
+      const wrapper = getBlockEditorWrapper()
       fireEvent.blur(wrapper as Element)
 
       expect(mockEdit).toHaveBeenCalledWith('B1', 'updated text')
@@ -1087,7 +1098,7 @@ describe('EditableBlock', () => {
         activeBlockId: 'B1',
       })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="original"
@@ -1096,7 +1107,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor')
+      const wrapper = getBlockEditorWrapper()
       fireEvent.blur(wrapper as Element)
 
       expect(mockSplitBlock).toHaveBeenCalledWith('B1', 'line1\nline2')
@@ -1113,7 +1124,7 @@ describe('EditableBlock', () => {
         activeBlockId: 'B1',
       })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="ArrowRight content"
@@ -1122,7 +1133,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor')
+      const wrapper = getBlockEditorWrapper()
       fireEvent.blur(wrapper as Element)
 
       // The store update must happen (not be skipped or deferred)
@@ -1167,7 +1178,7 @@ describe('EditableBlock', () => {
         activeBlockId: 'B1',
       })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="original text"
@@ -1176,7 +1187,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor')
+      const wrapper = getBlockEditorWrapper()
       fireEvent.blur(wrapper as Element)
 
       // edit was called (and will reject), but blur still completes
@@ -1195,7 +1206,7 @@ describe('EditableBlock', () => {
         activeBlockId: 'B1',
       })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="original"
@@ -1204,7 +1215,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor')
+      const wrapper = getBlockEditorWrapper()
       fireEvent.blur(wrapper as Element)
 
       expect(mockSplitBlock).toHaveBeenCalledWith('B1', 'line1\nline2')
@@ -1316,7 +1327,7 @@ describe('EditableBlock', () => {
         activeBlockId: 'B1',
       })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="original"
@@ -1325,7 +1336,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor')
+      const wrapper = getBlockEditorWrapper()
       fireEvent.blur(wrapper as Element)
 
       // deleteDraft was called via discardDraft() — rejection caught by hook
@@ -1422,7 +1433,7 @@ describe('EditableBlock', () => {
         getMarkdown: mockGetMarkdown,
       })
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="B1"
           content="original text"
@@ -1431,7 +1442,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor')
+      const wrapper = getBlockEditorWrapper()
       fireEvent.blur(wrapper as Element)
 
       // discardDraft calls deleteDraft internally
@@ -1480,7 +1491,7 @@ describe('EditableBlock', () => {
     }
 
     it('shows drag-over styling when files are dragged over', () => {
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="BLK_1"
           content="hello"
@@ -1489,7 +1500,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor') as HTMLElement
+      const wrapper = getBlockEditorWrapper()
       fireEvent.dragOver(wrapper, {
         dataTransfer: { types: ['Files'], files: [] },
       })
@@ -1499,7 +1510,7 @@ describe('EditableBlock', () => {
     })
 
     it('removes drag-over styling on drag leave', () => {
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="BLK_1"
           content="hello"
@@ -1508,7 +1519,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor') as HTMLElement
+      const wrapper = getBlockEditorWrapper()
       fireEvent.dragOver(wrapper, {
         dataTransfer: { types: ['Files'], files: [] },
       })
@@ -1521,7 +1532,7 @@ describe('EditableBlock', () => {
     })
 
     it('calls addAttachmentWithBytes on file drop', async () => {
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="BLK_1"
           content="hello"
@@ -1531,7 +1542,7 @@ describe('EditableBlock', () => {
       )
 
       const file = makeFile('test.png', 'image/png')
-      const wrapper = container.querySelector('.block-editor') as HTMLElement
+      const wrapper = getBlockEditorWrapper()
 
       await act(async () => {
         fireEvent.drop(wrapper, {
@@ -1550,7 +1561,7 @@ describe('EditableBlock', () => {
     })
 
     it('shows success toast after file drop', async () => {
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="BLK_1"
           content="hello"
@@ -1560,7 +1571,7 @@ describe('EditableBlock', () => {
       )
 
       const file = makeFile('test.png', 'image/png')
-      const wrapper = container.querySelector('.block-editor') as HTMLElement
+      const wrapper = getBlockEditorWrapper()
 
       await act(async () => {
         fireEvent.drop(wrapper, {
@@ -1572,7 +1583,7 @@ describe('EditableBlock', () => {
     })
 
     it('rejects a disallowed file type without calling the add IPC', async () => {
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="BLK_1"
           content="hello"
@@ -1583,7 +1594,7 @@ describe('EditableBlock', () => {
 
       // Disallowed MIME type (not on the backend allow-list).
       const file = makeFile('evil.exe', 'application/x-msdownload')
-      const wrapper = container.querySelector('.block-editor') as HTMLElement
+      const wrapper = getBlockEditorWrapper()
 
       await act(async () => {
         fireEvent.drop(wrapper, {
@@ -1598,7 +1609,7 @@ describe('EditableBlock', () => {
     it('shows error toast on addAttachmentWithBytes failure', async () => {
       mockAddAttachmentWithBytes.mockRejectedValueOnce(new Error('backend error'))
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="BLK_1"
           content="hello"
@@ -1608,7 +1619,7 @@ describe('EditableBlock', () => {
       )
 
       const file = makeFile('test.png', 'image/png')
-      const wrapper = container.querySelector('.block-editor') as HTMLElement
+      const wrapper = getBlockEditorWrapper()
 
       await act(async () => {
         fireEvent.drop(wrapper, {
@@ -1626,7 +1637,7 @@ describe('EditableBlock', () => {
     })
 
     it('handles paste with image files', async () => {
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="BLK_1"
           content="hello"
@@ -1636,7 +1647,7 @@ describe('EditableBlock', () => {
       )
 
       const file = makeFile('screenshot.png', 'image/png')
-      const wrapper = container.querySelector('.block-editor') as HTMLElement
+      const wrapper = getBlockEditorWrapper()
 
       await act(async () => {
         fireEvent.paste(wrapper, {
@@ -1654,7 +1665,7 @@ describe('EditableBlock', () => {
     })
 
     it('ignores paste without files', async () => {
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="BLK_1"
           content="hello"
@@ -1663,7 +1674,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor') as HTMLElement
+      const wrapper = getBlockEditorWrapper()
 
       await act(async () => {
         fireEvent.paste(wrapper, {
@@ -1685,7 +1696,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const wrapper = container.querySelector('.block-editor') as HTMLElement
+      const wrapper = getBlockEditorWrapper()
 
       // Trigger drag-over visual state
       fireEvent.dragOver(wrapper, {
@@ -1699,7 +1710,7 @@ describe('EditableBlock', () => {
     })
 
     it('calls addAttachmentWithBytes for each file in a multi-file drop', async () => {
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="BLK_1"
           content="hello"
@@ -1711,7 +1722,7 @@ describe('EditableBlock', () => {
       const file1 = makeFile('photo.jpg', 'image/jpeg')
       const file2 = makeFile('notes.pdf', 'application/pdf')
       const file3 = makeFile('data.csv', 'text/csv')
-      const wrapper = container.querySelector('.block-editor') as HTMLElement
+      const wrapper = getBlockEditorWrapper()
 
       await act(async () => {
         fireEvent.drop(wrapper, {
@@ -1744,7 +1755,7 @@ describe('EditableBlock', () => {
     it('handles drop of file with special characters in name', async () => {
       const specialName = 'café résumé (2).pdf'
 
-      const { container } = render(
+      render(
         <EditableBlock
           blockId="BLK_1"
           content="hello"
@@ -1754,7 +1765,7 @@ describe('EditableBlock', () => {
       )
 
       const file = makeFile(specialName, 'application/pdf')
-      const wrapper = container.querySelector('.block-editor') as HTMLElement
+      const wrapper = getBlockEditorWrapper()
 
       await act(async () => {
         fireEvent.drop(wrapper, {
