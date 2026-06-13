@@ -115,7 +115,85 @@ jobs:
         # probes stay env-gated out (SLO_INCLUDE_PROBLEM unset) so the gate
         # tracks the commands currently within budget; flip the env to
         # surface the known-slow ones.
-        run: cargo bench --bench interactive_slo
+        #
+        # #978: tee stdout so the SLO summary step below can capture the
+        # per-command observed-mean-vs-budget lines for over-time tracking.
+        # `pipefail` (set by the shell) preserves the bench's exit code
+        # through the pipe so a budget breach still fails the run.
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo bench --bench interactive_slo 2>&1 | tee interactive_slo.log
+
+      - name: SLO summary + threshold flagging (#978)
+        if: always()
+        working-directory: src-tauri
+        # MEASURE-not-imagine: every number here is read back from the bench
+        # itself — the observed mean and the budget both come from the
+        # `interactive_slo:` lines the bench `println!`s (format defined in
+        # benches/interactive_slo.rs::assert_under_budget). We invent no
+        # thresholds; we surface the bench's own pass/fail per command and
+        # flag any line the bench did not mark PASS. Robust to no data:
+        # if the log is missing or matches nothing, we say so and exit 0.
+        shell: bash
+        run: |
+          {
+            echo "## interactive_slo (#978) — observed vs budget @ 100K"
+            echo
+            if [ ! -f interactive_slo.log ]; then
+              echo "_No interactive_slo.log produced (bench step did not run) — see job log._"
+              exit 0
+            fi
+            # Stable lines, e.g.:
+            #   interactive_slo: get_block @ 100K = 0.42 ms <= budget 1 ms (PASS)
+            #   interactive_slo: foo SKIPPED (set SLO_INCLUDE_PROBLEM=1 ...)
+            if ! grep -q '^interactive_slo:' interactive_slo.log; then
+              echo "_No \`interactive_slo:\` lines found in the bench output._"
+              echo "_(The bench format may have changed — see benches/interactive_slo.rs.)_"
+              exit 0
+            fi
+            echo "| command | observed | budget | status |"
+            echo "|---------|---------:|-------:|:------:|"
+            # PASS lines carry both numbers; emit them as a row. Any
+            # interactive_slo: line that is neither PASS nor SKIPPED is a
+            # FLAG (the bench would normally panic first, but if a future
+            # tier reports without asserting we still surface it).
+            grep '^interactive_slo:' interactive_slo.log | while IFS= read -r line; do
+              body="${line#interactive_slo: }"
+              if printf '%s' "$body" | grep -q '(PASS)$'; then
+                cmd="${body%% = *}"
+                rest="${body#* = }"
+                obs="${rest%% <= budget *}"
+                bud="${rest#* <= budget }"; bud="${bud% (PASS)}"
+                echo "| \`$cmd\` | $obs | $bud | PASS |"
+              elif printf '%s' "$body" | grep -q 'SKIPPED'; then
+                cmd="${body%% SKIPPED*}"
+                echo "| \`$cmd\` | — | — | SKIPPED |"
+              else
+                echo "| (raw) | | | FLAG |"
+                echo "| \`$body\` | | | |"
+              fi
+            done
+            echo
+            echo "_Budgets are sourced from the bench (ARCHITECTURE.md §25); a"
+            echo "breach \`panic!\`s the gate above. Track these rows across"
+            echo "weekly runs for drift._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload SLO results (log + criterion estimates)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: interactive-slo
+          # The raw log (stable observed/budget lines) plus criterion's own
+          # JSON estimates (medians/MAD per benchmark id) for finer-grained
+          # over-time trend analysis beyond the mean-vs-budget gate.
+          path: |
+            src-tauri/interactive_slo.log
+            src-tauri/target/criterion/**/estimates.json
+            src-tauri/target/criterion/**/benchmark.json
+          if-no-files-found: ignore
+          retention-days: 90
 
       - name: Install cargo-nextest via prebuilt binary
         uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
