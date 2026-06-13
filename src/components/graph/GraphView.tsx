@@ -315,6 +315,23 @@ export function GraphView(): React.ReactElement {
           aria-describedby="graph-keyboard-hint"
           data-testid="graph-svg"
         />
+        {/*
+         * BUG #746: when a filter combination matches no pages, the SVG is
+         * cleared and its simulation torn down by `useGraphSimulation`. The
+         * SVG stays mounted (so the filter bar above remains usable to widen
+         * the filter), and this overlay surfaces the empty state. Guarded on
+         * `filteredNodes.length === 0` rather than `nodes.length === 0` (which
+         * the top-level branch above already handles) so it fires precisely
+         * for the "filtered to zero" case.
+         */}
+        {filteredNodes.length === 0 && (
+          <div
+            className="pointer-events-none absolute inset-0 flex items-center justify-center"
+            data-testid="graph-no-matches"
+          >
+            <EmptyState icon={Network} message={t('graph.noMatches')} />
+          </div>
+        )}
         <div className="absolute bottom-3 right-3 flex flex-col gap-1">
           <IconButton
             variant="outline"

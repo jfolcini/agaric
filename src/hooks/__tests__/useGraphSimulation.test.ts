@@ -507,6 +507,156 @@ describe('useGraphSimulation', () => {
     })
   })
 
+  // BUG #746: filtering to zero nodes must clear the rendered graph and
+  // tear down the running simulation, instead of leaving the stale graph
+  // painted with the old worker/main-thread sim still ticking. Re-populating
+  // (filter widened again) must restart a fresh simulation.
+  describe('filtering to zero nodes (#746)', () => {
+    const stableNavigate = (): void => {}
+
+    it('terminates the worker when nodes filter down to zero', () => {
+      const { rerender } = render(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+      expect(MockWorker.instances).toHaveLength(1)
+      const worker = MockWorker.instances[0] as InstanceType<typeof MockWorker>
+      expect(worker.terminated).toBe(false)
+
+      // Filter to zero matches: empty nodes + edges arrays.
+      rerender(
+        React.createElement(Harness, {
+          nodes: [],
+          edges: [],
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+
+      // The previous simulation's worker was torn down — no stale sim.
+      expect(worker.terminated).toBe(true)
+      // No new worker spawned for the empty set.
+      expect(MockWorker.instances).toHaveLength(1)
+    })
+
+    it('clears the rendered node/edge layers via an empty exit join', () => {
+      const { rerender } = render(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+
+      // The d3-selection mock records every `.data(...)` call. The clear
+      // path patches the persistent `g` with empty arrays, so the last
+      // node/edge data joins are bound to empty arrays.
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock chain
+      const selectResult = vi.mocked(select).mock.results[0]?.value as any
+      const dataCallsBefore = selectResult.append.mock.results[0]?.value?.data?.mock?.calls?.length
+
+      rerender(
+        React.createElement(Harness, {
+          nodes: [],
+          edges: [],
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+
+      // The clear path ran a fresh data-join (patchGraphSelections with
+      // empty arrays) — at least one more `.data(...)` than before.
+      const dataCallsAfter = selectResult.append.mock.results[0]?.value?.data?.mock?.calls?.length
+      expect(dataCallsAfter).toBeGreaterThan(dataCallsBefore ?? 0)
+    })
+
+    it('does not keep the main-thread simulation running after filtering to zero', () => {
+      delete (globalThis as Record<string, unknown>)['Worker']
+      const simInstance = {
+        force: vi.fn().mockReturnThis(),
+        on: vi.fn().mockReturnThis(),
+        stop: vi.fn(),
+        alpha: vi.fn().mockReturnThis(),
+        alphaDecay: vi.fn().mockReturnThis(),
+        tick: vi.fn(),
+        restart: vi.fn(),
+        nodes: vi.fn(() => []),
+      }
+      vi.mocked(forceSimulation).mockReturnValue(
+        simInstance as unknown as ReturnType<typeof forceSimulation>,
+      )
+
+      const { rerender } = render(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+      expect(forceSimulation).toHaveBeenCalledTimes(1)
+      expect(simInstance.stop).not.toHaveBeenCalled()
+
+      rerender(
+        React.createElement(Harness, {
+          nodes: [],
+          edges: [],
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+
+      // The main-thread sim was stopped (cleanup) when nodes hit zero.
+      expect(simInstance.stop).toHaveBeenCalled()
+      // No new simulation spawned for the empty set.
+      expect(forceSimulation).toHaveBeenCalledTimes(1)
+    })
+
+    it('restarts a fresh worker when the filter is widened back to non-empty', () => {
+      const { rerender } = render(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+      expect(MockWorker.instances).toHaveLength(1)
+
+      // Filter to zero.
+      rerender(
+        React.createElement(Harness, {
+          nodes: [],
+          edges: [],
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+      expect(MockWorker.instances).toHaveLength(1)
+
+      // Widen the filter again — nodes return.
+      rerender(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+          navigateToPage: stableNavigate,
+        }),
+      )
+
+      // A fresh worker spawned and was told to start.
+      expect(MockWorker.instances).toHaveLength(2)
+      const fresh = MockWorker.instances[1] as InstanceType<typeof MockWorker>
+      expect(fresh.postMessageCalls.some((m: { type?: string }) => m.type === 'start')).toBe(true)
+      expect(fresh.terminated).toBe(false)
+    })
+  })
+
   // UX-270: the keyboard-navigation pattern (tabindex=0 + role=button +
   // Enter/Space activation) is now documented in `attachNodeClickAndKeyboard`.
   // These regression tests pin the contract:
