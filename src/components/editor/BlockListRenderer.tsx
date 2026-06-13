@@ -89,6 +89,12 @@ export function BlockListRenderer({
 
   const anyBlockHasChildren = hasChildrenSet.size > 0
 
+  // #1069 — derive a Set once per render so per-row membership is O(1).
+  // `selectedBlockIds` stays a string[] in the store; the lookup below ran
+  // before the React.memo gate, making selection-changing renders N×O(N).
+  // Mirrors the collapsedIds / hasChildrenSet Set pattern used in this file.
+  const selectedSet = useMemo(() => new Set(selectedBlockIds), [selectedBlockIds])
+
   // ── Expand animation (UX-79) ──────────────────────────────────────
   // Track previous collapsedIds to detect which parents were just expanded.
   // Children of those parents get a CSS enter animation.
@@ -214,7 +220,7 @@ export function BlockListRenderer({
                   key={block.id}
                   block={block}
                   focusedBlockId={focusedBlockId}
-                  isSelected={selectedBlockIds.includes(block.id)}
+                  isSelected={selectedSet.has(block.id)}
                   projected={projected}
                   activeId={activeId}
                   overId={overId}
