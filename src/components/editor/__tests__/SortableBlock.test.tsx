@@ -1678,7 +1678,7 @@ describe('SortableBlock visibility controls', () => {
     )
     const row = container.querySelector('.sortable-block') as HTMLElement
     expect(row.className).toContain('block-active')
-    expect(row.className).toContain('bg-accent/30')
+    expect(row.className).toContain('bg-muted/50')
   })
 
   it('unfocused row has no active-row tint', () => {
@@ -1692,7 +1692,7 @@ describe('SortableBlock visibility controls', () => {
     )
     const row = container.querySelector('.sortable-block') as HTMLElement
     expect(row.className).not.toContain('block-active')
-    expect(row.className).not.toContain('bg-accent/30')
+    expect(row.className).not.toContain('bg-muted/50')
   })
 
   it('delete handle has opacity-0 class (hidden by default)', () => {

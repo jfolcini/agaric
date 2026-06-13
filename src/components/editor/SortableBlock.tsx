@@ -251,7 +251,8 @@ function SortableBlockInner({
           // the calm row treatment (faint tint + a 2px left accent bar) gives
           // the focused/active block a visible home, like Logseq/Notion. Static
           // styling, so it's reduced-motion-safe by construction.
-          isFocused && 'block-active rounded-sm bg-accent/30 shadow-[inset_2px_0_0_var(--primary)]',
+          isFocused &&
+            'block-active rounded-sm bg-muted/50 shadow-[inset_2px_0_0_var(--muted-foreground)]',
           // Lifted-placeholder affordance: dashed outline marks the
           // source row's origin while the overlay floats elsewhere.
           isDragging && 'outline-dashed outline-1 outline-border rounded-sm',
