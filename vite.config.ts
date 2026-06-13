@@ -1,7 +1,8 @@
 import path from 'node:path'
 
+import babel from '@rolldown/plugin-babel'
 import tailwindcss from '@tailwindcss/vite'
-import react from '@vitejs/plugin-react'
+import react, { reactCompilerPreset } from '@vitejs/plugin-react'
 import { visualizer } from 'rollup-plugin-visualizer'
 import { defineConfig } from 'vite'
 
@@ -10,6 +11,25 @@ import { defineConfig } from 'vite'
 // `dist/stats.html` bundle treemap from rollup-plugin-visualizer.
 // `dist/` is gitignored, so the artefact never ships to the repo.
 const analyze = process.env['ANALYZE'] === '1'
+
+// React Compiler (#887) — full-tree auto-memoization. The eval proved
+// the codebase compiler-clean (healthcheck 469/469, 0 bails; TipTap
+// NodeViews are vanilla DOM). `@vitejs/plugin-react` v6 runs on
+// rolldown/oxc, so the compiler is wired via the `reactCompilerPreset`
+// helper + `@rolldown/plugin-babel` (the v5 `react({ babel })` option no
+// longer exists). The preset defaults to `compilationMode: 'infer'`
+// (compile every component/hook) and `target: '19'`, which emits imports
+// from React 19's built-in `react/compiler-runtime` — no
+// `react-compiler-runtime` polyfill needed.
+//
+// REVERT TOGGLE: set `REACT_COMPILER=0` to disable in one shot (e.g.
+// `REACT_COMPILER=0 npm run build`). Defaults to ON.
+// OFF under Vitest: unit tests assert behavior (compiler-agnostic — the full suite passes
+// identically with it on or off), and coverage must measure SOURCE lines, not the compiler's
+// injected `_c(...)` memo-cache branches (generated code that otherwise drags branch/function
+// coverage below the gate). The compiler IS exercised by the Playwright e2e suite (real
+// vite dev/build output).
+const reactCompiler = process.env['REACT_COMPILER'] !== '0' && !process.env['VITEST']
 
 /**
  * Hand-rolled manual chunking — PERF-24.
@@ -95,6 +115,14 @@ function manualChunks(id: string): string | undefined {
 export default defineConfig({
   plugins: [
     react(),
+    // Scope babel (React Compiler) to component files only. The default
+    // include matches all .ts files too; running babel over plain .ts emits
+    // codegen (e.g. dropping disambiguating parens around `(x as T) ? a : b`)
+    // that the dev server's vite:oxc transformer then fails to re-parse,
+    // breaking every e2e run. .jsx/.tsx is where components/hooks live.
+    ...(reactCompiler
+      ? [babel({ include: /\.[jt]sx(?:$|\?)/, presets: [reactCompilerPreset()] })]
+      : []),
     tailwindcss(),
     ...(analyze
       ? [
