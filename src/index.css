@@ -110,6 +110,16 @@
    * is intentionally a 1-px dark halo, not a brand shadow — keeping it
    * a token so the two SpaceManageDialog call sites don't drift. */
   --shadow-accent-stroke: 0 0 1.5px rgb(0 0 0 / 0.9);
+  /* Radius-by-prominence scale (#1010). Larger radius = more prominent /
+   * more "lifted" the surface. Apply by tier, not by component whim:
+   *   sm  (6px)  — concentric inner items (select/command rows, swatches)
+   *                nested inside an md/lg surface; always smaller than parent.
+   *   md  (8px)  — tight/transient floating surfaces: popover, select,
+   *                command, tooltip, dropdown/context menus, combobox.
+   *   lg  (10px) — in-flow cards (the default resting surface).
+   *   xl  (14px) — modals that float above everything: dialog,
+   *                alert-dialog, sheet.
+   * A contained card must never read rounder than the modal over it. */
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

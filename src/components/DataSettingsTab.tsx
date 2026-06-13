@@ -196,7 +196,7 @@ export function DataSettingsTab(): React.ReactElement {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle
-            className="import-panel-title flex items-center gap-2 text-base"
+            className="import-panel-title flex items-center gap-2"
             data-testid="import-panel-title"
           >
             <Upload className="h-4 w-4" />
@@ -343,7 +343,7 @@ export function DataSettingsTab(): React.ReactElement {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle
-            className="export-panel-title flex items-center gap-2 text-base"
+            className="export-panel-title flex items-center gap-2"
             data-testid="export-panel-title"
           >
             <Download className="h-4 w-4" />
