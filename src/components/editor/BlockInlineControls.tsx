@@ -180,11 +180,23 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
   const actionsZoomIn = useBlockActions().onZoomIn
   const zoomIn = onZoomIn ?? actionsZoomIn
 
-  // Fix 6 — when a multi-selection is active the row is in "select" mode: the
-  // per-row gutter checkbox is the only control that should show, so suppress
-  // the task checkbox here too (it's the one inline control that doubles as an
-  // action target). Bulk task-state changes go through the batch toolbar /
-  // context menu, which apply to the whole selection.
+  // Fix 6 / #994 — when a multi-selection is active the row enters "select"
+  // mode. We suppress ONLY the task checkbox here (it doubles as an action
+  // target that would be ambiguous against the selection-scoped gutter
+  // checkbox); bulk task-state changes go through the batch toolbar / context
+  // menu, which apply to the whole selection.
+  //
+  // The collapse chevron and the zoom bullet INTENTIONALLY survive selection
+  // mode (they are NOT guarded by `hasSelection`). They are per-block
+  // structural / navigation controls — the chevron is the row-leading,
+  // slot-reserved element that also carries the has-collapsed-children cue, and
+  // the bullet zooms into a single block. Hiding the chevron at selection-start
+  // would reflow every row horizontally and erase the collapsed-subtree cue
+  // exactly when users are picking subtrees. Best-in-class editors (Notion,
+  // Logseq) keep structural toggles live during multi-select; their per-block
+  // aria-label/tooltip keeps their single-block scope legible. Any
+  // selection-wide collapse belongs on the batch toolbar / context menu, never
+  // overloaded onto the row chevron.
   const hasSelection = useBlockStore((s) => s.selectedBlockIds.length > 0)
 
   // #217 C2 (remainder): relieve inline-control density on narrow viewports.

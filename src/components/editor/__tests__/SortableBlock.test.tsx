@@ -2043,7 +2043,7 @@ describe('SortableBlock a11y enhancements', () => {
     expect(collapseBtn).toHaveAttribute('aria-expanded', 'false')
   })
 
-  it('drag handle has focus-ring class', () => {
+  it('drag handle has focus-ring-visible class', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -2054,10 +2054,11 @@ describe('SortableBlock a11y enhancements', () => {
     )
 
     const handle = screen.getByRole('button', { name: /reorder block/i })
-    expect(handle.className).toContain('focus-ring')
+    // #995: migrated from the legacy `focus-ring` to canonical `focus-ring-visible`.
+    expect(handle.className).toContain('focus-ring-visible')
   })
 
-  it('delete button has focus-ring class', () => {
+  it('delete button has focus-ring-visible class', () => {
     render(
       <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
         <SortableBlock
@@ -2070,7 +2071,8 @@ describe('SortableBlock a11y enhancements', () => {
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    expect(deleteBtn.className).toContain('focus-ring')
+    // #995: migrated from the legacy `focus-ring` to canonical `focus-ring-visible`.
+    expect(deleteBtn.className).toContain('focus-ring-visible')
   })
 
   it('chevron has focus-visible ring classes', () => {

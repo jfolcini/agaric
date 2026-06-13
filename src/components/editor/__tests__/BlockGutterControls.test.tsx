@@ -347,6 +347,72 @@ describe('BlockGutterControls gutter button classes', () => {
     expect(historyBtn.className).toContain('touch-target')
     expect(deleteBtn.className).toContain('touch-target')
   })
+
+  // #995: the gutter is the last consumer migrated off the legacy `focus-ring`
+  // (2px ring + offset) onto the canonical `focus-ring-visible` (3px inset).
+  it('all three gutter buttons carry focus-ring-visible (not the legacy focus-ring)', () => {
+    renderWithTooltip(
+      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
+    )
+
+    const dragHandle = screen.getByTestId('drag-handle')
+    const historyBtn = screen.getByRole('button', { name: /block history/i })
+    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+
+    for (const btn of [dragHandle, historyBtn, deleteBtn]) {
+      expect(btn.className).toContain('focus-ring-visible')
+      // No bare legacy token (guard against a regression to `focus-ring`).
+      expect(btn.className.split(/\s+/)).not.toContain('focus-ring')
+    }
+  })
+
+  // #997: the neutral / destructive hover palettes are centralized constants;
+  // assert each button carries the expected colour set (neutral keeps both
+  // bg+text, destructive keeps the destructive bg+text).
+  it('applies the centralized neutral/destructive hover palettes', () => {
+    renderWithTooltip(
+      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
+    )
+
+    const historyBtn = screen.getByRole('button', { name: /block history/i })
+    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+
+    // History = neutral palette.
+    expect(historyBtn.className).toContain('hover:bg-accent')
+    expect(historyBtn.className).toContain('hover:text-foreground')
+    // Delete = destructive palette (and keeps the delete-handle modifier).
+    expect(deleteBtn.className).toContain('delete-handle')
+    expect(deleteBtn.className).toContain('hover:bg-destructive/10')
+    expect(deleteBtn.className).toContain('hover:text-destructive')
+  })
+
+  // #997 decision: the drag handle deliberately stays text-only on hover (no
+  // neutral bg plate), so it reads as ambient chrome.
+  it('drag handle hovers text-only (no hover:bg-accent plate)', () => {
+    renderWithTooltip(<BlockGutterControls blockId="B1" />)
+
+    const dragHandle = screen.getByTestId('drag-handle')
+    expect(dragHandle.className).toContain('hover:text-foreground')
+    expect(dragHandle.className).not.toContain('hover:bg-accent')
+  })
+
+  // #998: the icon-button radius is folded into the shared base token; assert
+  // it's present once and not bumped to the padded-row `rounded-md`.
+  it('gutter icon buttons inherit rounded-sm from the shared base token', () => {
+    renderWithTooltip(
+      <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
+    )
+
+    const dragHandle = screen.getByTestId('drag-handle')
+    const historyBtn = screen.getByRole('button', { name: /block history/i })
+    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+
+    for (const btn of [dragHandle, historyBtn, deleteBtn]) {
+      expect(btn.className.split(/\s+/)).toContain('rounded-sm')
+      // Must NOT be bumped to the padded-row radius (#998 explicit decision).
+      expect(btn.className.split(/\s+/)).not.toContain('rounded-md')
+    }
+  })
 })
 
 /* ── B1 (#217): multi-select checkbox affordance ────────────────── */
@@ -535,6 +601,37 @@ describe('BlockGutterControls (touch / pointer:coarse)', () => {
     expect(dragHandle).toHaveAttribute('data-dnd-activator', 'grip')
     fireEvent.pointerDown(dragHandle)
     expect(dragListeners.onPointerDown).toHaveBeenCalledTimes(1)
+  })
+
+  // ── #996: coarse-pointer icon legibility ──────────────────────────
+  // A 16px glyph in the WCAG 44px box reads as floaty; bump the touch grip and
+  // overflow icons to 20px on coarse pointers (desktop p-0.5/16px unchanged).
+  it('touch grip and overflow icons scale to 20px on coarse pointers (#996)', () => {
+    renderWithTooltip(<BlockGutterControls blockId="B1" onDelete={vi.fn()} />)
+
+    const grip = screen.getByTestId('grip-vertical-icon')
+    const overflow = screen.getByTestId('more-vertical-icon')
+
+    for (const icon of [grip, overflow]) {
+      expect(icon.getAttribute('class')).toContain('[@media(pointer:coarse)]:h-5')
+      expect(icon.getAttribute('class')).toContain('[@media(pointer:coarse)]:w-5')
+    }
+  })
+
+  // #996: neither touch element paints a visible button background at rest —
+  // bg only appears on hover/active so the region reads as ambient chrome.
+  it('touch grip and overflow have no resting background (#996)', () => {
+    renderWithTooltip(<BlockGutterControls blockId="B1" onDelete={vi.fn()} />)
+
+    const grip = screen.getByTestId('drag-handle')
+    const overflow = screen.getByTestId('more-actions')
+
+    // Grip: only active:bg-accent (no unconditional bg-* utility).
+    expect(grip.className).toContain('active:bg-accent')
+    expect(grip.className.split(/\s+/).some((c) => c.startsWith('bg-'))).toBe(false)
+    // Overflow: only hover:bg-accent (no unconditional bg-* utility).
+    expect(overflow.className).toContain('hover:bg-accent')
+    expect(overflow.className.split(/\s+/).some((c) => c.startsWith('bg-'))).toBe(false)
   })
 
   // ── UX-306: more-actions aria-label enumerates available actions ──

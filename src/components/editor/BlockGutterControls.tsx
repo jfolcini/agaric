@@ -34,9 +34,28 @@ import { capturePreDragFocus } from '@/lib/pre-drag-focus'
 import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
 
+/**
+ * Gutter radius scale (#998) — the proportional scale is intentional and
+ * best-in-class; do NOT bump small controls to `rounded-md` (it makes tiny
+ * icon buttons blobby):
+ *   - `rounded-sm` → icon buttons (drag handle, history, delete, more-actions)
+ *   - `rounded-md` → padded rows / touch grip (SHEET_ROW_CLASS, touch handle)
+ *   - `rounded-lg` → popover containers
+ * The icon-button radius lives in `GUTTER_BUTTON_BASE` (and the touch
+ * more-actions base) so the three small buttons can't silently diverge.
+ */
+
 /** Shared visibility / interaction classes for every gutter button. */
 const GUTTER_BUTTON_BASE =
-  'flex-shrink-0 p-0.5 text-muted-foreground opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring active:scale-95 touch-target'
+  'flex-shrink-0 p-0.5 rounded-sm text-muted-foreground opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring-visible active:scale-95 touch-target'
+
+/**
+ * Gutter hover palettes (#997) — centralized so a future tweak can't silently
+ * diverge across the five gutter sites. The neutral-vs-destructive colour
+ * distinction is intentional and preserved.
+ */
+const GUTTER_HOVER_NEUTRAL = 'hover:bg-accent hover:text-foreground'
+const GUTTER_HOVER_DESTRUCTIVE = 'hover:bg-destructive/10 hover:text-destructive'
 
 /**
  * Touch drag-handle grip (#918).
@@ -54,11 +73,17 @@ const GUTTER_BUTTON_BASE =
  *    press/active, so it reads as intentional chrome, not a permanent button.
  */
 const TOUCH_DRAG_HANDLE_CLASS =
-  'drag-handle touch-none flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground/60 active:text-foreground active:bg-accent transition-colors focus-ring active:scale-95 touch-target cursor-grab'
+  'drag-handle touch-none flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground/60 active:text-foreground active:bg-accent transition-colors focus-ring-visible active:scale-95 touch-target cursor-grab'
 
-/** Layout for the action rows inside the touch overflow Sheet. */
+/**
+ * Layout for the action rows inside the touch overflow Sheet.
+ *
+ * #995: uses the canonical `focus-ring-visible` (inset 3px `ring-ring/50`, no
+ * offset). The Sheet clips overflow, but an inset ring with no offset paints
+ * inside the row's own box, so the 3px ring is not clipped.
+ */
 const SHEET_ROW_CLASS =
-  'flex w-full items-center gap-3 rounded-md px-3 py-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent focus-visible:bg-accent focus-ring touch-target'
+  'flex w-full items-center gap-3 rounded-md px-3 py-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent focus-visible:bg-accent focus-ring-visible touch-target'
 
 /* ── GutterButton ───────────────────────────────────────────────── */
 
@@ -174,7 +199,7 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
           onPointerDown={(e) => e.stopPropagation()}
           className={cn(
             'block-select-checkbox flex-shrink-0 h-3.5 w-3.5 rounded border-border cursor-pointer',
-            'transition-opacity focus-ring',
+            'transition-opacity focus-ring-visible',
             isSelected
               ? // Selected → always visible (selection feedback).
                 'opacity-100'
@@ -210,6 +235,10 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
       // persistent gutter chrome. Inherit the base behaviour so the affordance
       // belongs to the single hovered/focused block. Touch is unaffected (it
       // renders `touchDragHandle` below and keeps the `.block-active` reveal).
+      // #997: the drag handle stays text-only on hover (no `hover:bg-accent`)
+      // — adding the neutral bg would be a visible change, and the grip reads
+      // as ambient chrome better without a hover plate. So it deliberately does
+      // NOT use GUTTER_HOVER_NEUTRAL; only the text-foreground half applies.
       className="drag-handle cursor-grab hover:text-foreground"
       // B (#216): expose the keyboard-reorder shortcut to assistive tech.
       // The naming tooltip ("Reorder — Ctrl+Shift+↑/↓") already comes from
@@ -275,7 +304,9 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
         // #966 — same pre-drag focus capture as the desktop handle (see above).
         onPointerDown={handleDragHandlePointerDown}
       >
-        <GripVertical className="h-4 w-4" />
+        {/* #996: bump to 20px on coarse pointers so the grip reads as a solid
+            affordance, not a floaty 16px glyph in the 44px box. */}
+        <GripVertical className="h-4 w-4 [@media(pointer:coarse)]:h-5 [@media(pointer:coarse)]:w-5" />
       </button>
     )
     // UX-306: enumerate the available secondary actions in the
@@ -297,14 +328,16 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
           <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
             <button
               type="button"
-              className={cn(GUTTER_BUTTON_BASE, 'rounded-sm hover:bg-accent hover:text-foreground')}
+              className={cn(GUTTER_BUTTON_BASE, GUTTER_HOVER_NEUTRAL)}
               aria-label={moreActionsLabel}
               aria-haspopup="dialog"
               aria-expanded={sheetOpen}
               data-testid="more-actions"
               onClick={() => setSheetOpen(true)}
             >
-              <MoreVertical className="h-4 w-4" />
+              {/* #996: bump to 20px on coarse pointers for legibility in the
+                  44px touch box; desktop p-0.5 + 16px icon is unchanged. */}
+              <MoreVertical className="h-4 w-4 [@media(pointer:coarse)]:h-5 [@media(pointer:coarse)]:w-5" />
             </button>
             <SheetContent side="right" className="w-3/4 sm:w-80">
               <SheetHeader>
@@ -329,10 +362,7 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
                   <SheetClose asChild>
                     <button
                       type="button"
-                      className={cn(
-                        SHEET_ROW_CLASS,
-                        'hover:bg-destructive/10 hover:text-destructive',
-                      )}
+                      className={cn(SHEET_ROW_CLASS, GUTTER_HOVER_DESTRUCTIVE)}
                       data-testid="more-actions-delete"
                       onClick={() => onDelete(blockId)}
                     >
@@ -361,7 +391,7 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
           icon={Clock}
           label={t('block.history')}
           ariaLabel={t('block.history')}
-          className="hover:text-foreground hover:bg-accent rounded-sm"
+          className={GUTTER_HOVER_NEUTRAL}
           onClick={() => onShowHistory(blockId)}
         />
       )}
@@ -372,7 +402,7 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
           icon={Trash2}
           label={t('block.delete')}
           ariaLabel={t('block.delete')}
-          className="delete-handle hover:text-destructive rounded-sm hover:bg-destructive/10"
+          className={cn('delete-handle', GUTTER_HOVER_DESTRUCTIVE)}
           onPointerDown={(e) => {
             e.stopPropagation()
             e.preventDefault()

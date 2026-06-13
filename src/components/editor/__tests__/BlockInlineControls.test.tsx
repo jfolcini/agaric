@@ -870,4 +870,25 @@ describe('BlockInlineControls multiselect suppression (Fix 6)', () => {
     renderControls(makeProps({ todoState: 'TODO' }))
     expect(screen.getByTestId('task-marker')).toBeInTheDocument()
   })
+
+  // #994: the collapse chevron and zoom bullet are per-block structural /
+  // navigation controls — they INTENTIONALLY survive selection mode (only the
+  // task checkbox is suppressed). Hiding the chevron would reflow every row at
+  // selection-start and erase the collapsed-subtree cue.
+  it('keeps the collapse chevron (with its per-block aria-label) during selection mode', () => {
+    useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
+    renderControls(makeProps({ hasChildren: true, isCollapsed: true }))
+
+    const chevron = screen.getByTestId('collapse-toggle')
+    expect(chevron).toBeInTheDocument()
+    // Per-block scope stays legible via the existing single-block aria-label.
+    expect(chevron).toHaveAttribute('aria-label', t('block.expandChildren'))
+    expect(chevron).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('keeps the zoom bullet during selection mode', () => {
+    useBlockStore.setState({ selectedBlockIds: ['OTHER'] })
+    renderControls(makeProps({ hasChildren: true }))
+    expect(screen.getByTestId('block-bullet')).toBeInTheDocument()
+  })
 })
