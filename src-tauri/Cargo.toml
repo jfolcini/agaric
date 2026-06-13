@@ -424,6 +424,13 @@ harness = false
 name = "property_def_bench"
 harness = false
 
+# #978 — coverage for two hot, user-facing read commands on the editor/block
+# path that had no bench: `load_page_subtree` (every page open) and
+# `get_blocks` (batch fetch for multi-select / backlink hydration).
+[[bench]]
+name = "page_load_bench"
+harness = false
+
 # Phase 2 §B.1 of `pending/scale-benchmarks-100k-2026-05-14.md` — history +
 # undo/redo at scale ([1K, 10K, 100K] ops on a single page). The 50-op
 # revert at 100K is the budget point that feeds the matching row in
