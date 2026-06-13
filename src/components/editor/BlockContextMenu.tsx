@@ -9,7 +9,7 @@
  * Closes on: action selected, click outside, or Escape.
  */
 
-import { autoUpdate, computePosition, flip, offset, shift } from '@floating-ui/dom'
+import { autoUpdate, computePosition, flip, offset, shift, size } from '@floating-ui/dom'
 import {
   ArrowLeftToLine,
   ArrowRightToLine,
@@ -38,7 +38,7 @@ import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { openUrl } from '@/lib/open-url'
-import { TURN_INTO_OPTIONS } from '@/lib/slash-commands'
+import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '@/lib/slash-commands'
 import { cn } from '@/lib/utils'
 
 export interface BlockContextMenuProps {
@@ -260,7 +260,22 @@ export function BlockContextMenu({
 
       computePosition(virtualEl, el, {
         placement: 'bottom-start',
-        middleware: [offset(4), flip({ padding: 8 }), shift({ padding: 8 })],
+        middleware: [
+          offset(4),
+          flip({ padding: 8 }),
+          shift({ padding: 8 }),
+          // #987: when the menu is taller than the viewport, flip/shift can't
+          // resolve the overflow (both placements overrun) and the bottom of
+          // the menu was clipped by the window. Cap the height to the space
+          // floating-ui leaves and let the list scroll inside it.
+          size({
+            padding: 8,
+            apply({ availableHeight, elements }) {
+              elements.floating.style.maxHeight = `${Math.max(120, availableHeight)}px`
+              elements.floating.style.overflowY = 'auto'
+            },
+          }),
+        ],
       })
         .then(({ x, y }) => {
           if (!el.isConnected) return
@@ -546,7 +561,7 @@ export function BlockContextMenu({
               const blockType = opt.blockType as BlockTypeToken
               const isActive = activeBlockType === blockType
               return {
-                label: t(`contextMenu.turnIntoType.${opt.blockType}`),
+                label: t(turnIntoTypeKey(opt.blockType)),
                 icon: Icon ? <Icon className="ml-3 h-3.5 w-3.5" /> : <span className="ml-3" />,
                 active: isActive,
                 action: isActive

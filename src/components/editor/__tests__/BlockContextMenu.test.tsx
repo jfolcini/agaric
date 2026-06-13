@@ -36,10 +36,27 @@ import { logger } from '@/lib/logger'
 import { openUrl } from '@/lib/open-url'
 
 vi.mock('@floating-ui/dom', () => ({
-  computePosition: vi.fn().mockResolvedValue({ x: 0, y: 0 }),
+  // Base impl resolves anchor coords AND runs any size() middleware's `apply`
+  // against the real floating element with a short available height, so the
+  // #987 max-height/scroll wiring is exercised exactly as in production
+  // (the real computePosition invokes size's apply during layout).
+  computePosition: vi.fn(
+    (_ref: unknown, floating: HTMLElement, opts?: { middleware?: unknown[] }) => {
+      for (const m of opts?.middleware ?? []) {
+        if (m && typeof m === 'object' && '_sizeApply' in m) {
+          ;(m as { _sizeApply: (a: unknown) => void })._sizeApply({
+            availableHeight: 150,
+            elements: { floating },
+          })
+        }
+      }
+      return Promise.resolve({ x: 0, y: 0 })
+    },
+  ),
   flip: vi.fn(() => ({})),
   shift: vi.fn(() => ({})),
   offset: vi.fn(() => ({})),
+  size: vi.fn((opts: { apply: (a: unknown) => void }) => ({ _sizeApply: opts.apply })),
   // `autoUpdate(reference, floating, update)` invokes `update` once
   // synchronously and returns a cleanup function. Mirror that behavior
   // in the test mock so positioning is exercised exactly as in
@@ -465,6 +482,17 @@ describe('BlockContextMenu', () => {
     await waitFor(() => {
       expect(menu.style.left).toBe('150px')
       expect(menu.style.top).toBe('300px')
+    })
+  })
+
+  it('caps menu height and enables scrolling when the viewport is short (#987)', async () => {
+    renderMenu()
+
+    const menu = screen.getByRole('menu')
+    await waitFor(() => {
+      // size() apply ran with availableHeight=150 (see the floating-ui mock).
+      expect(menu.style.maxHeight).toBe('150px')
+      expect(menu.style.overflowY).toBe('auto')
     })
   })
 

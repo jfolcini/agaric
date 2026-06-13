@@ -570,6 +570,17 @@ export const TURN_INTO_OPTIONS: TurnIntoOption[] = [
   { id: 'turn-callout', blockType: 'callout', label: 'Callout', icon: Info },
 ]
 
+/**
+ * i18n label key for a "Turn into" target. Block-type tokens are kebab-case
+ * (e.g. `numbered-list`), but translation keys follow the camelCase
+ * `namespace.name` convention — so we camelCase the dynamic segment. Shared by
+ * the block context menu and its i18n test so the two never drift (#986).
+ */
+export function turnIntoTypeKey(blockType: string): string {
+  const segment = blockType.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())
+  return `contextMenu.turnIntoType.${segment}`
+}
+
 export const TURN_INTO_COMMANDS: PickerItem[] = TURN_INTO_OPTIONS.map((o) => ({
   id: o.id,
   label: `TURN INTO ${o.label}`,
