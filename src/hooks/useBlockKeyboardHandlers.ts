@@ -103,7 +103,7 @@ export interface UseBlockKeyboardHandlersParams {
   collapsedVisible: FlatBlock[]
   rovingEditor: Pick<
     RovingEditorHandle,
-    'editor' | 'mount' | 'unmount' | 'getMarkdown' | 'splitAtCaret'
+    'editor' | 'activeBlockId' | 'mount' | 'unmount' | 'getMarkdown' | 'splitAtCaret'
   >
   setFocused: (id: string | null) => void
   handleFlush: () => string | null
@@ -413,13 +413,21 @@ export function useBlockKeyboardHandlers({
     setFocused(prevBlock.id)
     rovingEditorRef.current.mount(prevBlock.id, mergedContent)
 
+    // #976 f22 — capture the merge TARGET so the deferred cursor placement can
+    // verify the editor is still mounted on that block when the timer fires. If
+    // the user arrow-navigates before the 0ms callback runs, `handleFocusNext/
+    // Prev` remounts the roving editor onto a DIFFERENT block (updating
+    // `activeBlockId`), and a blind `setTextSelection` would land the caret in
+    // the wrong block. Guard on `activeBlockId === targetBlockId` — the same
+    // deterministic check `useEditorBlur` uses — so a stale timer is a no-op.
+    const targetBlockId = prevBlock.id
     if (pendingMergeSelectionRef.current !== null) {
       window.clearTimeout(pendingMergeSelectionRef.current)
     }
     pendingMergeSelectionRef.current = window.setTimeout(() => {
       pendingMergeSelectionRef.current = null
       const editor = rovingEditorRef.current.editor
-      if (editor) {
+      if (editor && rovingEditorRef.current.activeBlockId === targetBlockId) {
         const pmPos = Math.min(joinPoint, editor.state.doc.content.size - 1)
         editor.commands.setTextSelection(pmPos)
       }

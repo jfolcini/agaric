@@ -125,7 +125,7 @@ export function TemplatePicker({
         className="fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 min-w-[200px] max-w-[calc(100vw-2rem)] sm:max-w-[300px] max-sm:left-2 max-sm:right-2 max-sm:translate-x-0"
       >
         <ScrollArea className="max-h-[60vh]">
-          <p className="px-2 py-1 text-xs font-medium text-muted-foreground">
+          <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
             {t('slash.selectTemplate')}
           </p>
           {templatePages.map((tp) => (

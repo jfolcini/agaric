@@ -885,14 +885,21 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // #928 — prevent (don't just IPC-reject) an indent that would push the
         // block's deepest descendant past MAX_BLOCK_DEPTH. After indent the
         // block sits at `prevSibling.depth + 1`; its subtree height carries the
-        // rest. Short-circuit silently so the user gets a no-op instead of an
-        // error toast from the backend depth-limit rejection.
+        // rest. Short-circuit before the backend depth-limit rejection.
         const descendants = getDragDescendants(blocks, blockId)
         let subtreeHeight = 0
         for (const b of blocks) {
           if (descendants.has(b.id)) subtreeHeight = Math.max(subtreeHeight, b.depth - block.depth)
         }
-        if (prevSibling.depth + 1 + subtreeHeight > MAX_BLOCK_DEPTH - 1) return false
+        if (prevSibling.depth + 1 + subtreeHeight > MAX_BLOCK_DEPTH - 1) {
+          // #976 f21 — give sighted users feedback that Tab was rejected. The
+          // keyboard handler's aria-live `announceMoveResult('moveFailed')`
+          // covers AT, but a visual no-op left no explanation; a toast brings
+          // visual + AT feedback to parity (mirrors the delete-boundary toast).
+          // De-duped by `id` so a key-repeat at the depth ceiling shows once.
+          notify.error(i18n.t('error.maxNestingReached'), { id: 'max-nesting-reached' })
+          return false
+        }
 
         // #400: indent makes the block the LAST child of the previous sibling —
         // its slot is the prev sibling's current child count (append).

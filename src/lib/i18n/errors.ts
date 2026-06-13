@@ -22,6 +22,7 @@ export const errors: Record<string, string> = {
   'error.reorderBlockFailed': 'Failed to reorder block',
   'error.moveBlockFailed': 'Failed to move block',
   'error.indentBlockFailed': 'Failed to indent block',
+  'error.maxNestingReached': 'Max nesting level reached',
   'error.dedentBlockFailed': 'Failed to dedent block',
   'error.moveBlockUpFailed': 'Failed to move block up',
   'error.moveBlockDownFailed': 'Failed to move block down',
