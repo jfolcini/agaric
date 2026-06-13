@@ -330,6 +330,26 @@ describe('BlockInlineControls', () => {
       renderControls(makeProps({ hasChildren: true, isCollapsed: true }))
       expect(screen.getByTestId('block-bullet').getAttribute('data-collapsed')).toBe('true')
     })
+
+    // #976 (item 12) — the zoom-bullet aria-label must distinguish an expanded
+    // PARENT (has children) from a LEAF, and keep the collapsed message.
+    it('announces "has children" for an expanded parent bullet (#976)', () => {
+      renderControls(makeProps({ hasChildren: true, isCollapsed: false }))
+      const bullet = screen.getByTestId('block-bullet')
+      expect(bullet).toHaveAttribute('aria-label', t('block.zoomBulletParent'))
+    })
+
+    it('announces the bare zoom label for a leaf bullet (#976)', () => {
+      renderControls(makeProps({ hasChildren: false, isCollapsed: false }))
+      const bullet = screen.getByTestId('block-bullet')
+      expect(bullet).toHaveAttribute('aria-label', t('block.zoomBullet'))
+    })
+
+    it('announces hidden children for a collapsed bullet (#976)', () => {
+      renderControls(makeProps({ hasChildren: true, isCollapsed: true }))
+      const bullet = screen.getByTestId('block-bullet')
+      expect(bullet).toHaveAttribute('aria-label', t('block.zoomBulletCollapsed'))
+    })
   })
 
   it('calls onToggleCollapse with blockId on chevron click', async () => {
@@ -439,6 +459,14 @@ describe('BlockInlineControls', () => {
     renderControls(makeProps({ priority: '2', onTogglePriority: onToggle }))
     await user.click(screen.getByTestId('priority-badge'))
     expect(onToggle).toHaveBeenCalledWith('BLOCK_1')
+  })
+
+  // #976 (item 9) — the priority badge is a toggle button; it must expose its
+  // set/unset state via aria-pressed (it only renders when a priority is set,
+  // so it is always pressed, but the toggle semantics must be explicit for AT).
+  it('exposes aria-pressed=true on the priority badge (#976)', () => {
+    renderControls(makeProps({ priority: '1' }))
+    expect(screen.getByTestId('priority-badge')).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('renders due date chip when dueDate is set', () => {

@@ -74,6 +74,7 @@ import { useBlockTreeKeyboardShortcuts } from '@/hooks/useBlockTreeKeyboardShort
 import { useBlockZoom } from '@/hooks/useBlockZoom'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
+import { serializeBlockSubtree } from '@/lib/block-clipboard'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { convertBlockContent } from '@/lib/block-type-convert'
@@ -383,6 +384,28 @@ export function BlockTree({
     [pageStore, load, t],
   )
 
+  // #976 (item 13) — Duplicate a block + its subtree, inserting the copy
+  // immediately after the original at the same depth. This reuses the existing
+  // copy/paste-outline store ops (`serializeBlockSubtree` → `pasteBlocks`)
+  // rather than introducing a new clone op: serialize just this block's subtree
+  // to indented markdown, then paste it anchored on the original (paste inserts
+  // after the anchor at the anchor's depth). No new store op is required.
+  const handleDuplicate = useCallback(
+    async (blockId: string) => {
+      const state = pageStore.getState()
+      if (!state.blocksById.has(blockId)) return
+      const markdown = serializeBlockSubtree(state.blocks, [blockId])
+      if (markdown.length === 0) return
+      try {
+        await state.pasteBlocks(blockId, markdown)
+      } catch (err) {
+        logger.error('BlockTree', 'Failed to duplicate block', { blockId }, err)
+        notify.error(t('blockTree.duplicateFailed'))
+      }
+    },
+    [pageStore, t],
+  )
+
   // ── Slash commands hook ────────────────────────────────────────────
   const {
     handleSlashCommand,
@@ -636,6 +659,11 @@ export function BlockTree({
   const handleShowFocusedProperties = useCallback(() => {
     if (focusedBlockId) handleShowProperties(focusedBlockId)
   }, [focusedBlockId, handleShowProperties])
+  // #976 (item 15) — open the block-history drawer for the focused block via
+  // the `openBlockHistory` keyboard binding, mirroring the properties path.
+  const handleShowFocusedHistory = useCallback(() => {
+    if (focusedBlockId) handleShowHistory(focusedBlockId)
+  }, [focusedBlockId, handleShowHistory])
 
   useBlockKeyboard(rovingEditor.editor, {
     onFocusPrev: handleFocusPrev,
@@ -652,6 +680,7 @@ export function BlockTree({
     onToggleTodo: handleToggleFocusedTodo,
     onToggleCollapse: handleToggleFocusedCollapse,
     onShowProperties: handleShowFocusedProperties,
+    onShowHistory: handleShowFocusedHistory,
   })
 
   // ── Extracted event listeners (custom DOM events from toolbar) ───────
@@ -776,6 +805,8 @@ export function BlockTree({
     onZoomIn: handleZoomIn,
     onSelect: handleSelect,
     onTurnInto: handleTurnInto,
+    // `void` adapts the async handler to the bag's `(blockId) => void` shape.
+    onDuplicate: (blockId: string) => void handleDuplicate(blockId),
     // Fix 6 — bulk-delete the active multi-selection from the long-press /
     // right-click context menu (single IPC + undo toast). `void` adapts the
     // async handler to the bag's `() => void` shape.

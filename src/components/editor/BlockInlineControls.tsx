@@ -312,7 +312,17 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
             data-testid="block-bullet"
             data-has-children={hasChildren}
             data-collapsed={isCollapsed}
-            aria-label={isCollapsed ? t('block.zoomBulletCollapsed') : t('block.zoomBullet')}
+            // #976 (item 12) — distinguish three cases so AT users can tell an
+            // expanded parent (has children) from a leaf: collapsed (hidden
+            // children) keeps its own label; an EXPANDED parent announces it has
+            // children; a leaf stays the bare "Zoom in".
+            aria-label={
+              isCollapsed
+                ? t('block.zoomBulletCollapsed')
+                : hasChildren
+                  ? t('block.zoomBulletParent')
+                  : t('block.zoomBullet')
+            }
             onClick={(e) => {
               e.stopPropagation()
               zoomIn?.(blockId)
@@ -384,6 +394,13 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
               className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
               data-testid="priority-badge"
               aria-label={t('block.priorityCycle', { level: priorityLabel(priority) })}
+              // #976 (item 9) — the badge is a toggle button cycling the
+              // block's priority; expose its set/unset state per WAI-ARIA
+              // toggle-button semantics (matching the collapse/attachment
+              // toggles' `aria-expanded`). The badge only renders when a
+              // priority is set, so this is always `true` here, but it makes the
+              // toggle semantics explicit for AT.
+              aria-pressed={priority !== undefined && priority !== null}
               onClick={(e) => {
                 e.stopPropagation()
                 onTogglePriority?.(blockId)

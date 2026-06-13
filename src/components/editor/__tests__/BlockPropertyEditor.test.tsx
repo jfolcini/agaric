@@ -466,6 +466,102 @@ describe('BlockPropertyEditor', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+
+    // #976 (item 10) — the listbox previously had ARIA but ZERO key handlers, so
+    // AT users had to Tab through every option. Verify Arrow/Home/End move the
+    // `aria-activedescendant` and Enter commits the active option.
+    it('moves aria-activedescendant on ArrowDown/ArrowUp (#976)', async () => {
+      const user = userEvent.setup()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'status', value: 'open' },
+            selectOptions: ['open', 'closed', 'review'],
+          })}
+        />,
+      )
+
+      const listbox = screen.getByTestId('select-options-dropdown')
+      const options = screen.getAllByRole('option')
+      // Seeds on the selected value ('open' → index 0).
+      expect(listbox.getAttribute('aria-activedescendant')).toBe(options[0]?.id)
+
+      listbox.focus()
+      await user.keyboard('{ArrowDown}')
+      expect(listbox.getAttribute('aria-activedescendant')).toBe(options[1]?.id)
+
+      await user.keyboard('{ArrowDown}')
+      expect(listbox.getAttribute('aria-activedescendant')).toBe(options[2]?.id)
+
+      // Clamps at the last option.
+      await user.keyboard('{ArrowDown}')
+      expect(listbox.getAttribute('aria-activedescendant')).toBe(options[2]?.id)
+
+      await user.keyboard('{ArrowUp}')
+      expect(listbox.getAttribute('aria-activedescendant')).toBe(options[1]?.id)
+    })
+
+    it('jumps to first/last option on Home/End (#976)', async () => {
+      const user = userEvent.setup()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'status', value: 'open' },
+            selectOptions: ['open', 'closed', 'review'],
+          })}
+        />,
+      )
+      const listbox = screen.getByTestId('select-options-dropdown')
+      const options = screen.getAllByRole('option')
+      listbox.focus()
+
+      await user.keyboard('{End}')
+      expect(listbox.getAttribute('aria-activedescendant')).toBe(options[2]?.id)
+      await user.keyboard('{Home}')
+      expect(listbox.getAttribute('aria-activedescendant')).toBe(options[0]?.id)
+    })
+
+    it('commits the active option on Enter (#976)', async () => {
+      const user = userEvent.setup()
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'status', value: 'open' },
+            selectOptions: ['open', 'closed', 'review'],
+            setEditingProp,
+          })}
+        />,
+      )
+      const listbox = screen.getByTestId('select-options-dropdown')
+      listbox.focus()
+      // Move to 'closed' then commit.
+      await user.keyboard('{ArrowDown}{Enter}')
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith({
+          blockId: 'BLOCK_1',
+          key: 'status',
+          valueText: 'closed',
+        })
+      })
+      expect(setEditingProp).toHaveBeenCalledWith(null)
+    })
+
+    // #976 (item 11) — keyboard users need a visible focus ring while navigating
+    // the listbox; the option buttons must carry the shared `focus-ring-visible`.
+    it('applies focus-ring-visible to the option buttons (#976)', () => {
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'status', value: 'open' },
+            selectOptions: ['open', 'closed'],
+          })}
+        />,
+      )
+      for (const opt of screen.getAllByRole('option')) {
+        expect(opt.className).toContain('focus-ring-visible')
+      }
+    })
   })
 
   describe('ref picker', () => {
@@ -515,6 +611,21 @@ describe('BlockPropertyEditor', () => {
       expect(screen.getByLabelText('Search pages...')).toBe(screen.getByTestId('ref-search-input'))
       expect(screen.getByText('Page Alpha')).toBeInTheDocument()
       expect(screen.getByText('Page Beta')).toBeInTheDocument()
+    })
+
+    // #976 (item 11) — ref-picker option buttons also need the visible focus ring.
+    it('applies focus-ring-visible to the ref-picker option buttons (#976)', () => {
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'ref', value: 'P1' },
+            isRefProp: true,
+            refPages: pages,
+          })}
+        />,
+      )
+      const alpha = screen.getByText('Page Alpha').closest('button')
+      expect(alpha?.className).toContain('focus-ring-visible')
     })
 
     it('filters pages by search text', () => {

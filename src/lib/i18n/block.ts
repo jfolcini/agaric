@@ -38,6 +38,11 @@ export const block: Record<string, string> = {
   'block.zoomBullet': 'Zoom in',
   'block.zoomBulletTip': 'Zoom in (Alt+.)',
   'block.zoomBulletCollapsed': 'Zoom in (has hidden children)',
+  // #976 (item 12) — an EXPANDED parent and a leaf both previously announced a
+  // bare "Zoom in", so screen-reader users couldn't tell them apart (the
+  // collapsed state already has its own label + a visual halo). Distinguish the
+  // expanded-parent case so AT users know the block has children to zoom into.
+  'block.zoomBulletParent': 'Zoom in (block has children)',
   // #927 f4: swipe-to-indent / swipe-to-outdent gestures on touch. Surfaced as
   // aria descriptions so assistive tech announces the available gestures.
   'block.swipe.indented': 'Block indented',
@@ -171,6 +176,7 @@ export const block: Record<string, string> = {
   'blockTree.attachmentTooLarge': 'File is {{size}} — max is 50 MB',
   'blockTree.cannotDeleteLastBlock': 'Cannot delete the last block on a page',
   'blockTree.mergeBlocksFailed': 'Failed to merge blocks',
+  'blockTree.duplicateFailed': 'Failed to duplicate block',
   'blockTree.changesDiscarded': 'Changes discarded',
   'blockTree.noBlocks': 'No blocks yet. Click + Add block below to start writing.',
   'blockTree.emptyPageHint': 'Type / for commands',

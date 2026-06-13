@@ -19,6 +19,7 @@ import {
   ChevronRight,
   Clock,
   Copy,
+  CopyPlus,
   ExternalLink,
   Merge,
   MoveDown,
@@ -65,8 +66,8 @@ export interface BlockContextMenuProps {
    *
    * The action keys consumed by this menu are: `onDelete`, `onIndent`,
    * `onDedent`, `onToggleTodo`, `onTogglePriority`, `onToggleCollapse`,
-   * `onMoveUp`, `onMoveDown`, `onMerge`, `onShowHistory`, `onShowProperties`,
-   * `onZoomIn`, `onTurnInto`, and `onBatchDelete`.
+   * `onMoveUp`, `onMoveDown`, `onMerge`, `onDuplicate`, `onShowHistory`,
+   * `onShowProperties`, `onZoomIn`, `onTurnInto`, and `onBatchDelete`.
    */
   actions: BlockActions
   hasChildren?: boolean | undefined
@@ -186,6 +187,7 @@ export function BlockContextMenu({
     onShowProperties,
     onZoomIn,
     onTurnInto,
+    onDuplicate,
     onBatchDelete,
   } = actions
 
@@ -426,6 +428,11 @@ export function BlockContextMenu({
       icon: <Trash2 className="h-3.5 w-3.5" />,
       action: deleteAction,
       className: 'text-destructive hover:bg-destructive/10',
+      // #976 (item 16) — surface the delete binding. It's positional
+      // (`deleteBlock`: Backspace on an empty block), so the hint carries the
+      // "(when empty)" condition rather than implying Backspace always deletes.
+      // Suppressed in bulk mode, where the batch-delete has no single-key chord.
+      ...(isBulk ? {} : { shortcut: 'Backspace (when empty)' }),
     },
   ]
 
@@ -455,12 +462,30 @@ export function BlockContextMenu({
       action: onMoveDown ? () => dispatch(onMoveDown) : undefined,
       shortcut: 'Ctrl+Shift+↓',
     },
+    // #976 (item 13) — Duplicate the block + its subtree (insert after the
+    // original at the same depth). Single-block only: in bulk mode the action
+    // is omitted (duplicating a heterogeneous selection has no single intuitive
+    // anchor; the batch toolbar owns multi-block ops).
+    ...(onDuplicate && !isBulk
+      ? [
+          {
+            label: t('contextMenu.duplicate'),
+            icon: <CopyPlus className="h-3.5 w-3.5" />,
+            action: () => handleAction(onDuplicate),
+          },
+        ]
+      : []),
     ...(onMerge
       ? [
           {
             label: t('contextMenu.merge'),
             icon: <Merge className="h-3.5 w-3.5" />,
             action: () => handleAction(onMerge),
+            // #976 (item 17) — surface the merge binding. It's positional
+            // (`mergeWithPrevious`: Backspace at the start of the block), so the
+            // hint carries the "(at start)" condition to avoid implying a bare
+            // Backspace deletes the block.
+            shortcut: 'Backspace (at start)',
           },
         ]
       : []),
@@ -485,6 +510,9 @@ export function BlockContextMenu({
                 label: t('contextMenu.zoomIn'),
                 icon: <ZoomIn className="h-3.5 w-3.5" />,
                 action: () => handleAction(onZoomIn),
+                // #976 (item 18) — surface the `zoomIn` catalog binding (Alt+.),
+                // matching the adjacent collapse (Ctrl+.) / properties hints.
+                shortcut: 'Alt+.',
               },
             ]
           : []),
@@ -506,7 +534,11 @@ export function BlockContextMenu({
       label: isBulk ? t('contextMenu.cyclePrioritySelected') : getPriorityLabel(priority, t),
       icon: <Signal className="h-3.5 w-3.5" />,
       action: onTogglePriority ? () => dispatch(onTogglePriority) : undefined,
-      shortcut: 'Ctrl+Shift+1-3',
+      // #976 (item 19) — `'Ctrl+Shift+1-3'` read ambiguously as "press 1 then 2
+      // then 3"; the catalog defines three INDEPENDENT bindings
+      // (`priority1`/`priority2`/`priority3`). Alternation notation ("1/2/3")
+      // makes it clear any one of the three sets that priority.
+      shortcut: 'Ctrl+Shift+1/2/3',
     },
   ]
 
@@ -518,6 +550,9 @@ export function BlockContextMenu({
             label: t('contextMenu.history'),
             icon: <Clock className="h-3.5 w-3.5" />,
             action: () => handleAction(onShowHistory),
+            // #976 (item 15) — surface the new block-history binding, matching
+            // the adjacent properties row (Ctrl+Shift+P).
+            shortcut: 'Ctrl+Shift+Y',
           },
         ]
       : []),

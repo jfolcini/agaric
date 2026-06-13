@@ -191,6 +191,7 @@ export const common: Record<string, string> = {
   'contextMenu.setPriority1': 'Set priority 1',
   'contextMenu.properties': 'Properties...',
   'contextMenu.zoomIn': 'Zoom in',
+  'contextMenu.duplicate': 'Duplicate',
   'contextMenu.openLink': 'Open link',
   'contextMenu.copyUrl': 'Copy URL',
   'contextMenu.urlCopied': 'URL copied to clipboard',
