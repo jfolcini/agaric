@@ -369,6 +369,123 @@ describe('useViewportObserver', () => {
     unmount()
   })
 
+  // ── #838: callback memo map must not leak ──────────────────────────────────
+
+  it('keeps stable ref-callback identity for a still-present id across re-renders (#838)', () => {
+    // The leak fix must not regress the stable-identity contract: an id that
+    // stays mounted across renders must get the *same* callback identity so
+    // React never churns observe/unobserve.
+    const { result, unmount } = renderHook(() => useViewportObserver())
+
+    const first = result.current.createObserveRef('STABLE')
+    const el = makeEl('STABLE')
+    first(el)
+
+    // Re-request across (simulated) renders while the id is still present.
+    const second = result.current.createObserveRef('STABLE')
+    const third = result.current.createObserveRef('STABLE')
+
+    expect(second).toBe(first)
+    expect(third).toBe(first)
+
+    unmount()
+  })
+
+  it('prunes the callback memo entry when an id disappears (no unbounded growth) (#838)', async () => {
+    // Reaching into the internals would couple the test to the field name;
+    // instead we prove the prune behaviourally: after a block unmounts (its
+    // ref fires null), re-requesting the ref for that id yields a *fresh*
+    // callback — which can only happen if the prior entry was dropped. An id
+    // that never disappeared would keep returning the memoized callback.
+    const { result, unmount } = renderHook(() => useViewportObserver())
+
+    const before = result.current.createObserveRef('GONE')
+    const el = makeEl('GONE')
+    before(el)
+
+    // Sanity: still memoized while present.
+    expect(result.current.createObserveRef('GONE')).toBe(before)
+
+    // Block leaves the tree.
+    before(null)
+
+    // The prune is deferred to a microtask (so a transient null can cancel it);
+    // flush it. 'GONE' never re-attaches, so the entry is dropped.
+    await Promise.resolve()
+
+    // Entry was pruned → a re-request builds a new callback identity.
+    const after = result.current.createObserveRef('GONE')
+    expect(after).not.toBe(before)
+
+    unmount()
+  })
+
+  it('keeps stable identity across a StrictMode-style detach/reattach of a present id (#838)', () => {
+    // React 19 StrictMode (and keyed-list / suspense reconciliation) can fire the
+    // ref as el → null → el for a node that is STILL PRESENT. The transient null
+    // here is NOT an unmount. If the prune deletes the memoized callback on this
+    // transient null, the very next createObserveRef(id) hands React a NEW
+    // function identity → React re-runs el→null→el → infinite observe/unobserve
+    // churn and a broken stable-identity contract.
+    const { result, unmount } = renderHook(() => useViewportObserver())
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+    const observeSpy = vi.spyOn(obs, 'observe')
+
+    const cb = result.current.createObserveRef('PRESENT')
+    const el1 = makeEl('PRESENT')
+    const el2 = makeEl('PRESENT')
+
+    // StrictMode mount cycle for a present node: attach, detach, re-attach.
+    cb(el1)
+    cb(null)
+    cb(el2)
+
+    // The id is still present (el2 attached). Re-requesting its ref across a
+    // subsequent render MUST return the SAME callback identity — otherwise the
+    // ref churns. This is the stable-identity contract the leak fix must keep.
+    const again = result.current.createObserveRef('PRESENT')
+    expect(again).toBe(cb)
+
+    // And el2 must remain observed (no orphaned observe/unobserve churn).
+    expect(obs.observed.has(el2)).toBe(true)
+    expect(observeSpy).toHaveBeenCalledWith(el2)
+
+    unmount()
+  })
+
+  it('does not grow the callback map across many page-switch cycles (#838)', async () => {
+    // Simulate a long session: each "page" mounts a fresh set of block ids,
+    // then every block unmounts (ref(null)) before the next page mounts. If
+    // the memo map leaked, identities of *new, distinct* ids would be the
+    // only thing accumulating; we assert the per-page churn fully releases by
+    // checking that a re-mounted id from an earlier page is treated as new.
+    const { result, unmount } = renderHook(() => useViewportObserver())
+
+    const idsForPage = (page: number): string[] => [`P${page}_A`, `P${page}_B`, `P${page}_C`]
+
+    let firstPageRef!: (el: HTMLElement | null) => void
+    for (let page = 0; page < 50; page++) {
+      const refs = idsForPage(page).map((id) => {
+        const ref = result.current.createObserveRef(id)
+        ref(makeEl(id))
+        if (page === 0 && id === 'P0_A') firstPageRef = ref
+        return ref
+      })
+      // Unmount the whole page before the next one mounts.
+      for (const ref of refs) ref(null)
+    }
+
+    // Flush the deferred microtask prunes queued by every ref(null) above.
+    await Promise.resolve()
+
+    // P0_A was pruned long ago; requesting it now must yield a fresh callback,
+    // proving stale entries did not survive (the map did not grow unbounded).
+    const reRequested = result.current.createObserveRef('P0_A')
+    expect(reRequested).not.toBe(firstPageRef)
+
+    unmount()
+  })
+
   // ── Offscreen / height tracking ────────────────────────────────────────────
 
   it('marks a block as offscreen when not intersecting', () => {

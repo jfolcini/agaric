@@ -44,8 +44,14 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
   const elementsByIdRef = useRef<Map<string, HTMLElement>>(new Map())
   /** id → memoized ref callback. Guarantees stable identity per id across renders. */
   const refCallbacksRef = useRef<Map<string, (el: HTMLElement | null) => void>>(new Map())
+  /** ids with a deferred callback-memo prune pending. Lets a re-attach cancel it. */
+  const pendingPruneRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
+    // Capture the (stable) pending-prune set for the cleanup closure — the ref
+    // never reassigns `.current`, so this is the same Set throughout, and it
+    // keeps the linter from flagging a ref read inside cleanup.
+    const pendingPrune = pendingPruneRef.current
     observerRef.current = new IntersectionObserver(
       (entries) => {
         setOffscreenIds((prev) => {
@@ -81,6 +87,9 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
     return () => {
       observerRef.current?.disconnect()
       observerRef.current = null
+      // Drop any deferred prunes — the whole hook is tearing down, so the
+      // maps go with it; no microtask needs to fire after unmount.
+      pendingPrune.clear()
     }
   }, [rootMargin])
 
@@ -91,6 +100,12 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
     const cb = (el: HTMLElement | null): void => {
       const previous = elementsByIdRef.current.get(id)
       if (el) {
+        // A re-attach: cancel any deferred callback-memo prune for this id.
+        // This is what makes a transient `null` (StrictMode dev remount, keyed
+        // reconciliation) safe — the element comes back synchronously, before
+        // the deferred prune runs, so the memoized callback survives and its
+        // identity stays stable (#838).
+        pendingPruneRef.current.delete(id)
         // Defensive: if React hands us a new element without first
         // calling the ref with null for the previous one, unobserve
         // the stale element so the observer doesn't retain it.
@@ -103,6 +118,24 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
         observerRef.current?.unobserve(previous)
         elementsByIdRef.current.delete(id)
         heightsRef.current.delete(id)
+        // Defer pruning the memoized callback. A synchronous `null` is NOT a
+        // reliable "the block left the tree" signal: React fires el→null→el for
+        // a STILL-PRESENT node under StrictMode (dev) and during keyed-list /
+        // suspense reconciliation. Deleting the memo here would hand React a
+        // fresh callback identity on the next render → ref churn and a broken
+        // stable-identity contract (#838). Instead, schedule the prune; if the
+        // element re-attaches first (the `if (el)` branch above clears the
+        // pending flag), we keep the callback. Only a *genuine* unmount — no
+        // re-attach by the time the microtask runs — drops the entry, which is
+        // exactly when the id is truly absent from the current id set.
+        pendingPruneRef.current.add(id)
+        queueMicrotask(() => {
+          if (!pendingPruneRef.current.delete(id)) return
+          // Re-check liveness: only prune if the element is still gone.
+          if (!elementsByIdRef.current.has(id)) {
+            refCallbacksRef.current.delete(id)
+          }
+        })
         setOffscreenIds((prev) => {
           if (!prev.has(id)) return prev
           const next = new Set(prev)
