@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { formatDate, getTodayString } from '@/lib/date-utils'
+import { formatDate } from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
 
 import { logger } from '../lib/logger'
@@ -27,6 +27,7 @@ import {
 } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 import { useBlockPropertyEvents } from './useBlockPropertyEvents'
+import { useToday } from './useToday'
 
 // ── ULID reference extraction (B-53) ──────────────────────────────────
 /** Matches [[ULID]], #[ULID], and ((ULID)) refs inside block content. */
@@ -209,7 +210,7 @@ export function useDuePanelData({
     }
   }, [])
 
-  const todayStr = useMemo(() => getTodayString(), [])
+  const todayStr = useToday()
   const isToday = date === todayStr
 
   // Fetch overdue blocks when showing today

@@ -14,9 +14,9 @@ import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHead
 import { BlockListItem } from '@/components/editor/BlockListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
-import { getTodayString } from '@/lib/date-utils'
 
 import { useBlockNavigation } from '../../hooks/useBlockNavigation'
+import { useToday } from '../../hooks/useToday'
 import type { NavigateToPageFn } from '../../lib/block-events'
 import { logger } from '../../lib/logger'
 import type { BlockRow } from '../../lib/tauri'
@@ -203,7 +203,7 @@ export function UnfinishedTasks({
     useState<Record<string, boolean>>(readGroupCollapsedState)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
 
-  const todayStr = useMemo(() => getTodayString(), [])
+  const todayStr = useToday()
 
   const { handleBlockClick, handleBlockKeyDown } = useBlockNavigation({
     onNavigateToPage,
