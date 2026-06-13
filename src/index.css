@@ -1502,11 +1502,9 @@
 }
 
 /* ── Focus ring utilities (UX-6) ───────────────────────────────────── */
-@utility focus-ring {
-  &:focus-visible {
-    @apply ring-2 ring-ring ring-offset-1;
-  }
-}
+/* PEND-23 M6 (#995): the legacy `@utility focus-ring` (2px ring + offset) is
+ * removed — BlockGutterControls was its last consumer and is now migrated to
+ * `focus-ring-visible`. */
 
 /* PEND-23 M6: form-control / interactive-element focus ring. Replaces the
  * verbatim three-class string `focus-visible:outline-hidden
