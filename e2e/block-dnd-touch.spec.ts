@@ -79,7 +79,7 @@ test.describe('Block drag-and-drop (touch / narrow viewport)', () => {
     expect(box?.height ?? 0).toBeGreaterThan(0)
   })
 
-  // #929 f2 — a press-and-hold touch drag down one row emits a move_block.
+  // #929 f2 — a press-and-hold touch drag emits a move_block and reorders.
   //
   // #968: this test was previously `test.skip`'d IN CI ONLY because under the
   // GH runner's parallel/headless load it intermittently lost its rendered
@@ -91,33 +91,44 @@ test.describe('Block drag-and-drop (touch / narrow viewport)', () => {
   // shortly AFTER the first content row paints. `openPageMobile` only awaits the
   // FIRST row, so the old test read `.nth(2)` straight into that transient blank
   // window. The fix waits for a STABLE populated tree (`waitForStableBlockRows`
-  // — count ≥ 3 held across consecutive samples with the skeleton gone) before
-  // reading ids / measuring boxes, then re-asserts the grip + target are still
-  // attached immediately before the drag. No assertion is weakened.
+  // held across consecutive samples with the skeleton gone) before reading ids /
+  // measuring boxes, then re-asserts the grip + target are still attached
+  // immediately before the drag.
+  //
+  // #1045: the drag previously targeted the 3rd row (`.nth(2)`) and waited for
+  // THREE hydrated rows. `SortableBlockWrapper` virtualizes the tree — off-
+  // screen blocks render as empty `block-placeholder` <li>s and only promote to
+  // `sortable-block` rows once on-screen (`viewport.isOffscreen`). The seeded
+  // "Getting Started" page has 5 root children (GS_1…GS_5). On the iPhone-13
+  // viewport (390×844) only the first rows that fit on screen hydrate; locally
+  // three settle, but the resource-starved GH CI runner deterministically
+  // hydrates only TWO `sortable-block` rows (GS_3 stays an off-screen
+  // placeholder) even after a 30s budget — so requiring 3 rows could never pass
+  // in CI. A 2-row reorder fully exercises the press-and-hold touch drag path,
+  // so the test now drags GS_2's grip ONTO GS_1 (the top row) and asserts both
+  // the emitted `move_block` (slot 0 / "move to top") AND the resulting visual
+  // order swap — using only the two rows that hydrate reliably in CI.
   test('a touch drag reorders a block and emits move_block', async ({ page }) => {
     await openPageMobile(page, PAGE)
 
-    // The drag targets the 3rd row (`.nth(2)`). The BlockTree virtualizes, so
-    // on this phone viewport only the on-screen rows hydrate into
-    // `sortable-block`s (the seeded "Getting Started" page's later children stay
-    // as off-screen placeholders) — three hydrate here, which is exactly what
-    // the drag needs. Wait until all three have hydrated AND that count has held
-    // still, i.e. the tree is fully settled, not mid-(re)load and not a partial
-    // CI paint (the #968 transient-empty-render + #1045 incremental-paint
-    // guard). The 30s settle budget needs a per-test timeout above 30s.
+    // Wait until the two on-screen rows (GS_1, GS_2) have hydrated AND that
+    // count has held still — the tree is settled, not mid-(re)load and not a
+    // partial CI paint (the #968 transient-empty-render + #1045 incremental-
+    // paint guard). The 30s settle budget needs a per-test timeout above 30s.
     test.setTimeout(45_000)
-    await waitForStableBlockRows(page, 3)
-
-    const target = page.locator('[data-testid="sortable-block"]').nth(2) // onto GS_3
-    await expect(target).toBeVisible()
+    await waitForStableBlockRows(page, 2)
 
     const ids = await blockIds(page)
-    const gs1 = ids[0] as string
+    const gs2 = ids[1] as string
+
+    const target = page.locator('[data-testid="sortable-block"]').nth(0) // onto GS_1 (top)
+    await expect(target).toBeVisible()
 
     await clearInvokeCalls(page)
+    // Grip of the SECOND row (GS_2) — drag it up over the first row.
     const grip = page
       .locator('[data-testid="sortable-block"]')
-      .first()
+      .nth(1)
       .locator('[data-testid="drag-handle"]')
 
     // Re-assert both endpoints are still attached + visible at the instant we
@@ -129,10 +140,15 @@ test.describe('Block drag-and-drop (touch / narrow viewport)', () => {
 
     await dragBlockTouch(page, grip, target)
 
+    // The visual order swaps — GS_2 lands at the top (visual index 0).
+    await expect.poll(async () => (await blockIds(page)).indexOf(gs2)).toBe(0)
+
+    // …and the recorded IPC carries GS_2 moving to slot 0 ("move to top", #400).
     await expect.poll(async () => (await moveCalls(page)).length).toBeGreaterThan(0)
     const calls = await moveCalls(page)
-    const mine = calls.find((c) => c.blockId === gs1) ?? calls[calls.length - 1]
-    expect(mine?.blockId).toBe(gs1)
+    const mine = calls.find((c) => c.blockId === gs2) ?? calls[calls.length - 1]
+    expect(mine?.blockId).toBe(gs2)
+    expect(mine?.newIndex).toBe(0)
   })
 
   // #926 f3 — a stationary long-press on the block body opens the
