@@ -128,6 +128,19 @@ async function handleLocationPreset(
 }
 
 async function handleEffort(ctx: SlashCommandContext, value: string): Promise<void> {
+  // 'Custom…' escape hatch: arbitrary effort values (e.g. `3d`, `45m`,
+  // story-points) aren't covered by the fixed buckets, so route through the
+  // same empty-value → property-editor path as assignee/location custom.
+  if (value === 'custom') {
+    try {
+      await setProperty({ blockId: ctx.blockId, key: 'effort', valueText: '' })
+      notifyUndo(ctx.rootParentId)
+      notify.success(ctx.t('blockTree.addedEffortProperty'))
+    } catch {
+      notify.error(ctx.t('blockTree.addPropertyFailed'))
+    }
+    return
+  }
   try {
     await setProperty({ blockId: ctx.blockId, key: 'effort', valueText: value })
     notifyUndo(ctx.rootParentId)

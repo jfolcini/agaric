@@ -161,6 +161,7 @@ export const block: Record<string, string> = {
   'blockTree.setAssigneeMessage': 'Set assignee to {{value}}',
   'blockTree.setAssigneeFailed': 'Failed to set assignee',
   'blockTree.addedLocationProperty': 'Added location property',
+  'blockTree.addedEffortProperty': 'Added effort property',
   'blockTree.setLocationMessage': 'Set location to {{value}}',
   'blockTree.setLocationFailed': 'Failed to set location',
   'blockTree.repeatEndConditionRemoved': 'Repeat end condition removed',

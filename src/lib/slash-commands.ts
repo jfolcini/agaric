@@ -446,6 +446,12 @@ export const EFFORT_COMMANDS: PickerItem[] = [
     category: 'slashCommand.categories.properties',
     icon: Timer,
   },
+  {
+    id: 'effort-custom',
+    label: 'EFFORT Custom... — Enter custom effort',
+    category: 'slashCommand.categories.properties',
+    icon: Timer,
+  },
 ]
 
 export const ASSIGNEE_COMMANDS: PickerItem[] = [
