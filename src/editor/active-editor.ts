@@ -19,12 +19,34 @@ import type { Editor } from '@tiptap/react'
 
 let activeEditor: Editor | null = null
 
-/** Publish the single roving editor instance (or clear it with `null`). */
+/**
+ * Publish the single roving editor instance (or clear it with `null`).
+ *
+ * #1064 — reject a destroyed editor outright: a teardown that races the
+ * focus-event publish must never seed the registry with a dead handle.
+ */
 export function setActiveEditor(editor: Editor | null): void {
-  activeEditor = editor
+  activeEditor = editor?.isDestroyed === true ? null : editor
 }
 
-/** The live roving editor, or `null` when none is mounted/focused. */
+/**
+ * The live roving editor, or `null` when none is mounted/focused.
+ *
+ * #1064 — liveness chokepoint: any teardown that does not route through
+ * BlockTree's guarded unmount clear (an exception-driven tree swap, or an
+ * `editor.destroy()` that races the focus-event publish) can leave a
+ * destroyed `Editor` cached here. We never hand a dead handle to consumers:
+ * if the cached editor `isDestroyed`, clear the stale ref and return `null`
+ * so insert helpers degrade cleanly instead of throwing into a swallowing
+ * catch. We use `Editor.isDestroyed`, not `editor.view.isDestroyed`: in
+ * TipTap v3 `editor.view` is a Proxy stub once destroyed whose `isDestroyed`
+ * reports `false`, missing the `editor.destroy()`-before-cleanup case this
+ * bug is about (#1017). `Editor.isDestroyed` returns `editorView?.isDestroyed
+ * ?? true`, covering both a destroyed view and a fully destroyed editor.
+ */
 export function getActiveEditor(): Editor | null {
+  if (activeEditor?.isDestroyed === true) {
+    activeEditor = null
+  }
   return activeEditor
 }

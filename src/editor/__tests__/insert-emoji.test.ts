@@ -70,4 +70,22 @@ describe('insertEmojiIntoActiveEditor', () => {
 
     expect(insertEmojiIntoActiveEditor('\u{1F525}')).toBe(false)
   })
+
+  it('no-ops gracefully on a destroyed active editor (no chain, no throw) (#1064)', () => {
+    // The registry hands out a destroyed handle (e.g. a destroy raced the
+    // focus-event publish). `getActiveEditor()` nulls it at the chokepoint
+    // and the `isDestroyed` short-circuit belts it: we never touch the chain.
+    const { calls } = makeChainSpy()
+    const dead = {
+      isDestroyed: true,
+      chain: () => {
+        calls.run() // would mark a (wrong) insert if ever reached
+        throw new Error('editor destroyed')
+      },
+    } as unknown as Editor
+    setActiveEditor(dead)
+
+    expect(insertEmojiIntoActiveEditor('\u{1F525}')).toBe(false)
+    expect(calls.run).not.toHaveBeenCalled()
+  })
 })

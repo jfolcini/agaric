@@ -53,8 +53,14 @@ export function insertPageLinkInto(
   // `document.execCommand('insertText')` is deprecated. TipTap preserves
   // its ProseMirror selection across the palette focus excursion, so
   // `.focus()` restores the user's caret without the DOM snapshot range.
+  // #1064 — `getActiveEditor()` nulls a destroyed handle at the chokepoint,
+  // so a dead registry entry falls through to the Selection/Range fallback
+  // below rather than throwing into the swallowing catch. The `isDestroyed`
+  // short-circuit is cheap belt-and-suspenders against a destroy that races
+  // this call; the try/catch stays as defense-in-depth, not the dead-handle
+  // path.
   const editor = getActiveEditor()
-  if (editor != null && target.closest('.ProseMirror') != null) {
+  if (editor != null && !editor.isDestroyed && target.closest('.ProseMirror') != null) {
     try {
       editor.chain().focus().insertContent(text).run()
       return true
