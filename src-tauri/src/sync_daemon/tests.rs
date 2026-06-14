@@ -1238,11 +1238,13 @@ async fn handle_incoming_sync_rejects_unpaired_device() {
     materializer.shutdown();
 }
 
-/// S-11: Verify that cancel flag is cleared after try_sync_with_peer
-/// exits via the connection-failure path.  The CancelGuard (scope guard)
-/// ensures cleanup on ALL exit paths, including early returns.
+/// S-11 / #637: When `try_sync_with_peer` exits via the connection-failure
+/// path it runs NO real session, so it does NOT own the cancel and must
+/// LEAVE a pre-set (user) cancel flag intact — otherwise an early-exiting
+/// peer would swallow a cancel aimed at a still-running sibling. The guard
+/// only clears the flag once a real session was reached (`owns == true`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn try_sync_with_peer_clears_cancel_flag_after_connection_failure() {
+async fn try_sync_with_peer_preserves_cancel_flag_after_connection_failure() {
     install_crypto_provider();
 
     let (pool, _dir) = test_pool().await;
@@ -1277,10 +1279,11 @@ async fn try_sync_with_peer_clears_cancel_flag_after_connection_failure() {
 
     assert!(result.is_ok(), "must complete within timeout");
 
-    // S-11: CancelGuard clears the flag even on the connection-failure path
+    // #637: connection-failure early-exit ran no session → must NOT clear a
+    // pre-set user cancel (it could be aimed at a still-running sibling).
     assert!(
-        !cancel.load(Ordering::Acquire),
-        "S-11: cancel flag must be cleared after connection failure early-exit"
+        cancel.load(Ordering::Acquire),
+        "#637: connection-failure early-exit must PRESERVE a pre-set cancel flag"
     );
 
     // Verify we got the error event (connection failed)
@@ -1291,13 +1294,22 @@ async fn try_sync_with_peer_clears_cancel_flag_after_connection_failure() {
 }
 
 // ======================================================================
-// S-11 — Cancel flag cleared on ALL early-exit paths
+// S-11 / #637 — Cancel flag ownership on early-exit paths
+//
+// Original S-11 invariant ("clear the flag on every exit path") was unsafe
+// once Branch B started spawning one task per peer against a single SHARED
+// cancel flag: an early-exiting task would clear a user cancel aimed at a
+// still-running sibling (#637). The corrected invariant: only a task that
+// actually ran a real session OWNS the cancel and clears it; early-exit
+// paths (backoff / lock / no-address / connect failure) PRESERVE a pre-set
+// flag so a sibling-targeted cancel survives.
 // ======================================================================
 
-/// S-11: Cancel flag must be cleared when the backoff gate triggers
-/// an early return.
+/// S-11 / #637: the backoff-gate early return runs no session, so it must
+/// PRESERVE a pre-set user cancel (it may be aimed at a still-running
+/// sibling) — not clear it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn s11_cancel_cleared_on_backoff_early_exit() {
+async fn s11_cancel_preserved_on_backoff_early_exit() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
@@ -1332,17 +1344,18 @@ async fn s11_cancel_cleared_on_backoff_early_exit() {
     try_sync_with_peer(&ctx, &peer, &refs).await;
 
     assert!(
-        !cancel.load(Ordering::Acquire),
-        "S-11: cancel flag must be cleared after backoff early-exit"
+        cancel.load(Ordering::Acquire),
+        "#637: backoff early-exit must PRESERVE a pre-set cancel flag"
     );
 
     materializer.shutdown();
 }
 
-/// S-11: Cancel flag must be cleared when the per-peer lock is already
-/// held (already-syncing early return).
+/// S-11 / #637: the already-syncing (per-peer lock held) early return runs
+/// no session here, so it must PRESERVE a pre-set user cancel rather than
+/// clear a sibling's cancel.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn s11_cancel_cleared_on_already_syncing_early_exit() {
+async fn s11_cancel_preserved_on_already_syncing_early_exit() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
@@ -1373,17 +1386,17 @@ async fn s11_cancel_cleared_on_already_syncing_early_exit() {
     try_sync_with_peer(&ctx, &peer, &refs).await;
 
     assert!(
-        !cancel.load(Ordering::Acquire),
-        "S-11: cancel flag must be cleared after already-syncing early-exit"
+        cancel.load(Ordering::Acquire),
+        "#637: already-syncing early-exit must PRESERVE a pre-set cancel flag"
     );
 
     materializer.shutdown();
 }
 
-/// S-11: Cancel flag must be cleared when the peer has no addresses
-/// (no-address early return).
+/// S-11 / #637: the no-addresses early return runs no session, so it must
+/// PRESERVE a pre-set user cancel rather than clear a sibling's cancel.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn s11_cancel_cleared_on_no_addresses_early_exit() {
+async fn s11_cancel_preserved_on_no_addresses_early_exit() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
@@ -1411,8 +1424,8 @@ async fn s11_cancel_cleared_on_no_addresses_early_exit() {
     try_sync_with_peer(&ctx, &peer, &refs).await;
 
     assert!(
-        !cancel.load(Ordering::Acquire),
-        "S-11: cancel flag must be cleared after no-addresses early-exit"
+        cancel.load(Ordering::Acquire),
+        "#637: no-addresses early-exit must PRESERVE a pre-set cancel flag"
     );
 
     materializer.shutdown();
@@ -4455,10 +4468,12 @@ async fn try_sync_with_peer_returns_false_when_connect_refused_even_if_cancel_pr
         !result,
         "M-46: connect-failure early-exit must return false (no real session ran), got true"
     );
-    // S-11 invariant still holds: CancelGuard cleared the flag.
+    // #637 invariant: the early-exit task does NOT own the cancel, so it must
+    // PRESERVE a pre-set flag (it could be aimed at a still-running sibling)
+    // rather than clear it.
     assert!(
-        !cancel.load(Ordering::Acquire),
-        "M-46: CancelGuard must still clear the cancel flag after early-exit"
+        cancel.load(Ordering::Acquire),
+        "#637: connect-failure early-exit must PRESERVE a pre-set cancel flag"
     );
 
     materializer.shutdown();
@@ -4499,6 +4514,246 @@ async fn try_sync_with_peer_returns_false_on_backoff_early_exit_m46() {
         !result,
         "M-46: backoff early-exit must return false, got true"
     );
+    materializer.shutdown();
+}
+
+// ======================================================================
+// #637 — shared cancel flag is not swallowed by an early-exiting sibling
+// ======================================================================
+
+/// #637 (core regression): two peer tasks share a SINGLE cancel flag, as
+/// Branch B spawns them (one `&AtomicBool` cloned into every task). A user
+/// cancel is set, aimed at the still-running sibling. One peer exits early
+/// (here: backoff gate, the same shape as lock contention / no-address /
+/// connect-failure) and its `CancelGuard` drops. The sibling MUST still
+/// observe the cancel — the early-exiter must NOT store `false` over a
+/// cancel it does not own.
+///
+/// Before the fix, `CancelGuard::drop` cleared the shared flag
+/// unconditionally on every exit path, so the early-exiter would swallow
+/// the cancel and the sibling (and `abort_all`, which only fires on a
+/// `true` return) would never see it — the round kept syncing despite the
+/// user cancelling.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancel_637_early_exiter_does_not_swallow_sibling_cancel() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink = Arc::new(RecordingEventSink::new());
+    let event_sink: Arc<dyn SyncEventSink> = sink.clone();
+    let cert = sync_net::generate_self_signed_cert("LOCAL_637").unwrap();
+
+    // The user has cancelled the round; the cancel is aimed at the still-
+    // running sibling. This is the SHARED flag every per-peer task observes.
+    let cancel = Arc::new(AtomicBool::new(true));
+
+    // The early-exiting peer: put it in backoff so `try_sync_with_peer`
+    // returns via the no-session early-exit path and drops its CancelGuard.
+    let early_peer = sync_net::DiscoveredPeer {
+        device_id: "PEER_EARLY_637".to_string(),
+        addresses: vec!["192.168.1.50".parse().unwrap()],
+        port: 9999,
+    };
+    let early_refs = vec![make_peer_ref("PEER_EARLY_637")];
+    scheduler.record_failure("PEER_EARLY_637");
+    assert!(
+        !scheduler.may_retry("PEER_EARLY_637"),
+        "early peer must be in backoff"
+    );
+
+    // Run the early-exiter against the SHARED flag, exactly as a spawned
+    // Branch-B task would (owned clones, `&AtomicBool` borrowed from the Arc).
+    let early_handle = {
+        let pool = pool.clone();
+        let materializer = materializer.clone();
+        let scheduler = scheduler.clone();
+        let event_sink = event_sink.clone();
+        let cancel = cancel.clone();
+        let cert = cert.clone();
+        tokio::spawn(async move {
+            let ctx = SyncSessionContext {
+                pool: &pool,
+                device_id: "LOCAL_637",
+                materializer: &materializer,
+                scheduler: &scheduler,
+                event_sink: &event_sink,
+                cancel: &cancel,
+                cert: &cert,
+            };
+            try_sync_with_peer(&ctx, &early_peer, &early_refs).await
+        })
+    };
+
+    let early_was_cancelled = early_handle.await.unwrap();
+
+    // The early-exiter ran no real session, so it reports false (M-46) ...
+    assert!(
+        !early_was_cancelled,
+        "#637: early-exiter (backoff) must report false — it ran no session"
+    );
+    // ... and, crucially, it must NOT have cleared the shared cancel flag:
+    // the sibling still needs to observe it.
+    assert!(
+        cancel.load(Ordering::Acquire),
+        "#637: early-exiting sibling swallowed the user cancel — the still-running \
+         peer would never observe it"
+    );
+
+    // Sanity: a sibling now reading the SAME shared flag (as it would inside
+    // `run_sync_session`'s cancel check) still sees the cancel.
+    assert!(
+        cancel.load(Ordering::Acquire),
+        "#637: sibling must still observe the cancel after the early-exiter tore down"
+    );
+
+    materializer.shutdown();
+}
+
+/// #637 (owns-path): when `try_sync_with_peer` actually reaches a real
+/// session it OWNS the cancel and IS the legitimate resetter — so it must
+/// clear the shared flag on the way out. Here we reach `run_sync_session`
+/// against a live loopback responder with the cancel pre-set; the session's
+/// cancel check returns immediately ("sync cancelled by user"), the function
+/// reports `true` (M-46), and the guard clears the flag.
+///
+/// This also exercises the M-46 TRUE-return path that was an acknowledged
+/// TODO(#497): a real session ran AND the cancel was observed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancel_637_owns_path_clears_flag_after_real_session() {
+    install_crypto_provider();
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink = Arc::new(RecordingEventSink::new());
+    let event_sink: Arc<dyn SyncEventSink> = sink.clone();
+    let cert = sync_net::generate_self_signed_cert("LOCAL_637_OWNS").unwrap();
+
+    // Live loopback responder so `try_connect_each_address` succeeds and the
+    // function commits to a real session (sets `owns = true`).
+    let server_cert = sync_net::generate_self_signed_cert("PEER_637_OWNS").unwrap();
+    let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
+    let (server, port) = SyncServer::start(&server_cert, move |conn| {
+        let _ = conn_tx.try_send(conn);
+    })
+    .await
+    .unwrap();
+
+    let peer = sync_net::DiscoveredPeer {
+        device_id: "PEER_637_OWNS".to_string(),
+        addresses: vec!["127.0.0.1".parse().unwrap()],
+        port,
+    };
+    let refs = vec![make_peer_ref("PEER_637_OWNS")];
+
+    // Cancel pre-set: once `run_sync_session` starts, its first loop iteration's
+    // cancel check fires and returns Err("sync cancelled by user").
+    let cancel = AtomicBool::new(true);
+
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL_637_OWNS",
+        materializer: &materializer,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        cert: &cert,
+    };
+
+    let was_cancelled = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        try_sync_with_peer(&ctx, &peer, &refs),
+    )
+    .await
+    .expect("try_sync_with_peer must complete within timeout");
+
+    // Keep the server-side connection alive until after the call returns so
+    // the initiator's first send doesn't fail before the cancel check.
+    drop(conn_rx.try_recv());
+
+    // A real session ran and observed the cancel → true (M-46 true-path / #497).
+    assert!(
+        was_cancelled,
+        "#637 owns-path: a real session that observed the cancel must return true"
+    );
+    // And because this task OWNS the cancel, the guard performs the legitimate
+    // post-run reset — the next round starts clean.
+    assert!(
+        !cancel.load(Ordering::Acquire),
+        "#637 owns-path: the resetter that ran a real session must clear the flag on exit"
+    );
+
+    server.shutdown().await;
+    materializer.shutdown();
+}
+
+/// #637 (normal reset): the owns-path post-run reset still happens when NO
+/// cancel is pending. A real session is reached (live loopback) with the
+/// cancel flag clear; after the session ends the flag remains clear — the
+/// legitimate reset is preserved and nothing spuriously sets it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancel_637_owns_path_normal_reset_leaves_flag_clear() {
+    install_crypto_provider();
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink = Arc::new(RecordingEventSink::new());
+    let event_sink: Arc<dyn SyncEventSink> = sink.clone();
+    let cert = sync_net::generate_self_signed_cert("LOCAL_637_NORM").unwrap();
+
+    // Live loopback responder that accepts the connection and immediately
+    // drops it (the closure's `conn` falls out of scope). With cancel clear,
+    // `run_sync_session` sends its first message then errors on the first
+    // recv against the closed connection — a real session ran and FAILED,
+    // which is still the owns-path. This is deterministic (the initiator's
+    // recv returns an error promptly rather than blocking).
+    let server_cert = sync_net::generate_self_signed_cert("PEER_637_NORM").unwrap();
+    let (server, port) = SyncServer::start(&server_cert, move |_conn| {
+        // drop `_conn` immediately → initiator's recv fails fast
+    })
+    .await
+    .unwrap();
+
+    let peer = sync_net::DiscoveredPeer {
+        device_id: "PEER_637_NORM".to_string(),
+        addresses: vec!["127.0.0.1".parse().unwrap()],
+        port,
+    };
+    let refs = vec![make_peer_ref("PEER_637_NORM")];
+
+    // No cancel pending.
+    let cancel = AtomicBool::new(false);
+
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL_637_NORM",
+        materializer: &materializer,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        cert: &cert,
+    };
+
+    let was_cancelled = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        try_sync_with_peer(&ctx, &peer, &refs),
+    )
+    .await
+    .expect("try_sync_with_peer must complete within timeout");
+
+    // No cancel was set, so nothing to observe.
+    assert!(
+        !was_cancelled,
+        "#637 normal-reset: with no cancel pending the call must report false"
+    );
+    // The owns-path reset runs and leaves the flag clear (it was never set).
+    assert!(
+        !cancel.load(Ordering::Acquire),
+        "#637 normal-reset: the post-run reset must leave the flag clear"
+    );
+
+    server.shutdown().await;
     materializer.shutdown();
 }
 
