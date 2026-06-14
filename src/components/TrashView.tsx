@@ -283,14 +283,11 @@ export function TrashView(): React.ReactElement {
   }, [reload, clearSelection, t])
 
   // ── Scroll focused item into view ────────────────────────────────
-  useEffect(() => {
-    if (focusedIndex < 0 || !listRef.current) return
-    const items = listRef.current.querySelectorAll('[data-trash-item]')
-    const el = items[focusedIndex] as HTMLElement | undefined
-    if (el && typeof el.scrollIntoView === 'function') {
-      el.scrollIntoView({ block: 'nearest' })
-    }
-  }, [focusedIndex])
+  // #740 — the list is virtualized inside `TrashListView`, which now owns
+  // keeping the keyboard-focused row in view via the virtualizer's
+  // `scrollToIndex` (a DOM-index `querySelectorAll('[data-trash-item]')`
+  // here would index the *windowed* slice, not the absolute list, and
+  // miss any row outside the current window after a Home/End/PageDown jump).
 
   // ── Row click with focus tracking ────────────────────────────────
   const handleRowClickWithFocus = useCallback(
