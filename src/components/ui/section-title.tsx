@@ -32,19 +32,26 @@ const colorClassFor = (color: SectionTitleColor): string => {
   }
 }
 
-interface SectionTitleProps {
+interface SectionTitleProps extends React.ComponentProps<'h4'> {
   color?: SectionTitleColor
   label: string
   count: number
   className?: string
-  ref?: React.Ref<HTMLHeadingElement>
 }
 
-const SectionTitle = ({ ref, color = 'default', label, count, className }: SectionTitleProps) => {
+const SectionTitle = ({
+  ref,
+  color = 'default',
+  label,
+  count,
+  className,
+  ...rest
+}: SectionTitleProps) => {
   return (
     <h4
       ref={ref}
       data-slot="section-title"
+      {...rest}
       className={cn(
         'text-xs font-semibold mb-1.5 flex items-center gap-1',
         colorClassFor(color),

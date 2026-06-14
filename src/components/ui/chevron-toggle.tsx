@@ -8,6 +8,7 @@
 
 import { cva, type VariantProps } from 'class-variance-authority'
 import { ChevronRight } from 'lucide-react'
+import type React from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -26,7 +27,12 @@ const chevronToggleVariants = cva('shrink-0 transition-transform', {
   },
 })
 
-export interface ChevronToggleProps extends VariantProps<typeof chevronToggleVariants> {
+export interface ChevronToggleProps
+  // `size` is the CVA dimension variant (sm/md/lg → Tailwind h-/w- classes), not
+  // lucide's numeric icon `size`; omit the icon's `size`/`ref` so the variant wins.
+  extends
+    Omit<React.ComponentProps<typeof ChevronRight>, 'ref' | 'size'>,
+    VariantProps<typeof chevronToggleVariants> {
   /** Whether the target content is expanded. Controls the 90-degree rotation. */
   isExpanded: boolean
   /** Show a spinning loader instead of the chevron (e.g. while fetching). */
@@ -40,11 +46,13 @@ export function ChevronToggle({
   loading = false,
   size = 'sm',
   className,
+  ...rest
 }: ChevronToggleProps) {
   if (loading) {
     return (
       <Spinner
         data-slot="chevron-toggle"
+        {...rest}
         className={cn(chevronToggleVariants({ size }), className)}
       />
     )
@@ -53,6 +61,7 @@ export function ChevronToggle({
   return (
     <ChevronRight
       data-slot="chevron-toggle"
+      {...rest}
       className={cn(chevronToggleVariants({ size }), isExpanded && 'rotate-90', className)}
     />
   )

@@ -91,6 +91,36 @@ describe('ChevronToggle', () => {
     expect(classes).toContain('my-custom')
   })
 
+  // -- Prop forwarding (#1091) ------------------------------------------------
+
+  it('forwards data-testid and aria-* onto the chevron icon', () => {
+    const { container } = render(
+      <ChevronToggle isExpanded={false} data-testid="row-chevron" aria-hidden="true" />,
+    )
+
+    const svg = container.querySelector('svg') as SVGElement
+    expect(svg).toHaveAttribute('data-testid', 'row-chevron')
+    expect(svg).toHaveAttribute('aria-hidden', 'true')
+    // Managed defaults still present.
+    expect(svg).toHaveAttribute('data-slot', 'chevron-toggle')
+  })
+
+  it('forwards data-testid and aria-* onto the spinner when loading', () => {
+    const { container } = render(
+      <ChevronToggle
+        isExpanded={false}
+        loading={true}
+        data-testid="row-chevron"
+        aria-hidden="true"
+      />,
+    )
+
+    const svg = container.querySelector('svg') as SVGElement
+    expect(svg).toHaveAttribute('data-testid', 'row-chevron')
+    expect(svg).toHaveAttribute('aria-hidden', 'true')
+    expect(svg.getAttribute('class') ?? '').toContain('animate-spin')
+  })
+
   it('has no a11y violations when collapsed', async () => {
     const { container } = render(
       <button type="button" aria-label="Toggle">
