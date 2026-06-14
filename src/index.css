@@ -1090,13 +1090,15 @@
 /* Highlight mark inside the editor. TipTap's stock Highlight extension
    renders a bare `<mark>` styled by the UA default (bright yellow, dark
    text) — illegible in dark mode and mismatched against the view-mode
-   highlight (RichContentRenderer/marks/text.tsx, #211 P0-2, which uses
-   `bg-yellow-200 dark:bg-yellow-800/60`). Align the editor `<mark>` to that
-   same token so a highlight looks identical editing vs reading, and so dark
-   mode is legible. (The `--highlight` CSS var is a different token for
-   search/marker bands — not this inline mark.) */
+   highlight (RichContentRenderer/marks/text.tsx, #211 P0-2). #1096 routes
+   BOTH the editor `<mark>` and the view-mode highlight through the
+   fully-themed `--highlight` amber token (`bg-highlight`) instead of raw
+   `bg-yellow-*` literals, so a highlight looks identical editing vs reading
+   across every theme + high-contrast. This amber user-highlight is
+   intentionally DISTINCT from the search-match semantic, which uses
+   `--accent` (`.search-result-mark`). */
 .ProseMirror mark {
-  @apply bg-yellow-200 dark:bg-yellow-800/60 rounded px-0.5;
+  @apply bg-highlight rounded px-0.5;
 }
 
 /* Placeholder text (via TipTap Placeholder extension) */

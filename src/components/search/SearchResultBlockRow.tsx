@@ -79,7 +79,11 @@ function renderOffsetHighlights(content: string, offsets: ReadonlyArray<MatchOff
       out.push(<span key={`p${cursor}`}>{content.slice(cursor, start)}</span>)
     }
     out.push(
-      <mark key={`m${start}`} className="rounded-sm bg-yellow-200/70 dark:bg-yellow-500/30">
+      // #1096 — route through the shared `.search-result-mark` treatment
+      // (`--accent`/`--accent-foreground`) so the offset-highlighted row
+      // reads as the SAME colour as its `SnippetHighlight` sibling inside
+      // the one listbox, instead of a hand-coded yellow that diverged.
+      <mark key={`m${start}`} className="search-result-mark">
         {content.slice(start, end)}
       </mark>,
     )

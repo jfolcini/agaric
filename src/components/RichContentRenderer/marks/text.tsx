@@ -81,10 +81,14 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
     content = <s>{content}</s>
   }
   if (node.marks?.some((m) => m.type === 'highlight') === true) {
-    // Canonical highlight colour for the static renderer. Aligning the
-    // editor's `<mark>` (TipTap default styling today) to this token is a
-    // #211 follow-up.
-    content = <mark className="bg-yellow-200 dark:bg-yellow-800/60 rounded px-0.5">{content}</mark>
+    // #1096 — the user-highlight (highlighter-pen) semantic now routes
+    // through the fully-themed `--highlight` amber token (`bg-highlight`)
+    // instead of raw `bg-yellow-*` literals. The editor `<mark>`
+    // (`.ProseMirror mark`, index.css) is kept aligned to the same token so
+    // a highlight looks identical editing vs reading across every theme +
+    // high-contrast. This is DISTINCT from the search-match semantic, which
+    // uses `--accent` (`.search-result-mark`); the split is intentional.
+    content = <mark className="bg-highlight rounded px-0.5">{content}</mark>
   }
   if (node.marks?.some((m) => m.type === 'italic') === true) {
     content = <em>{content}</em>

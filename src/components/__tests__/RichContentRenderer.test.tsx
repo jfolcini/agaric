@@ -878,7 +878,10 @@ describe('RichContentRenderer', () => {
     const mark = container.querySelector('mark')
     expect(mark).not.toBeNull()
     expect(mark?.textContent).toBe('hl')
-    expect(mark?.className).toContain('bg-yellow-200')
+    // #1096 — user-highlight now routes through the themed `--highlight`
+    // amber token (`bg-highlight`) instead of a raw `bg-yellow-*` literal.
+    expect(mark?.className).toContain('bg-highlight')
+    expect(mark?.className).not.toContain('bg-yellow')
   })
 
   it('renders underline mark with <u> (#211 P2-5)', () => {
