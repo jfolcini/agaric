@@ -10,8 +10,7 @@ import { cn } from '@/lib/utils'
  *
  * Axes:
  *  - `tone`:  visual intent (`default | secondary | destructive | outline |
- *             ghost | link | priority | status`). The legacy `variant` prop
- *             is kept as a deprecated alias so existing callers keep working.
+ *             ghost | link | priority | status`).
  *  - `size`:  `xs | sm | default` — `default` matches the original `text-xs`
  *             pill, `sm` is the dense `PriorityBadge` md size, `xs` is the
  *             very-dense priority-badge sm size.
@@ -125,6 +124,8 @@ const Badge = ({
     <Comp
       ref={ref}
       data-slot="badge"
+      // Retains the legacy `data-variant` attribute name (the prop is `tone`)
+      // for test/CSS-selector stability; see badge.test.tsx and PageHeader.test.tsx.
       data-variant={resolvedTone}
       className={cn(badgeVariants({ tone: resolvedTone, size, shape }), toneColor, className)}
       {...props}
