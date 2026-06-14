@@ -13,17 +13,17 @@
  * Button size/variant matrix (icon-xs through icon-lg, ghost / outline /
  * destructive / …) is available without re-implementing chrome.
  *
- * A `TooltipProvider` is embedded so the primitive works standalone — Radix
- * nested providers are explicitly supported and inexpensive, and the
- * codebase has no app-level provider (each consuming surface previously
- * wrapped its own). Bundling the provider keeps consumers from forgetting
- * it and from breaking the tooltip silently.
+ * The tooltip relies on the app-level `<TooltipProvider>` mounted once in
+ * `src/main.tsx` (#1094) — there is a single hover-delay source of truth for
+ * the whole app, so the primitive no longer embeds its own provider. Tests
+ * that render IconButton in isolation get the provider from the shared test
+ * render wrapper (`src/test/render.tsx`).
  */
 
 import type * as React from 'react'
 
 import { Button } from './button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from './tooltip'
 
 type IconSize = 'icon-xs' | 'icon-sm' | 'icon' | 'icon-lg'
 
@@ -56,16 +56,14 @@ export interface IconButtonProps extends Omit<
 }
 
 const IconButton = ({ tooltip, ariaLabel, size = 'icon', children, ...rest }: IconButtonProps) => (
-  <TooltipProvider>
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button size={size} aria-label={ariaLabel} data-slot="icon-button" {...rest}>
-          {children}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{tooltip}</TooltipContent>
-    </Tooltip>
-  </TooltipProvider>
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <Button size={size} aria-label={ariaLabel} data-slot="icon-button" {...rest}>
+        {children}
+      </Button>
+    </TooltipTrigger>
+    <TooltipContent>{tooltip}</TooltipContent>
+  </Tooltip>
 )
 IconButton.displayName = 'IconButton'
 

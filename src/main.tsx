@@ -5,6 +5,7 @@ import './lib/i18n'
 
 import './index.css'
 import { ErrorBoundary } from '@/components/common/ErrorBoundary'
+import { TooltipProvider } from '@/components/ui/tooltip'
 
 import { App } from './App.tsx'
 import { PrimaryFocusProvider } from './hooks/usePrimaryFocus'
@@ -47,7 +48,24 @@ async function main() {
     <StrictMode>
       <ErrorBoundary>
         <PrimaryFocusProvider>
-          <App />
+          {/*
+           * App-level tooltip baseline (#1094). One provider here means every
+           * surface shares a single hover-delay source of truth instead of each
+           * wrapping its own (24 surfaces + the IconButton primitive used to).
+           *
+           * delayDuration=300 is the standard Radix/UX baseline — a short but
+           * non-zero hover dwell that feels intentional without lagging. It
+           * sits between the old per-surface drift (0 / 200 / 500). Surfaces
+           * with a deliberate deviation set delayDuration on their own
+           * <Tooltip> (sidebar 0, toolbars 200, gutter 500) so the override
+           * stays explicit rather than silently inheriting this baseline.
+           *
+           * skipDelayDuration=300 (Radix default) keeps the "move between
+           * adjacent tooltips without re-waiting" window short.
+           */}
+          <TooltipProvider delayDuration={300} skipDelayDuration={300}>
+            <App />
+          </TooltipProvider>
         </PrimaryFocusProvider>
       </ErrorBoundary>
     </StrictMode>,

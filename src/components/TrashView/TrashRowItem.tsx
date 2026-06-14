@@ -14,7 +14,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 import type { RichContentCallbacks } from '../../hooks/useRichContentCallbacks'
@@ -132,48 +132,44 @@ export function TrashRowItem({
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}
       >
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="trash-restore-btn [@media(pointer:coarse)]:h-10"
-                data-testid="trash-restore-btn"
-                onClick={() => onRestore(block)}
-                tabIndex={-1}
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-                {t('trash.restoreButton')}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{t('trash.restoreTooltip')}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="trash-restore-btn [@media(pointer:coarse)]:h-10"
+              data-testid="trash-restore-btn"
+              onClick={() => onRestore(block)}
+              tabIndex={-1}
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              {t('trash.restoreButton')}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{t('trash.restoreTooltip')}</p>
+          </TooltipContent>
+        </Tooltip>
         {/* UX-342 — Tooltip on the destructive Purge button so users
             understand "Purge" means permanent deletion. Mirrors the
             Restore button's Tooltip structure above. */}
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="destructive"
-                size="sm"
-                className="trash-purge-btn [@media(pointer:coarse)]:h-10"
-                data-testid="trash-purge-btn"
-                onClick={() => onRequestPurge(block.id)}
-                tabIndex={-1}
-              >
-                {t('trash.purgeButton')}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{t('trash.purgeTooltip')}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="trash-purge-btn [@media(pointer:coarse)]:h-10"
+              data-testid="trash-purge-btn"
+              onClick={() => onRequestPurge(block.id)}
+              tabIndex={-1}
+            >
+              {t('trash.purgeButton')}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{t('trash.purgeTooltip')}</p>
+          </TooltipContent>
+        </Tooltip>
       </div>
     </div>
   )

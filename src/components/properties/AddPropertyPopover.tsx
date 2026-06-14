@@ -32,7 +32,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { formatPropertyName } from '@/lib/property-utils'
@@ -137,18 +137,16 @@ export function AddPropertyPopover({
   // Popover and Sheet variants.
   const trigger =
     disabled && disabledTooltip ? (
-      <TooltipProvider>
-        <Tooltip>
-          {/* `span` wrapper so the tooltip still shows on a disabled button.
-              Radix Tooltip requires a focusable trigger; a disabled <button>
-              doesn't fire pointer events, so we wrap it in a focusable span. */}
-          <TooltipTrigger asChild>
-            {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Radix tooltip-on-disabled-button requires a focusable wrapper. */}
-            <span tabIndex={0}>{triggerButton}</span>
-          </TooltipTrigger>
-          <TooltipContent>{disabledTooltip}</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+      <Tooltip>
+        {/* `span` wrapper so the tooltip still shows on a disabled button.
+            Radix Tooltip requires a focusable trigger; a disabled <button>
+            doesn't fire pointer events, so we wrap it in a focusable span. */}
+        <TooltipTrigger asChild>
+          {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Radix tooltip-on-disabled-button requires a focusable wrapper. */}
+          <span tabIndex={0}>{triggerButton}</span>
+        </TooltipTrigger>
+        <TooltipContent>{disabledTooltip}</TooltipContent>
+      </Tooltip>
     ) : (
       triggerButton
     )

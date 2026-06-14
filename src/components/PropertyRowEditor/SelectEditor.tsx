@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 import type { SelectEditorState, SelectOptionsEditorState } from './usePropertyRowEditor'
 
@@ -60,20 +60,18 @@ export function SelectOptionsAffordance({ propKey, locked, state }: SelectOption
   const { t } = useTranslation()
   if (locked) {
     return (
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span
-              className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground"
-              data-testid={`locked-options-${propKey}`}
-            >
-              <Lock className="h-3 w-3" aria-hidden="true" />
-              {t('propertiesView.optionsLocked')}
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>{t('propertiesView.optionsLockedTooltip')}</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground"
+            data-testid={`locked-options-${propKey}`}
+          >
+            <Lock className="h-3 w-3" aria-hidden="true" />
+            {t('propertiesView.optionsLocked')}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{t('propertiesView.optionsLockedTooltip')}</TooltipContent>
+      </Tooltip>
     )
   }
   return <SelectOptionsPopover propKey={propKey} state={state} />

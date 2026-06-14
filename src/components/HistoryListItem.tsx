@@ -23,7 +23,7 @@ import { useTranslation } from 'react-i18next'
 
 import { DiffDisplay } from '@/components/rendering/DiffDisplay'
 import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 import type { DiffSpan, HistoryEntry } from '../lib/tauri'
@@ -159,55 +159,51 @@ function HistoryListItemInner({
             text appears beside the icon on touch devices only, preserving
             the compact desktop layout. */}
         {!isNonReversible && (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="restore-to-here-btn shrink-0 px-2"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onRestoreToHere(entry)
-                  }}
-                  aria-label={t('history.restoreToHereLabel')}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="restore-to-here-btn shrink-0 px-2"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onRestoreToHere(entry)
+                }}
+                aria-label={t('history.restoreToHereLabel')}
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                {/* Visible only on touch (pointer:coarse) so SRs that
+                    already read aria-label aren't fed a duplicate. */}
+                <span
+                  aria-hidden="true"
+                  className="hidden [@media(pointer:coarse)]:inline ml-1 text-xs"
+                  data-testid="restore-to-here-touch-label"
                 >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  {/* Visible only on touch (pointer:coarse) so SRs that
-                      already read aria-label aren't fed a duplicate. */}
-                  <span
-                    aria-hidden="true"
-                    className="hidden [@media(pointer:coarse)]:inline ml-1 text-xs"
-                    data-testid="restore-to-here-touch-label"
-                  >
-                    {t('history.restoreToHereTouchLabel')}
-                  </span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{t('history.restoreToHereTooltip')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+                  {t('history.restoreToHereTouchLabel')}
+                </span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('history.restoreToHereTooltip')}</p>
+            </TooltipContent>
+          </Tooltip>
         )}
 
         {/* Lock icon + visible "Non-reversible" label for non-reversible ops.
             UX-351: opacity-50 alone is a single visual cue (WCAG concern); the
             visible text label adds a second cue for both visual and SR users. */}
         {isNonReversible && (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground shrink-0">
-                  <Lock className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>{t('history.nonReversibleLabel')}</span>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{t('history.nonReversibleTooltip')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground shrink-0">
+                <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>{t('history.nonReversibleLabel')}</span>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('history.nonReversibleTooltip')}</p>
+            </TooltipContent>
+          </Tooltip>
         )}
       </div>
       {isExpanded &&

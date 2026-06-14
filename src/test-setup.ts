@@ -1,4 +1,5 @@
 import { cleanup, configure } from '@testing-library/react'
+import type * as React from 'react'
 import { afterEach, expect, vi } from 'vitest'
 import '@testing-library/jest-dom/vitest'
 import 'vitest-axe/extend-expect'
@@ -231,6 +232,39 @@ vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({
 // still work for tests that need custom capture variables.
 // See src/__tests__/mocks/sonner.ts for the mock implementation.
 vi.mock('sonner', async () => await import('./__tests__/mocks/sonner'))
+
+// Shared tooltip provider for tests (#1094). Production mounts ONE app-level
+// `<TooltipProvider>` in `src/main.tsx`; the per-surface and IconButton-embedded
+// providers were removed. Component tests, however, render individual surfaces
+// (and the IconButton primitive) in isolation via bare `render(...)`, so they no
+// longer have a provider ancestor — Radix's `Tooltip` throws
+// "`Tooltip` must be used within `TooltipProvider`" without one.
+//
+// Rather than edit ~100 test files (or re-add providers to production
+// components), supply the provider once here at the shared test-render layer:
+// wrap the real `Tooltip` so every test tree gets a `TooltipProvider` ancestor.
+// Everything else (Tooltip/Trigger/Content/Provider) stays the real
+// implementation via `importActual`, and a `delayDuration` on an inner
+// `<Tooltip>` still overrides the wrapper (Radix Tooltip.Root reads its own
+// delay first), so override-preservation tests remain meaningful.
+vi.mock('@/components/ui/tooltip', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/components/ui/tooltip')>('@/components/ui/tooltip')
+  const { createElement } = await import('react')
+  const ActualTooltip = actual.Tooltip
+  const TooltipWithProvider = (props: React.ComponentProps<typeof actual.Tooltip>) =>
+    // `children` is passed as the third `createElement` arg (not a prop) so the
+    // `react/no-children-prop` lint stays happy; the prop-object cast satisfies
+    // `TooltipProviderProps` (which types `children` as required) under
+    // exactOptionalPropertyTypes.
+    createElement(
+      actual.TooltipProvider,
+      { delayDuration: 0 } as React.ComponentProps<typeof actual.TooltipProvider>,
+      createElement(ActualTooltip, props),
+    )
+  TooltipWithProvider.displayName = actual.Tooltip.displayName
+  return { ...actual, Tooltip: TooltipWithProvider }
+})
 
 // Shared mock for `@/components/ui/select` — Radix Select does not work in
 // jsdom (no layout engine), so component tests mock it with a native

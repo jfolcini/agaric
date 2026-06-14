@@ -54,7 +54,6 @@ import { Button } from './ui/button'
 import { MenuPopoverContent } from './ui/menu-popover-content'
 import { Popover, PopoverAnchor } from './ui/popover'
 import { Separator } from './ui/separator'
-import { TooltipProvider } from './ui/tooltip'
 
 interface FormattingToolbarProps {
   editor: Editor
@@ -253,112 +252,110 @@ export function FormattingToolbar({
   }
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <div
+      ref={containerRef}
+      role="toolbar"
+      aria-label={t('toolbar.formatting')}
+      aria-controls={blockId ? `editor-${blockId}` : undefined}
+      className={cn(
+        'formatting-toolbar flex items-center gap-0.5 border-border/40 bg-muted/30 px-2 py-px',
+        // #925 f3 — touch: pin above the keyboard (fixed, lifted via the
+        // visualViewport effect); desktop: inline, just under the block.
+        isTouch
+          ? 'fixed inset-x-0 bottom-0 z-30 overflow-x-auto border-t bg-muted/95 backdrop-blur supports-backdrop-blur:bg-muted/80'
+          : 'relative border-b',
+      )}
+      data-testid="formatting-toolbar"
+      data-pinned={isTouch ? 'true' : undefined}
+      data-editor-portal=""
+    >
+      {visible.map((item) => (
+        <span key={`v-${item.key}`} className="inline-flex">
+          {renderItem(item, 'inline')}
+        </span>
+      ))}
+
+      {overflowed.length > 0 && (
+        <Popover open={overflowPopoverOpen} onOpenChange={setOverflowPopoverOpen}>
+          <PopoverAnchor asChild>
+            <Tip label={t('toolbar.moreTip')}>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={t('toolbar.more')}
+                aria-haspopup="dialog"
+                aria-expanded={overflowPopoverOpen}
+                aria-controls={overflowMenuId}
+                onPointerDown={(e) => {
+                  e.preventDefault()
+                  setOverflowPopoverOpen((prev) => !prev)
+                }}
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </Button>
+            </Tip>
+          </PopoverAnchor>
+          <MenuPopoverContent
+            id={overflowMenuId}
+            align="end"
+            data-editor-portal
+            data-testid="toolbar-overflow-menu"
+          >
+            <div className="flex flex-col gap-0.5">
+              {/*
+               * #217 A2 — preserve group structure in the overflow popover.
+               * `renderItem` drops separator items in overflow mode, so the
+               * list was previously flat. Filter the separators out and
+               * re-insert a divider whenever the group index changes,
+               * mirroring the inline toolbar's inter-group dividers (and the
+               * block context menu) on both desktop and pointer:coarse.
+               */}
+              {overflowed
+                .filter((item) => item.kind !== 'separator')
+                .map((item, i, buttons) => {
+                  const prev = buttons[i - 1]
+                  const showDivider = prev != null && item.group !== prev.group
+                  return (
+                    <span key={`o-${item.key}`}>
+                      {showDivider && (
+                        <hr
+                          className="my-1 h-px border-0 bg-border"
+                          data-testid="overflow-group-divider"
+                        />
+                      )}
+                      {renderItem(item, 'overflow')}
+                    </span>
+                  )
+                })}
+            </div>
+          </MenuPopoverContent>
+        </Popover>
+      )}
+
+      {/*
+       * Off-screen sentinel used by `useToolbarOverflow` to measure
+       * each item's natural width. Mirrors every item (visible or
+       * overflowed) so widths are always available, with
+       * `aria-hidden="true"` so testing-library / a11y traversal
+       * skip the duplicates.
+       */}
       <div
-        ref={containerRef}
-        role="toolbar"
-        aria-label={t('toolbar.formatting')}
-        aria-controls={blockId ? `editor-${blockId}` : undefined}
-        className={cn(
-          'formatting-toolbar flex items-center gap-0.5 border-border/40 bg-muted/30 px-2 py-px',
-          // #925 f3 — touch: pin above the keyboard (fixed, lifted via the
-          // visualViewport effect); desktop: inline, just under the block.
-          isTouch
-            ? 'fixed inset-x-0 bottom-0 z-30 overflow-x-auto border-t bg-muted/95 backdrop-blur supports-backdrop-blur:bg-muted/80'
-            : 'relative border-b',
-        )}
-        data-testid="formatting-toolbar"
-        data-pinned={isTouch ? 'true' : undefined}
-        data-editor-portal=""
+        ref={sentinelRef}
+        aria-hidden="true"
+        data-testid="toolbar-sentinel"
+        className="pointer-events-none absolute -left-[9999px] top-0 flex items-center gap-0.5"
+        style={{ visibility: 'hidden' }}
       >
-        {visible.map((item) => (
-          <span key={`v-${item.key}`} className="inline-flex">
-            {renderItem(item, 'inline')}
+        {items.map((item) => (
+          <span key={`s-${item.key}`} data-toolbar-item-key={item.key} className="inline-flex">
+            {item.kind === 'separator' ? (
+              <span className="border-l border-border/40 mx-0.5 h-4" />
+            ) : (
+              renderItem(item, 'sentinel')
+            )}
           </span>
         ))}
-
-        {overflowed.length > 0 && (
-          <Popover open={overflowPopoverOpen} onOpenChange={setOverflowPopoverOpen}>
-            <PopoverAnchor asChild>
-              <Tip label={t('toolbar.moreTip')}>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={t('toolbar.more')}
-                  aria-haspopup="dialog"
-                  aria-expanded={overflowPopoverOpen}
-                  aria-controls={overflowMenuId}
-                  onPointerDown={(e) => {
-                    e.preventDefault()
-                    setOverflowPopoverOpen((prev) => !prev)
-                  }}
-                >
-                  <MoreHorizontal className="h-3.5 w-3.5" />
-                </Button>
-              </Tip>
-            </PopoverAnchor>
-            <MenuPopoverContent
-              id={overflowMenuId}
-              align="end"
-              data-editor-portal
-              data-testid="toolbar-overflow-menu"
-            >
-              <div className="flex flex-col gap-0.5">
-                {/*
-                 * #217 A2 — preserve group structure in the overflow popover.
-                 * `renderItem` drops separator items in overflow mode, so the
-                 * list was previously flat. Filter the separators out and
-                 * re-insert a divider whenever the group index changes,
-                 * mirroring the inline toolbar's inter-group dividers (and the
-                 * block context menu) on both desktop and pointer:coarse.
-                 */}
-                {overflowed
-                  .filter((item) => item.kind !== 'separator')
-                  .map((item, i, buttons) => {
-                    const prev = buttons[i - 1]
-                    const showDivider = prev != null && item.group !== prev.group
-                    return (
-                      <span key={`o-${item.key}`}>
-                        {showDivider && (
-                          <hr
-                            className="my-1 h-px border-0 bg-border"
-                            data-testid="overflow-group-divider"
-                          />
-                        )}
-                        {renderItem(item, 'overflow')}
-                      </span>
-                    )
-                  })}
-              </div>
-            </MenuPopoverContent>
-          </Popover>
-        )}
-
-        {/*
-         * Off-screen sentinel used by `useToolbarOverflow` to measure
-         * each item's natural width. Mirrors every item (visible or
-         * overflowed) so widths are always available, with
-         * `aria-hidden="true"` so testing-library / a11y traversal
-         * skip the duplicates.
-         */}
-        <div
-          ref={sentinelRef}
-          aria-hidden="true"
-          data-testid="toolbar-sentinel"
-          className="pointer-events-none absolute -left-[9999px] top-0 flex items-center gap-0.5"
-          style={{ visibility: 'hidden' }}
-        >
-          {items.map((item) => (
-            <span key={`s-${item.key}`} data-toolbar-item-key={item.key} className="inline-flex">
-              {item.kind === 'separator' ? (
-                <span className="border-l border-border/40 mx-0.5 h-4" />
-              ) : (
-                renderItem(item, 'sentinel')
-              )}
-            </span>
-          ))}
-        </div>
       </div>
-    </TooltipProvider>
+    </div>
   )
 }

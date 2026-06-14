@@ -27,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -258,39 +258,35 @@ export function PropertyDefinitionsList(): React.ReactElement {
                   <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
                   <Badge tone="secondary">{def.value_type}</Badge>
                   {def.value_type === 'select' && LOCKED_PROPERTY_OPTIONS.has(def.key) && (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span
-                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground"
-                            data-testid={`locked-options-${def.key}`}
-                          >
-                            <Lock className="h-3 w-3" aria-hidden="true" />
-                            {t('propertiesView.optionsLocked')}
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent>{t('propertiesView.optionsLockedTooltip')}</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground"
+                          data-testid={`locked-options-${def.key}`}
+                        >
+                          <Lock className="h-3 w-3" aria-hidden="true" />
+                          {t('propertiesView.optionsLocked')}
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>{t('propertiesView.optionsLockedTooltip')}</TooltipContent>
+                    </Tooltip>
                   )}
                   {def.key === 'todo_state' && (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            className="inline-flex items-center justify-center text-muted-foreground"
-                            data-testid="todo-state-cycle-help"
-                            aria-label={t('propertiesView.taskCycleHelpLabel')}
-                          >
-                            <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-xs">
-                          {t('propertiesView.taskCycleHelpContent')}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="inline-flex items-center justify-center text-muted-foreground"
+                          data-testid="todo-state-cycle-help"
+                          aria-label={t('propertiesView.taskCycleHelpLabel')}
+                        >
+                          <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs">
+                        {t('propertiesView.taskCycleHelpContent')}
+                      </TooltipContent>
+                    </Tooltip>
                   )}
                   {def.value_type === 'select' && !LOCKED_PROPERTY_OPTIONS.has(def.key) && (
                     <Popover
@@ -352,22 +348,20 @@ export function PropertyDefinitionsList(): React.ReactElement {
                       {t('propertiesView.builtIn')}
                     </Badge>
                   ) : (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            aria-label={t('properties.deleteDefinition', { key: def.key })}
-                            className="shrink-0 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
-                            onClick={() => setDeleteTarget(def.key)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>{t('propertiesView.deleteTooltip')}</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={t('properties.deleteDefinition', { key: def.key })}
+                          className="shrink-0 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+                          onClick={() => setDeleteTarget(def.key)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{t('propertiesView.deleteTooltip')}</TooltipContent>
+                    </Tooltip>
                   )}
                 </ListItem>
               ))}

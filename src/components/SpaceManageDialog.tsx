@@ -59,7 +59,6 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { TooltipProvider } from '@/components/ui/tooltip'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -378,22 +377,20 @@ export function SpaceManageDialog({
   const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
 
   return (
-    <TooltipProvider>
-      <Root open={open} onOpenChange={onOpenChange}>
-        <Content data-testid="space-manage-dialog" {...contentSideProps}>
-          <Header>
-            <Title>{t('space.manageDialogTitle')}</Title>
-            <Description>{t('space.manageDialogDescription')}</Description>
-          </Header>
-          <DialogBody>
-            <SpaceOnboardingHint open={open} availableSpaceCount={availableSpaces.length} />
-            <div data-slot="space-manage-list">{rows}</div>
-            <div className="flex justify-end pt-2">
-              <CreateSpaceForm onCreated={handleRefresh} />
-            </div>
-          </DialogBody>
-        </Content>
-      </Root>
-    </TooltipProvider>
+    <Root open={open} onOpenChange={onOpenChange}>
+      <Content data-testid="space-manage-dialog" {...contentSideProps}>
+        <Header>
+          <Title>{t('space.manageDialogTitle')}</Title>
+          <Description>{t('space.manageDialogDescription')}</Description>
+        </Header>
+        <DialogBody>
+          <SpaceOnboardingHint open={open} availableSpaceCount={availableSpaces.length} />
+          <div data-slot="space-manage-list">{rows}</div>
+          <div className="flex justify-end pt-2">
+            <CreateSpaceForm onCreated={handleRefresh} />
+          </div>
+        </DialogBody>
+      </Content>
+    </Root>
   )
 }

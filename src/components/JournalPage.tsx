@@ -21,7 +21,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 import { useCalendarPageDates } from '../hooks/useCalendarPageDates'
 import { useJournalAutoCreate } from '../hooks/useJournalAutoCreate'
@@ -170,22 +170,20 @@ export function JournalPage({
         className="journal-page-header"
         {...(showConfigureTemplateAction && {
           actions: (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={t('space.configureJournalTemplate')}
-                    onClick={() => setManageOpen(true)}
-                    data-testid="journal-configure-template-trigger"
-                  >
-                    <Settings2 className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t('space.configureJournalTemplate')}</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t('space.configureJournalTemplate')}
+                  onClick={() => setManageOpen(true)}
+                  data-testid="journal-configure-template-trigger"
+                >
+                  <Settings2 className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('space.configureJournalTemplate')}</TooltipContent>
+            </Tooltip>
           ),
         })}
       />

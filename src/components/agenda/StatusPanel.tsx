@@ -15,7 +15,7 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { MetricCard } from '@/components/ui/metric-card'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePollingQuery } from '@/hooks/usePollingQuery'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import type { StatusInfo } from '@/lib/tauri'
@@ -145,227 +145,219 @@ export function StatusPanel(): React.ReactElement {
   const { t } = useTranslation()
 
   return (
-    <TooltipProvider>
-      <div className="status-panel space-y-4">
-        {/* PEND-UX item 5 — top-level `<h1>` landmark consistent with the
+    <div className="status-panel space-y-4">
+      {/* PEND-UX item 5 — top-level `<h1>` landmark consistent with the
             other top-level views. The two existing CardHeader/CardTitle
             elements (Materializer / Sync) remain as sub-section
             headings beneath. */}
-        <FeaturePageHeader title={t('sidebar.status')} className="status-panel-header" />
+      <FeaturePageHeader title={t('sidebar.status')} className="status-panel-header" />
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="status-panel-title flex items-center gap-2">
-              <Activity className="h-4 w-4" />
-              {t('status.materializerStatusTitle')}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {loading && !status && (
-              <LoadingSkeleton
-                count={4}
-                height="h-20"
-                loading
-                ariaLabel={t('status.loadingLabel')}
-                className="status-panel-loading grid grid-cols-1 sm:grid-cols-2 gap-4 space-y-0"
-              />
-            )}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="status-panel-title flex items-center gap-2">
+            <Activity className="h-4 w-4" />
+            {t('status.materializerStatusTitle')}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading && !status && (
+            <LoadingSkeleton
+              count={4}
+              height="h-20"
+              loading
+              ariaLabel={t('status.loadingLabel')}
+              className="status-panel-loading grid grid-cols-1 sm:grid-cols-2 gap-4 space-y-0"
+            />
+          )}
 
-            {error && <p className="status-panel-error text-sm text-destructive">{error}</p>}
+          {error && <p className="status-panel-error text-sm text-destructive">{error}</p>}
 
-            {status && (
-              <output className="status-panel-metrics block">
-                <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <MetricCard
-                    className={cn(
-                      'status-metric',
-                      queueHealthClasses(status.foreground_queue_depth),
-                    )}
-                    value={
-                      <span className="status-metric-value">{status.foreground_queue_depth}</span>
-                    }
-                    labelSlot={
-                      <MetricLabel
-                        label={t('status.foregroundQueueLabel')}
-                        tooltip={t('status.foregroundQueueTooltip')}
-                      />
-                    }
-                    footer={
-                      <>
-                        {t('status.peakLabel')} {status.fg_high_water ?? 0}
-                      </>
-                    }
-                  />
+          {status && (
+            <output className="status-panel-metrics block">
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <MetricCard
+                  className={cn('status-metric', queueHealthClasses(status.foreground_queue_depth))}
+                  value={
+                    <span className="status-metric-value">{status.foreground_queue_depth}</span>
+                  }
+                  labelSlot={
+                    <MetricLabel
+                      label={t('status.foregroundQueueLabel')}
+                      tooltip={t('status.foregroundQueueTooltip')}
+                    />
+                  }
+                  footer={
+                    <>
+                      {t('status.peakLabel')} {status.fg_high_water ?? 0}
+                    </>
+                  }
+                />
 
-                  <MetricCard
-                    className={cn(
-                      'status-metric',
-                      queueHealthClasses(status.background_queue_depth),
-                    )}
-                    value={
-                      <span className="status-metric-value">{status.background_queue_depth}</span>
-                    }
-                    labelSlot={
-                      <MetricLabel
-                        label={t('status.backgroundQueueLabel')}
-                        tooltip={t('status.backgroundQueueTooltip')}
-                      />
-                    }
-                    footer={
-                      <>
-                        {t('status.peakLabel')} {status.bg_high_water ?? 0}
-                      </>
-                    }
-                  />
+                <MetricCard
+                  className={cn('status-metric', queueHealthClasses(status.background_queue_depth))}
+                  value={
+                    <span className="status-metric-value">{status.background_queue_depth}</span>
+                  }
+                  labelSlot={
+                    <MetricLabel
+                      label={t('status.backgroundQueueLabel')}
+                      tooltip={t('status.backgroundQueueTooltip')}
+                    />
+                  }
+                  footer={
+                    <>
+                      {t('status.peakLabel')} {status.bg_high_water ?? 0}
+                    </>
+                  }
+                />
 
-                  <MetricCard
-                    className="status-metric"
-                    value={
-                      <span className="status-metric-value">
-                        {status.total_ops_dispatched + status.total_background_dispatched}
-                      </span>
-                    }
-                    labelSlot={
-                      <MetricLabel
-                        label={t('status.opsDispatchedLabel')}
-                        tooltip={t('status.opsDispatchedTooltip')}
-                      />
-                    }
-                  />
+                <MetricCard
+                  className="status-metric"
+                  value={
+                    <span className="status-metric-value">
+                      {status.total_ops_dispatched + status.total_background_dispatched}
+                    </span>
+                  }
+                  labelSlot={
+                    <MetricLabel
+                      label={t('status.opsDispatchedLabel')}
+                      tooltip={t('status.opsDispatchedTooltip')}
+                    />
+                  }
+                />
 
-                  <MetricCard
-                    className="status-metric"
-                    value={
-                      <span className="status-metric-value">
-                        {status.total_background_dispatched}
-                      </span>
-                    }
-                    labelSlot={
-                      <MetricLabel
-                        label={t('status.backgroundDispatchedLabel')}
-                        tooltip={t('status.backgroundDispatchedTooltip')}
-                      />
-                    }
-                  />
-                </dl>
+                <MetricCard
+                  className="status-metric"
+                  value={
+                    <span className="status-metric-value">
+                      {status.total_background_dispatched}
+                    </span>
+                  }
+                  labelSlot={
+                    <MetricLabel
+                      label={t('status.backgroundDispatchedLabel')}
+                      tooltip={t('status.backgroundDispatchedTooltip')}
+                    />
+                  }
+                />
+              </dl>
 
-                {hasErrors && (
-                  <div className="status-panel-errors mt-4 flex flex-col gap-1 rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
-                    <div className="flex items-start gap-2">
-                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                      <p>
-                        {[
-                          fgErrors > 0 && t('status.foregroundErrorsMessage', { count: fgErrors }),
-                          bgErrors > 0 && t('status.backgroundErrorsMessage', { count: bgErrors }),
-                          fgPanics > 0 && t('status.foregroundPanicsMessage', { count: fgPanics }),
-                          bgPanics > 0 && t('status.backgroundPanicsMessage', { count: bgPanics }),
-                        ]
-                          .filter(Boolean)
-                          .join(', ')}
-                      </p>
-                    </div>
-                    {bgErrors > 0 && (
-                      <p className="ml-6 text-xs text-muted-foreground">
-                        {t('status.cacheStaleHint')}
-                      </p>
-                    )}
+              {hasErrors && (
+                <div className="status-panel-errors mt-4 flex flex-col gap-1 rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <p>
+                      {[
+                        fgErrors > 0 && t('status.foregroundErrorsMessage', { count: fgErrors }),
+                        bgErrors > 0 && t('status.backgroundErrorsMessage', { count: bgErrors }),
+                        fgPanics > 0 && t('status.foregroundPanicsMessage', { count: fgPanics }),
+                        bgPanics > 0 && t('status.backgroundPanicsMessage', { count: bgPanics }),
+                      ]
+                        .filter(Boolean)
+                        .join(', ')}
+                    </p>
                   </div>
-                )}
-              </output>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle
-              className="sync-panel-title flex items-center gap-2"
-              data-testid="sync-panel-title"
-            >
-              <RefreshCw className="h-4 w-4" />
-              {t('status.syncStatusTitle')}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {syncPeers.length === 0 ? (
-              <p
-                className="sync-panel-not-configured text-sm text-muted-foreground"
-                data-testid="sync-panel-not-configured"
-              >
-                {t('status.notConfigured')}
-              </p>
-            ) : (
-              <div className="sync-panel-details space-y-3">
-                <div className="flex items-center gap-2">
-                  <output
-                    className={cn(
-                      'sync-state-dot h-2 w-2 rounded-full',
-                      syncStateDotClasses(syncState),
-                    )}
-                    aria-label={t('status.syncStateLabel', { state: syncStateLabel(syncState, t) })}
-                  />
-                  <SyncStateIcon state={syncState} />
-                  <span className="sync-state-label text-sm font-medium">
-                    {syncStateLabel(syncState, t)}
-                  </span>
+                  {bgErrors > 0 && (
+                    <p className="ml-6 text-xs text-muted-foreground">
+                      {t('status.cacheStaleHint')}
+                    </p>
+                  )}
                 </div>
+              )}
+            </output>
+          )}
+        </CardContent>
+      </Card>
 
-                {syncError && (
-                  <p className="sync-panel-error text-sm text-destructive" role="alert">
-                    {syncError}
-                  </p>
-                )}
-
-                <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <MetricCard
-                    value={<span className="sync-peer-count">{syncPeers.length}</span>}
-                    labelSlot={
-                      <MetricLabel
-                        label={t('status.peerLabel', { count: syncPeers.length })}
-                        tooltip={t('status.peerCountTooltip')}
-                      />
-                    }
-                  />
-
-                  <MetricCard
-                    value={
-                      <span className="sync-last-synced">
-                        {syncLastSynced ? formatRelativeTime(syncLastSynced, t) : '--'}
-                      </span>
-                    }
-                    labelSlot={
-                      <MetricLabel
-                        label={t('status.lastSyncedLabel')}
-                        tooltip={t('status.lastSyncedTooltip')}
-                      />
-                    }
-                  />
-
-                  <MetricCard
-                    value={<span className="sync-ops-received">{syncOpsReceived}</span>}
-                    labelSlot={
-                      <MetricLabel
-                        label={t('status.opsReceivedLabel')}
-                        tooltip={t('status.opsReceivedTooltip')}
-                      />
-                    }
-                  />
-
-                  <MetricCard
-                    value={<span className="sync-ops-sent">{syncOpsSent}</span>}
-                    labelSlot={
-                      <MetricLabel
-                        label={t('status.opsSentLabel')}
-                        tooltip={t('status.opsSentTooltip')}
-                      />
-                    }
-                  />
-                </dl>
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle
+            className="sync-panel-title flex items-center gap-2"
+            data-testid="sync-panel-title"
+          >
+            <RefreshCw className="h-4 w-4" />
+            {t('status.syncStatusTitle')}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {syncPeers.length === 0 ? (
+            <p
+              className="sync-panel-not-configured text-sm text-muted-foreground"
+              data-testid="sync-panel-not-configured"
+            >
+              {t('status.notConfigured')}
+            </p>
+          ) : (
+            <div className="sync-panel-details space-y-3">
+              <div className="flex items-center gap-2">
+                <output
+                  className={cn(
+                    'sync-state-dot h-2 w-2 rounded-full',
+                    syncStateDotClasses(syncState),
+                  )}
+                  aria-label={t('status.syncStateLabel', { state: syncStateLabel(syncState, t) })}
+                />
+                <SyncStateIcon state={syncState} />
+                <span className="sync-state-label text-sm font-medium">
+                  {syncStateLabel(syncState, t)}
+                </span>
               </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-    </TooltipProvider>
+
+              {syncError && (
+                <p className="sync-panel-error text-sm text-destructive" role="alert">
+                  {syncError}
+                </p>
+              )}
+
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <MetricCard
+                  value={<span className="sync-peer-count">{syncPeers.length}</span>}
+                  labelSlot={
+                    <MetricLabel
+                      label={t('status.peerLabel', { count: syncPeers.length })}
+                      tooltip={t('status.peerCountTooltip')}
+                    />
+                  }
+                />
+
+                <MetricCard
+                  value={
+                    <span className="sync-last-synced">
+                      {syncLastSynced ? formatRelativeTime(syncLastSynced, t) : '--'}
+                    </span>
+                  }
+                  labelSlot={
+                    <MetricLabel
+                      label={t('status.lastSyncedLabel')}
+                      tooltip={t('status.lastSyncedTooltip')}
+                    />
+                  }
+                />
+
+                <MetricCard
+                  value={<span className="sync-ops-received">{syncOpsReceived}</span>}
+                  labelSlot={
+                    <MetricLabel
+                      label={t('status.opsReceivedLabel')}
+                      tooltip={t('status.opsReceivedTooltip')}
+                    />
+                  }
+                />
+
+                <MetricCard
+                  value={<span className="sync-ops-sent">{syncOpsSent}</span>}
+                  labelSlot={
+                    <MetricLabel
+                      label={t('status.opsSentLabel')}
+                      tooltip={t('status.opsSentTooltip')}
+                    />
+                  }
+                />
+              </dl>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   )
 }

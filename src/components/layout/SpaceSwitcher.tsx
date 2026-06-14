@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { isMac } from '@/lib/platform'
 import { accentVar } from '@/lib/space-accent'
 import { cn } from '@/lib/utils'
@@ -96,7 +96,7 @@ export function SpaceSwitcher(): React.JSX.Element {
   }
 
   return (
-    <TooltipProvider>
+    <>
       <Select value={currentSpaceId ?? ''} onValueChange={handleValueChange}>
         {/*
          * UX-9 — surface the `Ctrl+1..9` / `⌘1..9` space-switching
@@ -241,6 +241,6 @@ export function SpaceSwitcher(): React.JSX.Element {
         </SelectContent>
       </Select>
       <SpaceManageDialog open={manageOpen} onOpenChange={setManageOpen} />
-    </TooltipProvider>
+    </>
   )
 }

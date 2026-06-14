@@ -49,7 +49,14 @@ export const Tip = ({
   children: React.ReactElement
   ref?: React.Ref<HTMLButtonElement>
 }) => (
-  <Tooltip>
+  // #1094: the formatting toolbar deliberately uses a 200ms hover delay
+  // (snappier than the 300ms app baseline) — the toolbar is a dense strip of
+  // icon buttons sitting right at the edit point, so its tips should appear
+  // quickly. This `Tip` is used only by the FormattingToolbar family, all of
+  // which shared the old per-surface `<TooltipProvider delayDuration={200}>`;
+  // the override now lives on the Tooltip itself so it stays explicit instead
+  // of silently inheriting the app-level default once that provider is gone.
+  <Tooltip delayDuration={200}>
     <TooltipTrigger asChild ref={ref}>
       {children}
     </TooltipTrigger>

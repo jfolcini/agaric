@@ -27,7 +27,6 @@ import {
 } from '@/components/editor/BlockInlineControls'
 import { BlockPropertyEditor } from '@/components/editor/BlockPropertyEditor'
 import { EditableBlock } from '@/components/editor/EditableBlock'
-import { TooltipProvider } from '@/components/ui/tooltip'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useBatchAttachments } from '@/hooks/useBatchAttachments'
 import { useBlockActions } from '@/hooks/useBlockActions'
@@ -227,116 +226,111 @@ function SortableBlockInner({
   }
 
   return (
-    <TooltipProvider delayDuration={500}>
-      {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- touch handlers for long-press context menu */}
-      <div
-        ref={(node) => {
-          setNodeRef(node)
-          ;(blockRef as React.RefObject<HTMLDivElement | null>).current = node
-        }}
-        style={style}
-        data-block-id={blockId}
-        data-testid="sortable-block"
-        // B (#216): describe the swipe-to-delete gesture for assistive tech.
-        // The swipe handlers only do anything on coarse pointers and only
-        // when a delete handler is wired up, so scope the description the same way.
-        {...(isTouchDevice && onDelete
-          ? { 'aria-description': t('block.swipeRowDescription') }
-          : {})}
-        className={cn(
-          'sortable-block group relative flex items-center gap-1 max-sm:items-start min-w-0',
-          // BUG-37: suppress the iOS/Android long-press text-selection
-          // magnifier / callout that otherwise competes with the 400ms
-          // long-press context menu. Only applied on coarse pointers so
-          // desktop text-selection within static blocks still works.
-          '[@media(pointer:coarse)]:[-webkit-touch-callout:none]',
-          // #929 — `block-active` keeps the gutter-reveal selector working;
-          // the calm row treatment (faint tint + a 2px left accent bar) gives
-          // the focused/active block a visible home, like Logseq/Notion. Static
-          // styling, so it's reduced-motion-safe by construction.
-          isFocused &&
-            'block-active rounded-sm bg-muted/50 shadow-[inset_2px_0_0_var(--muted-foreground)]',
-          // Lifted-placeholder affordance: dashed outline marks the
-          // source row's origin while the overlay floats elsewhere.
-          isDragging && 'outline-dashed outline-1 outline-border rounded-sm',
-        )}
-        onTouchStart={(e) => {
-          handleTouchStart(e)
-          swipeHandlers.onTouchStart(e)
-        }}
-        onTouchEnd={() => {
-          handleTouchEnd()
-          swipeHandlers.onTouchEnd()
-        }}
-        onTouchMove={(e) => {
-          handleTouchMove(e)
-          swipeHandlers.onTouchMove(e)
-        }}
-        onContextMenu={handleContextMenu}
-      >
-        {/* ── Swipe-to-delete backdrop (mobile only) ──────────────── */}
-        {/* UX-304: progressive cue — the backdrop is a muted destructive
+    /* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- touch handlers for long-press context menu */
+    <div
+      ref={(node) => {
+        setNodeRef(node)
+        ;(blockRef as React.RefObject<HTMLDivElement | null>).current = node
+      }}
+      style={style}
+      data-block-id={blockId}
+      data-testid="sortable-block"
+      // B (#216): describe the swipe-to-delete gesture for assistive tech.
+      // The swipe handlers only do anything on coarse pointers and only
+      // when a delete handler is wired up, so scope the description the same way.
+      {...(isTouchDevice && onDelete ? { 'aria-description': t('block.swipeRowDescription') } : {})}
+      className={cn(
+        'sortable-block group relative flex items-center gap-1 max-sm:items-start min-w-0',
+        // BUG-37: suppress the iOS/Android long-press text-selection
+        // magnifier / callout that otherwise competes with the 400ms
+        // long-press context menu. Only applied on coarse pointers so
+        // desktop text-selection within static blocks still works.
+        '[@media(pointer:coarse)]:[-webkit-touch-callout:none]',
+        // #929 — `block-active` keeps the gutter-reveal selector working;
+        // the calm row treatment (faint tint + a 2px left accent bar) gives
+        // the focused/active block a visible home, like Logseq/Notion. Static
+        // styling, so it's reduced-motion-safe by construction.
+        isFocused &&
+          'block-active rounded-sm bg-muted/50 shadow-[inset_2px_0_0_var(--muted-foreground)]',
+        // Lifted-placeholder affordance: dashed outline marks the
+        // source row's origin while the overlay floats elsewhere.
+        isDragging && 'outline-dashed outline-1 outline-border rounded-sm',
+      )}
+      onTouchStart={(e) => {
+        handleTouchStart(e)
+        swipeHandlers.onTouchStart(e)
+      }}
+      onTouchEnd={() => {
+        handleTouchEnd()
+        swipeHandlers.onTouchEnd()
+      }}
+      onTouchMove={(e) => {
+        handleTouchMove(e)
+        swipeHandlers.onTouchMove(e)
+      }}
+      onContextMenu={handleContextMenu}
+    >
+      {/* ── Swipe-to-delete backdrop (mobile only) ──────────────── */}
+      {/* UX-304: progressive cue — the backdrop is a muted destructive
             tint while the gesture only reveals the action, then flips to
             the solid destructive variant + t('block.swipe.releaseToDelete') label
             once the auto-delete threshold is crossed mid-drag. */}
-        {isTouchDevice && onDelete && (swipeRevealed || swipeTranslateX < 0) && (
-          <div
-            className={cn(
-              'absolute right-0 top-0 bottom-0 flex items-center justify-center gap-2 px-3',
-              'transition-colors duration-150',
-              swipeThresholdCrossed
-                ? 'bg-destructive text-destructive-foreground'
-                : 'bg-destructive/10 text-destructive',
-            )}
-            style={{ width: swipeThresholdCrossed ? '100%' : 80 }}
-            data-testid="swipe-delete-action"
-            data-threshold-crossed={swipeThresholdCrossed ? 'true' : 'false'}
+      {isTouchDevice && onDelete && (swipeRevealed || swipeTranslateX < 0) && (
+        <div
+          className={cn(
+            'absolute right-0 top-0 bottom-0 flex items-center justify-center gap-2 px-3',
+            'transition-colors duration-150',
+            swipeThresholdCrossed
+              ? 'bg-destructive text-destructive-foreground'
+              : 'bg-destructive/10 text-destructive',
+          )}
+          style={{ width: swipeThresholdCrossed ? '100%' : 80 }}
+          data-testid="swipe-delete-action"
+          data-threshold-crossed={swipeThresholdCrossed ? 'true' : 'false'}
+        >
+          <button
+            type="button"
+            aria-label={t('block.delete')}
+            className="flex items-center justify-center h-full"
+            onClick={() => {
+              onDelete(blockId)
+              swipeReset()
+            }}
           >
-            <button
-              type="button"
-              aria-label={t('block.delete')}
-              className="flex items-center justify-center h-full"
-              onClick={() => {
-                onDelete(blockId)
-                swipeReset()
-              }}
+            {/* Larger icon for swipe gesture affordance */}
+            <Trash2 className="h-5 w-5" />
+          </button>
+          {swipeThresholdCrossed && (
+            <span
+              className="hidden text-sm font-medium [@media(pointer:coarse)]:inline"
+              data-testid="swipe-release-hint"
             >
-              {/* Larger icon for swipe gesture affordance */}
-              <Trash2 className="h-5 w-5" />
-            </button>
-            {swipeThresholdCrossed && (
-              <span
-                className="hidden text-sm font-medium [@media(pointer:coarse)]:inline"
-                data-testid="swipe-release-hint"
-              >
-                {t('block.swipe.releaseToDelete')}
-              </span>
-            )}
-          </div>
+              {t('block.swipe.releaseToDelete')}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* ── Sliding content wrapper (swipe-to-delete) ───────────── */}
+      <div
+        className="flex items-stretch gap-1 w-full max-sm:items-start max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5 min-w-0"
+        data-testid="swipe-content"
+        style={{
+          transform:
+            isTouchDevice && swipeTranslateX !== 0 ? `translateX(${swipeTranslateX}px)` : undefined,
+          transition: isTouchDevice && swipeTranslateX !== 0 ? 'transform 0.2s ease' : undefined,
+        }}
+      >
+        {/* Indent guide line for nested blocks */}
+        {depth > 0 && (
+          <div
+            className="absolute left-0 top-0 bottom-0 border-l border-border/20"
+            style={{ left: `calc(var(--indent-width) * ${depth - 1} + var(--indent-width) / 2)` }}
+          />
         )}
 
-        {/* ── Sliding content wrapper (swipe-to-delete) ───────────── */}
-        <div
-          className="flex items-stretch gap-1 w-full max-sm:items-start max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5 min-w-0"
-          data-testid="swipe-content"
-          style={{
-            transform:
-              isTouchDevice && swipeTranslateX !== 0
-                ? `translateX(${swipeTranslateX}px)`
-                : undefined,
-            transition: isTouchDevice && swipeTranslateX !== 0 ? 'transform 0.2s ease' : undefined,
-          }}
-        >
-          {/* Indent guide line for nested blocks */}
-          {depth > 0 && (
-            <div
-              className="absolute left-0 top-0 bottom-0 border-l border-border/20"
-              style={{ left: `calc(var(--indent-width) * ${depth - 1} + var(--indent-width) / 2)` }}
-            />
-          )}
-
-          {/* ── Narrow gutter — grip + history + delete ────────────── */}
-          {/* #918: On a fine-pointer device the gutter collapses to 0px on
+        {/* ── Narrow gutter — grip + history + delete ────────────── */}
+        {/* #918: On a fine-pointer device the gutter collapses to 0px on
               narrow viewports (`max-md`) and reveals its controls on hover.
               On a touch device there is no hover, and `BlockGutterControls`
               renders a dedicated touch drag handle — collapsing to `w-0`
@@ -344,123 +338,127 @@ function SortableBlockInner({
               start a drag. So we only apply the touch-collapse classes when
               the pointer is *not* coarse; on touch the gutter keeps its real
               width and the touch grip stays a hittable target. */}
-          <div
-            className={cn(
-              GUTTER_WIDTH,
-              'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end',
-              !isTouchDevice && 'max-md:w-0 max-md:overflow-hidden',
-            )}
-          >
-            <BlockGutterControls
-              blockId={blockId}
-              onDelete={onDelete}
-              onShowHistory={onShowHistory}
-              dragAttributes={attributes}
-              dragListeners={listeners}
-              isSelected={isSelected}
-              onSelect={onSelect}
-            />
-          </div>
-
-          {/* ── Inline controls — chevron, checkbox, priority ─────── */}
-          <BlockInlineControls
-            blockId={blockId}
-            hasChildren={hasChildren}
-            isCollapsed={isCollapsed}
-            onToggleCollapse={onToggleCollapse}
-            todoState={todoState}
-            onToggleTodo={onToggleTodo}
-            priority={priority}
-            onTogglePriority={onTogglePriority}
-            dueDate={dueDate}
-            scheduledDate={scheduledDate}
-            properties={properties}
-            filteredProperties={filteredProperties}
-            maxInlineProperties={maxInlineProperties}
-            resolveBlockTitle={resolveBlockTitle}
-            anyBlockHasChildren={anyBlockHasChildren}
-            attachmentCount={attachmentCount}
-            showAttachments={showAttachments}
-            onToggleAttachments={handleToggleAttachments}
-            onEditProp={setEditingProp}
-            onEditKey={handleEditKey}
-          />
-
-          {/* ── Property edit popover / key rename ────────────────── */}
-          <BlockPropertyEditor
-            blockId={blockId}
-            editingProp={editingProp}
-            setEditingProp={setEditingProp}
-            editingKey={editingKey}
-            setEditingKey={setEditingKey}
-            selectOptions={selectOptions}
-            isRefProp={isRefProp}
-            refPages={refPages}
-            refSearch={refSearch}
-            setRefSearch={setRefSearch}
-          />
-
-          {/* ── Block content ─────────────────────────────────────────── */}
-          <div
-            className={cn(
-              'flex-1 min-w-0 transition-[text-decoration-color,opacity] duration-200',
-              // Strikethrough + fade for DONE and CANCELLED (both are "closed" states).
-              (todoState === 'DONE' || todoState === 'CANCELLED') && !isFocused
-                ? 'line-through opacity-50'
-                : 'no-underline opacity-100',
-            )}
-          >
-            <EditableBlock
-              blockId={blockId}
-              content={content}
-              isFocused={isFocused}
-              rovingEditor={rovingEditor}
-              onNavigate={onNavigate}
-              resolveBlockTitle={resolveBlockTitle}
-              resolveTagName={resolveTagName}
-              resolveBlockStatus={resolveBlockStatus}
-              resolveTagStatus={resolveTagStatus}
-              isSelected={isSelected}
-              onSelect={onSelect}
-            />
-          </div>
-
-          {/* ── Collapsible attachment list ────────────────────────────── */}
-          {showAttachments && attachmentCount > 0 && (
-            <div className="mt-1 ml-5 border-l-2 border-border/30 pl-3">
-              <AttachmentList blockId={blockId} />
-            </div>
+        <div
+          className={cn(
+            GUTTER_WIDTH,
+            'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end',
+            !isTouchDevice && 'max-md:w-0 max-md:overflow-hidden',
           )}
+        >
+          <BlockGutterControls
+            blockId={blockId}
+            onDelete={onDelete}
+            onShowHistory={onShowHistory}
+            dragAttributes={attributes}
+            dragListeners={listeners}
+            isSelected={isSelected}
+            onSelect={onSelect}
+            // #1094: the gutter keeps its deliberate 500ms hover delay (longer
+            // than the 300ms app baseline) so tips don't flicker as the
+            // pointer crosses rows. The per-surface TooltipProvider that set
+            // this is gone; the override now rides on each gutter Tooltip.
+            tooltipDelayDuration={500}
+          />
         </div>
 
-        {/* ── Context menu (long-press / right-click) ───────────────── */}
-        {contextMenu && (
-          <BlockContextMenu
+        {/* ── Inline controls — chevron, checkbox, priority ─────── */}
+        <BlockInlineControls
+          blockId={blockId}
+          hasChildren={hasChildren}
+          isCollapsed={isCollapsed}
+          onToggleCollapse={onToggleCollapse}
+          todoState={todoState}
+          onToggleTodo={onToggleTodo}
+          priority={priority}
+          onTogglePriority={onTogglePriority}
+          dueDate={dueDate}
+          scheduledDate={scheduledDate}
+          properties={properties}
+          filteredProperties={filteredProperties}
+          maxInlineProperties={maxInlineProperties}
+          resolveBlockTitle={resolveBlockTitle}
+          anyBlockHasChildren={anyBlockHasChildren}
+          attachmentCount={attachmentCount}
+          showAttachments={showAttachments}
+          onToggleAttachments={handleToggleAttachments}
+          onEditProp={setEditingProp}
+          onEditKey={handleEditKey}
+        />
+
+        {/* ── Property edit popover / key rename ────────────────── */}
+        <BlockPropertyEditor
+          blockId={blockId}
+          editingProp={editingProp}
+          setEditingProp={setEditingProp}
+          editingKey={editingKey}
+          setEditingKey={setEditingKey}
+          selectOptions={selectOptions}
+          isRefProp={isRefProp}
+          refPages={refPages}
+          refSearch={refSearch}
+          setRefSearch={setRefSearch}
+        />
+
+        {/* ── Block content ─────────────────────────────────────────── */}
+        <div
+          className={cn(
+            'flex-1 min-w-0 transition-[text-decoration-color,opacity] duration-200',
+            // Strikethrough + fade for DONE and CANCELLED (both are "closed" states).
+            (todoState === 'DONE' || todoState === 'CANCELLED') && !isFocused
+              ? 'line-through opacity-50'
+              : 'no-underline opacity-100',
+          )}
+        >
+          <EditableBlock
             blockId={blockId}
-            position={contextMenu}
-            onClose={closeContextMenu}
-            triggerRef={blockRef}
-            // A2 (#1020) — forward the whole action bag instead of re-drilling
-            // each callback. `onZoomIn` is gated by `hasChildren` (zoom-in only
-            // makes sense for a block with children), so spread the bag and
-            // override that one key with the gated value.
-            actions={{ ...actions, onZoomIn }}
-            // Fix 6 / #1018 — the menu reads the active multi-selection from the
-            // store itself (it's the only consumer and only mounts while open),
-            // so we no longer thread `selectedBlockIds` through here. Bulk mode
-            // (Delete / TODO / Priority / Move across the WHOLE selection) still
-            // engages via the menu's own live subscription.
-            activeBlockType={detectBlockType(content)}
-            hasChildren={hasChildren}
-            isCollapsed={isCollapsed}
-            todoState={todoState}
-            priority={priority}
-            dueDate={dueDate}
-            linkUrl={contextMenu.linkUrl}
+            content={content}
+            isFocused={isFocused}
+            rovingEditor={rovingEditor}
+            onNavigate={onNavigate}
+            resolveBlockTitle={resolveBlockTitle}
+            resolveTagName={resolveTagName}
+            resolveBlockStatus={resolveBlockStatus}
+            resolveTagStatus={resolveTagStatus}
+            isSelected={isSelected}
+            onSelect={onSelect}
           />
+        </div>
+
+        {/* ── Collapsible attachment list ────────────────────────────── */}
+        {showAttachments && attachmentCount > 0 && (
+          <div className="mt-1 ml-5 border-l-2 border-border/30 pl-3">
+            <AttachmentList blockId={blockId} />
+          </div>
         )}
       </div>
-    </TooltipProvider>
+
+      {/* ── Context menu (long-press / right-click) ───────────────── */}
+      {contextMenu && (
+        <BlockContextMenu
+          blockId={blockId}
+          position={contextMenu}
+          onClose={closeContextMenu}
+          triggerRef={blockRef}
+          // A2 (#1020) — forward the whole action bag instead of re-drilling
+          // each callback. `onZoomIn` is gated by `hasChildren` (zoom-in only
+          // makes sense for a block with children), so spread the bag and
+          // override that one key with the gated value.
+          actions={{ ...actions, onZoomIn }}
+          // Fix 6 / #1018 — the menu reads the active multi-selection from the
+          // store itself (it's the only consumer and only mounts while open),
+          // so we no longer thread `selectedBlockIds` through here. Bulk mode
+          // (Delete / TODO / Priority / Move across the WHOLE selection) still
+          // engages via the menu's own live subscription.
+          activeBlockType={detectBlockType(content)}
+          hasChildren={hasChildren}
+          isCollapsed={isCollapsed}
+          todoState={todoState}
+          priority={priority}
+          dueDate={dueDate}
+          linkUrl={contextMenu.linkUrl}
+        />
+      )}
+    </div>
   )
 }
 

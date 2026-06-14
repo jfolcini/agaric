@@ -22,7 +22,7 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useBatchProperties } from '@/hooks/useBatchProperties'
 import { logger } from '@/lib/logger'
 import type { PropertyRow } from '@/lib/tauri'
@@ -139,23 +139,21 @@ export function DependencyIndicator({
     : t('dependency.blockedByUnresolved')
 
   return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            className={cn('inline-flex items-center text-muted-foreground', className)}
-            data-testid="dependency-indicator"
-            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- labelled wrapper around an inline SVG icon and the Tooltip's asChild trigger ref; <img> is a void element that can't contain the SVG child
-            role="img"
-            aria-label={tooltipText}
-          >
-            <Link2 className="h-3.5 w-3.5" aria-hidden="true" />
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>
-          <p>{tooltipText}</p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={cn('inline-flex items-center text-muted-foreground', className)}
+          data-testid="dependency-indicator"
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- labelled wrapper around an inline SVG icon and the Tooltip's asChild trigger ref; <img> is a void element that can't contain the SVG child
+          role="img"
+          aria-label={tooltipText}
+        >
+          <Link2 className="h-3.5 w-3.5" aria-hidden="true" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>
+        <p>{tooltipText}</p>
+      </TooltipContent>
+    </Tooltip>
   )
 }

@@ -20,7 +20,7 @@ import { useSidebarKeyboard } from '@/components/ui/sidebar/use-sidebar-keyboard
 import { useSidebarRailDrag } from '@/components/ui/sidebar/use-sidebar-rail-drag'
 import { type SidebarState, useSidebarState } from '@/components/ui/sidebar/use-sidebar-state'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 const SIDEBAR_WIDTH_MOBILE = 'min(18rem, 85vw)'
@@ -109,25 +109,24 @@ const SidebarProvider = ({
 
   return (
     <SidebarContext.Provider value={contextValue}>
-      <TooltipProvider delayDuration={0}>
-        <div
-          ref={ref}
-          data-slot="sidebar-wrapper"
-          data-resizing={isResizing || undefined}
-          style={
-            {
-              '--sidebar-width': `${sidebarWidth}px`,
-              '--sidebar-width-icon': SIDEBAR_WIDTH_ICON,
-              ...style,
-            } as React.CSSProperties
-          }
-          className={cn(
-            'group/sidebar-wrapper flex h-svh w-full has-data-[variant=inset]:bg-sidebar',
-            className,
-          )}
-          {...props}
-        >
-          {/*
+      <div
+        ref={ref}
+        data-slot="sidebar-wrapper"
+        data-resizing={isResizing || undefined}
+        style={
+          {
+            '--sidebar-width': `${sidebarWidth}px`,
+            '--sidebar-width-icon': SIDEBAR_WIDTH_ICON,
+            ...style,
+          } as React.CSSProperties
+        }
+        className={cn(
+          'group/sidebar-wrapper flex h-svh w-full has-data-[variant=inset]:bg-sidebar',
+          className,
+        )}
+        {...props}
+      >
+        {/*
             UX-260 sub-fix 1: 3px coarse-pointer-only edge gradient hint that
             tells touch users a sidebar lives behind the left edge.
             `pointer:coarse` only — desktop layout unaffected. Hidden when
@@ -140,16 +139,15 @@ const SidebarProvider = ({
             `[@media(pointer:coarse)]`; inline indicators that compete with
             content for space use `max-sm:`.
           */}
-          {isMobile && !openMobile && (
-            <div
-              aria-hidden="true"
-              data-testid="sidebar-swipe-hint"
-              className="pointer-events-none fixed left-0 inset-y-0 z-40 hidden w-[3px] bg-foreground/10 [@media(pointer:coarse)]:block"
-            />
-          )}
-          {children}
-        </div>
-      </TooltipProvider>
+        {isMobile && !openMobile && (
+          <div
+            aria-hidden="true"
+            data-testid="sidebar-swipe-hint"
+            className="pointer-events-none fixed left-0 inset-y-0 z-40 hidden w-[3px] bg-foreground/10 [@media(pointer:coarse)]:block"
+          />
+        )}
+        {children}
+      </div>
     </SidebarContext.Provider>
   )
 }
@@ -682,7 +680,12 @@ const SidebarMenuButton = ({
   }
 
   return (
-    <Tooltip>
+    // #1094: the collapsed-sidebar nav labels intentionally appear instantly
+    // (0ms) — they're the icon-rail's only labels, not supplementary hints, so
+    // any dwell would feel laggy. The override now rides on the Tooltip itself,
+    // since the per-surface `<TooltipProvider delayDuration={0}>` was removed in
+    // favour of the single app-level baseline.
+    <Tooltip delayDuration={0}>
       <TooltipTrigger asChild>{button}</TooltipTrigger>
       <TooltipContent
         side="right"

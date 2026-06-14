@@ -31,7 +31,7 @@ import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 import { useRichContentCallbacks, useTagClickHandler } from '../../hooks/useRichContentCallbacks'
@@ -133,18 +133,16 @@ export function HistoryItemCore({
             })()}
             {entry.op_type}
           </Badge>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="history-item-time text-xs text-muted-foreground w-fit">
-                  {formatRelativeTime(entry.created_at, t)}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{formatTimestamp(entry.created_at, 'full')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="history-item-time text-xs text-muted-foreground w-fit">
+                {formatRelativeTime(entry.created_at, t)}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{formatTimestamp(entry.created_at, 'full')}</p>
+            </TooltipContent>
+          </Tooltip>
           <span className="text-xs text-muted-foreground"> · </span>
           <span className="history-item-device text-xs text-muted-foreground">
             dev:{entry.device_id.slice(0, 8)}
