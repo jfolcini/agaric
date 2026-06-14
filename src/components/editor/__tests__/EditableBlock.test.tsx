@@ -813,6 +813,56 @@ describe('EditableBlock', () => {
       expect(mockMount).toHaveBeenCalledWith('B1', 'New block')
     })
 
+    // #770 gap 1 — a programmatic focus move (auto-mount path) does NOT go
+    // through useEditorBlur's discardDraft(), so the previous block's
+    // debounced `block_drafts` row would survive to the next boot and be
+    // replayed by flush_all_drafts as an edit_block op (possibly clobbering
+    // newer content). persistUnmount must delete the previous block's draft
+    // row so nothing is flushable at boot.
+    it('deletes the previous block draft row on a programmatic focus move (gap 1)', () => {
+      const mockMount = vi.fn()
+      const mockUnmount = vi.fn(() => 'unsaved changes')
+      const roving = makeRovingEditor({
+        mount: mockMount,
+        unmount: mockUnmount,
+        activeBlockId: 'OLD_BLOCK',
+      })
+
+      const { rerender } = render(
+        <EditableBlock blockId="B1" content="x" isFocused={false} rovingEditor={roving as never} />,
+      )
+      rerender(
+        <EditableBlock blockId="B1" content="x" isFocused={true} rovingEditor={roving as never} />,
+      )
+
+      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes')
+      // The orphan draft row for the block we moved AWAY from must be dropped.
+      expect(mockDeleteDraft).toHaveBeenCalledWith('OLD_BLOCK')
+    })
+
+    // Gap 1 corner: even when the previous content is unchanged (unmount
+    // returns null) a >2 s pause may have persisted a draft row, so the
+    // delete must still fire.
+    it('deletes the previous block draft row even when content is unchanged (gap 1)', () => {
+      const mockMount = vi.fn()
+      const mockUnmount = vi.fn(() => null)
+      const roving = makeRovingEditor({
+        mount: mockMount,
+        unmount: mockUnmount,
+        activeBlockId: 'OLD_BLOCK',
+      })
+
+      const { rerender } = render(
+        <EditableBlock blockId="B1" content="" isFocused={false} rovingEditor={roving as never} />,
+      )
+      rerender(
+        <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
+      )
+
+      expect(mockEdit).not.toHaveBeenCalled()
+      expect(mockDeleteDraft).toHaveBeenCalledWith('OLD_BLOCK')
+    })
+
     it('calls splitBlock when previous block content has newlines', () => {
       const mockMount = vi.fn()
       const mockUnmount = vi.fn(() => 'line1\nline2')
@@ -1370,8 +1420,15 @@ describe('EditableBlock', () => {
         onChange?.('unsaved')
       })
 
-      // Unmount triggers cleanup — flushDraft fires and rejects
+      // Unmount triggers cleanup — flushDraft fires and rejects.
+      // The final flush is chained on the gap-2 saveDraft promise (#770), so
+      // it lands a couple of microtask turns after unmount.
       unmount()
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
 
       expect(mockFlushDraft).toHaveBeenCalledWith('B1')
 
@@ -1472,8 +1529,15 @@ describe('EditableBlock', () => {
         onChange?.('unsaved content')
       })
 
-      // Unmount without blur — useDraftAutosave cleanup calls flushDraft
+      // Unmount without blur — useDraftAutosave cleanup calls flushDraft.
+      // The final flush is chained on the gap-2 saveDraft promise (#770), so
+      // it lands a couple of microtask turns after unmount.
       unmount()
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
 
       expect(mockFlushDraft).toHaveBeenCalledWith('B1')
     })
