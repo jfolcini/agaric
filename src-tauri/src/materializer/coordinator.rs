@@ -11,9 +11,16 @@ use crate::error::AppError;
 use crate::lifecycle::LifecycleHooks;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+// #1059: `AtomicU32` and `Notify` now back only the test-only
+// `BlockCountTestHooks` sidecar; importing them unconditionally would be
+// an unused-import warning in production builds.
+#[cfg(test)]
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex, OnceLock};
-use tokio::sync::{Notify, mpsc};
+#[cfg(test)]
+use tokio::sync::Notify;
+use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 /// #385: minimum interval between `SELECT COUNT(*) FROM op_log` refreshes
@@ -44,32 +51,13 @@ pub struct Materializer {
     /// be used here. Both pools point at the same SQLite file; this
     /// field exists to satisfy the write-side query-permission check.
     pub(super) write_pool: SqlitePool,
-    /// Set once the initial background task spawned by [`Materializer::build`]
-    /// has finished populating [`QueueMetrics::cached_block_count`]. Tests
-    /// that want to overwrite `cached_block_count` with a simulated value
-    /// must first await [`Materializer::wait_for_initial_block_count_cache`]
-    /// so the stale writer cannot clobber the simulated value after the
-    /// `.store(…)` call. Production code does not observe this flag; the
-    /// field is cheap (two pointer-sized Arcs per Materializer).
-    pub(super) block_count_cache_ready_flag: Arc<AtomicBool>,
-    pub(super) block_count_cache_ready_notify: Arc<Notify>,
-    /// Count of in-flight `refresh_block_count_cache()` tasks spawned
-    /// after the initial one-shot refresh (currently: post-FTS-optimize,
-    /// see [`Materializer::refresh_block_count_cache`]).
-    ///
-    /// Incremented before each `tokio::spawn`, decremented via an RAII
-    /// guard when the spawned future terminates (normal completion,
-    /// panic, or runtime-shutdown cancellation — all paths hit `Drop`).
-    /// Paired with [`Self::pending_block_count_refreshes_notify`]: on
-    /// transition to zero the notify fires, waking any tasks blocked in
-    /// [`Materializer::wait_for_pending_block_count_refreshes`].
-    ///
-    /// Production code does not observe this counter; it exists so tests
-    /// that exercise the FTS-optimize path can deterministically gate on
-    /// "all post-optimize refresh tasks have drained" before simulating
-    /// a different `cached_block_count` value.
-    pub(super) pending_block_count_refreshes: Arc<AtomicU32>,
-    pub(super) pending_block_count_refreshes_notify: Arc<Notify>,
+    /// #1059: test-only readiness/drain coordination for the
+    /// block-count cache refreshes. Production code never observes these
+    /// signals, so the whole bundle lives behind `#[cfg(test)]` and is
+    /// absent from the production `Materializer` (which carries only its
+    /// 9 real fields). See [`BlockCountTestHooks`].
+    #[cfg(test)]
+    pub(super) block_count_test_hooks: BlockCountTestHooks,
     /// FEAT-5h / #643 — optional [`DirtySink`] notified whenever an
     /// applied op could shift downstream projected state (today: the
     /// GCal push connector's projected agenda on an in-window date).
@@ -122,20 +110,71 @@ pub struct Materializer {
     pub(super) tasks: Arc<Mutex<JoinSet<()>>>,
 }
 
+/// #1059: test-only readiness/drain coordination for the block-count
+/// cache refreshes, extracted out of the production [`Materializer`].
+///
+/// Production code WRITES the underlying flag/counter (set in
+/// [`Materializer::build`]'s initial refresh task, incremented in
+/// [`Materializer::refresh_block_count_cache`]); those writes are now
+/// routed through this handle and exist only under `#[cfg(test)]`. The
+/// only *readers* — [`Materializer::wait_for_initial_block_count_cache`]
+/// and [`Materializer::wait_for_pending_block_count_refreshes`] — are
+/// called exclusively from `materializer::tests`. Keeping the whole
+/// bundle here means the production struct carries none of it.
+#[cfg(test)]
+#[derive(Clone)]
+pub(super) struct BlockCountTestHooks {
+    /// Set once the initial background task spawned by
+    /// [`Materializer::build`] has finished populating
+    /// [`QueueMetrics::cached_block_count`]. Tests that want to overwrite
+    /// `cached_block_count` with a simulated value must first await
+    /// [`Materializer::wait_for_initial_block_count_cache`] so the stale
+    /// writer cannot clobber the simulated value after the `.store(…)`
+    /// call.
+    pub(super) block_count_cache_ready_flag: Arc<AtomicBool>,
+    pub(super) block_count_cache_ready_notify: Arc<Notify>,
+    /// Count of in-flight `refresh_block_count_cache()` tasks spawned
+    /// after the initial one-shot refresh (currently: post-FTS-optimize,
+    /// see [`Materializer::refresh_block_count_cache`]).
+    ///
+    /// Incremented before each `tokio::spawn`, decremented via an RAII
+    /// guard when the spawned future terminates (normal completion,
+    /// panic, or runtime-shutdown cancellation — all paths hit `Drop`).
+    /// Paired with [`Self::pending_block_count_refreshes_notify`]: on
+    /// transition to zero the notify fires, waking any tasks blocked in
+    /// [`Materializer::wait_for_pending_block_count_refreshes`].
+    pub(super) pending_block_count_refreshes: Arc<AtomicU32>,
+    pub(super) pending_block_count_refreshes_notify: Arc<Notify>,
+}
+
+#[cfg(test)]
+impl BlockCountTestHooks {
+    fn new() -> Self {
+        Self {
+            block_count_cache_ready_flag: Arc::new(AtomicBool::new(false)),
+            block_count_cache_ready_notify: Arc::new(Notify::new()),
+            pending_block_count_refreshes: Arc::new(AtomicU32::new(0)),
+            pending_block_count_refreshes_notify: Arc::new(Notify::new()),
+        }
+    }
+}
+
 /// RAII guard that decrements
-/// [`Materializer::pending_block_count_refreshes`] on drop and fires the
-/// matching notify when the counter reaches zero.
+/// [`BlockCountTestHooks::pending_block_count_refreshes`] on drop and
+/// fires the matching notify when the counter reaches zero.
 ///
 /// Using a guard (rather than an explicit decrement at the tail of the
 /// spawned future) ensures the counter stays consistent even if the
 /// future panics or is cancelled mid-refresh (e.g. during runtime
 /// shutdown). Missing a decrement would permanently desync the counter
 /// from reality and leave `wait_for_pending_block_count_refreshes` hung.
+#[cfg(test)]
 struct PendingRefreshGuard {
     counter: Arc<AtomicU32>,
     notify: Arc<Notify>,
 }
 
+#[cfg(test)]
 impl Drop for PendingRefreshGuard {
     fn drop(&mut self) {
         // AcqRel matches the increment at spawn time; the post-decrement
@@ -202,10 +241,8 @@ impl Materializer {
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let metrics = Arc::new(QueueMetrics::default());
         let reader_pool = reader_pool_for_caches;
-        let block_count_cache_ready_flag = Arc::new(AtomicBool::new(false));
-        let block_count_cache_ready_notify = Arc::new(Notify::new());
-        let pending_block_count_refreshes = Arc::new(AtomicU32::new(0));
-        let pending_block_count_refreshes_notify = Arc::new(Notify::new());
+        #[cfg(test)]
+        let block_count_test_hooks = BlockCountTestHooks::new();
         let dirty_sink: Arc<OnceLock<Arc<dyn DirtySink + Send + Sync>>> = Arc::new(OnceLock::new());
         let app_data_dir: Arc<OnceLock<PathBuf>> = Arc::new(OnceLock::new());
         // M-12: JoinSet must exist before the four `spawn_task` calls
@@ -233,8 +270,16 @@ impl Materializer {
         {
             let p = reader_pool.clone();
             let m = metrics.clone();
-            let flag = block_count_cache_ready_flag.clone();
-            let notify = block_count_cache_ready_notify.clone();
+            // #1059: the completion flag/notify are test-only coordination;
+            // production never observes them, so they are cloned and signalled
+            // only under `#[cfg(test)]`. The `cached_block_count` store below
+            // is the real production behaviour and runs unconditionally.
+            #[cfg(test)]
+            let flag = block_count_test_hooks.block_count_cache_ready_flag.clone();
+            #[cfg(test)]
+            let notify = block_count_test_hooks
+                .block_count_cache_ready_notify
+                .clone();
             Self::spawn_task(&tasks, async move {
                 if let Ok(count) = sqlx::query_scalar::<_, i64>(
                     "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL",
@@ -253,8 +298,11 @@ impl Materializer {
                 // attached before the flag was set; the double-checked
                 // pattern in the waiter handles the race where notify
                 // fires before anyone is waiting.
-                flag.store(true, Ordering::Release);
-                notify.notify_waiters();
+                #[cfg(test)]
+                {
+                    flag.store(true, Ordering::Release);
+                    notify.notify_waiters();
+                }
             });
         }
         {
@@ -282,10 +330,8 @@ impl Materializer {
             metrics,
             reader_pool,
             write_pool: write_pool_for_struct,
-            block_count_cache_ready_flag,
-            block_count_cache_ready_notify,
-            pending_block_count_refreshes,
-            pending_block_count_refreshes_notify,
+            #[cfg(test)]
+            block_count_test_hooks,
             dirty_sink,
             app_data_dir,
             tasks,
@@ -499,17 +545,25 @@ impl Materializer {
     pub(super) fn refresh_block_count_cache(&self) {
         let pool = self.reader_pool.clone();
         let metrics = self.metrics.clone();
+        // #1059: the in-flight counter + RAII drain guard are test-only
+        // coordination (production treats this as pure fire-and-forget).
         // Increment BEFORE the spawn so a waiter cannot observe a
         // zero-counter between this call returning and the spawned task
         // incrementing itself later. The guard constructed here moves
         // into the async block and decrements on drop.
-        self.pending_block_count_refreshes
-            .fetch_add(1, Ordering::AcqRel);
-        let guard = PendingRefreshGuard {
-            counter: self.pending_block_count_refreshes.clone(),
-            notify: self.pending_block_count_refreshes_notify.clone(),
+        #[cfg(test)]
+        let guard = {
+            let hooks = &self.block_count_test_hooks;
+            hooks
+                .pending_block_count_refreshes
+                .fetch_add(1, Ordering::AcqRel);
+            PendingRefreshGuard {
+                counter: hooks.pending_block_count_refreshes.clone(),
+                notify: hooks.pending_block_count_refreshes_notify.clone(),
+            }
         };
         Self::spawn_task(&self.tasks, async move {
+            #[cfg(test)]
             let _g = guard;
             if let Ok(count) =
                 sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL")
@@ -601,22 +655,24 @@ impl Materializer {
     /// parallelism-flaky test (TEST-2).
     ///
     /// The method is cheap in the common "already initialized" case — a
-    /// single Acquire atomic load. Production code does not need to call
-    /// this; the helper is `pub` purely so tests in sibling modules can
-    /// use it. Two `Arc`s on the `Materializer` back the signal and are
-    /// negligible cost.
+    /// single Acquire atomic load. Production code does not call this:
+    /// #1059 moved the backing flag/notify into the test-only
+    /// [`BlockCountTestHooks`] sidecar, so the helper is `#[cfg(test)]`
+    /// and available only to tests in sibling modules.
+    #[cfg(test)]
     pub async fn wait_for_initial_block_count_cache(&self) {
+        let hooks = &self.block_count_test_hooks;
         // Double-checked pattern: check the flag, construct a Notified
         // future *before* rechecking so we cannot miss a notification
         // fired between the two checks, then await. If notify_waiters
         // ran before we attached a waiter the flag load after the
         // construction catches it.
         loop {
-            if self.block_count_cache_ready_flag.load(Ordering::Acquire) {
+            if hooks.block_count_cache_ready_flag.load(Ordering::Acquire) {
                 return;
             }
-            let notified = self.block_count_cache_ready_notify.notified();
-            if self.block_count_cache_ready_flag.load(Ordering::Acquire) {
+            let notified = hooks.block_count_cache_ready_notify.notified();
+            if hooks.block_count_cache_ready_flag.load(Ordering::Acquire) {
                 return;
             }
             notified.await;
@@ -644,10 +700,13 @@ impl Materializer {
     /// refreshes). Either helper alone remains independently useful.
     ///
     /// Returns immediately if zero refreshes are in flight at call time
-    /// (cheap: a single `Acquire` load). Production code does not need
-    /// to call this; the helper is `pub` so integration tests in sibling
-    /// crates / modules can use it.
+    /// (cheap: a single `Acquire` load). Production code does not call
+    /// this: #1059 moved the backing counter/notify into the test-only
+    /// [`BlockCountTestHooks`] sidecar, so the helper is `#[cfg(test)]`
+    /// and available only to tests in sibling modules.
+    #[cfg(test)]
     pub async fn wait_for_pending_block_count_refreshes(&self) {
+        let hooks = &self.block_count_test_hooks;
         // Double-checked pattern, identical in shape to
         // wait_for_initial_block_count_cache: load the counter, build
         // the Notified future, re-load. The second load closes the
@@ -656,11 +715,11 @@ impl Materializer {
         // establishes a happens-before edge from "guard dropped" to
         // "waiter observes zero".
         loop {
-            if self.pending_block_count_refreshes.load(Ordering::Acquire) == 0 {
+            if hooks.pending_block_count_refreshes.load(Ordering::Acquire) == 0 {
                 return;
             }
-            let notified = self.pending_block_count_refreshes_notify.notified();
-            if self.pending_block_count_refreshes.load(Ordering::Acquire) == 0 {
+            let notified = hooks.pending_block_count_refreshes_notify.notified();
+            if hooks.pending_block_count_refreshes.load(Ordering::Acquire) == 0 {
                 return;
             }
             notified.await;

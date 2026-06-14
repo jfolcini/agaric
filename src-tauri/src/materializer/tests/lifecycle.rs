@@ -179,6 +179,7 @@ async fn wait_for_pending_block_count_refreshes_drains_inflight_refreshes() {
     // the increment happens before the spawn so observing zero here
     // would be a bug.
     let snapshot = mat
+        .block_count_test_hooks
         .pending_block_count_refreshes
         .load(AtomicOrdering::Acquire);
     assert!(
@@ -196,7 +197,8 @@ async fn wait_for_pending_block_count_refreshes_drains_inflight_refreshes() {
     .expect("helper must return once all pending refreshes complete");
 
     assert_eq!(
-        mat.pending_block_count_refreshes
+        mat.block_count_test_hooks
+            .pending_block_count_refreshes
             .load(AtomicOrdering::Acquire),
         0,
         "counter must be zero after wait_for_pending_block_count_refreshes returns"
@@ -242,6 +244,7 @@ async fn wait_for_pending_block_count_refreshes_returns_after_tasks_already_fini
     mat.refresh_block_count_cache();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while mat
+        .block_count_test_hooks
         .pending_block_count_refreshes
         .load(AtomicOrdering::Acquire)
         != 0
@@ -250,7 +253,8 @@ async fn wait_for_pending_block_count_refreshes_returns_after_tasks_already_fini
             panic!(
                 "test precondition: refresh did not drain the counter within 5s \
                  (last value: {})",
-                mat.pending_block_count_refreshes
+                mat.block_count_test_hooks
+                    .pending_block_count_refreshes
                     .load(AtomicOrdering::Acquire)
             );
         }
@@ -301,7 +305,8 @@ async fn wait_for_pending_block_count_refreshes_handles_overlapping_spawns() {
     .expect("helper must drain overlapping refreshes without deadlocking");
 
     assert_eq!(
-        mat.pending_block_count_refreshes
+        mat.block_count_test_hooks
+            .pending_block_count_refreshes
             .load(AtomicOrdering::Acquire),
         0,
         "counter must reach zero after overlapping refreshes drain"
