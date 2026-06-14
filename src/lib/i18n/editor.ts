@@ -103,6 +103,10 @@ export const editor: Record<string, string> = {
   'lightbox.counter': '{{current}} of {{total}}',
   // #294 item 7 — zoom/pan readout badge (shown only while zoomed in).
   'lightbox.zoom': '{{percent}}% — +/− zoom, 0 reset, drag/arrows to pan',
+  // #1104 — on-screen zoom control cluster (mirrors GraphView's tooltips).
+  'lightbox.zoomIn': 'Zoom in',
+  'lightbox.zoomOut': 'Zoom out',
+  'lightbox.zoomReset': 'Reset zoom',
   'imageResize.toolbar': 'Image size',
   'imageResize.small': 'Small (25%)',
   'imageResize.medium': 'Medium (50%)',

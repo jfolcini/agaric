@@ -46,6 +46,21 @@ function renderLightbox(
   return onIndexChange
 }
 
+function renderLightboxContainer(props: Partial<React.ComponentProps<typeof ImageLightbox>> = {}): {
+  container: HTMLElement
+} {
+  return render(
+    <ImageLightbox
+      images={IMAGES}
+      index={0}
+      onIndexChange={noop}
+      open
+      onOpenChange={noop}
+      {...props}
+    />,
+  )
+}
+
 describe('ImageLightbox', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -294,6 +309,96 @@ describe('ImageLightbox', () => {
       fireEvent.keyDown(window, { key: '0' })
       fireEvent.click(screen.getByTestId('lightbox-next'))
       expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1)')
+    })
+  })
+
+  // ---- #1104: on-screen zoom control cluster ----
+  describe('zoom controls (on-screen)', () => {
+    it('renders the three zoom buttons (in, out, reset)', () => {
+      renderLightbox()
+      expect(screen.getByTestId('lightbox-zoom-in')).toBeInTheDocument()
+      expect(screen.getByTestId('lightbox-zoom-out')).toBeInTheDocument()
+      expect(screen.getByTestId('lightbox-zoom-reset')).toBeInTheDocument()
+    })
+
+    it('surfaces the +/-/0 shortcuts in the accessible names', () => {
+      renderLightbox()
+      // `withShortcut` appends the configured binding (shared graphZoom* ids).
+      expect(screen.getByTestId('lightbox-zoom-in')).toHaveAttribute(
+        'aria-label',
+        'Zoom in (+ / =)',
+      )
+      expect(screen.getByTestId('lightbox-zoom-out')).toHaveAttribute('aria-label', 'Zoom out (-)')
+      expect(screen.getByTestId('lightbox-zoom-reset')).toHaveAttribute(
+        'aria-label',
+        'Reset zoom (0)',
+      )
+    })
+
+    it('clicking ZoomIn increases the zoom and reveals the badge', async () => {
+      const user = userEvent.setup()
+      renderLightbox()
+      await user.click(screen.getByTestId('lightbox-zoom-in'))
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1.25)')
+      expect(screen.getByTestId('lightbox-zoom-badge')).toHaveTextContent('125%')
+    })
+
+    it('clicking ZoomOut decreases the zoom', async () => {
+      const user = userEvent.setup()
+      renderLightbox()
+      await user.click(screen.getByTestId('lightbox-zoom-in'))
+      await user.click(screen.getByTestId('lightbox-zoom-in'))
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1.5)')
+      await user.click(screen.getByTestId('lightbox-zoom-out'))
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1.25)')
+    })
+
+    it('clicking Reset returns to 100% and hides the badge', async () => {
+      const user = userEvent.setup()
+      renderLightbox()
+      await user.click(screen.getByTestId('lightbox-zoom-in'))
+      await user.click(screen.getByTestId('lightbox-zoom-in'))
+      await user.click(screen.getByTestId('lightbox-zoom-reset'))
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1)')
+      expect(screen.queryByTestId('lightbox-zoom-badge')).not.toBeInTheDocument()
+    })
+
+    it('disables ZoomOut and Reset at 100% (min); ZoomIn stays enabled', () => {
+      renderLightbox()
+      expect(screen.getByTestId('lightbox-zoom-out')).toBeDisabled()
+      expect(screen.getByTestId('lightbox-zoom-reset')).toBeDisabled()
+      expect(screen.getByTestId('lightbox-zoom-in')).toBeEnabled()
+    })
+
+    it('enables ZoomOut and Reset once zoomed in', async () => {
+      const user = userEvent.setup()
+      renderLightbox()
+      await user.click(screen.getByTestId('lightbox-zoom-in'))
+      expect(screen.getByTestId('lightbox-zoom-out')).toBeEnabled()
+      expect(screen.getByTestId('lightbox-zoom-reset')).toBeEnabled()
+    })
+
+    it('disables ZoomIn at the 400% maximum', () => {
+      renderLightbox()
+      for (let i = 0; i < 20; i++) fireEvent.keyDown(window, { key: '+' })
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(4)')
+      expect(screen.getByTestId('lightbox-zoom-in')).toBeDisabled()
+      expect(screen.getByTestId('lightbox-zoom-out')).toBeEnabled()
+    })
+
+    it('keyboard and on-screen controls stay in sync', async () => {
+      const user = userEvent.setup()
+      renderLightbox()
+      fireEvent.keyDown(window, { key: '+' })
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1.25)')
+      await user.click(screen.getByTestId('lightbox-zoom-in'))
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1.5)')
+    })
+
+    it('has no a11y violations with the zoom controls present', async () => {
+      const { container } = renderLightboxContainer()
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
   })
 })
