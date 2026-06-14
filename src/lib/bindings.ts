@@ -715,8 +715,11 @@ export const commands = {
 	 */
 	forceGcalResync: () => typedError<null, AppError>(__TAURI_INVOKE("force_gcal_resync")),
 	/**
-	 *  Tauri command: disconnect the GCal account (revoke tokens, optionally
-	 *  delete the synced calendar). Delegates to [`disconnect_gcal_inner`].
+	 *  Tauri command: disconnect the GCal account. Best-effort revokes the
+	 *  OAuth grant with Google (#690 — a failed/timed-out revoke is logged
+	 *  and does not block the disconnect), then clears the local OAuth
+	 *  tokens and account email, and optionally deletes the synced
+	 *  calendar. Delegates to [`disconnect_gcal_inner`].
 	 */
 	disconnectGcal: (deleteCalendar: boolean) => typedError<null, AppError>(__TAURI_INVOKE("disconnect_gcal", { deleteCalendar })),
 	/**

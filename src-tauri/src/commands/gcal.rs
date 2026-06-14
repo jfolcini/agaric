@@ -211,10 +211,17 @@ pub fn force_gcal_resync_inner(handle: &GcalConnectorHandle) {
 // disconnect_gcal
 // ---------------------------------------------------------------------------
 
-/// Pure implementation of [`disconnect_gcal`].  Clears OAuth tokens,
-/// emits `gcal:push_disabled`, and optionally deletes the dedicated
-/// calendar.  All steps are idempotent — the user may click disconnect
-/// multiple times without error.
+/// Pure implementation of [`disconnect_gcal`].  Best-effort revokes the
+/// OAuth grant with Google, clears OAuth tokens, emits
+/// `gcal:push_disabled`, and optionally deletes the dedicated calendar.
+/// All steps are idempotent — the user may click disconnect multiple
+/// times without error.
+///
+/// #690: the token is loaded once up front and used to revoke the grant
+/// server-side *before* any local state is cleared.  The revoke is
+/// best-effort — a failed or timed-out revoke is logged and the
+/// disconnect proceeds — so a network outage or an already-revoked
+/// token never blocks the local cleanup the user is waiting on.
 pub async fn disconnect_gcal_inner(
     pool: &SqlitePool,
     api: &GcalApi,
@@ -222,30 +229,51 @@ pub async fn disconnect_gcal_inner(
     emitter: &Arc<dyn GcalEventEmitter>,
     delete_calendar: bool,
 ) -> Result<(), AppError> {
-    // Load a token for the optional calendar-delete call BEFORE we
-    // clear the store.  If the token is gone we cannot delete remotely;
-    // that is a soft failure (logged, no error surfaced).
+    // Load the token ONCE, up front, while the store still holds it —
+    // it is needed both for the best-effort revoke below and for the
+    // optional calendar-delete call.  If the token is gone we can do
+    // neither remote step; that is a soft failure (logged, no error
+    // surfaced).
     //
     // M-36: a keyring transient error here MUST NOT abort the disconnect.
     // The user clicking disconnect *because* the keyring is misbehaving is
     // exactly the user who needs the local cleanup to succeed; demote the
-    // failure to a warn-log and continue with `None` (no remote delete is
-    // possible, but that branch already handles missing tokens).
-    let token = if delete_calendar {
-        match token_store.load().await {
-            Ok(tok) => tok,
-            Err(e) => {
-                tracing::warn!(
-                    target: "gcal",
-                    error = %e,
-                    "keyring unavailable during disconnect; continuing",
-                );
-                None
-            }
+    // failure to a warn-log and continue with `None` (no remote step is
+    // possible, but the branches below already handle a missing token).
+    let token = match token_store.load().await {
+        Ok(tok) => tok,
+        Err(e) => {
+            tracing::warn!(
+                target: "gcal",
+                error = %e,
+                "keyring unavailable during disconnect; continuing",
+            );
+            None
+        }
+    };
+
+    // #690: best-effort revoke FIRST, while the refresh token is still
+    // available, so the broad `.../auth/calendar` grant does not stay
+    // valid on Google's side after disconnect (a pre-disconnect keyring
+    // backup would otherwise retain a server-side-valid refresh token).
+    // Revoking the refresh token tears down the whole grant.  This is
+    // strictly best-effort: any failure (network down, already-revoked
+    // token, timeout) is logged and the disconnect proceeds — it MUST
+    // NOT block or fail the local cleanup.
+    if let Some(tok) = &token {
+        if let Err(e) = api.revoke_token(&tok.refresh).await {
+            tracing::warn!(
+                target: "gcal",
+                error = %e,
+                "token revoke failed during disconnect; continuing with local cleanup",
+            );
         }
     } else {
-        None
-    };
+        tracing::warn!(
+            target: "gcal",
+            "no token available to revoke during disconnect — skipping remote revoke",
+        );
+    }
 
     // Optional remote delete.  If the token is missing OR the client
     // fails, we log and continue — the local cleanup MUST still happen.
@@ -501,8 +529,11 @@ pub async fn force_gcal_resync(
     Ok(())
 }
 
-/// Tauri command: disconnect the GCal account (revoke tokens, optionally
-/// delete the synced calendar). Delegates to [`disconnect_gcal_inner`].
+/// Tauri command: disconnect the GCal account. Best-effort revokes the
+/// OAuth grant with Google (#690 — a failed/timed-out revoke is logged
+/// and does not block the disconnect), then clears the local OAuth
+/// tokens and account email, and optionally deletes the synced
+/// calendar. Delegates to [`disconnect_gcal_inner`].
 #[tauri::command]
 #[specta::specta]
 pub async fn disconnect_gcal(
@@ -1154,6 +1185,126 @@ mod tests {
         assert!(
             recorder.events().contains(&GcalEvent::PushDisabled),
             "push_disabled must be emitted even when keyring load fails, got {:?}",
+            recorder.events()
+        );
+    }
+
+    #[tokio::test]
+    async fn disconnect_revokes_token_before_clearing_local_state() {
+        // #690: the disconnect path MUST attempt to revoke the OAuth
+        // grant with Google (best-effort) while the refresh token is
+        // still available, BEFORE the local store/settings are cleared.
+        // Here Google answers the revoke with success; we assert the
+        // /revoke endpoint was hit exactly once AND that local cleanup
+        // (token cleared, account_email reset, PushDisabled emit) ran.
+        let (pool, _dir) = test_pool().await;
+        let store = store_with(Some(dummy_token())).await;
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/revoke"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = make_api(&server);
+        let recorder = Arc::new(RecordingEventEmitter::new());
+        let emitter: Arc<dyn GcalEventEmitter> = recorder.clone();
+
+        models::set_setting(&pool, GcalSettingKey::OauthAccountEmail, "me@example.com")
+            .await
+            .unwrap();
+
+        disconnect_gcal_inner(&pool, &api, &store, &emitter, false)
+            .await
+            .unwrap();
+
+        // Revoke endpoint hit exactly once (verified again on Drop via
+        // the `.expect(1)` mock assertion).
+        assert_eq!(
+            count_requests(&server, "POST", "/revoke").await,
+            1,
+            "disconnect must POST the refresh token to Google's /revoke endpoint",
+        );
+        // Local cleanup happened.
+        assert!(
+            store.load().await.unwrap().is_none(),
+            "tokens must be cleared after disconnect"
+        );
+        assert_eq!(
+            models::get_setting(&pool, GcalSettingKey::OauthAccountEmail)
+                .await
+                .unwrap()
+                .unwrap_or_default(),
+            "",
+        );
+        assert!(
+            recorder.events().contains(&GcalEvent::PushDisabled),
+            "push_disabled must be emitted, got {:?}",
+            recorder.events()
+        );
+    }
+
+    #[tokio::test]
+    async fn disconnect_clears_local_state_when_revoke_fails() {
+        // #690: a failed revoke (here Google answers HTTP 500) MUST be
+        // best-effort / non-fatal — it is logged and the disconnect
+        // proceeds to clear all local state. This is the core guard that
+        // a server-side revoke outage can never strand the user in a
+        // "can't disconnect" state.
+        let (pool, _dir) = test_pool().await;
+        let store = store_with(Some(dummy_token())).await;
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/revoke"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = make_api(&server);
+        let recorder = Arc::new(RecordingEventEmitter::new());
+        let emitter: Arc<dyn GcalEventEmitter> = recorder.clone();
+
+        models::set_setting(&pool, GcalSettingKey::CalendarId, "cal_KEEP")
+            .await
+            .unwrap();
+        models::set_setting(&pool, GcalSettingKey::OauthAccountEmail, "me@example.com")
+            .await
+            .unwrap();
+
+        // Disconnect MUST succeed despite the 500 from /revoke.
+        disconnect_gcal_inner(&pool, &api, &store, &emitter, false)
+            .await
+            .expect("disconnect must succeed even when revoke returns an error (#690)");
+
+        // The revoke was attempted (best-effort), then local cleanup ran.
+        assert_eq!(
+            count_requests(&server, "POST", "/revoke").await,
+            1,
+            "revoke must be attempted before local cleanup",
+        );
+        assert!(
+            store.load().await.unwrap().is_none(),
+            "tokens must be cleared even when revoke fails"
+        );
+        // calendar_id preserved (delete_calendar=false).
+        assert_eq!(
+            models::get_setting(&pool, GcalSettingKey::CalendarId)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("cal_KEEP"),
+        );
+        assert_eq!(
+            models::get_setting(&pool, GcalSettingKey::OauthAccountEmail)
+                .await
+                .unwrap()
+                .unwrap_or_default(),
+            "",
+            "account_email must be cleared even when revoke fails",
+        );
+        assert!(
+            recorder.events().contains(&GcalEvent::PushDisabled),
+            "push_disabled must be emitted even when revoke fails, got {:?}",
             recorder.events()
         );
     }
