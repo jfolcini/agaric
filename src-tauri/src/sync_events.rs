@@ -66,6 +66,15 @@ pub enum SyncEvent {
         remote_device_id: String,
         ops_received: usize,
         ops_sent: usize,
+        /// #1071: deduped set of owning *page* ids (page-root block ids)
+        /// touched by the ops applied during this sync session. The frontend
+        /// reloads ONLY the mounted page stores whose id is in this set (and
+        /// gates the resolve preload on it being non-empty), falling back to
+        /// reloading EVERY mounted store + a full preload when the field is
+        /// absent/empty — preserving backward compatibility with peers on the
+        /// old protocol and the snapshot-catch-up path (which sends empty).
+        #[serde(default)]
+        changed_page_ids: Vec<String>,
     },
     Error {
         message: String,
@@ -230,6 +239,13 @@ impl SyncEventSink for ChannelEventSink {
                 remote_device_id,
                 ops_received,
                 ops_sent,
+                // #1071: the channel `Sync` progress envelope is the
+                // per-state-transition stream consumed by `useSyncTrigger`;
+                // it carries no page-invalidation set. The targeted reload
+                // is driven from the inner-sink `sync:complete` event (the
+                // dual-emit above clones the full SyncEvent, page ids and
+                // all), so the channel deliberately ignores this field.
+                changed_page_ids: _,
             } => {
                 let _ = self.channel.send(SyncProgressUpdate::Sync {
                     state: "complete".to_string(),
@@ -364,6 +380,7 @@ mod tests {
             remote_device_id: "DEV_B".into(),
             ops_received: 5,
             ops_sent: 2,
+            changed_page_ids: vec!["PAGE01".into(), "PAGE02".into()],
         };
         let json = serde_json::to_value(&event).expect("serialize Complete");
         assert_eq!(
@@ -372,6 +389,13 @@ mod tests {
         );
         assert_eq!(json["ops_received"], 5, "ops_received should be 5");
         assert_eq!(json["ops_sent"], 2, "ops_sent should be 2");
+        // #1071: the targeted-invalidation page-id set rides on Complete.
+        let pages = json["changed_page_ids"]
+            .as_array()
+            .expect("changed_page_ids should serialize as an array");
+        assert_eq!(pages.len(), 2, "both changed page ids should be present");
+        assert_eq!(pages[0], "PAGE01");
+        assert_eq!(pages[1], "PAGE02");
     }
 
     #[test]
@@ -433,6 +457,7 @@ mod tests {
             remote_device_id: "DEV_B".into(),
             ops_received: 5,
             ops_sent: 3,
+            changed_page_ids: Vec::new(),
         });
 
         let events = sink.events();
@@ -797,6 +822,7 @@ mod tests {
             remote_device_id: "DEV_PEER".into(),
             ops_received: 12,
             ops_sent: 4,
+            changed_page_ids: vec!["PAGE_X".into()],
         });
 
         // Inner sink sees the original Complete variant (semantics
