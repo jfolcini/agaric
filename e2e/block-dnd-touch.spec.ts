@@ -170,6 +170,8 @@ test.describe('Block drag-and-drop (touch / narrow viewport)', () => {
     // hasChildren, so it is intentionally NOT asserted for a leaf block).
     await expect(menu.getByRole('menuitem', { name: 'Indent' })).toBeVisible()
     await expect(menu.getByRole('menuitem', { name: 'Dedent' })).toBeVisible()
+    // #1109 — Move up/down now live behind the "Move & arrange" disclosure; expand it.
+    await menu.getByRole('menuitem', { name: 'Move & arrange' }).click()
     await expect(menu.getByRole('menuitem', { name: 'Move Up' })).toBeVisible()
     const moveDown = menu.getByRole('menuitem', { name: 'Move Down' })
     await expect(moveDown).toBeVisible()

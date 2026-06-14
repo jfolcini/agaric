@@ -82,6 +82,8 @@ test.describe('Touch gestures (iPhone viewport)', () => {
     await expect(menu).toBeVisible()
     await expect(menu.getByRole('menuitem', { name: 'Indent' })).toBeVisible()
     await expect(menu.getByRole('menuitem', { name: 'Dedent' })).toBeVisible()
+    // #1109 — Move up/down now live behind the "Move & arrange" disclosure; expand it.
+    await menu.getByRole('menuitem', { name: 'Move & arrange' }).click()
     await expect(menu.getByRole('menuitem', { name: 'Move Up' })).toBeVisible()
     await expect(menu.getByRole('menuitem', { name: 'Move Down' })).toBeVisible()
     await expect(menu.getByRole('menuitem', { name: 'Zoom in' })).toHaveCount(0)
