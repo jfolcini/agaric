@@ -2417,6 +2417,86 @@ impl LoroEngine {
         }
         None
     }
+
+    /// #1054 — detect an *update*-shaped blob whose causal base is NOT
+    /// reachable from this doc's current `oplog_vv()`, BEFORE importing it.
+    ///
+    /// ## Why this mirrors the live MAINT-228 gate
+    ///
+    /// [`crate::sync_protocol::loro_sync::apply_remote`] runs the MAINT-228
+    /// reachability gate on a `LoroSyncMessage::Update`'s declared `from_vv`
+    /// and short-circuits into the snapshot-fallback path on a miss — an
+    /// unreachable update would otherwise surface as an *opaque Loro decode
+    /// error* from [`Self::import_with_changed_blocks`]. The boot-replay path
+    /// has only `(space_id, bytes)` in the inbox row (no `from_vv`), so it
+    /// recovers the base from the blob itself: `partial_start_vv` is the blob's
+    /// own start frontier — the update's causal base — and is compared against
+    /// the local `oplog_vv()` with the SAME "every (peer,counter) entry must be
+    /// matched by a local entry whose counter is `>=`" rule as the live gate.
+    ///
+    /// Returns `Some(reason)` iff the blob is update-shaped AND its
+    /// `partial_start_vv` is unreachable. Callers must treat `Some` as "do not
+    /// import; drop the slot and let the next live sync session detect the gap
+    /// in `apply_remote` and route into snapshot catch-up".
+    ///
+    /// ## What is NOT flagged (safe to import unconditionally)
+    ///
+    /// * **Snapshot-shaped blobs** (`meta.mode.is_snapshot()`) — a snapshot is
+    ///   self-contained: it carries a full causal base and imports against any
+    ///   prior state, exactly as the live gate only checks `Update` (never
+    ///   `Snapshot`) variants. Returns `None`.
+    /// * A `0`-counter entry in `partial_start_vv` carries no ops and is
+    ///   trivially reachable (mirrors the live classifier's no-op skip).
+    ///
+    /// Decode failures are deliberately tolerated (`None` + a warn), identical
+    /// to [`Self::own_peer_fork_in_blob`]: the guard must never block an import
+    /// the real [`Self::import_with_changed_blocks`] would have accepted, and a
+    /// genuinely malformed blob will surface a proper error there.
+    pub fn unreachable_update_in_blob(&self, bytes: &[u8]) -> Option<String> {
+        let meta = match LoroDoc::decode_import_blob_meta(bytes, true) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "loro: unreachable_update_in_blob: blob meta decode failed; \
+                     skipping the reachability guard (import will surface the real error)"
+                );
+                return None;
+            }
+        };
+        // Snapshot-shaped blobs are self-contained and always safe to import
+        // (the live MAINT-228 gate only checks Update variants). Skip them.
+        if meta.mode.is_snapshot() {
+            return None;
+        }
+
+        // Update-shaped: the blob's `partial_start_vv` is its causal base.
+        // Reachable iff, for every (peer,counter) entry the base requires,
+        // our local oplog_vv holds the same peer at a counter `>=` it. A
+        // `0`-counter entry carries no ops and is trivially reachable.
+        let local_vv = self.doc.oplog_vv();
+        for (peer_id, &base_counter) in meta.partial_start_vv.iter() {
+            if base_counter == 0 {
+                continue;
+            }
+            match local_vv.get(peer_id) {
+                Some(&local_counter) if local_counter >= base_counter => continue,
+                Some(&local_counter) => {
+                    return Some(format!(
+                        "boot-replay update base unreachable (#1054): requires peer={peer_id} \
+                         counter>={base_counter}, local oplog_vv has counter={local_counter}"
+                    ));
+                }
+                None => {
+                    return Some(format!(
+                        "boot-replay update base unreachable (#1054): requires peer={peer_id} \
+                         counter>={base_counter}, local oplog_vv has no entry for that peer"
+                    ));
+                }
+            }
+        }
+        None
+    }
 }
 
 impl Default for LoroEngine {
@@ -2988,6 +3068,99 @@ mod tests {
         }
         assert!(
             a.own_peer_fork_in_blob(&flipped).is_none(),
+            "checksum-corrupt blob must not trip or panic the guard"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // #1054 — `unreachable_update_in_blob` reachability guard.
+    // -----------------------------------------------------------------
+
+    /// #1054 — an Update-shaped blob whose `partial_start_vv` (causal base)
+    /// is unreachable from this doc's `oplog_vv()` must be flagged BEFORE
+    /// import (it would otherwise surface as an opaque Loro decode error).
+    #[test]
+    fn unreachable_update_in_blob_flags_unreachable_update_1054() {
+        use super::LoroEngine;
+
+        // Producer: 2 ops → vv → 3rd op; export the delta since the
+        // post-2-ops vv (base = producer @ counter 2).
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        a.apply_create_block("A-1", "content", "one", None, 0)
+            .expect("a-1");
+        a.apply_create_block("A-2", "content", "two", None, 1)
+            .expect("a-2");
+        let base_vv = a.version_vector();
+        a.apply_create_block("A-3", "content", "three", None, 2)
+            .expect("a-3");
+        let update = a.export_update_since(&base_vv).expect("delta");
+
+        // A fresh doc has never seen DEV-A's ops → base unreachable.
+        let fresh = LoroEngine::with_peer_id("DEV-B").expect("fresh");
+        let reason = fresh
+            .unreachable_update_in_blob(&update)
+            .expect("unreachable update must be flagged");
+        assert!(
+            reason.contains("#1054") && reason.contains("unreachable"),
+            "reason must be self-diagnosing, got: {reason}"
+        );
+    }
+
+    /// #1054 — an Update whose base IS reachable must NOT be flagged
+    /// (the guard must not block a legitimately-applicable update), and a
+    /// snapshot blob is self-contained → never flagged, even on a fresh
+    /// doc.
+    #[test]
+    fn unreachable_update_in_blob_allows_reachable_update_and_snapshot_1054() {
+        use super::LoroEngine;
+
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        a.apply_create_block("A-1", "content", "one", None, 0)
+            .expect("a-1");
+        a.apply_create_block("A-2", "content", "two", None, 1)
+            .expect("a-2");
+        let base_vv = a.version_vector();
+        let snapshot = a.export_snapshot().expect("snap");
+        a.apply_create_block("A-3", "content", "three", None, 2)
+            .expect("a-3");
+        let update = a.export_update_since(&base_vv).expect("delta");
+
+        // A receiver that already holds the base (the first 2 ops): the
+        // update's base is reachable.
+        let mut b = LoroEngine::with_peer_id("DEV-B").expect("B");
+        b.import(&snapshot).expect("seed B");
+        assert!(
+            b.unreachable_update_in_blob(&update).is_none(),
+            "a reachable update must not be flagged"
+        );
+
+        // A snapshot is self-contained: never flagged, even on a fresh doc.
+        let fresh = LoroEngine::with_peer_id("DEV-C").expect("fresh");
+        assert!(
+            fresh.unreachable_update_in_blob(&snapshot).is_none(),
+            "a snapshot-shaped blob must always be safe to import"
+        );
+    }
+
+    /// #1054 robustness — like the #792 guard, malformed bytes must
+    /// degrade to `None` (let the real import surface the error), never
+    /// panic.
+    #[test]
+    fn unreachable_update_in_blob_tolerates_malformed_bytes_1054() {
+        use super::LoroEngine;
+
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        a.apply_create_block("A-1", "content", "from A", None, 0)
+            .expect("a-1");
+        assert!(a.unreachable_update_in_blob(b"not a loro blob").is_none());
+        assert!(a.unreachable_update_in_blob(&[]).is_none());
+        let real = a.export_snapshot().expect("snap");
+        let mut flipped = real.clone();
+        if let Some(last) = flipped.last_mut() {
+            *last ^= 0xFF;
+        }
+        assert!(
+            a.unreachable_update_in_blob(&flipped).is_none(),
             "checksum-corrupt blob must not trip or panic the guard"
         );
     }
