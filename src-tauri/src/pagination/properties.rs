@@ -110,6 +110,7 @@ pub async fn query_by_property(
     block_type: Option<&str>,
     value_text_in: &[String],
     value_date_range: Option<(&str, &str)>,
+    exclude_todo_states: &[String],
 ) -> Result<PageResponse<BlockRow>, AppError> {
     // L-23: reject conflicting value filters at the boundary so both
     // routing branches behave identically wrt the value-filter contract.
@@ -158,6 +159,22 @@ pub async fn query_by_property(
         None
     } else {
         Some(serde_json::to_string(value_text_in)?)
+    };
+
+    // #738 sub-2 — `exclude_todo_states` drops rows whose `todo_state`
+    // matches any of the supplied states (e.g. `['DONE']`), pushing the
+    // DuePanel's overdue DONE-exclusion into SQL so completed tasks no
+    // longer occupy the bounded fetch window and starve genuinely
+    // overdue TODOs. Bound as a JSON array via `json_each(?N)` (same
+    // shape as `value_text_in`); the `(?N IS NULL OR …)` short-circuit
+    // keeps the unfiltered plan byte-equivalent to the pre-#738 path.
+    // `b.todo_state IS NULL OR` is included so blocks carrying a date
+    // but no todo_state are retained — only the explicitly-excluded
+    // states are removed.
+    let exclude_todo_states_json: Option<String> = if exclude_todo_states.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(exclude_todo_states)?)
     };
 
     // PEND-35 Tier 3.4 — `value_date_range` is split into two binds so
@@ -230,6 +247,7 @@ pub async fn query_by_property(
                AND (?9 IS NULL OR b.{col} IN (SELECT value FROM json_each(?9))) \
                AND (?10 IS NULL OR b.{col} >= ?10) \
                AND (?11 IS NULL OR b.{col} < ?11) \
+               AND (?12 IS NULL OR b.todo_state IS NULL OR b.todo_state NOT IN (SELECT value FROM json_each(?12))) \
              ORDER BY b.id ASC \
              LIMIT ?4",
             cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS,
@@ -253,6 +271,7 @@ pub async fn query_by_property(
             .bind(value_text_in_json.as_deref()) // ?9
             .bind(value_date_from) // ?10
             .bind(value_date_to) // ?11
+            .bind(exclude_todo_states_json.as_deref()) // ?12
             .fetch_all(pool)
             .await?
     } else {
@@ -302,6 +321,7 @@ pub async fn query_by_property(
                AND (?11 IS NULL OR bp.value_text IN (SELECT value FROM json_each(?11))) \
                AND (?12 IS NULL OR bp.value_date >= ?12) \
                AND (?13 IS NULL OR bp.value_date < ?13) \
+               AND (?14 IS NULL OR b.todo_state IS NULL OR b.todo_state NOT IN (SELECT value FROM json_each(?14))) \
              ORDER BY b.id ASC \
              LIMIT ?6",
             cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS,
@@ -320,6 +340,7 @@ pub async fn query_by_property(
             .bind(value_text_in_json.as_deref()) // ?11
             .bind(value_date_from) // ?12
             .bind(value_date_to) // ?13
+            .bind(exclude_todo_states_json.as_deref()) // ?14
             .fetch_all(pool)
             .await?
     };

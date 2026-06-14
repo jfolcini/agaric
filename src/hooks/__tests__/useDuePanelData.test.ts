@@ -517,6 +517,34 @@ describe('useDuePanelData', () => {
     })
   })
 
+  // #738 sub-2 — the overdue query must push `excludeTodoStates: ['DONE']`
+  // and `contentNonEmpty: true` into SQL (mirroring DonePanel) so DONE /
+  // empty-content rows no longer occupy the bounded 200-row window and
+  // starve genuinely overdue TODOs.
+  it('pushes excludeTodoStates=[DONE] + contentNonEmpty into the overdue SQL query (#738)', async () => {
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+    renderHook(() => useDuePanelData({ date: todayStr, sourceFilter: null }))
+
+    await waitFor(() => {
+      const overdueCall = mockedQueryByProperty.mock.calls.find(
+        (args) =>
+          args[0]?.key === 'due_date' &&
+          Array.isArray(args[0]?.valueDateRange) &&
+          args[0]?.valueDateRange?.[0] === '0001-01-01',
+      )
+      expect(overdueCall).toBeDefined()
+      expect(overdueCall?.[0]).toEqual(
+        expect.objectContaining({
+          key: 'due_date',
+          excludeTodoStates: ['DONE'],
+          contentNonEmpty: true,
+        }),
+      )
+    })
+  })
+
   it('upcoming batchResolve includes content ULIDs (B-55)', async () => {
     const ULID_REF = '01ABCDEFGHJKLMNPQRSTUVWXYZ'
     const today = new Date()
@@ -814,6 +842,116 @@ describe('useDuePanelData', () => {
         expect(result.current.blocks).toHaveLength(2)
       })
       expect(result.current.blocks.map((b) => b.id).sort()).toEqual(['OTHER', 'OWN'])
+    })
+  })
+})
+
+// #738 sub-3 — the projected-agenda cache (UX-114, 30s TTL) must be
+// cleared ONLY when `invalidationKey` actually changes (a property event
+// fired), NOT on every effect re-run. Before the fix, the effect deps
+// included `date` + `currentSpaceId`, and any prior property event left
+// `invalidationKey > 0` forever, so the unconditional `clear()` wiped the
+// cache on every date navigation for the rest of the session.
+describe('projected cache invalidation (#738 sub-3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    clearProjectedCache()
+    mockInvalidationKey = 0
+    mockedUseBlockPropertyEvents.mockReturnValue({ invalidationKey: 0 })
+    mockedListBlocks.mockResolvedValue(emptyResponse)
+    mockedBatchResolve.mockResolvedValue([])
+    mockedQueryByProperty.mockResolvedValue(emptyResponse)
+    mockedListProjectedAgenda.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    // Freeze Date so the 30s TTL window stays open across the rerenders.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-04-15T12:00:00Z'))
+  })
+
+  afterEach(() => {
+    localStorage.clear()
+    vi.useRealTimers()
+  })
+
+  it('serves the cache on a plain date round-trip without refetching (unchanged invalidationKey)', async () => {
+    const projectedFor = (date: string) => ({
+      items: [
+        {
+          block: makeBlock({ id: `PROJ_${date}`, content: 'projected task' }),
+          projected_date: date,
+          source: 'due_date' as const,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    mockedListProjectedAgenda.mockImplementation(({ startDate }) =>
+      Promise.resolve(projectedFor(startDate as string)),
+    )
+
+    const { result, rerender } = renderHook(
+      ({ date }) => useDuePanelData({ date, sourceFilter: null }),
+      { initialProps: { date: '2026-04-15' } },
+    )
+
+    // Initial fetch for date A populates the cache.
+    await waitFor(() => {
+      expect(result.current.projectedEntries).toHaveLength(1)
+    })
+    expect(mockedListProjectedAgenda).toHaveBeenCalledTimes(1)
+
+    // Navigate to date B (cache miss → second fetch).
+    rerender({ date: '2026-04-16' })
+    await waitFor(() => {
+      expect(mockedListProjectedAgenda).toHaveBeenCalledTimes(2)
+    })
+
+    // Navigate BACK to date A. invalidationKey never changed, so the
+    // 30s-TTL cache must still hold A's entry → NO third fetch.
+    rerender({ date: '2026-04-15' })
+    await waitFor(() => {
+      expect(result.current.projectedEntries[0]?.block.id).toBe('PROJ_2026-04-15')
+    })
+    expect(mockedListProjectedAgenda).toHaveBeenCalledTimes(2)
+  })
+
+  it('clears the cache (refetches) when invalidationKey changes', async () => {
+    mockedListProjectedAgenda.mockResolvedValue({
+      items: [
+        {
+          block: makeBlock({ id: 'PROJ_A', content: 'projected task' }),
+          projected_date: '2026-04-15',
+          source: 'due_date',
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result, rerender } = renderHook(() =>
+      useDuePanelData({ date: '2026-04-15', sourceFilter: null }),
+    )
+
+    await waitFor(() => {
+      expect(result.current.projectedEntries).toHaveLength(1)
+    })
+    expect(mockedListProjectedAgenda).toHaveBeenCalledTimes(1)
+
+    // A property event fires: invalidationKey changes. The same date is
+    // re-rendered; the cache must be cleared and the entry refetched.
+    mockInvalidationKey = 1
+    mockedUseBlockPropertyEvents.mockReturnValue({ invalidationKey: 1 })
+    rerender()
+
+    await waitFor(() => {
+      expect(mockedListProjectedAgenda).toHaveBeenCalledTimes(2)
     })
   })
 })

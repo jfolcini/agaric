@@ -184,6 +184,14 @@ export const commands = {
 	 *  into SQL (half-open `[from, to)` range).
 	 */
 	valueDateRange: [string, string] | null,
+	/**
+	 *  #738 sub-2 — push `b.todo_state NOT IN (...)` into SQL so the
+	 *  DuePanel's overdue query can exclude completed (`DONE`) tasks at
+	 *  the database layer instead of post-filtering a capped page. NULL
+	 *  `todo_state` rows are retained (only the listed states are
+	 *  dropped). `None` / empty preserves the unfiltered behaviour.
+	 */
+	excludeTodoStates: string[] | null,
 } | null) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("query_by_property", { key, valueText, valueDate, operator, cursor, limit, scope, extraFilters })),
 	/**
 	 *  Tauri command: AND-intersect property + tag predicates in SQL.
@@ -1419,6 +1427,14 @@ export type ExtraQueryFilters = {
 	 *  into SQL (half-open `[from, to)` range).
 	 */
 	valueDateRange: [string, string] | null,
+	/**
+	 *  #738 sub-2 — push `b.todo_state NOT IN (...)` into SQL so the
+	 *  DuePanel's overdue query can exclude completed (`DONE`) tasks at
+	 *  the database layer instead of post-filtering a capped page. NULL
+	 *  `todo_state` rows are retained (only the listed states are
+	 *  dropped). `None` / empty preserves the unfiltered behaviour.
+	 */
+	excludeTodoStates: string[] | null,
 };
 
 /**

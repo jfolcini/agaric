@@ -49,7 +49,13 @@ export interface DuePanelProps {
   excludePageId?: string | undefined
 }
 
-const GROUP_ORDER = ['DOING', 'TODO', 'DONE', null] as const
+// #738 sub-1 — CANCELLED was absent here, so a CANCELLED block matched
+// no group (hidden from the list) yet still counted in `visibleBlocks`,
+// making the header say "3 due" while the list showed 2. Adding the
+// group keeps the header count and rendered rows in agreement and
+// matches the canonical agenda grouping (`agenda-sort.ts`: DOING > TODO
+// > DONE > CANCELLED > null) and the existing DONE precedent.
+const GROUP_ORDER = ['DOING', 'TODO', 'DONE', 'CANCELLED', null] as const
 
 /** Priority sort key: '1' → 1, '2' → 2, '3' → 3, null → 4 */
 function priorityKey(p: string | null): number {
@@ -146,6 +152,7 @@ export function DuePanel({
       DOING: t('duePanel.groupDoing'),
       TODO: t('duePanel.groupTodo'),
       DONE: t('duePanel.groupDone'),
+      CANCELLED: t('duePanel.groupCancelled'),
     }
     return GROUP_ORDER.map((state) => {
       const items = visibleBlocks

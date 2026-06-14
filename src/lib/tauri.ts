@@ -1330,13 +1330,15 @@ export async function queryByProperty(params: {
   blockType?: string | undefined
   valueTextIn?: string[] | undefined
   valueDateRange?: [string, string] | undefined
+  excludeTodoStates?: string[] | undefined
 }): Promise<PageResponse<BlockRow>> {
   const hasExtra =
     params.excludeParentId !== undefined ||
     params.contentNonEmpty !== undefined ||
     params.blockType !== undefined ||
     params.valueTextIn !== undefined ||
-    params.valueDateRange !== undefined
+    params.valueDateRange !== undefined ||
+    params.excludeTodoStates !== undefined
   const extraFilters = hasExtra
     ? {
         excludeParentId: params.excludeParentId ?? null,
@@ -1344,6 +1346,7 @@ export async function queryByProperty(params: {
         blockType: params.blockType ?? null,
         valueTextIn: params.valueTextIn ?? null,
         valueDateRange: params.valueDateRange ?? null,
+        excludeTodoStates: params.excludeTodoStates ?? null,
       }
     : null
   return unwrap(
