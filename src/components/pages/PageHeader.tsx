@@ -21,7 +21,7 @@ import { PageQuickActions } from '@/components/pages/PageQuickActions'
 import { PageTagSection } from '@/components/pages/PageTagSection'
 import { PageTitleEditor } from '@/components/pages/PageTitleEditor'
 import { Breadcrumb, type BreadcrumbCrumb } from '@/components/ui/breadcrumb'
-import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { useBlockTags } from '@/hooks/useBlockTags'
 import { useEmojiRecents } from '@/hooks/useEmojiRecents'
 import { usePageAliases } from '@/hooks/usePageAliases'
@@ -442,14 +442,15 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           {/* Title row */}
           <div className="flex items-center gap-2">
             {onBack && (
-              <Button
+              <IconButton
                 variant="ghost"
                 size="icon-sm"
                 onClick={onBack}
-                aria-label={t('pageHeader.goBack')}
+                ariaLabel={t('pageHeader.goBack')}
+                tooltip={t('pageHeader.goBack')}
               >
                 <ArrowLeft className="h-4 w-4" />
-              </Button>
+              </IconButton>
             )}
             <PageTitleEditor
               title={title}
@@ -464,14 +465,15 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
                 Opens the shared <EmojiPickerDialog>; the title contentEditable
                 blurs (saving any pending edit) before the picker opens, so the
                 handler splices at the last-known caret and persists itself. */}
-            <Button
+            <IconButton
               variant="ghost"
               size="icon-sm"
               onClick={() => setEmojiPickerOpen(true)}
-              aria-label={t('pageHeader.insertEmoji')}
+              ariaLabel={t('pageHeader.insertEmoji')}
+              tooltip={t('pageHeader.insertEmoji')}
             >
               <Smile className="h-4 w-4" />
-            </Button>
+            </IconButton>
             {/* PEND-68 Part A — unified star + dedicated delete affordance.
                 The kebab below KEEPS its "Delete page" item as a secondary
                 path; both routes call `requestDelete()` on the shared

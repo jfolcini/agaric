@@ -25,6 +25,7 @@ import { useShallow } from 'zustand/react/shallow'
 
 import { JournalCalendarDropdown } from '@/components/journal/JournalCalendarDropdown'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { Kbd } from '@/components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCalendarPageDates } from '@/hooks/useCalendarPageDates'
@@ -195,50 +196,46 @@ export function JournalControls(): React.ReactElement {
             opening the KeyboardShortcuts sheet. */}
         {mode !== 'agenda' && (
           <>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={navLabels.prev}
-                  onClick={goPrev}
-                  disabled={!canGoPrev}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {navLabels.prev}{' '}
-                <Kbd className="ml-1" aria-hidden="true">
-                  Alt+←
-                </Kbd>
-              </TooltipContent>
-            </Tooltip>
+            <IconButton
+              variant="ghost"
+              size="icon-xs"
+              ariaLabel={navLabels.prev}
+              tooltip={
+                <>
+                  {navLabels.prev}{' '}
+                  <Kbd className="ml-1" aria-hidden="true">
+                    Alt+←
+                  </Kbd>
+                </>
+              }
+              onClick={goPrev}
+              disabled={!canGoPrev}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </IconButton>
             <span
               className="sm:min-w-[100px] text-center text-sm font-medium"
               data-testid="date-display"
             >
               {getDateDisplay()}
             </span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={navLabels.next}
-                  onClick={goNext}
-                  disabled={!canGoNext}
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {navLabels.next}{' '}
-                <Kbd className="ml-1" aria-hidden="true">
-                  Alt+→
-                </Kbd>
-              </TooltipContent>
-            </Tooltip>
+            <IconButton
+              variant="ghost"
+              size="icon-xs"
+              ariaLabel={navLabels.next}
+              tooltip={
+                <>
+                  {navLabels.next}{' '}
+                  <Kbd className="ml-1" aria-hidden="true">
+                    Alt+→
+                  </Kbd>
+                </>
+              }
+              onClick={goNext}
+              disabled={!canGoNext}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </IconButton>
           </>
         )}
         {!todayButtonHidden && (
@@ -285,6 +282,10 @@ export function JournalControls(): React.ReactElement {
           </Button>
         )}
         <div className="relative">
+          {/* NOT migrated to IconButton (#1089): this is a positioned
+              popover trigger whose dropdown placement logic is timing-
+              sensitive to the trigger's DOM; the Tooltip wrapper regressed
+              the calendar-dropdown positioning test. Kept as a bare Button. */}
           <Button
             variant="ghost"
             size="icon-xs"

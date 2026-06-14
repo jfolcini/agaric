@@ -24,6 +24,7 @@ import { ViewHeader } from '@/components/layout/ViewHeader'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { CompactionCard } from '@/components/templates/CompactionCard'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { useHistoryDiffToggle } from '@/hooks/useHistoryDiffToggle'
 import { useHistoryKeyboardNav } from '@/hooks/useHistoryKeyboardNav'
 import { entryKey, useHistorySelection } from '@/hooks/useHistorySelection'
@@ -281,28 +282,30 @@ export function HistoryView(): React.ReactElement {
           aria-label={t('history.touchNavLabel')}
           data-testid="history-touch-nav"
         >
-          <Button
+          <IconButton
             type="button"
             variant="ghost"
             size="icon-sm"
-            aria-label={t('history.touchNavPrev')}
+            ariaLabel={t('history.touchNavPrev')}
+            tooltip={t('history.touchNavPrev')}
             disabled={focusedIndex <= 0}
             onClick={() => setFocusedIndex((idx) => (idx > 0 ? idx - 1 : 0))}
           >
             <ChevronUp className="h-4 w-4" />
-          </Button>
-          <Button
+          </IconButton>
+          <IconButton
             type="button"
             variant="ghost"
             size="icon-sm"
-            aria-label={t('history.touchNavNext')}
+            ariaLabel={t('history.touchNavNext')}
+            tooltip={t('history.touchNavNext')}
             disabled={focusedIndex >= entries.length - 1}
             onClick={() =>
               setFocusedIndex((idx) => (idx < entries.length - 1 ? idx + 1 : entries.length - 1))
             }
           >
             <ChevronDown className="h-4 w-4" />
-          </Button>
+          </IconButton>
         </div>
       )}
 
