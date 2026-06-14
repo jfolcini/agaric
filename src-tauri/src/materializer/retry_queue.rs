@@ -783,6 +783,22 @@ pub async fn sweep_once(
                     );
                     clear_entry(write_pool, &row.block_id, &row.task_kind).await?;
                 }
+                Ok(ApplyOpSweepDisposition::SupersededByEdit) => {
+                    // #850: a later edit_block on the same block already won
+                    // under strict LWW. Re-applying this stale edit now
+                    // (`apply_edit_block_via_loro` splices `to_text` and
+                    // projects the snapshot) would regress the newer content
+                    // in both engine and SQL. The newer edit makes this op's
+                    // effect moot — retire the row.
+                    tracing::info!(
+                        block_id = %row.block_id,
+                        task_kind = %row.task_kind,
+                        "retiring persisted ApplyOp row: a later edit_block \
+                         supersedes it — re-applying would regress newer \
+                         content (#850)"
+                    );
+                    clear_entry(write_pool, &row.block_id, &row.task_kind).await?;
+                }
                 Err(e) => {
                     tracing::warn!(
                         block_id = %row.block_id,
@@ -855,6 +871,11 @@ enum ApplyOpSweepDisposition {
     /// `INSERT OR IGNORE` with no tombstone/purge check, and the engine
     /// recreates the node).
     SupersededByPurge,
+    /// #850: a later `edit_block` op targets the same block; re-applying this
+    /// (stale) op out of order would regress the block's content.
+    /// `apply_edit_block_via_loro` splices `to_text` and projects the
+    /// snapshot, overwriting the newer content in both engine and SQL.
+    SupersededByEdit,
 }
 
 /// PEND-24 H1: re-enqueue a previously-persisted [`MaterializeTask::ApplyOp`]
@@ -862,11 +883,13 @@ enum ApplyOpSweepDisposition {
 ///
 /// Steps:
 ///   1. Load the `OpRecord` from `op_log` by `(device_id, seq)`.
-///   2. #621: gate on op-log supersession — if a later `purge_block` targets
-///      the same block, do NOT re-apply (out-of-order resurrection).
+///   2. #621/#850: gate on op-log supersession — if a later `purge_block`
+///      targets the same block, do NOT re-apply (out-of-order resurrection);
+///      and if the swept op is an `edit_block` with a later `edit_block` on
+///      the same block, do NOT re-apply (out-of-order content regression).
 ///   3. Wrap in `Arc` and submit via [`crate::materializer::Materializer::enqueue_foreground`].
 ///
-/// A missing op_log row and a purge-superseded op are reported as
+/// A missing op_log row and a purge-/edit-superseded op are reported as
 /// [`ApplyOpSweepDisposition`] values (permanent — the caller retires the
 /// row); transient failures (enqueue / probe errors) propagate as `Err` so
 /// the row survives for the next sweep.
@@ -899,6 +922,9 @@ async fn try_reenqueue_apply_op(
     // the strict "later than" comparison: a purge is never superseded by
     // itself.)
     if let Some(block_id) = record.block_id.as_deref() {
+        // #621/#850: runtime query() (not the macro) keeps this purge gate
+        // adjacent to the edit-gate twin below; both share the LWW predicate.
+        // dynamic-sql: parameterized EXISTS; all values bound, no interpolation.
         let superseded: i64 = sqlx::query_scalar(
             "SELECT EXISTS( \
                  SELECT 1 FROM op_log p \
@@ -918,6 +944,44 @@ async fn try_reenqueue_apply_op(
         .await?;
         if superseded != 0 {
             return Ok(ApplyOpSweepDisposition::SupersededByPurge);
+        }
+
+        // #850: the second half of #621's own fix suggestion (the purge half
+        // shipped first). When the op being swept is itself an `edit_block`,
+        // a LATER `edit_block` on the same block (same strict LWW order:
+        // `created_at, device_id, seq`) already won — its content is what the
+        // user observed. `apply_edit_block_via_loro` splices `to_text` and
+        // projects the snapshot, so re-applying this stale edit now would
+        // regress the newer content in both engine and SQL. Drop it. The
+        // strict "later than" comparison excludes the op from gating itself
+        // (an edit is never superseded by itself), exactly as the purge gate
+        // does. Scoped to `op_type = 'edit_block'` on BOTH sides: only a
+        // stale edit can be content-regressed by a newer edit, and only a
+        // newer edit (not e.g. a delete/restore — whose soft-delete interplay
+        // was deliberately deferred from #621) supersedes here.
+        if record.op_type == "edit_block" {
+            // #850: mirrors the purge gate above.
+            // dynamic-sql: parameterized EXISTS; all values bound, no interpolation.
+            let superseded_by_edit: i64 = sqlx::query_scalar(
+                "SELECT EXISTS( \
+                     SELECT 1 FROM op_log e \
+                     WHERE e.op_type = 'edit_block' \
+                       AND e.block_id = ?1 \
+                       AND (e.created_at > ?2 \
+                            OR (e.created_at = ?2 \
+                                AND (e.device_id > ?3 \
+                                     OR (e.device_id = ?3 AND e.seq > ?4)))) \
+                 )",
+            )
+            .bind(block_id)
+            .bind(record.created_at)
+            .bind(&record.device_id)
+            .bind(record.seq)
+            .fetch_one(read_pool)
+            .await?;
+            if superseded_by_edit != 0 {
+                return Ok(ApplyOpSweepDisposition::SupersededByEdit);
+            }
         }
     }
 
@@ -2109,6 +2173,136 @@ mod tests {
         assert_eq!(
             resurrected, 0,
             "sweeping must not re-insert a block a later purge destroyed (#621)"
+        );
+        mat.shutdown();
+    }
+
+    /// #850 (out-of-order-sweep half, mirroring the #621 purge gate): a stale
+    /// `edit_block` ApplyOp row that is superseded by a LATER `edit_block` on
+    /// the same block must be retired, not re-applied — re-applying would
+    /// regress the newer content (`apply_edit_block_via_loro` splices
+    /// `to_text` and projects the snapshot, overwriting SQL/engine state).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_retires_apply_op_superseded_by_later_edit_850() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // The block exists with the NEWER content (what the later edit
+        // produced and the user observed). The sweep must preserve it.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content) \
+             VALUES ('BLK850EDIT', 'content', 'NEW content')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let t0 = crate::db::now_ms() - 60_000;
+        // seq 1: the failed-then-persisted STALE edit_block.
+        insert_sweep_op(
+            &pool,
+            "dev-850e",
+            1,
+            "edit_block",
+            r#"{"block_id":"BLK850EDIT","to_text":"STALE content"}"#,
+            "BLK850EDIT",
+            t0,
+        )
+        .await;
+        // seq 2: the LATER edit_block that already won under strict LWW.
+        insert_sweep_op(
+            &pool,
+            "dev-850e",
+            2,
+            "edit_block",
+            r#"{"block_id":"BLK850EDIT","to_text":"NEW content"}"#,
+            "BLK850EDIT",
+            t0 + 1000,
+        )
+        .await;
+
+        let past = crate::db::now_ms() - 5 * 60_000;
+        let recent = crate::db::now_ms();
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "__APPLY_OP__",
+            "ApplyOp:1:dev-850e",
+            1_i64,
+            recent,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 0,
+            "an edit-superseded ApplyOp must not be re-enqueued (#850)"
+        );
+        let remaining = pending_count(&pool).await.unwrap();
+        assert_eq!(
+            remaining, 0,
+            "the superseded edit row must be retired (#850)"
+        );
+
+        // The newer content must be PRESERVED — the stale edit was dropped.
+        let content: String =
+            sqlx::query_scalar("SELECT content FROM blocks WHERE id = 'BLK850EDIT'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            content, "NEW content",
+            "sweeping a stale edit must not regress content a later edit produced (#850)"
+        );
+        mat.shutdown();
+    }
+
+    /// #850 (boundary): the LWW comparison is STRICT — an `edit_block` is
+    /// never superseded by ITSELF. With no later edit present, the lone stale
+    /// edit row is re-enqueued normally (not retired by the new gate).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_reenqueues_lone_edit_not_self_superseded_850() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+        insert_sweep_op(
+            &pool,
+            "dev-850s",
+            1,
+            "edit_block",
+            r#"{"block_id":"BLK850SOLO","to_text":"only edit"}"#,
+            "BLK850SOLO",
+            t0,
+        )
+        .await;
+
+        let past = crate::db::now_ms() - 5 * 60_000;
+        let recent = crate::db::now_ms();
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "__APPLY_OP__",
+            "ApplyOp:1:dev-850s",
+            1_i64,
+            recent,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 1,
+            "a lone edit (no later edit) must be re-enqueued — the gate is strict (#850)"
         );
         mat.shutdown();
     }
