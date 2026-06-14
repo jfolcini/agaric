@@ -313,9 +313,12 @@
 .dark {
   --background: oklch(0.129 0.042 264.695);
   --foreground: oklch(0.984 0.003 247.858);
-  --card: oklch(0.129 0.042 264.695);
+  /* #1097: lift card/popover one tonal step above --background so floating
+   * surfaces read as elevated on a dark ground (where shadow alone is weak).
+   * Sits between --background (L 0.129) and --muted (L 0.279). */
+  --card: oklch(0.18 0.042 264.695);
   --card-foreground: oklch(0.984 0.003 247.858);
-  --popover: oklch(0.129 0.042 264.695);
+  --popover: oklch(0.18 0.042 264.695);
   --popover-foreground: oklch(0.984 0.003 247.858);
   /* WCAG AA (#744): same --primary-foreground/--primary pair as light mode was
    * 4.09:1; L 0.55 → 0.50 lifts it to ≈5.07:1. */
@@ -556,9 +559,11 @@
 .theme-solarized-dark {
   --background: oklch(0.22 0.04 210); /* base03 */
   --foreground: oklch(0.68 0.01 195); /* base1 */
-  --card: oklch(0.22 0.04 210);
+  /* #1097: lift card/popover above --background (L 0.22) for elevation;
+   * sits below --muted (base02, L 0.3). */
+  --card: oklch(0.27 0.04 210);
   --card-foreground: oklch(0.68 0.01 195);
-  --popover: oklch(0.22 0.04 210);
+  --popover: oklch(0.27 0.04 210);
   --popover-foreground: oklch(0.68 0.01 195);
   --primary: oklch(0.61 0.13 235); /* blue */
   --primary-foreground: oklch(0.22 0.04 210);
@@ -675,9 +680,11 @@
 .theme-dracula {
   --background: oklch(0.28 0.03 275);
   --foreground: oklch(0.96 0.01 90);
-  --card: oklch(0.28 0.03 275);
+  /* #1097: lift card/popover above --background (L 0.28) for elevation;
+   * sits below --muted (current-line, L 0.37). */
+  --card: oklch(0.32 0.03 275);
   --card-foreground: oklch(0.96 0.01 90);
-  --popover: oklch(0.28 0.03 275);
+  --popover: oklch(0.32 0.03 275);
   --popover-foreground: oklch(0.96 0.01 90);
   --primary: oklch(0.72 0.18 295); /* purple */
   --primary-foreground: oklch(0.28 0.03 275);
@@ -780,9 +787,11 @@
 .theme-one-dark-pro {
   --background: oklch(0.29 0.02 260);
   --foreground: oklch(0.75 0.02 255);
-  --card: oklch(0.29 0.02 260);
+  /* #1097: lift card/popover above --background (L 0.29) for elevation;
+   * sits below --muted (selection, L 0.35). */
+  --card: oklch(0.33 0.02 260);
   --card-foreground: oklch(0.75 0.02 255);
-  --popover: oklch(0.29 0.02 260);
+  --popover: oklch(0.33 0.02 260);
   --popover-foreground: oklch(0.75 0.02 255);
   --primary: oklch(0.73 0.13 235); /* blue */
   --primary-foreground: oklch(0.29 0.02 260);

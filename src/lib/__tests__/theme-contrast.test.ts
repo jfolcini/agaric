@@ -100,6 +100,33 @@ const PAIRS: ReadonlyArray<{
     bg: [0.93, 0.02, 28.71],
     min: AA_NORMAL,
   },
+  // ── #1097: dark-family card/popover surfaces are tonally lifted above
+  //    --background; --card-foreground/--popover-foreground must still clear AA
+  //    on the brighter (lower-contrast) surface. ──────────────────────────
+  {
+    name: 'dark: --card-foreground on lifted --card',
+    fg: [0.984, 0.003, 247.858],
+    bg: [0.18, 0.042, 264.695],
+    min: AA_NORMAL,
+  },
+  {
+    name: 'Solarized Dark: --card-foreground on lifted --card',
+    fg: [0.68, 0.01, 195],
+    bg: [0.27, 0.04, 210],
+    min: AA_NORMAL,
+  },
+  {
+    name: 'Dracula: --card-foreground on lifted --card',
+    fg: [0.96, 0.01, 90],
+    bg: [0.32, 0.03, 275],
+    min: AA_NORMAL,
+  },
+  {
+    name: 'One Dark Pro: --card-foreground on lifted --card',
+    fg: [0.75, 0.02, 255],
+    bg: [0.33, 0.02, 260],
+    min: AA_NORMAL,
+  },
 ]
 
 describe('theme OKLCH contrast (WCAG AA)', () => {
