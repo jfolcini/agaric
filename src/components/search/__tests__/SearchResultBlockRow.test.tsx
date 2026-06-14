@@ -13,6 +13,7 @@
 
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
 
 import type { SearchBlockRow as SearchBlockRowT } from '@/lib/bindings'
 
@@ -61,6 +62,80 @@ describe('SearchResultBlockRow', () => {
     const marks = document.querySelectorAll('mark.search-result-mark')
     expect(marks).toHaveLength(1)
     expect(marks[0]?.textContent).toBe('alpha')
+  })
+
+  // #1096 — the offset-driven highlight (page-content rows carrying
+  // `match_offsets`) must use the SAME `.search-result-mark` treatment as
+  // the FTS `snippet` path (`SnippetHighlight`), so two search-result rows
+  // in one listbox read as one colour. It previously rendered a hand-coded
+  // `bg-yellow-200/70 dark:bg-yellow-500/30`, diverging from the accent
+  // snippet highlight.
+  it('renders offset highlights with the shared `.search-result-mark` class', () => {
+    render(
+      <ul>
+        <SearchResultBlockRow
+          row={makeRow({
+            content: 'hello alpha world',
+            match_offsets: [{ start: 6, end: 11 }],
+          })}
+          isFocused={false}
+          onClick={() => {}}
+        />
+      </ul>,
+    )
+    const marks = document.querySelectorAll('mark.search-result-mark')
+    expect(marks).toHaveLength(1)
+    expect(marks[0]?.textContent).toBe('alpha')
+    // The diverging yellow literal must be gone.
+    expect(document.querySelector('mark.bg-yellow-200\\/70')).toBeNull()
+  })
+
+  it('uses the same highlight class for offset rows and snippet rows', () => {
+    const { rerender } = render(
+      <ul>
+        <SearchResultBlockRow
+          row={makeRow({ snippet: 'hello <mark>alpha</mark> world' })}
+          isFocused={false}
+          onClick={() => {}}
+        />
+      </ul>,
+    )
+    const snippetMarkClass = document.querySelector('mark')?.className
+    expect(snippetMarkClass).toBe('search-result-mark')
+
+    rerender(
+      <ul>
+        <SearchResultBlockRow
+          row={makeRow({
+            snippet: null,
+            content: 'hello alpha world',
+            match_offsets: [{ start: 6, end: 11 }],
+          })}
+          isFocused={false}
+          onClick={() => {}}
+        />
+      </ul>,
+    )
+    const offsetMarkClass = document.querySelector('mark')?.className
+    expect(offsetMarkClass).toBe(snippetMarkClass)
+  })
+
+  it('has no axe violations when rendering offset highlights', async () => {
+    const { container } = render(
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role, jsx-a11y/no-noninteractive-element-to-interactive-role -- mirror the production listbox so the `role="option"` row has a valid parent for axe; a native <select>/<datalist> can't host the rich row content.
+      <ul role="listbox" aria-label="results">
+        <SearchResultBlockRow
+          row={makeRow({
+            content: 'hello alpha world',
+            match_offsets: [{ start: 6, end: 11 }],
+          })}
+          isFocused={false}
+          onClick={() => {}}
+          id="search-result-BLK1"
+        />
+      </ul>,
+    )
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   it('falls back to `row.content` when `snippet` is null', () => {
