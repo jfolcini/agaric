@@ -12,7 +12,7 @@ import type React from 'react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 
-export interface FilterPillProps {
+export interface FilterPillProps extends Omit<React.ComponentProps<typeof Badge>, 'children'> {
   /** The label to display in the pill. */
   label: string
   /** Called when the remove button is clicked or Delete/Backspace is pressed. */
@@ -34,6 +34,7 @@ export function FilterPill({
   className,
   title,
   groupAriaLabel,
+  ...rest
 }: FilterPillProps): React.ReactElement {
   // E6 — a long tag/path/property value must not stretch the pill to an
   // unbounded width (which wraps the chip to its own line and can push
@@ -46,6 +47,7 @@ export function FilterPill({
     <Badge
       data-slot="filter-pill"
       tone="secondary"
+      {...rest}
       className={cn('filter-pill min-w-0 max-w-[16rem] shrink-0 gap-1 text-xs', className)}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role is forwarded to a <Badge> wrapper grouping a label + remove button; <fieldset>/<optgroup> etc. would break the inline pill layout and carry form/list semantics
       role="group"

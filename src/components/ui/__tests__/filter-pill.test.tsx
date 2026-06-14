@@ -169,6 +169,49 @@ describe('FilterPill', () => {
     expect(cls).toContain('[@media(pointer:coarse)]:size-5')
   })
 
+  // -- Prop forwarding (#1091) ------------------------------------------------
+
+  it('forwards data-testid, extra aria-*, id, and handlers onto the group element', async () => {
+    const user = userEvent.setup()
+    const onPointerEnter = vi.fn()
+    const { container } = render(
+      <FilterPill
+        {...defaultProps}
+        data-testid="status-pill"
+        id="pill-1"
+        aria-describedby="hint"
+        onPointerEnter={onPointerEnter}
+      />,
+    )
+
+    const group = screen.getByRole('group', { name: 'status = TODO' })
+    expect(group).toHaveAttribute('data-testid', 'status-pill')
+    expect(group).toHaveAttribute('id', 'pill-1')
+    expect(group).toHaveAttribute('aria-describedby', 'hint')
+
+    await user.hover(group)
+    expect(onPointerEnter).toHaveBeenCalledTimes(1)
+
+    // a11y stays clean with forwarded attributes.
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  it('keeps managed convenience props when extra props are forwarded', () => {
+    const { container } = render(
+      <FilterPill {...defaultProps} data-testid="status-pill" className="extra-class" />,
+    )
+
+    const badge = container.querySelector('[data-slot="filter-pill"]') as HTMLElement
+    // Forwarded prop applied …
+    expect(badge).toHaveAttribute('data-testid', 'status-pill')
+    // … while managed role/aria-label/className-merge still hold.
+    expect(badge).toHaveAttribute('role', 'group')
+    expect(badge).toHaveAttribute('aria-label', 'status = TODO')
+    expect(badge.className).toContain('extra-class')
+    expect(badge.className).toContain('filter-pill')
+  })
+
   // -- a11y -------------------------------------------------------------------
 
   it('has no a11y violations', async () => {
