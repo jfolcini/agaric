@@ -10,9 +10,10 @@
 //!   with `#[serde(default)]` without ever requiring the frontend to
 //!   send them.
 //! - `SearchBlockRow.snippet` must serialise as JSON `null` when
-//!   absent and as a plain string when present — the frontend renderer
-//!   parses the literal `<mark>...</mark>` markers as React nodes and
-//!   never invokes `dangerouslySetInnerHTML`.
+//!   absent and as a plain string when present — the backend emits #828
+//!   PUA sentinel markers (U+E000 / U+E001); the web UI parses them as
+//!   React nodes (never `dangerouslySetInnerHTML`) and the MCP search
+//!   tool converts them back to `<mark>` / `</mark>`.
 
 use super::super::{MatchOffset, SearchBlockRow, SearchFilter};
 use crate::ulid::ActiveBlockId;
@@ -110,9 +111,9 @@ fn search_block_row_snippet_serialises_none_as_null_and_some_as_string() {
     // `snippet: None` must serialise as JSON `null` so the frontend's
     // TypeScript binding (`snippet: string | null`) deserialises
     // cleanly. `Some("foo")` must serialise as `"foo"` verbatim — the
-    // backend emits literal `<mark>...</mark>` markers and the
-    // frontend parses them as React nodes (no
-    // `dangerouslySetInnerHTML`).
+    // backend emits #828 PUA sentinel markers (U+E000 / U+E001), the web
+    // UI parses them as React nodes (no `dangerouslySetInnerHTML`), and
+    // the MCP search tool converts them back to `<mark>` / `</mark>`.
     let none_row = SearchBlockRow {
         id: ActiveBlockId::from_trusted_active("01HQBLKA00000000000000BKA1"),
         block_type: "content".into(),

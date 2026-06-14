@@ -893,6 +893,18 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
         Some(SEARCH_SNIPPET_CAP),
     )
     .await?;
+    // #828 — the backend snippet carries PUA sentinels (U+E000/U+E001); the
+    // web UI parses them directly, but the agent-facing MCP contract is
+    // <mark>/</mark>, so convert them back before serialising the result.
+    let mut resp = resp;
+    for row in &mut resp.items {
+        if let Some(s) = row.snippet.take() {
+            row.snippet = Some(
+                s.replace(crate::fts::SNIPPET_HL_OPEN, "<mark>")
+                    .replace(crate::fts::SNIPPET_HL_CLOSE, "</mark>"),
+            );
+        }
+    }
     to_tool_result(&resp)
 }
 

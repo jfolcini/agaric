@@ -280,10 +280,11 @@ pub struct MatchOffset {
 /// Mirrors `ActiveBlockRow` column-for-column so the wire format is a
 /// strict superset (every field in `ActiveBlockRow` is reproduced
 /// verbatim) and adds `snippet` — the FTS5 [`snippet`] window with
-/// literal `<mark>...</mark>` boundaries on every match span. The
-/// frontend parses the markers into React nodes (no
-/// `dangerouslySetInnerHTML`); see `pending/PEND-50-search-vscode-ux.md`
-/// for the renderer contract.
+/// #828 PUA sentinel boundaries (U+E000 open / U+E001 close) on every
+/// match span. The web UI parses the sentinels into React nodes (no
+/// `dangerouslySetInnerHTML`); the MCP search tool converts them back to
+/// `<mark>` / `</mark>` so the agent-facing contract is unchanged. See
+/// `pending/PEND-50-search-vscode-ux.md` for the renderer contract.
 ///
 /// PEND-55 appends `match_offsets: Vec<MatchOffset>` for the
 /// regex/whole-word offset rendering path; `#[serde(default)]` keeps
@@ -309,10 +310,11 @@ pub struct SearchBlockRow {
     pub page_id: Option<String>,
     /// FTS5 `snippet()` window for the matched block. `None` when the
     /// match has no content snippet (e.g. a page-title-only hit on a
-    /// block with `content IS NULL`). Contains literal `<mark>` /
-    /// `</mark>` boundaries around each match span — the frontend
-    /// parses these as React nodes and never invokes
-    /// `dangerouslySetInnerHTML`.
+    /// block with `content IS NULL`). Contains #828 PUA sentinel
+    /// boundaries (U+E000 open / U+E001 close) around each match span —
+    /// the web UI parses these as React nodes (never
+    /// `dangerouslySetInnerHTML`); the MCP search tool converts them back
+    /// to `<mark>` / `</mark>`.
     #[serde(default)]
     pub snippet: Option<String>,
     /// PEND-55 — UTF-16 code-unit match offsets for the toggle

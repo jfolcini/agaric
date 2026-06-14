@@ -19,6 +19,11 @@ import type { SearchBlockRow as SearchBlockRowT } from '@/lib/bindings'
 
 import { SearchResultBlockRow } from '../SearchResultBlockRow'
 
+// #828 — the backend `snippet()` highlight sentinels (PUA U+E000 open /
+// U+E001 close) that `SnippetHighlight` parses into `<mark>` nodes.
+const OPEN = '\u{E000}'
+const CLOSE = '\u{E001}'
+
 function makeRow(overrides: Partial<SearchBlockRowT> = {}): SearchBlockRowT {
   return {
     id: 'BLK1',
@@ -53,7 +58,7 @@ describe('SearchResultBlockRow', () => {
     render(
       <ul>
         <SearchResultBlockRow
-          row={makeRow({ snippet: 'hello <mark>alpha</mark> world' })}
+          row={makeRow({ snippet: `hello ${OPEN}alpha${CLOSE} world` })}
           isFocused={false}
           onClick={() => {}}
         />
@@ -94,7 +99,7 @@ describe('SearchResultBlockRow', () => {
     const { rerender } = render(
       <ul>
         <SearchResultBlockRow
-          row={makeRow({ snippet: 'hello <mark>alpha</mark> world' })}
+          row={makeRow({ snippet: `hello ${OPEN}alpha${CLOSE} world` })}
           isFocused={false}
           onClick={() => {}}
         />

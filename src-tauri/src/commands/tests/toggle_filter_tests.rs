@@ -151,7 +151,8 @@ async fn all_toggles_off_returns_snippet_and_no_offsets() {
             row.match_offsets.len(),
             row.id.as_str()
         );
-        // The PEND-50 snippet path may emit a `<mark>`-bracketed window.
+        // The PEND-50 snippet path may emit a #828 PUA-sentinel-bracketed
+        // window (U+E000 / U+E001).
         assert!(
             row.snippet.is_some(),
             "FTS path must populate snippet on matches"

@@ -31,6 +31,9 @@ pub use index::{
     update_fts_for_block_split_with_maps, update_fts_for_block_with_maps,
 };
 pub use search::search_fts;
+// #828 — re-export the snippet highlight sentinels so the MCP search tool
+// (mcp::tools_ro::handle_search) can convert them back to <mark>/</mark>.
+pub(crate) use search::{SNIPPET_HL_CLOSE, SNIPPET_HL_OPEN};
 pub use toggle_filter::{SearchToggles, search_with_toggles};
 
 // PEND-61 Phase 1 — partitioned FTS scan for the multi-mode palette.

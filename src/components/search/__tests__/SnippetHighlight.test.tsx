@@ -4,16 +4,18 @@
  * Covers the PEND-50 Phase 1 "Testing surface — frontend / Unit" cases
  * for `SearchResultBlockRow.tsx`'s snippet path:
  *
- *  - Plain text (no `<mark>` boundaries) → single text span.
- *  - One `<mark>` pair → text + mark + text.
- *  - Multiple `<mark>` pairs → alternating text/mark sequence.
+ *  - Plain text (no sentinel boundaries) → single text span.
+ *  - One sentinel pair (U+E000 / U+E001) → text + mark + text.
+ *  - Multiple sentinel pairs → alternating text/mark sequence.
  *  - Literal `<` and `&` in source → rendered as text content (React
  *    escapes), zero XSS surface.
+ *  - #828: a literal `<mark>` substring in content → rendered verbatim as
+ *    text, NEVER treated as a highlight boundary.
  *  - Hypothetical `<script>` payload → rendered as text, no script
  *    executes (this defends against a future regression where a
  *    `dangerouslySetInnerHTML` slip-up would otherwise execute the
  *    payload).
- *  - Defensive: unpaired `<mark>` open or close → no exception thrown.
+ *  - Defensive: unpaired OPEN or CLOSE sentinel → no exception thrown.
  *  - `null` / empty / undefined snippet → empty fragment list.
  */
 
@@ -22,6 +24,10 @@ import { describe, expect, it } from 'vitest'
 
 import { parseSnippet, SnippetHighlight } from '../SnippetHighlight'
 
+// #828 — the backend snippet sentinels the parser recognises.
+const OPEN = '\u{E000}'
+const CLOSE = '\u{E001}'
+
 describe('parseSnippet', () => {
   it('returns [] for null / undefined / empty', () => {
     expect(parseSnippet(null)).toEqual([])
@@ -29,13 +35,13 @@ describe('parseSnippet', () => {
     expect(parseSnippet('')).toEqual([])
   })
 
-  it('parses plain text without `<mark>` as a single fragment', () => {
+  it('parses plain text without sentinels as a single fragment', () => {
     const out = parseSnippet('plain content')
     expect(out).toEqual([{ text: 'plain content', marked: false }])
   })
 
-  it('parses a single `<mark>` pair into text / mark / text', () => {
-    const out = parseSnippet('hello <mark>world</mark> bye')
+  it('parses a single sentinel pair into text / mark / text', () => {
+    const out = parseSnippet(`hello ${OPEN}world${CLOSE} bye`)
     expect(out).toEqual([
       { text: 'hello ', marked: false },
       { text: 'world', marked: true },
@@ -43,8 +49,8 @@ describe('parseSnippet', () => {
     ])
   })
 
-  it('parses multiple `<mark>` pairs in order', () => {
-    const out = parseSnippet('<mark>a</mark>-<mark>b</mark>-<mark>c</mark>')
+  it('parses multiple sentinel pairs in order', () => {
+    const out = parseSnippet(`${OPEN}a${CLOSE}-${OPEN}b${CLOSE}-${OPEN}c${CLOSE}`)
     expect(out).toEqual([
       { text: 'a', marked: true },
       { text: '-', marked: false },
@@ -55,32 +61,43 @@ describe('parseSnippet', () => {
   })
 
   it('preserves literal `<` and `&` characters as text', () => {
-    const out = parseSnippet('a < b && c <mark>x</mark>')
+    const out = parseSnippet(`a < b && c ${OPEN}x${CLOSE}`)
     expect(out).toEqual([
       { text: 'a < b && c ', marked: false },
       { text: 'x', marked: true },
     ])
   })
 
-  it('renders a `<script>` payload defensively as literal text', () => {
-    const out = parseSnippet('<script>alert(1)</script>')
-    // No `<mark>` markers — the whole thing is one plain-text fragment.
-    expect(out).toEqual([{ text: '<script>alert(1)</script>', marked: false }])
-  })
-
-  it('handles an unpaired `<mark>` open by emitting the rest as text', () => {
-    // The dangling open tag itself is rendered as literal text — the
-    // parser never throws.
-    const out = parseSnippet('before <mark>unterminated end')
+  it('#828: a literal `<mark>` substring in content is plain text, never a boundary', () => {
+    // Only the real sentinel pair around `foo` is a highlight; the typed
+    // `<mark>` is rendered verbatim.
+    const out = parseSnippet(`use ${OPEN}foo${CLOSE} with <mark> literal`)
     expect(out).toEqual([
-      { text: 'before ', marked: false },
-      { text: '<mark>unterminated end', marked: false },
+      { text: 'use ', marked: false },
+      { text: 'foo', marked: true },
+      { text: ' with <mark> literal', marked: false },
     ])
   })
 
-  it('treats an unpaired `</mark>` close as plain text', () => {
-    const out = parseSnippet('orphan </mark> close')
-    expect(out).toEqual([{ text: 'orphan </mark> close', marked: false }])
+  it('renders a `<script>` payload defensively as literal text', () => {
+    const out = parseSnippet('<script>alert(1)</script>')
+    // No sentinel markers — the whole thing is one plain-text fragment.
+    expect(out).toEqual([{ text: '<script>alert(1)</script>', marked: false }])
+  })
+
+  it('handles an unpaired OPEN sentinel by emitting the rest as text', () => {
+    // The dangling open sentinel itself is rendered as literal text — the
+    // parser never throws.
+    const out = parseSnippet(`before ${OPEN}unterminated end`)
+    expect(out).toEqual([
+      { text: 'before ', marked: false },
+      { text: `${OPEN}unterminated end`, marked: false },
+    ])
+  })
+
+  it('treats an unpaired CLOSE sentinel as plain text', () => {
+    const out = parseSnippet(`orphan ${CLOSE} close`)
+    expect(out).toEqual([{ text: `orphan ${CLOSE} close`, marked: false }])
   })
 })
 
@@ -91,16 +108,16 @@ describe('SnippetHighlight', () => {
     expect(container.querySelector('mark')).toBeNull()
   })
 
-  it('renders a `<mark>` highlight with the `.search-result-mark` class', () => {
-    render(<SnippetHighlight snippet="hello <mark>world</mark> bye" />)
+  it('renders a sentinel highlight with the `.search-result-mark` class', () => {
+    render(<SnippetHighlight snippet={`hello ${OPEN}world${CLOSE} bye`} />)
     const marks = document.querySelectorAll('mark.search-result-mark')
     expect(marks).toHaveLength(1)
     expect(marks[0]?.textContent).toBe('world')
   })
 
-  it('renders multiple marks for multiple `<mark>` pairs', () => {
+  it('renders multiple marks for multiple sentinel pairs', () => {
     const { container } = render(
-      <SnippetHighlight snippet="<mark>a</mark>-<mark>b</mark>-<mark>c</mark>" />,
+      <SnippetHighlight snippet={`${OPEN}a${CLOSE}-${OPEN}b${CLOSE}-${OPEN}c${CLOSE}`} />,
     )
     const marks = container.querySelectorAll('mark.search-result-mark')
     expect(marks).toHaveLength(3)
@@ -108,7 +125,7 @@ describe('SnippetHighlight', () => {
   })
 
   it('escapes literal `<` and `&` via React (text content, not parsed HTML)', () => {
-    const { container } = render(<SnippetHighlight snippet="a < b && c <mark>x</mark>" />)
+    const { container } = render(<SnippetHighlight snippet={`a < b && c ${OPEN}x${CLOSE}`} />)
     expect(container.textContent).toBe('a < b && c x')
     // Verify the `<` did NOT spawn a stray element.
     expect(container.querySelectorAll('mark').length).toBe(1)
@@ -127,10 +144,12 @@ describe('SnippetHighlight', () => {
     expect(container.querySelector('mark')).toBeNull()
   })
 
-  it('does not throw on an unpaired `<mark>`', () => {
-    expect(() => render(<SnippetHighlight snippet="before <mark>unterminated end" />)).not.toThrow()
-    // The literal dangling tag appears as text — verifies no mark element
-    // was emitted.
-    expect(screen.queryByText(/<mark>unterminated end/)).toBeTruthy()
+  it('does not throw on an unpaired OPEN sentinel', () => {
+    expect(() =>
+      render(<SnippetHighlight snippet={`before ${OPEN}unterminated end`} />),
+    ).not.toThrow()
+    // The literal dangling sentinel appears as text — verifies no mark
+    // element was emitted.
+    expect(screen.queryByText(/unterminated end/)).toBeTruthy()
   })
 })
