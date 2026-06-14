@@ -534,7 +534,7 @@ pub async fn list_attachments_batch_inner(
         "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at \
          FROM attachments \
          WHERE block_id IN (SELECT value FROM json_each(?)) \
-         ORDER BY created_at",
+         ORDER BY created_at, id",
         ids_json
     )
     .fetch_all(pool)
