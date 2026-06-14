@@ -34,6 +34,10 @@ After this, every `git commit` runs the fast subset (lint + format + static chec
 
 **If you cannot install prek locally** (e.g., contributor without Rust toolchain): your patch is welcome anyway; CI will run the same gate on the PR. Open the PR and iterate based on CI feedback.
 
+### Editor setup (VS Code)
+
+Opening the repo in VS Code prompts you to install the workspace-recommended extensions (declared in the tracked [`.vscode/extensions.json`](.vscode/extensions.json)): the OXC extension (`oxc.oxc-vscode`) for oxlint/oxfmt, rust-analyzer (`rust-lang.rust-analyzer`), and Even Better TOML (`tamasfe.even-better-toml`) for taplo. These match the project's toolchain — installing the default Prettier/ESLint extensions instead will fight the repo's formatters. Per-user `.vscode/settings.json` stays local (gitignored).
+
 ## Development workflow
 
 ```bash
@@ -42,6 +46,17 @@ npm run test                 # Vitest (frontend)
 cd src-tauri && cargo nextest run   # Rust tests
 prek run --all-files         # Full local gate (mirror of CI's `validate` job)
 ```
+
+### Fixing a format check failure
+
+The pre-commit hooks split formatting by language. If a hook fails:
+
+```bash
+npm run format        # oxfmt — fixes JS/TS/JSON (the oxfmt hook also auto-fixes + re-stages)
+npm run format:toml   # taplo — fixes TOML (a `taplo fmt --check` failure is NOT fixed by `npm run format`)
+```
+
+`npm run format` (oxfmt) only touches JS/TS/JSON and never reformats TOML, so a `taplo fmt --check` hook failure must be fixed with `npm run format:toml`. The `format:toml` script needs the `taplo` binary on `PATH` (`cargo install taplo-cli --locked`).
 
 Every change must:
 

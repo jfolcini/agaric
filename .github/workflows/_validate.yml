@@ -357,6 +357,17 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: prek run --all-files
 
+      - name: Run npm-audit advisory scan (pre-push-staged hook)
+        # npm-audit is staged `pre-push` in prek.toml (#1087: it hits the
+        # registry advisory endpoint over the network, which doesn't belong on
+        # the commit path), so the `prek run --all-files` above — which runs
+        # only pre-commit-stage hooks — does NOT execute it. Invoke it
+        # explicitly with `--hook-stage pre-push` (mirrors the lychee step in
+        # the docs-lint job) so the advisory vulnerability scan stays in CI.
+        # `npm audit signatures` above is a different, warn-only provenance
+        # check and does not cover advisories.
+        run: prek run --all-files --hook-stage pre-push npm-audit
+
       - name: Migrations append-only backstop (#806)
         # `prek run --all-files` cannot enforce the append-only
         # invariant — the migrations-immutable hook's staged-index scan
