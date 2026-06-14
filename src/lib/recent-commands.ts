@@ -9,6 +9,11 @@
  * `activeSpaceKey()`). Space-scoped so different spaces never see each
  * other's MRU (FEAT-3 invariant: every list slice partitions by space).
  *
+ * #1105 — the slash menu reuses this exact MRU under its own namespace
+ * (`recent_slash`, see `RECENT_SLASH_PREFIX`) so palette command ids and
+ * slash command ids never collide. The prefix is the only knob; cap,
+ * shape, and move-to-top semantics are shared verbatim.
+ *
  * Brand-new lib in PEND-67, so there is no legacy global key to
  * migrate. The cap is enforced only against non-pinned entries; v1
  * has no pin concept (deferred to Phase 4).
@@ -18,6 +23,12 @@ import { activeSpaceKey } from './active-space'
 
 const SPACE_KEY_PREFIX = 'recent_commands'
 const MAX_RECENT_COMMANDS = 5
+
+/**
+ * #1105 — namespace for the slash menu's MRU. Distinct from the palette's
+ * default `recent_commands` prefix so the two id spaces never collide.
+ */
+export const RECENT_SLASH_PREFIX = 'recent_slash'
 
 export interface RecentCommand {
   /** Stable command id (e.g. `go-settings`, `search-everywhere`). */
@@ -32,14 +43,19 @@ function isRecentCommand(item: unknown): item is RecentCommand {
   return typeof r['id'] === 'string' && typeof r['runAt'] === 'string'
 }
 
-function storageKey(): string {
-  return `${SPACE_KEY_PREFIX}:${activeSpaceKey()}`
+function storageKey(prefix: string): string {
+  return `${prefix}:${activeSpaceKey()}`
 }
 
-/** Read the recent-commands list for the active space from localStorage. */
-export function getRecentCommands(): RecentCommand[] {
+/**
+ * Read the recent-commands list for the active space from localStorage.
+ *
+ * @param prefix Storage namespace. Defaults to the palette's
+ *   `recent_commands`; the slash menu passes `RECENT_SLASH_PREFIX` (#1105).
+ */
+export function getRecentCommands(prefix: string = SPACE_KEY_PREFIX): RecentCommand[] {
   try {
-    const raw = localStorage.getItem(storageKey())
+    const raw = localStorage.getItem(storageKey(prefix))
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
@@ -55,13 +71,16 @@ export function getRecentCommands(): RecentCommand[] {
  * - If the command already exists it is moved to position 0 with an
  *   updated `runAt` timestamp.
  * - The list is capped at `MAX_RECENT_COMMANDS` entries.
+ *
+ * @param prefix Storage namespace. Defaults to the palette's
+ *   `recent_commands`; the slash menu passes `RECENT_SLASH_PREFIX` (#1105).
  */
-export function addRecentCommand(commandId: string): void {
-  const commands = getRecentCommands().filter((c) => c.id !== commandId)
+export function addRecentCommand(commandId: string, prefix: string = SPACE_KEY_PREFIX): void {
+  const commands = getRecentCommands(prefix).filter((c) => c.id !== commandId)
   commands.unshift({ id: commandId, runAt: new Date().toISOString() })
   if (commands.length > MAX_RECENT_COMMANDS) commands.length = MAX_RECENT_COMMANDS
   try {
-    localStorage.setItem(storageKey(), JSON.stringify(commands))
+    localStorage.setItem(storageKey(prefix), JSON.stringify(commands))
   } catch {
     // localStorage may throw under quota (private-mode browsers, full
     // disk). The recents strip is a convenience; losing one write is

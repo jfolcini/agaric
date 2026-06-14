@@ -58,6 +58,32 @@ import { matchSorter } from 'match-sorter'
 import type { PickerItem } from '../editor/SuggestionList'
 import { matchesSearchFolded } from './fold-for-search'
 import { getPropertyKeys } from './property-keys-cache'
+import { getRecentCommands, RECENT_SLASH_PREFIX } from './recent-commands'
+
+/**
+ * #1105 — synthetic category for the "Recent" band the slash menu prepends
+ * on an empty query. Joins the top recent slash ids against `SLASH_COMMANDS`
+ * (skipping stale ids) and re-tags them with this category so
+ * `SuggestionList`'s category grouping renders them as their own band above
+ * the full list — mirroring the command palette's recents strip.
+ */
+export const RECENT_SLASH_CATEGORY = 'slashCommand.categories.recent'
+
+/**
+ * Build the "Recent" band for the empty-query slash menu: the most-recently
+ * run base commands, re-tagged with {@link RECENT_SLASH_CATEGORY}. Stale ids
+ * (in the MRU but no longer in `SLASH_COMMANDS`) are skipped, exactly as the
+ * palette does (`CommandsModeBody.tsx`). Only base `SLASH_COMMANDS` are
+ * surfaced — expanded sub-options (`turn-*`, `priority-*`, …) are reachable
+ * by typing, not via the recents band. #1105.
+ */
+function recentSlashCommands(): PickerItem[] {
+  const byId = new Map(SLASH_COMMANDS.map((c) => [c.id, c]))
+  return getRecentCommands(RECENT_SLASH_PREFIX)
+    .map((r) => byId.get(r.id))
+    .filter((c): c is PickerItem => c != null)
+    .map((c) => ({ ...c, category: RECENT_SLASH_CATEGORY }))
+}
 
 export const SLASH_COMMANDS: PickerItem[] = [
   {
@@ -591,7 +617,15 @@ export const TURN_INTO_COMMANDS: PickerItem[] = TURN_INTO_OPTIONS.map((o) => ({
 export function searchSlashCommands(query: string): PickerItem[] {
   const q = query.toLowerCase()
   const baseResults = q ? matchSorter(SLASH_COMMANDS, q, { keys: ['label'] }) : SLASH_COMMANDS
-  if (!q) return baseResults
+  if (!q) {
+    // #1105 — empty query: surface a "Recent" band (top-N most-recently-run
+    // commands) above the full catalog so the highest-frequency surface is
+    // progressively disclosed instead of dumping all commands flat. The full
+    // list still follows below, so everything stays reachable; typing a query
+    // bypasses the band entirely (the branch below).
+    const recents = recentSlashCommands()
+    return recents.length > 0 ? [...recents, ...baseResults] : baseResults
+  }
   const priorityResults = matchSorter(PRIORITY_COMMANDS, q, { keys: ['label'] })
   const headingResults = matchSorter(HEADING_COMMANDS, q, { keys: ['label'] })
   const repeatResults = matchSorter(REPEAT_COMMANDS, q, { keys: ['label'] })

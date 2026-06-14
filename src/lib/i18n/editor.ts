@@ -45,6 +45,9 @@ export const editor: Record<string, string> = {
   'slashCommand.categories.templates': 'Templates',
   'slashCommand.categories.queries': 'Queries',
   'slashCommand.categories.repeat': 'Repeat',
+  // #1105 — heading for the "Recent" band the slash menu prepends on an empty
+  // query (mirrors the command palette's recents strip).
+  'slashCommand.categories.recent': 'Recent',
   'editor.templatePlaceholder': 'Type /template to start from a template, or just start typing...',
   // UX-309: discoverability hint for the slash-command palette on empty blocks.
   // #217 D5: also surface the Shift+Enter soft-line-break shortcut, which has

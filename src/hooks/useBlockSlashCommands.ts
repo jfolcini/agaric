@@ -30,6 +30,7 @@
 import { useCallback, useMemo, useRef } from 'react'
 
 import type { PickerItem } from '../editor/SuggestionList'
+import { addRecentCommand, RECENT_SLASH_PREFIX } from '../lib/recent-commands'
 import type { SlashCommandContext, SlashHandlerTables } from './useBlockSlashCommands/types'
 import type {
   UseBlockSlashCommandsParams,
@@ -175,6 +176,12 @@ export function useBlockSlashCommands({
   const handleSlashCommand = useCallback(
     async (item: PickerItem) => {
       if (!focusedBlockId) return
+      // #1105 — record the run into the slash-menu MRU (own namespace, no
+      // collision with palette command ids) so empty `/` can surface a
+      // "Recent" band. Recorded before dispatch; the band join (in
+      // `searchSlashCommands`) skips ids absent from the base catalog, so
+      // recording expanded sub-option ids (e.g. `table:3:3`) is harmless.
+      addRecentCommand(item.id, RECENT_SLASH_PREFIX)
       const { tables: t_, ...rest } = inputsRef.current
       const ctx: SlashCommandContext = { blockId: focusedBlockId, ...rest }
       await dispatchSlashCommand(t_, ctx, item)
