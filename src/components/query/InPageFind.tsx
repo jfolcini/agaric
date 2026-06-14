@@ -387,7 +387,7 @@ export function InPageFind({
           // Single-row free-floating overlay anchored top-right.
           // `fixed` so it floats above whichever view is rendered
           // without each view having to participate.
-          'fixed top-2 right-2 md:right-4 z-50 flex items-center gap-1.5 bg-popover shadow-lg transition-transform duration-100',
+          'fixed top-2 right-2 md:right-4 z-50 flex items-center gap-1.5 bg-popover shadow-lg transition-transform duration-fast',
         variant === 'embedded' &&
           // Two intentional rows inside the search sheet — row 1 is
           // the input across the full width; row 2 is the controls.

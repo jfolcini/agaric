@@ -1200,7 +1200,7 @@ describe('SortableBlock task marker', () => {
     const contentWrapper = container.querySelector('.line-through')
     expect(contentWrapper).toBeInTheDocument()
     expect(contentWrapper?.className).toContain('transition-')
-    expect(contentWrapper?.className).toContain('duration-200')
+    expect(contentWrapper?.className).toContain('duration-moderate')
   })
 
   it('does not apply line-through when todoState is not DONE', () => {
@@ -1235,7 +1235,7 @@ describe('SortableBlock task marker', () => {
     expect(contentWrapper?.className).not.toContain('opacity-50')
     // Transition classes should still be present
     expect(contentWrapper?.className).toContain('transition-')
-    expect(contentWrapper?.className).toContain('duration-200')
+    expect(contentWrapper?.className).toContain('duration-moderate')
   })
 
   it('applies DONE strikethrough/opacity when block is not focused', () => {
@@ -1255,7 +1255,7 @@ describe('SortableBlock task marker', () => {
     expect(contentWrapper?.className).toContain('opacity-50')
     // Transition classes should be present
     expect(contentWrapper?.className).toContain('transition-')
-    expect(contentWrapper?.className).toContain('duration-200')
+    expect(contentWrapper?.className).toContain('duration-moderate')
   })
 })
 

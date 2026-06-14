@@ -61,7 +61,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     if (this.state.hasError) {
       const error = this.state.error
       return (
-        <div className="flex h-screen flex-col items-center justify-center gap-4 transition-opacity duration-200">
+        <div className="flex h-screen flex-col items-center justify-center gap-4 transition-opacity duration-moderate">
           <div
             className="flex flex-col items-center gap-3 rounded-lg border bg-destructive/5 p-8"
             role="alert"

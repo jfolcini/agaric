@@ -50,7 +50,7 @@ export function BootGate({ children }: { children: React.ReactNode }) {
     return (
       <output
         aria-live="polite"
-        className="flex h-screen flex-col items-center justify-center gap-3 transition-opacity duration-200"
+        className="flex h-screen flex-col items-center justify-center gap-3 transition-opacity duration-moderate"
       >
         <Spinner size="xl" className="text-muted-foreground" aria-hidden="true" />
         <p className="text-sm text-muted-foreground">{t('boot.starting')}</p>
@@ -60,7 +60,7 @@ export function BootGate({ children }: { children: React.ReactNode }) {
 
   if (state === 'error') {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-4 transition-opacity duration-200">
+      <div className="flex h-screen flex-col items-center justify-center gap-4 transition-opacity duration-moderate">
         <div
           className="flex flex-col items-center gap-3 rounded-lg border bg-destructive/5 p-8"
           role="alert"
