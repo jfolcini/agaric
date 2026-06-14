@@ -37,7 +37,24 @@ export interface WorkerDragMessage {
   phase: 'start' | 'drag' | 'end'
 }
 
-export type WorkerInboundMessage = WorkerStartMessage | WorkerStopMessage | WorkerDragMessage
+/**
+ * Resize the simulation's centering/bounds forces to new canvas dimensions
+ * WITHOUT re-seeding node positions (#747 item 1). Mirrors the main-thread
+ * `applyResizeForces` path: swaps `center`/`x`/`y` in place and nudges alpha
+ * so the existing layout re-settles around the new center instead of
+ * re-scattering from scratch (which is what re-posting `start` would do).
+ */
+export interface WorkerResizeMessage {
+  type: 'resize'
+  width: number
+  height: number
+}
+
+export type WorkerInboundMessage =
+  | WorkerStartMessage
+  | WorkerStopMessage
+  | WorkerDragMessage
+  | WorkerResizeMessage
 
 // ── Outbound messages (worker → main) ────────────────────────────────
 

@@ -59,7 +59,22 @@ function hastChildrenToReact(
   })
 }
 
+/**
+ * Max source length (in characters ≈ bytes for ASCII source) we will syntax-
+ * highlight (#747 item 3). `highlightAuto` scans the full string across every
+ * registered grammar (16 here) with backtracking regexes — O(grammars × length)
+ * work on the render thread — so a pasted multi-hundred-KB log stalls the
+ * render. 30 KB comfortably covers any hand-written code block (a 1000-line
+ * file of 80-col lines is ~80 KB but realistic blocks are far smaller) while
+ * cutting off the log-dump pathological case. Above the cap we render the code
+ * as plain text (no highlighting) — still fully readable, just uncolored.
+ */
+export const HIGHLIGHT_MAX_LENGTH = 30_000
+
 function renderHighlightedCode(code: string, language: string, key: string): React.ReactNode {
+  // Skip highlighting above the cap: fall back to plain text so a huge paste
+  // never blocks the render thread on regex scanning.
+  if (code.length > HIGHLIGHT_MAX_LENGTH) return code
   try {
     const tree = (language
       ? lowlight.highlight(language, code)

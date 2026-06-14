@@ -466,18 +466,49 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
   if (!worker) return { cleanup: noop, onResize: noop }
 
   let tickCount = 0
+
+  // #747 item 2: coalesce per-tick DOM application to one rAF per frame.
+  // The worker posts a full position array on EVERY tick (~300 ticks);
+  // applying each immediately is the main-thread hot spot at 1-2k nodes on
+  // mobile. We keep only the latest tick's positions and flush them once per
+  // animation frame, so multiple ticks landing within a frame collapse to a
+  // single `applyPositions` (DOM write). The `done` message still flushes
+  // synchronously so the final settled layout is always exact.
+  let pendingPositions: ReadonlyArray<NodePosition> | null = null
+  let rafId: number | null = null
+
+  const flushPending = (): void => {
+    rafId = null
+    if (failed || pendingPositions === null) return
+    updateNodePositions(ctx.nodeById, pendingPositions)
+    pendingPositions = null
+    resolveEdgeEndpoints(ctx.simEdges, ctx.nodeById)
+    ctx.applyPositions()
+  }
+
+  const scheduleFlush = (positions: ReadonlyArray<NodePosition>): void => {
+    pendingPositions = positions
+    if (rafId !== null) return
+    rafId = requestAnimationFrame(flushPending)
+  }
+
   const handleMessage = (evt: MessageEvent<WorkerOutboundMessage>): void => {
     if (failed) return
     const msg = evt.data
     if (msg.type === 'tick') {
       tickCount++
-      updateNodePositions(ctx.nodeById, msg.positions)
-      resolveEdgeEndpoints(ctx.simEdges, ctx.nodeById)
-      ctx.applyPositions()
+      scheduleFlush(msg.positions)
       if (ctx.prefersReducedMotion && tickCount >= REDUCED_MOTION_TICK_LIMIT) {
         worker.postMessage({ type: 'stop' })
       }
     } else if (msg.type === 'done') {
+      // Final settled positions: cancel any pending frame and apply now so the
+      // last frame never clobbers the converged layout.
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId)
+        rafId = null
+      }
+      pendingPositions = null
       updateNodePositions(ctx.nodeById, msg.positions)
       resolveEdgeEndpoints(ctx.simEdges, ctx.nodeById)
       ctx.applyPositions()
@@ -502,16 +533,22 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
   worker.addEventListener('messageerror', handleError)
 
   // Mutable dimensions so ResizeObserver re-posts can update them.
-  // We re-post `start` with new dimensions on resize (the worker
-  // protocol does not yet have a `resize` message — `start` is the
-  // documented fallback per UX-238's spec; this causes the simulation
-  // to rebuild with the new centering forces).
+  // On resize we now send a dedicated `resize` message (#747 item 1): the
+  // worker swaps its centering/bounds forces in place and nudges alpha,
+  // keeping the current node positions instead of re-seeding from scratch
+  // (which is what re-posting `start` did — a full re-scatter + re-converge
+  // on every sidebar toggle / orientation change). Mirrors the
+  // main-thread `applyResizeForces` path below.
   const current = { width: ctx.width, height: ctx.height }
   postWorkerStart(worker, { ...ctx, width: current.width, height: current.height })
   ctx.node.call(createWorkerDrag(worker))
 
   return {
     cleanup: () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId)
+        rafId = null
+      }
       worker.removeEventListener('message', handleMessage)
       worker.removeEventListener('error', handleError)
       worker.removeEventListener('messageerror', handleError)
@@ -522,7 +559,7 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
       if (width === current.width && height === current.height) return
       current.width = width
       current.height = height
-      postWorkerStart(worker, { ...ctx, width, height })
+      worker.postMessage({ type: 'resize', width, height })
     },
   }
 }

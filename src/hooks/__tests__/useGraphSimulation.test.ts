@@ -396,7 +396,7 @@ describe('useGraphSimulation', () => {
     expect((observedEl as Element).tagName.toLowerCase()).toBe('svg')
   })
 
-  it('re-posts start to the worker with new dimensions when resize fires (UX-238)', () => {
+  it('posts a resize message (not a second start) with new dimensions when resize fires (#747, UX-238)', () => {
     render(
       React.createElement(Harness, {
         nodes: makeNodes(),
@@ -419,11 +419,18 @@ describe('useGraphSimulation', () => {
 
     observer.fire()
 
+    // #747: resize must NOT re-post `start` (which strips positions and
+    // re-scatters the sim); it posts a `resize` that swaps the centering
+    // forces in place, preserving node positions.
     const finalStartCalls = worker.postMessageCalls.filter(
       (m: { type?: string }) => m.type === 'start',
     )
-    expect(finalStartCalls).toHaveLength(2)
-    expect(finalStartCalls[1]).toMatchObject({ type: 'start', width: 1200, height: 800 })
+    expect(finalStartCalls).toHaveLength(1)
+    const resizeCalls = worker.postMessageCalls.filter(
+      (m: { type?: string }) => m.type === 'resize',
+    )
+    expect(resizeCalls).toHaveLength(1)
+    expect(resizeCalls[0]).toMatchObject({ type: 'resize', width: 1200, height: 800 })
   })
 
   it('disconnects the ResizeObserver on unmount (UX-238)', () => {
