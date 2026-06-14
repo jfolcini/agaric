@@ -195,6 +195,55 @@ describe('TabBar', () => {
       expect(useTabsStore.getState().tabs[0]?.label).toBe('Page 1')
     })
 
+    // #1172 — the `closeTabOnFocus` binding is `Delete / Backspace`. The Delete
+    // alternative is covered above; this pins the Backspace alternative so the
+    // catalog's second key never silently rots.
+    it('pressing Backspace key on a tab closes it (closeTabOnFocus alternative)', () => {
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+      })
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+        ],
+        activeTabIndex: 0,
+      })
+
+      render(<TabBar />)
+
+      // Focus the second tab and press Backspace — closes the focused (not the
+      // active) tab.
+      const tabs = screen.getAllByRole('tab')
+      ;(tabs[1] as HTMLElement).focus()
+      fireEvent.keyDown(tabs[1] as HTMLElement, { key: 'Backspace' })
+
+      expect(useTabsStore.getState().tabs).toHaveLength(1)
+      expect(useTabsStore.getState().tabs[0]?.label).toBe('Page 1')
+    })
+
+    it('a non-close key on a focused tab does not close it (closeTabOnFocus gate)', () => {
+      useNavigationStore.setState({
+        currentView: 'page-editor',
+      })
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
+          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
+        ],
+        activeTabIndex: 0,
+      })
+
+      render(<TabBar />)
+
+      const tabs = screen.getAllByRole('tab')
+      ;(tabs[1] as HTMLElement).focus()
+      // A plain letter must NOT trigger the close path.
+      fireEvent.keyDown(tabs[1] as HTMLElement, { key: 'a' })
+
+      expect(useTabsStore.getState().tabs).toHaveLength(2)
+    })
+
     it('close icon on inactive tab does not switch to it', async () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
