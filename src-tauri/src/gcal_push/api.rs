@@ -70,6 +70,28 @@ pub type CalendarId = String;
 /// per-date in `gcal_agenda_event_map.gcal_event_id`.
 pub type EventId = String;
 
+/// One entry from the Google `calendarList` collection — just the two
+/// fields the calendar-adoption reconcile needs (#859): the opaque
+/// [`CalendarId`] and the human `summary` we match against
+/// [`DEDICATED_CALENDAR_NAME`].
+///
+/// #859 — used by the connector's first-connect flow to look up an
+/// already-created "Agaric Agenda" calendar before issuing a fresh
+/// `create_dedicated_calendar`.  A crash between a successful
+/// `create_dedicated_calendar` and the local `set_setting` that
+/// persists `calendar_id` leaves an orphan empty calendar; listing
+/// first and ADOPTING it makes the ensure-calendar path idempotent —
+/// the orphan is reused, not duplicated.
+///
+/// [`DEDICATED_CALENDAR_NAME`]: crate::gcal_push::connector::DEDICATED_CALENDAR_NAME
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalendarListEntry {
+    /// GCal-assigned opaque calendar ID.
+    pub id: CalendarId,
+    /// Human-readable calendar title (the `summary` field).
+    pub summary: String,
+}
+
 /// Full response body returned by the GCal API for event endpoints.
 /// The caller (FEAT-5e) reads `id` to populate
 /// `gcal_agenda_event_map`, and uses the decoded [`Event`] to diff
@@ -297,6 +319,72 @@ impl GcalApi {
             )
             .await?;
         Ok(body.id)
+    }
+
+    /// List the calendars on the connected account's calendar list
+    /// (`GET /users/me/calendarList`).
+    ///
+    /// #859 — used by the connector's first-connect flow as a
+    /// lookup-before-create reconcile, mirroring the #631 events fix.
+    /// `create_dedicated_calendar` → `set_setting(CalendarId, …)` is
+    /// non-atomic across the network boundary: a crash between the two
+    /// leaves an untracked "Agaric Agenda" calendar, and the next boot
+    /// would see an empty `calendar_id` and create a SECOND empty
+    /// calendar — the orphan would never be reused or cleaned up.
+    /// Instead the connector lists first and ADOPTS a calendar whose
+    /// `summary` matches [`DEDICATED_CALENDAR_NAME`].
+    ///
+    /// Only `id` + `summary` are decoded; every other `calendarList`
+    /// field (access role, colours, notification settings) is ignored.
+    /// A page token is deliberately NOT followed: the dedicated calendar
+    /// is created by Agaric and lives near the top of a freshly-connected
+    /// account's (typically tiny) list; the single page Google returns by
+    /// default is ample for finding it, and unbounded pagination here
+    /// would burn the first-connect cycle's lease budget. `summary` is
+    /// `#[serde(default)]`-tolerant so a calendar lacking the field
+    /// (never the dedicated one) decodes as `""` and simply never matches.
+    ///
+    /// [`DEDICATED_CALENDAR_NAME`]: crate::gcal_push::connector::DEDICATED_CALENDAR_NAME
+    ///
+    /// # Errors
+    /// Any [`GcalErrorKind`] variant — callers map per FEAT-5e's retry
+    /// taxonomy.  A 404 on this collection path is unexpected (the
+    /// `calendarList` endpoint always exists for an authenticated user);
+    /// we classify it as [`GcalErrorKind::CalendarGone`] for symmetry
+    /// with the other calendar-scoped calls.
+    #[tracing::instrument(skip(self, token), err)]
+    pub async fn list_calendars(&self, token: &Token) -> Result<Vec<CalendarListEntry>, AppError> {
+        #[derive(Deserialize)]
+        struct CalendarListResp {
+            #[serde(default)]
+            items: Vec<CalendarListItem>,
+        }
+
+        #[derive(Deserialize)]
+        struct CalendarListItem {
+            id: String,
+            #[serde(default)]
+            summary: String,
+        }
+
+        let url = format!("{}/users/me/calendarList", self.base_url);
+        let body: CalendarListResp = self
+            .send_json(
+                reqwest::Method::GET,
+                &url,
+                token,
+                None::<&()>,
+                NotFoundMeans::CalendarGone,
+            )
+            .await?;
+        Ok(body
+            .items
+            .into_iter()
+            .map(|item| CalendarListEntry {
+                id: item.id,
+                summary: item.summary,
+            })
+            .collect())
     }
 
     /// Delete the dedicated calendar.  Invoked when the user chooses
@@ -1236,6 +1324,105 @@ mod tests {
         let result = api
             .create_dedicated_calendar(&make_token(), "Agaric Agenda")
             .await;
+        assert!(
+            matches!(result, Err(AppError::Gcal(GcalErrorKind::Unauthorized))),
+            "401 must map to Unauthorized, got {result:?}"
+        );
+    }
+
+    // ── list_calendars (#859) ──────────────────────────────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_calendars_decodes_id_and_summary() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/calendarList"))
+            .and(header("authorization", "Bearer dummy-access-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "items": [
+                    {"id": "cal_work", "summary": "Work", "accessRole": "owner"},
+                    {"id": "cal_agenda", "summary": "Agaric Agenda"},
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        let cals = api
+            .list_calendars(&make_token())
+            .await
+            .expect("list must succeed");
+        assert_eq!(
+            cals,
+            vec![
+                CalendarListEntry {
+                    id: "cal_work".to_owned(),
+                    summary: "Work".to_owned(),
+                },
+                CalendarListEntry {
+                    id: "cal_agenda".to_owned(),
+                    summary: "Agaric Agenda".to_owned(),
+                },
+            ],
+            "only id + summary are decoded, extra fields ignored",
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_calendars_tolerates_missing_summary() {
+        // A calendar lacking `summary` (never the dedicated one) decodes
+        // as `""` rather than failing the whole list's JSON decode.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/calendarList"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "items": [{"id": "cal_no_summary"}]
+            })))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        let cals = api
+            .list_calendars(&make_token())
+            .await
+            .expect("list must succeed");
+        assert_eq!(
+            cals,
+            vec![CalendarListEntry {
+                id: "cal_no_summary".to_owned(),
+                summary: String::new(),
+            }],
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_calendars_empty_items_is_empty_vec() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/calendarList"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": [] })))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        let cals = api
+            .list_calendars(&make_token())
+            .await
+            .expect("list must succeed");
+        assert!(cals.is_empty(), "empty items must yield an empty Vec");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_calendars_maps_401_to_unauthorized() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/calendarList"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        let result = api.list_calendars(&make_token()).await;
         assert!(
             matches!(result, Err(AppError::Gcal(GcalErrorKind::Unauthorized))),
             "401 must map to Unauthorized, got {result:?}"
