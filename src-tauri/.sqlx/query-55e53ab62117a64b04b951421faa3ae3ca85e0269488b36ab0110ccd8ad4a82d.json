@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT MAX(device_min) as \"floor: i64\"\n           FROM (SELECT MIN(seq) AS device_min FROM op_log GROUP BY device_id)",
+  "describe": {
+    "columns": [
+      {
+        "name": "floor: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "55e53ab62117a64b04b951421faa3ae3ca85e0269488b36ab0110ccd8ad4a82d"
+}

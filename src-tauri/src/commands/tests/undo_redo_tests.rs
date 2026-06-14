@@ -536,6 +536,83 @@ async fn revert_ops_appends_op_log_entry() {
     );
 }
 
+/// #659 / #851: a batch revert is undo-producing — its reverse op rows must
+/// carry `op_log.is_undo = 1` (via `append_local_undo_op_in_tx`) so they are
+/// legitimate redo targets and the activity feed / point-in-time restore can
+/// distinguish them from ordinary forward edits. Pins the `is_undo` flag on
+/// the row `revert_ops_inner` appends.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn revert_ops_inner_marks_reverse_op_is_undo() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "before".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "after".into())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let ops_before = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let edit_op = ops_before
+        .iter()
+        .find(|o| o.op_type == "edit_block")
+        .unwrap();
+
+    let results = revert_ops_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![OpRef {
+            device_id: DEV.into(),
+            seq: edit_op.seq,
+        }],
+    )
+    .await
+    .unwrap();
+    assert_eq!(results.len(), 1, "should produce one result");
+
+    let new_ref = &results[0].new_op_ref;
+
+    // The forward edit op must NOT be flagged is_undo; the reverse op MUST be.
+    let forward_is_undo: i64 =
+        sqlx::query_scalar("SELECT is_undo FROM op_log WHERE device_id = ? AND seq = ?")
+            .bind(DEV)
+            .bind(edit_op.seq)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        forward_is_undo, 0,
+        "the original forward edit op must not be flagged is_undo"
+    );
+
+    let reverse_is_undo: i64 =
+        sqlx::query_scalar("SELECT is_undo FROM op_log WHERE device_id = ? AND seq = ?")
+            .bind(&new_ref.device_id)
+            .bind(new_ref.seq)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        reverse_is_undo, 1,
+        "#659: revert_ops_inner's reverse op row must carry is_undo = 1"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn revert_ops_rejects_non_reversible_op() {
     let (pool, _dir) = test_pool().await;
