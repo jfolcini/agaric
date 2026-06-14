@@ -1,11 +1,11 @@
 # Agaric vs Logseq: Feature Comparison
 
-> **Verified as of 2026-04-25.** Version-specific claims (Logseq release versions, Agaric APK size, feature counts) reflect the state of the repo and the upstream Logseq release notes on this date. Re-verify before relying on numeric claims older than ~3 months.
+> **Last updated 2026-04-25.** Version-specific numbers (Logseq release versions and star counts, Agaric/competitor binary sizes) reflect what was observed on that date and drift over time — treat them as illustrative, not current.
 >
 > Goal: Agaric is meant to fully replace Logseq for the author's personal workflow.
 > This document maps every Logseq capability to what we have, what's planned, and what's missing.
 >
-> **Methodology:** Logseq features verified against official documentation (docs.logseq.com, GitHub logseq/docs), release notes (0.10.15, Dec 2025), and community forums (discuss.logseq.com). Last updated 2026-04-08 (session 256).
+> **Methodology:** Logseq features verified against official documentation (docs.logseq.com, GitHub logseq/docs), release notes, and community forums (discuss.logseq.com).
 
 **Status key:**
 

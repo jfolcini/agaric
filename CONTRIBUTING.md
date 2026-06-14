@@ -90,7 +90,7 @@ If you forgot the sign-off on a commit:
 
 ## Maintainer workflow
 
-The maintainer uses a PLAN → BUILD → REVIEW → MERGE → COMMIT → LOG pipeline, often driving AI subagents in parallel (see `PROMPT.md` if you want the full recipe). You do not need to replicate this workflow to contribute — a plain PR with green `prek` is enough.
+The maintainer uses a PLAN → BUILD → REVIEW → MERGE → COMMIT → LOG pipeline, often driving AI subagents in parallel. You do not need to replicate this workflow to contribute — a plain PR with green `prek` is enough.
 
 ## Asking questions
 
