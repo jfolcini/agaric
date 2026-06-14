@@ -382,6 +382,10 @@ const OAUTH_CALLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 /// supplies a closure that drives a TcpStream into the listener.
 ///
 /// # Errors
+/// * [`AppError::Validation`] keyed `oauth.client_id_unset` — the
+///   binary was built without `AGARIC_GCAL_CLIENT_ID`, so the OAuth
+///   client still carries the build-time sentinel client id.  Raised
+///   by `begin_authorize` before the authorize URL is built.
 /// * [`AppError::Validation`] keyed `oauth.timeout` — the user didn't
 ///   complete the consent flow within [`OAUTH_CALLBACK_TIMEOUT`].
 /// * [`AppError::Validation`] keyed `oauth.invalid_state` — the

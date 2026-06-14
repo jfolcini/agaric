@@ -1279,14 +1279,18 @@ async fn resolve_page_titles(
         return Ok(HashMap::new());
     }
     let ids_json = serde_json::to_string(&ids).map_err(AppError::Json)?;
-    // Recursive-CTE filter on  is implicit here: we
-    // join on `blocks.id` directly and constrain on
-    // in the WHERE clause.  The entries list is already conflict-free
-    // upstream but the JOIN being explicit is the safer shape.
+    // Resolve each page id to its title by joining `blocks` against the
+    // JSON array of ids (passed as a single bound parameter and expanded
+    // via `json_each`). `b.deleted_at IS NULL` is required: a page that
+    // was soft-deleted after an agenda entry still references it must not
+    // leak its (stale) title into the digest breadcrumbs — without this
+    // filter, deleted pages' titles would resolve and surface in pushed
+    // GCal event descriptions.
     let rows = sqlx::query!(
         "SELECT b.id AS id, b.content AS content \
          FROM blocks b \
          JOIN json_each(?) j ON j.value = b.id \
+         WHERE b.deleted_at IS NULL \
          ",
         ids_json,
     )
@@ -1854,6 +1858,77 @@ mod tests {
             .iter()
             .filter(|r| r.method.as_str() == http_method && r.url.path().starts_with(path_prefix))
             .count()
+    }
+
+    // ── resolve_page_titles ────────────────────────────────────────
+
+    /// Build a minimal `ProjectedAgendaEntry` whose `page_id` points at
+    /// `page_id`. `resolve_page_titles` only reads `block.page_id`, so
+    /// the rest is defaulted.
+    fn entry_for_page(page_id: &str) -> ProjectedAgendaEntry {
+        use crate::pagination::BlockRow;
+        use crate::ulid::BlockId;
+        ProjectedAgendaEntry {
+            block: BlockRow {
+                id: BlockId::from_trusted("00000000000000000000000001"),
+                block_type: "content".to_owned(),
+                content: Some("a todo".to_owned()),
+                parent_id: None,
+                position: Some(1),
+                deleted_at: None,
+                todo_state: Some("TODO".to_owned()),
+                priority: None,
+                due_date: Some("2026-04-22".to_owned()),
+                scheduled_date: None,
+                page_id: Some(BlockId::from_trusted(page_id)),
+            },
+            projected_date: "2026-04-22".to_owned(),
+            source: "due_date".to_owned(),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn resolve_page_titles_excludes_soft_deleted_pages() {
+        // #692 item 2: a page that is soft-deleted after an agenda entry
+        // still references it must not leak its (stale) title into the
+        // digest breadcrumbs. `resolve_page_titles` filters
+        // `b.deleted_at IS NULL`, so the deleted page resolves to nothing.
+        let (pool, _dir) = test_pool().await;
+
+        let live_page = make_ulid(7_001);
+        let deleted_page = make_ulid(7_002);
+
+        // Two page blocks: one live, one we will soft-delete.
+        for (id, title) in [(&live_page, "Live Page"), (&deleted_page, "Deleted Page")] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, \
+                 deleted_at, page_id) \
+                 VALUES (?, 'page', ?, NULL, 0, NULL, ?)",
+            )
+            .bind(id)
+            .bind(title)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Soft-delete the second page (epoch-ms timestamp, matching
+        // migration 0080's INTEGER `deleted_at`).
+        soft_delete(&pool, &deleted_page).await;
+
+        let entries = vec![entry_for_page(&live_page), entry_for_page(&deleted_page)];
+        let titles = resolve_page_titles(&pool, &entries).await.unwrap();
+
+        assert_eq!(
+            titles.get(&live_page).map(String::as_str),
+            Some("Live Page"),
+            "live page title must resolve",
+        );
+        assert!(
+            !titles.contains_key(&deleted_page),
+            "soft-deleted page must NOT resolve into breadcrumbs, got {titles:?}",
+        );
     }
 
     // ── First-connect flow ─────────────────────────────────────────
