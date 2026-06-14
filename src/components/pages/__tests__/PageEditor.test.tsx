@@ -120,7 +120,7 @@ import { makeBlock } from '@/__tests__/fixtures'
 import { PageEditor } from '@/components/pages/PageEditor'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
-import { pageBlockRegistry } from '@/stores/page-blocks'
+import { getPageStore } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
@@ -145,7 +145,9 @@ beforeEach(() => {
     focusedBlockId: null,
     selectedBlockIds: [],
   })
-  pageBlockRegistry.clear()
+  // #1075 — page-store slots self-clean when their provider unmounts; RTL's
+  // afterEach `cleanup()` unmounts every rendered tree between tests, so no
+  // explicit registry reset is needed.
   useUndoStore.setState({ pages: new Map() })
   useNavigationStore.setState({
     currentView: 'page-editor',
@@ -260,7 +262,7 @@ describe('PageEditor', () => {
 
     // Pre-populate per-page store with a block (via registry after mount)
     act(() => {
-      pageBlockRegistry.get('PAGE_1')?.setState({
+      getPageStore('PAGE_1')?.setState({
         blocks: [makeBlock({ id: 'B1', content: 'First block', parent_id: 'PAGE_1', position: 0 })],
       })
     })
@@ -324,7 +326,7 @@ describe('PageEditor', () => {
     await waitFor(() => {
       expect(useBlockStore.getState().focusedBlockId).toBe('B1')
     })
-    const stored = pageBlockRegistry.get('PAGE_1')?.getState().blocks ?? []
+    const stored = getPageStore('PAGE_1')?.getState().blocks ?? []
     expect(stored.map((b) => b.id)).toEqual(['B1'])
   })
 
@@ -349,7 +351,7 @@ describe('PageEditor', () => {
     // The last entry in the flat tree is B3 (deeply nested).
     // "Add block" must create a top-level sibling of B1, NOT a sibling of B3.
     act(() => {
-      pageBlockRegistry.get('PAGE_1')?.setState({
+      getPageStore('PAGE_1')?.setState({
         blocks: [
           makeBlock({
             id: 'B1',

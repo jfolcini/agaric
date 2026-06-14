@@ -18,7 +18,7 @@ const {
   mockUpdateLastSynced,
   mockLoad,
   mockLoad2,
-  mockPageBlockRegistry,
+  mockForEachPageStore,
   mockPreload,
   mockReanchorUndo,
 } = vi.hoisted(() => {
@@ -54,6 +54,13 @@ const {
       rootParentId: 'PAGE_2',
     }),
   })
+  // #1075 — useSyncEvents now fans out via `forEachPageStore` (single source
+  // of truth) instead of iterating the registry Map directly.
+  const mockForEachPageStore = vi.fn(
+    (fn: (pageId: string, store: { getState: () => unknown }) => void) => {
+      for (const [pageId, store] of mockPageBlockRegistry) fn(pageId, store)
+    },
+  )
 
   const mockPreload = vi.fn().mockResolvedValue(undefined)
   const mockReanchorUndo = vi.fn()
@@ -68,7 +75,7 @@ const {
     mockUpdateLastSynced,
     mockLoad,
     mockLoad2,
-    mockPageBlockRegistry,
+    mockForEachPageStore,
     mockPreload,
     mockReanchorUndo,
   }
@@ -94,7 +101,7 @@ vi.mock('@/stores/sync', () => ({
 }))
 
 vi.mock('@/stores/page-blocks', () => ({
-  pageBlockRegistry: mockPageBlockRegistry,
+  forEachPageStore: mockForEachPageStore,
 }))
 
 // #731 — useSyncEvents re-anchors each reloaded page's undo state.

@@ -21,7 +21,8 @@ describe('module smoke tests', () => {
     expect(mod.createPageBlockStore).toBeDefined()
     expect(typeof mod.createPageBlockStore).toBe('function')
     expect(mod.PageBlockContext).toBeDefined()
-    expect(mod.pageBlockRegistry).toBeDefined()
+    expect(typeof mod.getPageStore).toBe('function')
+    expect(typeof mod.forEachPageStore).toBe('function')
   })
 
   it('navigation store exports are importable', async () => {

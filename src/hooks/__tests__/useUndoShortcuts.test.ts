@@ -8,46 +8,42 @@ import { useUndoShortcuts } from '../useUndoShortcuts'
 
 // -- Hoisted mocks (vi.mock factories are hoisted above module scope) ---------
 
-const {
-  toastMock,
-  mockUndo,
-  mockRedo,
-  mockLoad,
-  mockReplacePage,
-  mockGetBlock,
-  mockPageBlockRegistry,
-} = vi.hoisted(() => {
-  const mock: ReturnType<typeof vi.fn> & { error: ReturnType<typeof vi.fn> } = Object.assign(
-    vi.fn(),
-    { error: vi.fn() },
-  )
+const { toastMock, mockUndo, mockRedo, mockLoad, mockReplacePage, mockGetBlock, mockGetPageStore } =
+  vi.hoisted(() => {
+    const mock: ReturnType<typeof vi.fn> & { error: ReturnType<typeof vi.fn> } = Object.assign(
+      vi.fn(),
+      { error: vi.fn() },
+    )
 
-  const mockUndo = vi.fn().mockResolvedValue(null)
-  const mockRedo = vi.fn().mockResolvedValue(null)
-  const mockLoad = vi.fn().mockResolvedValue(undefined)
-  const mockReplacePage = vi.fn()
-  const mockGetBlock = vi.fn().mockResolvedValue(null)
+    const mockUndo = vi.fn().mockResolvedValue(null)
+    const mockRedo = vi.fn().mockResolvedValue(null)
+    const mockLoad = vi.fn().mockResolvedValue(undefined)
+    const mockReplacePage = vi.fn()
+    const mockGetBlock = vi.fn().mockResolvedValue(null)
 
-  const mockPageBlockStoreState = {
-    load: mockLoad,
-    rootParentId: 'PAGE_1',
-  }
-  const mockPageBlockRegistry = new Map()
-  mockPageBlockRegistry.set('PAGE_1', { getState: () => mockPageBlockStoreState })
-  mockPageBlockRegistry.set('PAGE_3', {
-    getState: () => ({ ...mockPageBlockStoreState, rootParentId: 'PAGE_3' }),
+    const mockPageBlockStoreState = {
+      load: mockLoad,
+      rootParentId: 'PAGE_1',
+    }
+    // #1075 — production code now resolves stores via `getPageStore(pageId)`
+    // (single source of truth) instead of reading the registry Map directly.
+    const mockPageBlockRegistry = new Map()
+    mockPageBlockRegistry.set('PAGE_1', { getState: () => mockPageBlockStoreState })
+    mockPageBlockRegistry.set('PAGE_3', {
+      getState: () => ({ ...mockPageBlockStoreState, rootParentId: 'PAGE_3' }),
+    })
+    const mockGetPageStore = vi.fn((pageId: string) => mockPageBlockRegistry.get(pageId))
+
+    return {
+      toastMock: mock,
+      mockUndo,
+      mockRedo,
+      mockLoad,
+      mockReplacePage,
+      mockGetBlock,
+      mockGetPageStore,
+    }
   })
-
-  return {
-    toastMock: mock,
-    mockUndo,
-    mockRedo,
-    mockLoad,
-    mockReplacePage,
-    mockGetBlock,
-    mockPageBlockRegistry,
-  }
-})
 
 // -- vi.mock calls (hoisted to top — only reference vi.hoisted vars) ----------
 
@@ -85,7 +81,7 @@ vi.mock('@/stores/undo', () => ({
 }))
 
 vi.mock('@/stores/page-blocks', () => ({
-  pageBlockRegistry: mockPageBlockRegistry,
+  getPageStore: mockGetPageStore,
 }))
 
 vi.mock('../../lib/tauri', () => ({

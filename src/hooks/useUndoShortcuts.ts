@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
 import { useNavigationStore } from '@/stores/navigation'
-import { pageBlockRegistry } from '@/stores/page-blocks'
+import { getPageStore } from '@/stores/page-blocks'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
@@ -23,7 +23,7 @@ import { useResolveStore } from '../stores/resolve'
 
 /** Reload block store and refresh page title in nav store after undo/redo. */
 async function refreshAfterUndoRedo(pageId: string): Promise<void> {
-  await pageBlockRegistry.get(pageId)?.getState().load()
+  await getPageStore(pageId)?.getState().load()
   try {
     const pageBlock = await getBlock(pageId)
     if (pageBlock?.content) {
