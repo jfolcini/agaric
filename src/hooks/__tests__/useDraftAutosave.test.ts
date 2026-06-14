@@ -302,6 +302,63 @@ describe('useDraftAutosave', () => {
     })
   })
 
+  // Issue #1065 — discard-on-unmount race. When a component unmounts
+  // coinciding with blur while `isFocused` is still true, Effect B's cleanup
+  // runs with `blockIdRef.current` still equal to the block id and (pre-fix)
+  // fired `flushDraft` while `discardDraft`'s `deleteDraft` was still in
+  // flight — racing it and potentially materializing the ~2s-stale debounced
+  // draft as the LATEST `edit_block` op. A synchronous `discardedRef` marker
+  // closes the window regardless of unmount-vs-blur ordering.
+  describe('issue #1065 — discard suppresses the unmount flush', () => {
+    it('discardDraft then unmount WITHOUT re-rendering to null does NOT flush', () => {
+      const { result, unmount } = renderHook(() =>
+        useDraftAutosave('BLOCK_1', 'stale debounced content'),
+      )
+
+      // Discard (as the blur handler does) but stay focused — no re-render to
+      // null. blockIdRef still holds BLOCK_1, so the null-ref guard alone
+      // would NOT prevent the flush; the discarded marker must.
+      act(() => {
+        result.current.discardDraft()
+      })
+
+      // Unmount directly. Effect B's cleanup fires with blockIdRef === BLOCK_1.
+      unmount()
+
+      expect(mockedFlushDraft).not.toHaveBeenCalled()
+      // discardDraft still issued exactly one deleteDraft for the block.
+      expect(mockedDeleteDraft).toHaveBeenCalledTimes(1)
+      expect(mockedDeleteDraft).toHaveBeenCalledWith('BLOCK_1')
+    })
+
+    it('a fresh save after discard re-enables flushing (marker cleared)', () => {
+      const { result, rerender, unmount } = renderHook(
+        ({ blockId, content }) => useDraftAutosave(blockId, content),
+        { initialProps: { blockId: 'BLOCK_1', content: 'first content' } },
+      )
+
+      // Discard marks BLOCK_1 as discarded.
+      act(() => {
+        result.current.discardDraft()
+      })
+
+      // The user keeps typing in the SAME block; a genuine fresh save fires
+      // after the debounce, which must clear the discarded marker.
+      rerender({ blockId: 'BLOCK_1', content: 'real edit after discard' })
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(1)
+      expect(mockedSaveDraft).toHaveBeenCalledWith('BLOCK_1', 'real edit after discard')
+
+      // Now an unmount-while-focused must flush again — the marker was cleared
+      // by the fresh save, so the real post-discard edit is not suppressed.
+      unmount()
+      expect(mockedFlushDraft).toHaveBeenCalledTimes(1)
+      expect(mockedFlushDraft).toHaveBeenCalledWith('BLOCK_1')
+    })
+  })
+
   // Issue #106 — autosave is the canonical `pool_busy` consumer: a
   // user typing fast can collide with another in-flight write that
   // holds every connection in the sqlx pool. `retryOnPoolBusy` should
