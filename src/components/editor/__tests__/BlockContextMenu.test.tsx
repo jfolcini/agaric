@@ -505,6 +505,15 @@ describe('BlockContextMenu', () => {
       expect(within(menu).getByText(t('contextMenu.duplicate'))).toBeInTheDocument()
     })
 
+    // #976 (item 13) — the Duplicate row surfaces its new keyboard binding hint.
+    it('shows the Ctrl+Shift+J binding hint on the Duplicate row', async () => {
+      const user = userEvent.setup()
+      renderMenu({ onDuplicate: vi.fn() })
+      await expandMoveArrange(user)
+      const menu = screen.getByRole('menu')
+      expect(within(menu).getByText('Ctrl+Shift+J')).toBeInTheDocument()
+    })
+
     it('omits Duplicate when onDuplicate is not wired', async () => {
       const user = userEvent.setup()
       renderMenu()
@@ -1310,6 +1319,17 @@ describe('BlockContextMenu', () => {
       expect(toggle.textContent).not.toContain('▸')
       expect(toggle.textContent).not.toContain('▾')
       // svgs present: the leading Replace icon + the trailing chevron.
+      expect(toggle.querySelectorAll('svg').length).toBeGreaterThanOrEqual(2)
+    })
+
+    // #976 (item 14) — the Turn into toggle surfaces its new keyboard binding
+    // hint alongside the disclosure chevron.
+    it('shows the Ctrl+Shift+T binding hint on the Turn into toggle', () => {
+      renderMenu({ onTurnInto: vi.fn() })
+      const toggle = screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.turnInto')) })
+      expect(within(toggle).getByText('Ctrl+Shift+T')).toBeInTheDocument()
+      // The chevron still renders next to the hint (toggle keeps its disclosure
+      // affordance — both svgs present).
       expect(toggle.querySelectorAll('svg').length).toBeGreaterThanOrEqual(2)
     })
 

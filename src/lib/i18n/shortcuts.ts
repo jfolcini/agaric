@@ -63,6 +63,8 @@ export const shortcuts: Record<string, string> = {
   'keyboard.openDatePicker': 'Open date picker',
   'keyboard.openPropertiesDrawer': 'Open block properties drawer',
   'keyboard.openBlockHistory': 'Open block history',
+  'keyboard.duplicateBlock': 'Duplicate block (and its subtree)',
+  'keyboard.turnIntoBlock': 'Turn block into another type',
   'keyboard.heading1': 'Heading 1',
   'keyboard.heading2': 'Heading 2',
   'keyboard.heading3': 'Heading 3',

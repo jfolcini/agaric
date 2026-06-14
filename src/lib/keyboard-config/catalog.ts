@@ -159,6 +159,30 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.openBlockHistory',
   },
   {
+    // #976 (item 13) — duplicate the focused block + its subtree from the
+    // keyboard, mirroring the context-menu "Duplicate" row and the
+    // `/duplicate` slash command. The natural `Ctrl + Shift + D` mnemonic is
+    // already taken by `openDatePicker`, and `Ctrl + D` is the browser
+    // bookmark chord, so this uses the free `Ctrl + Shift + J` chord (no other
+    // catalog entry binds it — verified against the full key list).
+    id: 'duplicateBlock',
+    keys: 'Ctrl + Shift + J',
+    category: 'keyboard.category.blockTree',
+    description: 'keyboard.duplicateBlock',
+  },
+  {
+    // #976 (item 14) — open the "Turn into" type picker for the focused block
+    // from the keyboard, surfacing the same conversion family the context-menu
+    // submenu and the `/turn` slash command expose. `Alt + T` (goToToday) and
+    // `Ctrl + T` (openInNewTab) are taken; this uses the free `Ctrl + Shift + T`
+    // chord (verified against the full key list — only `Ctrl + Shift + Tab`,
+    // a distinct key, exists).
+    id: 'turnIntoBlock',
+    keys: 'Ctrl + Shift + T',
+    category: 'keyboard.category.blockTree',
+    description: 'keyboard.turnIntoBlock',
+  },
+  {
     id: 'heading1',
     keys: 'Ctrl + 1',
     category: 'keyboard.category.blockTree',

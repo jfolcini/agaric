@@ -20,6 +20,7 @@ import {
   CheckCircle2,
   CircleDot,
   Code,
+  CopyPlus,
   Grid3x3,
   Hash,
   Heading1,
@@ -269,6 +270,16 @@ export const SLASH_COMMANDS: PickerItem[] = [
     label: 'TURN INTO — Convert this block to another type',
     category: 'slashCommand.categories.structure',
     icon: Replace,
+  },
+  {
+    // #976 (item 13) — duplicate the current block + its subtree, inserting the
+    // copy right after the original at the same depth. Fires the SAME
+    // serialize-subtree → pasteBlocks path the context-menu "Duplicate" row and
+    // the `Ctrl+Shift+J` keyboard binding use (no separate clone op).
+    id: 'duplicate',
+    label: 'DUPLICATE — Copy this block and its subtree',
+    category: 'slashCommand.categories.structure',
+    icon: CopyPlus,
   },
   {
     id: 'query',

@@ -97,6 +97,10 @@ export interface BlockKeyboardCallbacks {
   onShowProperties?: (() => void) | undefined
   /** Show block history drawer (#976 item 15 — default Ctrl/Cmd+Shift+Y). */
   onShowHistory?: (() => void) | undefined
+  /** Duplicate the current block + its subtree (#976 item 13 — default Ctrl/Cmd+Shift+J). */
+  onDuplicate?: (() => void) | undefined
+  /** Open the "Turn into" type picker for the current block (#976 item 14 — default Ctrl/Cmd+Shift+T). */
+  onTurnInto?: (() => void) | undefined
   /**
    * Whether the current block is the sole remaining block on the page.
    * When true, Backspace on an empty block is a no-op (prevents empty page).
@@ -281,6 +285,26 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       cb.onShowHistory?.()
     },
   },
+  // #976 (item 13) — configurable shortcut (default Ctrl/Cmd+Shift+J): duplicate
+  // the focused block + its subtree, reusing the same `handleDuplicate` the
+  // context-menu "Duplicate" row and the `/duplicate` slash command fire.
+  {
+    match: (e) => matchesShortcutBinding(e, 'duplicateBlock'),
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onDuplicate?.()
+    },
+  },
+  // #976 (item 14) — configurable shortcut (default Ctrl/Cmd+Shift+T): open the
+  // "Turn into" type picker for the focused block (surfaces the same conversion
+  // family as the context-menu submenu and the `/turn` slash command).
+  {
+    match: (e) => matchesShortcutBinding(e, 'turnIntoBlock'),
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onTurnInto?.()
+    },
+  },
   // Enter (without Shift): save + create new sibling. Suppressed inside
   // code blocks and tables (#725) so ProseMirror's own Enter handling runs
   // instead (newlineInCode inserts a newline in the fence; splitBlock adds a
@@ -383,6 +407,9 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
     onToggleTodo,
     onToggleCollapse,
     onShowProperties,
+    onShowHistory,
+    onDuplicate,
+    onTurnInto,
     isLastBlock,
   } = callbacks
 
@@ -439,6 +466,9 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         onToggleTodo,
         onToggleCollapse,
         onShowProperties,
+        onShowHistory,
+        onDuplicate,
+        onTurnInto,
         isLastBlock,
       })
       // When our handler called preventDefault(), also stop propagation so
@@ -464,6 +494,9 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       onToggleTodo,
       onToggleCollapse,
       onShowProperties,
+      onShowHistory,
+      onDuplicate,
+      onTurnInto,
       isLastBlock,
     ],
   )

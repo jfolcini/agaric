@@ -12,7 +12,10 @@
 import { useMemo } from 'react'
 
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
+import { serializeBlockSubtree } from '@/lib/block-clipboard'
 import { convertBlockContent, turnIdToBlockType } from '@/lib/block-type-convert'
+import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 
 import type { PickerItem } from '../../editor/SuggestionList'
 import { applyContentEdit, readCurrentContent } from './helpers'
@@ -48,6 +51,29 @@ async function handleTurnInto(ctx: SlashCommandContext, item: PickerItem): Promi
 
 async function handleDivider(ctx: SlashCommandContext): Promise<void> {
   await applyContentEdit(ctx, '---', 'slash.dividerFailed')
+}
+
+/**
+ * #976 (item 13) — `/duplicate` clones the current block + its subtree and
+ * inserts the copy right after the original at the same depth. Reuses the exact
+ * `serializeBlockSubtree` → `pasteBlocks` path the context-menu "Duplicate" row
+ * (`BlockTree.handleDuplicate`) and the `duplicateBlock` keyboard binding fire —
+ * no separate clone op.
+ */
+async function handleDuplicate(ctx: SlashCommandContext): Promise<void> {
+  const state = ctx.pageStore.getState()
+  if (!state.blocksById.has(ctx.blockId)) return
+  const markdown = serializeBlockSubtree(state.blocks, [ctx.blockId])
+  if (markdown.length === 0) return
+  try {
+    await state.pasteBlocks(ctx.blockId, markdown)
+  } catch (err) {
+    logger.error('useSlashCommandStructural', 'Failed to duplicate block', {
+      blockId: ctx.blockId,
+      error: err,
+    })
+    notify.error(ctx.t('blockTree.duplicateFailed'))
+  }
 }
 
 function handleTable(ctx: SlashCommandContext, id: string, withHeaderRow = true): void {
@@ -106,6 +132,8 @@ export function useSlashCommandStructural(): SlashHandlerTables {
         // directly is a no-op (the user picks a concrete target type).
         turn: () => {},
         'numbered-list': (ctx) => handleNumberedList(ctx),
+        // #976 (item 13) — duplicate the current block + its subtree.
+        duplicate: (ctx) => handleDuplicate(ctx),
         divider: (ctx) => handleDivider(ctx),
         table: (ctx) => handleTable(ctx, 'table'),
         // #215 — header-row opt-out.

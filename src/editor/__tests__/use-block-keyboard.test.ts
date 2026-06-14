@@ -71,6 +71,8 @@ function makeCallbacks(overrides: { isLastBlock?: () => boolean } = {}): BlockKe
     onToggleCollapse: track('onToggleCollapse'),
     onShowProperties: track('onShowProperties'),
     onShowHistory: track('onShowHistory'),
+    onDuplicate: track('onDuplicate'),
+    onTurnInto: track('onTurnInto'),
     isLastBlock: overrides.isLastBlock,
     _calls,
     _deleteBlockArgs,
@@ -548,6 +550,69 @@ describe('handleBlockKeyDown', () => {
       expect(event.preventDefault).toHaveBeenCalledOnce()
       expect(cbs._calls['onShowProperties']).toBe(1)
       expect(cbs._calls['onShowHistory']).toBeUndefined()
+    })
+  })
+
+  // #976 (items 13/14) — the duplicate / turn-into block bindings. Like the
+  // drawers above, these go through the real `matchesShortcutBinding` catalog
+  // path, so the test pins the default key → action mapping end to end.
+  describe('Duplicate / Turn into (#976 items 13/14)', () => {
+    it('Ctrl+Shift+J calls onDuplicate (duplicateBlock)', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('J', { ctrlKey: true, shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls['onDuplicate']).toBe(1)
+      expect(cbs._calls['onTurnInto']).toBeUndefined()
+    })
+
+    it('Meta+Shift+J calls onDuplicate (macOS)', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('J', { metaKey: true, shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(cbs._calls['onDuplicate']).toBe(1)
+    })
+
+    it('plain J does NOT duplicate', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      handleBlockKeyDown(makeEvent('J'), editor, cbs)
+      expect(cbs._calls['onDuplicate']).toBeUndefined()
+    })
+
+    it('Ctrl+Shift+T calls onTurnInto (turnIntoBlock)', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('T', { ctrlKey: true, shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls['onTurnInto']).toBe(1)
+      expect(cbs._calls['onDuplicate']).toBeUndefined()
+    })
+
+    it('Meta+Shift+T calls onTurnInto (macOS)', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('T', { metaKey: true, shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(cbs._calls['onTurnInto']).toBe(1)
+    })
+
+    it('plain T does NOT open turn-into', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      handleBlockKeyDown(makeEvent('T'), editor, cbs)
+      expect(cbs._calls['onTurnInto']).toBeUndefined()
     })
   })
 

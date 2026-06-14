@@ -545,6 +545,77 @@ describe('keyboard-config', () => {
     })
   })
 
+  // #976 (items 13/14) — the duplicate-block + turn-into-block bindings, the
+  // final two sub-items of the editor audit. Pin their default chords and prove
+  // those chords are collision-free against every other catalog entry.
+  describe('Duplicate / Turn into block shortcuts (#976 items 13/14)', () => {
+    it('duplicateBlock defaults to Ctrl + Shift + J under blockTree', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'duplicateBlock')
+      expect(s).toBeDefined()
+      expect(s?.keys).toBe('Ctrl + Shift + J')
+      expect(s?.category).toBe('keyboard.category.blockTree')
+      expect(s?.description).toBe('keyboard.duplicateBlock')
+    })
+
+    it('turnIntoBlock defaults to Ctrl + Shift + T under blockTree', () => {
+      const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'turnIntoBlock')
+      expect(s).toBeDefined()
+      expect(s?.keys).toBe('Ctrl + Shift + T')
+      expect(s?.category).toBe('keyboard.category.blockTree')
+      expect(s?.description).toBe('keyboard.turnIntoBlock')
+    })
+
+    it('the two new chords collide with NO other default binding', () => {
+      // A chord collides only when ANOTHER entry lists the exact same `keys`
+      // string. Each new chord must be unique across the whole catalog (the
+      // issue calls a collision a real bug). `Ctrl + Shift + D` (openDatePicker),
+      // `Alt + T` (goToToday) and `Ctrl + T` (openInNewTab) are the near-misses
+      // the issue warned about — assert we did not land on any of them.
+      for (const id of ['duplicateBlock', 'turnIntoBlock']) {
+        const chord = DEFAULT_SHORTCUTS.find((s) => s.id === id)?.keys
+        const owners = DEFAULT_SHORTCUTS.filter((s) => s.keys === chord).map((s) => s.id)
+        expect(owners, `"${chord}" is bound by ${owners.join(', ')}`).toEqual([id])
+      }
+    })
+
+    it('findConflicts reports no conflict for the default catalog (incl. the new bindings)', () => {
+      expect(findConflicts()).toHaveLength(0)
+    })
+
+    it('matchesShortcutBinding resolves the new chords (both Ctrl and Meta)', () => {
+      for (const opts of [
+        { ctrlKey: true, shiftKey: true },
+        { metaKey: true, shiftKey: true },
+      ]) {
+        expect(
+          matchesShortcutBinding(
+            { altKey: false, ctrlKey: false, metaKey: false, ...opts, key: 'j' },
+            'duplicateBlock',
+          ),
+        ).toBe(true)
+        expect(
+          matchesShortcutBinding(
+            { altKey: false, ctrlKey: false, metaKey: false, ...opts, key: 't' },
+            'turnIntoBlock',
+          ),
+        ).toBe(true)
+      }
+      // The taken near-miss chords must NOT resolve to the new ids.
+      expect(
+        matchesShortcutBinding(
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: true, key: 'd' },
+          'duplicateBlock',
+        ),
+      ).toBe(false)
+      expect(
+        matchesShortcutBinding(
+          { altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, key: 't' },
+          'turnIntoBlock',
+        ),
+      ).toBe(false)
+    })
+  })
+
   describe('Tab bar shortcut — closeTabOnFocus (F-38 Phase 4)', () => {
     it('closeTabOnFocus exists in DEFAULT_SHORTCUTS', () => {
       const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'closeTabOnFocus')

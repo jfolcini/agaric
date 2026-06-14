@@ -511,6 +511,10 @@ export function BlockContextMenu({
             label: t('contextMenu.duplicate'),
             icon: <CopyPlus className="h-3.5 w-3.5" />,
             action: () => handleAction(onDuplicate),
+            // #976 (item 13) — surface the new `duplicateBlock` catalog binding,
+            // matching the adjacent move/merge hints. `Ctrl+Shift+D` is taken by
+            // the date picker, so duplicate lives on `Ctrl+Shift+J`.
+            shortcut: 'Ctrl+Shift+J',
             indented: true,
             disclosureId: moveArrangeGroupId,
             disclosureLabel: t('contextMenu.moveArrange'),
@@ -693,6 +697,10 @@ export function BlockContextMenu({
           action: () => setTurnIntoOpen((o) => !o),
           expanded: turnIntoOpen,
           disclosureId: turnIntoGroupId,
+          // #976 (item 14) — surface the `turnIntoBlock` catalog binding next to
+          // the disclosure chevron. `Alt+T`/`Ctrl+T` are taken, so it lives on
+          // `Ctrl+Shift+T`.
+          shortcut: 'Ctrl+Shift+T',
         },
         ...(turnIntoOpen
           ? TURN_INTO_OPTIONS.map((opt): MenuItem => {
@@ -771,22 +779,29 @@ export function BlockContextMenu({
 
   let itemIndex = 0
 
-  // #999/#1002/#1003 — the trailing slot of an interactive row holds exactly
-  // one of: a disclosure chevron (the "Turn into" toggle), or a keyboard
-  // shortcut hint (suppressed on coarse pointers, which have no keyboard).
+  // #999/#1002/#1003 — the trailing slot of an interactive row holds a keyboard
+  // shortcut hint (suppressed on coarse pointers, which have no keyboard) and/or
+  // a disclosure chevron (the "Turn into" toggle). #976 (item 14) — a disclosure
+  // toggle that ALSO has a binding (Turn into → Ctrl+Shift+T) shows the hint
+  // before the chevron, so the keyboard shortcut stays discoverable.
   const renderTrailing = (item: MenuItem): React.ReactNode => {
-    if (item.expanded !== undefined) {
-      const Chevron = item.expanded ? ChevronDown : ChevronRight
-      return <Chevron aria-hidden="true" className="h-3.5 w-3.5 text-muted-foreground" />
-    }
-    if (!item.shortcut) return null
-    return (
+    const hint = item.shortcut ? (
       // #1002 — no magic `ml-4`; the label's `flex-1` + button `gap-2`
       // right-align the hint. `tabular-nums` keeps glyph widths even.
       <span className="text-xs text-muted-foreground tabular-nums [@media(pointer:coarse)]:hidden">
         {item.shortcut}
       </span>
-    )
+    ) : null
+    if (item.expanded !== undefined) {
+      const Chevron = item.expanded ? ChevronDown : ChevronRight
+      return (
+        <>
+          {hint}
+          <Chevron aria-hidden="true" className="h-3.5 w-3.5 text-muted-foreground" />
+        </>
+      )
+    }
+    return hint
   }
 
   // Render a single menu row. #999 — `indented` rows get `pl-7` (28px) applied
