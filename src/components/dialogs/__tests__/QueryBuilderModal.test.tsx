@@ -252,6 +252,50 @@ describe('QueryBuilderModal', () => {
     expect(preview).toHaveTextContent('type:tag expr:work table:true')
   })
 
+  // #1093 — the "show as table" toggle is the shared Radix Checkbox primitive,
+  // not a raw native input. It must expose role=checkbox with an accessible
+  // name, and toggle its bound state via onCheckedChange on click.
+  describe('show-as-table checkbox (Checkbox primitive)', () => {
+    it('exposes role=checkbox with an accessible name', () => {
+      render(<QueryBuilderModal {...defaultProps} />)
+
+      const checkbox = screen.getByRole('checkbox', { name: /show results as table/i })
+      expect(checkbox).toBeInTheDocument()
+      expect(checkbox).toHaveAttribute('aria-checked', 'false')
+    })
+
+    it('toggles its bound state when clicked (onCheckedChange wiring)', async () => {
+      const user = userEvent.setup()
+      render(<QueryBuilderModal {...defaultProps} />)
+
+      const checkbox = screen.getByRole('checkbox', { name: /show results as table/i })
+      expect(checkbox).toHaveAttribute('aria-checked', 'false')
+
+      // Drive a tag query so the preview reflects the flag.
+      await user.type(screen.getByLabelText(/tag prefix/i), 'work')
+
+      await user.click(checkbox)
+      expect(checkbox).toHaveAttribute('aria-checked', 'true')
+      expect(screen.getByTestId('expression-preview')).toHaveTextContent('table:true')
+
+      await user.click(checkbox)
+      expect(checkbox).toHaveAttribute('aria-checked', 'false')
+      expect(screen.getByTestId('expression-preview')).not.toHaveTextContent('table:true')
+    })
+
+    it('has no a11y violations with the toggle checked', async () => {
+      const user = userEvent.setup()
+      const { container } = render(<QueryBuilderModal {...defaultProps} />)
+
+      await user.click(screen.getByRole('checkbox', { name: /show results as table/i }))
+
+      await waitFor(async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
+    })
+  })
+
   it('disables Insert button when required fields are empty', () => {
     render(<QueryBuilderModal {...defaultProps} />)
 
