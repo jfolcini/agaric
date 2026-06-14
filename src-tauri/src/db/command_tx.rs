@@ -99,18 +99,41 @@ enum PendingDispatch {
 pub struct CommandTx {
     /// The live `BEGIN IMMEDIATE` transaction. `'static` because
     /// `pool.begin_with(...)` internally clones the pool handle.
-    inner: sqlx::Transaction<'static, Sqlite>,
+    ///
+    /// Wrapped in `Option` purely so the finalizing methods
+    /// (`commit_and_dispatch`, `commit_without_dispatch`, `rollback`) can
+    /// `take()` the transaction out and call its by-value
+    /// `commit()`/`rollback()`. `sqlx::Transaction` consumes `self`, but a
+    /// type with a manual `Drop` impl (added for issue #654) cannot have a
+    /// field moved out of it directly (E0509) — `Option::take` moves out of
+    /// the `Option`, not out of `self`, which is allowed. It is `Some` for
+    /// the entire useful life of the value and only becomes `None` once one
+    /// of the consuming finalizers has run (after which the value is gone).
+    inner: Option<sqlx::Transaction<'static, Sqlite>>,
     /// Op records to dispatch to the materializer once the transaction
     /// commits successfully. FIFO order — `commit_and_dispatch` drains
     /// them in enqueue order.
     pending: Vec<PendingDispatch>,
-    /// Label used by [`begin_immediate_logged`] for slow-acquire logs.
-    /// Stored here only so diagnostic code (future: a debug-assert on
-    /// Drop with a pending queue) can name the originating command.
-    #[expect(
-        dead_code,
-        reason = "stored for a planned Drop-time debug-assert that names the originating command"
-    )]
+    /// Set to `true` the instant `self.inner.commit()` returns `Ok` inside
+    /// [`commit_and_dispatch`](Self::commit_and_dispatch) or
+    /// [`commit_without_dispatch`](Self::commit_without_dispatch). It is
+    /// the discriminator the [`Drop`] debug-assert uses to tell the
+    /// genuine bug ("the inner transaction was committed but its enqueued
+    /// dispatches were never drained") apart from a *legitimate*
+    /// rollback-drop.
+    ///
+    /// This flag is load-bearing for correctness, not just diagnostics:
+    /// many command sites enqueue a dispatch and only *then* run further
+    /// fallible `await?` work before `commit_and_dispatch` (e.g.
+    /// `create_blocks_batch_inner`, `bulk_restore_trash_inner`). When such
+    /// a call returns `Err`, the `?` drops the `CommandTx` with `pending`
+    /// non-empty *on purpose* — the transaction rolls back and the queued
+    /// records must be discarded. That drop must NOT trip the assert, and
+    /// it does not, because `committed` is still `false`.
+    committed: bool,
+    /// Label used by [`begin_immediate_logged`] for slow-acquire logs, and
+    /// named by the [`Drop`] debug-assert below so a leaked
+    /// post-commit dispatch can be traced back to its originating command.
     label: &'static str,
 }
 
@@ -126,8 +149,9 @@ impl CommandTx {
     ) -> Result<Self, sqlx::Error> {
         let inner = begin_immediate_logged(pool, label).await?;
         Ok(Self {
-            inner,
+            inner: Some(inner),
             pending: Vec::new(),
+            committed: false,
             label,
         })
     }
@@ -195,7 +219,11 @@ impl CommandTx {
         mut self,
         materializer: &crate::materializer::Materializer,
     ) -> Result<usize, sqlx::Error> {
-        self.inner.commit().await?;
+        self.take_inner().commit().await?;
+        // Commit succeeded: from here the Drop assert (below) is armed.
+        // We must drain `pending` before this method returns, or the
+        // assert will fire — which is exactly its job.
+        self.committed = true;
         let drained = std::mem::take(&mut self.pending);
         let count = drained.len();
         for entry in drained {
@@ -227,7 +255,8 @@ impl CommandTx {
     /// SQLite PRAGMA writes, migration markers). Pending records are
     /// discarded silently.
     pub async fn commit_without_dispatch(mut self) -> Result<(), sqlx::Error> {
-        self.inner.commit().await?;
+        self.take_inner().commit().await?;
+        self.committed = true;
         self.pending.clear();
         Ok(())
     }
@@ -239,7 +268,20 @@ impl CommandTx {
     /// committing, but surfaces any rollback error to the caller.
     pub async fn rollback(mut self) -> Result<(), sqlx::Error> {
         self.pending.clear();
-        self.inner.rollback().await
+        self.take_inner().rollback().await
+    }
+
+    /// Move the live `sqlx::Transaction` out of `self` so it can be
+    /// committed or rolled back by value.
+    ///
+    /// Only the three consuming finalizers call this, and each calls it at
+    /// most once, so `inner` is always `Some` here. After the call `inner`
+    /// is `None`; the finalizer then drops `self`, and the [`Drop`] impl
+    /// (which never touches `inner`) runs the debug-assert and finishes.
+    fn take_inner(&mut self) -> sqlx::Transaction<'static, Sqlite> {
+        self.inner
+            .take()
+            .expect("CommandTx inner transaction taken twice — finalizer called more than once")
     }
 
     /// Number of op records currently queued for post-commit dispatch.
@@ -255,16 +297,163 @@ impl CommandTx {
     }
 }
 
+impl Drop for CommandTx {
+    /// Debug-time guard that the post-commit dispatch queue is never
+    /// silently abandoned *after a successful commit*.
+    ///
+    /// Invariant: once `self.inner.commit()` has returned `Ok` (tracked by
+    /// `self.committed`), every enqueued [`PendingDispatch`] must have been
+    /// drained — either fired (`commit_and_dispatch`) or explicitly
+    /// discarded (`commit_without_dispatch`). Both methods do exactly that
+    /// immediately after the commit, so a `committed` `CommandTx` reaching
+    /// `Drop` with a non-empty `pending` can only mean a *future* code path
+    /// committed the inner transaction (e.g. via `DerefMut` +
+    /// `inner.commit()`) and let the value drop without draining. That is
+    /// the silent-missing-dispatch bug MAINT-112 set out to make
+    /// impossible; the assert turns it into a loud panic under
+    /// `cfg(debug_assertions)`.
+    ///
+    /// Why this is gated on `committed` rather than asserting
+    /// `pending.is_empty()` unconditionally: many command sites
+    /// (`create_blocks_batch_inner`, `bulk_restore_trash_inner`, …)
+    /// `enqueue_background` and then run further fallible `await?` work
+    /// before `commit_and_dispatch`. An error there drops the `CommandTx`
+    /// with `pending` populated *by design* — the transaction rolls back
+    /// and the queue is correctly discarded. Such a drop has
+    /// `committed == false`, so it does not (and must not) trip the assert.
+    ///
+    /// In release builds `debug_assert!` compiles out entirely, so this
+    /// `Drop` is a no-op there beyond running the inner transaction's own
+    /// `Drop` (rollback) as before.
+    fn drop(&mut self) {
+        debug_assert!(
+            !self.committed || self.pending.is_empty(),
+            "CommandTx '{}' dropped with {} pending dispatches after a successful commit",
+            self.label,
+            self.pending.len(),
+        );
+    }
+}
+
 impl std::ops::Deref for CommandTx {
     type Target = sqlx::Transaction<'static, Sqlite>;
 
+    /// Deref to the live transaction. `inner` is `Some` for the entire
+    /// span in which a `CommandTx` is usable — it only becomes `None`
+    /// inside a consuming finalizer (`commit_*` / `rollback`), after which
+    /// the value is gone and cannot be deref'd again. So this `expect`
+    /// cannot fire through any sound use of the API.
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        self.inner
+            .as_ref()
+            .expect("CommandTx deref'd after its transaction was finalized")
     }
 }
 
 impl std::ops::DerefMut for CommandTx {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
+        self.inner
+            .as_mut()
+            .expect("CommandTx deref'd after its transaction was finalized")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Drop-time debug-assert coverage (issue #654).
+    //!
+    //! These tests live in `command_tx.rs` rather than the `db::tests`
+    //! block because they need to reach the module-private `committed` /
+    //! `pending` fields to *synthesise* the post-commit-with-leftover-queue
+    //! state. That state is unreachable through the public API — both
+    //! commit methods drain `pending` the moment they set `committed` — so
+    //! forcing it here is the only way to exercise the assert's failing arm.
+    //! The happy-path / rollback / error-path behaviour the assert must
+    //! NOT trip on is covered end-to-end by the `command_tx_*` tests in
+    //! `db::tests`.
+    use super::*;
+    use crate::op_log::OpRecord;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    fn fake_op_record() -> OpRecord {
+        OpRecord {
+            device_id: "DEV".to_string(),
+            seq: 1,
+            parent_seqs: None,
+            hash: "0".repeat(64),
+            op_type: "create_block".to_string(),
+            payload: "{}".to_string(),
+            created_at: 0,
+            block_id: None,
+        }
+    }
+
+    /// A bare in-memory SQLite pool — enough to open a real
+    /// `BEGIN IMMEDIATE` transaction. No migrations needed: the Drop
+    /// assert is about the in-memory `pending`/`committed` state, not any
+    /// table.
+    async fn bare_pool() -> SqlitePool {
+        SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory sqlite pool should open")
+    }
+
+    /// The genuine bug class: the inner transaction was committed but the
+    /// enqueued dispatches were never drained. Synthesised by committing
+    /// `inner` and flipping `committed` by hand WITHOUT clearing `pending`
+    /// (i.e. simulating a future refactor that commits via `DerefMut` and
+    /// forgets to dispatch). The Drop assert must fire.
+    ///
+    /// `#[should_panic]` only catches the panic in debug builds, where
+    /// `debug_assert!` is active. The test is gated on `debug_assertions`
+    /// so a `--release` test run (where the assert compiles out and no
+    /// panic occurs) does not spuriously fail the `should_panic`
+    /// expectation.
+    #[cfg(debug_assertions)]
+    #[tokio::test]
+    #[should_panic(expected = "dropped with 1 pending dispatches after a successful commit")]
+    async fn drop_after_commit_with_pending_trips_assert_654() {
+        let pool = bare_pool().await;
+        let mut tx = CommandTx::begin_immediate(&pool, "test_leaked_dispatch")
+            .await
+            .unwrap();
+        tx.enqueue_background(fake_op_record());
+
+        // Simulate the regression: commit the inner tx, mark committed, but
+        // leave `pending` populated (the real commit methods would drain it
+        // here). Dropping `tx` at end of scope must panic via the assert.
+        tx.inner.take().unwrap().commit().await.unwrap();
+        tx.committed = true;
+        // `tx` drops here → Drop runs → debug_assert! fires.
+    }
+
+    /// A successfully *and correctly* committed `CommandTx` (queue drained
+    /// by `commit_and_dispatch`) must drop cleanly — no panic. This is the
+    /// false-positive guard for the assert: the happy path stays silent.
+    #[tokio::test]
+    async fn drop_after_clean_commit_does_not_trip_assert_654() {
+        use crate::materializer::Materializer;
+
+        let pool = bare_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let mut tx = CommandTx::begin_immediate(&pool, "test_clean_commit")
+            .await
+            .unwrap();
+        tx.enqueue_background(fake_op_record());
+        assert_eq!(tx.pending_len(), 1, "enqueue should populate pending");
+
+        // `commit_and_dispatch` consumes `tx`, commits, sets `committed`,
+        // and drains `pending` to zero before the value drops — so the
+        // Drop assert sees `committed == true && pending.is_empty()` and
+        // stays silent.
+        let dispatched = tx
+            .commit_and_dispatch(&materializer)
+            .await
+            .expect("commit_and_dispatch should succeed");
+        assert_eq!(dispatched, 1, "the enqueued record should have dispatched");
+        // No panic on drop ⇒ test passes.
     }
 }
