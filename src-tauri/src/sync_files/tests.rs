@@ -1043,6 +1043,266 @@ async fn protocol_size_mismatch_no_ack_returns_err() {
     server.shutdown().await;
 }
 
+/// #638: an offer for an attachment with no local DB row must NOT stall
+/// the sender. The receiver drains the offered bytes and ALWAYS sends a
+/// `FileReceived` ACK on the skip path; the sender then unblocks and the
+/// *next* file in the same round still transfers. Without the fix the
+/// sender would block on `recv_json` until the 180s `RECV_TIMEOUT`,
+/// erroring the file phase and losing the round's remaining files.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn protocol_unknown_attachment_acks_and_round_continues() {
+    let initiator_dir = TempDir::new().unwrap();
+    let initiator_pool = init_pool(&initiator_dir.path().join("test.db"))
+        .await
+        .unwrap();
+
+    // The receiver only knows about ATT_KNOWN. The first offer is for
+    // ATT_UNKNOWN (no DB row) — the skip path — followed by a valid
+    // offer for ATT_KNOWN that must still land.
+    let known_bytes = b"the second file in the round must still arrive";
+    let known_hash = blake3::hash(known_bytes).to_hex().to_string();
+    insert_test_attachment(
+        &initiator_pool,
+        "ATT_KNOWN",
+        "attachments/known.bin",
+        i64::try_from(known_bytes.len()).expect("invariant: test fixture file size fits in i64"),
+    )
+    .await;
+
+    let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+
+    let server_side = async move {
+        // 1. Receive FileRequest (only ATT_KNOWN is missing locally).
+        let msg: SyncMessage = server_conn.recv_json().await.unwrap();
+        match msg {
+            SyncMessage::FileRequest { attachment_ids } => {
+                assert_eq!(attachment_ids, vec!["ATT_KNOWN".to_string()]);
+            }
+            other => panic!("expected FileRequest, got {other:?}"),
+        }
+
+        // 2. Offer a file the receiver has no row for, then ship bytes.
+        let unknown_bytes = b"bytes for a file the receiver does not track";
+        server_conn
+            .send_json(&SyncMessage::FileOffer {
+                attachment_id: "ATT_UNKNOWN".into(),
+                size_bytes: u64::try_from(unknown_bytes.len())
+                    .expect("invariant: test fixture file size fits in u64"),
+                blake3_hash: blake3::hash(unknown_bytes).to_hex().to_string(),
+            })
+            .await
+            .unwrap();
+        server_conn.send_binary(unknown_bytes).await.unwrap();
+
+        // 3. The fix: the receiver MUST ACK the skipped file promptly so
+        //    we don't block here until RECV_TIMEOUT. Bound the wait so a
+        //    regression fails fast instead of hanging the test.
+        let ack: SyncMessage = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            server_conn.recv_json::<SyncMessage>(),
+        )
+        .await
+        .expect("#638: receiver must ACK the skipped unknown attachment (no stall)")
+        .expect("recv_json for skip ACK failed");
+        assert!(
+            matches!(
+                ack,
+                SyncMessage::FileReceived { ref attachment_id } if attachment_id == "ATT_UNKNOWN"
+            ),
+            "#638: expected FileReceived ACK for the skipped offer, got {ack:?}"
+        );
+
+        // 4. Now offer the known file — it must still transfer in the
+        //    same round (the sender was not derailed by the skip).
+        server_conn
+            .send_json(&SyncMessage::FileOffer {
+                attachment_id: "ATT_KNOWN".into(),
+                size_bytes: u64::try_from(known_bytes.len())
+                    .expect("invariant: test fixture file size fits in u64"),
+                blake3_hash: known_hash,
+            })
+            .await
+            .unwrap();
+        server_conn.send_binary(known_bytes).await.unwrap();
+
+        let ack2: SyncMessage = server_conn.recv_json().await.unwrap();
+        assert!(
+            matches!(
+                ack2,
+                SyncMessage::FileReceived { ref attachment_id } if attachment_id == "ATT_KNOWN"
+            ),
+            "expected FileReceived ACK for the known file, got {ack2:?}"
+        );
+
+        // 5. Conclude this half of the round.
+        server_conn
+            .send_json(&SyncMessage::FileTransferComplete)
+            .await
+            .unwrap();
+    };
+
+    let cancel_init = AtomicBool::new(false);
+    let (_, initiator_result) = tokio::join!(
+        server_side,
+        request_and_receive_files(
+            &mut client_conn,
+            &initiator_pool,
+            initiator_dir.path(),
+            &cancel_init,
+            None,
+        ),
+    );
+
+    let stats = initiator_result.expect("receive must succeed despite the skipped offer");
+    // The known file landed; the unknown one was deliberately discarded.
+    assert_eq!(
+        stats.files_received, 1,
+        "only the known file should be counted as received"
+    );
+    let (data, hash) = read_attachment_file(initiator_dir.path(), "attachments/known.bin").unwrap();
+    assert_eq!(data, known_bytes);
+    assert_eq!(hash, blake3::hash(known_bytes).to_hex().to_string());
+
+    server.shutdown().await;
+}
+
+/// #638: the temp-writer reject path (writer open fails, e.g. a
+/// `create_dir_all` collision) has the same no-ACK shape as the
+/// unknown-attachment path. It must drain the offered bytes and ACK so
+/// the sender unblocks and the round's next file still transfers, rather
+/// than stalling until the 180s `RECV_TIMEOUT`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn protocol_temp_writer_reject_acks_and_round_continues() {
+    let initiator_dir = TempDir::new().unwrap();
+    let initiator_pool = init_pool(&initiator_dir.path().join("test.db"))
+        .await
+        .unwrap();
+
+    // ATT_BAD's fs_path needs a parent dir `attachments/blocked` — we
+    // plant a *regular file* at that path so `create_dir_all` fails with
+    // NotADirectory, forcing `write_attachment_streaming` to error and
+    // exercising the temp-writer reject path.
+    let bad_bytes = b"bytes for a file whose temp writer cannot open";
+    insert_test_attachment(
+        &initiator_pool,
+        "ATT_BAD",
+        "attachments/blocked/bad.bin",
+        i64::try_from(bad_bytes.len()).expect("invariant: test fixture file size fits in i64"),
+    )
+    .await;
+
+    let good_bytes = b"the file after the writer-reject must still arrive";
+    let good_hash = blake3::hash(good_bytes).to_hex().to_string();
+    insert_test_attachment(
+        &initiator_pool,
+        "ATT_GOOD",
+        "attachments/good.bin",
+        i64::try_from(good_bytes.len()).expect("invariant: test fixture file size fits in i64"),
+    )
+    .await;
+
+    // Plant the colliding regular file so the temp writer for ATT_BAD
+    // fails to create its parent directory.
+    std::fs::create_dir_all(initiator_dir.path().join("attachments")).unwrap();
+    std::fs::write(
+        initiator_dir.path().join("attachments/blocked"),
+        b"not a dir",
+    )
+    .unwrap();
+
+    let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+
+    let server_side = async move {
+        // 1. Receive FileRequest. Both files are missing locally; the
+        //    order is DB-driven, so accept either ordering and remember
+        //    which we'll offer first.
+        let msg: SyncMessage = server_conn.recv_json().await.unwrap();
+        let ids = match msg {
+            SyncMessage::FileRequest { attachment_ids } => attachment_ids,
+            other => panic!("expected FileRequest, got {other:?}"),
+        };
+        assert!(ids.contains(&"ATT_BAD".to_string()));
+        assert!(ids.contains(&"ATT_GOOD".to_string()));
+
+        // 2. Always offer ATT_BAD (the writer-reject) FIRST.
+        server_conn
+            .send_json(&SyncMessage::FileOffer {
+                attachment_id: "ATT_BAD".into(),
+                size_bytes: u64::try_from(bad_bytes.len())
+                    .expect("invariant: test fixture file size fits in u64"),
+                blake3_hash: blake3::hash(bad_bytes).to_hex().to_string(),
+            })
+            .await
+            .unwrap();
+        server_conn.send_binary(bad_bytes).await.unwrap();
+
+        // 3. The fix: ACK must arrive promptly (no RECV_TIMEOUT stall).
+        let ack: SyncMessage = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            server_conn.recv_json::<SyncMessage>(),
+        )
+        .await
+        .expect("#638: receiver must ACK after a temp-writer reject (no stall)")
+        .expect("recv_json for writer-reject ACK failed");
+        assert!(
+            matches!(
+                ack,
+                SyncMessage::FileReceived { ref attachment_id } if attachment_id == "ATT_BAD"
+            ),
+            "#638: expected FileReceived ACK for the writer-rejected offer, got {ack:?}"
+        );
+
+        // 4. Offer the good file — it must still transfer.
+        server_conn
+            .send_json(&SyncMessage::FileOffer {
+                attachment_id: "ATT_GOOD".into(),
+                size_bytes: u64::try_from(good_bytes.len())
+                    .expect("invariant: test fixture file size fits in u64"),
+                blake3_hash: good_hash,
+            })
+            .await
+            .unwrap();
+        server_conn.send_binary(good_bytes).await.unwrap();
+
+        let ack2: SyncMessage = server_conn.recv_json().await.unwrap();
+        assert!(
+            matches!(
+                ack2,
+                SyncMessage::FileReceived { ref attachment_id } if attachment_id == "ATT_GOOD"
+            ),
+            "expected FileReceived ACK for the good file, got {ack2:?}"
+        );
+
+        server_conn
+            .send_json(&SyncMessage::FileTransferComplete)
+            .await
+            .unwrap();
+    };
+
+    let cancel_init = AtomicBool::new(false);
+    let (_, initiator_result) = tokio::join!(
+        server_side,
+        request_and_receive_files(
+            &mut client_conn,
+            &initiator_pool,
+            initiator_dir.path(),
+            &cancel_init,
+            None,
+        ),
+    );
+
+    let stats = initiator_result.expect("receive must succeed despite the temp-writer reject");
+    assert_eq!(
+        stats.files_received, 1,
+        "only the good file should be counted as received"
+    );
+    let (data, hash) = read_attachment_file(initiator_dir.path(), "attachments/good.bin").unwrap();
+    assert_eq!(data, good_bytes);
+    assert_eq!(hash, blake3::hash(good_bytes).to_hex().to_string());
+
+    server.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn protocol_large_file_chunking() {
     let initiator_dir = TempDir::new().unwrap();
