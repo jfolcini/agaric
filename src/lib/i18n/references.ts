@@ -258,6 +258,7 @@ export const references: Record<string, string> = {
   'tagList.newTagLabel': 'New tag name',
   'tagList.colorTagLabel': 'Set tag color',
   'tagList.colorPaletteLabel': 'Color palette',
+  'tagList.customColorLabel': 'Custom color',
   'tagList.clearColor': 'Clear color',
   'backlink.filtersLegend': 'Backlink filters',
   'backlink.filtersApplied_one': '{{count}} filter applied',

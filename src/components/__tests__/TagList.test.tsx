@@ -1,3 +1,10 @@
+// @vitest-environment jsdom
+// #1099: tag pills now render `var(--accent-*)` inline backgrounds. happy-dom's
+// CSS parser rejects `var(--…)` values (drops them, leaving an empty style),
+// so the accent-token assertions below would see ''. jsdom preserves the raw
+// inline style string. Pinned to jsdom for the same reason as
+// SpaceAccentBadge.test.tsx (which also asserts on accent CSS vars).
+
 /**
  * Tests for TagList component.
  *
@@ -719,9 +726,10 @@ describe('TagList', () => {
       const palette = await screen.findByRole('group', { name: /color palette/i })
       expect(palette).toBeInTheDocument()
 
-      // Should have 8 color swatches
+      // #1099 — the palette is now the 7 themed --accent-* tokens
+      // (emerald/blue/violet/amber/rose/slate/orange), not 8 flat sRGB hexes.
       const swatches = within(palette).getAllByRole('button')
-      expect(swatches).toHaveLength(8)
+      expect(swatches).toHaveLength(7)
     })
 
     it('selecting a color calls setProperty', async () => {
@@ -738,16 +746,17 @@ describe('TagList', () => {
       // Mock setProperty response
       mockedInvoke.mockResolvedValueOnce({ id: 'T1', block_type: 'tag', content: 'color-tag' })
 
-      // Click the "red" swatch
-      const redSwatch = await screen.findByRole('button', { name: 'red' })
-      await user.click(redSwatch)
+      // Click the "rose" swatch — #1099 persists the accent *token*, not a
+      // raw sRGB hex, so the value re-themes across light/dark/high-contrast.
+      const roseSwatch = await screen.findByRole('button', { name: 'rose' })
+      await user.click(roseSwatch)
 
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
           blockId: 'T1',
           key: 'color',
           value: {
-            value_text: '#ef4444',
+            value_text: 'accent-rose',
             value_num: null,
             value_date: null,
             value_ref: null,
@@ -757,23 +766,25 @@ describe('TagList', () => {
       })
     })
 
-    it('badge renders with custom background color and a contrast-aware foreground', async () => {
-      // Pre-set color in localStorage. blue-500 (#3b82f6, L≈0.236) yields
-      // higher WCAG contrast against black than white (5.71:1 vs 3.68:1),
-      // so the contrast-aware helper picks black — not a hard-coded white.
-      localStorage.setItem('tag-colors', JSON.stringify({ T1: '#3b82f6' }))
+    it('badge renders an accent-token bg via var(--accent-*) with its paired foreground (#1099)', async () => {
+      // #1099 — a token-coloured tag renders the themed CSS var, not a flat
+      // hex, so it re-themes across light/dark/high-contrast. The foreground
+      // is the token's fixed paired colour (blue → white).
+      localStorage.setItem('tag-colors', JSON.stringify({ T1: 'accent-blue' }))
       mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'blue-tag')])
 
       render(<TagList />)
 
       const badge = await screen.findByText('blue-tag')
       const badgeEl = badge.closest('[data-slot="badge"]') as HTMLElement
-      expect(badgeEl).toHaveStyle({ backgroundColor: '#3b82f6' })
-      expect(badgeEl).toHaveStyle({ color: '#000' })
+      expect(badgeEl.getAttribute('style')).toContain('var(--accent-blue')
+      expect(badgeEl).toHaveStyle({ color: '#fff' })
     })
 
-    it('badge picks white foreground when the bg is dark enough (WCAG)', async () => {
-      // Very dark navy — strictly higher contrast against white than black.
+    it('badge renders a custom hex verbatim with a WCAG foreground (escape hatch, #1099)', async () => {
+      // Free-form custom hex (not a legacy preset) bypasses the token palette
+      // and renders verbatim; foreground falls back to pickReadableForeground.
+      // Very dark navy → strictly higher contrast against white than black.
       localStorage.setItem('tag-colors', JSON.stringify({ T1: '#1e3a8a' }))
       mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'navy-tag')])
 
@@ -783,6 +794,19 @@ describe('TagList', () => {
       const badgeEl = badge.closest('[data-slot="badge"]') as HTMLElement
       expect(badgeEl).toHaveStyle({ backgroundColor: '#1e3a8a' })
       expect(badgeEl).toHaveStyle({ color: '#fff' })
+    })
+
+    it('migrates a legacy hex tag to its themed accent token on render (#1099)', async () => {
+      // A tag coloured before #1099 with the old red-500 preset re-themes to
+      // accent-rose (nearest hue) rather than rendering the flat sRGB hex.
+      localStorage.setItem('tag-colors', JSON.stringify({ T1: '#ef4444' }))
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'legacy-tag')])
+
+      render(<TagList />)
+
+      const badge = await screen.findByText('legacy-tag')
+      const badgeEl = badge.closest('[data-slot="badge"]') as HTMLElement
+      expect(badgeEl.getAttribute('style')).toContain('var(--accent-rose')
     })
 
     it('clear option removes color', async () => {
@@ -849,7 +873,7 @@ describe('TagList', () => {
       await user.click(colorBtn)
 
       const palette = await screen.findByRole('group', { name: /color palette/i })
-      const swatch = within(palette).getByRole('button', { name: 'red' })
+      const swatch = within(palette).getByRole('button', { name: 'emerald' })
       expect(swatch.className).toContain('focus-ring-visible')
       expect(swatch.className).not.toContain('focus-visible:ring-2')
       expect(swatch.className).not.toContain('focus-visible:ring-ring')
