@@ -49,7 +49,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use chrono::{Days, NaiveDate};
-use secrecy::ExposeSecret;
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -155,6 +155,14 @@ pub struct GcalApi {
     client: reqwest::Client,
     bucket: Arc<Mutex<InstantBucket>>,
     base_url: String,
+    /// Google's OAuth 2.0 token-revocation endpoint
+    /// (`https://oauth2.googleapis.com/revoke` in production).  Held as
+    /// its own field — and not derived from `base_url` — because the
+    /// revoke endpoint lives on a different host (`oauth2.googleapis.com`)
+    /// than the Calendar API (`www.googleapis.com/calendar/v3`).
+    /// `with_base_url` points it at `{base}/revoke` so the wiremock tests
+    /// can mount a `/revoke` matcher on the same mock server.
+    revoke_url: String,
 }
 
 impl std::fmt::Debug for GcalApi {
@@ -170,6 +178,22 @@ impl std::fmt::Debug for GcalApi {
 
 /// Production Google Calendar base URL.
 pub const GOOGLE_CALENDAR_BASE_URL: &str = "https://www.googleapis.com/calendar/v3";
+
+/// Google's OAuth 2.0 token-revocation endpoint (RFC 7009).  POSTing a
+/// `token=<refresh-or-access-token>` form body here invalidates the
+/// token (and, for a refresh token, the whole grant) server-side.  Used
+/// by [`GcalApi::revoke_token`] on disconnect so the broad
+/// `.../auth/calendar` grant does not stay valid on Google's side after
+/// the user disconnects (#690).
+pub const GOOGLE_REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
+
+/// Per-request timeout for the best-effort revoke call.  Deliberately
+/// shorter than [`HTTP_CLIENT_TIMEOUT`]: revoke is best-effort and runs
+/// inline on the disconnect path, so a hung revoke must not stall the
+/// local cleanup the user is waiting on.  A revoke that does not
+/// complete within this budget is logged and abandoned — Google will
+/// expire the grant on its own schedule.
+const REVOKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Maximum sustained queries-per-second we will send to Google.
 /// Google's stated v3 quota is 500 QPS per user project, so 10 QPS
@@ -205,7 +229,12 @@ impl GcalApi {
     /// build (would indicate a malformed rustls setup — not expected
     /// in practice).
     pub fn new() -> Result<Self, AppError> {
-        Self::with_base_url(GOOGLE_CALENDAR_BASE_URL)
+        let mut api = Self::with_base_url(GOOGLE_CALENDAR_BASE_URL)?;
+        // The Calendar API and the OAuth revoke endpoint live on
+        // different hosts, so the production revoke URL is the canonical
+        // Google endpoint rather than `{base}/revoke`.
+        api.revoke_url = GOOGLE_REVOKE_URL.to_owned();
+        Ok(api)
     }
 
     /// Construct a `GcalApi` pointing at an arbitrary base URL.
@@ -216,13 +245,20 @@ impl GcalApi {
     /// [`AppError::Validation`] if the shared HTTP client fails to
     /// build.
     pub fn with_base_url(base_url: &str) -> Result<Self, AppError> {
+        let base_url = base_url.trim_end_matches('/').to_owned();
+        // Tests point this at a wiremock server; deriving `{base}/revoke`
+        // lets the same mock server serve a `/revoke` matcher.  The
+        // production `new()` overrides this with the canonical Google
+        // revoke endpoint, which lives on a different host.
+        let revoke_url = format!("{base_url}/revoke");
         Ok(Self {
             client: shared_client()?,
             bucket: Arc::new(Mutex::new(InstantBucket::new(
                 RATE_LIMIT_BURST,
                 RATE_LIMIT_QPS,
             ))),
-            base_url: base_url.trim_end_matches('/').to_owned(),
+            base_url,
+            revoke_url,
         })
     }
 
@@ -283,6 +319,75 @@ impl GcalApi {
             NotFoundMeans::CalendarGone,
         )
         .await
+    }
+
+    /// Best-effort revoke of the connected account's OAuth grant via
+    /// Google's RFC 7009 revocation endpoint (#690).
+    ///
+    /// Posts `token=<refresh-token>` to [`GOOGLE_REVOKE_URL`].  Revoking
+    /// the **refresh** token invalidates the entire grant (the paired
+    /// access tokens included), so a single call tears down the
+    /// server-side `.../auth/calendar` authorization that
+    /// `disconnect_gcal` would otherwise leave valid in any keyring
+    /// backup.
+    ///
+    /// This is **best-effort**: the caller invokes it before clearing
+    /// local state and treats any error as non-fatal.  A `Result` is
+    /// returned only so the caller can log *why* a revoke failed; an
+    /// `Err` here MUST NOT abort the disconnect.  Network failures, an
+    /// already-revoked token (Google answers 400 `invalid_token`), and
+    /// timeouts all surface as `Err` and are expected in normal
+    /// operation.
+    ///
+    /// Unlike the Calendar API calls this does not pass through the
+    /// shared rate-limiter or the `classify_error` taxonomy: it targets
+    /// a different host, the only caller discards the error, and we set
+    /// a short [`REVOKE_TIMEOUT`] so a hung endpoint cannot stall the
+    /// disconnect the user is waiting on.
+    ///
+    /// # Errors
+    /// [`AppError::Validation`] keyed `gcal.revoke_failed` on a
+    /// transport error or a non-2xx response from Google.
+    #[tracing::instrument(skip(self, refresh_token), err)]
+    pub async fn revoke_token(&self, refresh_token: &SecretString) -> Result<(), AppError> {
+        // RFC 7009 §2.1 — the revocation request is a
+        // `application/x-www-form-urlencoded` POST carrying `token=…`.
+        // We build the body via `form_urlencoded` (the `url` crate is
+        // already a direct dep) and set the header explicitly rather
+        // than relying on reqwest's optional `urlencoded`/form feature,
+        // which this build does not enable.
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("token", refresh_token.expose_secret())
+            .finish();
+        let resp = self
+            .client
+            .post(&self.revoke_url)
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .body(body)
+            .timeout(REVOKE_TIMEOUT)
+            .send()
+            .await
+            .map_err(|e| {
+                // L-129 discipline: never interpolate a server-controlled
+                // error body; the reqwest Display here is the transport
+                // error (status/url-kind), which carries no token bytes.
+                AppError::Validation(format!("gcal.revoke_failed: transport error: {e}"))
+            })?;
+
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        // Do NOT read the response body — Google echoes the supplied
+        // token-class hints in some error responses and the body is not
+        // needed to decide best-effort success/failure.
+        Err(AppError::Validation(format!(
+            "gcal.revoke_failed: http {}",
+            status.as_u16()
+        )))
     }
 
     /// Insert a new event into the dedicated calendar.  Returns the
@@ -1169,6 +1274,46 @@ mod tests {
         assert!(
             matches!(result, Err(AppError::Gcal(GcalErrorKind::CalendarGone))),
             "404 on calendar path must map to CalendarGone, got {result:?}"
+        );
+    }
+
+    // ── revoke_token (#690) ────────────────────────────────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revoke_token_posts_refresh_token_and_succeeds_on_200() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/revoke"))
+            // RFC 7009 form body carries `token=<refresh>`.
+            .and(body_string_contains("token=dummy-refresh"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        api.revoke_token(&make_token().refresh)
+            .await
+            .expect("200 from /revoke must be Ok");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revoke_token_surfaces_err_on_non_2xx() {
+        // Google answers an already-revoked / malformed token with 400.
+        // `revoke_token` surfaces an Err so the caller can log it; the
+        // caller (disconnect) treats it as best-effort and proceeds.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/revoke"))
+            .respond_with(ResponseTemplate::new(400))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        let result = api.revoke_token(&make_token().refresh).await;
+        assert!(
+            matches!(result, Err(AppError::Validation(ref m)) if m.contains("gcal.revoke_failed")),
+            "non-2xx must surface gcal.revoke_failed, got {result:?}"
         );
     }
 
