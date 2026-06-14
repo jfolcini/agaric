@@ -52,6 +52,7 @@
 
 use crate::domain::search_types::{MatchOffset, SearchBlockRow};
 use crate::error::AppError;
+use crate::error::validation_code::{INVALID_REGEX, prefixed};
 use crate::pagination::{PageRequest, PageResponse};
 use regex::{Regex, RegexBuilder};
 use sqlx::SqlitePool;
@@ -570,16 +571,19 @@ fn compose_literal_pattern(query: &str, toggles: SearchToggles) -> String {
 /// [`AppError::Validation`] with the typed `InvalidRegex:` prefix.
 pub(crate) fn build_regex(pattern: &str) -> Result<Regex, AppError> {
     if pattern.len() > MAX_PATTERN_LEN {
-        return Err(AppError::Validation(format!(
-            "InvalidRegex: pattern length {} exceeds cap {MAX_PATTERN_LEN}",
-            pattern.len()
+        return Err(AppError::Validation(prefixed(
+            INVALID_REGEX,
+            &format!(
+                "pattern length {} exceeds cap {MAX_PATTERN_LEN}",
+                pattern.len()
+            ),
         )));
     }
     RegexBuilder::new(pattern)
         .size_limit(REGEX_SIZE_LIMIT_BYTES)
         .dfa_size_limit(REGEX_DFA_SIZE_LIMIT_BYTES)
         .build()
-        .map_err(|e| AppError::Validation(format!("InvalidRegex: {e}")))
+        .map_err(|e| AppError::Validation(prefixed(INVALID_REGEX, &e.to_string())))
 }
 
 /// Apply a compiled regex to the rows in-place — narrows the candidate

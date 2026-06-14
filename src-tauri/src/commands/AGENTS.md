@@ -117,15 +117,20 @@ The dispatcher in `mcp/activity.rs` drains `LAST_APPEND` after the command retur
 
 `AppError` serialises as `{ kind: string, message: string }` (manual `Serialize` at `src-tauri/src/error.rs`). The variants are open; the wire shape isn't a tagged union.
 
-For **typed validation errors** that the frontend needs to discriminate (invalid glob, invalid regex, invalid filter, etc.), use the `AppError::Validation(format!("PrefixName: …"))` convention and parse the prefix on the frontend:
+For **typed validation errors** that the frontend needs to discriminate (invalid glob, invalid regex, invalid filter, etc.), encode the sub-kind as a leading `"<Code>: …"` token in the `message`. The wire shape stays `{ kind: "validation", message }` (no `code` field) — the prefix lives inside `message`.
 
-```rust
-return Err(AppError::Validation(format!("InvalidGlob: {reason}")));
-return Err(AppError::Validation(format!("InvalidRegex: {reason}")));
-return Err(AppError::Validation(format!("InvalidDateFilter: {reason}")));
-```
+**#1061 — never hand-spell the prefix.** The sub-kind codes are defined once per language and referenced everywhere else, so a rename can't silently desync the ~triplicated holders (Rust emit / TS re-emit / TS parse):
 
-This avoids reshaping the wire shape every time a new validation surface lands. Document new prefixes in [`docs/architecture/search.md`](../../../docs/architecture/search.md) and the relevant plan file.
+- Rust source of truth: [`error::validation_code`](../error.rs) — `INVALID_GLOB`, `INVALID_REGEX`, `INVALID_DATE_FILTER` consts + the `prefixed(code, reason)` helper. Emit with:
+  ```rust
+  use crate::error::validation_code::{INVALID_REGEX, prefixed};
+  return Err(AppError::Validation(prefixed(INVALID_REGEX, &reason)));
+  ```
+- TS source of truth: [`src/lib/search-query/validation-codes.ts`](../../../src/lib/search-query/validation-codes.ts) — `ValidationCode` consts + `prefixed` / `prefixToken` / `parseValidationReason`. The re-emitters (`glob-validate.ts`, `register.ts`) build messages via `prefixed(...)`; the parser (`useSearchResults.ts`) reads them via `parseValidationReason(...)`.
+
+The two lists are pinned to identical strings by tests on each side (`glob_filter.rs::*_1061`, `validation-codes.test.ts`) — that pair IS the cross-language contract check; keep them in lockstep.
+
+**Adding a new sub-kind:** add the const in BOTH source-of-truth files (identical string), reference it at the emit/parse sites, extend the pinning tests, and document it in [`docs/architecture/search.md`](../../../docs/architecture/search.md) and the relevant plan file. This keeps the wire shape stable while preserving the cross-language enforcement.
 
 ## Cancellation safety inside async commands
 

@@ -16,6 +16,7 @@
 //! silently dropped.
 
 use crate::error::AppError;
+use crate::error::validation_code::{INVALID_GLOB, prefixed};
 
 /// Cap on the total number of patterns produced from a single brace
 /// expansion. Mirrors the frontend `EXPANSION_CAP` so the chip
@@ -54,9 +55,12 @@ pub fn prepare_globs(entries: &[String]) -> Result<Vec<String>, AppError> {
                 continue;
             }
             if trimmed.len() > MAX_GLOB_LEN {
-                return Err(AppError::Validation(format!(
-                    "InvalidGlob: pattern length {} exceeds cap {MAX_GLOB_LEN}",
-                    trimmed.len()
+                return Err(AppError::Validation(prefixed(
+                    INVALID_GLOB,
+                    &format!(
+                        "pattern length {} exceeds cap {MAX_GLOB_LEN}",
+                        trimmed.len()
+                    ),
                 )));
             }
             validate(trimmed)?;
@@ -78,8 +82,9 @@ pub fn prepare_globs(entries: &[String]) -> Result<Vec<String>, AppError> {
                 out.push(with_substring.to_ascii_lowercase());
             }
             if out.len() > EXPANSION_CAP {
-                return Err(AppError::Validation(format!(
-                    "InvalidGlob: expansion exceeded {EXPANSION_CAP} patterns"
+                return Err(AppError::Validation(prefixed(
+                    INVALID_GLOB,
+                    &format!("expansion exceeded {EXPANSION_CAP} patterns"),
                 )));
             }
         }
@@ -119,9 +124,10 @@ fn validate(input: &str) -> Result<(), AppError> {
             if let Some(&next) = chars.peek()
                 && matches!(next, '{' | '}' | '[' | ']')
             {
-                return Err(AppError::Validation(
-                    "InvalidGlob: escapes not supported".into(),
-                ));
+                return Err(AppError::Validation(prefixed(
+                    INVALID_GLOB,
+                    "escapes not supported",
+                )));
             }
             continue;
         }
@@ -129,23 +135,28 @@ fn validate(input: &str) -> Result<(), AppError> {
             '[' => bracket_depth += 1,
             ']' => {
                 if bracket_depth == 0 {
-                    return Err(AppError::Validation(
-                        "InvalidGlob: unbalanced bracket".into(),
-                    ));
+                    return Err(AppError::Validation(prefixed(
+                        INVALID_GLOB,
+                        "unbalanced bracket",
+                    )));
                 }
                 bracket_depth -= 1;
             }
             '{' => {
                 brace_depth += 1;
                 if brace_depth > 1 {
-                    return Err(AppError::Validation(
-                        "InvalidGlob: brace nesting not supported".into(),
-                    ));
+                    return Err(AppError::Validation(prefixed(
+                        INVALID_GLOB,
+                        "brace nesting not supported",
+                    )));
                 }
             }
             '}' => {
                 if brace_depth == 0 {
-                    return Err(AppError::Validation("InvalidGlob: unbalanced brace".into()));
+                    return Err(AppError::Validation(prefixed(
+                        INVALID_GLOB,
+                        "unbalanced brace",
+                    )));
                 }
                 brace_depth -= 1;
             }
@@ -153,12 +164,16 @@ fn validate(input: &str) -> Result<(), AppError> {
         }
     }
     if bracket_depth != 0 {
-        return Err(AppError::Validation(
-            "InvalidGlob: unbalanced bracket".into(),
-        ));
+        return Err(AppError::Validation(prefixed(
+            INVALID_GLOB,
+            "unbalanced bracket",
+        )));
     }
     if brace_depth != 0 {
-        return Err(AppError::Validation("InvalidGlob: unbalanced brace".into()));
+        return Err(AppError::Validation(prefixed(
+            INVALID_GLOB,
+            "unbalanced brace",
+        )));
     }
     Ok(())
 }
@@ -190,7 +205,10 @@ fn expand_braces(input: &str) -> Result<Vec<String>, AppError> {
             let close = input[i + 1..].find('}');
             let Some(rel) = close else {
                 // Unbalanced — should have been caught by `validate`.
-                return Err(AppError::Validation("InvalidGlob: unbalanced brace".into()));
+                return Err(AppError::Validation(prefixed(
+                    INVALID_GLOB,
+                    "unbalanced brace",
+                )));
             };
             let end = i + 1 + rel;
             let inner = &input[i + 1..end];
@@ -390,6 +408,40 @@ mod tests {
         for pat in &out {
             assert!(pat.contains('é'), "expected intact 'é' in {pat:?}");
             assert!(!pat.contains('Ã'), "mojibake leaked into {pat:?}");
+        }
+    }
+
+    #[test]
+    fn every_glob_emit_site_uses_the_shared_invalid_glob_prefix_1061() {
+        // #1061 — every glob validation error must carry the shared
+        // `InvalidGlob:` prefix sourced from `error::validation_code`, not a
+        // hand-spelled literal. Each tuple drives one distinct emit site.
+        let expect = format!("{INVALID_GLOB}: ");
+        let cases: &[&str] = &[
+            &"a".repeat(MAX_GLOB_LEN + 1), // pattern length cap (line ~58)
+            "\\{",                         // escapes not supported (~123)
+            "abc]",                        // unbalanced closing bracket (~133)
+            "{a,{b}}",                     // brace nesting (~142)
+            "a}b",                         // unbalanced closing brace (~148)
+            "[abc",                        // unbalanced bracket post-loop (~157)
+            "{abc",                        // unbalanced brace post-loop (~161)
+        ];
+        for input in cases {
+            let err = prepare_globs(&[(*input).to_string()]).unwrap_err();
+            let AppError::Validation(msg) = err else {
+                panic!("expected AppError::Validation for {input:?}, got {err:?}");
+            };
+            assert!(
+                msg.starts_with(&expect),
+                "emit site for {input:?} must start with {expect:?}; got {msg:?}",
+            );
+        }
+        // The expansion-overflow site (~82) is only reachable via a heavy
+        // brace product; assert it too when it errors rather than truncates.
+        if let Err(AppError::Validation(msg)) =
+            prepare_globs(&["{a,b,c,d}{a,b,c,d}{a,b,c,d}{a,b,c,d}{a,b,c,d}".to_string()])
+        {
+            assert!(msg.starts_with(&expect), "expansion-overflow msg: {msg:?}");
         }
     }
 

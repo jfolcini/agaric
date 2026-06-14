@@ -14,6 +14,7 @@
 import { validateGlob } from './glob-validate'
 import { registerTokenPrefix } from './registry'
 import type { DateOp, FilterToken, NamedDateRange } from './types'
+import { prefixed, ValidationCode } from './validation-codes'
 
 let registered = false
 
@@ -238,7 +239,10 @@ function parseDateToken(
         return {
           kind: 'invalid',
           source: `${kind}:${value}`,
-          error: `InvalidDateFilter: expected YYYY-MM-DD after '${op}', got '${rest}'`,
+          error: prefixed(
+            ValidationCode.InvalidDateFilter,
+            `expected YYYY-MM-DD after '${op}', got '${rest}'`,
+          ),
           span,
         }
       }
@@ -262,7 +266,7 @@ function parseDateToken(
   return {
     kind: 'invalid',
     source: `${kind}:${value}`,
-    error: `InvalidDateFilter: unknown date '${value}'`,
+    error: prefixed(ValidationCode.InvalidDateFilter, `unknown date '${value}'`),
     span,
   }
 }

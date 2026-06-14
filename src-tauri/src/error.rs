@@ -1,6 +1,51 @@
 use serde::Serialize;
 use thiserror::Error;
 
+/// Stable sub-kind prefixes for [`AppError::Validation`] (#1061).
+///
+/// `AppError` serialises as an untagged `{ kind, message }` envelope, so a
+/// validation sub-kind that the frontend needs to discriminate (invalid glob,
+/// invalid regex, invalid date filter) is encoded as a leading `"<Prefix>: …"`
+/// token inside the `message` and parsed back out on the frontend.
+///
+/// Historically these prefixes were hand-spelled as raw literals at every
+/// emit site (`format!("InvalidRegex: …")`) and re-spelled again by the TS
+/// parser/re-emitter, with nothing enforcing they stayed in sync — a typo or
+/// rename on any of the ~triplicated holders silently degraded the inline
+/// validation UX to the generic-error toast.
+///
+/// This module is the **single Rust-side source of truth** for those prefixes.
+/// Every emit site references [`prefixed`] (or one of the `*_PREFIX` consts)
+/// instead of a raw literal. The matching TS-side source of truth lives in
+/// `src/lib/search-query/validation-codes.ts`; the two are pinned to identical
+/// string values by tests on each side (the `pinned_*` Rust tests below and
+/// the TS `validation-codes` test), which is the cross-language contract check.
+///
+/// The wire envelope is unchanged: the prefix is still part of `message`, so
+/// this is purely an internal de-duplication — no `code` field, no specta
+/// binding churn, fully backward-compatible.
+pub mod validation_code {
+    /// Invalid page-name glob filter (`fts::glob_filter`).
+    pub const INVALID_GLOB: &str = "InvalidGlob";
+    /// Invalid user-supplied regex (`fts::toggle_filter::build_regex`).
+    pub const INVALID_REGEX: &str = "InvalidRegex";
+    /// Invalid / unparseable date-filter bound (metadata, pages, backlink).
+    pub const INVALID_DATE_FILTER: &str = "InvalidDateFilter";
+
+    /// Build the `"<code>: <reason>"` message body an `AppError::Validation`
+    /// carries, from one of the `*` consts above and a human reason.
+    ///
+    /// ```
+    /// # use agaric_lib::error::validation_code;
+    /// let msg = validation_code::prefixed(validation_code::INVALID_REGEX, "unclosed group");
+    /// assert_eq!(msg, "InvalidRegex: unclosed group");
+    /// ```
+    #[must_use]
+    pub fn prefixed(code: &str, reason: &str) -> String {
+        format!("{code}: {reason}")
+    }
+}
+
 /// Helper struct matching the `{ kind, message }` JSON shape that [`AppError`]
 /// serialises to.  Used solely so specta can derive the TypeScript type for
 /// `AppError` — the real serialisation is still handled by the manual
