@@ -235,6 +235,108 @@ describe('InPageFind — chunked walk preserves navigation (#756)', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// visualViewport offset (#760-class guard, #843) — the overlay toolbar
+// translateY-floats above the soft keyboard, but pinch zoom (scale > 1)
+// shrinks vv.height with no keyboard and must NOT lift the toolbar.
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal visualViewport stand-in. Extends EventTarget so the toolbar's
+ * `addEventListener('resize' | 'scroll', …)` wiring is exercised for real.
+ * Mirrors the FakeVisualViewport in sheet.test.tsx (#760).
+ */
+class FakeVisualViewport extends EventTarget {
+  height: number
+  offsetTop = 0
+  width = 1024
+  /** Pinch-zoom factor — 1 = unzoomed. The IME never changes this; pinch zoom always does. */
+  scale = 1
+
+  constructor(height: number) {
+    super()
+    this.height = height
+  }
+}
+
+function installVisualViewport(height: number): FakeVisualViewport {
+  const vv = new FakeVisualViewport(height)
+  Object.defineProperty(window, 'visualViewport', {
+    value: vv,
+    writable: true,
+    configurable: true,
+  })
+  return vv
+}
+
+describe('InPageFind — visualViewport keyboard offset (#843)', () => {
+  const originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight')
+  const originalVisualViewport = Object.getOwnPropertyDescriptor(window, 'visualViewport')
+
+  beforeEach(() => {
+    // Deterministic layout-viewport height: keyboard offset is computed as
+    // visualViewport.height - innerHeight (negative while the IME is up).
+    Object.defineProperty(window, 'innerHeight', {
+      value: 768,
+      writable: true,
+      configurable: true,
+    })
+  })
+
+  afterEach(() => {
+    if (originalInnerHeight) {
+      Object.defineProperty(window, 'innerHeight', originalInnerHeight)
+    }
+    if (originalVisualViewport) {
+      Object.defineProperty(window, 'visualViewport', originalVisualViewport)
+    } else {
+      // happy-dom has no visualViewport by default — remove the stand-in.
+      // @ts-expect-error allow deleting the optional global between tests
+      delete window.visualViewport
+    }
+  })
+
+  it('lifts the overlay toolbar above a keyboard that is up (scale == 1, reduced vv.height)', () => {
+    installVisualViewport(468) // 468 - 768 = -300px IME offset
+    render(<InPageFind />)
+    openToolbar()
+    const toolbar = screen.getByTestId('in-page-find-toolbar')
+    expect(toolbar.style.transform).toBe('translateY(-300px)')
+  })
+
+  it('does NOT treat pinch zoom as a keyboard (visualViewport.scale > 1)', () => {
+    // Desktop trackpad / touchscreen pinch zoom shrinks vv.height exactly
+    // like the IME does (height ≈ innerHeight / scale) but lifting the
+    // toolbar would be bogus — the keyboard is not up.
+    const vv = installVisualViewport(384) // 768 / 2 — looks like a 384px "keyboard"
+    vv.scale = 2
+    render(<InPageFind />)
+    openToolbar()
+    const toolbar = screen.getByTestId('in-page-find-toolbar')
+    expect(toolbar.style.transform).toBe('')
+
+    // Zoom reset, then a real IME opens: the toolbar lifts for real.
+    act(() => {
+      vv.scale = 1
+      vv.height = 468 // 468 - 768 = -300px overlap
+      vv.dispatchEvent(new Event('resize'))
+    })
+    expect(toolbar.style.transform).toBe('translateY(-300px)')
+  })
+
+  it('keeps the plain offset math when scale is undefined (older WebViews)', () => {
+    const vv = installVisualViewport(468) // 468 - 768 = -300px IME offset
+    // Older WebViews expose no `scale`; `undefined > 1` is false so the
+    // plain keyboard math runs.
+    // @ts-expect-error simulate a WebView lacking visualViewport.scale
+    vv.scale = undefined
+    render(<InPageFind />)
+    openToolbar()
+    const toolbar = screen.getByTestId('in-page-find-toolbar')
+    expect(toolbar.style.transform).toBe('translateY(-300px)')
+  })
+})
+
 describe('InPageFind — close + a11y', () => {
   it('Esc closes the toolbar', async () => {
     render(<InPageFind />)
