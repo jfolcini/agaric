@@ -2,15 +2,15 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_precision_loss)]
 
-//! Interactive-command SLO gate — Phase 1 of
-//! `pending/scale-benchmarks-100k-2026-05-14.md`.
+//! Interactive-command SLO gate — the canonical enforcer of the product
+//! performance SLO documented in `docs/architecture/operations.md`
+//! (§ Product SLO).
 //!
 //! Re-runs the 100K-scale measurements for every user-facing Tauri command
-//! covered by `docs/ARCHITECTURE.md` §25 (lines 2374-2393) and `panic!`s if any
-//! sample's *mean* elapsed wall-clock exceeds the per-command latency
-//! budget. The product SLO is "interactive commands ≤ 200 ms p95 @ 100K";
-//! individual budgets are seeded from §25's current numbers, rounded up,
-//! and listed inline beside each bench function.
+//! and `panic!`s if any sample's *mean* elapsed wall-clock exceeds the
+//! per-command latency budget. The product SLO is "interactive commands
+//! ≤ 200 ms p95 @ 100K"; individual per-command budgets are listed inline
+//! beside each bench function (this file is the source of truth for them).
 //!
 //! ## Running
 //!
@@ -25,7 +25,8 @@
 //! ## Problem-command gating
 //!
 //! Two commands currently violate the 200 ms budget (`list_page_links`
-//! ~1.3 s, `list_projected_agenda` ~620 ms — see §25 *Problem* rows).
+//! ~1.3 s, `list_projected_agenda` ~620 ms — see the *known to exceed
+//! budget* note in `docs/architecture/operations.md` § Product SLO).
 //! Their bench fns are present in this file with the *aspirational*
 //! 200 ms budget, but are gated behind the `SLO_INCLUDE_PROBLEM` env
 //! var so they don't fail CI today. To run them locally:
@@ -35,8 +36,7 @@
 //! ```
 //!
 //! Each Problem fn's gate carries a TODO pointing at its mitigation
-//! plan; remove the gate as the fix lands (`pending/scale-benchmarks-100k-2026-05-14.md`
-//! Phase 3).
+//! plan; remove the gate as the fix lands.
 //!
 //! ## Why bench-internal `assert!` rather than Criterion thresholds?
 //!
@@ -639,7 +639,7 @@ fn assert_under_budget(cmd: &str, acc: &Acc, budget_ms: f64) {
     assert!(
         mean_ms <= budget_ms,
         "interactive_slo: {cmd} = {mean_ms:.2} ms > budget {budget_ms} ms \
-         (regression — see docs/ARCHITECTURE.md §25)"
+         (regression — see docs/architecture/operations.md § Product SLO)"
     );
     println!("interactive_slo: {cmd} = {mean_ms:.2} ms <= budget {budget_ms} ms (PASS)");
 }
@@ -650,7 +650,7 @@ fn problem_skipped(cmd: &str) -> bool {
     if std::env::var("SLO_INCLUDE_PROBLEM").is_err() {
         println!(
             "interactive_slo: {cmd} SKIPPED (set SLO_INCLUDE_PROBLEM=1 to run; \
-             aspirational budget — see pending/scale-benchmarks-100k-2026-05-14.md Phase 3)"
+             aspirational budget — see docs/architecture/operations.md § Product SLO)"
         );
         true
     } else {
@@ -924,7 +924,7 @@ fn bench_count_agenda_batch(c: &mut Criterion) {
 }
 
 /// `count_backlinks_batch` — 10 target pages, 100K source blocks.
-/// Budget: 100 ms (§25 measures ~62 ms — "concerning at scale" tier).
+/// Budget: 100 ms (measured ~62 ms — "concerning at scale" tier).
 fn bench_count_backlinks_batch(c: &mut Criterion) {
     const BUDGET_MS: f64 = 100.0;
     let rt = Runtime::new().unwrap();
@@ -1144,7 +1144,8 @@ fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
 // ===========================================================================
 
 /// `list_page_links` — graph-view roll-up. **Currently ~1.3 s at 100K**
-/// (3-JOIN superlinearity, see §25 *Problem* row); SQL-review §H-2
+/// (3-JOIN superlinearity, see docs/architecture/operations.md § Product
+/// SLO known-exceeds-budget note); SQL-review §H-2
 /// (migration 0065 `page_link_cache` + the per-`ReindexBlockLinks`
 /// rollup in `cache::page_links::reindex_page_link_cache_for_block`)
 /// brought it under budget, so the `SLO_INCLUDE_PROBLEM` env-gate has
@@ -1194,10 +1195,10 @@ fn bench_list_page_links(c: &mut Criterion) {
 }
 
 /// `list_projected_agenda` — repeating-task projection over 100K rows.
-/// **Currently ~620 ms** (O(n×m) in-memory expansion, §25 *Problem* row).
+/// **Currently ~620 ms** (O(n×m) in-memory expansion; see
+/// docs/architecture/operations.md § Product SLO known-exceeds-budget note).
 ///
-/// TODO(scale-benchmarks-100k-2026-05-14.md Phase 3): drop the
-/// `problem_skipped` gate once the SQL/CTE pushdown lands.
+/// TODO: drop the `problem_skipped` gate once the SQL/CTE pushdown lands.
 fn bench_list_projected_agenda(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
     if problem_skipped("list_projected_agenda @ 100K") {

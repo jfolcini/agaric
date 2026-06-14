@@ -139,8 +139,8 @@ pub async fn list_page_links_inner_split(
     // read collapses to two index joins (one per endpoint of `blocks`
     // for the `deleted_at IS NULL` filter) plus the optional
     // space / tag filters. Replaces the documented 1.3 s @ 100K
-    // bottleneck called out in ARCH §25 (the Problem-tier row in
-    // `interactive_slo`).
+    // bottleneck called out in docs/architecture/operations.md
+    // § Product SLO (the Problem-tier row in `interactive_slo`).
     //
     // The cache mirrors the legacy query's semantics ("source page =
     // COALESCE(parent_id, source_id), target page = target_id, drop
@@ -241,7 +241,6 @@ pub async fn list_page_links_inner_split(
 /// those whose target page carries at least one of the listed tags. The
 /// frontend GraphView passes its active tag filter here so the backend
 /// no longer ships every space-wide edge for the renderer to discard.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_page_links(

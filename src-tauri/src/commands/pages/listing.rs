@@ -401,7 +401,6 @@ pub async fn list_all_pages_in_space_inner(
 /// Tauri command: list every page in `space_id` as `{ id, content }`,
 /// optionally restricted to pages carrying at least one of `tag_ids`.
 /// Delegates to [`list_all_pages_in_space_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_all_pages_in_space(
@@ -442,7 +441,6 @@ pub async fn list_template_page_ids_in_space_inner(
 
 /// Tauri command: list template page IDs in `space_id`.
 /// Delegates to [`list_template_page_ids_in_space_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_template_page_ids_in_space(
@@ -533,7 +531,6 @@ pub async fn load_page_subtree_inner(
 
 /// Tauri command: load every active descendant under `root_block_id`
 /// in `space_id`.  Delegates to [`load_page_subtree_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn load_page_subtree(

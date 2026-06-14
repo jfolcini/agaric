@@ -557,7 +557,6 @@ pub fn collect_bug_report_metadata_inner(
 /// resolved here — same sources as [`read_logs_for_report`] — so the
 /// recent-error tail embedded in the prefilled public GitHub issue body
 /// goes through the same redaction pipeline as the ZIP export.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn collect_bug_report_metadata(
@@ -1160,7 +1159,6 @@ async fn fetch_redaction_extras(pool: &SqlitePool) -> (Option<String>, Vec<Strin
 /// bug-report ZIP, applying per-file size caps and optional PII
 /// redaction (home path, device id, GCal email, peer device ids).
 /// Delegates to [`read_logs_for_report_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn read_logs_for_report(

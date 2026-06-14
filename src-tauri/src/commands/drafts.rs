@@ -269,7 +269,6 @@ pub async fn flush_all_drafts_inner(
 }
 
 /// Tauri command: save a draft for a block. Delegates to [`draft::save_draft`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn save_draft(
@@ -284,7 +283,6 @@ pub async fn save_draft(
 
 /// Tauri command: flush a draft (write edit_block op + delete draft row).
 /// Delegates to [`flush_draft_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn flush_draft(
@@ -301,7 +299,6 @@ pub async fn flush_draft(
 /// Tauri command: flush every draft in a single `BEGIN IMMEDIATE` tx.
 /// Delegates to [`flush_all_drafts_inner`]. See that function's doc
 /// comment for the all-or-nothing atomicity contract.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn flush_all_drafts(
@@ -315,7 +312,6 @@ pub async fn flush_all_drafts(
 }
 
 /// Tauri command: delete a draft for a block. Delegates to [`draft::delete_draft`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_draft(pool: State<'_, WritePool>, block_id: BlockId) -> Result<(), AppError> {
@@ -325,7 +321,6 @@ pub async fn delete_draft(pool: State<'_, WritePool>, block_id: BlockId) -> Resu
 }
 
 /// Tauri command: list all drafts. Delegates to [`draft::get_all_drafts`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_drafts(pool: State<'_, ReadPool>) -> Result<Vec<draft::Draft>, AppError> {

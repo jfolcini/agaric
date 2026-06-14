@@ -897,7 +897,6 @@ impl RepeatingBlockRow {
 /// peers), so this sanitization exists purely for UX consistency and to
 /// keep raw SQL fragments or filesystem paths out of toast notifications
 /// — not as a security boundary.
-#[cfg(not(tarpaulin_include))]
 pub(crate) fn sanitize_internal_error(err: AppError) -> AppError {
     match &err {
         AppError::Database(_)
@@ -914,7 +913,6 @@ pub(crate) fn sanitize_internal_error(err: AppError) -> AppError {
 }
 
 /// Tauri command: list op-log history for a block. Delegates to [`get_block_history_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_block_history(

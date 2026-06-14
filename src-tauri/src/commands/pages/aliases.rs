@@ -239,7 +239,6 @@ pub async fn list_page_aliases_by_prefix_inner(
 }
 
 /// Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn set_page_aliases(
@@ -253,7 +252,6 @@ pub async fn set_page_aliases(
 }
 
 /// Tauri command: get page aliases. Delegates to [`get_page_aliases_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_page_aliases(
@@ -266,7 +264,6 @@ pub async fn get_page_aliases(
 }
 
 /// Tauri command: resolve a page by alias. Delegates to [`resolve_page_by_alias_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn resolve_page_by_alias(
@@ -281,7 +278,6 @@ pub async fn resolve_page_by_alias(
 
 /// Tauri command: list page aliases by prefix.
 /// Delegates to [`list_page_aliases_by_prefix_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_page_aliases_by_prefix(

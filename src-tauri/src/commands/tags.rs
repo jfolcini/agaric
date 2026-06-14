@@ -490,7 +490,6 @@ pub async fn list_tags_for_block_inner(
 }
 
 /// Tauri command: add a tag to a block. Delegates to [`add_tag_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn add_tag(
@@ -638,7 +637,6 @@ pub async fn add_tags_by_ids_inner(
 
 /// Tauri command: add ONE tag to N blocks (#81 / PEND-57). Delegates to
 /// [`add_tags_by_ids_inner`]. Returns the number of blocks newly tagged.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn add_tags_by_ids(
@@ -660,7 +658,6 @@ pub async fn add_tags_by_ids(
 }
 
 /// Tauri command: remove a tag from a block. Delegates to [`remove_tag_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn remove_tag(
@@ -676,7 +673,6 @@ pub async fn remove_tag(
 }
 
 /// Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -707,7 +703,6 @@ pub async fn query_by_tags(
 }
 
 /// Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_tags_by_prefix(
@@ -721,7 +716,6 @@ pub async fn list_tags_by_prefix(
 }
 
 /// Tauri command: list tag IDs for a block. Delegates to [`list_tags_for_block_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_tags_for_block(
@@ -735,7 +729,6 @@ pub async fn list_tags_for_block(
 
 /// Tauri command: list every tag in `space_id` as `TagCacheRow[]`. No
 /// pagination, no clamp.  Delegates to [`list_all_tags_in_space_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_all_tags_in_space(

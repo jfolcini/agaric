@@ -166,7 +166,6 @@ pub const ORPHAN_DRAFTS_SWEEP_INTERVAL: std::time::Duration = std::time::Duratio
 /// `info!` when it removed at least one row — orphans being swept is
 /// observable evidence of the schema-edge case (soft-deleted parent
 /// block) the function exists to handle.
-#[cfg(not(tarpaulin_include))]
 pub fn spawn_orphan_drafts_sweeper(
     pool: SqlitePool,
     interval: std::time::Duration,

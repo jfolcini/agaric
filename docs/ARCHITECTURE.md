@@ -57,5 +57,5 @@ How the system is built. Companion to:
 - **Backend code**: `src-tauri/src/` (commands, materializer, sync, Loro engine, recurrence, FTS, snapshot, GCal, MCP).
 - **Frontend code**: `src/` (components, editor, hooks, stores, lib).
 - **Bindings**: `src/lib/bindings.ts` (specta-generated; checked in; CI fails on drift).
-- **Tests**: `src-tauri/tests/` (Rust integration), `src/**/__tests__/` (frontend), `e2e/` (Playwright).
+- **Tests**: `src-tauri/src/` (Rust unit + integration, colocated as `#[cfg(test)] mod tests`, `*/tests.rs`, and `integration_tests.rs` / `command_integration_tests/` — see `src-tauri/tests/AGENTS.md` for the layering), `src/**/__tests__/` (frontend), `e2e/` (Playwright).
 - **Backlog**: tracked on the GitHub issue tracker.

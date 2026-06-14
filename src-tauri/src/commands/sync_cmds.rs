@@ -337,7 +337,6 @@ pub fn cancel_sync_inner(cancel_flag: &AtomicBool) -> Result<(), AppError> {
 }
 
 /// Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_peer_refs(pool: State<'_, ReadPool>) -> Result<Vec<PeerRef>, AppError> {
@@ -347,7 +346,6 @@ pub async fn list_peer_refs(pool: State<'_, ReadPool>) -> Result<Vec<PeerRef>, A
 }
 
 /// Tauri command: get a single sync peer by ID. Delegates to [`get_peer_ref_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_peer_ref(
@@ -360,7 +358,6 @@ pub async fn get_peer_ref(
 }
 
 /// Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_peer_ref(pool: State<'_, WritePool>, peer_id: String) -> Result<(), AppError> {
@@ -372,7 +369,6 @@ pub async fn delete_peer_ref(pool: State<'_, WritePool>, peer_id: String) -> Res
 /// Tauri command: rename a paired sync peer's display name (or clear
 /// it back to the device-supplied value when `device_name` is `None`).
 /// Delegates to [`update_peer_name_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn update_peer_name(
@@ -386,7 +382,6 @@ pub async fn update_peer_name(
 }
 
 /// Tauri command: set a peer's last-known network address for direct connection.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn set_peer_address(
@@ -400,7 +395,6 @@ pub async fn set_peer_address(
 }
 
 /// Tauri command: return the local device's persistent UUID.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_device_id(device_id: State<'_, DeviceId>) -> Result<String, AppError> {
@@ -409,7 +403,6 @@ pub async fn get_device_id(device_id: State<'_, DeviceId>) -> Result<String, App
 
 /// Tauri command: start a new pairing session.
 /// Generates a passphrase + QR SVG and stores the session in managed state.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn start_pairing(
@@ -421,7 +414,6 @@ pub async fn start_pairing(
 
 /// Tauri command: confirm pairing with a remote device.
 /// Stores the peer ref in the database and clears the pairing session.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn confirm_pairing(
@@ -445,7 +437,6 @@ pub async fn confirm_pairing(
 }
 
 /// Tauri command: cancel an in-progress pairing session.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn cancel_pairing(pairing_state: State<'_, PairingState>) -> Result<(), AppError> {
@@ -454,7 +445,6 @@ pub async fn cancel_pairing(pairing_state: State<'_, PairingState>) -> Result<()
 
 /// Tauri command: start sync with a remote peer.
 /// Checks backoff (#278), acquires the per-peer lock, and returns session info.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn start_sync(
@@ -468,7 +458,6 @@ pub async fn start_sync(
 }
 
 /// Tauri command: cancel an active sync session.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn cancel_sync(cancel_flag: State<'_, crate::SyncCancelFlag>) -> Result<(), AppError> {

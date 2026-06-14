@@ -75,7 +75,6 @@ pub(crate) fn log_frontend_inner(
 /// Truncation is unconditional — the FE rate-limiter is not in this
 /// trust scope (caller of `log_frontend` may be a panic handler that
 /// fires before the rate-limiter takes effect).
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn log_frontend(
@@ -124,7 +123,6 @@ pub(crate) fn get_log_dir_inner(app_data_dir: &std::path::Path) -> String {
 /// Uses [`crate::log_dir_for_app_data`] so the path returned to the
 /// frontend ("Open logs folder") is guaranteed to match the directory
 /// the tracing-appender writes to — on every platform (BUG-34).
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {

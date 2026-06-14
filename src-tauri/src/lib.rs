@@ -1695,7 +1695,6 @@ fn wire_gcal_connector<R: tauri::Runtime>(
     Ok(())
 }
 
-#[cfg(not(tarpaulin_include))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // #1058: most boot-wiring imports moved into the focused helper

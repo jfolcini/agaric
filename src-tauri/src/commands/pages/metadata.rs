@@ -983,7 +983,6 @@ fn build_metadata_response(
 ///
 /// Frontend wires this from `PageBrowser` when the `densityV1` flag is
 /// on; the flag-off path continues to use `list_blocks(blockType='page')`.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_pages_with_metadata(
