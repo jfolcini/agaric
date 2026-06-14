@@ -18,7 +18,7 @@ import { ScrollArea } from './scroll-area'
 // site — mirrors the DialogContent shape from
 // pending/dialog-responsiveness-primitive-2026-05-13.md.
 const SHEET_CONTENT_BASE =
-  'fixed z-50 flex flex-col overflow-hidden gap-4 bg-background p-6 shadow-lg transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-moderate data-[state=open]:animate-in data-[state=open]:duration-moderate'
+  'fixed z-50 flex flex-col overflow-hidden gap-4 bg-background p-6 shadow-(--shadow-overlay) transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-moderate data-[state=open]:animate-in data-[state=open]:duration-moderate'
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />

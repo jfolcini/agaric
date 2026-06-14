@@ -9,7 +9,7 @@ import { SHARED_INPUT_CLASSES } from './input'
 // PERF: hoisted from inline string in render — twMerge only re-parses caller className.
 // See pending/design-system-perf-review-2026-05-09.md Tier 3 item 16.
 const SELECT_CONTENT_BASE =
-  'bg-popover text-popover-foreground z-50 max-h-[min(var(--radix-select-content-available-height),24rem)] min-w-[8rem] overflow-hidden rounded-md border shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2'
+  'bg-popover text-popover-foreground z-50 max-h-[min(var(--radix-select-content-available-height),24rem)] min-w-[8rem] overflow-hidden rounded-md border shadow-(--shadow-floating) data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2'
 
 function Select({ ...props }: React.ComponentProps<typeof SelectPrimitive.Root>) {
   return <SelectPrimitive.Root data-slot="select" {...props} />
