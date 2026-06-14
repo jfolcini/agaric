@@ -18,6 +18,7 @@ vi.mock('sonner', () => {
 vi.mock('../../lib/tauri', () => ({
   listPeerRefs: vi.fn(),
   startSync: vi.fn(),
+  flushAllDrafts: vi.fn(),
 }))
 
 vi.mock('../../lib/announcer', () => ({
@@ -26,9 +27,26 @@ vi.mock('../../lib/announcer', () => ({
 
 import { announce } from '../../lib/announcer'
 import type { PeerRefRow, SyncSessionInfo } from '../../lib/tauri'
-import { listPeerRefs, startSync } from '../../lib/tauri'
+import { flushAllDrafts, listPeerRefs, startSync } from '../../lib/tauri'
 import { useSyncStore } from '../../stores/sync'
 import { mapPeerRefToInfo, useSyncTrigger } from '../useSyncTrigger'
+
+/**
+ * #748 — drive a `visibilitychange` event with the given visibility state.
+ * jsdom doesn't flip `document.visibilityState` itself, so we stub the
+ * getter before dispatching the event the handler listens for.
+ */
+function setVisibility(state: 'visible' | 'hidden'): void {
+  Object.defineProperty(document, 'visibilityState', {
+    value: state,
+    configurable: true,
+  })
+  Object.defineProperty(document, 'hidden', {
+    value: state === 'hidden',
+    configurable: true,
+  })
+  document.dispatchEvent(new Event('visibilitychange'))
+}
 
 /** Build a `PeerRefRow` with sensible defaults for tests (#1076). */
 function makePeerRow(overrides: Partial<PeerRefRow> = {}): PeerRefRow {
@@ -48,6 +66,7 @@ function makePeerRow(overrides: Partial<PeerRefRow> = {}): PeerRefRow {
 
 const mockListPeerRefs = vi.mocked(listPeerRefs)
 const mockStartSync = vi.mocked(startSync)
+const mockFlushAllDrafts = vi.mocked(flushAllDrafts)
 const mockedAnnounce = vi.mocked(announce)
 
 describe('useSyncTrigger', () => {
@@ -64,6 +83,11 @@ describe('useSyncTrigger', () => {
       ops_received: 0,
       ops_sent: 0,
     })
+    mockFlushAllDrafts.mockResolvedValue({ flushed: 0 })
+    // Start each test from a known-visible page so visibility transitions
+    // are unambiguous (#748).
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+    Object.defineProperty(document, 'hidden', { value: false, configurable: true })
     useSyncStore.getState().reset()
   })
 
@@ -787,6 +811,176 @@ describe('useSyncTrigger', () => {
       })
 
       expect(useSyncStore.getState().peers).toEqual([])
+    })
+  })
+
+  // #748: visibilitychange pause/resume — recover background-suspended
+  // sync on resume and persist drafts when backgrounded.
+  describe('visibilitychange pause/resume (#748)', () => {
+    const peers = [makePeerRow({ peer_id: 'PEER1' })]
+
+    it('on visible: re-arms the timer and triggers syncAll once', async () => {
+      mockListPeerRefs.mockResolvedValue(peers)
+
+      renderHook(() => useSyncTrigger())
+      // Run the initial mount sync so we're in steady state.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_100)
+      })
+      expect(mockStartSync).toHaveBeenCalledTimes(1)
+
+      // Resume: should fire exactly one immediate syncAll.
+      await act(async () => {
+        setVisibility('visible')
+        await Promise.resolve()
+      })
+      expect(mockStartSync).toHaveBeenCalledTimes(2)
+
+      // And the timer chain is re-armed: the next periodic tick fires.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+      expect(mockStartSync).toHaveBeenCalledTimes(3)
+    })
+
+    it('does NOT double-arm the timer on resume (single chain only)', async () => {
+      mockListPeerRefs.mockResolvedValue(peers)
+
+      renderHook(() => useSyncTrigger())
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_100)
+      })
+      expect(mockStartSync).toHaveBeenCalledTimes(1)
+
+      // Resume — re-arms once + fires immediate sync (call #2).
+      await act(async () => {
+        setVisibility('visible')
+        await Promise.resolve()
+      })
+      expect(mockStartSync).toHaveBeenCalledTimes(2)
+
+      // Exactly one 60s tick should fire. If two chains were live we'd
+      // see two extra startSync calls here.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+      expect(mockStartSync).toHaveBeenCalledTimes(3)
+    })
+
+    it('does NOT overlap syncAll when one is already in flight', async () => {
+      let resolveSync: (() => void) | undefined
+      mockListPeerRefs.mockResolvedValue(peers)
+      mockStartSync.mockImplementation(
+        () =>
+          new Promise<SyncSessionInfo>((resolve) => {
+            resolveSync = () =>
+              resolve({
+                state: 'complete',
+                local_device_id: 'L',
+                remote_device_id: 'R',
+                ops_received: 0,
+                ops_sent: 0,
+              })
+          }),
+      )
+
+      const { result } = renderHook(() => useSyncTrigger())
+
+      // Start a sync and let it enter the critical section (in flight).
+      act(() => {
+        void result.current.syncAll()
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(mockStartSync).toHaveBeenCalledTimes(1)
+
+      // Resume while the sync is still in flight — overlap guard must
+      // keep it a no-op (no second startSync).
+      await act(async () => {
+        setVisibility('visible')
+        await Promise.resolve()
+      })
+      expect(mockStartSync).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        resolveSync?.()
+      })
+    })
+
+    it('on hidden: flushes all drafts', async () => {
+      mockListPeerRefs.mockResolvedValue(peers)
+
+      renderHook(() => useSyncTrigger())
+
+      expect(mockFlushAllDrafts).not.toHaveBeenCalled()
+
+      await act(async () => {
+        setVisibility('hidden')
+        await Promise.resolve()
+      })
+
+      expect(mockFlushAllDrafts).toHaveBeenCalledTimes(1)
+    })
+
+    it('removes the visibilitychange listener on unmount', async () => {
+      mockListPeerRefs.mockResolvedValue(peers)
+
+      const { unmount } = renderHook(() => useSyncTrigger())
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_100)
+      })
+      const callsBefore = mockStartSync.mock.calls.length
+      const flushesBefore = mockFlushAllDrafts.mock.calls.length
+
+      unmount()
+
+      // After unmount, neither a visible nor a hidden transition should do
+      // anything (listener detached).
+      await act(async () => {
+        setVisibility('hidden')
+        setVisibility('visible')
+        await Promise.resolve()
+      })
+
+      expect(mockStartSync.mock.calls.length).toBe(callsBefore)
+      expect(mockFlushAllDrafts.mock.calls.length).toBe(flushesBefore)
+    })
+
+    it('suppresses the spurious timeout toast for a suspended in-flight sync on resume', async () => {
+      mockListPeerRefs.mockResolvedValue(peers)
+      // Model a background-suspended sync: startSync never resolves while
+      // hidden, so the in-flight run's `runWithTimeout` is the race that
+      // would (late) reject with "Sync timeout".
+      mockStartSync.mockImplementation(() => new Promise<SyncSessionInfo>(() => {}))
+
+      const { result } = renderHook(() => useSyncTrigger())
+
+      // Begin a sync and let it reach the in-flight state.
+      act(() => {
+        void result.current.syncAll()
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(mockStartSync).toHaveBeenCalledTimes(1)
+
+      // Resume: invalidates the suspended run (generation bump). Because
+      // the prior run is still genuinely in flight, the overlap guard
+      // keeps the resume's syncAll a no-op for now.
+      await act(async () => {
+        setVisibility('visible')
+        await Promise.resolve()
+      })
+
+      // The suspended run's timeout fires late (background throttling
+      // simulated by advancing past SYNC_TIMEOUT_MS). It must NOT toast —
+      // the run was superseded by the resume.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_100)
+      })
+
+      expect(toast.error).not.toHaveBeenCalled()
     })
   })
 })
