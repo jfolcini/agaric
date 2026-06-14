@@ -1581,6 +1581,7 @@ async fn query_by_property_returns_matching_blocks() {
         None,
         &[],
         None,
+        &[],
     )
     .await
     .unwrap();
@@ -1620,6 +1621,7 @@ async fn query_by_property_filters_by_value() {
         None,
         &[],
         None,
+        &[],
     )
     .await
     .unwrap();
@@ -1677,6 +1679,7 @@ async fn query_by_property_neq_keeps_other_column_rows() {
         None,
         &[],
         None,
+        &[],
     )
     .await
     .unwrap();
@@ -1728,6 +1731,7 @@ async fn query_by_property_paginates_with_cursor() {
                 None,
                 &[],
                 None,
+                &[],
             )
             .await
         },
@@ -1755,6 +1759,7 @@ async fn query_by_property_returns_empty_for_nonexistent_key() {
         None,
         &[],
         None,
+        &[],
     )
     .await
     .unwrap();
@@ -1795,6 +1800,7 @@ async fn query_by_property_excludes_soft_deleted() {
         None,
         &[],
         None,
+        &[],
     )
     .await
     .unwrap();
@@ -1831,6 +1837,7 @@ async fn query_by_property_rejects_both_value_filters() {
         None,
         &[],
         None,
+        &[],
     )
     .await
     .expect_err("both value filters must be rejected");
@@ -1858,6 +1865,7 @@ async fn query_by_property_rejects_both_value_filters() {
         None,
         &[],
         None,
+        &[],
     )
     .await
     .expect_err("both value filters must be rejected on reserved-key path too");

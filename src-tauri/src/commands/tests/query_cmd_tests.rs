@@ -578,6 +578,7 @@ async fn query_by_property_returns_matching_blocks() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -608,6 +609,7 @@ async fn query_by_property_empty_key_returns_validation_error() {
         &SpaceScope::Global,
         None,
         false,
+        None,
         None,
         None,
         None,
@@ -644,6 +646,7 @@ async fn query_by_property_filters_by_value() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -674,6 +677,7 @@ async fn query_by_property_paginates_correctly() {
         &SpaceScope::Global,
         None,
         false,
+        None,
         None,
         None,
         None,
@@ -711,6 +715,7 @@ async fn query_by_property_paginates_correctly() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -738,6 +743,7 @@ async fn query_by_property_paginates_correctly() {
         &SpaceScope::Global,
         None,
         false,
+        None,
         None,
         None,
         None,
@@ -775,6 +781,7 @@ async fn query_by_property_excludes_deleted_blocks() {
         &SpaceScope::Global,
         None,
         false,
+        None,
         None,
         None,
         None,
@@ -851,6 +858,7 @@ async fn query_by_property_reserved_date_key_filters_by_value_date() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -868,6 +876,7 @@ async fn query_by_property_reserved_date_key_filters_by_value_date() {
         &SpaceScope::Global,
         None,
         false,
+        None,
         None,
         None,
         None,
@@ -932,6 +941,7 @@ async fn query_by_property_with_gt_operator() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -978,6 +988,7 @@ async fn query_by_property_with_lt_operator() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1017,6 +1028,7 @@ async fn query_by_property_with_neq_operator() {
         &SpaceScope::Global,
         None,
         false,
+        None,
         None,
         None,
         None,
@@ -1060,6 +1072,7 @@ async fn query_by_property_with_lte_operator() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1097,6 +1110,7 @@ async fn query_by_property_with_gte_operator() {
         &SpaceScope::Global,
         None,
         false,
+        None,
         None,
         None,
         None,
@@ -1143,6 +1157,7 @@ async fn query_by_property_neq_sibling_column_regression_384() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1180,6 +1195,7 @@ async fn query_by_property_defaults_to_eq() {
         &SpaceScope::Global,
         None,
         false,
+        None,
         None,
         None,
         None,
@@ -1242,6 +1258,7 @@ async fn query_by_property_excludes_parent_id() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1264,6 +1281,7 @@ async fn query_by_property_excludes_parent_id() {
         &SpaceScope::Global,
         Some("PARENT_X".into()),
         false,
+        None,
         None,
         None,
         None,
@@ -1320,6 +1338,7 @@ async fn query_by_property_content_non_empty() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1340,6 +1359,7 @@ async fn query_by_property_content_non_empty() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1349,6 +1369,113 @@ async fn query_by_property_content_non_empty() {
         ids,
         ["QPCNE_A", "QPCNE_D"].into_iter().collect(),
         "content_non_empty must drop NULL, '', and whitespace-only content; got {ids:?}"
+    );
+}
+
+// ======================================================================
+// #738 sub-2 — query_by_property_inner exclude_todo_states push-down
+// ======================================================================
+//
+// The DuePanel "overdue" query fetches `due_date` rows for past dates,
+// then dropped `todo_state == 'DONE'` rows CLIENT-SIDE after a capped
+// 200-row page returned — so DONE rows occupied the window and starved
+// genuinely overdue TODOs. This test pins the SQL push-down: completed
+// rows are excluded at the DB layer (reserved-key `due_date` path), and
+// a row with NULL `todo_state` survives (only the listed states drop).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_property_excludes_todo_states_reserved_due_date() {
+    let (pool, _dir) = test_pool().await;
+
+    // Four overdue (due 2026-05-01) blocks: a TODO, a DOING, a DONE,
+    // and one with NULL todo_state (a bare dated block). All carry a
+    // past `due_date` so the reserved-key column path selects them.
+    insert_block(&pool, "QPET_TODO", "content", "todo task", None, Some(1)).await;
+    insert_block(&pool, "QPET_DOING", "content", "doing task", None, Some(2)).await;
+    insert_block(&pool, "QPET_DONE", "content", "done task", None, Some(3)).await;
+    insert_block(
+        &pool,
+        "QPET_NULL",
+        "content",
+        "dated, no state",
+        None,
+        Some(4),
+    )
+    .await;
+    sqlx::query("UPDATE blocks SET due_date = '2026-05-01', todo_state = 'TODO' WHERE id = ?")
+        .bind("QPET_TODO")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET due_date = '2026-05-01', todo_state = 'DOING' WHERE id = ?")
+        .bind("QPET_DOING")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET due_date = '2026-05-01', todo_state = 'DONE' WHERE id = ?")
+        .bind("QPET_DONE")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET due_date = '2026-05-01' WHERE id = ?")
+        .bind("QPET_NULL")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Unfiltered baseline — all four dated blocks come back.
+    let unfiltered = query_by_property_inner(
+        &pool,
+        "due_date".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        false,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        unfiltered.items.len(),
+        4,
+        "baseline must surface all four dated blocks; got {:?}",
+        unfiltered.items.iter().map(|b| &b.id).collect::<Vec<_>>()
+    );
+
+    // Filtered — exclude DONE. TODO, DOING, and the NULL-state block
+    // survive; only the completed task is dropped at the SQL layer.
+    let filtered = query_by_property_inner(
+        &pool,
+        "due_date".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        false,
+        None,
+        None,
+        None,
+        Some(vec!["DONE".into()]),
+    )
+    .await
+    .unwrap();
+    let ids: std::collections::HashSet<&str> =
+        filtered.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["QPET_TODO", "QPET_DOING", "QPET_NULL"]
+            .into_iter()
+            .collect(),
+        "exclude_todo_states must drop only DONE rows; NULL-state rows survive; got {ids:?}"
     );
 }
 
@@ -1397,6 +1524,7 @@ async fn query_by_property_filters_by_block_type() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1414,6 +1542,7 @@ async fn query_by_property_filters_by_block_type() {
         None,
         false,
         Some("page".into()),
+        None,
         None,
         None,
     )
@@ -1454,6 +1583,7 @@ async fn query_by_property_value_text_in() {
         false,
         None,
         Some(vec!["a".into(), "c".into()]),
+        None,
         None,
     )
     .await
@@ -1550,6 +1680,7 @@ async fn query_by_property_value_date_range() {
         None,
         None,
         Some(("2026-01-01".into(), "2026-02-01".into())),
+        None,
     )
     .await
     .unwrap();
@@ -1583,6 +1714,7 @@ async fn query_by_property_value_text_in_rejects_with_value_text() {
         false,
         None,
         Some(vec!["a".into()]),
+        None,
         None,
     )
     .await
@@ -2253,6 +2385,7 @@ async fn query_by_property_returns_only_current_space_blocks_feat3p4() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -2285,6 +2418,7 @@ async fn query_by_property_returns_only_current_space_blocks_feat3p4() {
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
         false,
+        None,
         None,
         None,
         None,
@@ -2331,6 +2465,7 @@ async fn query_by_property_with_none_space_id_returns_all_feat3p4() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -2359,6 +2494,7 @@ async fn query_by_property_with_nonexistent_space_id_returns_empty_feat3p4() {
         &SpaceScope::Active(SpaceId::from_trusted("DOES_NOT_EXIST")),
         None,
         false,
+        None,
         None,
         None,
         None,
@@ -2403,6 +2539,7 @@ async fn query_by_property_disjointness_feat3p4() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -2417,6 +2554,7 @@ async fn query_by_property_disjointness_feat3p4() {
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
         None,
         false,
+        None,
         None,
         None,
         None,
@@ -2481,6 +2619,7 @@ async fn query_by_property_global_equals_union_of_actives_pend18_parity() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -2498,6 +2637,7 @@ async fn query_by_property_global_equals_union_of_actives_pend18_parity() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -2512,6 +2652,7 @@ async fn query_by_property_global_equals_union_of_actives_pend18_parity() {
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
         None,
         false,
+        None,
         None,
         None,
         None,
@@ -3776,6 +3917,7 @@ async fn pend18_query_by_property_scope_parity() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -3796,6 +3938,7 @@ async fn pend18_query_by_property_scope_parity() {
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
         false,
+        None,
         None,
         None,
         None,

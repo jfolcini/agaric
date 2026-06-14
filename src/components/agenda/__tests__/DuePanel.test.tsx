@@ -199,6 +199,41 @@ describe('DuePanel', () => {
     expect(groupHeaders[3]).toHaveTextContent(t('duePanel.groupOther'))
   })
 
+  // #738 sub-1 — a CANCELLED block was counted in the header but matched
+  // no group, so it was hidden from the list: the header said "3" while
+  // the list showed 2. The CANCELLED group is now rendered so the header
+  // count and the visible rows agree.
+  it('renders a CANCELLED group so the header count matches visible rows (#738)', async () => {
+    mockedListBlocks.mockResolvedValue({
+      items: [
+        makeBlock({ id: 'B1', todo_state: 'TODO', content: 'todo block' }),
+        makeBlock({ id: 'B2', todo_state: 'DONE', content: 'done block' }),
+        makeBlock({ id: 'B3', todo_state: 'CANCELLED', content: 'cancelled block' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    render(<DuePanel date="2025-06-15" />)
+
+    // Header counts all three (including the CANCELLED block).
+    await screen.findByText(t('duePanel.header', { count: 3 }))
+
+    // The CANCELLED group header and its row are both rendered, so the
+    // count and the list agree (3 counted, 3 visible).
+    const groupHeaders = screen.getAllByText(/^(DOING|TODO|DONE|CANCELLED|Other)$/)
+    expect(groupHeaders.map((h) => h.textContent)).toEqual([
+      t('duePanel.groupTodo'),
+      t('duePanel.groupDone'),
+      t('duePanel.groupCancelled'),
+    ])
+    expect(screen.getByText('cancelled block')).toBeInTheDocument()
+
+    const rows = screen.getAllByTestId('due-panel-item')
+    expect(rows).toHaveLength(3)
+  })
+
   // 4. Sorts by priority within group (1 > 2 > 3 > null)
   it('sorts by priority within group', async () => {
     mockedListBlocks.mockResolvedValue({

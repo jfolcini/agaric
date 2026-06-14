@@ -51,6 +51,7 @@ describe('loadTemplatePages', () => {
         blockType: 'page',
         valueTextIn: null,
         valueDateRange: null,
+        excludeTodoStates: null,
       },
     })
     expect(result).toHaveLength(2)

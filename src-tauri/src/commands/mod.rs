@@ -486,6 +486,12 @@ pub struct ExtraQueryFilters {
     /// PEND-35 Tier 3.4 — push `value_date >= from AND value_date < to`
     /// into SQL (half-open `[from, to)` range).
     pub value_date_range: Option<(String, String)>,
+    /// #738 sub-2 — push `b.todo_state NOT IN (...)` into SQL so the
+    /// DuePanel's overdue query can exclude completed (`DONE`) tasks at
+    /// the database layer instead of post-filtering a capped page. NULL
+    /// `todo_state` rows are retained (only the listed states are
+    /// dropped). `None` / empty preserves the unfiltered behaviour.
+    pub exclude_todo_states: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]

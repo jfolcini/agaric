@@ -198,6 +198,13 @@ export function useDuePanelData({
   blocksRef.current = blocks
   const [projectedEntries, setProjectedEntries] = useState<ProjectedAgendaEntry[]>([])
   const [projectedLoading, setProjectedLoading] = useState(false)
+  // #738 sub-3 — track the previous `invalidationKey` so the projected
+  // cache is cleared ONLY when a property event actually fires (the key
+  // changes), not on every effect re-run. The projected effect's deps
+  // include `date` + `currentSpaceId`, so without this guard a plain
+  // date navigation (after any prior property event) wiped the whole
+  // 30s-TTL cache for the rest of the session, defeating UX-114.
+  const prevInvalidationKeyRef = useRef(invalidationKey)
   const [overdueBlocks, setOverdueBlocks] = useState<BlockRow[]>([])
   const [upcomingBlocks, setUpcomingBlocks] = useState<BlockRow[]>([])
 
@@ -224,11 +231,14 @@ export function useDuePanelData({
 
     async function fetchOverdue() {
       try {
-        // limit-clamp-followup — push the date filter into SQL via
-        // `valueDateRange`.  The half-open `['0001-01-01', date)` window
-        // returns only blocks whose `due_date` precedes `date`; the
-        // todo-state / content filters remain client-side because
-        // `query_by_property` filters on the property column only.
+        // #738 sub-2 — push the date, DONE-exclusion, and content
+        // filters into SQL so completed tasks and empty-content rows no
+        // longer occupy the bounded fetch window and starve genuinely
+        // overdue TODOs (the DonePanel pushes `contentNonEmpty` the same
+        // way). The half-open `['0001-01-01', date)` window returns only
+        // blocks whose `due_date` precedes `date`; `excludeTodoStates`
+        // drops `DONE` rows at the DB layer (NULL-state rows survive);
+        // `contentNonEmpty` drops empty/whitespace-only content.
         // The 200-row cap matches `PageRequest::new`'s `MAX_PAGE_SIZE`
         // (the silent clamp the previous `limit: 500` was hitting);
         // workspaces with more than 200 distinct overdue items would
@@ -236,11 +246,17 @@ export function useDuePanelData({
         const resp = await queryByProperty({
           key: 'due_date',
           valueDateRange: ['0001-01-01', date],
+          excludeTodoStates: ['DONE'],
+          contentNonEmpty: true,
           limit: paginationLimit(200),
           spaceId: currentSpaceId,
         })
         if (stale) return
 
+        // Defence-in-depth: the SQL push-down above already excludes
+        // DONE / empty-content / on-or-after-`date` rows, but the
+        // client predicate is retained so the visible set is correct
+        // even if a stale backend ignores the new knob.
         const overdue = resp.items.filter(
           (b) => b.due_date && b.due_date < date && b.todo_state !== 'DONE' && b.content?.trim(),
         )
@@ -456,8 +472,13 @@ export function useDuePanelData({
     let stale = false
     const cacheKey = `${currentSpaceId ?? '__null__'}|${date}`
 
-    // When invalidationKey changes, clear the projected cache so we refetch fresh data
-    if (invalidationKey > 0) {
+    // #738 sub-3 — clear the projected cache ONLY when `invalidationKey`
+    // actually changes (a property event fired since the last run), not
+    // on every effect re-run. Comparing against the prev-value ref keeps
+    // the UX-114 30s-TTL cache alive across plain date / space
+    // navigations that don't carry a fresh invalidation.
+    if (invalidationKey !== prevInvalidationKeyRef.current) {
+      prevInvalidationKeyRef.current = invalidationKey
       projectedCache.clear()
     }
 

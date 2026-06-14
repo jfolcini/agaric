@@ -311,6 +311,7 @@ pub async fn query_by_property_inner(
     block_type: Option<String>,
     value_text_in: Option<Vec<String>>,
     value_date_range: Option<(String, String)>,
+    exclude_todo_states: Option<Vec<String>>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     if key.trim().is_empty() {
         return Err(AppError::Validation(
@@ -323,6 +324,7 @@ pub async fn query_by_property_inner(
     let value_date_range_ref: Option<(&str, &str)> = value_date_range
         .as_ref()
         .map(|(from, to)| (from.as_str(), to.as_str()));
+    let exclude_todo_states_slice: &[String] = exclude_todo_states.as_deref().unwrap_or(&[]);
     pagination::query_by_property(
         pool,
         &key,
@@ -336,6 +338,7 @@ pub async fn query_by_property_inner(
         block_type.as_deref(),
         value_text_in_slice,
         value_date_range_ref,
+        exclude_todo_states_slice,
     )
     .await
 }
@@ -876,17 +879,24 @@ pub async fn query_by_property(
     scope: SpaceScope,
     extra_filters: Option<ExtraQueryFilters>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    let (exclude_parent_id, content_non_empty, block_type, value_text_in, value_date_range) =
-        match extra_filters {
-            Some(f) => (
-                f.exclude_parent_id,
-                f.content_non_empty.unwrap_or(false),
-                f.block_type,
-                f.value_text_in,
-                f.value_date_range,
-            ),
-            None => (None, false, None, None, None),
-        };
+    let (
+        exclude_parent_id,
+        content_non_empty,
+        block_type,
+        value_text_in,
+        value_date_range,
+        exclude_todo_states,
+    ) = match extra_filters {
+        Some(f) => (
+            f.exclude_parent_id,
+            f.content_non_empty.unwrap_or(false),
+            f.block_type,
+            f.value_text_in,
+            f.value_date_range,
+            f.exclude_todo_states,
+        ),
+        None => (None, false, None, None, None, None),
+    };
     query_by_property_inner(
         &pool.0,
         key,
@@ -901,6 +911,7 @@ pub async fn query_by_property(
         block_type,
         value_text_in,
         value_date_range,
+        exclude_todo_states,
     )
     .await
     .map_err(sanitize_internal_error)
