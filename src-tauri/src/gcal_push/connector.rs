@@ -50,7 +50,7 @@ use crate::error::{AppError, GcalErrorKind};
 use crate::pagination::ProjectedAgendaEntry;
 use crate::spaces::bootstrap::SPACE_PERSONAL_ULID;
 
-use super::api::{EventPatch, GcalApi};
+use super::api::{CalendarId, EventPatch, GcalApi};
 use super::digest::{self, DigestResult, Event, PrivacyMode};
 use super::keyring_store::{GcalEvent, GcalEventEmitter, TokenStore};
 use super::lease;
@@ -648,14 +648,11 @@ async fn run_cycle_attempt(
     // next cycle picks up the new snapshot.
     let settings = GcalSettingsSnapshot::read(pool).await?;
 
-    // 3. First-connect flow: if no calendar_id yet, create one.  Any
+    // 3. First-connect flow: if no calendar_id yet, ensure one.  Any
     // failure here is returned as a HardFailure so the outer loop can
     // decide whether to retry (recoverable 5xx) or surface (403).
     let calendar_id = if settings.calendar_id.is_empty() {
-        match api
-            .create_dedicated_calendar(token, DEDICATED_CALENDAR_NAME)
-            .await
-        {
+        match ensure_dedicated_calendar(api, token).await {
             Ok(id) => {
                 models::set_setting(pool, GcalSettingKey::CalendarId, &id).await?;
                 id
@@ -829,6 +826,43 @@ async fn run_cycle_attempt(
     }
 
     Ok(CycleAttempt::Completed(CycleOutcome::Ok))
+}
+
+/// Ensure the dedicated "Agaric Agenda" calendar exists, returning its
+/// [`CalendarId`].  The caller persists the returned id via
+/// `set_setting(CalendarId, …)` and uses it for the rest of the cycle.
+///
+/// #859 — lookup-before-create reconcile, mirroring the #631 events
+/// fix in [`push_date`].  `create_dedicated_calendar` →
+/// `set_setting(CalendarId, …)` is non-atomic across the network
+/// boundary: a crash (or DB-write failure) between the two leaves an
+/// orphan empty "Agaric Agenda" calendar, and the next boot — still
+/// seeing an empty `calendar_id` — would create a SECOND empty
+/// calendar, never reusing or cleaning up the first.  So we list the
+/// account's calendars first and ADOPT an existing one whose summary
+/// matches [`DEDICATED_CALENDAR_NAME`]; only when none is found do we
+/// create. This makes the ensure-calendar path idempotent / crash-safe:
+/// the crash-window orphan is adopted on the next boot, not duplicated.
+///
+/// A `list_calendars` failure does NOT fall through to a blind create:
+/// a transient list error returns its `AppError` so the caller
+/// classifies it (retry next cycle) — creating on a failed lookup would
+/// reintroduce the very duplicate this reconcile prevents.
+async fn ensure_dedicated_calendar(api: &GcalApi, token: &Token) -> Result<CalendarId, AppError> {
+    let existing = api.list_calendars(token).await?;
+    if let Some(adopted) = existing
+        .into_iter()
+        .find(|c| c.summary == DEDICATED_CALENDAR_NAME)
+    {
+        tracing::info!(
+            target: "gcal",
+            calendar_id = %adopted.id,
+            "adopting existing dedicated calendar instead of creating a duplicate (#859)",
+        );
+        return Ok(adopted.id);
+    }
+    api.create_dedicated_calendar(token, DEDICATED_CALENDAR_NAME)
+        .await
 }
 
 #[derive(Debug)]
@@ -1754,11 +1788,44 @@ mod tests {
     /// id.  Returns the [`MockServer`] guard so the caller controls the
     /// lifetime / `.expect(N)` assertion.
     async fn mount_create_calendar(server: &MockServer, calendar_id: &str) {
+        // #859 — the first-connect flow now lists the account's calendars
+        // before creating one (lookup-before-create reconcile).  Mount an
+        // empty `calendarList` so the lookup finds no existing dedicated
+        // calendar and the create path proceeds as before.
+        mount_list_calendars_empty(server).await;
         Mock::given(method("POST"))
             .and(path("/calendars"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "id": calendar_id,
                 "summary": "Agaric Agenda",
+            })))
+            .mount(server)
+            .await;
+    }
+
+    /// Mount a `GET /users/me/calendarList` mock returning an empty list
+    /// — the first-connect lookup-before-create reconcile (#859) finds no
+    /// existing dedicated calendar and proceeds to create one.
+    async fn mount_list_calendars_empty(server: &MockServer) {
+        Mock::given(method("GET"))
+            .and(path("/users/me/calendarList"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": [] })))
+            .mount(server)
+            .await;
+    }
+
+    /// Mount a `GET /users/me/calendarList` mock returning a single
+    /// dedicated "Agaric Agenda" calendar with id `calendar_id` — the
+    /// first-connect reconcile (#859) ADOPTS it instead of creating a
+    /// duplicate.
+    async fn mount_list_calendars_with_dedicated(server: &MockServer, calendar_id: &str) {
+        Mock::given(method("GET"))
+            .and(path("/users/me/calendarList"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "items": [
+                    {"id": "other_cal", "summary": "Work"},
+                    {"id": calendar_id, "summary": DEDICATED_CALENDAR_NAME},
+                ]
             })))
             .mount(server)
             .await;
@@ -1987,6 +2054,7 @@ mod tests {
     async fn first_connect_creates_calendar_and_persists_id() {
         let (pool, _dir) = test_pool().await;
         let server = MockServer::start().await;
+        mount_list_calendars_empty(&server).await;
         Mock::given(method("POST"))
             .and(path("/calendars"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -2022,6 +2090,7 @@ mod tests {
         let server = MockServer::start().await;
         // Only A creates the calendar; B is blocked at the lease check
         // and never issues an HTTP call.
+        mount_list_calendars_empty(&server).await;
         Mock::given(method("POST"))
             .and(path("/calendars"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -2061,6 +2130,7 @@ mod tests {
         let server = MockServer::start().await;
         // Only one create_calendar should happen — A creates, then B
         // re-uses the persisted calendar_id.
+        mount_list_calendars_empty(&server).await;
         Mock::given(method("POST"))
             .and(path("/calendars"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -2096,6 +2166,220 @@ mod tests {
         assert_eq!(
             state.device_id, DEV_B,
             "B must hold the lease after seizure"
+        );
+    }
+
+    // ── #859 — calendar orphan-duplicate reconcile ─────────────────
+    //
+    // `create_dedicated_calendar` → `set_setting(CalendarId, …)` is
+    // non-atomic across the network boundary.  A crash between the two
+    // leaves an orphan empty "Agaric Agenda" calendar; the next boot,
+    // still seeing an empty `calendar_id`, must ADOPT that orphan via a
+    // lookup-before-create (calendarList) reconcile — not create a
+    // SECOND empty calendar (the #631 events fix, mirrored for
+    // calendars).
+
+    /// (a) An existing "Agaric Agenda" calendar is present on the
+    /// account → first-connect ADOPTS it (persists its id via
+    /// `set_setting`) and issues NO create.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn first_connect_adopts_existing_dedicated_calendar() {
+        let (pool, _dir) = test_pool().await;
+        let server = MockServer::start().await;
+        // calendarList already has the dedicated calendar.
+        mount_list_calendars_with_dedicated(&server, TEST_CAL_ID).await;
+        // A create POST must NOT be issued — mount it with expect(0) so
+        // the wiremock guard trips on drop if the create path runs.
+        Mock::given(method("POST"))
+            .and(path("/calendars"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "WRONG_new_calendar",
+            })))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+
+        let outcome = run_cycle(
+            &pool,
+            &api,
+            &emitter,
+            DEV_A,
+            &clock,
+            &token,
+            &DirtySet::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome, CycleOutcome::Ok);
+
+        // The adopted (existing) calendar's id is persisted, NOT a new one.
+        assert_eq!(
+            models::get_setting(&pool, GcalSettingKey::CalendarId)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(TEST_CAL_ID),
+            "the existing dedicated calendar must be adopted, not recreated",
+        );
+        assert_eq!(
+            count_requests(&server, "POST", "/calendars").await,
+            0,
+            "no create_calendar may be issued when a dedicated calendar already exists",
+        );
+    }
+
+    /// (b) No dedicated calendar present → first-connect CREATES one and
+    /// persists its id (the normal first-connect path, now preceded by a
+    /// calendarList lookup that finds nothing to adopt).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn first_connect_creates_when_no_dedicated_calendar_exists() {
+        let (pool, _dir) = test_pool().await;
+        let server = MockServer::start().await;
+        // calendarList holds only an unrelated calendar.
+        Mock::given(method("GET"))
+            .and(path("/users/me/calendarList"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "items": [{"id": "cal_work", "summary": "Work"}]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/calendars"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": TEST_CAL_ID,
+                "summary": "Agaric Agenda",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+
+        let outcome = run_cycle(
+            &pool,
+            &api,
+            &emitter,
+            DEV_A,
+            &clock,
+            &token,
+            &DirtySet::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome, CycleOutcome::Ok);
+        assert_eq!(
+            models::get_setting(&pool, GcalSettingKey::CalendarId)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(TEST_CAL_ID),
+            "a freshly-created calendar's id must be persisted",
+        );
+    }
+
+    /// (c) The crash-window scenario.  Cycle 1 creates the calendar but
+    /// "crashes" before persisting `calendar_id` (we drop the persisted
+    /// id to simulate the create-but-no-set_setting window).  Cycle 2
+    /// must ADOPT the orphan — exactly one calendar exists on the
+    /// account, and no second create is issued.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn crash_after_create_before_persist_adopts_orphan_next_cycle() {
+        let (pool, _dir) = test_pool().await;
+        let server = MockServer::start().await;
+
+        // Cycle 1: empty list → create returns the orphan id.  Once the
+        // orphan exists, the account's calendarList reports it, so we use
+        // a stateful responder: the first GET returns empty (pre-create
+        // snapshot), every subsequent GET returns the dedicated orphan.
+        // wiremock has no built-in mutable state, so we model the two
+        // snapshots as ordered mocks scoped by call sequence via
+        // `up_to_n_times`.
+        Mock::given(method("GET"))
+            .and(path("/users/me/calendarList"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": [] })))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        // Create succeeds, minting the orphan.
+        Mock::given(method("POST"))
+            .and(path("/calendars"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": TEST_CAL_ID,
+                "summary": "Agaric Agenda",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+
+        // --- Cycle 1: creates the calendar (and would persist it).
+        run_cycle(
+            &pool,
+            &api,
+            &emitter,
+            DEV_A,
+            &clock,
+            &token,
+            &DirtySet::new(),
+        )
+        .await
+        .unwrap();
+
+        // Simulate the crash window: the create succeeded server-side but
+        // the `set_setting(CalendarId, …)` never landed (process died).
+        models::set_setting(&pool, GcalSettingKey::CalendarId, "")
+            .await
+            .unwrap();
+
+        // Now the account holds the orphan; the calendarList lookup on the
+        // next boot reports it (this mock has no `up_to_n_times` cap, so it
+        // serves every GET after the first one is exhausted).
+        mount_list_calendars_with_dedicated(&server, TEST_CAL_ID).await;
+
+        // --- Cycle 2 (next boot): must ADOPT the orphan, not recreate.
+        // Advance past lease expiry so the same device can re-claim.
+        clock.advance(ChronoDuration::seconds(
+            lease::LEASE_EXPIRY_SECS.cast_signed() + 1,
+        ));
+        let outcome = run_cycle(
+            &pool,
+            &api,
+            &emitter,
+            DEV_A,
+            &clock,
+            &token,
+            &DirtySet::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome, CycleOutcome::Ok);
+
+        // The orphan's id is re-adopted, and exactly ONE create happened
+        // across both cycles — no duplicate empty calendar.
+        assert_eq!(
+            models::get_setting(&pool, GcalSettingKey::CalendarId)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(TEST_CAL_ID),
+            "the crash-window orphan must be adopted on the next boot",
+        );
+        assert_eq!(
+            count_requests(&server, "POST", "/calendars").await,
+            1,
+            "the orphan must be adopted, never duplicated by a second create",
         );
     }
 
@@ -2465,9 +2749,10 @@ mod tests {
     async fn unauthorized_emits_reauth_required_and_pauses() {
         let (pool, _dir) = test_pool().await;
         let server = MockServer::start().await;
-        // 401 on the create_calendar call — first-connect fails.
-        Mock::given(method("POST"))
-            .and(path("/calendars"))
+        // #859 — first-connect now lists calendars before creating one;
+        // the 401 surfaces on that lookup call (the first network hop).
+        Mock::given(method("GET"))
+            .and(path("/users/me/calendarList"))
             .respond_with(ResponseTemplate::new(401))
             .mount(&server)
             .await;
@@ -2546,11 +2831,12 @@ mod tests {
             "reauth_required must default to false on a fresh pool"
         );
 
-        // 401 on first-connect — exactly one POST is expected; the
-        // second cycle must NOT reach the network thanks to the
-        // pause flag set after the first.
-        Mock::given(method("POST"))
-            .and(path("/calendars"))
+        // 401 on first-connect — #859 lists calendars before creating,
+        // so the 401 surfaces on that lookup GET.  Exactly one GET is
+        // expected; the second cycle must NOT reach the network thanks
+        // to the pause flag set after the first.
+        Mock::given(method("GET"))
+            .and(path("/users/me/calendarList"))
             .respond_with(ResponseTemplate::new(401))
             .expect(1)
             .mount(&server)
@@ -2610,7 +2896,7 @@ mod tests {
         // --- Cycle 2: must short-circuit at the pause gate.  No new
         // request should hit the wiremock server — the `expect(1)`
         // on the 401 mock above will trip on drop if a second hits.
-        let request_count_before = count_requests(&server, "POST", "/calendars").await;
+        let request_count_before = count_requests(&server, "GET", "/users/me/calendarList").await;
         let outcome2 = run_cycle(
             &pool,
             &api,
@@ -2627,7 +2913,7 @@ mod tests {
             CycleOutcome::Ok,
             "paused cycle must return Ok (no work) — got {outcome2:?}"
         );
-        let request_count_after = count_requests(&server, "POST", "/calendars").await;
+        let request_count_after = count_requests(&server, "GET", "/users/me/calendarList").await;
         assert_eq!(
             request_count_before, request_count_after,
             "paused cycle must NOT issue any HTTP requests; before={request_count_before}, after={request_count_after}"
@@ -2761,9 +3047,13 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let server = MockServer::start().await;
 
-        // Stale bearer → 401; refreshed bearer → 200.
-        Mock::given(method("POST"))
-            .and(path("/calendars"))
+        // #859 — first-connect lists calendars before creating one, so
+        // the stale bearer's 401 surfaces on the calendarList GET; the
+        // refreshed bearer succeeds there (empty list), then the create
+        // POST runs with the refreshed bearer.
+        // Stale bearer → 401 on the lookup.
+        Mock::given(method("GET"))
+            .and(path("/users/me/calendarList"))
             .and(wiremock::matchers::header(
                 "authorization",
                 "Bearer mock-access",
@@ -2772,6 +3062,18 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
+        // Refreshed bearer → empty list on the lookup.
+        Mock::given(method("GET"))
+            .and(path("/users/me/calendarList"))
+            .and(wiremock::matchers::header(
+                "authorization",
+                "Bearer refreshed-access",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": [] })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        // Refreshed bearer → create succeeds.
         Mock::given(method("POST"))
             .and(path("/calendars"))
             .and(wiremock::matchers::header(
@@ -2855,8 +3157,9 @@ mod tests {
         .unwrap();
 
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/calendars"))
+        // #859 — the 401 surfaces on the first-connect calendarList lookup.
+        Mock::given(method("GET"))
+            .and(path("/users/me/calendarList"))
             .respond_with(ResponseTemplate::new(401))
             .expect(1)
             .mount(&server)
@@ -2932,8 +3235,11 @@ mod tests {
     async fn second_401_after_successful_refresh_is_terminal() {
         let (pool, _dir) = test_pool().await;
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/calendars"))
+        // #859 — the first-connect calendarList lookup 401s both before
+        // AND after the refresh, so the cycle never reaches the create
+        // POST; the bounded retry is observed on the lookup GET (2 hits).
+        Mock::given(method("GET"))
+            .and(path("/users/me/calendarList"))
             .respond_with(ResponseTemplate::new(401))
             .expect(2)
             .mount(&server)
@@ -2967,7 +3273,7 @@ mod tests {
             "second 401 after refresh must be terminal, got {outcome:?}"
         );
         assert_eq!(
-            count_requests(&server, "POST", "/calendars").await,
+            count_requests(&server, "GET", "/users/me/calendarList").await,
             2,
             "the refresh-retry must be bounded to exactly one re-attempt"
         );
@@ -2992,8 +3298,9 @@ mod tests {
     async fn transient_refresh_failure_mid_cycle_is_not_terminal() {
         let (pool, _dir) = test_pool().await;
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/calendars"))
+        // #859 — the 401 surfaces on the first-connect calendarList lookup.
+        Mock::given(method("GET"))
+            .and(path("/users/me/calendarList"))
             .respond_with(ResponseTemplate::new(401))
             .expect(1)
             .mount(&server)
@@ -3852,6 +4159,7 @@ mod tests {
     async fn empty_dirty_set_still_acquires_lease_and_runs_first_connect() {
         let (pool, _dir) = test_pool().await;
         let server = MockServer::start().await;
+        mount_list_calendars_empty(&server).await;
         Mock::given(method("POST"))
             .and(path("/calendars"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
