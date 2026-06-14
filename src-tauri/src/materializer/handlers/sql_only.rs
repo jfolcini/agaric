@@ -79,12 +79,18 @@ pub(super) async fn apply_restore_block_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: RestoreBlockPayload,
 ) -> Result<(), AppError> {
+    // #1055: cohort-contiguous walk (mirror `project_restore_block_to_sql`)
+    // so the SQL-only fallback restores exactly the seed's connected
+    // same-cohort subtree, not every block under the seed that merely
+    // shares the `deleted_at` value (which collides across independent
+    // deletes — `now_ms` is non-monotonic).
     sqlx::query(concat!(
-        crate::descendants_cte_standard!(),
+        crate::descendants_cte_cohort!(),
         "UPDATE blocks SET deleted_at = NULL \
          WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
     ))
     .bind(p.block_id.as_str())
+    .bind(p.deleted_at_ref)
     .bind(p.deleted_at_ref)
     .execute(&mut *conn)
     .await?;
