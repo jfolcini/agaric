@@ -192,6 +192,16 @@ export function BlockTree({
   // listener (useBlockTreeKeyboardShortcuts) doesn't re-attach every render.
   const visibleIds = useMemo(() => zoomedVisible.map((b) => b.id), [zoomedVisible])
 
+  // #1066 — `visibleIds` is re-derived from `blocks` on every edit, so a
+  // `handleSelect` that closed over it would get a new identity per edit and
+  // bust the `blockActions` context bag (re-rendering every memoized row).
+  // Keep a render-synced ref so `handleSelect` can read the CURRENT visible
+  // ids at call time while staying referentially stable across edits. This
+  // preserves #1063's visible-only range-select semantics without the closure
+  // dependency.
+  const visibleIdsRef = useRef(visibleIds)
+  visibleIdsRef.current = visibleIds
+
   // ── Enter-creates-block refs ───────────────────────────────────────
   const justCreatedBlockIds = useRef(new Set<string>())
   const prevFocusedRef = useRef<string | null>(null)
@@ -649,10 +659,13 @@ export function BlockTree({
         // `blocks` list silently pulled every collapsed/zoomed-out block
         // between the two clicked rows into the selection (then batch
         // deleted/modified). Matches the keyboard range-select path.
-        rawRangeSelect(blockId, visibleIds)
+        // #1066 — read the current visible ids from a render-synced ref so
+        // this callback stays referentially stable across edits (keeps the
+        // blockActions bag identity stable → per-row React.memo holds).
+        rawRangeSelect(blockId, visibleIdsRef.current)
       }
     },
-    [toggleSelected, rawRangeSelect, visibleIds],
+    [toggleSelected, rawRangeSelect],
   )
 
   // Stable identities so `useBlockKeyboard` doesn't detach/re-attach the

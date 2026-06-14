@@ -140,6 +140,11 @@ vi.mock('@/hooks/useViewportObserver', () => ({
   }),
 }))
 
+// #1066 — capture the latest `onSelect` identity seen by a rendered row, so a
+// test can assert the published callback (the bag memo's key) stays
+// referentially stable across an edit that re-allocates `blocks`.
+let capturedOnSelect: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
+
 // Minimal mock for SortableBlock — production SortableBlock pulls action
 // callbacks from `useBlockActions()`, so the mock does the same to mirror
 // the real component's wiring (MAINT-118).
@@ -155,6 +160,7 @@ vi.mock('../SortableBlock', async () => {
       isSelected?: boolean
     }) => {
       const actions = useBlockActions()
+      capturedOnSelect = actions.onSelect
       const onToggleCollapse = actions.onToggleCollapse
       const onToggleTodo = actions.onToggleTodo
       const onTogglePriority = actions.onTogglePriority
@@ -340,6 +346,7 @@ beforeEach(() => {
   capturedSearchSlashCommands = undefined
   capturedOnSlashCommand = undefined
   capturedBlockKeyboardOpts = undefined
+  capturedOnSelect = undefined
   capturedQuerySave = undefined
   capturedQueryOpen = false
   mockCalendarOnSelect = undefined
@@ -5866,6 +5873,88 @@ describe('BlockTree multi-selection (#657)', () => {
     const selected = useBlockStore.getState().selectedBlockIds
     expect(new Set(selected)).toEqual(new Set(['A', 'C']))
     expect(selected).not.toContain('B')
+  })
+
+  // #1066 — perf regression guard. `handleSelect` is published as the
+  // `onSelect` callback of the `blockActions` context bag, whose identity the
+  // bag memo is keyed on. The per-page `edit` reducer re-allocates
+  // `state.blocks` (via `.map`) on every flush, which re-derives
+  // `visibleIds`/`zoomedVisible`. If `handleSelect` closed over `visibleIds`
+  // it would get a new identity per edit → bust the bag → re-render EVERY
+  // memoized row (O(N) cascade on the hottest path). `handleSelect` now reads
+  // the current visible ids from a render-synced ref instead, so its identity
+  // (and the whole bag) must stay STABLE across a `blocks` re-allocation.
+  it('blockActions bag (onSelect) identity is stable across an edit that re-allocates blocks', async () => {
+    const tree = [
+      makeBlock({ id: 'A', content: 'Alpha' }),
+      makeBlock({ id: 'B', content: 'Beta' }),
+      makeBlock({ id: 'C', content: 'Gamma' }),
+    ]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [] })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    const onSelectBefore = capturedOnSelect
+    expect(onSelectBefore).toBeDefined()
+
+    // Simulate the `edit` reducer: a NEW `blocks` array (and new block
+    // objects) on flush. This re-derives `visibleIds`/`zoomedVisible`, exactly
+    // the per-edit identity churn that used to bust the bag.
+    act(() => {
+      pageStore.setState((s) => ({
+        blocks: s.blocks.map((b) =>
+          b.id === 'A' ? { ...b, content: 'Alpha (edited)' } : { ...b },
+        ),
+      }))
+    })
+
+    await waitFor(() => {
+      expect(pageStore.getState().blocks[0]?.content).toBe('Alpha (edited)')
+    })
+
+    // The re-allocation produced a brand-new `blocks` reference (the precondition
+    // that used to bust the bag via the `onSelect` closure dependency)…
+    expect(pageStore.getState().blocks).not.toBe(tree)
+    // …yet the published `onSelect` identity is unchanged. This is the #1066
+    // lever: before the fix `handleSelect` closed over `visibleIds` (re-derived
+    // from `blocks` every edit) and got a new identity per edit.
+    expect(capturedOnSelect).toBe(onSelectBefore)
+  })
+
+  // #1066 + #1063 — the stable `handleSelect` must still read the CURRENT
+  // visible ids at call time (not a stale snapshot from when it was created).
+  // After re-allocating `blocks` to add a new visible row D, a Shift+Click
+  // range from A to D must include D — proving the range branch sees the
+  // freshly-derived visible set despite handleSelect's stable identity.
+  it('range-select reads current visible ids after a blocks re-allocation (stable handler, fresh data)', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' }), makeBlock({ id: 'B', content: 'Beta' })]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [] })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    const onSelectBefore = capturedOnSelect
+
+    // Add a third visible row D via a fresh `blocks` array.
+    act(() => {
+      pageStore.setState((s) => ({
+        blocks: [...s.blocks.map((b) => ({ ...b })), makeBlock({ id: 'D', content: 'Delta' })],
+      }))
+    })
+    await screen.findByTestId('sortable-block-D')
+    // Identity stayed stable across the re-allocation…
+    expect(capturedOnSelect).toBe(onSelectBefore)
+
+    // …but the range branch picks up the newly-added D.
+    await user.click(screen.getByTestId('select-A'))
+    await user.click(screen.getByTestId('select-range-D'))
+
+    const selected = new Set(useBlockStore.getState().selectedBlockIds)
+    expect(selected).toEqual(new Set(['A', 'B', 'D']))
   })
 
   it('isSelected prop is passed to SortableBlock', async () => {
