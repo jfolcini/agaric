@@ -122,9 +122,12 @@ impl PrivacyMode {
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Hard ceiling on the `description` field.  GCal's raw limit is 8192
-/// bytes — half that leaves headroom for multi-byte content and any
-/// future prefixes FEAT-5 parent may add (e.g. a leading device tag).
+/// Hard ceiling on the `description` field, measured in Unicode scalar
+/// values (the cap is enforced via `chars().count()`, not byte length).
+/// GCal's raw limit is ~8192 characters — half that leaves headroom for
+/// any future prefixes FEAT-5 parent may add (e.g. a leading device
+/// tag).  Because the limit is counted in characters rather than bytes,
+/// multi-byte (e.g. CJK) content is not double-counted here.
 const DESCRIPTION_CAP: usize = 4096;
 
 /// Truncate page titles to this many characters in the breadcrumb.

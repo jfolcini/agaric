@@ -89,13 +89,22 @@ pub const GOOGLE_CALENDAR_SCOPE: &str = "https://www.googleapis.com/auth/calenda
 /// ID token to populate `gcal_settings.oauth_account_email`.
 pub const OPENID_EMAIL_SCOPE: &str = "openid email";
 
+/// Compile-time placeholder substituted for [`CLIENT_ID`] when the
+/// `AGARIC_GCAL_CLIENT_ID` env var is unset during `cargo build`.  Kept
+/// as a named constant so the runtime guard in
+/// [`OAuthClient::begin_authorize`] can detect a missing-env build and
+/// fail with a typed `oauth.client_id_unset` error instead of letting
+/// the sentinel flow into the authorize URL (where Google would reject
+/// it deep inside its own error page).
+pub const UNSET_CLIENT_ID_SENTINEL: &str = "UNSET-agaric-gcal-client-id";
+
 /// Public desktop OAuth client ID, pinned at build time via
-/// `AGARIC_GCAL_CLIENT_ID`.  A missing env var substitutes a
-/// compile-time sentinel so local development builds keep compiling —
-/// release pipelines MUST set the env var.
+/// `AGARIC_GCAL_CLIENT_ID`.  A missing env var substitutes the
+/// [`UNSET_CLIENT_ID_SENTINEL`] so local development builds keep
+/// compiling — release pipelines MUST set the env var.
 pub const CLIENT_ID: &str = match option_env!("AGARIC_GCAL_CLIENT_ID") {
     Some(v) => v,
-    None => "UNSET-agaric-gcal-client-id",
+    None => UNSET_CLIENT_ID_SENTINEL,
 };
 
 // ---------------------------------------------------------------------------
@@ -407,18 +416,38 @@ impl OAuthClient {
     /// authorize URL must advertise the same port back to Google.
     ///
     /// # Errors
-    /// [`AppError::Validation`] if `redirect_uri` fails to parse or the
-    /// endpoint URLs are malformed.
+    /// * [`AppError::Validation`] keyed `oauth.client_id_unset` — the
+    ///   binary was built without `AGARIC_GCAL_CLIENT_ID`, so
+    ///   [`CLIENT_ID`] is still the [`UNSET_CLIENT_ID_SENTINEL`].  We
+    ///   reject before the sentinel ever reaches the authorize URL so
+    ///   the failure is a clean typed error rather than an opaque
+    ///   Google error page.
+    /// * [`AppError::Validation`] if `redirect_uri` fails to parse or the
+    ///   endpoint URLs are malformed.
     #[tracing::instrument(skip(self), err)]
     pub fn begin_authorize(&self, redirect_uri: String) -> Result<AuthorizeUrl, AppError> {
+        // Guard: a missing-env build ships the sentinel client id, which
+        // Google rejects with an unhelpful error page. Surface a typed
+        // error here instead.
+        if self.client_id == UNSET_CLIENT_ID_SENTINEL {
+            return Err(AppError::Validation("oauth.client_id_unset".to_owned()));
+        }
         let redirect = RedirectUrl::new(redirect_uri)
             .map_err(|e| AppError::Validation(format!("oauth.invalid_redirect_url: {e}")))?;
         let client = self.build_client().set_redirect_uri(redirect);
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
 
+        // `access_type=offline` is what asks Google to mint a refresh
+        // token. The oauth2 crate's authorize-url builder does NOT add
+        // it implicitly — we set it explicitly here. For Desktop/installed
+        // clients Google happens to return a refresh token regardless, but
+        // a future Web-type client id (e.g. #134 Android) would silently
+        // get only an access token without this param, so we set it as
+        // belt-and-braces for every flow.
         let mut builder = client
             .authorize_url(CsrfToken::new_random)
-            .set_pkce_challenge(challenge);
+            .set_pkce_challenge(challenge)
+            .add_extra_param("access_type", "offline");
         for scope in &self.scopes {
             builder = builder.add_scope(Scope::new(scope.clone()));
         }
@@ -713,8 +742,10 @@ struct AccessPart {
 ///
 /// When `require_refresh` is `true` (the initial `exchange_code`
 /// path) the response MUST include a `refresh_token` — Google issues
-/// one on the first exchange when `access_type=offline` is requested
-/// (the default in oauth2 v5's authorize-url builder).  When `false`
+/// one on the first exchange when the authorize URL carried
+/// `access_type=offline`, which `begin_authorize` sets explicitly via
+/// `add_extra_param` (the oauth2 crate's authorize-url builder does
+/// NOT add it for us).  When `false`
 /// (the refresh-grant path) a missing refresh token is tolerated;
 /// the caller is expected to merge the previously-held refresh token
 /// in its place.
@@ -1121,6 +1152,13 @@ mod tests {
             "authorize URL state param must match returned state",
         );
         assert!(!authorize.state.is_empty(), "state token must not be empty");
+        assert!(
+            authorize.url.contains("access_type=offline"),
+            "authorize URL must request offline access so Google mints a \
+             refresh token (the oauth2 crate does NOT add this implicitly), \
+             got {}",
+            authorize.url,
+        );
 
         // PKCE verifier must now be cached under the returned state.
         assert_eq!(
@@ -1152,6 +1190,39 @@ mod tests {
                 .len(),
             2,
             "both verifiers must be cached"
+        );
+    }
+
+    #[test]
+    fn begin_authorize_rejects_unset_client_id_sentinel() {
+        // #692 item 1: a build without `AGARIC_GCAL_CLIENT_ID` ships the
+        // sentinel client id. `begin_authorize` must reject it with a
+        // typed `oauth.client_id_unset` error rather than emitting a URL
+        // carrying the sentinel (which Google rejects deep inside its own
+        // error page).
+        let client = OAuthClient::new(
+            UNSET_CLIENT_ID_SENTINEL.to_owned(),
+            "https://accounts.google.com/o/oauth2/v2/auth".to_owned(),
+            "https://oauth2.googleapis.com/token".to_owned(),
+            TEST_REDIRECT.to_owned(),
+            vec![TEST_SCOPE.to_owned()],
+        )
+        .unwrap();
+
+        let result = client.begin_authorize(TEST_REDIRECT.to_owned());
+        assert!(
+            matches!(result, Err(AppError::Validation(ref m)) if m == "oauth.client_id_unset"),
+            "unset client id must surface oauth.client_id_unset, got {result:?}",
+        );
+        // Nothing should have been cached on the rejected path.
+        assert_eq!(
+            client
+                .pkce_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len(),
+            0,
+            "rejected begin_authorize must not cache a PKCE verifier",
         );
     }
 
