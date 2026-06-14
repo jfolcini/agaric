@@ -303,7 +303,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                             key={preset.value}
                             type="button"
                             className={cn(
-                              'h-6 w-6 rounded-full border-2 transition-transform hover:scale-110 focus-visible:ring-2 focus-visible:ring-ring',
+                              'h-6 w-6 rounded-full border-2 transition-transform hover:scale-110 focus-ring-visible',
                               color === preset.value
                                 ? 'border-foreground scale-110'
                                 : 'border-transparent',

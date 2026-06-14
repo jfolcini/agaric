@@ -98,6 +98,16 @@ describe('BlockHistoryItem (extracted sibling)', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 
+  // #1092: the restorable row uses the canonical focus-ring-visible utility,
+  // not the legacy 2px ring.
+  it('#1092: restorable row uses focus-ring-visible (no legacy 2px ring)', () => {
+    renderInList(defaultProps())
+    const row = screen.getByRole('button', { expanded: false })
+    expect(row.className).toContain('focus-ring-visible')
+    expect(row.className).not.toContain('focus-visible:ring-2')
+    expect(row.className).not.toContain('focus-visible:ring-ring')
+  })
+
   it('has no a11y violations when collapsed (restorable)', async () => {
     const { container } = renderInList(defaultProps())
     const results = await axe(container)
