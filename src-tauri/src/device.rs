@@ -29,8 +29,7 @@ impl std::fmt::Display for DeviceId {
 /// Build the error for a corrupt device-id file.
 ///
 /// Extracted from a `map_err` closure so the formatting code is attributable
-/// by tarpaulin (closures inside `map_err` are unreliable for coverage).
-#[cfg(not(tarpaulin_include))]
+/// in coverage reports (closures inside `map_err` are unreliable for coverage).
 fn corrupt_device_id_error(config_path: &Path, e: &uuid::Error) -> crate::error::AppError {
     crate::error::AppError::InvalidOperation(format!(
         "Corrupt device ID file '{}': {}",
@@ -45,7 +44,6 @@ fn corrupt_device_id_error(config_path: &Path, e: &uuid::Error) -> crate::error:
 /// This catch-all arm only triggers for OS errors other than `NotFound`
 /// (e.g. permission denied, device full, `IsADirectory`) which are impractical
 /// to trigger deterministically in unit tests without filesystem mocking.
-#[cfg(not(tarpaulin_include))]
 fn unexpected_create_error(e: std::io::Error) -> crate::error::AppError {
     e.into()
 }

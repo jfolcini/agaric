@@ -90,7 +90,6 @@ pub(crate) fn prepare_notification(
 /// to dispatch (e.g. the plugin is unavailable) surfaces as
 /// [`AppError::InvalidOperation`]; a blank title surfaces as
 /// [`AppError::Validation`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn notify_task(

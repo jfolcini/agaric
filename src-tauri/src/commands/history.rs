@@ -969,7 +969,6 @@ pub async fn find_undo_group_inner(
 }
 
 /// Tauri command: list page history. Delegates to [`list_page_history_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_page_history(
@@ -986,7 +985,6 @@ pub async fn list_page_history(
 }
 
 /// Tauri command: batch revert ops. Delegates to [`revert_ops_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn revert_ops(
@@ -1001,7 +999,6 @@ pub async fn revert_ops(
 }
 
 /// Tauri command: point-in-time restore. Delegates to [`restore_page_to_op_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn restore_page_to_op(
@@ -1025,7 +1022,6 @@ pub async fn restore_page_to_op(
 }
 
 /// Tauri command: undo page op. Delegates to [`undo_page_op_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn undo_page_op(
@@ -1047,7 +1043,6 @@ pub async fn undo_page_op(
 }
 
 /// Tauri command: redo page op. Delegates to [`redo_page_op_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn redo_page_op(
@@ -1071,7 +1066,6 @@ pub async fn redo_page_op(
 /// Tauri command: compute the size of the consecutive same-device,
 /// within-window undo group starting at the Nth-most-recent undoable op.
 /// Delegates to [`find_undo_group_inner`]. PEND-35 Tier 4.4.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn find_undo_group(
@@ -1148,7 +1142,6 @@ pub async fn compute_edit_diff_inner(
 
 /// Tauri command: compute word-level diff for an edit_block history entry.
 /// Delegates to [`compute_edit_diff_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn compute_edit_diff(
@@ -1298,7 +1291,6 @@ pub async fn compute_block_vs_current_diff_inner(
 /// the historical lookup can bound on the canonical `(created_at, seq)`
 /// keyset instead of bare per-device `seq`, which is not a valid global
 /// upper bound across devices.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn compute_block_vs_current_diff(

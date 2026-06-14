@@ -544,7 +544,6 @@ pub async fn count_backlinks_batch_inner(
 }
 
 /// Tauri command: list backlinks for a block. Delegates to [`get_backlinks_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_backlinks(
@@ -560,7 +559,6 @@ pub async fn get_backlinks(
 }
 
 /// Tauri command: get materializer queue status. Delegates to [`get_status_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_status(
@@ -580,7 +578,6 @@ pub async fn get_status(
 /// `searchBlocks({ parentId, tagIds, spaceId, ... })` and marshals
 /// into the struct only at the IPC boundary, mirroring the
 /// [`ExtraQueryFilters`] precedent on [`query_by_property`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn search_blocks(
@@ -787,7 +784,6 @@ pub async fn search_blocks_partitioned_inner(
 ///
 /// See [`search_blocks_partitioned_inner`] for the partition + `has_more`
 /// contract, and the cancellation contract (PEND-70).
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn search_blocks_partitioned(
@@ -861,7 +857,6 @@ pub async fn search_blocks_partitioned(
 /// `queryByProperty({ blockType, valueTextIn, ... })` and marshals
 /// into the struct only at the IPC boundary, mirroring the
 /// [`AgendaQuery`] precedent on `list_blocks`.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -907,7 +902,6 @@ pub async fn query_by_property(
 }
 
 /// Tauri command: list unfinished tasks before a given date. Delegates to [`list_unfinished_tasks_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_unfinished_tasks(
@@ -924,7 +918,6 @@ pub async fn list_unfinished_tasks(
 }
 
 /// Tauri command: filtered backlink query. Delegates to [`query_backlinks_filtered_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -943,7 +936,6 @@ pub async fn query_backlinks_filtered(
 }
 
 /// Tauri command: grouped backlink query. Delegates to [`list_backlinks_grouped_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -962,7 +954,6 @@ pub async fn list_backlinks_grouped(
 }
 
 /// Tauri command: unlinked references query. Delegates to [`list_unlinked_references_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -981,7 +972,6 @@ pub async fn list_unlinked_references(
 }
 
 /// Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn count_backlinks_batch(
@@ -1374,7 +1364,6 @@ pub async fn filtered_blocks_query_inner(
 /// fixes the silent-cap regression where any AND-set member outside
 /// the top-200 of any one sub-query was dropped before the
 /// intersection ran.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]

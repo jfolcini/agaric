@@ -833,7 +833,6 @@ pub async fn delete_blocks_by_ids_inner(
 /// `useBlockMultiSelect.handleBatchDelete` into one round-trip and
 /// one writer-lock window. Returns the number of blocks soft-deleted
 /// (roots + descendants combined).
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_blocks_by_ids(
@@ -978,7 +977,6 @@ pub async fn move_blocks_to_space_inner(
 /// Tauri command: move N blocks to a target space (#81 / PEND-57).
 /// Delegates to [`move_blocks_to_space_inner`]. Returns the number of
 /// blocks actually moved.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn move_blocks_to_space(
@@ -2109,7 +2107,6 @@ pub(crate) async fn delete_property_in_tx(
 // `create_block_inner_with_space`. Tauri command signatures match
 // `_inner` shapes 1:1 by convention.
 #[allow(clippy::too_many_arguments)]
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn create_block(
@@ -2138,7 +2135,6 @@ pub async fn create_block(
 }
 
 /// Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn edit_block(
@@ -2160,7 +2156,6 @@ pub async fn edit_block(
 }
 
 /// Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_block(
@@ -2175,7 +2170,6 @@ pub async fn delete_block(
 }
 
 /// Tauri command: restore a soft-deleted block. Delegates to [`restore_block_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn restore_block(
@@ -2197,7 +2191,6 @@ pub async fn restore_block(
 }
 
 /// Tauri command: permanently purge a soft-deleted block. Delegates to [`purge_block_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn purge_block(
@@ -2212,7 +2205,6 @@ pub async fn purge_block(
 }
 
 /// Tauri command: restore all soft-deleted blocks. Delegates to [`restore_all_deleted_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn restore_all_deleted(
@@ -2226,7 +2218,6 @@ pub async fn restore_all_deleted(
 }
 
 /// Tauri command: permanently purge all soft-deleted blocks. Delegates to [`purge_all_deleted_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn purge_all_deleted(
@@ -2241,7 +2232,6 @@ pub async fn purge_all_deleted(
 
 /// PEND-35 Tier 2.2 — restore a list of soft-deleted blocks in one IPC.
 /// Delegates to [`restore_blocks_by_ids_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn restore_blocks_by_ids(
@@ -2257,7 +2247,6 @@ pub async fn restore_blocks_by_ids(
 
 /// PEND-35 Tier 2.2 — permanently purge a list of soft-deleted blocks in one IPC.
 /// Delegates to [`purge_blocks_by_ids_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn purge_blocks_by_ids(
@@ -2429,7 +2418,6 @@ pub async fn create_blocks_batch_inner(
 /// `insertTemplateBlocksFromString` into one round-trip and one
 /// writer-lock window. A 10-line template that previously fired 10
 /// IPCs now fires 1.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn create_blocks_batch(

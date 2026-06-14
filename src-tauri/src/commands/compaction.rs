@@ -96,7 +96,6 @@ pub async fn get_compaction_status_inner(pool: &SqlitePool) -> Result<Compaction
 }
 
 /// Tauri command: return op log compaction statistics for the UI.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_compaction_status(
@@ -254,7 +253,6 @@ pub async fn compact_op_log_cmd_inner(
 /// `CleanupOrphanedAttachments` so attachments whose owning block was
 /// just purged get swept. The complementary boot-time enqueue in
 /// `lib.rs` covers the case where the user never triggers compaction.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn compact_op_log_cmd(

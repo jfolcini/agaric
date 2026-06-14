@@ -656,7 +656,6 @@ pub async fn import_markdown_with_progress(
 }
 
 /// Tauri command: export a page as Markdown. Delegates to [`export_page_markdown_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn export_page_markdown(
@@ -681,7 +680,6 @@ pub async fn export_page_markdown(
 /// progress to the frontend. The frontend always supplies a
 /// `Channel<ImportProgressUpdate>` (mirroring `start_sync`); sends are
 /// best-effort, so a dropped channel never aborts the import.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn import_markdown(

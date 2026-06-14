@@ -47,14 +47,12 @@ pub(crate) fn reset_recovery_guard() {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers (excluded from coverage)
+// Helpers
 // ---------------------------------------------------------------------------
 
 /// Log and record a draft-recovery error. Extracted so the defensive error
-/// paths (which require injecting DB failures into individual draft rows) can
-/// be excluded from tarpaulin's line count without hiding the surrounding
-/// logic.
-#[cfg(not(tarpaulin_include))]
+/// paths (which require injecting DB failures into individual draft rows) are
+/// isolated in one place without hiding the surrounding logic.
 fn log_draft_error(draft_errors: &mut Vec<String>, block_id: &str, e: &AppError, context: &str) {
     tracing::error!(block_id, context, error = %e, "draft recovery failed");
     if context == "deleting" {
@@ -77,7 +75,7 @@ fn log_draft_error(draft_errors: &mut Vec<String>, block_id: &str, e: &AppError,
 /// The per-draft error handling paths (draft recovery failure, draft
 /// deletion failure) require database-level failures to trigger and are
 /// not exercised in unit tests. These are intentionally defensive and
-/// represent 5 of the remaining uncovered lines in tarpaulin reports.
+/// account for a few of the remaining uncovered lines in coverage reports.
 pub async fn recover_at_boot(
     pool: &SqlitePool,
     device_id: &str,

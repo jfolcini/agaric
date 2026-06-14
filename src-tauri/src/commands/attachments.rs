@@ -558,7 +558,6 @@ pub async fn list_attachments_batch_inner(
 }
 
 /// Tauri command: add an attachment to a block. Delegates to [`add_attachment_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -594,7 +593,6 @@ pub async fn add_attachment(
 
 /// Tauri command: add an attachment from raw bytes. Delegates to
 /// [`add_attachment_with_bytes_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -628,7 +626,6 @@ pub async fn add_attachment_with_bytes(
 
 /// Tauri command: read an attachment's raw bytes. Delegates to
 /// [`read_attachment_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn read_attachment(
@@ -646,7 +643,6 @@ pub async fn read_attachment(
 }
 
 /// Tauri command: delete an attachment. Delegates to [`delete_attachment_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_attachment(
@@ -672,7 +668,6 @@ pub async fn delete_attachment(
 }
 
 /// Tauri command: rename an attachment. Delegates to [`rename_attachment_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn rename_attachment(
@@ -694,7 +689,6 @@ pub async fn rename_attachment(
 }
 
 /// Tauri command: list attachments for a block. Delegates to [`list_attachments_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_attachments(
@@ -707,7 +701,6 @@ pub async fn list_attachments(
 }
 
 /// Tauri command: batch-fetch full attachment lists. Delegates to [`list_attachments_batch_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_attachments_batch(

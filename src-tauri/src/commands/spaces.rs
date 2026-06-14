@@ -87,7 +87,6 @@ pub async fn list_spaces_inner(pool: &SqlitePool) -> Result<Vec<SpaceRow>, AppEr
 }
 
 /// Tauri command: list every space. Delegates to [`list_spaces_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_spaces(pool: State<'_, ReadPool>) -> Result<Vec<SpaceRow>, AppError> {
@@ -302,7 +301,6 @@ pub async fn create_page_in_space_inner(
 /// expects. Background cache tasks (tag-inheritance, block-tag-refs,
 /// FTS indexing) are dispatched inside `_inner` via `CommandTx` — the
 /// wrapper only needs to thread `materializer` through.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn create_page_in_space(
@@ -432,7 +430,6 @@ pub async fn create_space_inner(
 /// rebuilds (FTS, tag-inheritance, agenda projection) are dispatched
 /// inside `_inner` via `CommandTx`; the wrapper only threads
 /// `materializer` through.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn create_space(

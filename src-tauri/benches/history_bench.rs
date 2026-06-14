@@ -3,7 +3,8 @@
 
 //! Criterion benchmarks for history + undo/redo commands at scale.
 //!
-//! Phase 2 §B.1 of `pending/scale-benchmarks-100k-2026-05-14.md`.
+//! Part of the 100K-scale command benchmark coverage that enforces the
+//! product SLO (see `docs/architecture/operations.md` § Product SLO).
 //!
 //! Covers the four user-facing history Tauri commands at scale, none of
 //! which have a direct bench today (the existing `undo_redo.rs` measures

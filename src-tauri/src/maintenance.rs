@@ -312,7 +312,6 @@ pub async fn projected_agenda_midnight_tick(
 /// each entry's predicate/run closures. The closures themselves can
 /// hold any state they need (pools, materializer handles, etc.) and
 /// the daemon doesn't introspect their captures.
-#[cfg(not(tarpaulin_include))]
 pub fn spawn_daemon(jobs: Vec<MaintenanceJob>, shutdown_flag: Arc<AtomicBool>) {
     #[cfg(not(test))]
     let spawn_fn = tauri::async_runtime::spawn;
@@ -338,10 +337,9 @@ pub fn spawn_daemon(jobs: Vec<MaintenanceJob>, shutdown_flag: Arc<AtomicBool>) {
 }
 
 /// Single-tick body, factored out for testability — `spawn_daemon`'s
-/// loop is `#[cfg(not(tarpaulin_include))]` (it's a fire-and-forget
-/// `tokio::spawn` wrapper) but `run_tick` is a pure function over a
-/// `&mut Vec<MaintenanceJob>` and is exercised directly by the unit
-/// tests below.
+/// loop is a fire-and-forget `tokio::spawn` wrapper, but `run_tick` is a
+/// pure function over a `&mut Vec<MaintenanceJob>` and is exercised
+/// directly by the unit tests below.
 pub async fn run_tick(jobs: &mut [MaintenanceJob]) {
     let now = Instant::now();
     for job in jobs.iter_mut() {

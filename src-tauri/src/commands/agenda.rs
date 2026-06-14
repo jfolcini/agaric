@@ -640,7 +640,6 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
 }
 
 /// Tauri command: batch-count agenda items per date. Delegates to [`count_agenda_batch_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn count_agenda_batch(
@@ -654,7 +653,6 @@ pub async fn count_agenda_batch(
 }
 
 /// Tauri command: batch-count agenda items per (date, source). Delegates to [`count_agenda_batch_by_source_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn count_agenda_batch_by_source(
@@ -672,7 +670,6 @@ pub async fn count_agenda_batch_by_source(
 ///
 /// Cursor-paginated (M-25) — pass `cursor = next_cursor` from the previous
 /// response to fetch the next page.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_projected_agenda(
@@ -708,7 +705,6 @@ pub async fn list_undated_tasks_inner(
 }
 
 /// Tauri command: list undated tasks. Delegates to [`list_undated_tasks_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_undated_tasks(

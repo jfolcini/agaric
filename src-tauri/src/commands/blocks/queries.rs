@@ -327,7 +327,6 @@ pub async fn batch_resolve_inner(
 /// public API (accepts `agendaDate` / `agendaDateRange` / `agendaSource`
 /// at the top level and marshals them into this struct for the IPC
 /// boundary).
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -407,7 +406,6 @@ pub async fn list_trash_inner(
 }
 
 /// Tauri command: paginate soft-deleted blocks. Delegates to [`list_trash_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_trash(
@@ -429,7 +427,6 @@ pub async fn list_trash(
 /// Switched from `get_block_inner` to [`get_active_block_inner`] so a
 /// soft-deleted block returns `NotFound` to the IPC caller instead of an
 /// apparently-live row with `deleted_at` set.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_block(pool: State<'_, ReadPool>, block_id: BlockId) -> Result<BlockRow, AppError> {
@@ -443,7 +440,6 @@ pub async fn get_block(pool: State<'_, ReadPool>, block_id: BlockId) -> Result<B
 /// FEAT-3 Phase 7 — `space_id` is required so the resolve store cannot
 /// surface foreign-space titles. The frontend always knows the current
 /// space and threads it through `useResolveStore.preload(spaceId)`.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn batch_resolve(
@@ -478,7 +474,6 @@ pub async fn trash_descendant_counts_inner(
 
 /// Tauri command: batch-count cascade-deleted descendants per trash root.
 /// Delegates to [`trash_descendant_counts_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn trash_descendant_counts(
@@ -561,7 +556,6 @@ pub async fn first_child_for_blocks_inner(
 
 /// Tauri command: batch-fetch the first child per parent block. Delegates
 /// to [`first_child_for_blocks_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn first_child_for_blocks(
@@ -637,7 +631,6 @@ pub async fn get_blocks_inner(
 
 /// Tauri command: batch-fetch full block rows by id. Delegates to
 /// [`get_blocks_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_blocks(
@@ -687,7 +680,6 @@ pub async fn count_trash_inner(pool: &SqlitePool, space_id: &str) -> Result<i64,
 
 /// Tauri command: count soft-deleted blocks in a space. Delegates to
 /// [`count_trash_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn count_trash(pool: State<'_, ReadPool>, space_id: String) -> Result<i64, AppError> {

@@ -173,7 +173,6 @@ The sequence below is the full path from "I wrote some Rust" to "the frontend ca
 2. **Write the thin Tauri wrapper** in the same module. Decorate with `#[tauri::command]` + `#[specta::specta]`, resolve the `State` args, and delegate to `*_inner`. For write commands the wrapper takes `pool: State<'_, WritePool>` and passes `&pool.0`; it ends with `.map_err(sanitize_internal_error)`. Any multi-row write inside `*_inner` opens `CommandTx::begin_immediate(pool, "label")` (see [§`CommandTx` for atomic multi-row writes](#commandtx-for-atomic-multi-row-writes)) — verify the helper name against an existing command rather than guessing.
 
    ```rust
-   #[cfg(not(tarpaulin_include))]
    #[tauri::command]
    #[specta::specta]
    pub async fn my_command(

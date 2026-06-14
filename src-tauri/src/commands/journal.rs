@@ -285,7 +285,6 @@ pub async fn quick_capture_block_inner(
 
 /// Tauri command: quick-capture a single content block onto today's
 /// journal page in `space_id`. Delegates to [`quick_capture_block_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn quick_capture_block(
@@ -362,7 +361,6 @@ pub async fn get_journal_page_by_date_inner(
 
 /// Tauri command: look up a journal page by date. Delegates to
 /// [`get_journal_page_by_date_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_journal_page_by_date(
@@ -437,7 +435,6 @@ pub async fn list_journal_pages_in_range_inner(
 
 /// Tauri command: list date-formatted journal pages in `[start_date,
 /// end_date]`. Delegates to [`list_journal_pages_in_range_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_journal_pages_in_range(

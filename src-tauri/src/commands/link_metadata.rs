@@ -62,7 +62,6 @@ fn is_stale(fetched_at: i64, max_days: u32) -> bool {
 /// hits return immediately; stale or missing entries trigger an HTTP
 /// fetch and an upsert into the cache. Delegates to
 /// [`fetch_link_metadata_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn fetch_link_metadata(
@@ -78,7 +77,6 @@ pub async fn fetch_link_metadata(
 /// Tauri command: read cached link metadata only (no network fetch).
 /// Returns `None` if the URL has not been seen. Delegates to
 /// [`get_link_metadata_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_link_metadata(

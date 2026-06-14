@@ -55,7 +55,6 @@ impl PersistedCert {
 const PEM_SEPARATOR: &str = "\n";
 
 /// Build the error for a corrupt cert file.
-#[cfg(not(tarpaulin_include))]
 fn corrupt_cert_error(path: &Path, detail: &str) -> AppError {
     AppError::InvalidOperation(format!(
         "Corrupt sync cert file '{}': {}",
@@ -65,7 +64,6 @@ fn corrupt_cert_error(path: &Path, detail: &str) -> AppError {
 }
 
 /// Convert an unexpected `io::Error` from file creation into `AppError`.
-#[cfg(not(tarpaulin_include))]
 fn unexpected_create_error(e: std::io::Error) -> AppError {
     e.into()
 }

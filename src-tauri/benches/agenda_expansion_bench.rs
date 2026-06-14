@@ -8,12 +8,12 @@
 //! total block count but pins the projection window to a fixed 7-day range
 //! — its sweep measures end-to-end latency at a single window size and
 //! does not let us see the `m` coefficient (number of repeating rules)
-//! independently. docs/ARCHITECTURE.md §25 documents the on-the-fly projection
-//! path as O(n × m) where:
+//! independently. docs/architecture/operations.md § Product SLO documents the
+//! on-the-fly projection path as O(n × m) where:
 //!   - `n` = projection-window size (days)
 //!   - `m` = number of repeating rules in scope
 //!
-//! docs/ARCHITECTURE.md §25 *Problem* row reports ~620 ms at 100K total blocks;
+//! docs/architecture/operations.md § Product SLO reports ~620 ms at 100K total blocks;
 //! that figure rolls `n` and `m` together. Without a bench that varies `m`
 //! while holding `n` fixed, a future fix to the expansion algorithm cannot
 //! be verified — you cannot tell whether wall-clock improved because the

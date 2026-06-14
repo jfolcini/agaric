@@ -473,7 +473,6 @@ where
 
 /// Tauri command: report the GCal connector's connect/sync status to
 /// the Settings tab. Delegates to [`get_gcal_status_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_gcal_status(
@@ -489,7 +488,6 @@ pub async fn get_gcal_status(
 /// Tauri command: poke the GCal connector to run a resync immediately
 /// (rather than waiting for the next scheduled tick). Delegates to
 /// [`force_gcal_resync_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn force_gcal_resync(
@@ -501,7 +499,6 @@ pub async fn force_gcal_resync(
 
 /// Tauri command: disconnect the GCal account (revoke tokens, optionally
 /// delete the synced calendar). Delegates to [`disconnect_gcal_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn disconnect_gcal(
@@ -526,7 +523,6 @@ pub async fn disconnect_gcal(
 /// that are mirrored to the connected calendar). The value is clamped
 /// to `[MIN_WINDOW_DAYS, MAX_WINDOW_DAYS]` in the inner. Delegates to
 /// [`set_gcal_window_days_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn set_gcal_window_days(
@@ -541,7 +537,6 @@ pub async fn set_gcal_window_days(
 /// Tauri command: update the GCal privacy mode (`"full"` vs.
 /// `"minimal"` event-body sharing). Delegates to
 /// [`set_gcal_privacy_mode_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn set_gcal_privacy_mode(
@@ -559,7 +554,6 @@ pub async fn set_gcal_privacy_mode(
 ///
 /// Returns the unverified account email so the FE can update its
 /// connected-state label without waiting for the next status poll.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn begin_gcal_oauth(

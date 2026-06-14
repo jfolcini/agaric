@@ -1196,7 +1196,6 @@ pub async fn get_batch_properties_inner(
 }
 
 /// Tauri command: list distinct property keys. Delegates to [`list_property_keys_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_property_keys(read_pool: State<'_, ReadPool>) -> Result<Vec<String>, AppError> {
@@ -1210,7 +1209,6 @@ pub async fn list_property_keys(read_pool: State<'_, ReadPool>) -> Result<Vec<St
 /// PEND-14: typed value fields are bundled into [`SetPropertyArgs`] so the
 /// IPC signature stays at 7 positional args (under specta's 10-arg cap).
 /// Adding `value_bool` as a 5th flat field would have exceeded the limit.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn set_property(
@@ -1247,7 +1245,6 @@ pub async fn set_property(
 }
 
 /// Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn set_todo_state(
@@ -1280,7 +1277,6 @@ pub async fn set_todo_state(
 /// so existing per-block listeners (e.g. agenda recompute, property
 /// drawer) keep firing without protocol changes. Failed-emit
 /// breadcrumbs follow the established log-on-error pattern (L-33).
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn set_todo_state_batch(
@@ -1315,7 +1311,6 @@ pub async fn set_todo_state_batch(
 /// `delete_property` / `set_property`). The emit uses the
 /// log-on-error pattern (mirror of L-33) so a transient emit failure
 /// does not propagate as a command error.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn set_priority(
@@ -1338,7 +1333,6 @@ pub async fn set_priority(
 }
 
 /// Tauri command: set due date on a block. Delegates to [`set_due_date_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn set_due_date(
@@ -1361,7 +1355,6 @@ pub async fn set_due_date(
 }
 
 /// Tauri command: set scheduled date on a block. Delegates to [`set_scheduled_date_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn set_scheduled_date(
@@ -1385,7 +1378,6 @@ pub async fn set_scheduled_date(
 }
 
 /// Tauri command: delete a property from a block. Delegates to [`delete_property_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_property(
@@ -1409,7 +1401,6 @@ pub async fn delete_property(
 }
 
 /// Tauri command: get all properties for a block. Delegates to [`get_properties_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_properties(
@@ -1423,7 +1414,6 @@ pub async fn get_properties(
 
 /// Tauri command: fetch a single property row by `(block_id, key)`
 /// primary key (PEND-35 Tier 2.4c). Delegates to [`get_property_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_property(
@@ -1437,7 +1427,6 @@ pub async fn get_property(
 }
 
 /// Tauri command: batch-fetch properties. Delegates to [`get_batch_properties_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_batch_properties(
@@ -1450,7 +1439,6 @@ pub async fn get_batch_properties(
 }
 
 /// Tauri command: create a property definition. Delegates to [`create_property_def_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn create_property_def(
@@ -1466,7 +1454,6 @@ pub async fn create_property_def(
 
 /// Tauri command: list all property definitions, paginated (M-85).
 /// Delegates to [`list_property_defs_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn list_property_defs(
@@ -1481,7 +1468,6 @@ pub async fn list_property_defs(
 
 /// Tauri command: fetch a single property definition by key (PEND-35 Tier 2.6).
 /// Delegates to [`get_property_def_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_property_def(
@@ -1494,7 +1480,6 @@ pub async fn get_property_def(
 }
 
 /// Tauri command: update options for a select-type definition. Delegates to [`update_property_def_options_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn update_property_def_options(
@@ -1508,7 +1493,6 @@ pub async fn update_property_def_options(
 }
 
 /// Tauri command: delete a property definition. Delegates to [`delete_property_def_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_property_def(

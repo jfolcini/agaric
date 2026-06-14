@@ -277,7 +277,6 @@ pub async fn move_block_inner(
 /// Tauri command: move a block under a new parent at a 0-based sibling slot
 /// (#400). `new_index` is an insertion slot among the target parent's other
 /// children; slot 0 is "first child" / "top". Delegates to [`move_block_inner`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn move_block(

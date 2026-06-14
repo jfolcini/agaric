@@ -33,7 +33,6 @@ use super::dirty_sink::DirtySink;
 use super::handlers::{handle_background_task, handle_foreground_task};
 use super::metrics::QueueMetrics;
 
-#[cfg(not(tarpaulin_include))]
 pub(super) fn log_consumer_result(
     label: &str,
     result: &Result<Result<(), crate::error::AppError>, tokio::task::JoinError>,

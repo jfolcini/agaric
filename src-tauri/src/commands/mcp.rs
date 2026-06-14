@@ -274,7 +274,6 @@ impl Default for McpRwToggleGate {
 }
 
 /// Tauri command: return the current MCP RO status for the Settings tab.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_mcp_status(
@@ -286,7 +285,6 @@ pub async fn get_mcp_status(
 }
 
 /// Tauri command: return the default socket path for the current platform.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_mcp_socket_path(app: tauri::AppHandle) -> Result<String, AppError> {
@@ -316,7 +314,6 @@ pub async fn get_mcp_socket_path(app: tauri::AppHandle) -> Result<String, AppErr
 /// observed at T may already be unwinding by T + ε. The Settings tab's
 /// `get_mcp_status` polling loop is the right place to read the
 /// post-disconnect count, not this command.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn mcp_disconnect_all(
@@ -334,7 +331,6 @@ pub async fn mcp_disconnect_all(
 /// RW serve tasks, so late subscribers (a Settings tab opened after
 /// the calls happened) and diagnostics can inspect recent history
 /// without having been subscribed to the `mcp:activity` event stream.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_mcp_recent_activity(
@@ -351,7 +347,6 @@ pub async fn get_mcp_recent_activity(
 /// cannot interleave and leave the server in an "enabled but not
 /// bound" stall. The lock is held for the full command body so a
 /// concurrent disable cannot race ahead of the spawn.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -473,7 +468,6 @@ pub fn mcp_rw_set_enabled_inner(
 }
 
 /// Tauri command: return the current MCP RW status for the Settings tab.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_mcp_rw_status(
@@ -486,7 +480,6 @@ pub async fn get_mcp_rw_status(
 
 /// Tauri command: return the default RW socket path for the current
 /// platform. Same shape as [`get_mcp_socket_path`].
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn get_mcp_rw_socket_path(app: tauri::AppHandle) -> Result<String, AppError> {
@@ -495,7 +488,6 @@ pub async fn get_mcp_rw_socket_path(app: tauri::AppHandle) -> Result<String, App
 }
 
 /// Tauri command: disconnect every in-flight RW MCP connection.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn mcp_rw_disconnect_all(
@@ -512,7 +504,6 @@ pub async fn mcp_rw_disconnect_all(
 /// L-46: serialised through [`McpRwToggleGate`] — see `mcp_set_enabled`
 /// for the rationale. RO and RW each hold their own gate so they do
 /// not block each other.
-#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]

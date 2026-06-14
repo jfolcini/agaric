@@ -1370,7 +1370,6 @@ pub struct ConnectorTask {
 /// Spawn the connector task.  Returns the handle + a `ConnectorTask`
 /// that keeps the task alive for the process lifetime (drop the
 /// `ConnectorTask` → wake shutdown → task exits on next iteration).
-#[cfg(not(tarpaulin_include))]
 pub fn spawn_connector(
     pool: SqlitePool,
     api: Arc<GcalApi>,
@@ -1421,7 +1420,6 @@ pub fn spawn_connector(
 /// Event-loop body.  Extracted so we can instantiate it with an
 /// in-test clock if we ever add integration tests.  The function is
 /// deliberately boring — the per-cycle logic is in [`run_cycle`].
-#[cfg(not(tarpaulin_include))]
 #[allow(clippy::too_many_arguments)]
 async fn run_task_loop(
     pool: SqlitePool,

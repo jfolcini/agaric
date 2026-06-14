@@ -944,7 +944,6 @@ async fn try_reenqueue_apply_op(
 /// any row they attempt to re-enqueue. Convergence requires a restart; the
 /// dormant `shutdown_flag` parameter is retained only to keep this signature
 /// stable for a future graceful-shutdown path.
-#[cfg(not(tarpaulin_include))]
 pub fn spawn_sweeper(
     read_pool: SqlitePool,
     write_pool: SqlitePool,
