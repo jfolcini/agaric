@@ -378,7 +378,7 @@ export function ImageLightbox({
                 'absolute top-1/2 left-4 -translate-y-1/2 inline-flex items-center justify-center',
                 'rounded-full bg-black/60 p-2 text-white/80',
                 'transition-colors hover:bg-black/80 hover:text-white',
-                'focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden',
+                'focus-ring-visible',
                 'disabled:opacity-30 disabled:pointer-events-none',
               )}
               onClick={(e) => {
@@ -398,7 +398,7 @@ export function ImageLightbox({
                 'absolute top-1/2 right-4 -translate-y-1/2 inline-flex items-center justify-center',
                 'rounded-full bg-black/60 p-2 text-white/80',
                 'transition-colors hover:bg-black/80 hover:text-white',
-                'focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden',
+                'focus-ring-visible',
                 'disabled:opacity-30 disabled:pointer-events-none',
               )}
               onClick={(e) => {
@@ -427,7 +427,7 @@ export function ImageLightbox({
               'absolute bottom-4 right-4 inline-flex items-center gap-1.5',
               'rounded-md bg-black/60 px-3 py-1.5 text-xs text-white/80',
               'transition-colors hover:bg-black/80 hover:text-white',
-              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden',
+              'focus-ring-visible',
             )}
             onClick={(e) => {
               e.stopPropagation()

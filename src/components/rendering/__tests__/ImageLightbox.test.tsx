@@ -120,6 +120,18 @@ describe('ImageLightbox', () => {
     expect(onOpenExternal).toHaveBeenCalledTimes(1)
   })
 
+  // #1092: prev/next/open-external buttons use the canonical focus-ring-visible
+  // utility, not the legacy 2px ring.
+  it('#1092: nav + external buttons use focus-ring-visible (no legacy 2px ring)', () => {
+    renderLightbox({ onOpenExternal: vi.fn() })
+    for (const testId of ['lightbox-prev', 'lightbox-next', 'lightbox-open-external']) {
+      const btn = screen.getByTestId(testId)
+      expect(btn.className).toContain('focus-ring-visible')
+      expect(btn.className).not.toContain('focus-visible:ring-2')
+      expect(btn.className).not.toContain('focus-visible:ring-ring')
+    }
+  })
+
   describe('single image', () => {
     it('shows no navigation chrome', () => {
       render(

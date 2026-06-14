@@ -422,6 +422,17 @@ describe('KeyboardSettingsTab', () => {
     expect(mockSetCustomShortcut).toHaveBeenCalledWith('prevBlock', 'Ctrl + P')
   })
 
+  // #1092: the reset-shortcut link button uses the canonical focus-ring-visible
+  // utility, not the legacy 2px ring.
+  it('#1092: reset-shortcut button uses focus-ring-visible (no legacy 2px ring)', () => {
+    render(<KeyboardSettingsTab />)
+    // indentBlock is custom, so its "Reset to default" link button is present.
+    const resetBtn = screen.getByText('Reset to default')
+    expect(resetBtn.className).toContain('focus-ring-visible')
+    expect(resetBtn.className).not.toContain('focus-visible:ring-2')
+    expect(resetBtn.className).not.toContain('focus-visible:ring-ring')
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(<KeyboardSettingsTab />)
 

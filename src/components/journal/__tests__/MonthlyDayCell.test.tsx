@@ -230,6 +230,15 @@ describe('MonthlyDayCell', () => {
     expect(dots).toHaveLength(0)
   })
 
+  // #1092: use the canonical focus-ring-visible utility, not the legacy 2px ring.
+  it('#1092: gridcell uses the canonical focus-ring-visible utility (no legacy 2px ring)', () => {
+    render(<MonthlyDayCell {...defaultProps} />)
+    const cell = screen.getByRole('gridcell')
+    expect(cell.className).toContain('focus-ring-visible')
+    expect(cell.className).not.toContain('focus-visible:ring-2')
+    expect(cell.className).not.toContain('focus-visible:ring-ring')
+  })
+
   it('has aria-label with full date', () => {
     render(<MonthlyDayCell {...defaultProps} />)
     const cell = screen.getByRole('gridcell')

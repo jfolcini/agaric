@@ -835,6 +835,26 @@ describe('TagList', () => {
       expect(screen.queryByText(/clear color/i)).not.toBeInTheDocument()
     })
 
+    // #1092: color preset swatches use the canonical focus-ring-visible
+    // utility, not the legacy 2px ring.
+    it('#1092: color preset swatch uses focus-ring-visible (no legacy 2px ring)', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'ring-tag')])
+
+      render(<TagList />)
+
+      const tag = await screen.findByText('ring-tag')
+      const tagRow = tag.closest('li') as HTMLElement
+      const colorBtn = findColorButton(tagRow)
+      await user.click(colorBtn)
+
+      const palette = await screen.findByRole('group', { name: /color palette/i })
+      const swatch = within(palette).getByRole('button', { name: 'red' })
+      expect(swatch.className).toContain('focus-ring-visible')
+      expect(swatch.className).not.toContain('focus-visible:ring-2')
+      expect(swatch.className).not.toContain('focus-visible:ring-ring')
+    })
+
     it('has no a11y violations with color picker open', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'a11y-tag', 2)])

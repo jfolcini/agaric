@@ -218,7 +218,7 @@ export function BlockHistoryItem({
           aria-expanded={isExpanded}
           aria-controls={isExpanded ? `block-history-panel-${index}` : undefined}
           data-testid={`block-history-row-${index}`}
-          className="flex items-center gap-2 w-full cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+          className="flex items-center gap-2 w-full cursor-pointer focus-ring-visible rounded-sm"
           onClick={handleRowClick}
           onKeyDown={handleRowKeyDown}
         >
