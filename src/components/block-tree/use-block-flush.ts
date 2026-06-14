@@ -87,12 +87,40 @@ export function useBlockFlush({
         // Check for checkbox markdown syntax before saving
         const { cleanContent, todoState } = processCheckboxSyntax(changed)
         if (todoState) {
-          // Set todo state via thin command and save cleaned content
-          setTodoStateCmd(blockId, todoState)
-            .then(() => {
+          // #1074 — coordinate the two effects. Previously this fired
+          // `set_todo_state` and, regardless of its outcome, optimistically
+          // wrote `todo_state` (with no rollback) AND stripped the marker via
+          // `edit(blockId, cleanContent)`. On a rejected state write that left
+          // the task state silently and unrecoverably lost (marker gone, state
+          // never committed). Now we AWAIT the state write and only strip the
+          // marker + apply the optimistic `todo_state` AFTER it resolves; on
+          // rejection we keep the marker (persist `changed`, not `cleanContent`)
+          // so the box stays re-parseable, and write no optimistic state. The
+          // callback stays sync (`() => string | null`) via this fire-and-track
+          // async IIFE — mirroring the store's own async/rollback idioms.
+          void (async () => {
+            try {
+              const echo = await setTodoStateCmd(blockId, todoState)
+              // Adopt the backend echo for `todo_state` the way `edit()` adopts
+              // the content echo (#753): the optimistic write below records the
+              // state we SENT; prefer the canonical value the backend returned
+              // to avoid drift. Fall back to the sent state if the echo omits it.
+              const settledState =
+                typeof echo?.todo_state === 'string' ? echo.todo_state : todoState
+              pageStore.setState((s) => ({
+                blocks: s.blocks.map((b) =>
+                  b.id === blockId ? { ...b, todo_state: settledState } : b,
+                ),
+              }))
+              // Strip the marker only now that the state is committed.
+              edit(blockId, cleanContent)
               if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-            })
-            .catch((err: unknown) => {
+            } catch (err: unknown) {
+              // State write failed — do NOT strip the marker. Persist the raw
+              // content (with the `- [ ] `/`- [x] ` marker intact) so the task
+              // state stays recoverable, and write no optimistic `todo_state`
+              // (nothing to roll back since we deferred it past the await).
+              edit(blockId, changed)
               logger.error(
                 'BlockTree',
                 'Failed to set task state from checkbox syntax',
@@ -102,11 +130,8 @@ export function useBlockFlush({
                 err,
               )
               notify.error(t('blockTree.setTaskStateFailed'))
-            })
-          pageStore.setState((s) => ({
-            blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: todoState } : b)),
-          }))
-          edit(blockId, cleanContent)
+            }
+          })()
         } else {
           edit(blockId, changed)
         }
