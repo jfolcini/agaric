@@ -31,6 +31,16 @@
 //! ([`crate::sync_daemon::snapshot_transfer`]) already handles —
 //! identical to the first-time-pairing / log-compacted path.
 //!
+//! #1054: the boot-replay path ([`replay_inbox_row`]) mirrors this same
+//! gate. A leftover write-ahead inbox slot stores only `(space_id, bytes)`
+//! (no `from_vv`), so it recovers the update's causal base from the blob's
+//! own `partial_start_vv` (via [`crate::loro::engine::LoroEngine::unreachable_update_in_blob`])
+//! and, on a miss, DROPs the slot — rather than importing unconditionally and
+//! leaving an opaque-error poison row that re-fails at every boot. The next
+//! live sync session re-detects the gap in [`apply_remote`] and routes into
+//! the snapshot catch-up. Snapshot-shaped slots stay safe to import
+//! unconditionally.
+//!
 //! ## TODOs
 //!
 //! * `peer_refs.loro_vv_bytes` schema / read. Callers pass the peer's
@@ -471,6 +481,14 @@ pub(crate) async fn import_and_project(
 /// FTS reconciliation). On success the inbox row is deleted (in-tx, by
 /// `import_and_project`); on error the row is left in place so a later boot
 /// can retry.
+///
+/// #792 / #1054: before the import, two guards mirror `apply_remote`'s
+/// pre-import gates and DROP the slot (their own small DELETE) rather than
+/// import it: the own-peer fork guard (#792) and the MAINT-228 `from_vv`
+/// reachability gate (#1054). Both routes leave the next live sync session to
+/// re-detect the condition in `apply_remote` and fall back to snapshot
+/// catch-up — preventing a permanent poison row that would re-error at every
+/// boot.
 pub(crate) async fn replay_inbox_row(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
@@ -503,6 +521,45 @@ pub(crate) async fn replay_inbox_row(
             "loro_sync: boot-replay inbox slot forks our own (peer,counter) \
              space (#792); dropping the slot — the next sync session will \
              fall back to snapshot catch-up"
+        );
+        sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", inbox_id)
+            .execute(pool)
+            .await?;
+        return Ok(Vec::new());
+    }
+
+    // #1054 (MAINT-228): mirror `apply_remote`'s live reachability gate.
+    // `apply_remote` refuses to import an `Update` whose declared `from_vv`
+    // is unreachable from our `oplog_vv()` — returning `SnapshotFallbackRequested`
+    // BEFORE any side-effect — because such an update would otherwise surface
+    // as an OPAQUE Loro decode error from `import_with_changed_blocks`. The
+    // boot-replay path here imported unconditionally, so a slot whose causal
+    // base out-runs the rehydrated-then-op-log-replayed engine (the engine can
+    // be BEHIND the surviving Update's base: `loro_doc_state` is persisted only
+    // periodically and op-log replay never reconstructs remote Loro-only ops)
+    // re-errored on EVERY boot — a permanent poison row.
+    //
+    // The inbox row stores only `(space_id, bytes)` — no `from_vv` — so we
+    // recover the base from the blob itself (`partial_start_vv`) and run the
+    // same reachability rule. Snapshot-shaped blobs are self-contained and
+    // stay safe to import unconditionally (only Update-shaped blobs are gated,
+    // exactly as in the live gate). On a miss, drop the slot via its own small
+    // DELETE — mirroring the #792 fork branch above — and skip: the next live
+    // sync session re-detects the gap in `apply_remote` and routes into the
+    // snapshot catch-up that reconciles it. This trades a never-reconciled
+    // poison slot for a clean, self-healing gap.
+    let unreachable = {
+        let mut guard = registry.for_space(&space, device_id)?;
+        guard.engine_mut().unreachable_update_in_blob(bytes)
+    };
+    if let Some(reason) = unreachable {
+        tracing::warn!(
+            space_id,
+            inbox_id,
+            reason = %reason,
+            "loro_sync: boot-replay inbox slot's update base is unreachable from \
+             the local engine (#1054); dropping the slot — the next sync session \
+             will detect the gap and fall back to snapshot catch-up"
         );
         sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", inbox_id)
             .execute(pool)
@@ -1650,6 +1707,272 @@ mod tests {
             miss.contains("counter") || miss.contains("peer"),
             "diagnostic should mention peer/counter, got: {miss}",
         );
+    }
+
+    // -----------------------------------------------------------------
+    // #1054 — boot-replay reachability gate (mirrors the live MAINT-228
+    // gate in the inbox replay path).
+    // -----------------------------------------------------------------
+
+    /// #1054 — a leftover write-ahead inbox slot holding an *Update*-shaped
+    /// blob whose causal base (`partial_start_vv`) is UNREACHABLE from the
+    /// rehydrated-then-op-log-replayed engine must be DROPPED at boot
+    /// replay — not imported. Pre-fix it was imported unconditionally,
+    /// surfacing an opaque Loro decode error and re-erroring at every boot
+    /// (a permanent poison row, since op-log replay never advances the
+    /// engine past the remote gap). The fix mirrors the live gate: drop the
+    /// slot and let the next live sync re-detect the gap and snapshot
+    /// catch-up.
+    #[tokio::test]
+    async fn replay_inbox_row_drops_unreachable_update_slot_1054() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // Producer A: 2 ops → capture vv → a 3rd op. The update exported
+        // since the post-2-ops vv has a non-trivial `partial_start_vv`
+        // (peer A at counter 2) — the causal base a fresh replaying engine
+        // does NOT hold.
+        let registry_a = LoroEngineRegistry::new();
+        let base_vv = {
+            let mut g = registry_a
+                .for_space(&space, "device-A")
+                .expect("for_space A");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "a1", None, 0)
+                .expect("a1");
+            e.apply_create_block(BLOCK_B, "content", "a2", None, 1)
+                .expect("a2");
+            let vv = e.version_vector();
+            e.apply_create_block(BLOCK_C, "content", "a3", None, 2)
+                .expect("a3");
+            vv
+        };
+        let update_bytes: Vec<u8> = {
+            let mut g = registry_a
+                .for_space(&space, "device-A")
+                .expect("for_space A2");
+            g.engine_mut().export_update_since(&base_vv).expect("delta")
+        };
+
+        // A leftover inbox slot holding that update (as a crash mid-projection
+        // would have left behind).
+        let inbox_id: i64 = sqlx::query_scalar(
+            "INSERT INTO loro_sync_inbox (space_id, bytes, created_at) \
+             VALUES (?, ?, 0) RETURNING id",
+        )
+        .bind(space.as_str())
+        .bind(&update_bytes)
+        .fetch_one(&pool)
+        .await
+        .expect("seed slot");
+
+        // A FRESH replaying engine (device-B) that has never seen A's ops:
+        // its oplog_vv has no entry for peer A, so the update's base is
+        // unreachable.
+        let registry_b = LoroEngineRegistry::new();
+        let changed = replay_inbox_row(
+            &pool,
+            &registry_b,
+            "device-B",
+            space.as_str(),
+            &update_bytes,
+            inbox_id,
+        )
+        .await
+        .expect("replay must not error — it drops the slot and skips");
+        assert!(
+            changed.is_empty(),
+            "nothing imported from an unreachable update slot"
+        );
+
+        // The slot is gone (no permanent poison row, no boot re-error).
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(remaining, 0, "the unreachable update slot must be deleted");
+
+        // Engine state is NOT corrupted: the unreachable ops never landed.
+        {
+            let mut g = registry_b
+                .for_space(&space, "device-B")
+                .expect("for_space B");
+            let e = g.engine_mut();
+            for blk in [BLOCK_A, BLOCK_B, BLOCK_C] {
+                assert!(
+                    e.read_block(blk).expect("read").is_none(),
+                    "{blk} must NOT be present — the unreachable update was not imported"
+                );
+            }
+        }
+
+        // No SQL projection either.
+        let blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&pool)
+            .await
+            .expect("count blocks");
+        assert_eq!(blocks, 0, "no SQL projection on a dropped slot");
+    }
+
+    /// #1054 control — a leftover Update slot whose base IS reachable from
+    /// the replaying engine must still replay normally (import + project +
+    /// clear the slot). The gate must not block a legitimately-applicable
+    /// boot replay.
+    #[tokio::test]
+    async fn replay_inbox_row_replays_reachable_update_slot_1054() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // Producer A: 2 ops → capture vv → a 3rd op; export the delta since
+        // the post-2-ops vv (base = peer A @ counter 2).
+        let registry_a = LoroEngineRegistry::new();
+        let (seed_bytes, base_vv) = {
+            let mut g = registry_a
+                .for_space(&space, "device-A")
+                .expect("for_space A");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "a1", None, 0)
+                .expect("a1");
+            e.apply_create_block(BLOCK_B, "content", "a2", None, 1)
+                .expect("a2");
+            let vv = e.version_vector();
+            let seed = e.export_snapshot().expect("seed snapshot");
+            e.apply_create_block(BLOCK_C, "content", "a3", None, 2)
+                .expect("a3");
+            (seed, vv)
+        };
+        let update_bytes: Vec<u8> = {
+            let mut g = registry_a
+                .for_space(&space, "device-A")
+                .expect("for_space A2");
+            g.engine_mut().export_update_since(&base_vv).expect("delta")
+        };
+
+        // The replaying engine (device-B) already holds A's first 2 ops —
+        // so the update's base IS reachable.
+        let registry_b = LoroEngineRegistry::new();
+        {
+            let mut g = registry_b
+                .for_space(&space, "device-B")
+                .expect("for_space B");
+            g.engine_mut().import(&seed_bytes).expect("seed import");
+        }
+
+        let inbox_id: i64 = sqlx::query_scalar(
+            "INSERT INTO loro_sync_inbox (space_id, bytes, created_at) \
+             VALUES (?, ?, 0) RETURNING id",
+        )
+        .bind(space.as_str())
+        .bind(&update_bytes)
+        .fetch_one(&pool)
+        .await
+        .expect("seed slot");
+
+        let changed = replay_inbox_row(
+            &pool,
+            &registry_b,
+            "device-B",
+            space.as_str(),
+            &update_bytes,
+            inbox_id,
+        )
+        .await
+        .expect("reachable update must replay cleanly");
+        assert!(
+            !changed.is_empty(),
+            "a reachable update must import its changed block(s)"
+        );
+
+        // The slot is cleared (in-tx with the projection).
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(remaining, 0, "a successfully-replayed slot is cleared");
+
+        // The update's new block (BLOCK_C) landed in the engine and SQL.
+        {
+            let mut g = registry_b
+                .for_space(&space, "device-B")
+                .expect("for_space B2");
+            assert!(
+                g.engine_mut().read_block(BLOCK_C).expect("read").is_some(),
+                "BLOCK_C from the reachable update must be imported"
+            );
+        }
+        let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(BLOCK_C)
+            .fetch_one(&pool)
+            .await
+            .expect("count rows");
+        assert_eq!(row_count, 1, "BLOCK_C must be projected to SQL");
+    }
+
+    /// #1054 — a Snapshot-shaped slot is self-contained and must always
+    /// replay unconditionally, even against a fresh engine. The gate only
+    /// applies to Update-shaped blobs (mirrors the live gate, which only
+    /// checks `LoroSyncMessage::Update`).
+    #[tokio::test]
+    async fn replay_inbox_row_replays_snapshot_slot_1054() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // Producer A's full snapshot (carries its own causal base).
+        let registry_a = LoroEngineRegistry::new();
+        let snapshot_bytes: Vec<u8> = {
+            let mut g = registry_a
+                .for_space(&space, "device-A")
+                .expect("for_space A");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "a1", None, 0)
+                .expect("a1");
+            e.apply_create_block(BLOCK_B, "content", "a2", None, 1)
+                .expect("a2");
+            e.export_snapshot().expect("snapshot")
+        };
+
+        let inbox_id: i64 = sqlx::query_scalar(
+            "INSERT INTO loro_sync_inbox (space_id, bytes, created_at) \
+             VALUES (?, ?, 0) RETURNING id",
+        )
+        .bind(space.as_str())
+        .bind(&snapshot_bytes)
+        .fetch_one(&pool)
+        .await
+        .expect("seed slot");
+
+        // A FRESH replaying engine — a snapshot must import regardless.
+        let registry_b = LoroEngineRegistry::new();
+        let changed = replay_inbox_row(
+            &pool,
+            &registry_b,
+            "device-B",
+            space.as_str(),
+            &snapshot_bytes,
+            inbox_id,
+        )
+        .await
+        .expect("a snapshot slot must replay unconditionally");
+        assert!(!changed.is_empty(), "the snapshot must import its blocks");
+
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(remaining, 0, "the snapshot slot is cleared on success");
+
+        {
+            let mut g = registry_b
+                .for_space(&space, "device-B")
+                .expect("for_space B");
+            let e = g.engine_mut();
+            for blk in [BLOCK_A, BLOCK_B] {
+                assert!(
+                    e.read_block(blk).expect("read").is_some(),
+                    "{blk} from the snapshot must be imported"
+                );
+            }
+        }
     }
 
     // -----------------------------------------------------------------
