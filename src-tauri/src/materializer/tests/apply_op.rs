@@ -465,3 +465,91 @@ async fn apply_op_success() {
     );
     mat.shutdown();
 }
+
+// #412 / #667 — single-op apply mirror of the `BatchApplyOps`
+// single-device-cursor `debug_assert!`. `apply_op` advances a single
+// global apply cursor for `record.seq`, which is only sound when the
+// op_log belongs to ONE device (op_log seq is a per-device counter).
+// These two tests pin the new `debug_assert!`: it fires when the op_log
+// already contains an op from a DIFFERENT device, and does NOT fire on a
+// single-device op_log.
+//
+// We drive `handle_foreground_task` directly (the same pattern used by
+// `dispatch_bg_empty_block_id` / `handle_*_returns_validation_err`) so
+// the assert panics on the test's own task rather than on a detached
+// consumer worker, letting `#[should_panic]` catch it. Gated on
+// `debug_assertions` because the guard compiles out in release builds
+// (the release-build counterpart lives in `recovery::replay` #412).
+#[cfg(debug_assertions)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "per-device cursor partitioning is required (backend audit #412)")]
+async fn apply_op_different_device_trips_single_device_cursor_assert() {
+    let (pool, _dir) = test_pool().await;
+    // Seed the op_log with an op from a DIFFERENT device so the op_log
+    // now spans two devices.
+    let _other = append_local_op(
+        &pool,
+        "OTHER-DEVICE",
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("blk-other-dev"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(0),
+            index: None,
+            content: "from other device".into(),
+        }),
+    )
+    .await
+    .unwrap();
+    // Build a single-op apply for the LOCAL device. `make_op_record`
+    // appends as `DEV`, so the op_log now holds {DEV, OTHER-DEVICE}.
+    let mine = make_op_record(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("blk-mine-dev"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "from this device".into(),
+        }),
+    )
+    .await;
+    let sink = empty_gcal_handle();
+    // Should panic on the `debug_assert!` before the cursor advances.
+    let _ =
+        handle_foreground_task(&pool, &MaterializeTask::ApplyOp(StdArc::new(mine)), &sink).await;
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_op_same_device_does_not_trip_single_device_cursor_assert() {
+    let (pool, _dir) = test_pool().await;
+    // Single-device op_log: only `DEV` ops present.
+    let mine = make_op_record(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("blk-single-dev"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(0),
+            index: None,
+            content: "single device".into(),
+        }),
+    )
+    .await;
+    let sink = empty_gcal_handle();
+    // Must NOT panic; the apply succeeds on a single-device op_log.
+    handle_foreground_task(&pool, &MaterializeTask::ApplyOp(StdArc::new(mine)), &sink)
+        .await
+        .expect("same-device single-op apply must succeed without tripping the #412 assert");
+    let count = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM blocks WHERE id = ?")
+        .bind(BlockId::test_id("blk-single-dev").as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count.0, 1,
+        "same-device single-op apply should materialize the block"
+    );
+}

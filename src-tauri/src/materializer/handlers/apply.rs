@@ -29,6 +29,54 @@ pub(super) async fn apply_op(
         None => None,
     };
     let effects = apply_op_tx(&mut tx, record).await?;
+    // #412 / #667 — SINGLE-DEVICE-CURSOR ASSUMPTION (single-op mirror of
+    // the `BatchApplyOps` arm's guard in `task_handlers.rs`).
+    //
+    // `advance_apply_cursor` below moves a SINGLE GLOBAL scalar cursor to
+    // `record.seq`, but `op_log.seq` is a PER-DEVICE counter (PK
+    // `(device_id, seq)`). Advancing the global cursor for an op from one
+    // device is only sound when the entire op_log belongs to that ONE
+    // device — otherwise the cursor jumps past another device's
+    // unmaterialised ops (which sit at `seq <= cursor`) and boot replay
+    // silently drops them. The batch arm `debug_assert!`s the equivalent
+    // within-batch invariant, and boot replay (`recovery::replay`)
+    // hard-errors on a multi-device op_log in ALL builds; this is the
+    // missing single-op counterpart.
+    //
+    // It is a `debug_assert!` (not a release-build `return Err`) on
+    // purpose: multi-device single-op apply is NOT a supported production
+    // path. Multi-device sync is unshipped (the remote-apply path is
+    // test-only and the SyncDaemon is dormant until a peer is paired), and
+    // `apply_op` is reached only via the test-only `dispatch_op` helper
+    // today (see its doc comment). The release-build guard already lives at
+    // boot (`replay.rs` `#412`); this assert exists to catch a test/dev
+    // regression that wires a multi-device single-op apply before the
+    // per-device watermark cursor lands. Remove once that cursor ships.
+    #[cfg(debug_assertions)]
+    {
+        // Compile-checked `query_scalar!` macro (NOT the runtime fn form):
+        // it reuses the identical `COUNT(DISTINCT device_id)` query already
+        // cached for `recovery::replay`'s #412 release guard, so it needs no
+        // new `.sqlx` offline entry, is schema-validated at build time, and
+        // carries no #646 dynamic-SQL marker burden. This mirrors the batch
+        // arm's invariant for the single-op path: the batch arm asserts the
+        // in-batch records share one device; the single-op equivalent is
+        // that the op_log as a whole is single-device (the same property the
+        // replay guard enforces in all builds).
+        let distinct_devices: i64 =
+            sqlx::query_scalar!(r#"SELECT COUNT(DISTINCT device_id) AS "n!: i64" FROM op_log"#)
+                .fetch_one(&mut *tx)
+                .await?;
+        debug_assert!(
+            distinct_devices <= 1,
+            "apply_op advances a single global apply cursor for device {:?} but \
+             op_log spans {} devices; the single global cursor cannot represent \
+             per-device watermarks — per-device cursor partitioning is required \
+             (backend audit #412)",
+            record.device_id,
+            distinct_devices,
+        );
+    }
     // C-2b: advance the cursor in the same tx so `apply + cursor` are
     // atomic. A crash between the apply and the commit rolls both back
     // together; the cursor never points ahead of materialised state.
