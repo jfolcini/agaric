@@ -524,6 +524,21 @@ language = "system"
 files = '^src-tauri/src/.*\.rs$'
 stages = ["pre-commit", "pre-push"]
 
+# #653: the raw-tx guard now also flags a bare `pool.begin()` (DEFERRED)
+# in any file that calls `append_local_op_in_tx` — that pairing breaks the
+# `SELECT MAX(seq)+1`+`INSERT` BEGIN IMMEDIATE contract. This companion
+# hook runs the guard's own fixture suite (`--self-test`) so the proximity
+# logic and false-positive exemptions (CommandTx path, read-only `.begin()`,
+# `// allow-raw-tx:`, `#[cfg(test)]`) cannot silently regress. No file args.
+[[repos.hooks]]
+id = "check-raw-tx-self-test"
+name = "raw write-tx guard self-test (#653 deferred-tx fixtures)"
+entry = "python3 scripts/check-raw-tx.py --self-test"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit", "pre-push"]
+
 # Rust: dynamic-SQL justification guard (#646). docs/architecture/tooling.md
 # claims every runtime `sqlx::query()` (non-macro) site carries a comment
 # justifying the runtime form — until #646 that claim was unenforced (unlike
