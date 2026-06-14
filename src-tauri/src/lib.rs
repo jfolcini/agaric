@@ -1695,6 +1695,49 @@ fn wire_gcal_connector<R: tauri::Runtime>(
     Ok(())
 }
 
+/// #634: extract the human-readable payload + source location from a
+/// [`std::panic::PanicHookInfo`].
+///
+/// Factored out of the panic hook so the (otherwise untestable) hook's
+/// message-extraction logic can be unit-tested directly. Mirrors the
+/// std default hook's payload handling: `&str` and `String` payloads are
+/// rendered verbatim, anything else degrades to a fixed sentinel.
+fn panic_payload_and_location(info: &std::panic::PanicHookInfo<'_>) -> (String, String) {
+    let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = info.payload().downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    };
+    let location = info
+        .location()
+        .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+        .unwrap_or_default();
+    (payload, location)
+}
+
+/// #634: format the complete, abort-safe panic report written synchronously
+/// to stderr from the panic hook.
+///
+/// Under the release profile's `panic = "abort"` (see `Cargo.toml`), the
+/// process aborts the instant the panic hook returns, so the
+/// `tracing_appender::non_blocking` worker thread never gets a chance to
+/// flush the file-side `PANIC` line. This helper builds a string that the
+/// hook prints with a single synchronous `eprintln!` — no background thread,
+/// no buffering — so the payload, location, and backtrace survive an abort
+/// and end up in any captured stderr (the copy bug reports harvest).
+///
+/// Pure (no I/O) so it can be unit-tested without provoking a real panic.
+fn format_panic_report(payload: &str, location: &str, backtrace: &str) -> String {
+    let location = if location.is_empty() {
+        "<unknown location>"
+    } else {
+        location
+    };
+    format!("PANIC at {location}: {payload}\nstack backtrace:\n{backtrace}")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // #1058: most boot-wiring imports moved into the focused helper
@@ -1714,20 +1757,45 @@ pub fn run() {
     // installed here early — it uses the global tracing subscriber and is
     // a no-op until the subscriber is installed in `setup()`.
 
-    // M-44: Install custom panic hook so panics are captured in the log file.
-    std::panic::set_hook(Box::new(|info| {
-        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
-            s.to_string()
-        } else if let Some(s) = info.payload().downcast_ref::<String>() {
-            s.clone()
-        } else {
-            "unknown panic".to_string()
-        };
-        let location = info
-            .location()
-            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
-            .unwrap_or_default();
+    // M-44 / #634: Install a custom panic hook so panics are captured in the
+    // log file AND survive `panic = "abort"` (release profile, Cargo.toml).
+    //
+    // Two abort-safety problems the previous hook had:
+    //   1. The file sink is `tracing_appender::non_blocking` — `tracing::error!`
+    //      only enqueues the PANIC line onto a background worker thread that
+    //      flushes on `WorkerGuard` drop. Under `abort` the process dies the
+    //      instant this hook returns, so the buffered file-side PANIC line —
+    //      the copy bug reports harvest — was plausibly never written.
+    //   2. `set_hook` replaced the std default hook outright, so no backtrace
+    //      was captured anywhere.
+    //
+    // Fix: (a) write the payload/location + a force-captured backtrace
+    // synchronously to stderr via `eprintln!` (no worker thread, abort-safe);
+    // (b) still emit the structured `tracing::error!` event for the file/JSON
+    // sink on the normal (unwind / non-abort) path; (c) chain the previously
+    // installed hook so the std default backtrace behaviour is preserved.
+    // Normal (non-panic) logging is untouched.
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let (payload, location) = panic_payload_and_location(info);
+        let backtrace = std::backtrace::Backtrace::force_capture();
+
+        // Synchronous, abort-safe write: this reaches captured stderr even
+        // when the non-blocking file worker never gets to flush.
+        eprintln!(
+            "{}",
+            format_panic_report(&payload, &location, &backtrace.to_string())
+        );
+
+        // Structured event for the JSON file sink (delivered on the normal
+        // unwind path; best-effort under abort, but the eprintln! above is
+        // the durable copy).
         tracing::error!(target: "agaric", panic = %payload, location = %location, "PANIC");
+
+        // Preserve the std default hook's behaviour (e.g. its own backtrace
+        // formatting / future changes) by chaining to whatever was installed
+        // before us.
+        previous_hook(info);
     }));
 
     // I-Core-7: command list lives in the `agaric_commands!` macro near the
@@ -2433,6 +2501,89 @@ mod log_dir_tests {
         assert_eq!(
             log_dir, expected,
             "tracing-appender log dir must equal <app_data_dir>/logs (what get_log_dir returns)"
+        );
+    }
+}
+
+// #634: unit tests for the abort-safe panic-report helpers. A full
+// `panic = "abort"` integration test can't run in-process (the test binary
+// would die), so we test the extracted, pure formatting + payload-extraction
+// logic the hook delegates to.
+#[cfg(test)]
+mod panic_report_tests {
+    use super::{format_panic_report, panic_payload_and_location};
+
+    #[test]
+    fn report_includes_payload_location_and_backtrace() {
+        let report = format_panic_report(
+            "something exploded",
+            "src/foo.rs:42:7",
+            "0: frame_a\n1: frame_b",
+        );
+        assert!(
+            report.contains("something exploded"),
+            "report must carry the panic payload, got: {report}"
+        );
+        assert!(
+            report.contains("src/foo.rs:42:7"),
+            "report must carry the panic location, got: {report}"
+        );
+        assert!(
+            report.contains("frame_a") && report.contains("frame_b"),
+            "report must carry the captured backtrace, got: {report}"
+        );
+        assert!(
+            report.starts_with("PANIC"),
+            "report must be greppable via the PANIC marker, got: {report}"
+        );
+    }
+
+    #[test]
+    fn report_handles_missing_location() {
+        let report = format_panic_report("boom", "", "<bt>");
+        assert!(
+            report.contains("<unknown location>"),
+            "empty location must degrade to a sentinel, got: {report}"
+        );
+        assert!(
+            report.contains("boom"),
+            "payload must still appear: {report}"
+        );
+    }
+
+    #[test]
+    fn payload_extraction_reads_str_payload_and_location() {
+        // `panic::catch_unwind` lets us drive `panic_payload_and_location`
+        // with a real `PanicHookInfo` without aborting the test binary: we
+        // install a temporary hook, capture what it extracts, then restore.
+        use std::sync::Mutex;
+        static CAPTURED: Mutex<Option<(String, String)>> = Mutex::new(None);
+
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|info| {
+            let extracted = panic_payload_and_location(info);
+            *CAPTURED.lock().unwrap() = Some(extracted);
+        }));
+
+        let result = std::panic::catch_unwind(|| {
+            panic!("str payload here");
+        });
+
+        std::panic::set_hook(previous);
+
+        assert!(result.is_err(), "the closure must have panicked");
+        let (payload, location) = CAPTURED
+            .lock()
+            .unwrap()
+            .take()
+            .expect("hook must have captured the panic");
+        assert_eq!(
+            payload, "str payload here",
+            "string payload must round-trip"
+        );
+        assert!(
+            location.contains("lib.rs"),
+            "location must point at this source file, got: {location}"
         );
     }
 }
