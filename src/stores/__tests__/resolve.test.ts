@@ -498,6 +498,68 @@ describe('set', () => {
     expect(entry).toEqual({ title: 'Updated Title', deleted: true })
   })
 
+  // #1073 — `set` fires on tag rename/delete (TagList) and trash restore
+  // (TrashView); an idempotent restore/rename re-writes the identical
+  // `{ title, deleted }`. Mirror batchSet's #753 no-op guard: a no-change
+  // call must NOT clone the Map or bump `version` (every version-subscribed
+  // block row re-renders on a bump).
+  it('skips the version bump AND the Map clone when the value is unchanged (#1073)', () => {
+    useResolveStore.getState().set('ID_1', 'My Page', false)
+    const versionBefore = useResolveStore.getState().version
+    const cacheBefore = useResolveStore.getState().cache
+
+    // Same id, same title, same deleted flag — a pure echo.
+    useResolveStore.getState().set('ID_1', 'My Page', false)
+
+    const state = useResolveStore.getState()
+    expect(state.version).toBe(versionBefore)
+    // Reference equality — no clone happened at all.
+    expect(state.cache).toBe(cacheBefore)
+  })
+
+  it('bumps version when the title changes for an existing id (#1073)', () => {
+    useResolveStore.getState().set('ID_1', 'My Page', false)
+    const versionBefore = useResolveStore.getState().version
+
+    useResolveStore.getState().set('ID_1', 'Renamed Page', false)
+
+    const state = useResolveStore.getState()
+    expect(state.version).toBe(versionBefore + 1)
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'ID_1'))).toEqual({
+      title: 'Renamed Page',
+      deleted: false,
+    })
+  })
+
+  it('bumps version when only the deleted flag changes for an existing id (#1073)', () => {
+    useResolveStore.getState().set('ID_1', 'My Page', false)
+    const versionBefore = useResolveStore.getState().version
+
+    useResolveStore.getState().set('ID_1', 'My Page', true)
+
+    const state = useResolveStore.getState()
+    expect(state.version).toBe(versionBefore + 1)
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'ID_1'))).toEqual({
+      title: 'My Page',
+      deleted: true,
+    })
+  })
+
+  it('bumps version on the first write of an absent id (#1073)', () => {
+    const versionBefore = useResolveStore.getState().version
+
+    // Absent key — even though title/deleted happen to match the would-be
+    // default, an absent entry must always be written and bump.
+    useResolveStore.getState().set('NEW_ID', 'Fresh', false)
+
+    const state = useResolveStore.getState()
+    expect(state.version).toBe(versionBefore + 1)
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'NEW_ID'))).toEqual({
+      title: 'Fresh',
+      deleted: false,
+    })
+  })
+
   it('set and batchSet both bump version inline (FE-H-21 symmetric contract)', () => {
     // FE-H-21 — pin the symmetric inline-bump policy: each `set` and each
     // `batchSet` bumps `version` synchronously, on its own. No microtask

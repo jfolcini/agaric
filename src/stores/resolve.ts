@@ -244,6 +244,14 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
     set: (id, title, deleted) => {
       const spaceId = activeSpaceId()
       const compositeKey = keyFor(spaceId, id)
+      // #1073 — diff before cloning, mirroring batchSet's #753 guard. `set`
+      // fires on tag create/delete/rename (TagList) and trash restore
+      // (TrashView); idempotent restores/renames re-write the identical
+      // `{ title, deleted }` for a key already in the cache. Cloning the
+      // full Map and bumping `version` for a no-op change re-renders every
+      // version-subscribed block row for zero gain. Skip when unchanged.
+      const cached = get().cache.get(compositeKey)
+      if (cached && cached.title === title && cached.deleted === deleted) return
       set((state) => {
         const cache = new Map(state.cache)
         cache.set(compositeKey, { title, deleted })
