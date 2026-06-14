@@ -30,24 +30,55 @@ const DELETE_CHUNK: usize = MAX_SQL_PARAMS; // 999
 /// Output is sorted by `b.id ASC` so the sort-merge diff in
 /// [`apply_sort_merge_rebuild`] can walk this stream alongside
 /// `tags_cache` (also `ORDER BY tag_id ASC`) in lockstep.
-const DESIRED_TAGS_SQL: &str = "SELECT b.id, b.content, COALESCE(t.cnt, 0) AS cnt
-         FROM blocks b
-         LEFT JOIN (
-             SELECT tag_id, COUNT(*) AS cnt FROM (
-                 SELECT bt.tag_id, bt.block_id
-                 FROM block_tags bt
-                 JOIN blocks blk ON blk.id = bt.block_id
-                 WHERE blk.deleted_at IS NULL
-                 UNION
-                 SELECT btr.tag_id, btr.source_id AS block_id
-                 FROM block_tag_refs btr
-                 JOIN blocks blk ON blk.id = btr.source_id
-                 WHERE blk.deleted_at IS NULL
-             )
-             GROUP BY tag_id
-         ) t ON t.tag_id = b.id
-         WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.content IS NOT NULL
-         ORDER BY b.id ASC";
+///
+/// **Duplicate-name de-duplication (#626).** `tags_cache.name` is UNIQUE
+/// (migration 0061:195) but `blocks.content` has no uniqueness for
+/// `block_type='tag'`: two live tags can legitimately share a name (a
+/// rename collision, or two devices independently creating `#project`
+/// then syncing). If both were emitted into the desired state, the
+/// rebuild's INSERT would have to resolve the UNIQUE(name) collision on
+/// *every* run, and `INSERT OR REPLACE` made the two rows flip-flop
+/// forever (each rebuild evicted whichever one the previous rebuild had
+/// inserted → `changed >= 1` perpetually, one tag permanently invisible).
+///
+/// We instead de-duplicate by name *deterministically* in the desired
+/// projection: among all live tags sharing a name (compared
+/// case-insensitively to match the UNIQUE index, which is
+/// `name COLLATE NOCASE` per 0061:206-207), only the one with the
+/// smallest `id` (ULID → earliest-created) survives. `ROW_NUMBER()
+/// OVER (PARTITION BY content COLLATE NOCASE ORDER BY id)` picks that
+/// winner. Because the winner is a pure function of the source rows, the
+/// desired stream is stable across rebuilds → the cache converges
+/// (a settled rebuild reports `changed == 0`) and the same tag wins every
+/// time. The loser is omitted from the cache (it has no UNIQUE slot to
+/// occupy); it remains fully live in `blocks` and is recoverable by a
+/// rename. This is the explicit, deterministic resolution mandated by
+/// the issue's Proposed change.
+const DESIRED_TAGS_SQL: &str = "SELECT id, content, cnt FROM (
+             SELECT b.id, b.content, COALESCE(t.cnt, 0) AS cnt,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY b.content COLLATE NOCASE
+                        ORDER BY b.id
+                    ) AS rn
+             FROM blocks b
+             LEFT JOIN (
+                 SELECT tag_id, COUNT(*) AS cnt FROM (
+                     SELECT bt.tag_id, bt.block_id
+                     FROM block_tags bt
+                     JOIN blocks blk ON blk.id = bt.block_id
+                     WHERE blk.deleted_at IS NULL
+                     UNION
+                     SELECT btr.tag_id, btr.source_id AS block_id
+                     FROM block_tag_refs btr
+                     JOIN blocks blk ON blk.id = btr.source_id
+                     WHERE blk.deleted_at IS NULL
+                 )
+                 GROUP BY tag_id
+             ) t ON t.tag_id = b.id
+             WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.content IS NOT NULL
+         )
+         WHERE rn = 1
+         ORDER BY id ASC";
 
 const CURRENT_TAGS_SQL: &str =
     "SELECT tag_id, name, usage_count FROM tags_cache ORDER BY tag_id ASC";
@@ -99,6 +130,12 @@ async fn apply_tags_diff(
             // UNIQUE(name) constraint would cause INSERT OR IGNORE to silently
             // drop the renamed tag's new row.  INSERT OR REPLACE instead evicts
             // the stale row and preserves the incoming (correct) row.
+            //
+            // The desired projection now de-duplicates names deterministically
+            // (DESIRED_TAGS_SQL, #626), so each rebuild's insert set holds at
+            // most one row per name and OR REPLACE no longer flip-flops between
+            // two same-name tags: the same winner (smallest id) is inserted
+            // every rebuild and the cache converges (changed == 0 once settled).
             "INSERT OR REPLACE INTO tags_cache (tag_id, name, usage_count, updated_at) VALUES {}",
             placeholders.join(", ")
         );
@@ -458,7 +495,8 @@ mod tests {
     ///
     /// With `INSERT OR IGNORE` the new row for A was silently dropped because B
     /// still occupied the UNIQUE(name) slot (B was not in the delete set). With
-    /// `INSERT OR REPLACE` A's row wins and the cache stays correct.
+    /// the deterministic de-dup projection (#626), the smaller-id tag wins the
+    /// shared name and the cache stays correct.
     #[tokio::test]
     async fn tags_cache_rename_collision_does_not_silently_drop_tag() {
         let (pool, _dir) = test_pool().await;
@@ -472,10 +510,12 @@ mod tests {
         let first = rebuild_tags_cache_impl(&pool).await.unwrap();
         assert_eq!(first, 2, "baseline must insert 2 rows");
 
-        // Rename tag A to "beta" — now A and B both want the name "beta"
+        // Rename tag A to "beta" — now A and B both want the name "beta".
+        // A has the smaller id (TAG_AA... < TAG_BB...), so A deterministically
+        // wins the "beta" slot.
         rename_tag(&pool, "TAG_AAAAAAAAAAAAAAAAAAAAAAA", "beta").await;
 
-        // Incremental rebuild must not silently drop tag A
+        // Incremental rebuild must not silently drop the winning tag A
         let _changed = rebuild_tags_cache_impl(&pool).await.unwrap();
 
         let cache = snapshot(&pool).await;
@@ -490,6 +530,68 @@ mod tests {
             tag_a_row.unwrap().1,
             "beta",
             "tag A must carry its new name 'beta'"
+        );
+    }
+
+    /// #626 — two LIVE tags sharing a name must NOT flip-flop forever.
+    ///
+    /// `tags_cache.name` is UNIQUE but two live tags can legitimately share a
+    /// name (rename collision / two devices each create `#project` then sync).
+    /// The old `INSERT OR REPLACE` rebuild evicted one and re-inserted the
+    /// other on *every* rebuild → perpetual flip-flop (`changed >= 1` forever,
+    /// one tag permanently invisible). With the deterministic de-dup projection
+    /// the smaller-id tag wins the name on *every* rebuild, so the cache
+    /// converges: the same winner each time, and the third rebuild is a no-op.
+    #[tokio::test]
+    async fn tags_cache_duplicate_name_converges_no_flip_flop() {
+        let (pool, _dir) = test_pool().await;
+
+        // Two live tags that share the name "project". A has the smaller id.
+        insert_tag(&pool, "TAGDUPA0000000000000000000", "project").await;
+        insert_tag(&pool, "TAGDUPB0000000000000000000", "project").await;
+        // Give the LOSER (B) the higher usage so we can prove the winner is
+        // chosen by id, not by usage_count.
+        insert_content(&pool, "BLKDUP00000000000000000000", "note").await;
+        add_tag(
+            &pool,
+            "BLKDUP00000000000000000000",
+            "TAGDUPB0000000000000000000",
+        )
+        .await;
+
+        // Rebuild three times. Capture the winner each time.
+        let mut winners: Vec<(String, String, i64)> = Vec::new();
+        let mut changes: Vec<u64> = Vec::new();
+        for _ in 0..3 {
+            let changed = rebuild_tags_cache_impl(&pool).await.unwrap();
+            changes.push(changed);
+            let cache = snapshot(&pool).await;
+            // Exactly one row may occupy the UNIQUE(name) slot for "project".
+            let project_rows: Vec<_> = cache
+                .iter()
+                .filter(|(_, name, _)| name == "project")
+                .cloned()
+                .collect();
+            assert_eq!(
+                project_rows.len(),
+                1,
+                "exactly one tag may hold the UNIQUE name 'project'; cache = {cache:?}"
+            );
+            winners.push(project_rows.into_iter().next().unwrap());
+        }
+
+        // (1) STABLE: the SAME tag (smaller id, A) wins all three rebuilds.
+        assert!(
+            winners
+                .iter()
+                .all(|(id, _, _)| id == "TAGDUPA0000000000000000000"),
+            "the smaller-id tag must win every rebuild (deterministic); winners = {winners:?}"
+        );
+
+        // (2) CONVERGED: the third rebuild reports zero diff ops — no flip-flop.
+        assert_eq!(
+            changes[2], 0,
+            "third rebuild must converge to changed == 0 (no perpetual flip-flop); changes = {changes:?}"
         );
     }
 
