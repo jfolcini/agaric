@@ -16,7 +16,7 @@
 
 import { useCallback } from 'react'
 
-import { getRecentPages } from '@/lib/recent-pages'
+import { getRecentPagesForSpace } from '@/stores/recent-pages'
 
 import type { BlockRow, PageWithMetadataRow } from '../lib/tauri'
 import { useLocalStoragePreference } from './useLocalStoragePreference'
@@ -177,7 +177,7 @@ export function usePageBrowserSort(): UsePageBrowserSortReturn {
       } else if (sortOption === 'default') {
         sorted.sort((a, b) => a.id.localeCompare(b.id))
       } else if (sortOption === 'recent') {
-        const recentPages = getRecentPages()
+        const recentPages = getRecentPagesForSpace()
         const recentMap = new Map(recentPages.map((rp) => [rp.id, rp.visitedAt]))
         sorted.sort((a, b) => {
           const aTime = recentMap.get(a.id)

@@ -11,7 +11,7 @@
 import { useMemo } from 'react'
 
 import { buildPageTree, type PageTreeNode } from '@/lib/page-tree'
-import { getRecentPages } from '@/lib/recent-pages'
+import { getRecentPagesForSpace } from '@/stores/recent-pages'
 
 import type { BlockRow } from '../lib/tauri'
 import type { SortOption } from './usePageBrowserSort'
@@ -170,7 +170,9 @@ export function buildMultiPageBranch(
   // descendant ULID (or own ULID for flat); recent → newest
   // descendant visit time (or own for flat) with name fallback.
   const recentMap =
-    sortOption === 'recent' ? new Map(getRecentPages().map((rp) => [rp.id, rp.visitedAt])) : null
+    sortOption === 'recent'
+      ? new Map(getRecentPagesForSpace().map((rp) => [rp.id, rp.visitedAt]))
+      : null
   const sortedTopLevel = sortTopLevelUnits(topLevelUnits, sortOption, recentMap)
 
   const rows: PageBrowserRow[] = []

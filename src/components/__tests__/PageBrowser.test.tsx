@@ -68,13 +68,18 @@ vi.mock('@tanstack/react-virtual', () =>
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
-vi.mock('@/lib/recent-pages', () => ({
-  getRecentPages: vi.fn(() => []),
-}))
+// #1149 — recent-pages moved from `lib/recent-pages` to the zustand store.
+// Override only the snapshot reader the PageBrowser sort/grouping uses;
+// keep every other store export real (the full PageBrowser render pulls in
+// `useRecentPagesStore`, `QuickAccessBar`, etc.).
+vi.mock('@/stores/recent-pages', async (importActual) => {
+  const actual = await importActual<typeof import('@/stores/recent-pages')>()
+  return { ...actual, getRecentPagesForSpace: vi.fn(() => []) }
+})
 
-import { getRecentPages } from '@/lib/recent-pages'
+import { getRecentPagesForSpace } from '@/stores/recent-pages'
 
-const mockedGetRecentPages = vi.mocked(getRecentPages)
+const mockedGetRecentPages = vi.mocked(getRecentPagesForSpace)
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)

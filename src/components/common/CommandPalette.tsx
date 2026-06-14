@@ -82,18 +82,17 @@ import { useVoiceInput } from '@/hooks/useVoiceInput'
 import { isCancellation } from '@/lib/app-error'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import {
-  addRecentPage,
-  getRecentPages,
-  type RecentPage,
-  removeRecentPage,
-  togglePinRecentPage,
-} from '@/lib/recent-pages'
 import { addRecentSearch, clearRecentSearches, getRecentSearches } from '@/lib/recent-searches'
 import type { SearchBlockRow } from '@/lib/tauri'
 import { searchBlocksPartitioned } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
+import {
+  type RecentPage,
+  selectRecentPagesForSpace,
+  toRecentPage,
+  useRecentPagesStore,
+} from '@/stores/recent-pages'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
@@ -431,11 +430,15 @@ export function PaletteBody({
     [pages, blocks, effectiveQuery],
   )
 
-  // Recent pages — empty-state list when no query.
-  const [recents, setRecents] = useState<RecentPage[]>([])
-  useEffect(() => {
-    setRecents(getRecentPages())
-  }, [])
+  // Recent pages — empty-state list when no query. #1149 — sourced from the
+  // reactive zustand store (single source of truth shared with SearchPanel /
+  // QuickAccessBar); the selector re-renders on every pin/remove/add so the
+  // list stays live without a manual `setRecents(getRecentPages())` re-read.
+  const addRecentPage = useRecentPagesStore((s) => s.addRecentPage)
+  const removeRecentPage = useRecentPagesStore((s) => s.removeRecentPage)
+  const togglePinRecentPage = useRecentPagesStore((s) => s.togglePinRecentPage)
+  const recentPageRefs = useRecentPagesStore((s) => selectRecentPagesForSpace(s, currentSpaceId))
+  const recents: RecentPage[] = recentPageRefs.map(toRecentPage)
 
   // #131 — recent search TERMS (distinct from recent pages). Surfaced
   // in the mobile empty state so a tap re-runs a prior query. Mobile
@@ -687,12 +690,10 @@ export function PaletteBody({
   function handleRecentRowAction(actionId: string, rowId: string, newTab: boolean): void {
     if (actionId === 'pin' || actionId === 'unpin') {
       togglePinRecentPage(rowId)
-      setRecents(getRecentPages())
       return
     }
     if (actionId === 'remove-from-recents') {
       removeRecentPage(rowId)
-      setRecents(getRecentPages())
       return
     }
     const page = recents.find((p) => p.id === rowId)
@@ -976,7 +977,6 @@ export function PaletteBody({
                         onClick={(e) => {
                           e.stopPropagation()
                           togglePinRecentPage(page.id)
-                          setRecents(getRecentPages())
                         }}
                         onPointerDown={(e) => {
                           // Prevent cmdk from interpreting the

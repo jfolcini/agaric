@@ -10,13 +10,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makePage } from '../../__tests__/fixtures'
 import { isFrontendOnlySort, usePageBrowserSort } from '../usePageBrowserSort'
 
-vi.mock('@/lib/recent-pages', () => ({
-  getRecentPages: vi.fn(() => []),
-}))
+// #1149 — recent-pages moved to the zustand store. `sortPages` reads the
+// snapshot helper `getRecentPagesForSpace`; override only that and keep the
+// rest of the store module real.
+vi.mock('@/stores/recent-pages', async (importActual) => {
+  const actual = await importActual<typeof import('@/stores/recent-pages')>()
+  return { ...actual, getRecentPagesForSpace: vi.fn(() => []) }
+})
 
-import { getRecentPages } from '@/lib/recent-pages'
+import { getRecentPagesForSpace } from '@/stores/recent-pages'
 
-const mockedGetRecentPages = vi.mocked(getRecentPages)
+const mockedGetRecentPages = vi.mocked(getRecentPagesForSpace)
 
 beforeEach(() => {
   localStorage.clear()

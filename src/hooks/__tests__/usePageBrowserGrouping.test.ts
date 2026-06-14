@@ -16,9 +16,13 @@ import {
   usePageBrowserGrouping,
 } from '../usePageBrowserGrouping'
 
-vi.mock('@/lib/recent-pages', () => ({
-  getRecentPages: vi.fn(() => []),
-}))
+// #1149 — recent-pages moved to the zustand store. The grouping comparator
+// reads the snapshot helper `getRecentPagesForSpace`; override only that and
+// keep the rest of the store module real.
+vi.mock('@/stores/recent-pages', async (importActual) => {
+  const actual = await importActual<typeof import('@/stores/recent-pages')>()
+  return { ...actual, getRecentPagesForSpace: vi.fn(() => []) }
+})
 
 /** Identity sort — keeps inputs in their original order so assertions are stable. */
 function identitySort(input: BlockRow[]): BlockRow[] {

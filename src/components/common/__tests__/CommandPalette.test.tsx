@@ -34,6 +34,7 @@ import { axe } from 'vitest-axe'
 import { CommandPalette, mergeAndRankGroups } from '@/components/common/CommandPalette'
 import { setActiveEditor } from '@/editor/active-editor'
 import { useNavigationStore } from '@/stores/navigation'
+import { type PageRef, useRecentPagesStore } from '@/stores/recent-pages'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
@@ -137,6 +138,14 @@ beforeEach(() => {
   mockedUseIsMobile.mockReturnValue(false)
   localStorage.clear()
   resetStore()
+  // #1149 — recents now live in the zustand store (was `lib/recent-pages`).
+  // Reset its in-memory state per test; `rawKeysMerged: true` skips the
+  // raw-key migration during these renders.
+  useRecentPagesStore.setState({
+    recentPages: [],
+    recentPagesBySpace: {},
+    rawKeysMerged: true,
+  })
   useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
@@ -195,17 +204,28 @@ describe('CommandPalette — visibility', () => {
   })
 })
 
+/**
+ * #1149 — recents are sourced from the zustand store (active space
+ * `SPACE_TEST` in this suite), no longer raw `recent_pages:SPACE_TEST`
+ * localStorage. Seed the per-space slice and read it back via the store.
+ */
+function seedRecentPagesStore(entries: PageRef[]): void {
+  useRecentPagesStore.setState((s) => ({
+    recentPagesBySpace: { ...s.recentPagesBySpace, SPACE_TEST: entries },
+  }))
+}
+
+function readRecentPagesStore(): Array<{ id: string; pinned?: boolean }> {
+  const slice = useRecentPagesStore.getState().recentPagesBySpace['SPACE_TEST'] ?? []
+  return slice.map((p) => ({ id: p.pageId, ...(p.pinned === true && { pinned: true }) }))
+}
+
 describe('CommandPalette — empty state', () => {
   it('shows recent pages when no query is typed', () => {
-    // PEND-67 forward-port: PR #31 made `recent-pages.ts` space-scoped
-    // (storage key `recent_pages:<spaceId>`). Seed the SPACE_TEST slot
-    // so `getRecentPages()` returns this entry under the active space.
-    localStorage.setItem(
-      'recent_pages:SPACE_TEST',
-      JSON.stringify([
-        { id: 'PAGE_RECENT', title: 'Recent Project', visitedAt: '2026-05-01T00:00:00Z' },
-      ]),
-    )
+    // #1149 — recents come from the store; seed the active SPACE_TEST slice.
+    seedRecentPagesStore([
+      { pageId: 'PAGE_RECENT', title: 'Recent Project', visitedAt: '2026-05-01T00:00:00Z' },
+    ])
     render(<CommandPalette />)
     openPalette()
     expect(screen.getByText('Recent Project')).toBeInTheDocument()
@@ -215,30 +235,22 @@ describe('CommandPalette — empty state', () => {
 
 describe('CommandPalette — recents pinning (PEND-67 Phase 4)', () => {
   it('clicking the pin button toggles the pinned state without navigating', async () => {
-    localStorage.setItem(
-      'recent_pages:SPACE_TEST',
-      JSON.stringify([{ id: 'PAGE_A', title: 'Alpha', visitedAt: '2026-05-19T00:00:00Z' }]),
-    )
+    seedRecentPagesStore([{ pageId: 'PAGE_A', title: 'Alpha', visitedAt: '2026-05-19T00:00:00Z' }])
     render(<CommandPalette />)
     openPalette()
     const pin = await screen.findByTestId('palette-recent-pin-PAGE_A')
     fireEvent.click(pin)
-    // Persisted as pinned.
-    const raw = localStorage.getItem('recent_pages:SPACE_TEST') ?? '[]'
-    const parsed = JSON.parse(raw) as Array<{ id: string; pinned?: boolean }>
-    expect(parsed[0]?.pinned).toBe(true)
+    // Persisted as pinned (in the store).
+    expect(readRecentPagesStore()[0]?.pinned).toBe(true)
     // The palette did NOT navigate away on the pin click.
     expect(useCommandPaletteStore.getState().open).toBe(true)
   })
 
   it('pinned recents sort above unpinned recents', async () => {
-    localStorage.setItem(
-      'recent_pages:SPACE_TEST',
-      JSON.stringify([
-        { id: 'PAGE_OLD', title: 'OldPinned', visitedAt: '2026-01-01T00:00:00Z', pinned: true },
-        { id: 'PAGE_NEW', title: 'NewUnpinned', visitedAt: '2026-05-19T00:00:00Z' },
-      ]),
-    )
+    seedRecentPagesStore([
+      { pageId: 'PAGE_OLD', title: 'OldPinned', visitedAt: '2026-01-01T00:00:00Z', pinned: true },
+      { pageId: 'PAGE_NEW', title: 'NewUnpinned', visitedAt: '2026-05-19T00:00:00Z' },
+    ])
     render(<CommandPalette />)
     openPalette()
     // Find both recent rows by data-testid.
@@ -254,10 +266,7 @@ describe('CommandPalette — recents pinning (PEND-67 Phase 4)', () => {
 
 describe('CommandPalette — action menu (PEND-67 Phase 5)', () => {
   function seedRecents() {
-    localStorage.setItem(
-      'recent_pages:SPACE_TEST',
-      JSON.stringify([{ id: 'PAGE_R', title: 'Recent', visitedAt: '2026-05-19T00:00:00Z' }]),
-    )
+    seedRecentPagesStore([{ pageId: 'PAGE_R', title: 'Recent', visitedAt: '2026-05-19T00:00:00Z' }])
   }
 
   it('Tab on a focused recent row opens the action menu', async () => {
@@ -315,9 +324,7 @@ describe('CommandPalette — action menu (PEND-67 Phase 5)', () => {
     recentRow.setAttribute('aria-selected', 'true')
     fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
     fireEvent.click(await screen.findByTestId('palette-action-pin'))
-    const raw = localStorage.getItem('recent_pages:SPACE_TEST') ?? '[]'
-    const parsed = JSON.parse(raw) as Array<{ id: string; pinned?: boolean }>
-    expect(parsed[0]?.pinned).toBe(true)
+    expect(readRecentPagesStore()[0]?.pinned).toBe(true)
     // Action ran, menu closed; palette stays open because pin is not a nav action.
     expect(screen.queryByTestId('palette-action-menu')).toBeNull()
     expect(useCommandPaletteStore.getState().open).toBe(true)
@@ -362,9 +369,7 @@ describe('CommandPalette — action menu (PEND-67 Phase 5)', () => {
     recentRow.setAttribute('aria-selected', 'true')
     fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
     fireEvent.click(await screen.findByTestId('palette-action-remove-from-recents'))
-    const raw = localStorage.getItem('recent_pages:SPACE_TEST') ?? '[]'
-    const parsed = JSON.parse(raw) as Array<{ id: string }>
-    expect(parsed.length).toBe(0)
+    expect(readRecentPagesStore().length).toBe(0)
     // Action ran, menu closed; palette stays open (not a navigation).
     expect(useCommandPaletteStore.getState().open).toBe(true)
   })
