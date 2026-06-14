@@ -40,6 +40,11 @@ vi.mock('../../lib/tauri', async (importOriginal) => {
 const mockedInvoke = vi.mocked(invoke)
 const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
+// #828 — the backend `snippet()` highlight sentinels (PUA U+E000 open /
+// U+E001 close) that `SnippetHighlight` parses into `<mark>` nodes.
+const OPEN = '\u{E000}'
+const CLOSE = '\u{E001}'
+
 interface SearchRowOverrides {
   id?: string
   block_type?: string
@@ -93,15 +98,19 @@ describe('PEND-50 Phase 1 — SearchPanel page grouping', () => {
       if (cmd === 'search_blocks') {
         return {
           items: [
-            makeSearchRow({ id: 'B1', page_id: 'PAGE_A', snippet: 'first <mark>alpha</mark> hit' }),
-            makeSearchRow({ id: 'B2', page_id: 'PAGE_A', snippet: 'second <mark>alpha</mark>' }),
-            makeSearchRow({ id: 'B3', page_id: 'PAGE_A', snippet: 'third <mark>alpha</mark>' }),
-            makeSearchRow({ id: 'B4', page_id: 'PAGE_B', snippet: '<mark>alpha</mark> in B' }),
-            makeSearchRow({ id: 'B5', page_id: 'PAGE_B', snippet: 'more <mark>alpha</mark>' }),
-            makeSearchRow({ id: 'B6', page_id: 'PAGE_C', snippet: '<mark>alpha</mark>' }),
-            makeSearchRow({ id: 'B7', page_id: 'PAGE_C', snippet: '<mark>alpha</mark>' }),
-            makeSearchRow({ id: 'B8', page_id: 'PAGE_C', snippet: '<mark>alpha</mark>' }),
-            makeSearchRow({ id: 'B9', page_id: 'PAGE_C', snippet: '<mark>alpha</mark>' }),
+            makeSearchRow({
+              id: 'B1',
+              page_id: 'PAGE_A',
+              snippet: `first ${OPEN}alpha${CLOSE} hit`,
+            }),
+            makeSearchRow({ id: 'B2', page_id: 'PAGE_A', snippet: `second ${OPEN}alpha${CLOSE}` }),
+            makeSearchRow({ id: 'B3', page_id: 'PAGE_A', snippet: `third ${OPEN}alpha${CLOSE}` }),
+            makeSearchRow({ id: 'B4', page_id: 'PAGE_B', snippet: `${OPEN}alpha${CLOSE} in B` }),
+            makeSearchRow({ id: 'B5', page_id: 'PAGE_B', snippet: `more ${OPEN}alpha${CLOSE}` }),
+            makeSearchRow({ id: 'B6', page_id: 'PAGE_C', snippet: `${OPEN}alpha${CLOSE}` }),
+            makeSearchRow({ id: 'B7', page_id: 'PAGE_C', snippet: `${OPEN}alpha${CLOSE}` }),
+            makeSearchRow({ id: 'B8', page_id: 'PAGE_C', snippet: `${OPEN}alpha${CLOSE}` }),
+            makeSearchRow({ id: 'B9', page_id: 'PAGE_C', snippet: `${OPEN}alpha${CLOSE}` }),
           ],
           next_cursor: null,
           has_more: false,
@@ -137,9 +146,9 @@ describe('PEND-50 Phase 1 — SearchPanel page grouping', () => {
       if (cmd === 'search_blocks') {
         return {
           items: [
-            makeSearchRow({ id: 'B1', page_id: 'PAGE_A', snippet: '<mark>x</mark>' }),
-            makeSearchRow({ id: 'B2', page_id: 'PAGE_A', snippet: '<mark>x</mark>' }),
-            makeSearchRow({ id: 'B3', page_id: 'PAGE_B', snippet: '<mark>x</mark>' }),
+            makeSearchRow({ id: 'B1', page_id: 'PAGE_A', snippet: `${OPEN}x${CLOSE}` }),
+            makeSearchRow({ id: 'B2', page_id: 'PAGE_A', snippet: `${OPEN}x${CLOSE}` }),
+            makeSearchRow({ id: 'B3', page_id: 'PAGE_B', snippet: `${OPEN}x${CLOSE}` }),
           ],
           next_cursor: null,
           has_more: false,
@@ -174,7 +183,7 @@ describe('PEND-50 Phase 1 — SearchPanel page grouping', () => {
             makeSearchRow({
               id: 'B1',
               page_id: 'PAGE_A',
-              snippet: 'reviewed the <mark>alpha</mark> plan',
+              snippet: `reviewed the ${OPEN}alpha${CLOSE} plan`,
             }),
           ],
           next_cursor: null,
@@ -207,7 +216,7 @@ describe('PEND-50 Phase 1 — SearchPanel page grouping', () => {
               id: 'BLK1',
               parent_id: 'PAGE_A',
               page_id: 'PAGE_A',
-              snippet: '<mark>alpha</mark> body',
+              snippet: `${OPEN}alpha${CLOSE} body`,
             }),
           ],
           next_cursor: null,
@@ -255,7 +264,7 @@ describe('PEND-50 Phase 1 — SearchPanel page grouping', () => {
             makeSearchRow({
               id: 'BLK1',
               page_id: 'PAGE_A',
-              snippet: '<mark>alpha</mark>',
+              snippet: `${OPEN}alpha${CLOSE}`,
             }),
           ],
           next_cursor: null,
@@ -289,12 +298,12 @@ describe('PEND-50 Phase 1 — SearchPanel page grouping', () => {
             makeSearchRow({
               id: 'B1',
               page_id: 'PAGE_A',
-              snippet: '<mark>x</mark>',
+              snippet: `${OPEN}x${CLOSE}`,
             }),
             makeSearchRow({
               id: 'B2',
               page_id: 'PAGE_B',
-              snippet: '<mark>x</mark>',
+              snippet: `${OPEN}x${CLOSE}`,
             }),
           ],
           next_cursor: null,
@@ -341,12 +350,12 @@ describe('PEND-50 Phase 1 — SearchPanel page grouping', () => {
             makeSearchRow({
               id: 'B1',
               page_id: 'PAGE_A',
-              snippet: '<mark>x</mark>',
+              snippet: `${OPEN}x${CLOSE}`,
             }),
             makeSearchRow({
               id: 'B2',
               page_id: 'PAGE_B',
-              snippet: '<mark>x</mark>',
+              snippet: `${OPEN}x${CLOSE}`,
             }),
           ],
           next_cursor: null,
@@ -425,7 +434,7 @@ describe('PEND-50 Phase 1 — SearchPanel page grouping', () => {
             makeSearchRow({
               id: 'B1',
               page_id: 'PAGE_A',
-              snippet: '<mark>x</mark>',
+              snippet: `${OPEN}x${CLOSE}`,
             }),
           ],
           next_cursor: null,
@@ -454,8 +463,8 @@ describe('PEND-50 Phase 1 — SearchPanel page grouping', () => {
       if (cmd === 'search_blocks') {
         return {
           items: [
-            makeSearchRow({ id: 'B1', page_id: 'PAGE_A', snippet: '<mark>x</mark>' }),
-            makeSearchRow({ id: 'B2', page_id: 'PAGE_A', snippet: '<mark>x</mark>' }),
+            makeSearchRow({ id: 'B1', page_id: 'PAGE_A', snippet: `${OPEN}x${CLOSE}` }),
+            makeSearchRow({ id: 'B2', page_id: 'PAGE_A', snippet: `${OPEN}x${CLOSE}` }),
           ],
           next_cursor: null,
           has_more: false,
@@ -485,12 +494,12 @@ describe('PEND-50 Phase 1 — SearchPanel page grouping', () => {
             makeSearchRow({
               id: 'B1',
               page_id: 'PAGE_A',
-              snippet: 'first <mark>alpha</mark>',
+              snippet: `first ${OPEN}alpha${CLOSE}`,
             }),
             makeSearchRow({
               id: 'B2',
               page_id: 'PAGE_B',
-              snippet: 'second <mark>alpha</mark>',
+              snippet: `second ${OPEN}alpha${CLOSE}`,
             }),
           ],
           next_cursor: null,
@@ -538,8 +547,8 @@ describe('PEND-50 Phase 1 — SearchPanel page grouping', () => {
         if (cursor == null) {
           return {
             items: [
-              makeSearchRow({ id: 'B1', page_id: 'PAGE_A', snippet: '<mark>x</mark>' }),
-              makeSearchRow({ id: 'B2', page_id: 'PAGE_A', snippet: '<mark>x</mark>' }),
+              makeSearchRow({ id: 'B1', page_id: 'PAGE_A', snippet: `${OPEN}x${CLOSE}` }),
+              makeSearchRow({ id: 'B2', page_id: 'PAGE_A', snippet: `${OPEN}x${CLOSE}` }),
             ],
             next_cursor: 'C1',
             has_more: true,
@@ -548,8 +557,8 @@ describe('PEND-50 Phase 1 — SearchPanel page grouping', () => {
         }
         return {
           items: [
-            makeSearchRow({ id: 'B3', page_id: 'PAGE_A', snippet: '<mark>x</mark>' }),
-            makeSearchRow({ id: 'B4', page_id: 'PAGE_A', snippet: '<mark>x</mark>' }),
+            makeSearchRow({ id: 'B3', page_id: 'PAGE_A', snippet: `${OPEN}x${CLOSE}` }),
+            makeSearchRow({ id: 'B4', page_id: 'PAGE_A', snippet: `${OPEN}x${CLOSE}` }),
           ],
           next_cursor: null,
           has_more: false,

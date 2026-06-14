@@ -1,33 +1,37 @@
 /**
- * SnippetHighlight — render a FTS5 `snippet()` string with `<mark>` boundaries
- * as React nodes (no `dangerouslySetInnerHTML`).
+ * SnippetHighlight — render a FTS5 `snippet()` string with #828 PUA
+ * sentinel boundaries as React nodes (no `dangerouslySetInnerHTML`).
  *
- * PEND-50 Phase 1. The backend emits snippets shaped like
+ * PEND-50 Phase 1 / #828. The backend emits snippets shaped like
  *
- *   "kicked off the <mark>alpha</mark> review …"
+ *   "kicked off the \u{E000}alpha\u{E001} review …"
  *
- * by calling `snippet(fts_blocks, 1, '<mark>', '</mark>', '…', 32)`. Those
- * literal `<mark>` / `</mark>` substrings are the *only* markup the parser
- * recognises — any other `<` or `&` in the snippet is rendered as text,
- * which React escapes on its own. This keeps the snippet renderer free of
- * `dangerouslySetInnerHTML` and gives us a zero-XSS-surface highlighter
- * regardless of the source content.
+ * by calling `snippet(fts_blocks, 1, '\u{E000}', '\u{E001}', '…', 32)`.
+ * The OPEN (U+E000) / CLOSE (U+E001) Unicode Private-Use-Area sentinels are
+ * the *only* markup the parser recognises — any other character (including
+ * a literal `<mark>` typed into a block, or any `<` or `&`) is rendered as
+ * text, which React escapes on its own. PUA codepoints cannot occur in
+ * user-typed content, so a block whose CONTENT literally contains `<mark>`
+ * is rendered verbatim and is NEVER mistaken for a highlight boundary
+ * (#828). This keeps the snippet renderer free of `dangerouslySetInnerHTML`
+ * and gives us a zero-XSS-surface highlighter regardless of source content.
  *
  * The parser is exported separately (`parseSnippet`) so unit tests can hit
  * it without the React chrome, and so the `<mark>` rendering can be
  * threaded through alternate consumers (PEND-55's offset path will sit
- * alongside this one).
+ * alongside this one). The MCP search tool converts the sentinels back to
+ * literal `<mark>` / `</mark>` for its agent-facing output.
  *
- * Edge cases (locked in by PEND-50):
+ * Edge cases (locked in by PEND-50 / #828):
  *
  * - `null` / empty snippet → returns an empty fragment (caller should
  *   render a sensible fallback such as the page title).
- * - Unpaired `<mark>` or `</mark>` (theoretically impossible from FTS5 but
+ * - Unpaired OPEN or CLOSE sentinel (theoretically impossible from FTS5 but
  *   defended against) → the trailing run renders as a plain text span; the
  *   parser never throws.
- * - Multiple `<mark>` pairs → each emits its own `<mark>` element.
- * - Source content containing literal `<` or `&` (e.g. `a < b`) → rendered
- *   verbatim through React, which escapes both characters.
+ * - Multiple sentinel pairs → each emits its own `<mark>` element.
+ * - Source content containing literal `<mark>`, `<`, or `&` → rendered
+ *   verbatim through React, which escapes the characters; never a boundary.
  */
 
 import type React from 'react'
@@ -38,8 +42,10 @@ export interface SnippetFragment {
   marked: boolean
 }
 
-const OPEN = '<mark>'
-const CLOSE = '</mark>'
+// #828 — PUA sentinels emitted by the backend `snippet()` call. These
+// cannot occur in user content, so a literal `<mark>` is never a boundary.
+const OPEN = '\u{E000}'
+const CLOSE = '\u{E001}'
 
 /**
  * Split a FTS5 `snippet()` string into alternating text / marked fragments.
@@ -70,8 +76,8 @@ export function parseSnippet(snippet: string | null | undefined): SnippetFragmen
     const contentStart = openIdx + OPEN.length
     const closeIdx = snippet.indexOf(CLOSE, contentStart)
     if (closeIdx === -1) {
-      // Unpaired `<mark>` — defensive fallthrough. Render the rest of the
-      // string (including the dangling open tag itself, as literal text)
+      // Unpaired OPEN sentinel — defensive fallthrough. Render the rest of
+      // the string (including the dangling open sentinel itself, as text)
       // so the caller never sees a thrown exception.
       fragments.push({ text: snippet.slice(openIdx), marked: false })
       break

@@ -4163,10 +4163,11 @@ async fn reindex_fts_references_multi_row_insert_no_duplicates() {
 // ======================================================================
 //
 // These tests pin the wire shape of `SearchBlockRow.snippet` to the
-// FTS5 `snippet()` window with literal `<mark>` / `</mark>` markers.
-// The frontend renders them as React nodes (parsing the literal
-// markers); NEVER as `dangerouslySetInnerHTML`. Any change here must
-// be paired with a frontend renderer change.
+// FTS5 `snippet()` window with #828 PUA sentinel markers (U+E000 open /
+// U+E001 close). The web UI renders them as React nodes (parsing the
+// sentinels); NEVER as `dangerouslySetInnerHTML`. The MCP search tool
+// converts them back to `<mark>` / `</mark>`. Any change here must be
+// paired with a frontend renderer change.
 //
 // The window constant is `32` (trigrams) — see
 // `pending/PEND-50-search-vscode-ux.md` "Edge cases (locked in)" for
@@ -4208,18 +4209,18 @@ async fn snippet_returns_paired_mark_boundaries_on_content_match() {
         .snippet
         .as_deref()
         .expect("snippet() must produce some text for a content match");
-    let opens = snippet.matches("<mark>").count();
-    let closes = snippet.matches("</mark>").count();
+    let opens = snippet.matches('\u{E000}').count();
+    let closes = snippet.matches('\u{E001}').count();
     assert!(
         opens >= 1,
-        "snippet must contain at least one <mark> opener, got: {snippet:?}"
+        "snippet must contain at least one U+E000 opener, got: {snippet:?}"
     );
     assert_eq!(
         opens, closes,
-        "every <mark> opener must have a matching </mark> closer, got: {snippet:?}"
+        "every U+E000 opener must have a matching U+E001 closer, got: {snippet:?}"
     );
     assert!(
-        snippet.contains("<mark>wonderful</mark>"),
+        snippet.contains("\u{E000}wonderful\u{E001}"),
         "expected the match span to be wrapped, got: {snippet:?}"
     );
 }
@@ -4350,7 +4351,7 @@ async fn snippet_for_long_content_returns_windowed_output() {
         body.len(),
     );
     assert!(
-        snippet.contains("<mark>"),
+        snippet.contains('\u{E000}'),
         "windowed snippet must still contain the match span: {snippet:?}"
     );
 }
@@ -4390,15 +4391,15 @@ async fn snippet_with_multiple_matches_contains_at_least_one_pair() {
         .snippet
         .as_deref()
         .expect("snippet must be produced");
-    let opens = snippet.matches("<mark>").count();
-    let closes = snippet.matches("</mark>").count();
+    let opens = snippet.matches('\u{E000}').count();
+    let closes = snippet.matches('\u{E001}').count();
     assert!(
         opens >= 1,
-        "multi-match block must include at least one <mark> pair, got: {snippet:?}"
+        "multi-match block must include at least one U+E000 pair, got: {snippet:?}"
     );
     assert_eq!(
         opens, closes,
-        "every <mark> opener must have a matching </mark> closer in a multi-match snippet"
+        "every U+E000 opener must have a matching U+E001 closer in a multi-match snippet"
     );
 }
 
@@ -4446,16 +4447,16 @@ async fn snippet_window_constant_produces_readable_output_on_representative_samp
         .as_deref()
         .expect("snippet must be produced for a content match");
     let mark_start = snippet
-        .find("<mark>")
+        .find('\u{E000}')
         .expect("snippet must contain a match span");
     let mark_end = snippet
-        .find("</mark>")
+        .find('\u{E001}')
         .expect("snippet must close the match span");
     // Some surrounding context before/after the highlighted span —
     // at least one non-marker character on each side (allowing the
     // FTS5 truncation ellipsis to count as context).
     let before = &snippet[..mark_start];
-    let after = &snippet[mark_end + "</mark>".len()..];
+    let after = &snippet[mark_end + '\u{E001}'.len_utf8()..];
     assert!(
         before.chars().any(|c| !c.is_whitespace()),
         "snippet must include non-empty leading context: {snippet:?}"
@@ -6176,8 +6177,8 @@ fn partitioned_snippet_skipped_when_post_filter_clears_it() {
     use super::search::fts_select_prefix_for_test;
 
     // Snippet-on branch: the SQL must include the `snippet(` function
-    // call so the FTS path can carry `<mark>` boundaries to the
-    // frontend (the no-toggle case).
+    // call so the FTS path can carry the #828 PUA sentinel boundaries
+    // (U+E000 / U+E001) to the frontend (the no-toggle case).
     let with = fts_select_prefix_for_test(true);
     assert!(
         with.contains("snippet(fts_blocks"),

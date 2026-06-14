@@ -15,6 +15,24 @@ use crate::pagination::{Cursor, PageRequest, PageResponse};
 use super::metadata_filter::MetadataPredicates;
 
 // ---------------------------------------------------------------------------
+// #828 — FTS5 snippet() highlight sentinels
+// ---------------------------------------------------------------------------
+
+/// #828 — FTS5 snippet() highlight sentinels. PUA codepoints that cannot
+/// occur in user content, so a literal "<mark>" typed into a block is never
+/// mistaken for a highlight boundary. The web UI parser (parseSnippet in
+/// src/components/search/SnippetHighlight.tsx) reads these directly; the MCP
+/// search tool converts them back to <mark>/</mark> so the agent-facing
+/// contract is unchanged.
+pub(crate) const SNIPPET_HL_OPEN: char = '\u{E000}';
+pub(crate) const SNIPPET_HL_CLOSE: char = '\u{E001}';
+/// The `snippet(...)` SQL projection, shared by the production query and the
+/// test mirror so the two never drift. Keep the inline sentinels in sync
+/// with SNIPPET_HL_OPEN / SNIPPET_HL_CLOSE above.
+pub(crate) const SNIPPET_SQL_PROJECTION: &str =
+    "snippet(fts_blocks, 1, '\u{E000}', '\u{E001}', '…', 32) as snippet";
+
+// ---------------------------------------------------------------------------
 // PEND-70 — per-FTS-query timing thresholds
 // ---------------------------------------------------------------------------
 
@@ -331,9 +349,9 @@ struct FtsSearchRow {
     due_date: Option<String>,
     scheduled_date: Option<String>,
     page_id: Option<String>,
-    // PEND-50 Phase 1 — FTS5 `snippet()` window with literal `<mark>` /
-    // `</mark>` boundaries. May be `NULL` from SQLite when the matched
-    // row has `content IS NULL` (page-title hits etc.).
+    // PEND-50 Phase 1 — FTS5 `snippet()` window with #828 PUA sentinel
+    // boundaries (U+E000 open / U+E001 close). May be `NULL` from SQLite
+    // when the matched row has `content IS NULL` (page-title hits etc.).
     snippet: Option<String>,
     // FTS ranking field (for cursor)
     search_rank: f64,
@@ -474,8 +492,8 @@ pub async fn search_fts(
         None
     };
     // PEND-50 Phase 1 — emit `SearchBlockRow` (= `ActiveBlockRow` +
-    // `snippet`). The `snippet` column from FTS5 carries literal
-    // `<mark>` / `</mark>` boundaries; the frontend parses them as
+    // `snippet`). The `snippet` column from FTS5 carries #828 PUA sentinel
+    // boundaries (U+E000 / U+E001); the frontend parses them as
     // React nodes — never as raw HTML.
     let mut block_rows: Vec<SearchBlockRow> = rows.into_iter().map(fts_row_to_block_row).collect();
 
@@ -804,8 +822,9 @@ async fn fts_fetch_rows(
     // Base parameters: ?1=query, ?2=cursor_flag, ?3=cursor_rank, ?4=cursor_id, ?5=limit
     // Additional parameters are appended after ?5 for parent_id, tag_ids,
     // and (FEAT-3 Phase 2) space_id.
-    // PEND-50 Phase 1 — `snippet()` carries literal `<mark>` / `</mark>`
-    // boundaries around each match span. Column index 1 = the `stripped`
+    // PEND-50 Phase 1 — `snippet()` carries #828 PUA sentinel boundaries
+    // (U+E000 open / U+E001 close, see SNIPPET_SQL_PROJECTION) around each
+    // match span. Column index 1 = the `stripped`
     // column of `fts_blocks` (migration `0006_fts5_trigram.sql:13`).
     // Window width is `32` trigrams (≈ a few words); the constant is
     // documented in PEND-50's "Edge cases" as tunable. The leading /
@@ -817,7 +836,7 @@ async fn fts_fetch_rows(
     // of calling `snippet()` so we don't pay the per-row tokenizer
     // walk just to throw the result away.
     let snippet_select = if with_snippet {
-        "snippet(fts_blocks, 1, '<mark>', '</mark>', '…', 32) as snippet"
+        SNIPPET_SQL_PROJECTION
     } else {
         "NULL as snippet"
     };
@@ -1313,7 +1332,7 @@ fn limit_plus_one_capped(limit: u32) -> i64 {
 #[cfg(test)]
 pub(crate) fn fts_select_prefix_for_test(with_snippet: bool) -> String {
     let snippet_select = if with_snippet {
-        "snippet(fts_blocks, 1, '<mark>', '</mark>', '…', 32) as snippet"
+        SNIPPET_SQL_PROJECTION
     } else {
         "NULL as snippet"
     };
