@@ -233,6 +233,125 @@ pub async fn claim_lease(
 }
 
 // ---------------------------------------------------------------------------
+// renew_lease (extend-only, never claims)
+// ---------------------------------------------------------------------------
+
+/// Extend the expiry of a lease **only if `device_id` is the current,
+/// non-expired holder** — the high-frequency keep-alive driven by the
+/// task loop every [`LEASE_RENEW_INTERVAL_SECS`].
+///
+/// Returns `Ok(true)` when this device held the lease and its expiry was
+/// pushed forward; `Ok(false)` when this device is *not* the live holder
+/// (unheld, held by someone else, or our own lease already lapsed) — in
+/// which case **nothing is written**.
+///
+/// # Why this is not `claim_lease`
+///
+/// [`claim_lease`] is a *seizure* primitive: it succeeds on an empty or
+/// stale holder and takes the lease.  Renewal must never do that — the
+/// keep-alive runs far more often than the reconcile cycle, and seizing
+/// a lapsed-but-recently-ours (or empty) lease from the renew arm would
+/// (a) double the claim paths racing the reconcile cycle and (b) let a
+/// device that has *missed* a renewal grab the lease back out from under
+/// a sibling that legitimately seized it. Renewal therefore only ever
+/// *extends* a hold we already, verifiably, possess.
+///
+/// The CAS guard is the SQL `WHERE` clause: the holder cell must still
+/// equal `device_id` (so a sibling that seized in between is respected)
+/// **and** the expiry cell must still be in the future at `now` (so a
+/// lease we already let lapse is left for the reconcile-cycle's
+/// [`claim_lease`] to re-seize, rather than silently resurrected). The
+/// whole thing runs inside a `BEGIN IMMEDIATE` tx, identical to
+/// [`claim_lease`], so it serialises against any concurrent claim /
+/// release / renew on the same DB.
+///
+/// # Errors
+/// [`AppError::Database`] on SQL errors.
+pub async fn renew_lease(
+    pool: &SqlitePool,
+    device_id: &str,
+    now: DateTime<Utc>,
+) -> Result<bool, AppError> {
+    let holder_key = GcalSettingKey::PushLeaseDeviceId.as_str();
+    let expires_key = GcalSettingKey::PushLeaseExpiresAt.as_str();
+
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // Read the current holder + expiry under the reserved lock so the
+    // "are we still the live holder?" decision and the write that
+    // depends on it cannot straddle a concurrent claim/release.
+    let rows = sqlx::query!(
+        "SELECT key, value FROM gcal_settings WHERE key IN (?, ?)",
+        holder_key,
+        expires_key,
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+
+    let mut current_holder = String::new();
+    let mut current_expires_raw = String::new();
+    for row in rows {
+        match row.key.as_str() {
+            k if k == holder_key => current_holder = row.value,
+            k if k == expires_key => current_expires_raw = row.value,
+            _ => {}
+        }
+    }
+    let current_expires = parse_rfc3339(&current_expires_raw);
+
+    // Renewal is a strict no-op unless this device is the live holder:
+    // the holder cell must be us AND the lease must not have lapsed.
+    let held_by_us = current_holder == device_id
+        && !device_id.is_empty()
+        && current_expires.is_some_and(|exp| exp > now);
+
+    if !held_by_us {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+
+    // Push the expiry forward.  We deliberately reuse the *exact* batched
+    // `CASE … WHEN …` UPDATE string from `claim_lease` — rewriting the
+    // holder cell to the same `device_id` it already holds is idempotent,
+    // and sharing the query string keeps the compile-checked `query!`
+    // offline cache (`.sqlx`) entry shared with `claim_lease` rather than
+    // introducing a brand-new SQL shape. Both seeded rows are stamped
+    // with the same `updated_at`, exactly as on a renewal-via-claim.
+    let new_expiry = (now + ChronoDuration::seconds(LEASE_EXPIRY_SECS.cast_signed()))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let updated_at = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
+    let res = sqlx::query!(
+        "UPDATE gcal_settings \
+         SET value = CASE key WHEN ? THEN ? WHEN ? THEN ? ELSE value END, \
+             updated_at = ? \
+         WHERE key IN (?, ?)",
+        holder_key,
+        device_id,
+        expires_key,
+        new_expiry,
+        updated_at,
+        holder_key,
+        expires_key,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    // The holder-cell guard above already proved we own the live lease;
+    // both seeded rows always exist (migration seeds them, we never
+    // delete them), so the batched UPDATE touches both. Fewer than 2 is
+    // a DB-corruption signal — surface it as a no-op renewal rather than
+    // a hard error so the keep-alive arm never tears down the loop.
+    if res.rows_affected() != 2 {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+
+    tx.commit().await?;
+    Ok(true)
+}
+
+// ---------------------------------------------------------------------------
 // release_lease
 // ---------------------------------------------------------------------------
 
@@ -383,6 +502,190 @@ mod tests {
         assert!(
             second_expires > first_expires,
             "expires_at must advance on renewal: first={first_expires:?} second={second_expires:?}"
+        );
+    }
+
+    // ── renew_lease (#691 keep-alive, extend-only) ─────────────────
+
+    #[tokio::test]
+    async fn renew_by_holder_extends_expiry() {
+        let (pool, _dir) = test_pool().await;
+        assert!(claim_lease(&pool, DEV_A, t0()).await.unwrap());
+
+        let first = read_current_lease(&pool).await.unwrap();
+        let first_expires = first.expires_at.expect("set");
+
+        // One renewal interval later — still well within the live lease.
+        let later = t0() + ChronoDuration::seconds(LEASE_RENEW_INTERVAL_SECS.cast_signed());
+        let renewed = renew_lease(&pool, DEV_A, later).await.unwrap();
+        assert!(renewed, "the live holder's renewal must succeed");
+
+        let second = read_current_lease(&pool).await.unwrap();
+        let second_expires = second.expires_at.expect("set");
+        assert_eq!(second.device_id, DEV_A, "holder unchanged by renewal");
+        assert!(
+            second_expires > first_expires,
+            "renewal must push the expiry forward: first={first_expires:?} second={second_expires:?}"
+        );
+        // The new expiry is exactly LEASE_EXPIRY_SECS past `later`.
+        assert_eq!(
+            second_expires,
+            later + ChronoDuration::seconds(LEASE_EXPIRY_SECS.cast_signed()),
+            "expiry must be LEASE_EXPIRY_SECS past the renewal instant"
+        );
+    }
+
+    #[tokio::test]
+    async fn renew_by_non_holder_is_noop_and_does_not_claim() {
+        let (pool, _dir) = test_pool().await;
+        // A holds the lease.
+        assert!(claim_lease(&pool, DEV_A, t0()).await.unwrap());
+        let before = read_current_lease(&pool).await.unwrap();
+
+        // B (not the holder) attempts a renewal — must NOT claim and
+        // must NOT touch any cell.
+        let renewed = renew_lease(&pool, DEV_B, t0() + ChronoDuration::seconds(1))
+            .await
+            .unwrap();
+        assert!(!renewed, "a non-holder renewal must report false");
+
+        let after = read_current_lease(&pool).await.unwrap();
+        assert_eq!(after.device_id, DEV_A, "non-holder renewal must not claim");
+        assert_eq!(
+            after.expires_at, before.expires_at,
+            "non-holder renewal must not extend (or touch) the expiry"
+        );
+    }
+
+    #[tokio::test]
+    async fn renew_on_unheld_lease_is_noop_and_does_not_claim() {
+        let (pool, _dir) = test_pool().await;
+        // Fresh DB — lease is unheld.  A renewal must never seize it.
+        let renewed = renew_lease(&pool, DEV_A, t0()).await.unwrap();
+        assert!(!renewed, "renewal on an unheld lease must report false");
+
+        let state = read_current_lease(&pool).await.unwrap();
+        assert_eq!(
+            state.device_id, "",
+            "renewal must never claim an unheld lease — that is claim_lease's job"
+        );
+        assert!(
+            state.expires_at.is_none(),
+            "renewal on an unheld lease must not populate expires_at"
+        );
+    }
+
+    #[tokio::test]
+    async fn renew_after_own_lease_lapsed_is_noop() {
+        let (pool, _dir) = test_pool().await;
+        assert!(claim_lease(&pool, DEV_A, t0()).await.unwrap());
+
+        // A misses every renewal; its own lease lapses.  A late renewal
+        // must NOT resurrect it — re-seizure belongs to claim_lease on
+        // the reconcile path so a sibling that grabbed the stale lease
+        // is respected.
+        let lapsed = t0() + ChronoDuration::seconds(LEASE_EXPIRY_SECS.cast_signed() + 1);
+        let renewed = renew_lease(&pool, DEV_A, lapsed).await.unwrap();
+        assert!(
+            !renewed,
+            "renewing an already-lapsed own lease must be a no-op"
+        );
+
+        // The stale holder/expiry are left untouched for claim_lease to
+        // overwrite — renewal wrote nothing.
+        let state = read_current_lease(&pool).await.unwrap();
+        assert!(
+            !state.is_live(lapsed),
+            "lapsed lease must remain not-live after a no-op renewal"
+        );
+    }
+
+    #[tokio::test]
+    async fn renew_does_not_interfere_after_sibling_seized() {
+        let (pool, _dir) = test_pool().await;
+        // A claims, lets it lapse, B seizes via the reconcile path.
+        assert!(claim_lease(&pool, DEV_A, t0()).await.unwrap());
+        let seize_at = t0() + ChronoDuration::seconds(LEASE_EXPIRY_SECS.cast_signed() + 1);
+        assert!(claim_lease(&pool, DEV_B, seize_at).await.unwrap());
+
+        // A's keep-alive arm fires again — it must NOT claw the lease
+        // back from B; renewal only extends a hold we actually own.
+        let renewed = renew_lease(&pool, DEV_A, seize_at + ChronoDuration::seconds(1))
+            .await
+            .unwrap();
+        assert!(!renewed, "A must not renew a lease now owned by B");
+
+        let state = read_current_lease(&pool).await.unwrap();
+        assert_eq!(state.device_id, DEV_B, "B must remain the holder");
+    }
+
+    // ── #691 keep-alive cadence on the interval ────────────────────
+    //
+    // Proves the renewal *cadence* drives `renew_lease` once per
+    // interval tick — mirroring the task-loop's `select!` keep-alive
+    // arm — and that the running expiry stays ahead of
+    // `LEASE_EXPIRY_SECS` across enough ticks to span more than one
+    // expiry window.  Without the keep-alive the lease would lapse; with
+    // it the lease is continuously held.
+    //
+    // We deliberately do NOT `tokio::time::pause()` here: under a paused
+    // clock sqlx's connection-pool acquire timer never fires and the DB
+    // calls deadlock (`PoolTimedOut`) — the very brittleness the module
+    // doc warns about.  Instead we drive a real, tiny `tokio::time::
+    // interval` for the *cadence* and an injected logical clock (stepped
+    // by the production `LEASE_RENEW_INTERVAL_SECS`) for the *lease SQL*
+    // comparisons, exactly as production does (wall-clock interval vs.
+    // `clock.now()` for the lease).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn renew_interval_keeps_lease_live_across_ticks() {
+        let (pool, _dir) = test_pool().await;
+        // Production steps the lease clock by LEASE_RENEW_INTERVAL_SECS
+        // per tick.  We keep that for the lease arithmetic but use a tiny
+        // real interval so the test runs in milliseconds.
+        let step = LEASE_RENEW_INTERVAL_SECS;
+
+        // A claims at logical t0.
+        assert!(claim_lease(&pool, DEV_A, t0()).await.unwrap());
+
+        let mut renew = tokio::time::interval(std::time::Duration::from_millis(2));
+        renew.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Consume the immediate first tick (interval fires at once).
+        renew.tick().await;
+
+        // Drive several keep-alive ticks; each real tick steps the
+        // logical lease clock by one renewal interval and renews.
+        let mut logical = t0();
+        let ticks: u64 = 4;
+        for i in 1..=ticks {
+            renew.tick().await;
+            logical += ChronoDuration::seconds(step.cast_signed());
+
+            let ok = renew_lease(&pool, DEV_A, logical).await.unwrap();
+            assert!(ok, "keep-alive renewal #{i} must succeed while A holds");
+
+            let state = read_current_lease(&pool).await.unwrap();
+            assert!(
+                state.is_live(logical),
+                "lease must stay live at tick #{i} (logical={logical:?})"
+            );
+            assert!(
+                state.is_held_by(DEV_A, logical),
+                "A must remain the live holder at tick #{i}"
+            );
+        }
+
+        // After `ticks` renewal intervals (240 s) — longer than
+        // LEASE_EXPIRY_SECS (180 s) — the lease is still live purely
+        // because the keep-alive kept extending it.  Without renewal it
+        // would have lapsed.
+        assert!(
+            (step * ticks) > LEASE_EXPIRY_SECS,
+            "test precondition: total elapsed must exceed a single expiry window"
+        );
+        let final_state = read_current_lease(&pool).await.unwrap();
+        assert!(
+            final_state.is_held_by(DEV_A, logical),
+            "lease must still be held after spanning more than one expiry window"
         );
     }
 
