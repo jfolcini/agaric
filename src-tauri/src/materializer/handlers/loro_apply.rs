@@ -65,6 +65,10 @@ pub(super) async fn apply_create_block_via_loro(
     };
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &resolution_anchor).await?
     else {
+        super::sql_only_fallback::record(
+            "create_block",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
         return apply_create_block_sql_only(conn, p.clone()).await;
     };
 
@@ -73,6 +77,10 @@ pub(super) async fn apply_create_block_via_loro(
     // engine work inside this sync block.
     let (snapshot, siblings): (BlockSnapshot, Vec<String>) = {
         let Some(state) = crate::loro::shared::get() else {
+            super::sql_only_fallback::record(
+                "create_block",
+                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
+            );
             return apply_create_block_sql_only(conn, p.clone()).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
@@ -139,11 +147,19 @@ pub(super) async fn apply_edit_block_via_loro(
     use crate::loro::projection;
 
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+        super::sql_only_fallback::record(
+            "edit_block",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
         return apply_edit_block_sql_only(conn, p.clone()).await;
     };
 
     let snapshot: BlockSnapshot = {
         let Some(state) = crate::loro::shared::get() else {
+            super::sql_only_fallback::record(
+                "edit_block",
+                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
+            );
             return apply_edit_block_sql_only(conn, p.clone()).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
@@ -182,11 +198,19 @@ pub(super) async fn apply_set_property_via_loro(
     use crate::loro::projection;
 
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+        super::sql_only_fallback::record(
+            "set_property",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
         return apply_set_property_sql_only(conn, p.clone()).await;
     };
 
     {
         let Some(state) = crate::loro::shared::get() else {
+            super::sql_only_fallback::record(
+                "set_property",
+                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
+            );
             return apply_set_property_sql_only(conn, p.clone()).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
@@ -239,11 +263,19 @@ pub(super) async fn apply_delete_block_via_loro(
     use crate::loro::projection;
 
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+        super::sql_only_fallback::record(
+            "delete_block",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
         return apply_delete_block_sql_only(conn, p.clone(), now).await;
     };
 
     {
         let Some(state) = crate::loro::shared::get() else {
+            super::sql_only_fallback::record(
+                "delete_block",
+                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
+            );
             return apply_delete_block_sql_only(conn, p.clone(), now).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
@@ -275,6 +307,10 @@ pub(super) async fn apply_move_block_via_loro(
     use crate::loro::projection;
 
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+        super::sql_only_fallback::record(
+            "move_block",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
         return apply_move_block_sql_only(conn, p.clone()).await;
     };
 
@@ -285,6 +321,10 @@ pub(super) async fn apply_move_block_via_loro(
     // authoritative new parent is the post-apply snapshot's `parent_id`.
     let (snapshot, old_siblings, new_siblings): (BlockSnapshot, Vec<String>, Vec<String>) = {
         let Some(state) = crate::loro::shared::get() else {
+            super::sql_only_fallback::record(
+                "move_block",
+                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
+            );
             return apply_move_block_sql_only(conn, p.clone()).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
@@ -378,11 +418,19 @@ pub(super) async fn apply_restore_block_via_loro(
     };
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &resolution_anchor).await?
     else {
+        super::sql_only_fallback::record(
+            "restore_block",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
         return apply_restore_block_sql_only(conn, p.clone()).await;
     };
 
     {
         let Some(state) = crate::loro::shared::get() else {
+            super::sql_only_fallback::record(
+                "restore_block",
+                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
+            );
             return apply_restore_block_sql_only(conn, p.clone()).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
@@ -595,11 +643,19 @@ pub(super) async fn apply_add_tag_via_loro(
     use crate::loro::projection;
 
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+        super::sql_only_fallback::record(
+            "add_tag",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
         return apply_add_tag_sql_only(conn, p.clone()).await;
     };
 
     {
         let Some(state) = crate::loro::shared::get() else {
+            super::sql_only_fallback::record(
+                "add_tag",
+                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
+            );
             return apply_add_tag_sql_only(conn, p.clone()).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
@@ -633,11 +689,19 @@ pub(super) async fn apply_remove_tag_via_loro(
     use crate::loro::projection;
 
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+        super::sql_only_fallback::record(
+            "remove_tag",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
         return apply_remove_tag_sql_only(conn, p.clone()).await;
     };
 
     {
         let Some(state) = crate::loro::shared::get() else {
+            super::sql_only_fallback::record(
+                "remove_tag",
+                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
+            );
             return apply_remove_tag_sql_only(conn, p.clone()).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
@@ -668,11 +732,19 @@ pub(super) async fn apply_delete_property_via_loro(
     use crate::loro::projection;
 
     let Some(space_id) = crate::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+        super::sql_only_fallback::record(
+            "delete_property",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
         return apply_delete_property_sql_only(conn, p.clone()).await;
     };
 
     {
         let Some(state) = crate::loro::shared::get() else {
+            super::sql_only_fallback::record(
+                "delete_property",
+                super::sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
+            );
             return apply_delete_property_sql_only(conn, p.clone()).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;

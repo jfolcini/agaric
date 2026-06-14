@@ -41,6 +41,7 @@ mod attachments;
 mod loro_apply;
 mod pages_cache;
 mod sql_only;
+pub(crate) mod sql_only_fallback;
 mod task_handlers;
 
 // Private glob re-exports so sibling submodules can resolve cross-module

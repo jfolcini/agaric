@@ -42,6 +42,46 @@ async fn apply_op_create() {
         "position should match created block position"
     );
 }
+// #1057: prove the SQL-only fallback instrumentation actually fires. This
+// test does NOT call `install_for_test`, so the create flows through
+// `apply_create_block_sql_only` (the EngineUninit fallback arm), which now
+// calls `sql_only_fallback::record`. The counter is process-global and
+// monotonic, so a `>` assertion is robust under nextest parallelism.
+#[tokio::test]
+async fn apply_op_create_records_sql_only_fallback() {
+    use crate::materializer::handlers::sql_only_fallback;
+    let before = sql_only_fallback::count();
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let r = make_op_record(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("APPLY_FALLBACK_1"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "fallback instrumentation".into(),
+        }),
+    )
+    .await;
+    mat.dispatch_op(&r).await.unwrap();
+    mat.flush().await.unwrap();
+    // The block still materializes via the SQL-only path...
+    assert!(
+        sqlx::query("SELECT id FROM blocks WHERE id = 'APPLY_FALLBACK_1'")
+            .fetch_optional(&pool)
+            .await
+            .unwrap()
+            .is_some(),
+        "block should exist after the SQL-only fallback apply"
+    );
+    // ...and the fallback was observed by the #1057 instrumentation.
+    assert!(
+        sql_only_fallback::count() > before,
+        "apply_op create without install_for_test must record a SQL-only fallback"
+    );
+}
 #[tokio::test]
 async fn apply_op_create_idempotent() {
     use sqlx::Row;
