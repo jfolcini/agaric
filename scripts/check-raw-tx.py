@@ -21,6 +21,21 @@ Rules (per .rs file under src-tauri/src/):
         `begin_with("BEGIN IMMEDIATE")` inside it (the primitive itself —
         but db.rs is allowlisted anyway), and the `CommandTx` internal
         call to `begin_immediate_logged`.
+  * #653 (DEFERRED-tx guard): a bare `.begin(` call (the sqlx default,
+    which opens a `BEGIN DEFERRED` transaction — NOT `begin_with` /
+    `begin_immediate_logged`) is flagged ONLY in a file that also
+    references `append_local_op_in_tx` / `append_local_undo_op_in_tx`.
+    That pairing is the danger #653 makes enforceable: those functions do
+    a `SELECT MAX(seq)+1` read then an `INSERT`, which races to
+    `SQLITE_BUSY_SNAPSHOT` under a DEFERRED tx but is safe under
+    `BEGIN IMMEDIATE` (the lock is taken eagerly). Today every caller
+    threads a `CommandTx`-opened (IMMEDIATE) transaction in, so the
+    contract holds — but a future caller wiring a plain `pool.begin()`
+    into the append would compile clean and only fail under contention.
+    The proximity scope keeps this false-positive-free: bare `.begin()`
+    is legitimate for read-only / rollback-only paths elsewhere (e.g.
+    `cache/page_id.rs`, `snapshot/create.rs`), and none of those files
+    call the append helpers. Same `// allow-raw-tx:` escape hatch.
   * The scan runs over COMMENT-STRIPPED whole-file text (#818): a call
     split across lines (`begin_with(\n  "BEGIN IMMEDIATE")`) is caught,
     and a mention inside a `//` or `/* */` comment never fires. Match
@@ -117,6 +132,25 @@ RAW_TX_RE = re.compile(r"begin_with\s*\(|begin_immediate_logged\s*\(")
 # Lines that are the primitive's own definition / internal plumbing, not a
 # caller. Matched anywhere (db.rs is allowlisted, but be defensive).
 DEFINITION_RE = re.compile(r"pub async fn begin_immediate_logged")
+
+# #653: a bare `.begin(` call — the sqlx default that opens a
+# `BEGIN DEFERRED` transaction. `\bbegin\s*\(` matches `pool.begin()` but
+# NOT `begin_with(` / `begin_immediate_logged(` (those have `_…` between
+# `begin` and `(`, so `\s*\(` fails to reach the paren) — i.e. the
+# IMMEDIATE primitives stay governed by RAW_TX_RE above, and only the
+# truly-deferred default is caught here. The leading `\b` keeps it from
+# firing on identifiers such as `rebegin(`.
+DEFERRED_BEGIN_RE = re.compile(r"\bbegin\s*\(")
+
+# #653: the op-log append helpers whose `SELECT MAX(seq)+1` + `INSERT`
+# requires the enclosing tx to be `BEGIN IMMEDIATE`. A bare deferred
+# `.begin(` is only a #653 violation when it shares a file with one of
+# these — the "near the function" proximity rule from the issue, which
+# keeps the guard false-positive-free against read-only `.begin()` paths
+# elsewhere in the tree.
+APPEND_HELPER_RE = re.compile(
+    r"\bappend_local_(?:undo_)?op_in_tx\b"
+)
 
 ALLOW_MARKER = "// allow-raw-tx:"
 
@@ -304,6 +338,71 @@ def cfg_test_line_set(lines: list[str]) -> set[int]:
     return inside
 
 
+def scan_text(rel_path: str, text: str) -> list[str]:
+    """Run both guards over a file's text. Pure (no I/O) so the
+    `--self-test` fixtures can exercise it directly. Allowlist / test-file
+    skips are applied by `check_file` before calling this — `scan_text`
+    itself always scans."""
+    # Whole-file scan over comment-stripped text (#818). The stripper
+    # replaces comments with spaces (newlines kept), so offsets in
+    # `stripped` map 1:1 onto `text` — a match's line number is the
+    # newline count before its start. Comments can no longer fire the
+    # regex, and a call split across lines can no longer evade it.
+    stripped = strip_rust_comments(text)
+    lines = text.splitlines()
+    stripped_lines = stripped.splitlines()
+
+    test_lines = cfg_test_line_set(stripped_lines)
+    violations: list[str] = []
+
+    def exempt(idx: int, line: str) -> bool:
+        """Shared skip rules: inside a test module, or per-site escape
+        hatch on the line itself or the line immediately above (the marker
+        is a comment, so it is checked against the ORIGINAL text)."""
+        if idx in test_lines:
+            return True
+        if ALLOW_MARKER in line:
+            return True
+        if idx > 0 and ALLOW_MARKER in lines[idx - 1]:
+            return True
+        return False
+
+    for m in RAW_TX_RE.finditer(stripped):
+        idx = stripped.count("\n", 0, m.start())  # 0-based line index
+        line = lines[idx] if idx < len(lines) else ""
+        # The definition is real CODE, so match it against the STRIPPED
+        # line — checking the original would let a trailing comment
+        # (`begin_with(W); // pub async fn begin_immediate_logged`)
+        # exempt a real call site.
+        stripped_line = stripped_lines[idx] if idx < len(stripped_lines) else ""
+        if DEFINITION_RE.search(stripped_line):
+            continue
+        if exempt(idx, line):
+            continue
+        violations.append(f"{rel_path}:{idx + 1}: {line.strip()}")
+
+    # #653: deferred-tx guard. Only files that actually call the op-log
+    # append helpers can violate the BEGIN IMMEDIATE contract, so the bare
+    # `.begin(` scan is gated on the file referencing one of them
+    # (proximity rule). Without this gate, the many legitimate read-only /
+    # rollback-only `pool.begin()` sites elsewhere would all false-positive.
+    # The reference is sought in the comment-stripped text so a mention of
+    # the helper in a doc comment does not arm the scan.
+    if APPEND_HELPER_RE.search(stripped):
+        for m in DEFERRED_BEGIN_RE.finditer(stripped):
+            idx = stripped.count("\n", 0, m.start())
+            line = lines[idx] if idx < len(lines) else ""
+            if exempt(idx, line):
+                continue
+            violations.append(
+                f"{rel_path}:{idx + 1}: {line.strip()}  "
+                f"[#653: deferred .begin() near append_local_op_in_tx — "
+                f"must be BEGIN IMMEDIATE]"
+            )
+
+    return violations
+
+
 def check_file(path: Path, repo_root: Path) -> list[str]:
     try:
         rel_path = str(path.resolve().relative_to(repo_root))
@@ -320,42 +419,114 @@ def check_file(path: Path, repo_root: Path) -> list[str]:
     except (OSError, UnicodeDecodeError):
         return []
 
-    # Whole-file scan over comment-stripped text (#818). The stripper
-    # replaces comments with spaces (newlines kept), so offsets in
-    # `stripped` map 1:1 onto `text` — a match's line number is the
-    # newline count before its start. Comments can no longer fire the
-    # regex, and a call split across lines can no longer evade it.
-    stripped = strip_rust_comments(text)
-    lines = text.splitlines()
-    stripped_lines = stripped.splitlines()
+    return scan_text(rel_path, text)
 
-    test_lines = cfg_test_line_set(stripped_lines)
-    violations: list[str] = []
 
-    for m in RAW_TX_RE.finditer(stripped):
-        idx = stripped.count("\n", 0, m.start())  # 0-based line index
-        line = lines[idx] if idx < len(lines) else ""
-        if idx in test_lines:
-            continue
-        # The definition is real CODE, so match it against the STRIPPED
-        # line — checking the original would let a trailing comment
-        # (`begin_with(W); // pub async fn begin_immediate_logged`)
-        # exempt a real call site.
-        stripped_line = stripped_lines[idx] if idx < len(stripped_lines) else ""
-        if DEFINITION_RE.search(stripped_line):
-            continue
-        # Per-site escape hatch on the line itself or the line above.
-        # Checked against the ORIGINAL text — the marker is a comment.
-        if ALLOW_MARKER in line:
-            continue
-        if idx > 0 and ALLOW_MARKER in lines[idx - 1]:
-            continue
-        violations.append(f"{rel_path}:{idx + 1}: {line.strip()}")
+# --- #653 self-test fixtures ------------------------------------------------
+# Run with `python3 scripts/check-raw-tx.py --self-test`. Proves the
+# deferred-tx guard flags a bare `.begin()` near `append_local_op_in_tx`
+# and stays silent on the legitimate `CommandTx` / `begin_immediate_logged`
+# path, the read-only-`.begin()`-without-the-helper case, and the per-site
+# escape hatch. Stdlib only — no test framework, no temp files.
+_SELFTEST_CASES: list[tuple[str, str, bool]] = [
+    (
+        "raw deferred begin() in a file that calls the append helper -> FLAG",
+        """
+        async fn bad(pool: &SqlitePool) -> Result<(), AppError> {
+            let mut tx = pool.begin().await?;
+            op_log::append_local_op_in_tx(&mut tx, dev, payload, now).await?;
+            tx.commit().await?;
+            Ok(())
+        }
+        """,
+        True,
+    ),
+    (
+        "CommandTx / begin_immediate_logged path with the append helper -> clean",
+        """
+        async fn good(pool: &SqlitePool) -> Result<(), AppError> {
+            let mut tx = CommandTx::begin_immediate(pool, "good").await?;
+            op_log::append_local_op_in_tx(&mut tx, dev, payload, now).await?;
+            tx.commit_and_dispatch(mat).await?;
+            Ok(())
+        }
+        """,
+        False,
+    ),
+    (
+        "bare begin() but NO append helper in the file -> clean (read-only path)",
+        """
+        async fn read_only(pool: &SqlitePool) -> Result<(), AppError> {
+            let mut read_tx = pool.begin().await?;
+            let _ = sqlx::query("SELECT 1").fetch_one(&mut *read_tx).await?;
+            Ok(())
+        }
+        """,
+        False,
+    ),
+    (
+        "bare begin() near the helper but carrying the // allow-raw-tx escape hatch -> clean",
+        """
+        async fn justified(pool: &SqlitePool) -> Result<(), AppError> {
+            // allow-raw-tx: single-writer migration path, no contention
+            let mut tx = pool.begin().await?;
+            op_log::append_local_op_in_tx(&mut tx, dev, payload, now).await?;
+            Ok(())
+        }
+        """,
+        False,
+    ),
+    (
+        "bare begin() + append helper, but both inside a #[cfg(test)] module -> clean",
+        """
+        #[cfg(test)]
+        mod tests {
+            async fn t(pool: &SqlitePool) {
+                let mut tx = pool.begin().await.unwrap();
+                op_log::append_local_op_in_tx(&mut tx, dev, payload, now).await.unwrap();
+            }
+        }
+        """,
+        False,
+    ),
+    (
+        "append helper mentioned only in a doc comment, real begin() below -> clean (scan not armed)",
+        """
+        /// See append_local_op_in_tx for the BEGIN IMMEDIATE contract.
+        async fn read_only(pool: &SqlitePool) -> Result<(), AppError> {
+            let mut read_tx = pool.begin().await?;
+            Ok(())
+        }
+        """,
+        False,
+    ),
+]
 
-    return violations
+
+def run_self_test() -> int:
+    failures = 0
+    for name, body, expect_flag in _SELFTEST_CASES:
+        # A neutral non-allowlisted, non-test production path so only the
+        # scan logic (not the file-level skips) decides the outcome.
+        violations = scan_text("src-tauri/src/__fixture__.rs", body)
+        got_flag = any("#653" in v for v in violations)
+        ok = got_flag == expect_flag
+        status = "PASS" if ok else "FAIL"
+        print(f"  [{status}] {name}")
+        if not ok:
+            failures += 1
+            print(f"         expected flag={expect_flag}, got {violations}")
+    if failures:
+        print(f"\n{failures} self-test case(s) FAILED", file=sys.stderr)
+        return 1
+    print("\nAll #653 deferred-tx guard self-tests passed.")
+    return 0
 
 
 def main(argv: list[str]) -> int:
+    if argv and argv[0] == "--self-test":
+        return run_self_test()
+
     repo_root = Path(__file__).resolve().parent.parent
 
     all_violations: list[str] = []

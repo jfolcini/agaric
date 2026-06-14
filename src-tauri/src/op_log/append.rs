@@ -50,11 +50,38 @@ pub async fn append_local_op(
 /// (see its `pool.begin_with("BEGIN IMMEDIATE")` line below); every
 /// other production caller does too.
 ///
-/// There is no compile-time guard on this contract today — a future
-/// caller that forgets `BEGIN IMMEDIATE` only hits
-/// `SQLITE_BUSY_SNAPSHOT` under contention, which is hard to reproduce
-/// in single-`TempDir` unit tests. If you find yourself adding a new
-/// caller, follow the pattern in [`append_local_op_at`] verbatim.
+/// # How the contract is enforced (#653)
+///
+/// This was previously a doc-only contract. It is now lint-enforced by the
+/// `check-raw-tx` prek hook (`scripts/check-raw-tx.py`, the #110 CommandTx
+/// guard): in any file that references `append_local_op_in_tx` /
+/// `append_local_undo_op_in_tx`, a bare `pool.begin()` (the sqlx default,
+/// which opens `BEGIN DEFERRED`) is flagged as a violation. The proximity
+/// rule — only files that call the append helpers — keeps it
+/// false-positive-free against the many legitimate read-only / rollback-only
+/// `pool.begin()` sites elsewhere in the tree, and the usual
+/// `// allow-raw-tx: <reason>` per-site escape hatch and `#[cfg(test)]`
+/// skipping still apply. A future caller wiring a deferred `pool.begin()`
+/// into this append now fails the hook at commit/push time, instead of only
+/// surfacing as a hard-to-reproduce `SQLITE_BUSY_SNAPSHOT` under contention.
+///
+/// Why a lint and not a stronger guard:
+/// - **Type-level** (require a `CommandTx`-derived marker) was rejected as
+///   too invasive: ~25 production call sites plus intermediate helpers in
+///   `domain/`, `spaces/`, and `tags.rs` thread a bare
+///   `&mut sqlx::Transaction` (not a `CommandTx`), and the test/bench-only
+///   [`append_local_op_at`] opens a raw transaction — a marker would have to
+///   be threaded through all of them.
+/// - **Runtime `debug_assert`** (probe the live tx for an IMMEDIATE write
+///   lock via `sqlite3_txn_state`) was rejected because it needs FFI: a
+///   direct `libsqlite3-sys` dependency and an entry in the audited
+///   unsafe-allowlist to opt the file out of the workspace `unsafe_code`
+///   deny lint — far too heavy for this guard, and there is no
+///   false-positive-free pure-SQL way to distinguish IMMEDIATE from DEFERRED
+///   without a destructive write.
+///
+/// If you find yourself adding a new caller, follow the pattern in
+/// [`append_local_op_at`] verbatim (open via `BEGIN IMMEDIATE`).
 pub async fn append_local_op_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
