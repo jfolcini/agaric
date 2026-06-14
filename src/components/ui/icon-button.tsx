@@ -3,9 +3,10 @@
  *
  * Icon-only buttons must surface their purpose for both sighted users (via a
  * visible tooltip) and assistive tech (via an accessible name). The `tooltip`
- * and `ariaLabel` props are typed as mandatory `string`s precisely so a
- * consumer cannot ship an icon-only button without both — TypeScript fails
- * the build if either is omitted.
+ * and `ariaLabel` props are mandatory precisely so a consumer cannot ship an
+ * icon-only button without both — TypeScript fails the build if either is
+ * omitted. (`ariaLabel` is a `string`; `tooltip` is a `ReactNode` so call
+ * sites can embed a `<Kbd>` shortcut chip, but it is still required.)
  *
  * Reference pattern: `BlockGutterControls.GutterButton` (Tooltip-wrapped
  * icon button with bespoke gutter positioning). `IconButton` generalises
@@ -39,8 +40,14 @@ export interface IconButtonProps extends Omit<
    * so the signature documents that this is an icon-only slot.
    */
   children?: React.ReactNode
-  /** Text shown inside the Radix tooltip — mandatory by design. */
-  tooltip: string
+  /**
+   * Content shown inside the Radix tooltip — mandatory by design. Typically a
+   * plain string, but any `ReactNode` is allowed so call sites can embed a
+   * `<Kbd>` shortcut chip (e.g. "Previous day Alt+←") without abandoning the
+   * primitive. Required (non-optional) so a consumer cannot ship an icon-only
+   * button without a tooltip — TypeScript fails the build if it is omitted.
+   */
+  tooltip: React.ReactNode
   /**
    * Accessible name surfaced as `aria-label` on the underlying `<button>` —
    * mandatory by design. Redundancy with `tooltip` is intentional and fine:
