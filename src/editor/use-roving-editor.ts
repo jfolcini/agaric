@@ -505,8 +505,6 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const mount = useCallback(
     (blockId: string, markdown: string, opts?: MountOptions) => {
       if (!editor) return
-      activeBlockIdRef.current = blockId
-      originalMarkdownRef.current = markdown
 
       // B-77 fix layer 2: Exit all suggestion plugins BEFORE replacing the
       // document so setMeta({ exit: true }) fires while decorations still
@@ -542,6 +540,17 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
           return
         }
       }
+
+      // #727 — commit the identity refs ONLY after the abort gate above has
+      // passed. They were previously written at the top of mount(), before the
+      // MAINT-176 guarded dispatch; when that dispatch threw and we returned, the
+      // refs already pointed at the NEW block while the document still held the
+      // OLD block's content. The next blur/flush serializes the old doc and
+      // attributes it to the new block's id (use-block-flush trusts
+      // `handle.activeBlockId`), silently overwriting it. Writing them here means
+      // an aborted mount leaves the prior block's identity intact.
+      activeBlockIdRef.current = blockId
+      originalMarkdownRef.current = markdown
 
       // B-77 fix layer 3: Remove any orphaned popup DOM elements that
       // survived a broken onExit() lifecycle (e.g. outside-click handler
@@ -593,7 +602,28 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         suggTr.setMeta(key, { exit: true })
       }
       suggTr.setMeta('addToHistory', false)
-      editor.view.dispatch(suggTr)
+      // #727 — guard the dispatch exactly like mount()'s identical exit
+      // dispatch (MAINT-176). It can throw when the view is torn down between
+      // block-switch frames; unguarded, that throw escaped unmount() ENTIRELY,
+      // skipping the serialize-with-plain-text-fallback below — the very
+      // data-loss protection it exists for. Unlike mount we do NOT abort on
+      // throw: we swallow it and fall through so the content is still captured.
+      try {
+        editor.view.dispatch(suggTr)
+      } catch (err) {
+        if (editor.view.isDestroyed) {
+          logger.debug('editor', 'unmount suggestion-exit dispatch on destroyed view; continuing', {
+            error: err instanceof Error ? err.message : String(err),
+          })
+        } else {
+          logger.warn(
+            'editor',
+            'unmount suggestion-exit dispatch threw; continuing to serialize',
+            undefined,
+            err,
+          )
+        }
+      }
     }
     cleanupOrphanedPopups()
 
