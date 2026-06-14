@@ -108,11 +108,31 @@ impl ImportProgressSink for tauri::ipc::Channel<ImportProgressUpdate> {
 ///
 /// Each line starting with `- ` (after optional indentation) is a block.
 /// Indentation determines depth (2 spaces = 1 level).
-/// Lines with `key:: value` pattern (no `- ` prefix, indented under a block)
-/// are treated as properties of the preceding block.
+///
+/// **Continuation lines** (#682): a non-list, non-property line that is
+/// indented under a preceding bullet is treated as a continuation of that
+/// bullet — its text is appended (newline-joined) to the owning block's
+/// content rather than spawned as a separate block. This matches Logseq,
+/// which stores soft-wrapped / multi-line bullet bodies as a single block.
+/// A non-list line with no preceding block (file starts with bare text)
+/// still becomes its own depth-0 content block.
+///
+/// **Property lines** (#682): a `key:: value` line attaches to the nearest
+/// preceding block whose depth is *less than or equal to* the property
+/// line's own indentation depth — i.e. the block that indentation says owns
+/// it — rather than blindly to the most-recently-pushed block. Logseq emits
+/// property lines indented one level under (or level with) their owner, so a
+/// property nested under a grandchild no longer mis-attaches to an unrelated
+/// later sibling. If no such ancestor exists the property is dropped and a
+/// warning is recorded (mirroring the depth-clamp warning counter).
+///
 /// `((uuid))` references are converted to plain text.
 pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     let mut blocks: Vec<ParsedBlock> = Vec::new();
+    // #682: count property lines that could not be attached to any owning
+    // ancestor block, mirroring the depth-clamp `clamped_count` pattern so the
+    // lossy case is surfaced in `warnings` rather than silently swallowed.
+    let mut orphan_property_count: usize = 0;
 
     // Normalize line endings BEFORE any other parsing. The frontmatter strip
     // below uses `find("\n---")`, which is fragile against CRLF (works only
@@ -177,12 +197,40 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
             // the content-block branch when the LHS is not a valid key.
             let key = key_candidate.trim().to_string();
             let value = value.trim().to_string();
-            // Attach to the immediately preceding block (Logseq emits property lines directly under their owning block).
-            if let Some(last) = blocks.last_mut() {
-                last.properties.push((key, value));
+            // #682: attach to the block that *indentation* says owns this
+            // property, not just the most-recently-pushed block. Logseq emits
+            // a property line indented one level under (or level with) its
+            // owning bullet, so the owner is the nearest preceding block whose
+            // depth is <= the property line's depth. Scanning in reverse over
+            // the document-ordered `blocks` finds that nearest ancestor; a
+            // property nested under a grandchild therefore no longer
+            // mis-attaches to an unrelated later sibling.
+            match blocks.iter_mut().rev().find(|b| b.depth <= depth) {
+                Some(owner) => owner.properties.push((key, value)),
+                None => {
+                    // No ancestor at or above this indentation (e.g. a
+                    // property line indented deeper than any preceding bullet,
+                    // or before any bullet at all). Lossy — surface it via a
+                    // warning counter rather than swallow it silently.
+                    orphan_property_count += 1;
+                }
+            }
+        } else if let Some(last) = blocks.last_mut() {
+            // #682: continuation line — a non-list, non-property line that
+            // follows a bullet is the soft-wrapped / multi-line body of that
+            // bullet. Append it (newline-joined) to the owning block's content
+            // instead of spawning a separate block, matching how Logseq stores
+            // multi-line bullet bodies.
+            let cleaned = strip_block_refs(trimmed);
+            if !cleaned.is_empty() {
+                if !last.content.is_empty() {
+                    last.content.push('\n');
+                }
+                last.content.push_str(&cleaned);
             }
         } else {
-            // Non-list, non-property line -- treat as a content block
+            // Non-list, non-property line with no preceding block (file starts
+            // with bare text) -- treat as a standalone depth-0 content block.
             let cleaned = strip_block_refs(trimmed);
             blocks.push(ParsedBlock {
                 content: cleaned,
@@ -208,6 +256,12 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     if clamped_count > 0 {
         warnings.push(format!(
             "{clamped_count} block(s) exceeded maximum depth of {MAX_IMPORT_DEPTH} and were flattened"
+        ));
+    }
+    if orphan_property_count > 0 {
+        warnings.push(format!(
+            "{orphan_property_count} property line(s) had no owning block at or above their \
+             indentation and were dropped"
         ));
     }
 
@@ -328,25 +382,30 @@ mod tests {
     fn parse_url_bearing_line_is_content_not_property_i_core_10() {
         let output =
             parse_logseq_markdown("- Block 1\n  See https://example.com/foo :: bar for context");
-        // Block 1 plus the free-form follow-up — TWO blocks total, ZERO
-        // properties on Block 1.
+        // #682: the indented free-form follow-up is a CONTINUATION of Block 1,
+        // so it joins Block 1's content (single block) — but the key
+        // invariant of I-Core-10 still holds: it must NOT become a property.
         assert_eq!(
             output.blocks.len(),
-            2,
-            "URL-bearing line must become its own content block, not a \
-             property of Block 1; got {:?}",
+            1,
+            "URL-bearing continuation line must join Block 1, not spawn a \
+             block or become a property; got {:?}",
             output.blocks
         );
-        assert_eq!(output.blocks[0].content, "Block 1");
         assert!(
             output.blocks[0].properties.is_empty(),
             "Block 1 must have no properties; got {:?}",
             output.blocks[0].properties
         );
         assert!(
-            output.blocks[1].content.contains("https://example.com/foo"),
+            output.blocks[0].content.contains("Block 1"),
+            "original bullet text must survive; got {:?}",
+            output.blocks[0].content
+        );
+        assert!(
+            output.blocks[0].content.contains("https://example.com/foo"),
             "URL-bearing line must round-trip as content; got {:?}",
-            output.blocks[1].content
+            output.blocks[0].content
         );
     }
 
@@ -355,19 +414,24 @@ mod tests {
     #[test]
     fn parse_prose_with_double_colon_is_content_i_core_10() {
         let output = parse_logseq_markdown("- Parent\n  Some text :: notes :: more");
+        // #682: indented prose joins Parent as a continuation line; the
+        // I-Core-10 invariant (it must not be parsed as a property) holds.
         assert_eq!(
             output.blocks.len(),
-            2,
-            "free-form line must become its own content block; got {:?}",
+            1,
+            "free-form continuation line must join Parent, not spawn a block; got {:?}",
             output.blocks
         );
-        assert_eq!(output.blocks[0].content, "Parent");
         assert!(
             output.blocks[0].properties.is_empty(),
             "Parent must have no properties; got {:?}",
             output.blocks[0].properties
         );
-        assert_eq!(output.blocks[1].content, "Some text :: notes :: more");
+        assert_eq!(
+            output.blocks[0].content, "Parent\nSome text :: notes :: more",
+            "continuation text must be newline-joined onto Parent; got {:?}",
+            output.blocks[0].content
+        );
     }
 
     /// I-Core-10: keys longer than 64 chars are rejected by
@@ -379,10 +443,20 @@ mod tests {
         let long_key = "a".repeat(65);
         let line = format!("- Parent\n  {long_key}:: value");
         let output = parse_logseq_markdown(&line);
-        assert_eq!(output.blocks.len(), 2, "oversized key must become content");
+        // #682: the oversized-key line is not a valid property, so it falls
+        // through to the continuation branch and joins Parent (single block).
+        assert_eq!(
+            output.blocks.len(),
+            1,
+            "oversized key must become content (joined as continuation)"
+        );
         assert!(
             output.blocks[0].properties.is_empty(),
             "Parent must have no property when key is >64 chars"
+        );
+        assert!(
+            output.blocks[0].content.contains(&long_key),
+            "oversized-key text must round-trip as continuation content"
         );
     }
 
@@ -408,6 +482,117 @@ mod tests {
         assert_eq!(
             output.blocks[0].properties[2],
             ("my_key-1".into(), "anything".into())
+        );
+    }
+
+    /// #682: an indented non-bullet line following a bullet is a continuation
+    /// of that bullet's body and must JOIN the same block (newline-joined),
+    /// not be split into a separate block.
+    #[test]
+    fn parse_continuation_line_joins_bullet_682() {
+        let output = parse_logseq_markdown("- First line of bullet\n  second line of same bullet");
+        assert_eq!(
+            output.blocks.len(),
+            1,
+            "continuation line must join the bullet, not spawn a new block; got {:?}",
+            output.blocks
+        );
+        assert_eq!(
+            output.blocks[0].content,
+            "First line of bullet\nsecond line of same bullet"
+        );
+        assert_eq!(output.blocks[0].depth, 0);
+    }
+
+    /// #682: multiple continuation lines all join the one owning bullet, and a
+    /// following bullet starts a fresh block.
+    #[test]
+    fn parse_multiple_continuation_lines_join_then_next_bullet_682() {
+        let output =
+            parse_logseq_markdown("- Bullet A\n  cont one\n  cont two\n- Bullet B\n  cont three");
+        assert_eq!(output.blocks.len(), 2, "got {:?}", output.blocks);
+        assert_eq!(output.blocks[0].content, "Bullet A\ncont one\ncont two");
+        assert_eq!(output.blocks[1].content, "Bullet B\ncont three");
+    }
+
+    /// #682: a `key:: value` line nested under a grandchild must attach to the
+    /// block that indentation says owns it (the nearest preceding block at or
+    /// above the property's depth), NOT to the most-recently-pushed block.
+    #[test]
+    fn parse_nested_property_attaches_to_indentation_owner_682() {
+        // Parent(0) > Child(1) > Grandchild(2), then a property indented at
+        // depth 1 (`    ` = 4 spaces under Grandchild's body would own
+        // Grandchild; here we indent at depth 1 so the Child owns it). Then a
+        // later sibling Child2 must NOT receive it.
+        let output = parse_logseq_markdown(
+            "- Parent\n  - Child\n    - Grandchild\n    owner:: gc\n  - Child2",
+        );
+        // 4 bullets, no extra blocks (the property line is not a block).
+        assert_eq!(output.blocks.len(), 4, "got {:?}", output.blocks);
+        assert_eq!(output.blocks[0].content, "Parent");
+        assert_eq!(output.blocks[1].content, "Child");
+        assert_eq!(output.blocks[2].content, "Grandchild");
+        assert_eq!(output.blocks[3].content, "Child2");
+        // The property at depth 2 (`    ` = 4 spaces) owns the nearest block
+        // with depth <= 2, which is Grandchild (depth 2) — NOT Child2.
+        assert_eq!(
+            output.blocks[2].properties,
+            vec![("owner".to_string(), "gc".to_string())],
+            "property must attach to the indentation owner (Grandchild); got {:?}",
+            output.blocks,
+        );
+        assert!(
+            output.blocks[3].properties.is_empty(),
+            "later sibling Child2 must NOT receive the nested property; got {:?}",
+            output.blocks[3].properties,
+        );
+    }
+
+    /// #682: a property indented at a parent's level attaches to the parent,
+    /// not to a deeper-but-more-recent descendant. This is the precise
+    /// "attach by recency vs indentation" regression: before the fix the
+    /// property would land on the most-recently-pushed (deeper) block.
+    #[test]
+    fn parse_property_attaches_to_shallow_owner_not_recent_deep_682() {
+        // Parent(0) > Child(1), then a property at depth 0 must own Parent,
+        // even though Child was pushed most recently.
+        let output = parse_logseq_markdown("- Parent\n  - Child\nstatus:: done");
+        assert_eq!(output.blocks.len(), 2, "got {:?}", output.blocks);
+        assert_eq!(
+            output.blocks[0].properties,
+            vec![("status".to_string(), "done".to_string())],
+            "depth-0 property must attach to Parent; got {:?}",
+            output.blocks,
+        );
+        assert!(
+            output.blocks[1].properties.is_empty(),
+            "Child must NOT receive the depth-0 property; got {:?}",
+            output.blocks[1].properties,
+        );
+    }
+
+    /// #682: a property line with no preceding block at or above its
+    /// indentation is dropped and surfaced via a warning counter (mirroring
+    /// the depth-clamp warning).
+    #[test]
+    fn parse_orphan_property_before_any_block_warns_682() {
+        let output = parse_logseq_markdown("orphan:: value\n- First bullet");
+        // "orphan:: value" is a valid property shape but has no preceding
+        // block, so it is dropped (not turned into a block) and warned about.
+        assert_eq!(output.blocks.len(), 1, "got {:?}", output.blocks);
+        assert_eq!(output.blocks[0].content, "First bullet");
+        assert!(
+            output.blocks[0].properties.is_empty(),
+            "the orphan property must not leak onto a later block; got {:?}",
+            output.blocks[0].properties,
+        );
+        assert!(
+            output
+                .warnings
+                .iter()
+                .any(|w| w.contains("property line(s) had no owning block")),
+            "an orphan-property warning must be emitted; got {:?}",
+            output.warnings,
         );
     }
 
