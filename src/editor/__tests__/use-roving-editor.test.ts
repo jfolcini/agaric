@@ -1401,6 +1401,174 @@ describe('mount() suggestion-exit dispatch error handling (MAINT-176)', () => {
   })
 })
 
+// -- #727 — roving-editor lifecycle hardening ---------------------------------
+//
+// (1) mount-abort mis-attribution: a mount aborted by a throwing suggestion-exit
+//     dispatch must NOT leave activeBlockId/originalMarkdown pointing at the new
+//     block while the document still holds the old block's content.
+// (2) unguarded unmount dispatch: a throw from unmount()'s suggestion-exit
+//     dispatch must NOT escape unmount() and skip the serialize-with-fallback.
+
+describe('#727 mount-abort mis-attribution', () => {
+  async function setup() {
+    const hook = renderHook(() => useRovingEditor())
+    await waitFor(() => expect(hook.result.current.editor).not.toBeNull())
+    return hook
+  }
+
+  it('aborted mount keeps the PRIOR block id + original markdown (not the new block)', async () => {
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+    const { result, unmount: unmountHook } = await setup()
+    const editor = result.current.editor as Editor
+
+    // First mount succeeds → identity is block-A.
+    act(() => {
+      result.current.mount('block-A', 'alpha content')
+    })
+    expect(result.current.activeBlockId).toBe('block-A')
+    expect(result.current.originalMarkdown).toBe('alpha content')
+
+    // Second mount aborts: suggestion-exit dispatch throws on a destroyed view.
+    vi.spyOn(editor.view, 'dispatch').mockImplementationOnce(() => {
+      throw new Error('view torn down')
+    })
+    Object.defineProperty(editor.view, 'isDestroyed', { value: true, configurable: true })
+
+    act(() => {
+      result.current.mount('block-B', 'beta content')
+    })
+
+    // The aborted mount must NOT have re-attributed identity to block-B —
+    // otherwise the next flush serializes block-A's doc under block-B's id.
+    expect(result.current.activeBlockId).toBe('block-A')
+    expect(result.current.originalMarkdown).toBe('alpha content')
+
+    debugSpy.mockRestore()
+    Object.defineProperty(editor.view, 'isDestroyed', { value: false, configurable: true })
+    editor.destroy()
+    unmountHook()
+  })
+
+  it('successful mount DOES commit the new block id + original markdown', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    act(() => {
+      result.current.mount('block-A', 'alpha')
+    })
+    act(() => {
+      result.current.mount('block-B', 'beta')
+    })
+
+    expect(result.current.activeBlockId).toBe('block-B')
+    expect(result.current.originalMarkdown).toBe('beta')
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+})
+
+describe('#727 unmount suggestion-exit dispatch is guarded', () => {
+  async function setup() {
+    const hook = renderHook(() => useRovingEditor())
+    await waitFor(() => expect(hook.result.current.editor).not.toBeNull())
+    return hook
+  }
+
+  it('a throwing suggestion-exit dispatch does NOT escape unmount — serialize + reset still run', async () => {
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const { result, unmount: unmountHook } = await setup()
+    const editor = result.current.editor as Editor
+
+    act(() => {
+      result.current.mount('block-1', 'original')
+    })
+    // Edit so there is content to capture if the serialize path is reached.
+    act(() => {
+      editor.commands.setContent({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'edited' }] }],
+      })
+    })
+
+    // unmount() dispatches twice: (1) suggestion-exit, (2) replaceDocSilently in
+    // the finally. Make ONLY the first throw (on a live view → warn path).
+    Object.defineProperty(editor.view, 'isDestroyed', { value: false, configurable: true })
+    vi.spyOn(editor.view, 'dispatch').mockImplementationOnce(() => {
+      throw new Error('exit dispatch boom')
+    })
+
+    let returned: string | null = null
+    let threw = false
+    act(() => {
+      try {
+        returned = result.current.unmount()
+      } catch {
+        threw = true
+      }
+    })
+
+    // The throw was swallowed — unmount() did NOT propagate it.
+    expect(threw).toBe(false)
+    // The serialize ran and captured the edit (data-loss protection intact).
+    expect(returned).toBe('edited')
+    // Refs were reset in the finally despite the earlier throw.
+    expect(result.current.activeBlockId).toBeNull()
+    expect(result.current.originalMarkdown).toBe('')
+    // The live-view throw was logged at warn (not debug).
+    expect(warnSpy).toHaveBeenCalledWith(
+      'editor',
+      'unmount suggestion-exit dispatch threw; continuing to serialize',
+      undefined,
+      expect.any(Error),
+    )
+
+    debugSpy.mockRestore()
+    warnSpy.mockRestore()
+    editor.destroy()
+    unmountHook()
+  })
+
+  it('logs debug (not warn) when the throwing view is destroyed, and still resets', async () => {
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const { result, unmount: unmountHook } = await setup()
+    const editor = result.current.editor as Editor
+
+    act(() => {
+      result.current.mount('block-1', 'original')
+    })
+
+    Object.defineProperty(editor.view, 'isDestroyed', { value: true, configurable: true })
+    vi.spyOn(editor.view, 'dispatch').mockImplementationOnce(() => {
+      throw new Error('view torn down')
+    })
+
+    act(() => {
+      result.current.unmount()
+    })
+
+    expect(debugSpy).toHaveBeenCalledWith(
+      'editor',
+      'unmount suggestion-exit dispatch on destroyed view; continuing',
+      expect.objectContaining({ error: 'view torn down' }),
+    )
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      'editor',
+      'unmount suggestion-exit dispatch threw; continuing to serialize',
+      undefined,
+      expect.anything(),
+    )
+    expect(result.current.activeBlockId).toBeNull()
+
+    debugSpy.mockRestore()
+    warnSpy.mockRestore()
+    Object.defineProperty(editor.view, 'isDestroyed', { value: false, configurable: true })
+    editor.destroy()
+    unmountHook()
+  })
+})
+
 // -- PEND-30 L-4: cleanupOrphanedPopups runs on host-component unmount -------
 
 describe('PEND-30 L-4 host-unmount popup sweep', () => {

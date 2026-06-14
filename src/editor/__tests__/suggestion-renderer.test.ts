@@ -779,6 +779,65 @@ describe('outside-click dismissal', () => {
     expect(document.querySelector('.suggestion-popup')).toBeNull()
   })
 
+  // #727 — the closeKey (Escape) path previously destroyed the renderer + popup
+  // but NEVER dispatched the plugin's `{ exit: true }` meta the way the
+  // outside-click path does. The Suggestion plugin therefore stayed ACTIVE:
+  // continued typing extended the query against a null renderer (the onUpdate
+  // "plugin state desync" warn). These pin the exit dispatch on the close path.
+  it('#727 dispatches {exit:true} on the plugin when closed via closeKey (Escape)', () => {
+    const pluginKey = new PluginKey('test-suggestion')
+    const setMeta = vi.fn().mockReturnThis()
+    const dispatch = vi.fn()
+    const mockEditor = {
+      state: { tr: { setMeta } },
+      view: { isDestroyed: false, dispatch },
+      // oxlint-disable-next-line typescript/no-explicit-any -- minimal editor mock
+    } as any
+
+    const renderer = createSuggestionRenderer('Tags', pluginKey)
+    const props = makeProps()
+    props.editor = mockEditor
+    renderer.onStart(props)
+
+    const handled = renderer.onKeyDown({
+      event: new KeyboardEvent('keydown', { key: 'Escape' }),
+      view: {} as never,
+      range: { from: 0, to: 0 },
+    })
+
+    // Close handled, plugin deactivated via exit meta, popup torn down.
+    expect(handled).toBe(true)
+    expect(setMeta).toHaveBeenCalledWith(pluginKey, { exit: true })
+    expect(setMeta).toHaveBeenCalledWith('addToHistory', false)
+    expect(dispatch).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('.suggestion-popup')).toBeNull()
+  })
+
+  it('#727 skips the closeKey exit dispatch when the view is destroyed but still cleans up', () => {
+    const pluginKey = new PluginKey('test-suggestion')
+    const dispatch = vi.fn()
+    const mockEditor = {
+      state: { tr: { setMeta: vi.fn().mockReturnThis() } },
+      view: { isDestroyed: true, dispatch },
+      // oxlint-disable-next-line typescript/no-explicit-any -- minimal editor mock
+    } as any
+
+    const renderer = createSuggestionRenderer('Tags', pluginKey)
+    const props = makeProps()
+    props.editor = mockEditor
+    renderer.onStart(props)
+
+    const handled = renderer.onKeyDown({
+      event: new KeyboardEvent('keydown', { key: 'Escape' }),
+      view: {} as never,
+      range: { from: 0, to: 0 },
+    })
+
+    expect(handled).toBe(true)
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(document.querySelector('.suggestion-popup')).toBeNull()
+  })
+
   it('skips view.dispatch when editor view is destroyed but still cleans up popup', () => {
     const pluginKey = new PluginKey('test-suggestion')
     const dispatch = vi.fn()

@@ -199,6 +199,32 @@ export function createSuggestionRenderer(
     }
   }
 
+  /**
+   * #727 — deactivate the Suggestion plugin by dispatching its `{ exit: true }`
+   * meta, the same signal the B-77 mount/unmount layers and the outside-click
+   * handler use. Without it the plugin stays ACTIVE after the renderer/popup are
+   * torn down: continued typing keeps extending the query against a null
+   * renderer (the `onUpdate` "plugin state desync" warn this file anticipates).
+   * Guards a destroyed/absent view exactly like the outside-click path. No
+   * `instanceof` on PM types — duck-typed via the captured `editorRef`/`pluginKey`
+   * refs (module-copy footgun; see project memory).
+   */
+  function dispatchExitMeta() {
+    if (!editorRef || !pluginKey) return
+    if (editorRef.view.isDestroyed) {
+      logger.warn('SuggestionRenderer', 'skipping exit dispatch — view destroyed', { label })
+      return
+    }
+    try {
+      const { tr } = editorRef.state
+      tr.setMeta(pluginKey, { exit: true })
+      tr.setMeta('addToHistory', false)
+      editorRef.view.dispatch(tr)
+    } catch (err) {
+      logger.warn('SuggestionRenderer', 'failed to dispatch exit meta', { label }, err)
+    }
+  }
+
   return {
     onStart(props: SuggestionProps) {
       logger.debug('SuggestionRenderer', 'onStart', { label, query: props.query })
@@ -268,27 +294,7 @@ export function createSuggestionRenderer(
           logger.warn('SuggestionRenderer', 'outside click — deactivating plugin', { label })
           // Deactivate the Suggestion plugin so it doesn't stay stuck
           // active with a null renderer (B-77 fix layer 1).
-          if (editorRef && pluginKey) {
-            if (editorRef.view.isDestroyed) {
-              logger.warn('SuggestionRenderer', 'skipping exit dispatch — view destroyed', {
-                label,
-              })
-            } else {
-              try {
-                const { tr } = editorRef.state
-                tr.setMeta(pluginKey, { exit: true })
-                tr.setMeta('addToHistory', false)
-                editorRef.view.dispatch(tr)
-              } catch (err) {
-                logger.warn(
-                  'SuggestionRenderer',
-                  'failed to dispatch exit meta on outside click',
-                  { label },
-                  err,
-                )
-              }
-            }
-          }
+          dispatchExitMeta()
           // #1102 — restore textbox semantics before we drop the references.
           teardownCombobox()
           cleanupListener()
@@ -343,6 +349,12 @@ export function createSuggestionRenderer(
     onKeyDown({ event }: SuggestionKeyDownProps) {
       const closeKey = getShortcutKeys('suggestionClose').toLowerCase()
       if (event.key.toLowerCase() === closeKey) {
+        // #727 — deactivate the plugin FIRST. Previously this path destroyed the
+        // renderer + popup but never dispatched `{ exit: true }`, so the
+        // Suggestion plugin stayed ACTIVE: continued typing extended the query
+        // against a null renderer (the `onUpdate` desync warn). Mirror the
+        // outside-click path's exit dispatch.
+        dispatchExitMeta()
         // #1102 — Escape closes the picker; restore textbox semantics.
         teardownCombobox()
         cleanupListener()
