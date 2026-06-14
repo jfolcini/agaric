@@ -1249,19 +1249,30 @@ fn register_managed_state<R: tauri::Runtime>(
     scheduler: Arc<sync_scheduler::SyncScheduler>,
     lifecycle: &lifecycle::LifecycleHooks,
 ) -> Arc<AtomicBool> {
-    use db::{ReadPool, WritePool};
+    use db::{ReadPool, WriteCtx, WritePool};
     use device::DeviceId;
     use lifecycle::AppLifecycle;
     use sync_cert::PersistedCert;
     use tauri::Manager;
 
+    // #1056 — assemble the bundled write-path context BEFORE the originals
+    // are moved into the standalone managed states. Every field is a cheap
+    // `Arc`-backed clone (`SqlitePool`, `Materializer`) or a small `String`
+    // clone (`DeviceId`), so `WriteCtx` and the standalone `WritePool` /
+    // `DeviceId` / `Materializer` states share the same underlying handles.
+    // The standalone states are kept for the read-only / partial-triple
+    // consumers (`get_device_id`, `sync_cmds`, `link_metadata`, …).
+    let device_id = DeviceId::new(device_id);
+    let write_ctx = WriteCtx::new(pools.write.clone(), device_id.clone(), materializer.clone());
+
     // Store all in Tauri managed state
     app.manage(WritePool(pools.write));
     app.manage(ReadPool(pools.read));
+    app.manage(write_ctx);
     // PEND-70 P1-A — extension-state guard registry for
     // in-flight search IPCs. See `cancellation.rs`.
     app.manage(cancellation::CancellationRegistry::new());
-    app.manage(DeviceId::new(device_id));
+    app.manage(device_id);
     app.manage(PersistedCert::new(sync_cert));
     app.manage(materializer);
 

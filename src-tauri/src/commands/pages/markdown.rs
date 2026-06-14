@@ -10,8 +10,7 @@ use tracing::instrument;
 
 use tauri::State;
 
-use crate::db::{CommandTx, ReadPool, WritePool};
-use crate::device::DeviceId;
+use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::error::AppError;
 use crate::import;
 use crate::import::{ImportProgressSink, ImportProgressUpdate, ImportResult};
@@ -687,14 +686,12 @@ pub async fn import_markdown(
     filename: Option<String>,
     space_id: String,
     progress: tauri::ipc::Channel<ImportProgressUpdate>,
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
 ) -> Result<ImportResult, AppError> {
     import_markdown_with_progress(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         content,
         filename,
         space_id,

@@ -1,5 +1,4 @@
-use crate::db::{CommandTx, WritePool};
-use crate::device::DeviceId;
+use crate::db::{CommandTx, WriteCtx};
 use crate::op::MoveBlockPayload;
 use tracing::instrument;
 
@@ -280,17 +279,15 @@ pub async fn move_block_inner(
 #[tauri::command]
 #[specta::specta]
 pub async fn move_block(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_id: String,
     new_parent_id: Option<String>,
     new_index: i64,
 ) -> Result<MoveResponse, AppError> {
     move_block_inner(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         block_id.into(),
         new_parent_id.map(Into::into),
         new_index,

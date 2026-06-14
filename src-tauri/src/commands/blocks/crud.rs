@@ -1,5 +1,4 @@
-use crate::db::{CommandTx, WritePool};
-use crate::device::DeviceId;
+use crate::db::{CommandTx, WriteCtx};
 use crate::op::{
     DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, PurgeBlockPayload,
     RestoreBlockPayload, SPACE_PROPERTY_KEY,
@@ -836,12 +835,10 @@ pub async fn delete_blocks_by_ids_inner(
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_blocks_by_ids(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_ids: Vec<BlockId>,
 ) -> Result<i64, AppError> {
-    delete_blocks_by_ids_inner(&pool.0, device_id.as_str(), &materializer, block_ids)
+    delete_blocks_by_ids_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), block_ids)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -980,16 +977,14 @@ pub async fn move_blocks_to_space_inner(
 #[tauri::command]
 #[specta::specta]
 pub async fn move_blocks_to_space(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_ids: Vec<BlockId>,
     space_id: String,
 ) -> Result<i64, AppError> {
     move_blocks_to_space_inner(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         block_ids,
         space_id,
     )
@@ -2103,16 +2098,10 @@ pub(crate) async fn delete_property_in_tx(
 /// "every page has a space" invariant at the IPC boundary
 /// (BUG-1 / H-3a). The optional `space_id` is required when
 /// `block_type == "page"` and ignored otherwise.
-// Same 8-arg justification as the inner — see the comment above
-// `create_block_inner_with_space`. Tauri command signatures match
-// `_inner` shapes 1:1 by convention.
-#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 #[specta::specta]
 pub async fn create_block(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_type: String,
     content: String,
     parent_id: Option<BlockId>,
@@ -2121,9 +2110,9 @@ pub async fn create_block(
     scope: SpaceScope,
 ) -> Result<BlockRow, AppError> {
     create_block_inner_with_space(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         block_type,
         content,
         parent_id,
@@ -2138,16 +2127,14 @@ pub async fn create_block(
 #[tauri::command]
 #[specta::specta]
 pub async fn edit_block(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     to_text: String,
 ) -> Result<BlockRow, AppError> {
     edit_block_inner(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         block_id,
         to_text,
     )
@@ -2159,12 +2146,10 @@ pub async fn edit_block(
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_block(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_id: BlockId,
 ) -> Result<DeleteResponse, AppError> {
-    delete_block_inner(&pool.0, device_id.as_str(), &materializer, block_id)
+    delete_block_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), block_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -2173,16 +2158,14 @@ pub async fn delete_block(
 #[tauri::command]
 #[specta::specta]
 pub async fn restore_block(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     deleted_at_ref: i64,
 ) -> Result<RestoreResponse, AppError> {
     restore_block_inner(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         block_id,
         deleted_at_ref,
     )
@@ -2194,12 +2177,10 @@ pub async fn restore_block(
 #[tauri::command]
 #[specta::specta]
 pub async fn purge_block(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_id: BlockId,
 ) -> Result<PurgeResponse, AppError> {
-    purge_block_inner(&pool.0, device_id.as_str(), &materializer, block_id)
+    purge_block_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), block_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -2207,12 +2188,8 @@ pub async fn purge_block(
 /// Tauri command: restore all soft-deleted blocks. Delegates to [`restore_all_deleted_inner`].
 #[tauri::command]
 #[specta::specta]
-pub async fn restore_all_deleted(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
-) -> Result<BulkTrashResponse, AppError> {
-    restore_all_deleted_inner(&pool.0, device_id.as_str(), &materializer)
+pub async fn restore_all_deleted(ctx: State<'_, WriteCtx>) -> Result<BulkTrashResponse, AppError> {
+    restore_all_deleted_inner(ctx.pool(), ctx.device_id(), ctx.materializer())
         .await
         .map_err(sanitize_internal_error)
 }
@@ -2220,12 +2197,8 @@ pub async fn restore_all_deleted(
 /// Tauri command: permanently purge all soft-deleted blocks. Delegates to [`purge_all_deleted_inner`].
 #[tauri::command]
 #[specta::specta]
-pub async fn purge_all_deleted(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
-) -> Result<BulkTrashResponse, AppError> {
-    purge_all_deleted_inner(&pool.0, device_id.as_str(), &materializer)
+pub async fn purge_all_deleted(ctx: State<'_, WriteCtx>) -> Result<BulkTrashResponse, AppError> {
+    purge_all_deleted_inner(ctx.pool(), ctx.device_id(), ctx.materializer())
         .await
         .map_err(sanitize_internal_error)
 }
@@ -2235,12 +2208,10 @@ pub async fn purge_all_deleted(
 #[tauri::command]
 #[specta::specta]
 pub async fn restore_blocks_by_ids(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_ids: Vec<BlockId>,
 ) -> Result<BulkTrashResponse, AppError> {
-    restore_blocks_by_ids_inner(&pool.0, device_id.as_str(), &materializer, block_ids)
+    restore_blocks_by_ids_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), block_ids)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -2250,12 +2221,10 @@ pub async fn restore_blocks_by_ids(
 #[tauri::command]
 #[specta::specta]
 pub async fn purge_blocks_by_ids(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_ids: Vec<BlockId>,
 ) -> Result<BulkTrashResponse, AppError> {
-    purge_blocks_by_ids_inner(&pool.0, device_id.as_str(), &materializer, block_ids)
+    purge_blocks_by_ids_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), block_ids)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -2421,12 +2390,10 @@ pub async fn create_blocks_batch_inner(
 #[tauri::command]
 #[specta::specta]
 pub async fn create_blocks_batch(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     specs: Vec<CreateBlockSpec>,
 ) -> Result<Vec<BlockRow>, AppError> {
-    create_blocks_batch_inner(&pool.0, device_id.as_str(), &materializer, specs)
+    create_blocks_batch_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), specs)
         .await
         .map_err(sanitize_internal_error)
 }

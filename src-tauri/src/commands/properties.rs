@@ -8,8 +8,7 @@ use tauri::State;
 use tracing::instrument;
 
 use crate::backlink;
-use crate::db::{CommandTx, ReadPool, WritePool};
-use crate::device::DeviceId;
+use crate::db::{CommandTx, ReadPool, WriteCtx, WritePool};
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::pagination;
@@ -1213,22 +1212,20 @@ pub async fn list_property_keys(read_pool: State<'_, ReadPool>) -> Result<Vec<St
 #[specta::specta]
 pub async fn set_property(
     app: tauri::AppHandle,
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     key: String,
     value: SetPropertyArgs,
 ) -> Result<BlockRow, AppError> {
     let block_id_clone = block_id.clone().into_string();
     let key_clone = key.clone();
-    let active_id = verify_active(&pool.0, &block_id)
+    let active_id = verify_active(ctx.pool(), &block_id)
         .await
         .map_err(sanitize_internal_error)?;
     let result = set_property_inner(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         active_id,
         key,
         value.value_text,
@@ -1249,19 +1246,23 @@ pub async fn set_property(
 #[specta::specta]
 pub async fn set_todo_state(
     app: tauri::AppHandle,
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     state: Option<String>,
 ) -> Result<BlockRow, AppError> {
     let block_id_clone = block_id.clone().into_string();
-    let active_id = verify_active(&pool.0, &block_id)
+    let active_id = verify_active(ctx.pool(), &block_id)
         .await
         .map_err(sanitize_internal_error)?;
-    let result = set_todo_state_inner(&pool.0, device_id.as_str(), &materializer, active_id, state)
-        .await
-        .map_err(sanitize_internal_error)?;
+    let result = set_todo_state_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        active_id,
+        state,
+    )
+    .await
+    .map_err(sanitize_internal_error)?;
     emit_property_changed_event(&app, block_id_clone, vec!["todo_state".to_string()]);
     Ok(result.into())
 }
@@ -1281,17 +1282,20 @@ pub async fn set_todo_state(
 #[specta::specta]
 pub async fn set_todo_state_batch(
     app: tauri::AppHandle,
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_ids: Vec<BlockId>,
     state: Option<String>,
 ) -> Result<i64, AppError> {
     let block_ids_for_emit = block_ids.clone();
-    let updated =
-        set_todo_state_batch_inner(&pool.0, device_id.as_str(), &materializer, block_ids, state)
-            .await
-            .map_err(sanitize_internal_error)?;
+    let updated = set_todo_state_batch_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        block_ids,
+        state,
+    )
+    .await
+    .map_err(sanitize_internal_error)?;
     // Emit per-block change events so the existing per-block listeners
     // continue to receive the same signal shape they got from the
     // single-row path. The inner already skipped missing rows silently,
@@ -1315,19 +1319,23 @@ pub async fn set_todo_state_batch(
 #[specta::specta]
 pub async fn set_priority(
     app: tauri::AppHandle,
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     level: Option<String>,
 ) -> Result<BlockRow, AppError> {
     let block_id_clone = block_id.clone().into_string();
-    let active_id = verify_active(&pool.0, &block_id)
+    let active_id = verify_active(ctx.pool(), &block_id)
         .await
         .map_err(sanitize_internal_error)?;
-    let result = set_priority_inner(&pool.0, device_id.as_str(), &materializer, active_id, level)
-        .await
-        .map_err(sanitize_internal_error)?;
+    let result = set_priority_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        active_id,
+        level,
+    )
+    .await
+    .map_err(sanitize_internal_error)?;
     emit_property_changed_event(&app, block_id_clone, vec!["priority".to_string()]);
     Ok(result.into())
 }
@@ -1337,19 +1345,23 @@ pub async fn set_priority(
 #[specta::specta]
 pub async fn set_due_date(
     app: tauri::AppHandle,
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     date: Option<String>,
 ) -> Result<BlockRow, AppError> {
     let block_id_clone = block_id.clone().into_string();
-    let active_id = verify_active(&pool.0, &block_id)
+    let active_id = verify_active(ctx.pool(), &block_id)
         .await
         .map_err(sanitize_internal_error)?;
-    let result = set_due_date_inner(&pool.0, device_id.as_str(), &materializer, active_id, date)
-        .await
-        .map_err(sanitize_internal_error)?;
+    let result = set_due_date_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        active_id,
+        date,
+    )
+    .await
+    .map_err(sanitize_internal_error)?;
     emit_property_changed_event(&app, block_id_clone, vec!["due_date".to_string()]);
     Ok(result.into())
 }
@@ -1359,20 +1371,23 @@ pub async fn set_due_date(
 #[specta::specta]
 pub async fn set_scheduled_date(
     app: tauri::AppHandle,
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     date: Option<String>,
 ) -> Result<BlockRow, AppError> {
     let block_id_clone = block_id.clone().into_string();
-    let active_id = verify_active(&pool.0, &block_id)
+    let active_id = verify_active(ctx.pool(), &block_id)
         .await
         .map_err(sanitize_internal_error)?;
-    let result =
-        set_scheduled_date_inner(&pool.0, device_id.as_str(), &materializer, active_id, date)
-            .await
-            .map_err(sanitize_internal_error)?;
+    let result = set_scheduled_date_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        active_id,
+        date,
+    )
+    .await
+    .map_err(sanitize_internal_error)?;
     emit_property_changed_event(&app, block_id_clone, vec!["scheduled_date".to_string()]);
     Ok(result.into())
 }
@@ -1382,20 +1397,24 @@ pub async fn set_scheduled_date(
 #[specta::specta]
 pub async fn delete_property(
     app: tauri::AppHandle,
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     key: String,
 ) -> Result<(), AppError> {
     let block_id_clone = block_id.clone().into_string();
     let key_clone = key.clone();
-    let active_id = verify_active(&pool.0, &block_id)
+    let active_id = verify_active(ctx.pool(), &block_id)
         .await
         .map_err(sanitize_internal_error)?;
-    delete_property_inner(&pool.0, device_id.as_str(), &materializer, active_id, key)
-        .await
-        .map_err(sanitize_internal_error)?;
+    delete_property_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        active_id,
+        key,
+    )
+    .await
+    .map_err(sanitize_internal_error)?;
     emit_property_changed_event(&app, block_id_clone, vec![key_clone]);
     Ok(())
 }

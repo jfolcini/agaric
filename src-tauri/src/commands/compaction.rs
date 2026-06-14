@@ -5,10 +5,9 @@ use sqlx::SqlitePool;
 use tauri::State;
 use tracing::instrument;
 
-use crate::db::{ReadPool, WritePool};
-use crate::device::DeviceId;
+use crate::db::{ReadPool, WriteCtx};
 use crate::error::AppError;
-use crate::materializer::{MaterializeTask, Materializer};
+use crate::materializer::MaterializeTask;
 
 use super::*;
 
@@ -256,12 +255,10 @@ pub async fn compact_op_log_cmd_inner(
 #[tauri::command]
 #[specta::specta]
 pub async fn compact_op_log_cmd(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     retention_days: u64,
 ) -> Result<CompactionResult, AppError> {
-    let result = compact_op_log_cmd_inner(&pool.0, device_id.as_str(), retention_days)
+    let result = compact_op_log_cmd_inner(ctx.pool(), ctx.device_id(), retention_days)
         .await
         .map_err(sanitize_internal_error)?;
 
@@ -270,8 +267,9 @@ pub async fn compact_op_log_cmd(
     // and nothing on disk has changed, so the sweep would be pointless
     // queue churn.
     if result.ops_deleted > 0
-        && let Err(e) =
-            materializer.try_enqueue_background(MaterializeTask::CleanupOrphanedAttachments)
+        && let Err(e) = ctx
+            .materializer()
+            .try_enqueue_background(MaterializeTask::CleanupOrphanedAttachments)
     {
         tracing::warn!(
             error = %e,
