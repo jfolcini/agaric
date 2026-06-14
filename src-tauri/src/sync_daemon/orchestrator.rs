@@ -586,9 +586,13 @@ pub(crate) struct SyncSessionContext<'a> {
 /// `run_sync_session` returned `Err("sync cancelled by user")`).
 ///
 /// The `_cancel_guard` (a Drop scope guard, S-11) clears the flag on
-/// every exit path — but the `was_cancelled` capture happens *before*
-/// the guard's Drop fires, so the returned bool reflects the live state
-/// at session end.
+/// Drop — but only when this task actually ran a real session and thus
+/// *owns* the cancel (#637). Early-exit paths (backoff / lock / no-address /
+/// connect failure) return with `owns == false` and deliberately leave the
+/// shared flag untouched, so an early-exiting peer can never swallow a user
+/// cancel aimed at a still-running sibling. On the real-session path the
+/// `was_cancelled` capture happens *before* the guard's Drop fires, so the
+/// returned bool reflects the live state at session end.
 #[tracing::instrument(
     skip_all,
     fields(peer = %peer.device_id),
@@ -611,27 +615,58 @@ pub(crate) async fn try_sync_with_peer(
 ) -> bool {
     let peer_id = &peer.device_id;
 
-    // Scope guard: always clear the cancel flag when this function returns,
-    // regardless of which path is taken (backoff, lock, no-address, connect
-    // failure, or after a completed/failed sync session).  Without this,
-    // early-exit paths would leave the flag permanently set (S-11).
-    struct CancelGuard<'a>(&'a AtomicBool);
+    // Scope guard: clear the shared cancel flag on Drop, but ONLY when this
+    // task actually *owns* the cancel — i.e. it reached the real sync-session
+    // phase and is therefore the legitimate consumer of (and resetter for) a
+    // user cancel. See `CancelGuard::owns`.
+    //
+    // #637: the cancel flag (`ctx.cancel`) is a single `&AtomicBool` SHARED by
+    // every per-peer task in a round (Branch B spawns one task per peer against
+    // the same flag). It is set `true` only by the user via
+    // `cancel_active_sync()`. The original guard cleared it unconditionally on
+    // every exit path; an early-exiting task (backoff gate, lock contention, no
+    // resolved addresses, all-addresses-failed connect) would then store
+    // `false` and *swallow* a user cancel aimed at a still-running sibling
+    // before that sibling ever observed it — `abort_all` (Branch B) only fires
+    // when some task returns `true`, so the whole round would keep syncing
+    // despite the user having cancelled.
+    //
+    // Invariant: a user cancel targeting a still-running sibling MUST survive
+    // an early-exiting peer's teardown, while the legitimate post-run reset
+    // still happens. We enforce this by clearing the flag on Drop only when
+    // `owns == true`, which is set exactly once — immediately before we run the
+    // real session (step 7). Every early-exit path returns with `owns == false`
+    // and therefore leaves the shared flag untouched: a pending user cancel
+    // stays set for the sibling / next attempt to observe (M-46), and a stale
+    // un-set flag stays un-set.
+    struct CancelGuard<'a> {
+        cancel: &'a AtomicBool,
+        owns: bool,
+    }
     impl Drop for CancelGuard<'_> {
         fn drop(&mut self) {
-            self.0.store(false, Ordering::Release);
+            if self.owns {
+                self.cancel.store(false, Ordering::Release);
+            }
         }
     }
-    let _cancel_guard = CancelGuard(ctx.cancel);
+    let mut _cancel_guard = CancelGuard {
+        cancel: ctx.cancel,
+        owns: false,
+    };
 
     // 1. Backoff gate
     if !ctx.scheduler.may_retry(peer_id) {
         // M-46: no real session ran, cancellation is moot for this peer.
+        // #637: guard.owns is still false, so we leave the shared cancel
+        // flag untouched — a user cancel aimed at a sibling survives.
         return false;
     }
 
     // 2. Per-peer mutex (prevents concurrent syncs to the same peer)
     let Some(_guard) = ctx.scheduler.try_lock_peer(peer_id) else {
         // M-46: already syncing with this peer; no real session ran here.
+        // #637: guard.owns is still false → don't clear a sibling's cancel.
         return false;
     };
 
@@ -641,6 +676,7 @@ pub(crate) async fn try_sync_with_peer(
     if addrs.is_empty() {
         tracing::warn!(peer_id, "peer has no addresses, skipping sync");
         // M-46: no real session ran, cancellation is moot for this peer.
+        // #637: guard.owns is still false → don't clear a sibling's cancel.
         return false;
     }
 
@@ -676,11 +712,23 @@ pub(crate) async fn try_sync_with_peer(
                     remote_device_id: peer_id.clone(),
                 });
                 // M-46: connection never established, no real session ran.
+                // #637: guard.owns is still false → don't clear a sibling's
+                // cancel; this early-exit must not swallow a pending user
+                // cancel aimed at a still-running peer.
                 return false;
             }
         };
 
     // 7. Run sync protocol through the orchestrator
+    //
+    // #637: we have committed to a real sync session — connection established,
+    // per-peer lock held, addresses resolved. From here on this task OWNS the
+    // cancel: it is the task that `run_sync_session` checks the flag in, the
+    // one that may observe & report a user cancel (M-46), and therefore the
+    // legitimate resetter. Mark the guard so its Drop clears the shared flag
+    // when the session ends (whether it completed normally or was cancelled).
+    _cancel_guard.owns = true;
+
     let mut event_sink_arc = Arc::clone(ctx.event_sink);
     if let Some(channel) = ctx.scheduler.take_channel(peer_id) {
         event_sink_arc = Arc::new(crate::sync_events::ChannelEventSink {
@@ -756,9 +804,14 @@ pub(crate) async fn try_sync_with_peer(
     // the still-set flag. The returned bool tells the daemon-loop caller
     // whether the user cancelled mid-session so it can break out of the
     // current peer round (see Branch B / Branch C in `daemon_loop`).
+    //
+    // #637: at this point `_cancel_guard.owns == true` (set in step 7), so the
+    // guard WILL clear the shared flag on Drop — this is the legitimate
+    // post-run reset. Early-exit paths never reach here and never set `owns`,
+    // so they leave a pending sibling-targeted cancel intact.
     let was_cancelled = ctx.cancel.load(Ordering::Acquire);
 
-    // Cancel flag is cleared by `_cancel_guard` (Drop) on all exit paths.
+    // Cancel flag is cleared by `_cancel_guard` (Drop) because we own it.
 
     let _ = conn.close().await.map_err(|e| {
         tracing::debug!(error = %e, "failed to close sync connection");
