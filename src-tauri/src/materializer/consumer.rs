@@ -364,63 +364,95 @@ fn record_last_materialize(metrics: &QueueMetrics) {
     metrics.last_materialize_ms.store(now_ms, Ordering::Relaxed);
 }
 
-/// Persist a failed task to `materializer_retry_queue`, retrying once
-/// after a short delay if the first attempt fails (PEND-24 M1).
+/// Bounded persist-retry budget for [`record_failure_with_retry`]: total
+/// number of `record_failure` attempts. The first attempt is immediate;
+/// each subsequent attempt waits [`PERSIST_RETRY_BACKOFF`] first.
+///
+/// #851 (bounded persist-failure mitigation): a single retry (the old
+/// PEND-24 M1 budget) still left a real loss window — if BOTH the first
+/// attempt and the one retry hit transient WAL-lock contention, the op was
+/// permanently unmaterialized (only a warn + metric, no further recourse;
+/// the foreground apply already failed, so the op never advances the cursor
+/// and is NOT covered by the boot replay walk). A few more bounded attempts
+/// turn the common transient-contention case from "lost" into "persisted to
+/// the retry queue" without unbounded blocking of the consumer. We keep this
+/// SMALL and well-contained deliberately — this is a defense-in-depth
+/// mitigation, not the #619 snapshot-rebuild fallback.
+const PERSIST_RETRY_ATTEMPTS: u32 = 4;
+
+/// Constant backoff between persist attempts. Short because the only
+/// expected failure is brief WAL-lock contention; total worst-case added
+/// latency is `(PERSIST_RETRY_ATTEMPTS - 1) * PERSIST_RETRY_BACKOFF`.
+const PERSIST_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Persist a failed task to `materializer_retry_queue`, retrying a small
+/// bounded number of times with a short backoff if a write fails
+/// (PEND-24 M1; bounded budget widened for #851).
 ///
 /// **Why retry?** The persistence path itself is a SQLite write that
 /// can hit the same WAL-lock contention as the primary task. Without
 /// the retry, a transient lock encountered during persistence
 /// silently leaks the task — `record_failure` returns `Err`, the
 /// caller drops the task, and operators see no signal that the retry
-/// queue write itself failed.
+/// queue write itself failed. The op never materialized (the foreground
+/// apply already exhausted its own retry) and the boot replay walk does
+/// NOT cover it (its op_log row's seq is `<= cursor`), so a lost persist
+/// here is a permanent, silent un-materialization. The bounded extra
+/// attempts (`PERSIST_RETRY_ATTEMPTS`) shrink that loss window.
 ///
 /// **Counters bumped:**
 /// * Every failed [`super::retry_queue::record_failure`] call bumps
-///   [`QueueMetrics::retry_queue_persist_errors`] (so a 1-then-2
-///   pattern emerges as 1 → 2 increments). Both first-attempt and
+///   [`QueueMetrics::retry_queue_persist_errors`] (so N consecutive
+///   failures emerge as N increments). Both first-attempt and
 ///   retry-attempt failures count.
 ///
-/// **Return value:** `true` if the task is durably persisted (either
-/// first attempt or retry succeeded); `false` if both attempts
-/// failed. Callers use the bool to decide whether to also bump the
+/// **Return value:** `true` if the task is durably persisted (any attempt
+/// succeeded); `false` if every attempt in the bounded budget failed.
+/// Callers use the bool to decide whether to also bump the
 /// "successfully queued for retry" sub-counters
 /// (e.g. `bg_dropped_global` semantic, `fg_apply_dropped_persisted`).
-async fn record_failure_with_retry(
+pub(super) async fn record_failure_with_retry(
     pool: &SqlitePool,
     task: &MaterializeTask,
     last_error: &str,
     metrics: &Arc<QueueMetrics>,
 ) -> bool {
     use super::retry_queue::record_failure;
-    match record_failure(pool, task, last_error).await {
-        Ok(()) => true,
-        Err(e1) => {
-            metrics
-                .retry_queue_persist_errors
-                .fetch_add(1, Ordering::Relaxed);
-            tracing::warn!(
-                error = %e1,
-                "PEND-24 M1: record_failure first attempt failed; retrying after 100ms"
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            match record_failure(pool, task, last_error).await {
-                Ok(()) => {
-                    tracing::info!("PEND-24 M1: record_failure succeeded on retry");
-                    true
-                }
-                Err(e2) => {
-                    metrics
-                        .retry_queue_persist_errors
-                        .fetch_add(1, Ordering::Relaxed);
-                    tracing::error!(
-                        error = %e2,
-                        "PEND-24 M1: record_failure failed on retry — task dropped without persistence"
+    for attempt in 1..=PERSIST_RETRY_ATTEMPTS {
+        match record_failure(pool, task, last_error).await {
+            Ok(()) => {
+                if attempt > 1 {
+                    tracing::info!(
+                        attempt,
+                        "PEND-24 M1 / #851: record_failure succeeded on retry"
                     );
-                    false
+                }
+                return true;
+            }
+            Err(e) => {
+                metrics
+                    .retry_queue_persist_errors
+                    .fetch_add(1, Ordering::Relaxed);
+                if attempt < PERSIST_RETRY_ATTEMPTS {
+                    tracing::warn!(
+                        error = %e,
+                        attempt,
+                        attempts = PERSIST_RETRY_ATTEMPTS,
+                        "PEND-24 M1 / #851: record_failure attempt failed; retrying after backoff"
+                    );
+                    tokio::time::sleep(PERSIST_RETRY_BACKOFF).await;
+                } else {
+                    tracing::error!(
+                        error = %e,
+                        attempts = PERSIST_RETRY_ATTEMPTS,
+                        "PEND-24 M1 / #851: record_failure exhausted its bounded retry budget — \
+                         task dropped without persistence"
+                    );
                 }
             }
         }
     }
+    false
 }
 
 async fn process_foreground_segment(
@@ -749,9 +781,10 @@ pub(super) async fn run_background(
                 // PEND-24 H1, but they are routed exclusively to the
                 // foreground queue and never reach this site.)
                 //
-                // PEND-24 M1: persistence itself can fail (transient WAL
-                // contention on the retry-queue write). Use
-                // `record_failure_with_retry` to retry once after 100ms
+                // PEND-24 M1 / #851: persistence itself can fail (transient
+                // WAL contention on the retry-queue write). Use
+                // `record_failure_with_retry` to retry a small bounded number
+                // of times with a short backoff (`PERSIST_RETRY_ATTEMPTS`)
                 // and bump `retry_queue_persist_errors` on every failed
                 // attempt. `bg_dropped` is bumped on the persist-failure
                 // branch too so the "tasks gone" total stays accurate

@@ -1043,3 +1043,139 @@ pub(crate) async fn recover_derived_state_from_op_log(
     tx.commit().await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::init_pool;
+    use tempfile::TempDir;
+
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    /// #618 / #851: the TEXT-era (pre-0080) `restore_block` cohort branch in
+    /// [`recover_blocks_from_op_log`]. Before migration 0080, `deleted_at` was
+    /// rfc3339 TEXT, so the cohort guard cannot string-compare against the
+    /// epoch-ms `deleted_at_ref`; it converts the stored TEXT via
+    /// `julianday()→ms` and compares on the parsed value. This drives that
+    /// branch directly with `deleted_at_is_ms = false`: only the cohort whose
+    /// `deleted_at` parses to `deleted_at_ref` is un-deleted; a sibling row
+    /// tombstoned at a different time stays deleted, and a descendant of the
+    /// restored root is resurrected with it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_text_era_restore_block_cohort_julianday_branch() {
+        let (pool, _dir) = test_pool().await;
+
+        // The migrated DB created an INTEGER-era `blocks` table; drop it and
+        // recreate the pre-0080 TEXT-era shape (`deleted_at TEXT`) so the
+        // recovery's julianday() branch is exercised, not the ms branch.
+        sqlx::query("DROP TABLE IF EXISTS blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE blocks (
+                 id             TEXT NOT NULL PRIMARY KEY,
+                 block_type     TEXT NOT NULL DEFAULT 'content',
+                 content        TEXT,
+                 parent_id      TEXT,
+                 position       INTEGER,
+                 deleted_at     TEXT,
+                 todo_state     TEXT,
+                 priority       TEXT,
+                 due_date       TEXT,
+                 scheduled_date TEXT,
+                 page_id        TEXT
+             )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Cohort timestamps: the restore op targets the cohort deleted at
+        // `ref_ms`; a sibling was deleted one second later (a DIFFERENT
+        // cohort) and must NOT be resurrected.
+        let ref_ms: i64 = 1_767_225_600_000; // 2026-01-01T00:00:00Z
+        let ref_rfc3339 = "2026-01-01T00:00:00.000Z";
+        let other_ms: i64 = ref_ms + 1000;
+        let other_rfc3339 = "2026-01-01T00:00:01.000Z";
+
+        // root + child belong to the restored cohort; sibling is a separate
+        // cohort tombstoned at a different time.
+        let seed = |id: &'static str, parent: Option<&'static str>, deleted_at: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO blocks (id, block_type, content, parent_id, deleted_at) \
+                     VALUES (?, 'content', '', ?, ?)",
+                )
+                .bind(id)
+                .bind(parent)
+                .bind(deleted_at)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        seed("root", None, ref_rfc3339).await;
+        seed("child", Some("root"), ref_rfc3339).await;
+        seed("sibling", None, other_rfc3339).await;
+        let _ = other_ms; // documents the sibling's distinct cohort ms
+
+        // A single restore_block op for `root`, carrying the cohort token in
+        // epoch-ms (the era-independent payload shape).
+        let payload = serde_json::json!({
+            "block_id": "root",
+            "deleted_at_ref": ref_ms,
+        })
+        .to_string();
+        sqlx::query(
+            "INSERT INTO op_log \
+             (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES ('dev', 1, NULL, 'h1', 'restore_block', ?, ?)",
+        )
+        .bind(&payload)
+        .bind(ref_ms)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Drive recovery through the TEXT-era branch.
+        let mut conn = pool.acquire().await.unwrap();
+        recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ false)
+            .await
+            .unwrap();
+        drop(conn);
+
+        let deleted_at = |id: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, Option<String>>(
+                    "SELECT deleted_at FROM blocks WHERE id = ?",
+                )
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+
+        assert!(
+            deleted_at("root").await.is_none(),
+            "TEXT-era restore must un-delete the cohort root (julianday match)"
+        );
+        assert!(
+            deleted_at("child").await.is_none(),
+            "TEXT-era restore must cascade to the root's descendant"
+        );
+        assert!(
+            deleted_at("sibling").await.is_some(),
+            "TEXT-era restore must NOT resurrect a different cohort \
+             (deleted_at parses to a different ms via julianday)"
+        );
+    }
+}

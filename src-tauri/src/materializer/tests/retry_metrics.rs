@@ -178,6 +178,90 @@ async fn record_failure_persist_error_is_metered_pend24_m1() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
+// #851 — bounded persist-failure mitigation. The previous PEND-24 M1
+// budget retried `record_failure` exactly ONCE; if both the first attempt
+// and that single retry hit transient WAL-lock contention, the op was
+// permanently un-materialized (it already failed its foreground apply, so
+// it never advances the cursor and the boot replay walk does NOT cover
+// it). #851 widens the budget to a few bounded attempts so a transient
+// failure that outlasts one retry still lands in the retry queue.
+//
+// This test makes the persist write fail for longer than a single retry
+// would tolerate: it DROPs the table, then recreates it only after a delay
+// that lets the FIRST attempt + the FIRST backoff elapse. The old
+// single-retry budget would have already given up and returned `false`;
+// the widened budget retries again, sees the table back, and persists.
+// ──────────────────────────────────────────────────────────────────────
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn persist_recovers_within_bounded_budget_851() {
+    use crate::materializer::consumer::record_failure_with_retry;
+
+    let (pool, _dir) = test_pool().await;
+    let metrics = StdArc::new(crate::materializer::QueueMetrics::default());
+
+    // Drop the table so the first attempt(s) fail deterministically.
+    sqlx::query("DROP TABLE materializer_retry_queue")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Recreate the table after a delay long enough to outlast a single
+    // retry (one 100ms backoff) but well inside the full bounded budget.
+    // 250ms lands the recreate after attempt 2's failure, so attempt 3
+    // succeeds — a scenario the old one-retry budget could not survive.
+    let recreate_pool = pool.clone();
+    let recreate = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        sqlx::query(
+            "CREATE TABLE materializer_retry_queue (
+                 block_id   TEXT NOT NULL,
+                 task_kind  TEXT NOT NULL,
+                 attempts   INTEGER NOT NULL DEFAULT 0,
+                 last_error TEXT,
+                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                 next_attempt_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                 PRIMARY KEY (block_id, task_kind)
+             ) STRICT",
+        )
+        .execute(&recreate_pool)
+        .await
+        .unwrap();
+    });
+
+    let task = MaterializeTask::ApplyOp(StdArc::new(fake_op_record("create_block", "{}")));
+    let persisted = record_failure_with_retry(&pool, &task, "boom", &metrics).await;
+    recreate.await.unwrap();
+
+    assert!(
+        persisted,
+        "#851: the bounded retry budget must recover a transient persist failure \
+         that outlasts a single retry (returned false — budget too small / not widened)"
+    );
+    // At least the first two attempts failed before the table came back.
+    assert!(
+        metrics
+            .retry_queue_persist_errors
+            .load(AtomicOrdering::Relaxed)
+            >= 2,
+        "each pre-recreate attempt must bump retry_queue_persist_errors (got {})",
+        metrics
+            .retry_queue_persist_errors
+            .load(AtomicOrdering::Relaxed),
+    );
+    // The row must actually be present after recovery.
+    let row_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM materializer_retry_queue WHERE block_id = ?")
+            .bind("__APPLY_OP__")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        row_count, 1,
+        "#851: the recovered attempt must leave exactly one persisted retry row"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // PEND-24 H1 — Foreground `ApplyOp` retry exhaustion now persists the
 // failure to `materializer_retry_queue` (replacing the previous
 // silent drop). The boot-time / periodic sweeper re-loads the

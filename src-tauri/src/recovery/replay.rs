@@ -128,11 +128,23 @@ async fn read_apply_cursor(pool: &SqlitePool) -> Result<i64, AppError> {
 /// because the op-log head below the rewind target was compacted away?
 ///
 /// `compact_op_log` deletes rows older than the retention window, so after
-/// at least one compaction `MIN(op_log.seq) > 1`. A replay walk
+/// at least one compaction the oldest surviving seq is `> 1`. A replay walk
 /// (`seq > reset_to`) is only a genuine rebuild when every op in
-/// `(reset_to, MIN(seq))` still exists — i.e. when
-/// `reset_to >= MIN(seq) - 1`. Anything lower silently reconstructs the
-/// engines from the surviving tail only.
+/// `(reset_to, oldest-surviving-seq)` still exists — i.e. when
+/// `reset_to >= oldest_surviving_seq - 1`. Anything lower silently
+/// reconstructs the engines from the surviving tail only.
+///
+/// #851 (per-device floor): `op_log.seq` is a PER-DEVICE counter
+/// (PK `(device_id, seq)`), and `compact_op_log` purges per device. A
+/// GLOBAL `MIN(seq)` therefore false-negatives the floor: if device A was
+/// compacted up to seq 100 but a freshly-paired device B still has its
+/// seq 1, the global `MIN(seq) = 1` makes the check believe nothing was
+/// purged — while device A's head (seqs 1..=99) is gone. The floor must be
+/// evaluated PER DEVICE: a rewind under-rebuilds iff ANY device's oldest
+/// surviving seq sits above `reset_to + 1`, i.e. the binding floor is the
+/// MAX over devices of `MIN(seq)`. (Today the replay walk itself is single
+/// device per the #412 guard, but the detection is the correctness surface
+/// here and must be right ahead of multi-device sync shipping.)
 ///
 /// Split out of [`heal_orphaned_apply_cursor`] so the floor predicate is
 /// directly unit-testable without staging a full heal scenario.
@@ -140,17 +152,23 @@ pub(super) async fn compacted_floor_above(
     pool: &SqlitePool,
     reset_to: i64,
 ) -> Result<bool, AppError> {
-    let min_seq: Option<i64> =
-        sqlx::query_scalar!(r#"SELECT MIN(seq) as "min_seq: i64" FROM op_log"#)
-            .fetch_one(pool)
-            .await?;
-    let Some(min_seq) = min_seq else {
+    // Per-device floor: for each device take its oldest surviving seq
+    // (`MIN(seq)`), then take the MAX of those per-device minima. That
+    // largest per-device head is the binding compaction floor — a rewind
+    // below it leaves at least one device's purged head unrecoverable.
+    let floor: Option<i64> = sqlx::query_scalar!(
+        r#"SELECT MAX(device_min) as "floor: i64"
+           FROM (SELECT MIN(seq) AS device_min FROM op_log GROUP BY device_id)"#
+    )
+    .fetch_one(pool)
+    .await?;
+    let Some(floor) = floor else {
         // Empty op_log — nothing to rebuild from, but also nothing was
         // compacted "above" the target; the caller's `max_seq == 0` guard
         // bails out before this matters.
         return Ok(false);
     };
-    Ok(reset_to < min_seq - 1)
+    Ok(reset_to < floor - 1)
 }
 
 /// Boot-only self-heal for an orphaned / stale apply cursor.
@@ -231,7 +249,8 @@ pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool
 
     // #619: compaction-floor check. `compact_op_log` purges ops below the
     // retention frontier, so the oldest surviving row is NOT necessarily
-    // seq 1. A `reset_to` below `MIN(op_log.seq) - 1` means the replay walk
+    // seq 1. A `reset_to` below the per-device compaction floor (#851 —
+    // `MAX` over devices of each device's `MIN(seq)`) means the replay walk
     // (`seq > reset_to`) can only reconstruct the surviving TAIL: blocks
     // created before the retention window exist in SQL but will be missing
     // from the rebuilt engines — the exact "loro: block not found" wedge
@@ -708,6 +727,95 @@ mod tests {
         assert!(
             !compacted_floor_above(&pool, 7).await.unwrap(),
             "targets above the floor are fine"
+        );
+    }
+
+    /// #851: the compaction floor is PER DEVICE, not global. `op_log.seq` is
+    /// per-device (PK `(device_id, seq)`); `compact_op_log` purges per device.
+    /// A device compacted up to a high head must trip the floor even when
+    /// another device's freshly-paired low seq keeps the GLOBAL `MIN(seq)`
+    /// at 1 (the old global query false-negatived this).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn compacted_floor_is_per_device_not_global_851() {
+        let (pool, _dir) = test_pool().await;
+
+        let insert = |dev: &'static str, seq: i64| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO op_log \
+                     (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                     VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+                )
+                .bind(dev)
+                .bind(seq)
+                .bind(format!("{dev}-hash-{seq}"))
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+
+        // Device A was compacted: only seqs 100..=102 survive (1..=99 purged).
+        // Device B is freshly paired: its seqs start at 1 and are intact.
+        for seq in 100..=102i64 {
+            insert("device-A", seq).await;
+        }
+        for seq in 1..=3i64 {
+            insert("device-B", seq).await;
+        }
+
+        // GLOBAL MIN(seq) is 1 (device B). The OLD global check would compute
+        // `reset_to < 1 - 1 = 0` and FALSE-NEGATIVE every non-negative target.
+        // The per-device floor is MAX(MIN over devices) = MIN(seq) of device A
+        // = 100, so the binding floor-minus-one is 99.
+        assert!(
+            compacted_floor_above(&pool, 0).await.unwrap(),
+            "rewind-to-0 must trip the per-device floor (device A head purged) — \
+             the global MIN(seq)=1 must NOT mask it (#851)"
+        );
+        assert!(
+            compacted_floor_above(&pool, 98).await.unwrap(),
+            "a target below device A's MIN(seq)-1 (=99) still misses device A's purged head"
+        );
+        assert!(
+            !compacted_floor_above(&pool, 99).await.unwrap(),
+            "target == device A's MIN(seq)-1 covers every surviving op — no violation"
+        );
+        assert!(
+            !compacted_floor_above(&pool, 200).await.unwrap(),
+            "targets above the floor are fine"
+        );
+    }
+
+    /// #851: a genuinely non-compacted multi-device log (every device's head
+    /// starts at seq 1) must NOT trip the floor — the per-device fix must not
+    /// over-fire on a healthy multi-device op_log.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn per_device_floor_no_false_positive_when_uncompacted_851() {
+        let (pool, _dir) = test_pool().await;
+
+        for (dev, max) in [("device-A", 3i64), ("device-B", 5i64)] {
+            for seq in 1..=max {
+                sqlx::query(
+                    "INSERT INTO op_log \
+                     (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                     VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+                )
+                .bind(dev)
+                .bind(seq)
+                .bind(format!("{dev}-hash-{seq}"))
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        }
+
+        // Every device's MIN(seq) is 1, so MAX(MIN) = 1 and the floor-minus-one
+        // is 0: a full rebuild from 0 is genuine, no violation.
+        assert!(
+            !compacted_floor_above(&pool, 0).await.unwrap(),
+            "an uncompacted multi-device log must not false-positive the floor (#851)"
         );
     }
 
