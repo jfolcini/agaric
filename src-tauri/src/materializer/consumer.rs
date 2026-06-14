@@ -84,6 +84,71 @@ pub(super) fn log_consumer_result(
     }
 }
 
+/// #665: an abort-on-drop wrapper around a [`tokio::task::JoinHandle`].
+///
+/// Each `retry_with_backoff` attempt runs inside its own
+/// `tokio::task::spawn` (for panic isolation — a panicking handler must
+/// not take down the consumer loop). The consumer loop itself runs as a
+/// task on the M-12 [`JoinSet`](super::coordinator::Materializer) and is
+/// cancelled by `shutdown()`'s `abort_all()` at its next `.await` point —
+/// which is the `.await` on the attempt's `JoinHandle`. A bare
+/// `tokio::task::spawn` is **detached**: aborting the awaiting consumer
+/// task drops the `JoinHandle` but the spawned attempt keeps running
+/// against the (closing) writer pool, defeating the M-12 abort-on-shutdown
+/// contract (the writer-pool-closed / slow-exit symptom).
+///
+/// Wrapping the handle in this guard closes that gap: `Drop` calls
+/// [`JoinHandle::abort`], so when the consumer task is cancelled and its
+/// future is dropped, the in-flight attempt is cancelled too. Normal
+/// completion is unaffected — the guard implements [`Future`] by polling
+/// the inner handle, and once the attempt finishes its result is returned
+/// to the awaiting caller exactly as before (the post-completion `Drop`'s
+/// `abort()` is a no-op on a finished task). Retry/backoff semantics are
+/// untouched: only the *cancellation* behaviour changes.
+struct AbortOnDrop<T> {
+    handle: tokio::task::JoinHandle<T>,
+}
+
+impl<T> AbortOnDrop<T> {
+    fn new(handle: tokio::task::JoinHandle<T>) -> Self {
+        Self { handle }
+    }
+}
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        // No-op if the task has already finished; otherwise signals
+        // cancellation, observed at the attempt's next `.await` point.
+        self.handle.abort();
+    }
+}
+
+impl<T> std::future::Future for AbortOnDrop<T> {
+    type Output = Result<T, tokio::task::JoinError>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        // `JoinHandle` is `Unpin`, so it is safe to poll it through a
+        // mutable reference without structural pinning.
+        std::pin::Pin::new(&mut self.handle).poll(cx)
+    }
+}
+
+/// #665: spawn a `retry_with_backoff` attempt as a detached task (for
+/// panic isolation) and immediately wrap its handle in [`AbortOnDrop`] so
+/// that cancelling the awaiting consumer loop also cancels the in-flight
+/// attempt. Returns the awaited `Result` — identical shape to the former
+/// `tokio::task::spawn(fut).await`.
+async fn run_attempt_cancellable<F>(fut: F) -> Result<F::Output, tokio::task::JoinError>
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    AbortOnDrop::new(tokio::task::spawn(fut)).await
+}
+
 /// Outcome of a [`retry_with_backoff`] loop.
 ///
 /// Captures enough state for the caller to bump the right metric counters
@@ -132,7 +197,7 @@ where
         last_error_msg: None,
     };
 
-    let first = tokio::task::spawn(spawn_attempt()).await;
+    let first = run_attempt_cancellable(spawn_attempt()).await;
     match &first {
         Ok(Ok(())) => {
             outcome.succeeded = true;
@@ -167,7 +232,7 @@ where
             "retrying failed materializer task after {backoff_ms}ms backoff"
         );
         tokio::time::sleep(backoff).await;
-        let retry = tokio::task::spawn(spawn_attempt()).await;
+        let retry = run_attempt_cancellable(spawn_attempt()).await;
         let retry_label = format!("{label}-retry-{attempt}");
         match &retry {
             Ok(Ok(())) => {

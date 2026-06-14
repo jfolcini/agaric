@@ -426,3 +426,124 @@ async fn shutdown_aborts_in_flight_tasks_m12() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
+
+/// #665: `shutdown()` must cancel an in-flight *handler attempt* running
+/// inside [`super::super::consumer::retry_with_backoff`], not just the
+/// consumer loop that awaits it.
+///
+/// Pre-fix, each attempt ran via a bare `tokio::task::spawn` that was
+/// merely `.await`ed; aborting the awaiting consumer task (the only thing
+/// the M-12 JoinSet tracked) detached the spawned attempt, which kept
+/// running against the (closing) writer pool. That is the exact
+/// writer-pool-closed / slow-exit symptom the M-12 contract claims to
+/// prevent.
+///
+/// The fix wraps each attempt's `JoinHandle` in an abort-on-drop guard,
+/// so cancelling the awaiting task also cancels the in-flight attempt.
+///
+/// This test reproduces the path directly: it spawns a `retry_with_backoff`
+/// loop onto the tracked M-12 JoinSet (exactly how the foreground /
+/// background consumer loops are spawned). The handler attempt signals it
+/// has started, holds a `Drop` guard, then blocks forever. We confirm the
+/// attempt is actually running (no DB write yet, guard not dropped), call
+/// `shutdown()` (→ `abort_all`), then assert the attempt's frame is
+/// dropped — i.e. the in-flight attempt was cancelled rather than detached.
+/// Pre-fix this would hang past the bounded wait and fail.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_cancels_in_flight_retry_attempt_665() {
+    use std::sync::atomic::AtomicBool;
+    use tokio::sync::Notify;
+
+    /// Set on drop — proves the attempt frame was torn down (cancelled),
+    /// not left detached and running.
+    struct DropFlag(StdArc<AtomicBool>);
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.store(true, AtomicOrdering::Release);
+        }
+    }
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Coordination between the test and the in-flight handler attempt.
+    let started = StdArc::new(Notify::new()); // attempt -> test: "I'm running"
+    let block = StdArc::new(Notify::new()); // test -> attempt: never fired
+    let attempt_dropped = StdArc::new(AtomicBool::new(false));
+    // Sentinel so we can prove the attempt did NOT run to completion
+    // against the pool after shutdown (the writer-pool-closed symptom).
+    let attempt_completed = StdArc::new(AtomicBool::new(false));
+
+    let started_h = started.clone();
+    let block_h = block.clone();
+    let drop_flag = attempt_dropped.clone();
+    let completed_h = attempt_completed.clone();
+
+    // Spawn the retry loop onto the SAME tracked JoinSet the real
+    // consumers use, so `shutdown()`'s `abort_all` cancels it the way it
+    // cancels `run_foreground` / `run_background`.
+    Materializer::spawn_task(&mat.tasks, async move {
+        let _ = super::super::consumer::retry_with_backoff(
+            "test-665",
+            0, // no retries — keep the single attempt blocked in-flight
+            |_| Duration::from_millis(0),
+            move || {
+                let started = started_h.clone();
+                let block = block_h.clone();
+                let drop_flag = drop_flag.clone();
+                let completed = completed_h.clone();
+                async move {
+                    // RAII guard: dropped iff the attempt frame is torn
+                    // down (cancellation) — never reached on the
+                    // never-fired wait below unless the task is aborted.
+                    let _guard = DropFlag(drop_flag);
+                    started.notify_one();
+                    // Blocks forever; only cancellation (abort) can end it.
+                    block.notified().await;
+                    // Only reached if the attempt is allowed to complete —
+                    // it must NOT be, post-shutdown.
+                    completed.store(true, AtomicOrdering::Release);
+                    Ok(())
+                }
+            },
+        )
+        .await;
+    });
+
+    // Wait until the attempt is genuinely in-flight (past its spawn and
+    // blocked on `block.notified()`).
+    tokio::time::timeout(Duration::from_secs(2), started.notified())
+        .await
+        .expect("in-flight retry attempt should start within 2s");
+    assert!(
+        !attempt_dropped.load(AtomicOrdering::Acquire),
+        "attempt frame must still be alive before shutdown",
+    );
+    assert!(
+        !attempt_completed.load(AtomicOrdering::Acquire),
+        "attempt must still be blocked (not completed) before shutdown",
+    );
+
+    let start = std::time::Instant::now();
+    mat.shutdown();
+
+    // The abort must propagate THROUGH the abort-on-drop guard into the
+    // in-flight attempt: its frame is dropped, setting the flag. 1s is
+    // generous on a multi-thread runtime; in practice <10 ms.
+    while !attempt_dropped.load(AtomicOrdering::Acquire) {
+        if start.elapsed() > Duration::from_secs(1) {
+            panic!(
+                "#665: shutdown() must cancel the in-flight retry attempt, \
+                 not detach it — attempt frame was never dropped within 1s"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    // And it was cancelled, not run to completion against the pool.
+    assert!(
+        !attempt_completed.load(AtomicOrdering::Acquire),
+        "#665: the in-flight attempt must be aborted, not allowed to finish \
+         its work against the closing pool after shutdown",
+    );
+}
