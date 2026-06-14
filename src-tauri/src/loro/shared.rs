@@ -75,11 +75,35 @@ pub fn get() -> Option<&'static LoroState> {
 }
 
 /// Test-only shim — install a fresh `LoroState` if the global is
-/// empty.  Each test process has its own static, so test isolation
-/// across `cargo nextest` is preserved by nextest's per-test process
-/// model.  Within a single test binary, multiple tests share the
-/// same install; that's fine because each test uses distinct
-/// `(space_id, block_id)` pairs.
+/// empty, returning the process-global state.
+///
+/// ## Isolation contract (read before adding engine-path tests)
+///
+/// This `GLOBAL` `OnceLock` is **process-wide**: the first
+/// `install_for_test` (or [`init`]) wins and every subsequent call is a
+/// no-op, so all tests in a binary share ONE `LoroState` and therefore
+/// ONE [`LoroEngineRegistry`](crate::loro::registry::LoroEngineRegistry).
+/// The engine-path conformance/undo tests deliberately reuse a single
+/// shared `TEST_SPACE_ID` (NOT distinct spaces) and isolate themselves by
+/// calling [`registry.clear()`](crate::loro::registry::LoroEngineRegistry::clear),
+/// which drops EVERY registered engine in the whole process so the next
+/// `for_space` lazy-creates a fresh tree.
+///
+/// Because the registry is shared and `clear()` is process-wide, two such
+/// tests running **concurrently in the same process** would collide: one
+/// test's `clear()` (or its lazy fresh-tree creation) can destroy the
+/// other's just-seeded tree mid-run. Isolation therefore holds ONLY when
+/// each test runs in its own process.
+///
+/// `cargo nextest` provides exactly that — one process per test — and it
+/// is what CI and the pre-push hook run. Plain `cargo test` is
+/// **UNSUPPORTED** for these modules (`command_integration_tests::conformance`,
+/// `command_integration_tests::undo_integration`): it runs every test of a
+/// binary in a single process across multiple threads, which exposes the
+/// shared-registry race and produces nondeterministic failures. Run engine-path
+/// tests with `cargo nextest run`, never `cargo test`.
+///
+/// See <https://github.com/jfolcini/agaric/issues/1079>.
 #[cfg(test)]
 pub fn install_for_test() -> &'static LoroState {
     let _ = GLOBAL.set(LoroState::new());

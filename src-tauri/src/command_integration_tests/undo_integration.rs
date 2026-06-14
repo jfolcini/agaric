@@ -1,3 +1,13 @@
+//! Isolation contract — run with `cargo nextest`, NEVER `cargo test` (#1079).
+//!
+//! These tests `install_for_test()` the PROCESS-GLOBAL Loro engine and isolate
+//! by `state.registry.clear()` (drops every engine in the process) under a
+//! single shared `TEST_SPACE_ID`. They are only safe one-process-per-test, which
+//! `cargo nextest` (CI + pre-push hook) provides; plain `cargo test` runs the
+//! binary multi-threaded in one process and will flake. See
+//! `loro::shared::install_for_test` and
+//! <https://github.com/jfolcini/agaric/issues/1079>.
+
 use super::common::*;
 
 // ======================================================================
