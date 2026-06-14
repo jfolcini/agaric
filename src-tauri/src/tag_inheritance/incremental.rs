@@ -43,11 +43,21 @@ pub(crate) async fn propagate_tag_to_descendants(
 /// After removing a tag from a block, clean up inherited entries.
 ///
 /// 1. Delete all rows where `inherited_from = block_id AND tag_id = tag_id`.
-/// 2. For each affected descendant, walk up ancestors to find the next block
-///    that directly has this tag. If found, re-insert with the new inherited_from.
+/// 2. Re-attribute descendants from a direct tagger that sits **inside** the
+///    deleted subtree. A child `C` of `block_id` that holds `tag_id` directly
+///    in `block_tags` must keep propagating the tag to its own descendants —
+///    those rows were wiped in step 1 (they carried `inherited_from = block_id`
+///    because of the `(block_id, tag_id)` PK / `INSERT OR IGNORE` ordering) and
+///    must be re-seeded with `inherited_from = C`. The nearest such tagger wins.
+/// 3. For each remaining affected descendant, walk up ancestors ABOVE
+///    `block_id` to find the next block that directly has this tag. If found,
+///    re-insert with that ancestor as the new `inherited_from`.
 ///
-/// This handles the case where grandparent and parent both have the same tag:
-/// removing it from the parent should re-attribute inheritance to the grandparent.
+/// Step 3 handles the case where grandparent and parent both have the same tag:
+/// removing it from the parent re-attributes inheritance to the grandparent.
+/// Step 2 handles the symmetric case where a tagger lives strictly INSIDE the
+/// removed subtree (#675): without it, that tagger's descendants would silently
+/// lose the tag.
 pub(crate) async fn remove_inherited_tag(
     conn: &mut SqliteConnection,
     block_id: &str,
@@ -60,7 +70,78 @@ pub(crate) async fn remove_inherited_tag(
         .execute(&mut *conn)
         .await?;
 
-    // Step 2: For descendants of block_id, check if any OTHER ancestor still
+    // Step 2 (#675): Re-seed inheritance from direct taggers INSIDE the subtree.
+    //
+    // For every active descendant D of block_id that no longer has an inherited
+    // row and is not itself a direct tagger, find the NEAREST ancestor C that
+    // (a) sits at or below the level of block_id's children (i.e. C is in the
+    // descendants set), and (b) holds the tag directly in block_tags. Re-insert
+    // (D, tag, C). The ancestor walk is seeded from D and ranked by depth so the
+    // closest in-subtree tagger wins; ancestors at or above block_id are
+    // excluded here (those are handled by step 3).
+    //
+    // `subtree_descendants` reuses the same children-and-below walk as the
+    // descendants set; `taggers` are the descendants that hold the tag directly.
+    // For each descendant we re-walk its own ancestor chain, intersect with the
+    // in-subtree taggers, and take the closest.
+    // dynamic-sql: #675 — static concat! CTE, all values bound (?1/?2), no interpolation.
+    sqlx::query(concat!(
+        "WITH RECURSIVE ",
+        // descendants(id, depth): children-and-below of block_id (?1).
+        "descendants(id, depth) AS ( \
+             SELECT b.id, 0 FROM blocks b \
+             WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+             JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.deleted_at IS NULL AND d.depth < 100 \
+         ), ",
+        // taggers: descendants that hold the tag directly (active rows only).
+        "taggers AS ( \
+             SELECT d.id FROM descendants d \
+             JOIN block_tags bt ON bt.block_id = d.id AND bt.tag_id = ?2 \
+         ), ",
+        // For each descendant, walk up its parent chain (bounded) collecting
+        // (descendant, ancestor, depth) so we can find the nearest in-subtree
+        // tagger ancestor. The walk stops climbing once it reaches block_id
+        // (block_id's own ancestors are step 3's responsibility) — but we keep
+        // walking the id up to and including the chain inside the subtree.
+        "anc(start_id, id, depth) AS ( \
+             SELECT d.id, b.parent_id, 1 FROM descendants d \
+             JOIN blocks b ON b.id = d.id \
+             WHERE b.parent_id IS NOT NULL \
+             UNION ALL \
+             SELECT a.start_id, b.parent_id, a.depth + 1 FROM anc a \
+             JOIN blocks b ON b.id = a.id \
+             WHERE b.parent_id IS NOT NULL AND a.id <> ?1 AND a.depth < 100 \
+         ), ",
+        // nearest in-subtree tagger ancestor per descendant.
+        "reseed AS ( \
+             SELECT a.start_id AS block_id, t.id AS inherited_from \
+             FROM anc a \
+             JOIN taggers t ON t.id = a.id \
+             WHERE a.depth = ( \
+                 SELECT MIN(a2.depth) FROM anc a2 \
+                 JOIN taggers t2 ON t2.id = a2.id \
+                 WHERE a2.start_id = a.start_id \
+             ) \
+         ) ",
+        "INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
+         SELECT r.block_id, ?2, r.inherited_from \
+         FROM reseed r \
+         WHERE r.block_id NOT IN ( \
+             SELECT block_id FROM block_tag_inherited WHERE tag_id = ?2 \
+         ) \
+         AND r.block_id NOT IN ( \
+             SELECT block_id FROM block_tags WHERE tag_id = ?2 \
+         )",
+    ))
+    .bind(block_id)
+    .bind(tag_id)
+    .execute(&mut *conn)
+    .await?;
+
+    // Step 3: For descendants of block_id, check if any OTHER ancestor still
     // has this tag. If so, re-insert with the closest such ancestor.
     // We find all descendants of block_id, then for each, walk UP ancestors
     // (starting from block_id's parent) to find the nearest ancestor with the tag.

@@ -49,5 +49,5 @@
 2 src-tauri/src/spaces/bootstrap.rs
 1 src-tauri/src/spaces/cross_space_validation.rs
 2 src-tauri/src/sync_files.rs
-12 src-tauri/src/tag_inheritance/incremental.rs
+13 src-tauri/src/tag_inheritance/incremental.rs
 4 src-tauri/src/tag_inheritance/rebuild.rs
