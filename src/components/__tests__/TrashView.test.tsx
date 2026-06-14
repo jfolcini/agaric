@@ -26,6 +26,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { emptyPage, makeBlock } from '../../__tests__/fixtures'
+import { mockReactVirtual } from '../../__tests__/mocks/react-virtual'
 import { keyFor, useResolveStore } from '../../stores/resolve'
 import { useSpaceStore } from '../../stores/space'
 import { TrashView } from '../TrashView'
@@ -33,6 +34,14 @@ import { TrashView } from '../TrashView'
 vi.mock('../RichContentRenderer', () => ({
   renderRichContent: vi.fn((markdown: string) => markdown),
 }))
+
+// #740 — TrashListView is now virtualized via `@tanstack/react-virtual`.
+// jsdom gives the scroll container zero height, so the real
+// `useVirtualizer` collapses the window to zero rows and every
+// content/row assertion below would see an empty list. Mock the
+// virtualizer to lay out all rows (mirrors DonePanel / PageBrowser
+// tests) so these existing assertions keep exercising the full list.
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 vi.mock('../../hooks/useRichContentCallbacks', () => ({
   useRichContentCallbacks: vi.fn(() => ({

@@ -34,6 +34,18 @@ interface TrashRowItemProps {
   onToggleSelection: (id: string) => void
   onRestore: (block: BlockRow) => void
   onRequestPurge: (id: string) => void
+  /**
+   * #740 — virtualization hooks. The list is windowed via
+   * `@tanstack/react-virtual`, so the row's own `role="row"` element must
+   * BE the positioned + measured node (a wrapper div between the
+   * `role="grid"` viewport and this row would break `aria-required-parent`).
+   * `rowRef` is the virtualizer's `measureElement`, `dataIndex` is the
+   * virtual index it reads, and `style` carries the absolute-position
+   * transform. All optional so non-virtualized callers stay unchanged.
+   */
+  rowRef?: (el: HTMLDivElement | null) => void
+  dataIndex?: number
+  style?: React.CSSProperties
 }
 
 export function TrashRowItem({
@@ -48,12 +60,18 @@ export function TrashRowItem({
   onToggleSelection,
   onRestore,
   onRequestPurge,
+  rowRef,
+  dataIndex,
+  style,
 }: TrashRowItemProps): React.ReactElement {
   const { t } = useTranslation()
   return (
     <div
       key={block.id}
       id={`trash-item-${block.id}`}
+      ref={rowRef}
+      data-index={dataIndex}
+      style={style}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- row in a CSS-grid aria grid (flex layout); a <tr> requires table ancestry and would break the flexbox layout
       role="row"
       aria-selected={isSelected}
