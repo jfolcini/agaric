@@ -15,6 +15,8 @@
     "lint:fix": "oxlint --fix",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
+    "format:toml": "taplo fmt",
+    "format:toml:check": "taplo fmt --check",
     "test": "vitest run",
     "backend-test": "cd src-tauri && cargo nextest run",
     "test:watch": "vitest",

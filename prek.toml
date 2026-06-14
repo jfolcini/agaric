@@ -367,7 +367,15 @@ pass_filenames = false
 files = "(\\.snap$|^src-tauri/src/.*\\.rs$)"
 stages = ["pre-commit"]
 
-# JS: better-npm-audit (security advisories)
+# JS: better-npm-audit (security advisories). Pre-push only (#817, #1087):
+# `better-npm-audit audit` shells out to `npm audit`, a network round-trip to
+# the registry advisory endpoint, so a dependency-bump commit would block on
+# the network and go red when flaky/offline — the same rationale that moved
+# knip and lychee off the commit path. As a pre-push-staged hook it runs once,
+# directly from the pre-push git shim (not via Phase A, which is
+# pre-commit-stage only), so CI must invoke it explicitly with
+# `--hook-stage pre-push npm-audit` (see .github/workflows/_validate.yml);
+# `npm audit signatures` there is a different, warn-only provenance check.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -377,7 +385,7 @@ entry = "npx better-npm-audit audit"
 language = "system"
 pass_filenames = false
 files = "(^package\\.json$|^package-lock\\.json$)"
-stages = ["pre-commit"]
+stages = ["pre-push"]
 
 # JS: license-checker (license compliance, PEND-41 R23). The repo is
 # GPL-3.0-or-later, so every accepted license below must be one-way-
