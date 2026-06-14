@@ -17,21 +17,107 @@
  * against that drift.
  */
 
+import { accentVar } from './space-accent'
+
 const STORAGE_KEY = 'tag-colors'
 
-/** Preset color palette — 8 colors that work in both light and dark mode. */
+/**
+ * Preset color palette — re-keyed (#1099) onto the themed per-space
+ * `--accent-*` token palette (`index.css`) instead of a parallel set of
+ * flat sRGB hex values.
+ *
+ * Each preset's `value` is now an *accent token* (e.g. `'accent-rose'`),
+ * resolved at render time through `accentVar()` → `var(--accent-rose, …)`.
+ * Because the underlying tokens are defined in OKLCH with distinct light,
+ * dark and `prefers-contrast: more` values, tag pills now auto-retheme and
+ * participate in high-contrast mode — exactly like the SpaceAccentBadge /
+ * status-bar chip that already consume these tokens.
+ *
+ * Foreground strategy (issue #1099 caveat): there are NO
+ * `--accent-*-foreground` paired tokens, and `pickReadableForeground`
+ * cannot read a computed `var()` hue from JS at runtime. We therefore pin a
+ * fixed, legible foreground per accent (`fg`), chosen against the token's
+ * OKLCH lightness across themes. Free-form custom hex values still flow
+ * through `pickReadableForeground` (see `tagColorForeground`).
+ *
+ * `value` is the persisted token; this is what lands in localStorage for new
+ * selections. Legacy hex values are migrated to their nearest token by
+ * `migrateTagColors` (see `LEGACY_HEX_TO_TOKEN`).
+ */
 export const TAG_COLOR_PRESETS = [
-  { name: 'red', value: '#ef4444' },
-  { name: 'orange', value: '#f97316' },
-  { name: 'amber', value: '#f59e0b' },
-  { name: 'green', value: '#22c55e' },
-  { name: 'teal', value: '#14b8a6' },
-  { name: 'blue', value: '#3b82f6' },
-  { name: 'purple', value: '#a855f7' },
-  { name: 'pink', value: '#ec4899' },
+  { name: 'emerald', value: 'accent-emerald', fg: '#000' },
+  { name: 'blue', value: 'accent-blue', fg: '#fff' },
+  { name: 'violet', value: 'accent-violet', fg: '#fff' },
+  { name: 'amber', value: 'accent-amber', fg: '#000' },
+  { name: 'rose', value: 'accent-rose', fg: '#fff' },
+  { name: 'slate', value: 'accent-slate', fg: '#fff' },
+  { name: 'orange', value: 'accent-orange', fg: '#000' },
 ] as const
 
-/** Read all tag colors from localStorage. */
+/** Set of recognised accent tokens, for `isAccentToken` guards. */
+const ACCENT_TOKENS: ReadonlySet<string> = new Set(TAG_COLOR_PRESETS.map((p) => p.value))
+
+/** Fixed legible foreground per accent token (see `TAG_COLOR_PRESETS`). */
+const ACCENT_FOREGROUND: Record<string, '#000' | '#fff'> = Object.fromEntries(
+  TAG_COLOR_PRESETS.map((p) => [p.value, p.fg]),
+)
+
+/**
+ * One-time migration map (#1099): the 8 legacy flat-sRGB presets that used
+ * to be persisted, mapped to their nearest themed accent token by hue.
+ * Applied lazily on read by `migrateTagColors` so existing tags re-theme
+ * without a destructive recolor — the hue is preserved, only the fidelity
+ * (flat sRGB → OKLCH, theme-aware) changes.
+ */
+export const LEGACY_HEX_TO_TOKEN: Readonly<Record<string, string>> = {
+  '#ef4444': 'accent-rose', // red   → rose (hue ~12)
+  '#f97316': 'accent-orange', // orange
+  '#f59e0b': 'accent-amber', // amber
+  '#22c55e': 'accent-emerald', // green → emerald
+  '#14b8a6': 'accent-emerald', // teal  → emerald (no dedicated teal token)
+  '#3b82f6': 'accent-blue', // blue
+  '#a855f7': 'accent-violet', // purple → violet
+  '#ec4899': 'accent-rose', // pink  → rose (no dedicated pink token)
+}
+
+/** True when `value` is one of the recognised `accent-*` palette tokens. */
+export function isAccentToken(value: string): boolean {
+  return ACCENT_TOKENS.has(value)
+}
+
+/**
+ * One-time migration (#1099): rewrite any legacy flat-sRGB preset values to
+ * their nearest themed accent token. Pure — takes the raw stored map and
+ * returns `{ colors, changed }` where `changed` flags whether at least one
+ * value was rewritten (so callers can decide whether to persist back).
+ *
+ * Only the 8 known legacy preset hexes are migrated; free-form custom hex
+ * values (the power-user escape hatch) and already-token values are left
+ * untouched, so a user's deliberate custom color is never recolored.
+ */
+export function migrateTagColors(colors: Record<string, string>): {
+  colors: Record<string, string>
+  changed: boolean
+} {
+  let changed = false
+  const next: Record<string, string> = {}
+  for (const [k, v] of Object.entries(colors)) {
+    const mapped = LEGACY_HEX_TO_TOKEN[v.toLowerCase()]
+    if (mapped !== undefined) {
+      next[k] = mapped
+      changed = true
+    } else {
+      next[k] = v
+    }
+  }
+  return { colors: next, changed }
+}
+
+/**
+ * Read all tag colors from localStorage, applying the #1099 legacy-hex →
+ * accent-token migration. If the migration rewrote anything, the migrated
+ * shape is persisted back once so subsequent reads are stable.
+ */
 export function getTagColors(): Record<string, string> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -42,7 +128,16 @@ export function getTagColors(): Record<string, string> {
     for (const [k, v] of Object.entries(parsed)) {
       if (typeof v === 'string') result[k] = v
     }
-    return result
+    const { colors, changed } = migrateTagColors(result)
+    if (changed) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(colors))
+      } catch {
+        // Storage unavailable — return the migrated map in-memory anyway so
+        // rendering re-themes this session; persistence retries next read.
+      }
+    }
+    return colors
   } catch {
     return {}
   }
@@ -75,6 +170,30 @@ export function clearTagColor(tagId: string): void {
   } catch {
     // Storage unavailable — degrade to no-persist (see setTagColor).
   }
+}
+
+/**
+ * Resolve a stored tag color value to a CSS `background-color` string for an
+ * inline style (#1099).
+ *
+ * - An accent token (e.g. `'accent-rose'`) → `var(--accent-rose, …)` via
+ *   `accentVar`, so the pill auto-rethemes (light/dark/high-contrast).
+ * - A free-form custom hex (power-user escape hatch) → the hex verbatim.
+ */
+export function resolveTagBackground(value: string): string {
+  return isAccentToken(value) ? accentVar(value) : value
+}
+
+/**
+ * Resolve the legible foreground color for a stored tag color value (#1099).
+ *
+ * - Accent token → its fixed paired foreground (`ACCENT_FOREGROUND`),
+ *   chosen at design time against the token's OKLCH lightness. JS cannot
+ *   read a computed `var()` hue at runtime, so this avoids guessing.
+ * - Custom hex → `pickReadableForeground` (WCAG luminance), unchanged.
+ */
+export function tagColorForeground(value: string): '#000' | '#fff' {
+  return ACCENT_FOREGROUND[value] ?? pickReadableForeground(value)
 }
 
 /**

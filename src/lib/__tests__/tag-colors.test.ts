@@ -21,8 +21,14 @@ import {
   clearTagColor,
   getTagColor,
   getTagColors,
+  isAccentToken,
+  LEGACY_HEX_TO_TOKEN,
+  migrateTagColors,
   pickReadableForeground,
+  resolveTagBackground,
   setTagColor,
+  TAG_COLOR_PRESETS,
+  tagColorForeground,
 } from '../tag-colors'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -39,8 +45,10 @@ describe('tag-colors', () => {
     })
 
     it('returns persisted map of tag IDs to colors', () => {
-      localStorage.setItem('tag-colors', JSON.stringify({ TAG1: '#ef4444', TAG2: '#22c55e' }))
-      expect(getTagColors()).toEqual({ TAG1: '#ef4444', TAG2: '#22c55e' })
+      // Use accent tokens + a custom hex (non-legacy) so the #1099 migration
+      // is a no-op and we're testing pure round-trip mechanics.
+      localStorage.setItem('tag-colors', JSON.stringify({ TAG1: 'accent-rose', TAG2: '#123456' }))
+      expect(getTagColors()).toEqual({ TAG1: 'accent-rose', TAG2: '#123456' })
     })
 
     it('returns empty object for invalid JSON', () => {
@@ -61,9 +69,9 @@ describe('tag-colors', () => {
     it('filters out non-string color values', () => {
       localStorage.setItem(
         'tag-colors',
-        JSON.stringify({ TAG1: '#ef4444', TAG2: 42, TAG3: null, TAG4: '#22c55e' }),
+        JSON.stringify({ TAG1: 'accent-rose', TAG2: 42, TAG3: null, TAG4: '#123456' }),
       )
-      expect(getTagColors()).toEqual({ TAG1: '#ef4444', TAG4: '#22c55e' })
+      expect(getTagColors()).toEqual({ TAG1: 'accent-rose', TAG4: '#123456' })
     })
   })
 
@@ -73,37 +81,37 @@ describe('tag-colors', () => {
     })
 
     it('returns the color for a stored tag', () => {
-      localStorage.setItem('tag-colors', JSON.stringify({ TAG1: '#ef4444' }))
-      expect(getTagColor('TAG1')).toBe('#ef4444')
+      localStorage.setItem('tag-colors', JSON.stringify({ TAG1: 'accent-rose' }))
+      expect(getTagColor('TAG1')).toBe('accent-rose')
     })
   })
 
   describe('setTagColor', () => {
     it('writes the color to localStorage under the `tag-colors` key', () => {
-      setTagColor('TAG1', '#ef4444')
+      setTagColor('TAG1', 'accent-rose')
       const raw = localStorage.getItem('tag-colors')
-      expect(raw).toBe(JSON.stringify({ TAG1: '#ef4444' }))
+      expect(raw).toBe(JSON.stringify({ TAG1: 'accent-rose' }))
     })
 
     it('preserves existing entries when adding a new color', () => {
-      setTagColor('TAG1', '#ef4444')
-      setTagColor('TAG2', '#22c55e')
-      expect(getTagColors()).toEqual({ TAG1: '#ef4444', TAG2: '#22c55e' })
+      setTagColor('TAG1', 'accent-rose')
+      setTagColor('TAG2', 'accent-emerald')
+      expect(getTagColors()).toEqual({ TAG1: 'accent-rose', TAG2: 'accent-emerald' })
     })
 
     it('overwrites the color for an existing tag', () => {
-      setTagColor('TAG1', '#ef4444')
-      setTagColor('TAG1', '#22c55e')
-      expect(getTagColor('TAG1')).toBe('#22c55e')
+      setTagColor('TAG1', 'accent-rose')
+      setTagColor('TAG1', 'accent-emerald')
+      expect(getTagColor('TAG1')).toBe('accent-emerald')
     })
   })
 
   describe('clearTagColor', () => {
     it('removes the color for the given tag', () => {
-      setTagColor('TAG1', '#ef4444')
-      setTagColor('TAG2', '#22c55e')
+      setTagColor('TAG1', 'accent-rose')
+      setTagColor('TAG2', 'accent-emerald')
       clearTagColor('TAG1')
-      expect(getTagColors()).toEqual({ TAG2: '#22c55e' })
+      expect(getTagColors()).toEqual({ TAG2: 'accent-emerald' })
     })
 
     it('is a no-op when the tag has no color', () => {
@@ -213,6 +221,106 @@ describe('tag-colors', () => {
       expect(pickReadableForeground('ef4444')).toBe('#000')
       // Non-hex characters inside an otherwise well-shaped string
       expect(pickReadableForeground('#zzzzzz')).toBe('#000')
+    })
+  })
+
+  // #1099 — presets re-keyed onto the themed --accent-* token palette
+  describe('TAG_COLOR_PRESETS (accent-token palette, #1099)', () => {
+    it('every preset value is an accent-* token, never a raw sRGB hex', () => {
+      for (const preset of TAG_COLOR_PRESETS) {
+        expect(preset.value).toMatch(/^accent-[a-z]+$/)
+        expect(preset.value).not.toMatch(/^#/)
+        expect(isAccentToken(preset.value)).toBe(true)
+      }
+    })
+
+    it('covers the seven themed accent tokens defined in index.css', () => {
+      const tokens = TAG_COLOR_PRESETS.map((p) => p.value)
+      expect(new Set(tokens)).toEqual(
+        new Set([
+          'accent-emerald',
+          'accent-blue',
+          'accent-violet',
+          'accent-amber',
+          'accent-rose',
+          'accent-slate',
+          'accent-orange',
+        ]),
+      )
+    })
+
+    it('pins a legible black/white foreground per preset', () => {
+      for (const preset of TAG_COLOR_PRESETS) {
+        expect(preset.fg === '#000' || preset.fg === '#fff').toBe(true)
+        expect(tagColorForeground(preset.value)).toBe(preset.fg)
+      }
+    })
+  })
+
+  describe('resolveTagBackground (#1099)', () => {
+    it('resolves an accent token to a themed var(--accent-*) reference', () => {
+      expect(resolveTagBackground('accent-rose')).toBe('var(--accent-rose, var(--accent-current))')
+      expect(resolveTagBackground('accent-blue')).toBe('var(--accent-blue, var(--accent-current))')
+    })
+
+    it('passes a free-form custom hex through verbatim (escape hatch)', () => {
+      expect(resolveTagBackground('#123456')).toBe('#123456')
+      expect(resolveTagBackground('#abc')).toBe('#abc')
+    })
+
+    it('never wraps a custom hex in a css var()', () => {
+      expect(resolveTagBackground('#ef4444')).not.toContain('var(')
+    })
+  })
+
+  describe('tagColorForeground (#1099)', () => {
+    it('returns the fixed paired foreground for accent tokens (no var() introspection)', () => {
+      expect(tagColorForeground('accent-amber')).toBe('#000')
+      expect(tagColorForeground('accent-blue')).toBe('#fff')
+    })
+
+    it('falls back to WCAG pickReadableForeground for custom hex', () => {
+      expect(tagColorForeground('#1e3a8a')).toBe('#fff') // dark navy
+      expect(tagColorForeground('#fde68a')).toBe('#000') // light amber
+    })
+  })
+
+  describe('migrateTagColors (legacy hex → accent token, #1099)', () => {
+    it('maps every legacy preset hex to a recognised accent token', () => {
+      for (const [hex, token] of Object.entries(LEGACY_HEX_TO_TOKEN)) {
+        const { colors, changed } = migrateTagColors({ T: hex })
+        expect(colors['T']).toBe(token)
+        expect(isAccentToken(token)).toBe(true)
+        expect(changed).toBe(true)
+      }
+    })
+
+    it('is case-insensitive on the legacy hex', () => {
+      expect(migrateTagColors({ T: '#EF4444' }).colors['T']).toBe('accent-rose')
+    })
+
+    it('leaves accent tokens and custom hex untouched (no silent recolor)', () => {
+      const { colors, changed } = migrateTagColors({
+        A: 'accent-violet',
+        B: '#123456', // deliberate custom color — must survive
+      })
+      expect(colors).toEqual({ A: 'accent-violet', B: '#123456' })
+      expect(changed).toBe(false)
+    })
+
+    it('getTagColors migrates legacy values on read and persists the new shape once', () => {
+      localStorage.setItem('tag-colors', JSON.stringify({ T1: '#ef4444', T2: '#3b82f6' }))
+      expect(getTagColors()).toEqual({ T1: 'accent-rose', T2: 'accent-blue' })
+      // Persisted back so the next read is already token-shaped.
+      expect(JSON.parse(localStorage.getItem('tag-colors') ?? '{}')).toEqual({
+        T1: 'accent-rose',
+        T2: 'accent-blue',
+      })
+    })
+
+    it('preserves a custom hex through getTagColors (escape hatch survives migration)', () => {
+      localStorage.setItem('tag-colors', JSON.stringify({ T1: '#0a0a0a' }))
+      expect(getTagColors()).toEqual({ T1: '#0a0a0a' })
     })
   })
 })

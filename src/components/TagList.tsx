@@ -26,9 +26,10 @@ import { notify } from '@/lib/notify'
 import {
   clearTagColor,
   getTagColors,
-  pickReadableForeground,
+  resolveTagBackground,
   setTagColor as setTagColorLocal,
   TAG_COLOR_PRESETS,
+  tagColorForeground,
 } from '@/lib/tag-colors'
 import { cn } from '@/lib/utils'
 
@@ -258,7 +259,10 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                       className={cn('truncate max-w-[150px]', color && 'border-transparent')}
                       style={
                         color
-                          ? { backgroundColor: color, color: pickReadableForeground(color) }
+                          ? {
+                              backgroundColor: resolveTagBackground(color),
+                              color: tagColorForeground(color),
+                            }
                           : undefined
                       }
                       title={tag.name || 'Unnamed'}
@@ -286,7 +290,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                         {color ? (
                           <span
                             className="inline-block h-3.5 w-3.5 rounded-full border border-white/30"
-                            style={{ backgroundColor: color }}
+                            style={{ backgroundColor: resolveTagBackground(color) }}
                           />
                         ) : (
                           <Paintbrush className="h-3.5 w-3.5" />
@@ -308,13 +312,29 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                                 ? 'border-foreground scale-110'
                                 : 'border-transparent',
                             )}
-                            style={{ backgroundColor: preset.value }}
+                            style={{ backgroundColor: resolveTagBackground(preset.value) }}
                             aria-label={preset.name}
                             aria-pressed={color === preset.value}
                             onClick={() => handleSetColor(tag.tag_id, preset.value)}
                           />
                         ))}
                       </fieldset>
+                      {/* #1099 — free-form custom-hex escape hatch for power
+                          users. Presets re-theme via accent tokens; a custom
+                          hex bypasses the palette and renders verbatim with a
+                          WCAG-picked foreground (pickReadableForeground). */}
+                      <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                        <input
+                          type="color"
+                          className="h-6 w-6 cursor-pointer rounded border-0 bg-transparent p-0"
+                          // A custom hex never matches an accent token, so a
+                          // token-coloured tag falls back to the swatch default.
+                          value={color && color.startsWith('#') ? color : '#000000'}
+                          aria-label={t('tagList.customColorLabel')}
+                          onChange={(e) => handleSetColor(tag.tag_id, e.target.value)}
+                        />
+                        {t('tagList.customColorLabel')}
+                      </label>
                       {color && (
                         <button
                           type="button"
