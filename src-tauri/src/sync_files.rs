@@ -1106,8 +1106,23 @@ pub async fn request_and_receive_files(
                         attachment_id,
                         "received file offer for unknown attachment, skipping binary data"
                     );
-                    // Still need to consume the binary data
+                    // Still need to consume the binary data so the stream
+                    // stays aligned with the sender's frame pointer.
                     consume_binary_data(conn, size_bytes).await?;
+                    // #638: ALWAYS ACK after draining the bytes. Without this
+                    // the sender blocks on its `recv_json` for this offer's
+                    // `FileReceived` until the 180s `RECV_TIMEOUT`, which then
+                    // errors the whole file phase and loses the round's
+                    // remaining files. The protocol has no skip/declined
+                    // variant, so we send `FileReceived` for the offered
+                    // `attachment_id`; the sender's ACK arm treats a matching
+                    // id as "delivered" and moves on to the next file. We
+                    // skipped writing the file locally on purpose (we don't
+                    // have a row for it), but the *next* sync cycle re-derives
+                    // missing attachments from the DB, so nothing is lost by
+                    // ACKing a file we deliberately discarded.
+                    conn.send_json(&SyncMessage::FileReceived { attachment_id })
+                        .await?;
                     continue;
                 };
 
@@ -1145,9 +1160,23 @@ pub async fn request_and_receive_files(
                         tracing::error!(
                             attachment_id,
                             error = %e,
-                            "failed to open temp attachment writer, rejecting without ACK"
+                            "failed to open temp attachment writer, skipping this file"
                         );
-                        return Err(e);
+                        // #638: same no-ACK stall as the unknown-attachment
+                        // path. We failed to open the temp writer (e.g. a
+                        // create_dir_all/permission error), but the sender has
+                        // already shipped (or is about to ship) the bytes and
+                        // is waiting on `FileReceived`. Drain the offered bytes
+                        // to keep the stream aligned, then ACK so the sender
+                        // unblocks and the round's remaining files still
+                        // transfer instead of erroring on the 180s
+                        // `RECV_TIMEOUT`. We did NOT write the file, so the
+                        // next sync cycle re-requests it (it's still missing
+                        // on disk) — no data is lost by ACKing here.
+                        consume_binary_data(conn, size_bytes).await?;
+                        conn.send_json(&SyncMessage::FileReceived { attachment_id })
+                            .await?;
+                        continue;
                     }
                 };
                 // PEND-06 Tier 2 — per-frame progress on the receive
