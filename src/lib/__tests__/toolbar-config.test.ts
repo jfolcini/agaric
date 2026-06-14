@@ -132,6 +132,61 @@ describe('createMarkToggles', () => {
     expect(mockChain).toHaveBeenCalled()
     expect(mockFocus).toHaveBeenCalled()
   })
+
+  // #1170 — close the weak-coverage gap: each non-Bold mark toggle's
+  // `action()` was only asserted for config shape, never invoked. Drive each
+  // button's action individually and assert it calls the correct
+  // `editor.chain().focus().toggleX().run()` command (not just `chain`/`focus`).
+  // Uses a dedicated editor mock with STABLE per-command spies (the shared
+  // `mockFocus` above recreates its toggle fns each call, so they can't be
+  // asserted by reference).
+  describe('each mark toggle invokes its specific editor chain command', () => {
+    function makeMarkEditor() {
+      const run = vi.fn()
+      const toggles = {
+        toggleBold: vi.fn(() => ({ run })),
+        toggleItalic: vi.fn(() => ({ run })),
+        toggleCode: vi.fn(() => ({ run })),
+        toggleStrike: vi.fn(() => ({ run })),
+        toggleHighlight: vi.fn(() => ({ run })),
+        toggleUnderline: vi.fn(() => ({ run })),
+      }
+      const focus = vi.fn(() => toggles)
+      const chain = vi.fn(() => ({ focus }))
+      const editor = { chain } as never
+      return { editor, chain, focus, run, toggles }
+    }
+
+    const cases = [
+      { label: 'toolbar.bold', command: 'toggleBold' },
+      { label: 'toolbar.italic', command: 'toggleItalic' },
+      { label: 'toolbar.code', command: 'toggleCode' },
+      { label: 'toolbar.strikethrough', command: 'toggleStrike' },
+      { label: 'toolbar.highlight', command: 'toggleHighlight' },
+      { label: 'toolbar.underline', command: 'toggleUnderline' },
+    ] as const
+
+    for (const { label, command } of cases) {
+      it(`${label} action calls editor.chain().focus().${command}().run()`, () => {
+        const { editor, chain, focus, run, toggles } = makeMarkEditor()
+        const buttons = createMarkToggles(editor)
+        const btn = buttons.find((b) => b.label === label)
+        expect(btn).toBeDefined()
+
+        btn?.action()
+
+        expect(chain).toHaveBeenCalledTimes(1)
+        expect(focus).toHaveBeenCalledTimes(1)
+        expect(toggles[command]).toHaveBeenCalledTimes(1)
+        expect(run).toHaveBeenCalledTimes(1)
+
+        // The action must NOT invoke any sibling mark command.
+        for (const other of Object.keys(toggles) as (keyof typeof toggles)[]) {
+          if (other !== command) expect(toggles[other]).not.toHaveBeenCalled()
+        }
+      })
+    }
+  })
 })
 
 // ── createRefsAndBlocks ─────────────────────────────────────────────────

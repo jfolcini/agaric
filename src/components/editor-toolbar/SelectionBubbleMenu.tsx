@@ -166,6 +166,7 @@ export function SelectionBubbleMenu({
       italic: ctx.editor.isActive('italic'),
       code: ctx.editor.isActive('code'),
       strike: ctx.editor.isActive('strike'),
+      underline: ctx.editor.isActive('underline'),
       highlight: ctx.editor.isActive('highlight'),
       link: ctx.editor.isActive('link'),
     }),
