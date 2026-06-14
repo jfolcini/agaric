@@ -62,8 +62,6 @@ function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
     case 'idle':
       return 'bg-sync-idle'
     case 'syncing':
-    case 'discovering':
-    case 'pairing':
       return 'bg-sync-active'
     case 'error':
       return 'bg-destructive'

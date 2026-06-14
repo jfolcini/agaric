@@ -513,6 +513,25 @@ describe('StatusPanel', () => {
       expect(screen.getByText('Idle')).toBeInTheDocument()
     })
 
+    // #1076: the full Sync panel (state dot, error, peer count, ops
+    // metrics) was permanently unreachable dead UI because store `peers`
+    // was always `[]`. With the store now wired to the backend, peers
+    // existing must swap the "Not configured" placeholder for the panel.
+    it('renders the full Sync panel (not "Not configured") when peers exist (#1076)', async () => {
+      mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+      mockSyncStoreState.state = 'idle'
+      mockedInvoke.mockResolvedValue(mockStatus)
+      const { container } = render(<StatusPanel />)
+      await screen.findByText('Materializer Status')
+
+      expect(screen.queryByTestId('sync-panel-not-configured')).not.toBeInTheDocument()
+      expect(container.querySelector('.sync-panel-details')).toBeInTheDocument()
+      expect(container.querySelector('.sync-state-dot')).toBeInTheDocument()
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+
     it('shows sync error message when error is set', async () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }]
       mockSyncStoreState.state = 'error'
@@ -555,34 +574,12 @@ describe('StatusPanel', () => {
 
     // UX-266 — sub-fix 2: each sync state renders a distinct lucide
     // icon next to the dot so colour-blind users (and anyone glancing
-    // at the panel) can tell `discovering` and `pairing` apart even
-    // though both still share the amber dot. The icon is decorative —
-    // the text label carries the canonical state.
+    // at the panel) can tell the states apart beyond colour. The icon
+    // is decorative — the text label carries the canonical state.
+    //
+    // #1076: the `discovering` / `pairing` icon cases were removed with
+    // those (dead, never-written) SyncState members.
     describe('per-state icon (UX-266)', () => {
-      it('renders a Search-style icon for the discovering state', async () => {
-        mockSyncStoreState.peers = [{ peer_id: 'P1' }]
-        mockSyncStoreState.state = 'discovering'
-        mockedInvoke.mockResolvedValue(mockStatus)
-        render(<StatusPanel />)
-        await screen.findByText('Discovering...')
-        const icon = screen.getByTestId('sync-state-icon-discovering')
-        expect(icon).toBeInTheDocument()
-        expect(icon).toHaveAttribute('aria-hidden', 'true')
-      })
-
-      it('renders a Link-style icon for the pairing state', async () => {
-        mockSyncStoreState.peers = [{ peer_id: 'P1' }]
-        mockSyncStoreState.state = 'pairing'
-        mockedInvoke.mockResolvedValue(mockStatus)
-        render(<StatusPanel />)
-        await screen.findByText('Pairing...')
-        const icon = screen.getByTestId('sync-state-icon-pairing')
-        expect(icon).toBeInTheDocument()
-        expect(icon).toHaveAttribute('aria-hidden', 'true')
-        // Sanity: the discovering icon must not also be present.
-        expect(screen.queryByTestId('sync-state-icon-discovering')).not.toBeInTheDocument()
-      })
-
       it('renders a CheckCircle-style icon for the idle state', async () => {
         mockSyncStoreState.peers = [{ peer_id: 'P1' }]
         mockSyncStoreState.state = 'idle'

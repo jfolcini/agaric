@@ -4,9 +4,30 @@ import { notify } from '@/lib/notify'
 
 import { announce } from '../lib/announcer'
 import { i18n } from '../lib/i18n'
+import type { PeerRefRow } from '../lib/tauri'
 import { listPeerRefs, startSync } from '../lib/tauri'
+import type { PeerInfo } from '../stores/sync'
 import { useSyncStore } from '../stores/sync'
 import { mapBackendState } from './useSyncEvents'
+
+/**
+ * Maps a backend `PeerRefRow` to the store-facing `PeerInfo` shape (#1076).
+ *
+ * Single source of truth for the row → store mapping so `useSyncStore.peers`
+ * — consumed by `StatusPanel` (Sync panel) and `AppSidebar` (status dot) —
+ * reflects the SAME paired devices the working `PairingDialog` /
+ * `DeviceManagement` components read via `listPeerRefs()`.
+ *
+ * `synced_at` is backend epoch-ms (or null); `PeerInfo.lastSyncedAt` is the
+ * ISO-string form the store documents and its tests assert.
+ */
+export function mapPeerRefToInfo(row: PeerRefRow): PeerInfo {
+  return {
+    peerId: row.peer_id,
+    lastSyncedAt: row.synced_at != null ? new Date(row.synced_at).toISOString() : null,
+    resetCount: row.reset_count,
+  }
+}
 
 // Frontend periodic-sync cadence and exponential-backoff caps.
 //
@@ -169,6 +190,11 @@ export function useSyncTrigger() {
 
     try {
       const peers = await listPeerRefs()
+      // #1076: reflect the authoritative backend peer list into the store
+      // so `StatusPanel`'s Sync panel and `AppSidebar`'s status dot (both
+      // gated on `useSyncStore.peers`) become correct. Runs for the empty
+      // case too, clearing any stale peers when the last device unpairs.
+      useSyncStore.getState().setPeers(peers.map(mapPeerRefToInfo))
       if (peers.length === 0) {
         setState('idle')
         return

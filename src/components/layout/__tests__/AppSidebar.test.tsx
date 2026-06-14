@@ -171,6 +171,33 @@ describe('AppSidebar', () => {
     expect(noPeersClass).not.toBe(offlineClass)
   })
 
+  // #1076 — the sidebar status dot is computed via
+  // `syncDotClass(syncState, syncPeers.length > 0)`. Before the store
+  // was wired to the backend, `syncPeers` was permanently `[]`, so the
+  // dot was stuck on the no-peers token even when devices were paired.
+  // Pin that paired (peers present) vs. unpaired now diverge.
+  it('reflects hasPeers in the sync dot when paired vs unpaired (#1076)', () => {
+    const peer: PeerInfo = { peerId: 'PEER1', lastSyncedAt: null, resetCount: 0 }
+
+    // Paired + idle → the "idle, has peers" token (NOT the no-peers one).
+    seedSyncStore({ state: 'idle', peers: [peer] })
+    const { rerender, props } = renderSidebar()
+    const pairedClass = screen.getByTestId('sync-button-status-dot').className
+    expect(pairedClass).toContain('bg-sync-idle')
+    expect(pairedClass).not.toContain('bg-status-pending')
+
+    // No peers + idle → the no-peers token.
+    seedSyncStore({ state: 'idle', peers: [] })
+    rerender(
+      <SidebarProvider>
+        <AppSidebar {...props} />
+      </SidebarProvider>,
+    )
+    const unpairedClass = screen.getByTestId('sync-button-status-dot').className
+    expect(unpairedClass).toContain('bg-status-pending')
+    expect(unpairedClass).not.toContain('bg-sync-idle')
+  })
+
   // UX-379 — the visible "last synced" timestamp is hidden in
   // icon-collapsed mode (`group-data-[collapsible=icon]:hidden`).
   // Pin that the same text is folded into the sync button tooltip

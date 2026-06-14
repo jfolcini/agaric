@@ -53,7 +53,8 @@ describe('useSyncStore', () => {
     })
 
     it('accepts all valid sync states', () => {
-      const states = ['idle', 'discovering', 'pairing', 'syncing', 'error'] as const
+      // #1076: `discovering` / `pairing` removed — they had no writer.
+      const states = ['idle', 'syncing', 'error', 'offline'] as const
       for (const s of states) {
         useSyncStore.getState().setState(s)
         expect(useSyncStore.getState().state).toBe(s)
