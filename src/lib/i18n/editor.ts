@@ -84,6 +84,11 @@ export const editor: Record<string, string> = {
     'No results — block references can only point at existing blocks',
   'suggestion.noResults.emoji': 'No emoji match',
   'suggestion.hint.minChars': 'Type at least 2 characters to search',
+  // #1102 — live result-count announcement for the editable-combobox status
+  // region. Announced on EVERY update (not just the empty branch) so screen
+  // readers hear how many suggestions are available as the query changes.
+  'suggestion.results.count_one': '{{count}} result available',
+  'suggestion.results.count_other': '{{count}} results available',
   'suggestion.create': 'Create',
   'suggestion.footer.navigate': '↑↓ navigate',
   // D6 (#217): Tab also confirms the highlighted item (suggestion-renderer

@@ -15,7 +15,51 @@ import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion
 import { applySafePosition } from '../lib/floating-position'
 import { getShortcutKeys } from '../lib/keyboard-config'
 import { logger } from '../lib/logger'
-import { SuggestionList, type SuggestionListRef } from './SuggestionList'
+import { SUGGESTION_LISTBOX_ID, SuggestionList, type SuggestionListRef } from './SuggestionList'
+
+/**
+ * #1102 — WCAG editable-combobox wiring.
+ *
+ * The picker listbox is portaled to `document.body` and never holds focus;
+ * focus stays in the ProseMirror contenteditable. So the combobox semantics
+ * (role + expanded + controls + activedescendant) must live on the focused
+ * contenteditable (`editor.view.dom`), not on the listbox.
+ *
+ * We mutate `editor.view.dom` attributes DIRECTLY rather than going through
+ * `editorProps.attributes` (which would churn the whole view on every keystroke)
+ * and WITHOUT any `instanceof` on ProseMirror types (module-copy footgun — a
+ * second @tiptap/pm/state copy makes `instanceof` silently false; see project
+ * memory). The base `role="textbox"` is restored on exit.
+ */
+function openCombobox(dom: HTMLElement, listboxId: string): void {
+  dom.setAttribute('role', 'combobox')
+  dom.setAttribute('aria-expanded', 'true')
+  dom.setAttribute('aria-controls', listboxId)
+  dom.setAttribute('aria-autocomplete', 'list')
+}
+
+/**
+ * #1102 — keep `aria-activedescendant` on the focused contenteditable in sync
+ * with the highlighted option as arrow navigation moves it. Removing the
+ * attribute when there is no active option avoids pointing at a stale id.
+ */
+function setActiveDescendant(dom: HTMLElement, id: string | null): void {
+  if (id) dom.setAttribute('aria-activedescendant', id)
+  else dom.removeAttribute('aria-activedescendant')
+}
+
+/**
+ * #1102 — tear down the combobox semantics and restore the contenteditable's
+ * resting `role="textbox"` (the value set in `use-roving-editor.ts`
+ * `EDITOR_PROPS`). Called on every exit path (onExit, Escape, outside click).
+ */
+function closeCombobox(dom: HTMLElement): void {
+  dom.setAttribute('role', 'textbox')
+  dom.removeAttribute('aria-expanded')
+  dom.removeAttribute('aria-controls')
+  dom.removeAttribute('aria-autocomplete')
+  dom.removeAttribute('aria-activedescendant')
+}
 
 /**
  * Mobile / touch viewports get a larger flip+shift padding (16px) plus a
@@ -130,6 +174,16 @@ export function createSuggestionRenderer(
   // rAF callback never runs against a destroyed popup.
   let pendingPositionFrame: number | null = null
 
+  /**
+   * #1102 — restore the contenteditable's resting `role="textbox"` and drop the
+   * combobox attrs. Guards against a destroyed/absent view so it is safe to call
+   * from any teardown path. Idempotent.
+   */
+  function teardownCombobox() {
+    const dom = editorRef?.view?.dom
+    if (dom instanceof HTMLElement) closeCombobox(dom)
+  }
+
   function cleanupListener() {
     if (deferredRegistrationId !== null) {
       cancelAnimationFrame(deferredRegistrationId)
@@ -159,8 +213,27 @@ export function createSuggestionRenderer(
         popup = null
       }
 
+      // #1102 — promote the focused contenteditable to a combobox and point its
+      // `aria-controls` at the (stable-id) listbox the React renderer mounts.
+      // `onActiveDescendantChange` mirrors the highlighted option id back onto
+      // the contenteditable so the active row is announced as arrows move it.
+      const comboboxDom = props.editor?.view?.dom
+      const onActiveDescendantChange = (id: string | null) => {
+        const dom = editorRef?.view?.dom
+        if (dom instanceof HTMLElement) setActiveDescendant(dom, id)
+      }
+      if (comboboxDom instanceof HTMLElement) {
+        openCombobox(comboboxDom, SUGGESTION_LISTBOX_ID)
+      }
+
       renderer = new ReactRenderer(SuggestionList, {
-        props: { ...props, label, triggerChar },
+        props: {
+          ...props,
+          label,
+          triggerChar,
+          listboxId: SUGGESTION_LISTBOX_ID,
+          onActiveDescendantChange,
+        },
         editor: props.editor,
       })
 
@@ -216,6 +289,8 @@ export function createSuggestionRenderer(
               }
             }
           }
+          // #1102 — restore textbox semantics before we drop the references.
+          teardownCombobox()
           cleanupListener()
           renderer?.destroy()
           renderer = null
@@ -268,6 +343,8 @@ export function createSuggestionRenderer(
     onKeyDown({ event }: SuggestionKeyDownProps) {
       const closeKey = getShortcutKeys('suggestionClose').toLowerCase()
       if (event.key.toLowerCase() === closeKey) {
+        // #1102 — Escape closes the picker; restore textbox semantics.
+        teardownCombobox()
         cleanupListener()
         renderer?.destroy()
         renderer = null
@@ -300,6 +377,9 @@ export function createSuggestionRenderer(
 
     onExit() {
       logger.debug('SuggestionRenderer', 'onExit', { label })
+      // #1102 — restore textbox semantics on the contenteditable BEFORE we drop
+      // `editorRef` (teardownCombobox reads it).
+      teardownCombobox()
       cleanupListener()
       renderer?.destroy()
       renderer = null

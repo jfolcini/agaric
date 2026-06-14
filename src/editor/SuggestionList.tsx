@@ -80,8 +80,29 @@ export interface SuggestionListProps {
    * so the empty-state can say *why* nothing is shown.
    */
   query?: string
+  /**
+   * Stable DOM id for the listbox container (#1102). The combobox
+   * contenteditable points its `aria-controls` here, so it must be a known,
+   * stable value rather than an auto-generated one.
+   */
+  listboxId?: string
+  /**
+   * Reports the currently-highlighted option's id (`suggestion-<id>`), or
+   * `null` when there is no active option (#1102). The suggestion renderer
+   * uses this to keep `aria-activedescendant` in sync on the FOCUSED
+   * contenteditable (the listbox itself never holds focus), implementing the
+   * WCAG editable-combobox pattern.
+   */
+  onActiveDescendantChange?: (id: string | null) => void
   ref?: React.Ref<SuggestionListRef>
 }
+
+/**
+ * Default stable id for the suggestion listbox container (#1102). Only one
+ * picker is open at a time (a single `.suggestion-popup` in the DOM), so a
+ * constant id is unambiguous and gives `aria-controls` a fixed target.
+ */
+export const SUGGESTION_LISTBOX_ID = 'suggestion-listbox'
 
 export interface SuggestionListRef {
   onKeyDown: (opts: { event: KeyboardEvent }) => boolean
@@ -94,6 +115,8 @@ export const SuggestionList = ({
   label,
   triggerChar,
   query,
+  listboxId = SUGGESTION_LISTBOX_ID,
+  onActiveDescendantChange,
 }: SuggestionListProps) => {
   const { t } = useTranslation()
   const listRef = useRef<HTMLDivElement>(null)
@@ -118,6 +141,12 @@ export const SuggestionList = ({
     onSelect: selectItem,
   })
 
+  // #1102 — the id of the currently-highlighted option, or null when there is
+  // no active row (empty list). This is the source of truth fed to the FOCUSED
+  // contenteditable's `aria-activedescendant` (the listbox stays unfocused).
+  const activeItem = items[selectedIndex]
+  const activeDescendantId = activeItem ? `suggestion-${activeItem.id}` : null
+
   // Scroll selected item into view on keyboard navigation
   // oxlint-disable-next-line react-hooks/exhaustive-deps -- selectedIndex IS the trigger — we scroll when selection changes
   useEffect(() => {
@@ -128,6 +157,13 @@ export const SuggestionList = ({
       selected.scrollIntoView?.({ block: 'nearest' })
     }
   }, [selectedIndex])
+
+  // #1102 — report the active option id to the renderer so it can mirror it as
+  // `aria-activedescendant` on the contenteditable that actually holds focus.
+  // Fires on every highlight move (arrow nav) and on every results change.
+  useEffect(() => {
+    onActiveDescendantChange?.(activeDescendantId)
+  }, [activeDescendantId, onActiveDescendantChange])
 
   useImperativeHandle(ref, () => ({
     onKeyDown: ({ event }) => {
@@ -297,9 +333,19 @@ export const SuggestionList = ({
 
   return (
     <div className="suggestion-list rounded-lg border bg-popover p-1 shadow-md" data-editor-portal>
+      {/* #1102 — live result-count status. Announced on EVERY update (the
+          previous `aria-live` lived only in the empty branch), so AT users hear
+          how many suggestions are available as they type. Visually hidden;
+          purely an announcement channel for the editable-combobox pattern. */}
+      <output className="sr-only" aria-live="polite" data-testid="suggestion-status">
+        {t('suggestion.results.count', { count: items.length })}
+      </output>
       <ScrollArea className="max-h-[min(300px,40vh)]">
         <div
           ref={listRef}
+          // #1102 — stable id so the combobox contenteditable's `aria-controls`
+          // (set by the suggestion renderer on `editor.view.dom`) has a target.
+          id={listboxId}
           // #1009 — scale the whole list up on coarse pointers so the label,
           // breadcrumb and kbd chip grow in lockstep with the `py-3` rows
           // (the footer keeps its own `text-xs` outside this container).
@@ -308,9 +354,11 @@ export const SuggestionList = ({
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- custom editor-suggestion listbox driven by aria-activedescendant; <datalist>/<select> can't host the grouped clickable <button> options
           role="listbox"
           aria-label={label ?? 'Suggestions'}
-          aria-activedescendant={
-            items[selectedIndex] ? `suggestion-${items[selectedIndex].id}` : undefined
-          }
+          // #1102 — the editable-combobox source of truth for the active option
+          // lives on the FOCUSED contenteditable (driven by the renderer via
+          // `onActiveDescendantChange`); the unfocused listbox mirrors it so the
+          // relationship is also expressed structurally for AT that inspects it.
+          aria-activedescendant={activeDescendantId ?? undefined}
           tabIndex={0}
         >
           {groups
