@@ -34,6 +34,18 @@
 //! the SAME normalized snapshot from the tauri-mock and asserts it matches the
 //! backend-authored `expected`. Behavioral drift between the 3.5k-line mock and
 //! the real backend then fails CI.
+//!
+//! ## Isolation contract — run with `cargo nextest`, NEVER `cargo test` (#1079)
+//!
+//! The tests here `install_for_test()` the PROCESS-GLOBAL Loro engine and
+//! isolate fixtures by `state.registry.clear()`, which drops EVERY engine in the
+//! whole process. All fixtures reuse a single shared `TEST_SPACE_ID`. That means
+//! two tests in this module CANNOT safely run concurrently in the same process —
+//! one's `clear()` would destroy the other's just-seeded tree. Isolation holds
+//! only because `cargo nextest` forks one process per test (what CI and the
+//! pre-push hook run). Plain `cargo test` runs the whole binary in one process
+//! across threads and will flake here. See `loro::shared::install_for_test` and
+//! <https://github.com/jfolcini/agaric/issues/1079>.
 
 use super::common::*;
 use crate::op::{

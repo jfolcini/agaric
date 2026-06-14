@@ -309,7 +309,7 @@ If a release tag fails at `verify-version`: delete it (`git push --delete origin
 
 During development, run only the relevant check:
 
-- Editing Rust? → `cd src-tauri && cargo test specific_test_name`
+- Editing Rust? → `cd src-tauri && cargo nextest run -E 'test(specific_test_name)'`. Use `cargo nextest`, NOT plain `cargo test`: the engine-path integration tests (`command_integration_tests::conformance`, `::undo_integration`) share a process-global Loro registry and `clear()` it under one `TEST_SPACE_ID`, so they only isolate when nextest forks a process per test. Plain `cargo test` runs them multi-threaded in one process and they flake (#1079).
 - Editing TS? → `npx vitest run`
 - Never run clippy/fmt/oxlint/oxfmt manually — prek hooks handle it at commit time
 - Frontend checks are irrelevant when only Rust changed (and vice versa)
