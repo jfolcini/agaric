@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { Editor } from '@tiptap/core'
 import Bold from '@tiptap/extension-bold'
 import Document from '@tiptap/extension-document'
+import HardBreak from '@tiptap/extension-hard-break'
 import History from '@tiptap/extension-history'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
@@ -572,6 +573,84 @@ describe('shortcut bindings are frozen at editor creation (#752)', () => {
     // …while the binding captured at creation still fires.
     expect(dispatchKeydown(editor, 'e', { ctrlKey: true })).toBe(true)
     expect(editor.isActive('code')).toBe(true)
+  })
+})
+
+// -- insertLineBreak (Shift+Enter hard break) #1172 ---------------------------
+//
+// The `insertLineBreak` catalog binding (Shift + Enter, documentation-only /
+// `rebindable: false`) is fulfilled by TipTap's HardBreak extension keymap,
+// which registers `Shift-Enter` → `setHardBreak()` (and `Mod-Enter` as an
+// alias). The block-level handler deliberately ignores Shift+Enter (asserted
+// in use-block-keyboard.test) so the keystroke reaches this keymap. Here we
+// drive the real keymap through ProseMirror and assert the side effect: a
+// `hardBreak` node is inserted at the caret instead of splitting the block.
+describe('insertLineBreak — Shift+Enter hard break (#1172)', () => {
+  let editor: Editor
+
+  afterEach(() => {
+    editor?.destroy()
+  })
+
+  function dispatchKeydown(
+    ed: Editor,
+    key: string,
+    mods: { ctrlKey?: boolean; shiftKey?: boolean } = {},
+  ): boolean {
+    return (
+      ed.view.someProp('handleKeyDown', (handler) =>
+        handler(ed.view, new KeyboardEvent('keydown', { key, ...mods })),
+      ) ?? false
+    )
+  }
+
+  function countHardBreaks(ed: Editor): number {
+    let n = 0
+    ed.state.doc.descendants((node) => {
+      if (node.type.name === 'hardBreak') n += 1
+    })
+    return n
+  }
+
+  it('registers the HardBreak extension', () => {
+    editor = createEditor([HardBreak])
+    expect(editor.extensionManager.extensions.some((e) => e.name === 'hardBreak')).toBe(true)
+  })
+
+  it('Shift+Enter inserts a hardBreak node (does not split the paragraph)', () => {
+    editor = createEditor([HardBreak])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }],
+    })
+    // Caret at end of the single paragraph.
+    editor.commands.focus('end')
+    expect(countHardBreaks(editor)).toBe(0)
+
+    const handled = dispatchKeydown(editor, 'Enter', { shiftKey: true })
+
+    expect(handled).toBe(true)
+    expect(countHardBreaks(editor)).toBe(1)
+    // Still ONE paragraph — a hard break is a soft return, not a block split.
+    let paragraphs = 0
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === 'paragraph') paragraphs += 1
+    })
+    expect(paragraphs).toBe(1)
+  })
+
+  it('Mod+Enter also inserts a hardBreak (HardBreak alias)', () => {
+    editor = createEditor([HardBreak])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }],
+    })
+    editor.commands.focus('end')
+
+    const handled = dispatchKeydown(editor, 'Enter', { ctrlKey: true })
+
+    expect(handled).toBe(true)
+    expect(countHardBreaks(editor)).toBe(1)
   })
 })
 

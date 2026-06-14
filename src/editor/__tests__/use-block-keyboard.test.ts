@@ -69,6 +69,8 @@ function makeCallbacks(overrides: { isLastBlock?: () => boolean } = {}): BlockKe
     onMoveDown: track('onMoveDown'),
     onToggleTodo: track('onToggleTodo'),
     onToggleCollapse: track('onToggleCollapse'),
+    onShowProperties: track('onShowProperties'),
+    onShowHistory: track('onShowHistory'),
     isLastBlock: overrides.isLastBlock,
     _calls,
     _deleteBlockArgs,
@@ -466,6 +468,12 @@ describe('handleBlockKeyDown', () => {
       expect(cbs._calls['onEnterSave']).toBe(1)
     })
 
+    // #1172 — `insertLineBreak` (Shift+Enter). The block key handler must NOT
+    // claim Shift+Enter: it deliberately falls through (no preventDefault, no
+    // onEnterSave) so TipTap's HardBreak extension keymap (`Shift-Enter` →
+    // setHardBreak) inserts a soft line break instead of splitting the block.
+    // The extension-side wiring is asserted in `use-roving-editor`'s HardBreak
+    // coverage; here we pin the fall-through contract.
     it('Shift+Enter does nothing (TipTap default handles line break)', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
@@ -475,6 +483,71 @@ describe('handleBlockKeyDown', () => {
 
       expect(event.preventDefault).not.toHaveBeenCalled()
       expect(cbs._calls['onEnterSave']).toBeUndefined()
+    })
+
+    it('Ctrl+Shift+Enter is also left to TipTap (Mod-Enter hard break)', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      // HardBreak's other keymap is `Mod-Enter`. The block handler's Enter rule
+      // requires a bare Enter (no shift), and Ctrl+Enter is `cycleTaskState`
+      // (onToggleTodo). With BOTH ctrl AND shift, neither the Enter-save rule
+      // nor the task-cycle rule should fire — it passes through to TipTap.
+      const event = makeEvent('Enter', { ctrlKey: true, shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(cbs._calls['onEnterSave']).toBeUndefined()
+    })
+  })
+
+  // #1172 — `openBlockHistory` (#976 item 15, default Ctrl/Cmd+Shift+Y) and
+  // `openPropertiesDrawer` (Ctrl/Cmd+Shift+P). These chord rules route through
+  // `matchesShortcutBinding` against the default catalog, so the test exercises
+  // the real key→action path end to end.
+  describe('Block drawers (history / properties)', () => {
+    it('Ctrl+Shift+Y calls onShowHistory (openBlockHistory)', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('Y', { ctrlKey: true, shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls['onShowHistory']).toBe(1)
+      expect(cbs._calls['onShowProperties']).toBeUndefined()
+    })
+
+    it('Meta+Shift+Y calls onShowHistory (macOS)', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('Y', { metaKey: true, shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls['onShowHistory']).toBe(1)
+    })
+
+    it('plain Y does NOT open the history drawer', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('Y')
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(cbs._calls['onShowHistory']).toBeUndefined()
+    })
+
+    it('Ctrl+Shift+P calls onShowProperties (openPropertiesDrawer)', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('P', { ctrlKey: true, shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls['onShowProperties']).toBe(1)
+      expect(cbs._calls['onShowHistory']).toBeUndefined()
     })
   })
 
