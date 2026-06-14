@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogBody,
@@ -372,13 +373,11 @@ export function QueryBuilderModal({
 
           {/* ---- Display Options ---- */}
           <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
+            <Checkbox
               id="qb-show-table"
               aria-label={t('queryBuilder.showAsTable')}
               checked={showAsTable}
-              onChange={(e) => setShowAsTable(e.target.checked)}
-              className="size-4 [@media(pointer:coarse)]:size-6 rounded border accent-primary"
+              onCheckedChange={(next) => setShowAsTable(next === true)}
             />
             <Label htmlFor="qb-show-table" muted={false}>
               {t('queryBuilder.showAsTable')}
