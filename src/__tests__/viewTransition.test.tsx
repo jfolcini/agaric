@@ -63,8 +63,8 @@ describe('view transition wrapper', () => {
     const wrapper = screen.getByTestId('view-transition-wrapper')
     expect(wrapper.className).toContain('opacity-100')
     expect(wrapper.className).toContain('transition-opacity')
-    expect(wrapper.className).toContain('duration-150')
-    expect(wrapper.className).toContain('ease-out')
+    expect(wrapper.className).toContain('duration-normal')
+    expect(wrapper.className).toContain('ease-smooth')
   })
 
   it('applies opacity-0 during view transition then fades in', async () => {

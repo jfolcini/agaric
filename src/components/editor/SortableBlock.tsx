@@ -279,7 +279,7 @@ function SortableBlockInner({
         <div
           className={cn(
             'absolute right-0 top-0 bottom-0 flex items-center justify-center gap-2 px-3',
-            'transition-colors duration-150',
+            'transition-colors duration-normal',
             swipeThresholdCrossed
               ? 'bg-destructive text-destructive-foreground'
               : 'bg-destructive/10 text-destructive',
@@ -402,7 +402,7 @@ function SortableBlockInner({
         {/* ── Block content ─────────────────────────────────────────── */}
         <div
           className={cn(
-            'flex-1 min-w-0 transition-[text-decoration-color,opacity] duration-200',
+            'flex-1 min-w-0 transition-[text-decoration-color,opacity] duration-moderate',
             // Strikethrough + fade for DONE and CANCELLED (both are "closed" states).
             (todoState === 'DONE' || todoState === 'CANCELLED') && !isFocused
               ? 'line-through opacity-50'
