@@ -1446,6 +1446,23 @@ async fn run_task_loop(
     let mut reconcile = tokio::time::interval(RECONCILE_INTERVAL);
     reconcile.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
+    // #691 — lease keep-alive.  The reconcile sweep claims/renews the
+    // lease at its top, but on a quiet device it runs only every
+    // `RECONCILE_INTERVAL` (~15 min) while the lease expires after
+    // `LEASE_EXPIRY_SECS` (180 s) — so without this arm the lease would
+    // sit unheld for ~12 min of every 15, eroding the single-pusher
+    // guarantee the module documents.  This dedicated tick renews the
+    // lease every `LEASE_RENEW_INTERVAL_SECS` (60 s) *only when this
+    // device is the live holder* — it never claims.  Claiming/seizing
+    // stays exclusively on the reconcile path so there is a single
+    // claim authority and no double-renew race with `run_cycle`.
+    //
+    // `Skip` (not `Delay`): if a long cycle delays a tick we want the
+    // next renewal aligned to the wall clock, not to drift forward and
+    // bunch up after a stall.
+    let mut renew = tokio::time::interval(Duration::from_secs(lease::LEASE_RENEW_INTERVAL_SECS));
+    renew.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
     loop {
         tokio::select! {
             biased;
@@ -1478,6 +1495,39 @@ async fn run_task_loop(
                     "reconcile tick: primed full-window dirty set",
                 );
                 next_flush_at = Some(tokio::time::Instant::now() + DEBOUNCE_WINDOW);
+            }
+            _ = renew.tick() => {
+                // #691 — keep-alive only.  `renew_lease` is a strict
+                // no-op unless this device is the current, non-expired
+                // holder, so this arm never claims and never races the
+                // reconcile cycle's `claim_lease` for ownership: when we
+                // don't hold the lease it returns `false` and writes
+                // nothing.  Errors are logged at warn (not propagated)
+                // so a transient DB hiccup can't tear down the loop —
+                // the next tick, or the reconcile cycle's own claim,
+                // recovers the hold.
+                match lease::renew_lease(&pool, &device_id, clock.now()).await {
+                    Ok(true) => {
+                        tracing::trace!(
+                            target: "gcal",
+                            device = %device_id,
+                            "push-lease renewed (keep-alive)",
+                        );
+                    }
+                    Ok(false) => {
+                        // Not the holder — expected whenever a sibling
+                        // device owns the lease or we have not claimed
+                        // it yet this run.  No action.
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "gcal",
+                            error = %e,
+                            "push-lease keep-alive renewal failed — \
+                             reconcile cycle will re-claim",
+                        );
+                    }
+                }
             }
             () = async {
                 match next_flush_at {
