@@ -369,7 +369,10 @@ pub(super) async fn apply_op_tx(
         AppError::Validation(format!("unknown op_type '{}': {}", record.op_type, e))
     })?;
     let mut effects = ApplyEffects::default();
-    let mut pre_state = PreOpState::default();
+    // Per-op pre-state captured for the post-projection count refresh.
+    // Each arm assigns exactly the variant matching its op type; op types
+    // that can't affect the cache counts leave this at `None`.
+    let mut pre_state = PreOpState::None;
     match op_type {
         OpType::CreateBlock => {
             // The engine path is the only path; the SQL-only
@@ -380,18 +383,22 @@ pub(super) async fn apply_op_tx(
             let p: CreateBlockPayload = serde_json::from_str(&record.payload)?;
             // PEND-56b: capture payload fields for the post-projection
             // pages_cache count refresh (`maintain_pages_cache_counts_after_op`).
-            pre_state.create_block_id = Some(p.block_id.as_str().to_owned());
-            pre_state.create_parent_id = p.parent_id.as_ref().map(|id| id.as_str().to_owned());
-            pre_state.create_block_type = Some(p.block_type.clone());
-            pre_state.create_content = Some(p.content.clone());
+            pre_state = PreOpState::Create {
+                block_id: p.block_id.as_str().to_owned(),
+                parent_id: p.parent_id.as_ref().map(|id| id.as_str().to_owned()),
+                block_type: p.block_type.clone(),
+                content: p.content.clone(),
+            };
             apply_create_block_via_loro(conn, &record.device_id, &p).await?;
         }
         OpType::EditBlock => {
             let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
             // PEND-56b: capture the new text so the post-projection
             // recompute knows which target pages to refresh.
-            pre_state.edit_block_id = Some(p.block_id.as_str().to_owned());
-            pre_state.edit_to_text = Some(p.to_text.clone());
+            pre_state = PreOpState::Edit {
+                block_id: p.block_id.as_str().to_owned(),
+                to_text: p.to_text.clone(),
+            };
             apply_edit_block_via_loro(conn, &record.device_id, &p).await?;
         }
         OpType::DeleteBlock => {
@@ -413,7 +420,7 @@ pub(super) async fn apply_op_tx(
             let delete_space_id =
                 crate::space::resolve_block_space(&mut *conn, &p.block_id).await?;
             // PEND-56b: feed the cohort into the count-refresh hook.
-            pre_state.cohort = cohort.clone();
+            pre_state = PreOpState::Cohort(cohort.clone());
             apply_delete_block_via_loro(conn, &record.device_id, &p, record.created_at).await?;
             effects.deleted_cohort = cohort;
             effects.delete_space_id = delete_space_id;
@@ -437,7 +444,7 @@ pub(super) async fn apply_op_tx(
             // block).
             let cohort = collect_restore_cohort(conn, &p).await?;
             // PEND-56b: cohort feeds the count refresh.
-            pre_state.cohort = cohort.clone();
+            pre_state = PreOpState::Cohort(cohort.clone());
             apply_restore_block_via_loro(conn, &record.device_id, &p).await?;
             effects.restored_cohort = cohort;
         }
@@ -447,8 +454,9 @@ pub(super) async fn apply_op_tx(
             // cascade clears `block_links` (FK CASCADE on mig 0061).
             // The cascade walks the descendant CTE so we mirror that
             // shape to collect the set we need to refresh.
-            pre_state.pre_purge_affected_pages =
-                collect_purge_affected_pages(conn, p.block_id.as_str()).await?;
+            pre_state = PreOpState::Purge {
+                affected_pages: collect_purge_affected_pages(conn, p.block_id.as_str()).await?,
+            };
             apply_purge_block_via_loro(conn, &record.device_id, &p).await?;
         }
         OpType::MoveBlock => {
@@ -458,13 +466,16 @@ pub(super) async fn apply_op_tx(
             // `page_id` for the moved subtree, so the source page loses
             // descendants and the destination page gains them — both
             // `child_block_count`s must be refreshed post-projection.
-            pre_state.move_block_id = Some(p.block_id.as_str().to_owned());
             let move_block_id_str = p.block_id.as_str();
-            pre_state.move_src_page =
+            let src_page =
                 sqlx::query_scalar!("SELECT page_id FROM blocks WHERE id = ?", move_block_id_str)
                     .fetch_optional(&mut *conn)
                     .await?
                     .flatten();
+            pre_state = PreOpState::Move {
+                block_id: p.block_id.as_str().to_owned(),
+                src_page,
+            };
             apply_move_block_via_loro(conn, &record.device_id, &p).await?;
         }
         OpType::AddTag => {
@@ -503,7 +514,7 @@ pub(super) async fn apply_op_tx(
     // the count UPDATEs commit atomically with the block mutations. The
     // hook is a no-op for op types that cannot affect the counts (see
     // `maintain_pages_cache_counts_after_op`).
-    maintain_pages_cache_counts_after_op(conn, record, &pre_state).await?;
+    maintain_pages_cache_counts_after_op(conn, &pre_state).await?;
     tracing::debug!(op_type = %record.op_type, seq = record.seq, "applied op to materialized tables");
     Ok(effects)
 }

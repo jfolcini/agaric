@@ -242,22 +242,19 @@ pub(super) async fn target_pages_for_block_ids(
 /// up by the matching pass in the `ReindexBlockLinks` handler below.
 pub(super) async fn maintain_pages_cache_counts_after_op(
     conn: &mut sqlx::SqliteConnection,
-    record: &OpRecord,
     pre_state: &PreOpState,
 ) -> Result<(), AppError> {
     use std::collections::HashSet;
-    use std::str::FromStr;
-
-    // Unknown op types are surfaced as errors upstream; here we just
-    // skip count maintenance. (`apply_op_tx` already errored.)
-    let Ok(op_type) = OpType::from_str(&record.op_type) else {
-        return Ok(());
-    };
 
     let mut affected: HashSet<String> = HashSet::new();
 
-    match op_type {
-        OpType::CreateBlock => {
+    match pre_state {
+        PreOpState::Create {
+            block_id,
+            parent_id,
+            block_type,
+            content,
+        } => {
             // The new block exists in `blocks` post-projection. Resolve
             // its owning page from the parent chain.
             //
@@ -266,81 +263,72 @@ pub(super) async fn maintain_pages_cache_counts_after_op(
             // the background `RebuildPageIds` task to its own id. To make
             // the count visible immediately, we INSERT a `pages_cache`
             // row here so the recompute UPDATE below has a target row.
-            if let Some(block_id) = &pre_state.create_block_id {
-                let parent_id = &pre_state.create_parent_id;
-                // Determine the owning page.
-                let owning_page = resolve_owning_page(conn, block_id, parent_id.as_deref()).await?;
-                if pre_state.create_block_type.as_deref() == Some("page") {
-                    // INSERT the pages_cache row if missing so the
-                    // `UPDATE` below sees a target. Title = content
-                    // (matches `rebuild_pages_cache`'s desired-state SQL).
-                    let title = pre_state.create_content.as_deref().unwrap_or("");
-                    let now = crate::db::now_ms();
-                    sqlx::query!(
-                        "INSERT OR IGNORE INTO pages_cache \
-                             (page_id, title, updated_at, inbound_link_count, child_block_count) \
-                         VALUES (?, ?, ?, 0, 0)",
-                        block_id,
-                        title,
-                        now,
-                    )
-                    .execute(&mut *conn)
-                    .await?;
-                    affected.insert(block_id.clone());
-                }
-                if let Some(p) = owning_page {
+            // Determine the owning page.
+            let owning_page = resolve_owning_page(conn, block_id, parent_id.as_deref()).await?;
+            if block_type == "page" {
+                // INSERT the pages_cache row if missing so the
+                // `UPDATE` below sees a target. Title = content
+                // (matches `rebuild_pages_cache`'s desired-state SQL).
+                let title = content.as_str();
+                let now = crate::db::now_ms();
+                sqlx::query!(
+                    "INSERT OR IGNORE INTO pages_cache \
+                         (page_id, title, updated_at, inbound_link_count, child_block_count) \
+                     VALUES (?, ?, ?, 0, 0)",
+                    block_id,
+                    title,
+                    now,
+                )
+                .execute(&mut *conn)
+                .await?;
+                affected.insert(block_id.clone());
+            }
+            if let Some(p) = owning_page {
+                affected.insert(p);
+            }
+            // Parse [[ULID]]/((ULID)) tokens from the new content
+            // and add the inferred target pages.
+            let tokens = parse_link_targets_from_content(content);
+            if !tokens.is_empty() {
+                for p in target_pages_for_block_ids(conn, &tokens).await? {
                     affected.insert(p);
-                }
-                // Parse [[ULID]]/((ULID)) tokens from the new content
-                // and add the inferred target pages.
-                if let Some(content) = &pre_state.create_content {
-                    let tokens = parse_link_targets_from_content(content);
-                    if !tokens.is_empty() {
-                        for p in target_pages_for_block_ids(conn, &tokens).await? {
-                            affected.insert(p);
-                        }
-                    }
                 }
             }
         }
-        OpType::EditBlock => {
-            if let Some(block_id) = &pre_state.edit_block_id {
-                // Owning page of the edited block.
-                let row = sqlx::query!("SELECT page_id FROM blocks WHERE id = ?", block_id)
-                    .fetch_optional(&mut *conn)
-                    .await?;
-                if let Some(Some(p)) = row.map(|r| r.page_id) {
+        PreOpState::Edit { block_id, to_text } => {
+            // Owning page of the edited block.
+            let row = sqlx::query!("SELECT page_id FROM blocks WHERE id = ?", block_id)
+                .fetch_optional(&mut *conn)
+                .await?;
+            if let Some(Some(p)) = row.map(|r| r.page_id) {
+                affected.insert(p);
+            }
+            // Pages reachable via OLD outbound edges (still in
+            // `block_links` until `ReindexBlockLinks` runs in BG).
+            for p in outbound_target_pages_for_block(conn, block_id).await? {
+                affected.insert(p);
+            }
+            // Pages parsed from the NEW content — caught via target's
+            // page_id. The block_links row may not be written yet but
+            // the SELECT joins against `block_links` so newly-arrived
+            // edges aren't reflected until `ReindexBlockLinks` runs.
+            // Capture the candidate pages so the matching pass in the
+            // `ReindexBlockLinks` arm can refresh them. We add them
+            // here too so the `pages_cache.inbound_link_count` is
+            // monotonic — never temporarily higher than the live
+            // SELECT would produce.
+            let tokens = parse_link_targets_from_content(to_text);
+            if !tokens.is_empty() {
+                for p in target_pages_for_block_ids(conn, &tokens).await? {
                     affected.insert(p);
-                }
-                // Pages reachable via OLD outbound edges (still in
-                // `block_links` until `ReindexBlockLinks` runs in BG).
-                for p in outbound_target_pages_for_block(conn, block_id).await? {
-                    affected.insert(p);
-                }
-                // Pages parsed from the NEW content — caught via target's
-                // page_id. The block_links row may not be written yet but
-                // the SELECT joins against `block_links` so newly-arrived
-                // edges aren't reflected until `ReindexBlockLinks` runs.
-                // Capture the candidate pages so the matching pass in the
-                // `ReindexBlockLinks` arm can refresh them. We add them
-                // here too so the `pages_cache.inbound_link_count` is
-                // monotonic — never temporarily higher than the live
-                // SELECT would produce.
-                if let Some(new_content) = &pre_state.edit_to_text {
-                    let tokens = parse_link_targets_from_content(new_content);
-                    if !tokens.is_empty() {
-                        for p in target_pages_for_block_ids(conn, &tokens).await? {
-                            affected.insert(p);
-                        }
-                    }
                 }
             }
         }
-        OpType::DeleteBlock | OpType::RestoreBlock => {
+        PreOpState::Cohort(cohort) => {
             // The cohort is captured upstream in `apply_op_tx` (see
             // `collect_delete_cohort` / `collect_restore_cohort`). We
-            // mirror the same set here via `pre_state.cohort`.
-            for p in distinct_pages_for_blocks(conn, &pre_state.cohort).await? {
+            // mirror the same set here via the `Cohort` variant.
+            for p in distinct_pages_for_blocks(conn, cohort).await? {
                 affected.insert(p);
             }
             // Pages targeted by outbound edges from any cohort block.
@@ -350,7 +338,7 @@ pub(super) async fn maintain_pages_cache_counts_after_op(
             // of `outbound_target_pages_for_block` over the cohort is
             // identical pre- and post-projection.
             // #463: single batch query instead of one round-trip per cohort block.
-            for p in outbound_target_pages_for_blocks(conn, &pre_state.cohort).await? {
+            for p in outbound_target_pages_for_blocks(conn, cohort).await? {
                 affected.insert(p);
             }
             // Inbound: blocks whose links pointed INTO the cohort. Their
@@ -367,16 +355,16 @@ pub(super) async fn maintain_pages_cache_counts_after_op(
             // recompute UPDATE will set its inbound_link_count to 0
             // (all descendants are now deleted_at IS NOT NULL).
         }
-        OpType::PurgeBlock => {
+        PreOpState::Purge { affected_pages } => {
             // PurgeBlock removes the cohort's `blocks` rows entirely; FK
             // CASCADE on `block_links` (mig 0061) clears outbound and
             // inbound edges. We captured the affected pages BEFORE the
             // cascade ran (see `pre_state`).
-            for p in &pre_state.pre_purge_affected_pages {
+            for p in affected_pages {
                 affected.insert(p.clone());
             }
         }
-        OpType::MoveBlock => {
+        PreOpState::Move { block_id, src_page } => {
             // E4: a MoveBlock CAN alter `page_id`. `commands/blocks/move_ops.rs`
             // recomputes `page_id` for the moved block + its descendants on a
             // cross-page reparent, so the source page loses children and the
@@ -393,26 +381,18 @@ pub(super) async fn maintain_pages_cache_counts_after_op(
             // (bounded, depth-capped) before recomputing — that keeps the
             // in-tx recompute correct without waiting for `RebuildPageIds`,
             // and is idempotent with it.
-            if let Some(block_id) = &pre_state.move_block_id {
-                let dest_page = reparent_moved_subtree_page_id(conn, block_id).await?;
-                if let Some(src) = &pre_state.move_src_page {
-                    affected.insert(src.clone());
-                }
-                if let Some(dest) = dest_page {
-                    affected.insert(dest);
-                }
+            let dest_page = reparent_moved_subtree_page_id(conn, block_id).await?;
+            if let Some(src) = src_page {
+                affected.insert(src.clone());
+            }
+            if let Some(dest) = dest_page {
+                affected.insert(dest);
             }
         }
         // No-ops for count maintenance: tag / property / attachment ops
         // never affect either count (they don't change the
         // `blocks.page_id`/`deleted_at` membership of any page).
-        OpType::AddTag
-        | OpType::RemoveTag
-        | OpType::SetProperty
-        | OpType::DeleteProperty
-        | OpType::AddAttachment
-        | OpType::DeleteAttachment
-        | OpType::RenameAttachment => {}
+        PreOpState::None => {}
     }
 
     if affected.is_empty() {
@@ -694,29 +674,43 @@ pub(super) async fn refresh_inbound_counts_after_reindex(
 
 /// Per-op state captured BEFORE projection mutates `blocks` so the
 /// post-projection recompute knows exactly which page rows to refresh.
-/// Field semantics are op-specific; unrelated fields stay at default.
-#[derive(Default)]
-pub(super) struct PreOpState {
-    // CreateBlock fields.
-    pub(super) create_block_id: Option<String>,
-    pub(super) create_parent_id: Option<String>,
-    pub(super) create_block_type: Option<String>,
-    pub(super) create_content: Option<String>,
-    // EditBlock fields.
-    pub(super) edit_block_id: Option<String>,
-    pub(super) edit_to_text: Option<String>,
-    // DeleteBlock / RestoreBlock cohort (mirrors `ApplyEffects`).
-    pub(super) cohort: Vec<String>,
-    // PurgeBlock affected-pages snapshot (captured pre-cascade because
-    // FK CASCADE on `block_links` clears outbound/inbound edges before
-    // the post-op recompute runs).
-    pub(super) pre_purge_affected_pages: Vec<String>,
-    // MoveBlock fields (E4). Captured BEFORE the projection reparents
-    // the block so the count hook can refresh BOTH the source page (the
-    // block's `page_id` at move time) and the destination page (derived
-    // post-move from the new parent chain). A cross-page reparent
-    // recomputes `page_id` for the moved subtree in `move_ops.rs`, so
-    // the two pages' `child_block_count` would otherwise drift.
-    pub(super) move_block_id: Option<String>,
-    pub(super) move_src_page: Option<String>,
+///
+/// Each variant carries exactly the data its op type needs; the empty
+/// `None` variant covers op types that don't touch the cache counts
+/// (tag / property / attachment). `apply_op_tx` constructs one variant
+/// per arm and `maintain_pages_cache_counts_after_op` matches on it, so
+/// the op→fields coupling is exhaustive-match-checked rather than an
+/// unchecked runtime convention.
+pub(super) enum PreOpState {
+    /// Op types that cannot affect either cache count.
+    None,
+    /// CreateBlock: payload fields needed to resolve the owning page,
+    /// (optionally) seed a `pages_cache` row for page creates, and parse
+    /// outbound link tokens from the new content.
+    Create {
+        block_id: String,
+        parent_id: Option<String>,
+        block_type: String,
+        content: String,
+    },
+    /// EditBlock: the edited block + its new text (for link-token parsing).
+    Edit { block_id: String, to_text: String },
+    /// DeleteBlock / RestoreBlock cohort (mirrors `ApplyEffects`).
+    /// The descendant cohort captured BEFORE the UPDATE; both ops refresh
+    /// the same affected set.
+    Cohort(Vec<String>),
+    /// PurgeBlock affected-pages snapshot (captured pre-cascade because
+    /// FK CASCADE on `block_links` clears outbound/inbound edges before
+    /// the post-op recompute runs).
+    Purge { affected_pages: Vec<String> },
+    /// MoveBlock (E4). Captured BEFORE the projection reparents the block
+    /// so the count hook can refresh BOTH the source page (the block's
+    /// `page_id` at move time) and the destination page (derived post-move
+    /// from the new parent chain). A cross-page reparent recomputes
+    /// `page_id` for the moved subtree in `move_ops.rs`, so the two pages'
+    /// `child_block_count` would otherwise drift.
+    Move {
+        block_id: String,
+        src_page: Option<String>,
+    },
 }
