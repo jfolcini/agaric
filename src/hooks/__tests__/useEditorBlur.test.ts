@@ -504,6 +504,99 @@ describe('useEditorBlur', () => {
       expect(mockEdit).not.toHaveBeenCalled()
     })
 
+    // #1062 — fresh-block plain-blur double-persist regression.
+    //
+    // A block created empty (`originalMarkdown === ''`) where the user types
+    // single-paragraph text and then blurs the ORDINARY way (no portal in the
+    // DOM) used to be persisted TWICE: Step 3 early-persists, then Step 5's
+    // unmount — which still computes its delta against '' because the roving
+    // editor's originalMarkdown is not advanced — returns the identical content
+    // and Step 5 ran edit() a second time. Two identical edit ops + two undo
+    // nudges (one Ctrl+Z no longer fully reverts). The fix skips the duplicate
+    // edit() when unmount returns exactly what Step 3 already persisted.
+    it('emits EXACTLY ONE edit op (no double persist) on type-then-plain-blur of a fresh block', () => {
+      const typed = 'typed text'
+      const mockGetMarkdown = vi.fn(() => typed)
+      // Unmount still reports the content as "changed" because the roving
+      // editor's originalMarkdown was '' at mount and is not advanced by the
+      // early persist — this is exactly the condition that caused the dup.
+      const mockUnmount = vi.fn<() => string | null>(() => typed)
+      const mockEdit = vi.fn()
+      const mockSplitBlock = vi.fn()
+      const mockDiscardDraft = vi.fn()
+      const mockSetFocused = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: mockUnmount,
+        getMarkdown: mockGetMarkdown,
+        originalMarkdown: '',
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: mockSplitBlock,
+          setFocused: mockSetFocused,
+          discardDraft: mockDiscardDraft,
+        }),
+      )
+
+      // Plain blur: no portal in the DOM, no relatedTarget.
+      act(() => {
+        result.current.handleBlur(makeFocusEvent())
+      })
+
+      // EXACTLY ONE edit op (the Step 3 early-persist) — Step 5 must NOT
+      // re-edit the identical content. `edit()` is what fires the undo nudge
+      // in the store, so one edit() == one undo nudge.
+      expect(mockEdit).toHaveBeenCalledTimes(1)
+      expect(mockEdit).toHaveBeenCalledWith('B1', typed)
+      expect(mockSplitBlock).not.toHaveBeenCalled()
+      // The editor is still torn down (state cleanup), the draft discarded and
+      // focus cleared — only the duplicate edit() is skipped.
+      expect(mockUnmount).toHaveBeenCalledOnce()
+      expect(mockDiscardDraft).toHaveBeenCalledOnce()
+      expect(mockSetFocused).toHaveBeenCalledWith(null)
+    })
+
+    it('still re-edits when blur content DIFFERS from the early-persisted text', () => {
+      // Defensive: if the content changed between the Step 3 read and the
+      // Step 5 unmount (e.g. a trailing edit), Step 5 must still persist the
+      // newer content — the skip only applies to byte-identical re-persist.
+      const mockGetMarkdown = vi.fn(() => 'first')
+      const mockUnmount = vi.fn<() => string | null>(() => 'first then more')
+      const mockEdit = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: mockUnmount,
+        getMarkdown: mockGetMarkdown,
+        originalMarkdown: '',
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: vi.fn(),
+        }),
+      )
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent())
+      })
+
+      expect(mockEdit).toHaveBeenCalledTimes(2)
+      expect(mockEdit).toHaveBeenNthCalledWith(1, 'B1', 'first')
+      expect(mockEdit).toHaveBeenNthCalledWith(2, 'B1', 'first then more')
+    })
+
     it('does not early-save when block had existing content', () => {
       const mockGetMarkdown = vi.fn(() => 'updated')
       const mockEdit = vi.fn()

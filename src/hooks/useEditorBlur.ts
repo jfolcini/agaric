@@ -79,10 +79,21 @@ export function useEditorBlur(params: {
       // Multi-paragraph content must go through Step 5's splitBlock path;
       // calling edit() here with the unsplit content and then splitBlock()
       // in Step 5 would create duplicate operations.
+      //
+      // #1062: track what Step 3 already persisted. The roving editor's
+      // `originalMarkdown` is NOT advanced here (it's set only in mount, reset
+      // only in unmount), so during this same blur Step 5's unmount still
+      // computes its delta against '' and returns the SAME content as changed.
+      // Re-running edit() on it would append a second identical edit_block op
+      // and fire the undo nudge twice. We remember the persisted content and
+      // skip the duplicate edit() in Step 5 (while still unmounting to tear
+      // down editor state / discard the draft / clear focus).
+      let earlyPersisted: string | null = null
       if (rovingEditorRef.current.originalMarkdown === '' && rovingEditorRef.current.getMarkdown) {
         const content = rovingEditorRef.current.getMarkdown()
         if (content && content !== '' && !shouldSplitOnBlur(content)) {
           edit(blockId, content)
+          earlyPersisted = content
           // Don't return — continue to normal blur logic (unmount, setFocused, etc.)
         }
       }
@@ -130,7 +141,9 @@ export function useEditorBlur(params: {
           flushSync(() => {
             splitBlock(blockId, changed)
           })
-        } else {
+        } else if (changed !== earlyPersisted) {
+          // #1062: skip the duplicate edit() when unmount returned the exact
+          // content Step 3 already persisted (the fresh-block plain-blur case).
           flushSync(() => {
             edit(blockId, changed)
           })
