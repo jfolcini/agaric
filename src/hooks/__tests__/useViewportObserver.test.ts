@@ -10,6 +10,7 @@ import type { Root } from 'react-dom/client'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { ViewportObserver } from '../useViewportObserver'
 import { useViewportObserver } from '../useViewportObserver'
 
 // -- IntersectionObserver mock ------------------------------------------------
@@ -630,6 +631,209 @@ describe('useViewportObserver', () => {
     expect(result.current.isOffscreen('B')).toBe(false)
     expect(result.current.getHeight('A')).toBe(30)
 
+    unmount()
+  })
+
+  // ── #1067: viewport object identity stability ─────────────────────────────
+
+  it('keeps a STABLE viewport object identity across offscreen flips (#1067)', () => {
+    // The whole point of the fix: off-screen membership lives in a ref +
+    // per-id subscription, NOT React state, so the memoized `viewport` object
+    // returned to the parent never changes identity. A churning identity here
+    // is what previously invalidated ALL N React.memo'd wrappers per scroll
+    // tick.
+    const renders: ViewportObserver[] = []
+    const { result, unmount } = renderHook(() => {
+      const v = useViewportObserver()
+      renders.push(v)
+      return v
+    })
+
+    const elA = makeEl('A')
+    const elB = makeEl('B')
+    result.current.createObserveRef('A')(elA)
+    result.current.createObserveRef('B')(elB)
+
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+    const initial = result.current
+
+    // Flip A offscreen.
+    act(() => {
+      obs.trigger([
+        {
+          target: elA,
+          isIntersecting: false,
+          boundingClientRect: { height: 30 } as DOMRectReadOnly,
+        },
+      ])
+    })
+    // Flip B offscreen, then A back onscreen — several membership changes.
+    act(() => {
+      obs.trigger([
+        {
+          target: elB,
+          isIntersecting: false,
+          boundingClientRect: { height: 40 } as DOMRectReadOnly,
+        },
+        {
+          target: elA,
+          isIntersecting: true,
+          boundingClientRect: { height: 30 } as DOMRectReadOnly,
+        },
+      ])
+    })
+
+    // Membership state is still correct…
+    expect(result.current.isOffscreen('A')).toBe(false)
+    expect(result.current.isOffscreen('B')).toBe(true)
+    // …but the viewport object identity never changed across all those flips.
+    expect(result.current).toBe(initial)
+    // And the hook never re-rendered from the membership changes (ref-backed,
+    // not React state). Only the initial render(s) recorded an identity.
+    expect(renders.every((v) => v === initial)).toBe(true)
+
+    unmount()
+  })
+
+  it('notifies ONLY the flipped block id subscriber, not others (#1067)', () => {
+    // Each wrapper subscribes per id (useSyncExternalStore). A flip of block A
+    // must notify A's subscriber and leave B's untouched — that is what makes
+    // only A's row re-render.
+    const { result, unmount } = renderHook(() => useViewportObserver())
+
+    const elA = makeEl('A')
+    const elB = makeEl('B')
+    result.current.createObserveRef('A')(elA)
+    result.current.createObserveRef('B')(elB)
+
+    const notifiedA = vi.fn()
+    const notifiedB = vi.fn()
+    const unsubA = result.current.subscribe('A', notifiedA)
+    const unsubB = result.current.subscribe('B', notifiedB)
+
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+
+    // Only A flips offscreen.
+    act(() => {
+      obs.trigger([
+        {
+          target: elA,
+          isIntersecting: false,
+          boundingClientRect: { height: 30 } as DOMRectReadOnly,
+        },
+      ])
+    })
+
+    expect(notifiedA).toHaveBeenCalledTimes(1)
+    expect(notifiedB).not.toHaveBeenCalled()
+
+    // A no-op (A already offscreen) must not re-notify.
+    act(() => {
+      obs.trigger([
+        {
+          target: elA,
+          isIntersecting: false,
+          boundingClientRect: { height: 30 } as DOMRectReadOnly,
+        },
+      ])
+    })
+    expect(notifiedA).toHaveBeenCalledTimes(1)
+
+    unsubA()
+    unsubB()
+    unmount()
+  })
+
+  it('the subscribe source reflects the latest isOffscreen snapshot (#1067)', () => {
+    // The subscribe/isOffscreen pair is a useSyncExternalStore source: when the
+    // subscriber fires, the snapshot must already read the new value.
+    const { result, unmount } = renderHook(() => useViewportObserver())
+
+    const el = makeEl('A')
+    result.current.createObserveRef('A')(el)
+
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+
+    let snapshotAtNotify: boolean | undefined
+    const unsub = result.current.subscribe('A', () => {
+      snapshotAtNotify = result.current.isOffscreen('A')
+    })
+
+    act(() => {
+      obs.trigger([
+        {
+          target: el,
+          isIntersecting: false,
+          boundingClientRect: { height: 30 } as DOMRectReadOnly,
+        },
+      ])
+    })
+
+    expect(snapshotAtNotify).toBe(true)
+
+    unsub()
+    unmount()
+  })
+
+  it('stops notifying after unsubscribe (#1067)', () => {
+    const { result, unmount } = renderHook(() => useViewportObserver())
+
+    const el = makeEl('A')
+    result.current.createObserveRef('A')(el)
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+
+    const cb = vi.fn()
+    const unsub = result.current.subscribe('A', cb)
+    unsub()
+
+    act(() => {
+      obs.trigger([
+        {
+          target: el,
+          isIntersecting: false,
+          boundingClientRect: { height: 30 } as DOMRectReadOnly,
+        },
+      ])
+    })
+
+    expect(cb).not.toHaveBeenCalled()
+
+    unmount()
+  })
+
+  it('notifies a still-mounted subscriber when its block unmounts (clears offscreen) (#1067)', () => {
+    // When a block leaves the tree its membership is cleared; a subscriber that
+    // is still attached for that id must be notified so its snapshot updates.
+    const { result, unmount } = renderHook(() => useViewportObserver())
+
+    const el = makeEl('A')
+    const ref = result.current.createObserveRef('A')
+    ref(el)
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+
+    // Go offscreen.
+    act(() => {
+      obs.trigger([
+        {
+          target: el,
+          isIntersecting: false,
+          boundingClientRect: { height: 30 } as DOMRectReadOnly,
+        },
+      ])
+    })
+
+    const cb = vi.fn()
+    const unsub = result.current.subscribe('A', cb)
+
+    // Block unmounts → membership cleared → subscriber notified.
+    act(() => {
+      ref(null)
+    })
+
+    expect(cb).toHaveBeenCalledTimes(1)
+    expect(result.current.isOffscreen('A')).toBe(false)
+
+    unsub()
     unmount()
   })
 
