@@ -207,20 +207,23 @@ describe('useGraphWorkerSimulation', () => {
     )
   })
 
-  it('onResize re-posts start with new dimensions when they change', () => {
+  it('onResize posts a resize message (not a second start) with new dimensions when they change (#747)', () => {
     const { result } = renderHook(() => useGraphWorkerSimulation())
     const handle = result.current.runWorker(makeCtx())
     const w = MockWorker.instances[0] as InstanceType<typeof MockWorker>
 
-    // Same dimensions: no re-post.
+    // Same dimensions: no message.
     handle.onResize(800, 600)
-    let starts = w.postMessageCalls.filter((m: { type?: string }) => m.type === 'start')
-    expect(starts).toHaveLength(1)
+    let resizes = w.postMessageCalls.filter((m: { type?: string }) => m.type === 'resize')
+    expect(resizes).toHaveLength(0)
 
-    // Changed dimensions: re-post with updated width/height.
+    // Changed dimensions: post a `resize` (not a second `start`, which would
+    // strip positions and re-scatter the sim — #747).
     handle.onResize(1024, 768)
-    starts = w.postMessageCalls.filter((m: { type?: string }) => m.type === 'start')
-    expect(starts).toHaveLength(2)
-    expect(starts[1]).toMatchObject({ width: 1024, height: 768 })
+    const starts = w.postMessageCalls.filter((m: { type?: string }) => m.type === 'start')
+    expect(starts).toHaveLength(1)
+    resizes = w.postMessageCalls.filter((m: { type?: string }) => m.type === 'resize')
+    expect(resizes).toHaveLength(1)
+    expect(resizes[0]).toMatchObject({ type: 'resize', width: 1024, height: 768 })
   })
 })

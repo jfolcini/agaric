@@ -92,6 +92,23 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
         break
       }
 
+      case 'resize': {
+        // #747 item 1: update centering/bounds forces in place WITHOUT
+        // re-seeding positions. Re-posting `start` rebuilds the sim from
+        // scratch (positions stripped to {id,label}) → full re-scatter +
+        // re-converge on every container resize. Mirror the main-thread
+        // `applyResizeForces` path: swap center/x/y, then nudge alpha so the
+        // existing layout drifts to the new center instead of restarting.
+        if (!simulation) break
+
+        const { width, height } = msg
+        simulation.force('center', forceCenter(width / 2, height / 2))
+        simulation.force('x', forceX(width / 2).strength(0.05))
+        simulation.force('y', forceY(height / 2).strength(0.05))
+        simulation.alpha(0.3).restart()
+        break
+      }
+
       case 'stop': {
         if (simulation) {
           simulation.stop()
