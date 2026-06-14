@@ -561,6 +561,21 @@ language = "system"
 files = '^src-tauri/src/.*\.rs$'
 stages = ["pre-commit", "pre-push"]
 
+# #1188: the guard's detection regex must tolerate a turbofish between the
+# method name and the call parens (`sqlx::query_scalar::<_, Option<i64>>(`) —
+# in fact the dominant runtime-query spelling here, which the pre-#1188 regex
+# silently skipped. This companion hook runs the guard's own fixture suite
+# (`--self-test`) so the match contract (turbofish + nested-generic close,
+# macro-form exemption) cannot silently regress. No file args.
+[[repos.hooks]]
+id = "check-dynamic-sql-self-test"
+name = "dynamic-SQL guard self-test (#1188 turbofish fixtures)"
+entry = "python3 scripts/check-dynamic-sql.py --self-test"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit", "pre-push"]
+
 # Rust: space-filter drift guard (#139). Space membership is a first-class
 # `blocks.space_id` column (#533, migration 0086), so the active-space read
 # filter is the canonical guard fragment `(?N IS NULL OR b.space_id = ?N)`

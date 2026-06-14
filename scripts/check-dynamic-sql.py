@@ -12,7 +12,7 @@ counts every runtime `sqlx::query(` / `query_as(` / `query_scalar(` call
 in production Rust (the macro forms `query!`/`query_as!`/`query_scalar!`
 are compile-checked and exempt) and compares the per-file count against a
 checked-in baseline (`src-tauri/dynamic-sql-baseline.txt`). The codebase
-already carries ~180 such sites; retrofitting a justifying comment onto
+already carries many such sites; retrofitting a justifying comment onto
 every one is out of scope for the hook. Instead the hook applies
 back-pressure to NEW sites:
 
@@ -68,7 +68,19 @@ is_test_file = _crt.is_test_file
 # whitespace) distinguishes them from the compile-checked macro forms
 # `sqlx::query!(` / `query_as!(` / `query_scalar!(`, whose `!` means the
 # next char is `!`, not `(`.
-DYN_SQL_RE = re.compile(r"sqlx::query(?:_as|_scalar)?\s*\(")
+#
+# An optional turbofish between the method name and the call parens must be
+# tolerated — the turbofish form (`sqlx::query_scalar::<_, String>(`) is in
+# fact the DOMINANT runtime-query style in this codebase, and a bare
+# `sqlx::query(?:_as|_scalar)?\s*\(` silently skips every one of them (the
+# #646 blind spot fixed in #1188; such a site slipped the #667 review). The
+# turbofish body is matched lazily (`.*?>`) rather than `[^>]*>` so nested
+# generics close at the OUTER `>` — `::<_, Option<i64>>(`, `::<_, Vec<u8>>(`
+# — instead of stopping at the inner one. `.` excludes newlines, so the call
+# parens must sit on the same line as the turbofish close; the bare-form
+# multi-line-call behavior is unchanged (still caught by the no-turbofish
+# branch).
+DYN_SQL_RE = re.compile(r"sqlx::query(?:_as|_scalar)?\s*(?:::<.*?>)?\s*\(")
 
 MARKER = "// dynamic-sql:"
 
@@ -178,7 +190,55 @@ def read_baseline() -> dict[str, int]:
     return baseline
 
 
+def run_self_test() -> int:
+    """Lock in DYN_SQL_RE's match contract (the #1188 turbofish fix).
+
+    Asserts the regex catches every runtime-query spelling — including the
+    turbofish form that the pre-#1188 regex silently skipped — while still
+    exempting the compile-checked macro forms.
+    """
+    should_match = [
+        # Bare forms (already caught before #1188).
+        'sqlx::query("SELECT 1")',
+        "sqlx::query_as::<_, BlockRow>(sql)",
+        "sqlx::query_scalar::<_, String>(",
+        # The #1188 blind spot: turbofish before the call parens.
+        'sqlx::query_scalar::<_, i64>("SELECT COUNT(*)")',
+        "sqlx::query_as::<_, (String, i64)>(sql)",  # tuple type
+        # Nested generics — must close at the OUTER `>` (`.*?`, not `[^>]*`).
+        'sqlx::query_scalar::<_, Option<i64>>("SELECT position")',
+        "sqlx::query_scalar::<_, Vec<u8>>(blob_sql)",
+        "sqlx::query_scalar::<_, Option<String>>(q)",
+    ]
+    should_not_match = [
+        # Compile-checked macros are exempt (the `!` is not `(`).
+        'sqlx::query!("SELECT 1")',
+        "sqlx::query_as!(BlockRow, sql)",
+        "sqlx::query_scalar!(",
+        # Unrelated tokens.
+        "let query = build_query();",
+        "// sqlx::query_scalar mentioned in prose",
+    ]
+    failures: list[str] = []
+    for s in should_match:
+        if not DYN_SQL_RE.search(s):
+            failures.append(f"expected MATCH, got none: {s!r}")
+    for s in should_not_match:
+        if DYN_SQL_RE.search(s):
+            failures.append(f"expected NO match, but matched: {s!r}")
+    if failures:
+        print("check-dynamic-sql self-test FAILED:", file=sys.stderr)
+        for f in failures:
+            print(f"  {f}", file=sys.stderr)
+        return 1
+    print(f"check-dynamic-sql self-test passed "
+          f"({len(should_match) + len(should_not_match)} cases).")
+    return 0
+
+
 def main(argv: list[str]) -> int:
+    if "--self-test" in argv:
+        return run_self_test()
     if "--update-baseline" in argv:
         write_baseline(compute_baseline())
         print(f"Wrote {BASELINE_PATH.relative_to(REPO_ROOT)}")
