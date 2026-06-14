@@ -27,4 +27,4 @@ export {
   setCustomShortcut,
   toAriaKeyshortcuts,
 } from './keyboard-config/storage'
-export { configKeyToTipTap } from './keyboard-config/tiptap'
+export { configKeyToTipTap, tipTapShortcutMap } from './keyboard-config/tiptap'

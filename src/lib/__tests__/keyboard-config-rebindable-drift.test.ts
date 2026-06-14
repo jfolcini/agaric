@@ -48,6 +48,13 @@ const LITERAL_MATCH = /matchesShortcutBinding\([^,)]*,\s*'([A-Za-z0-9]+)'/g
 const TEMPLATE_MATCH = /matchesShortcutBinding\([^,)]*,\s*`([A-Za-z0-9]+)\$\{/g
 /** Literal id read through storage: `getShortcutKeys('closeTabOnFocus')`. */
 const LITERAL_KEYS = /getShortcutKeys\(\s*'([A-Za-z0-9]+)'\s*\)/g
+/**
+ * Literal id consumed via the #789 TipTap keymap helper:
+ * `tipTapShortcutMap('underline', …)`. Same contract as `getShortcutKeys` —
+ * the helper reads the binding through `getShortcutKeys` internally and
+ * expands ` / ` alternatives into multiple keymap entries.
+ */
+const LITERAL_TIPTAP_MAP = /tipTapShortcutMap\(\s*'([A-Za-z0-9]+)'/g
 /** Dispatch-table entries (`JOURNAL_SHORTCUTS` / `TAB_SHORTCUTS`): `binding: 'goToToday'`. */
 const BINDING_FIELD = /\bbinding:\s*'([A-Za-z0-9]+)'/g
 
@@ -58,7 +65,7 @@ function extractConsumedIds(): Set<string> {
 
   for (const file of collectSourceFiles(SRC_ROOT, [])) {
     const text = readFileSync(file, 'utf8')
-    for (const re of [LITERAL_MATCH, LITERAL_KEYS, BINDING_FIELD]) {
+    for (const re of [LITERAL_MATCH, LITERAL_KEYS, LITERAL_TIPTAP_MAP, BINDING_FIELD]) {
       for (const m of text.matchAll(re)) {
         const id = m[1] as string
         if (catalogIds.has(id)) consumed.add(id)
