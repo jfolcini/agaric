@@ -225,6 +225,31 @@ describe('useSlashCommandProperty — effort', () => {
     )
   })
 
+  it('effort-custom routes through the empty-value branch (escape hatch, #1107)', async () => {
+    const { result } = renderHook(() => useSlashCommandProperty())
+    const { ctx } = makeSyntheticCtx()
+    const handler = result.current.prefix.find(([p]) => p === 'effort-')?.[1]
+    await handler?.(ctx, { id: 'effort-custom', label: 'EFFORT Custom...' })
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'set_property',
+      expect.objectContaining({
+        blockId: 'BLOCK_1',
+        key: 'effort',
+        value: expect.objectContaining({ value_text: '' }),
+      }),
+    )
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('blockTree.addedEffortProperty')
+  })
+
+  it('toasts addPropertyFailed when effort-custom fails (#1107)', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    const { result } = renderHook(() => useSlashCommandProperty())
+    const { ctx } = makeSyntheticCtx()
+    const handler = result.current.prefix.find(([p]) => p === 'effort-')?.[1]
+    await handler?.(ctx, { id: 'effort-custom', label: 'EFFORT Custom...' })
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.addPropertyFailed')
+  })
+
   it('toasts on effort failure', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('fail'))
     const { result } = renderHook(() => useSlashCommandProperty())
