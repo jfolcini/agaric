@@ -1020,9 +1020,36 @@ pub async fn reproject_block_deleted_at_from_engine(
             // #109 Phase 2: the engine seed carries `deleted_at` as a
             // serialized String slot; parse to i64 epoch-ms for the
             // INTEGER `blocks.deleted_at` column.
-            let ts = ts.parse::<i64>().map_err(|e| {
-                AppError::Validation(format!("engine deleted_at not an integer: {e}"))
-            })?;
+            //
+            // #668 defensive fallback: production writes epoch-ms decimal
+            // strings, but a pre-#109 doc could still hold an RFC-3339
+            // `deleted_at` slot. A strict i64-only parse hard-errors on
+            // such a slot, wedging inbound-sync reprojection on every
+            // retry. Self-heal instead: on i64 failure, try RFC-3339 and
+            // convert to epoch-ms. Only a value that is neither (genuine
+            // garbage) propagates the error.
+            let ts = match ts.parse::<i64>() {
+                Ok(ms) => ms,
+                Err(int_err) => match chrono::DateTime::parse_from_rfc3339(ts) {
+                    Ok(dt) => {
+                        let ms = dt.timestamp_millis();
+                        tracing::warn!(
+                            block_id = %block_id.as_str(),
+                            raw = %ts,
+                            epoch_ms = ms,
+                            "reproject_block_deleted_at_from_engine: legacy RFC-3339 \
+                             deleted_at slot; healed to epoch-ms (#668)",
+                        );
+                        ms
+                    }
+                    Err(rfc_err) => {
+                        return Err(AppError::Validation(format!(
+                            "engine deleted_at neither epoch-ms ({int_err}) nor \
+                             RFC-3339 ({rfc_err}): {ts:?}"
+                        )));
+                    }
+                },
+            };
             project_delete_block_to_sql(conn, block_id.as_str(), ts).await?;
         }
         None => {
@@ -2878,6 +2905,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reproject_deleted_at_rfc3339_legacy_slot_self_heals_to_ms() {
+        // #668: a pre-#109 doc could carry an RFC-3339 `deleted_at` slot.
+        // The strict i64 parse fails on it; the defensive fallback parses
+        // RFC-3339 and converts to epoch-ms instead of hard-erroring (which
+        // would wedge inbound-sync reprojection on every retry). The block
+        // must be soft-deleted at the converted timestamp.
+        let (pool, _dir) = fresh_pool().await;
+        insert_block(&pool, BLOCK_A, None).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        // "2026-05-25T09:30:00Z" == 1_779_701_400_000 epoch-ms.
+        let rfc3339 = "2026-05-25T09:30:00Z";
+        let expected_ms: i64 = 1_779_701_400_000;
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_deleted_at_from_engine(&mut conn, &bid, Some(rfc3339))
+            .await
+            .expect("RFC-3339 legacy slot must self-heal, not hard-error");
+        drop(conn);
+
+        let deleted_at: Option<i64> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch deleted_at");
+        assert_eq!(
+            deleted_at,
+            Some(expected_ms),
+            "RFC-3339 deleted_at must be converted to epoch-ms"
+        );
+    }
+
+    #[tokio::test]
+    async fn reproject_deleted_at_epoch_ms_path_still_works() {
+        // The normal (production) epoch-ms decimal-string path must keep
+        // working unchanged after the #668 RFC-3339 fallback was added.
+        let (pool, _dir) = fresh_pool().await;
+        insert_block(&pool, BLOCK_A, None).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let ts_ms: i64 = 1_779_701_400_000;
+        let ts_str = ts_ms.to_string();
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_deleted_at_from_engine(&mut conn, &bid, Some(&ts_str))
+            .await
+            .expect("epoch-ms path");
+        drop(conn);
+
+        let deleted_at: Option<i64> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch deleted_at");
+        assert_eq!(
+            deleted_at,
+            Some(ts_ms),
+            "epoch-ms deleted_at must round-trip unchanged"
+        );
+    }
+
+    #[tokio::test]
     async fn reproject_deleted_at_none_resurrects_block() {
         // A block with `deleted_at = None` in the engine (remote restore) →
         // DB `deleted_at` is cleared (NULL). Block has no deleted ancestor so
@@ -2960,8 +3051,9 @@ mod tests {
 
     #[tokio::test]
     async fn reproject_deleted_at_non_integer_ts_returns_error() {
-        // If the engine `deleted_at` value is not a valid integer string,
-        // the function must return an `AppError::Validation` rather than panic.
+        // If the engine `deleted_at` value is genuine garbage — neither an
+        // epoch-ms integer nor a #668 RFC-3339 fallback — the function must
+        // return an `AppError::Validation` rather than panic.
         let (pool, _dir) = fresh_pool().await;
         insert_block(&pool, BLOCK_A, None).await;
 

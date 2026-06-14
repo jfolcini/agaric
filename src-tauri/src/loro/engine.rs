@@ -1201,8 +1201,9 @@ impl LoroEngine {
     }
 
     /// Soft-delete a block — mirrors the production `DeleteBlock` op.
-    /// Stores the real `deleted_at` timestamp (RFC-3339; the
-    /// originating op's `created_at`) on the seed's block map, so the
+    /// Stores the real `deleted_at` timestamp (epoch-ms as a decimal
+    /// string — what production writes via the originating op's
+    /// `created_at.to_string()`; #668) on the seed's block map, so the
     /// value is **lossless across sync**: a peer that imports this doc
     /// reads the same timestamp back via [`Self::read_deleted_at`] and
     /// re-derives the SQL descendant cascade + restore cohort from it
@@ -3290,13 +3291,15 @@ mod op_coverage_tests {
             "an alive block must read back deleted_at = None"
         );
         // After delete, the real timestamp round-trips losslessly
-        // (PEND-80 Phase 2 — was a fixed marker before).
+        // (PEND-80 Phase 2 — was a fixed marker before). #668: production
+        // writes epoch-ms decimal strings (`created_at.to_string()`), not
+        // RFC-3339 — the fixture must match that wire format.
         engine
-            .apply_delete_block(BLOCK_A, "2026-05-25T09:30:00Z")
+            .apply_delete_block(BLOCK_A, "1779701400000")
             .expect("delete");
         assert_eq!(
             engine.read_deleted_at(BLOCK_A).unwrap(),
-            Some("2026-05-25T09:30:00Z".to_string()),
+            Some("1779701400000".to_string()),
             "the stored deleted_at timestamp must round-trip exactly"
         );
         // Restore clears the slot back to None.
