@@ -1242,16 +1242,19 @@ describe('JournalPage', () => {
         toJSON: () => {},
       })
 
-      // Simulate small viewport. The mock object intentionally lacks
-      // `addEventListener` — we only need `height` for the flip-detection
-      // logic in JournalCalendarDropdown. Floating-UI's `autoUpdate`
-      // iterates `win.visualViewport` and calls `.addEventListener('scroll',
-      // …)` on it; if this mock leaks into a later test that mounts a
-      // Radix Tooltip/Popover, that test crashes in a `useLayoutEffect`.
-      // The global `afterEach` in test-setup.ts cleans this up, but we
-      // also restore it here for defence in depth.
+      // Simulate small viewport. We only need `height` for the flip-detection
+      // logic in JournalCalendarDropdown, but the mock MUST carry no-op
+      // add/removeEventListener: the calendar trigger is now an IconButton
+      // (#1089) whose Radix Tooltip opens on click-focus and mounts floating-ui,
+      // which calls `visualViewport.addEventListener('scroll', …)`. An
+      // event-listener-less mock would crash that in a `useLayoutEffect`.
       Object.defineProperty(window, 'visualViewport', {
-        value: { height: 600, width: 1024 },
+        value: {
+          height: 600,
+          width: 1024,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        },
         writable: true,
         configurable: true,
       })
@@ -1297,11 +1300,16 @@ describe('JournalPage', () => {
         toJSON: () => {},
       })
 
-      // See the comment in the previous test about why this mock must be
-      // cleaned up — it lacks `addEventListener` and would break floating-ui
-      // for any subsequent Radix Tooltip/Popover mount.
+      // Carries no-op add/removeEventListener (see the previous test): the
+      // calendar trigger's IconButton Tooltip (#1089) mounts floating-ui on
+      // click-focus, which calls visualViewport.addEventListener.
       Object.defineProperty(window, 'visualViewport', {
-        value: { height: 800, width: 300 },
+        value: {
+          height: 800,
+          width: 300,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        },
         writable: true,
         configurable: true,
       })

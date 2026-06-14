@@ -282,20 +282,17 @@ export function JournalControls(): React.ReactElement {
           </Button>
         )}
         <div className="relative">
-          {/* NOT migrated to IconButton (#1089): this is a positioned
-              popover trigger whose dropdown placement logic is timing-
-              sensitive to the trigger's DOM; the Tooltip wrapper regressed
-              the calendar-dropdown positioning test. Kept as a bare Button. */}
-          <Button
+          <IconButton
             variant="ghost"
             size="icon-xs"
-            aria-label={t('journal.openCalendar')}
+            ariaLabel={t('journal.openCalendar')}
+            tooltip={t('journal.openCalendar')}
             aria-expanded={calendarOpen}
             aria-haspopup="dialog"
             onClick={() => setCalendarOpen((o) => !o)}
           >
             <CalendarIcon className="h-4 w-4" />
-          </Button>
+          </IconButton>
           {calendarOpen && (
             <JournalCalendarDropdown
               currentDate={currentDate}
