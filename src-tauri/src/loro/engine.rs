@@ -1499,6 +1499,16 @@ impl LoroEngine {
         let tags_root: LoroMap = self.doc.get_map(BLOCK_TAGS_ROOT);
         match tags_slot(&tags_root, block_id, "add_tag")? {
             Some(TagsSlot::Map(tag_map)) => {
+                // #845: rename-aware re-key. A tag renamed after it was
+                // added sits under its STALE name key; the tag being
+                // added may resolve to that same (now-freed) name. A
+                // plain `insert` at that key would CLOBBER the stale
+                // entry — destroying the renamed tag's association, which
+                // the next `reproject_block_tags_from_engine` then
+                // deletes from SQL (the #845 data loss). Migrate every
+                // stale-keyed entry on this block to its current name key
+                // first, so the colliding key is free for the new tag.
+                self.rekey_stale_tag_entries(block_id, &tag_map)?;
                 let key = self.tag_map_key_for(tag_id);
                 tag_map.insert(&key, LoroValue::from(tag_id)).map_err(|e| {
                     AppError::Validation(format!(
@@ -1561,6 +1571,72 @@ impl LoroEngine {
             }
         }
         tag_id.to_string()
+    }
+
+    /// #845: migrate any entry in a block's name-keyed tag map that sits
+    /// under a STALE key to the tag's CURRENT name key.
+    ///
+    /// The slot value is the `tag_id`; its key is the tag block's
+    /// normalized name resolved at the time the entry was written
+    /// ([`Self::tag_map_key_for`]). A later rename of the tag block
+    /// leaves the entry under the old name — so its stored key no longer
+    /// equals `tag_map_key_for(value)`. Left in place, that stale key can
+    /// be overwritten by a *different* tag that now resolves to the same
+    /// (freed) name (a new tag reusing the old name), silently destroying
+    /// the renamed tag's association.
+    ///
+    /// This sweep runs before [`Self::apply_add_tag`]'s map insert so the
+    /// colliding key is vacated first. It is also self-healing: any block
+    /// touched by an add converges its stale keys to current names. Only
+    /// entries whose current key differs *and* is not already occupied by
+    /// the same tag_id are moved; an entry already under its current key
+    /// is untouched (no spurious op). Skips re-keying onto a key held by
+    /// a DIFFERENT tag_id (that target is itself stale or a genuine
+    /// same-name coalesce — #709 LWW handles it on insert), and onto the
+    /// degraded raw-id key (unresolvable tag block — nothing to migrate).
+    fn rekey_stale_tag_entries(&self, block_id: &str, tag_map: &LoroMap) -> Result<(), AppError> {
+        // Snapshot current (key -> tag_id) so we don't mutate under for_each.
+        let mut entries: Vec<(String, String)> = Vec::new();
+        tag_map.for_each(|key, voc| {
+            if let Ok(LoroValue::String(s)) = voc.into_value() {
+                entries.push((key.to_string(), (*s).clone()));
+            }
+        });
+        // Set of keys currently present, to detect collisions before moving.
+        let present: std::collections::HashSet<&str> =
+            entries.iter().map(|(k, _)| k.as_str()).collect();
+
+        let mut moves: Vec<(String, String, String)> = Vec::new(); // (old_key, new_key, tag_id)
+        for (key, tag_id) in &entries {
+            let current_key = self.tag_map_key_for(tag_id);
+            if &current_key == key {
+                continue; // already under its current name — nothing to do
+            }
+            // Don't displace a different tag already sitting under the
+            // target key; let the insert/LWW path decide that case.
+            if present.contains(current_key.as_str()) {
+                continue;
+            }
+            moves.push((key.clone(), current_key, tag_id.clone()));
+        }
+
+        for (old_key, new_key, tag_id) in moves {
+            tag_map
+                .insert(&new_key, LoroValue::from(tag_id.as_str()))
+                .map_err(|e| {
+                    AppError::Validation(format!(
+                        "loro: add_tag block {block_id} rekey tag {tag_id} \
+                         to {new_key}: {e}"
+                    ))
+                })?;
+            tag_map.delete(&old_key).map_err(|e| {
+                AppError::Validation(format!(
+                    "loro: add_tag block {block_id} rekey delete stale key \
+                     {old_key}: {e}"
+                ))
+            })?;
+        }
+        Ok(())
     }
 
     /// Mirrors `RemoveTag` — dissociates `tag_id` from `block_id`.
@@ -4187,6 +4263,7 @@ mod tag_convergence_tests {
     use super::LoroEngine;
 
     const BLOCK_A: &str = "01HZ0000000000000000000B01";
+    const BLOCK_B: &str = "01HZ0000000000000000000B02";
     const TAG_X: &str = "01HZ0000000000000000000T0X";
     const TAG_Y: &str = "01HZ0000000000000000000T0Y";
 
@@ -4466,6 +4543,62 @@ mod tag_convergence_tests {
             a.read_tags(BLOCK_A).expect("read tags"),
             vec![TAG_Y.to_string()],
             "same normalized name must coalesce to the latest tag_id"
+        );
+    }
+
+    /// #845: rename + old-name reuse must NOT overwrite the renamed tag's
+    /// block association. Distinct from
+    /// `same_name_distinct_tag_ids_coalesce_by_name`: there both tags
+    /// genuinely carry the same name *now*, so coalescing is the #709
+    /// end-state. Here tag1's CURRENT name is "bar" — its entry only sits
+    /// under the stale "foo" key because the rename left it there. A new
+    /// tag2 named "foo" added to the SAME block would (pre-fix) insert at
+    /// key "foo" and clobber tag1's still-valid association, which the
+    /// next reprojection silently deletes from SQL. The add path must be
+    /// rename-aware: re-key tag1 to its current name first, so both
+    /// associations survive.
+    #[test]
+    fn rename_then_old_name_reuse_keeps_renamed_tags_association() {
+        let mut a = LoroEngine::with_peer_id("device-845-a").expect("peer a");
+        a.apply_create_block(BLOCK_A, "content", "hello", None, 0)
+            .expect("create block A");
+        a.apply_create_block(BLOCK_B, "content", "world", None, 1)
+            .expect("create block B");
+
+        // tag1 named "foo" on block A.
+        a.apply_create_block(TAG_X, "tag", "foo", None, 2)
+            .expect("create tag1 'foo'");
+        a.apply_add_tag(BLOCK_A, TAG_X)
+            .expect("tag block A with #foo");
+
+        // Rename tag1 'foo' -> 'bar'. block A now logically carries #bar
+        // (tag1), but the engine map still holds the stale key 'foo' -> tag1.
+        a.apply_edit_content(TAG_X, 0, 3, "bar")
+            .expect("rename tag1 foo->bar");
+
+        // A NEW tag2 reusing the old name 'foo' is created and added to a
+        // DIFFERENT block. The collision target is block A's stale 'foo'
+        // key when tag2 is later added there.
+        a.apply_create_block(TAG_Y, "tag", "foo", None, 3)
+            .expect("create tag2 'foo' (reuses old name)");
+        a.apply_add_tag(BLOCK_B, TAG_Y)
+            .expect("tag block B with new #foo");
+
+        // Now add the new #foo (tag2) to block A as well — its name key is
+        // 'foo', colliding with tag1's stale 'foo' entry on block A.
+        a.apply_add_tag(BLOCK_A, TAG_Y)
+            .expect("add new #foo to block A");
+
+        // block A must still resolve to the renamed tag1 (#bar) AND carry
+        // the new tag2 (#foo) — tag1's association must NOT be overwritten.
+        let mut tags_a = a.read_tags(BLOCK_A).expect("read tags A");
+        tags_a.sort();
+        let mut want = vec![TAG_X.to_string(), TAG_Y.to_string()];
+        want.sort();
+        assert_eq!(
+            tags_a, want,
+            "block A must retain the renamed tag (tag1/#bar) after a new \
+             tag reusing the old name (tag2/#foo) is added — got {tags_a:?}"
         );
     }
 }
