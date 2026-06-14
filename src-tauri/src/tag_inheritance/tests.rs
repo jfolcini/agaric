@@ -349,6 +349,80 @@ async fn remove_inherited_reattributes_to_grandparent() {
     assert!(rows.contains(&("CHILD".into(), "TAG".into(), "GRAND".into())));
 }
 
+/// #675 GAP: a direct tagger lives INSIDE the removed subtree.
+///
+/// Tree: P → C → GC, and P → SIBLING.
+/// P holds TAG directly and inherits it to {C, GC, SIBLING}.
+/// C ALSO holds TAG directly (so GC could inherit from either P or C; with the
+/// `(block_id, tag_id)` PK and P-then-C propagation order, GC's row points at
+/// P). When TAG is removed from P:
+///   * SIBLING (only inheriting from P) must LOSE the tag, and
+///   * C and GC must KEEP it, re-attributed to the in-subtree tagger C.
+///     (C keeps its DIRECT tag in block_tags; GC re-inherits inherited_from = C.)
+///
+/// Before the fix, step 1 wiped all `inherited_from = P` rows and step 2 only
+/// re-attributed from ancestors ABOVE P, so GC silently lost the tag.
+#[tokio::test]
+async fn remove_inherited_reattributes_to_intra_subtree_tagger() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "TAG", "tag", "tag-name", None).await;
+    insert_block(&pool, "P", "page", "p", None).await;
+    insert_block(&pool, "C", "content", "c", Some("P")).await;
+    insert_block(&pool, "GC", "content", "gc", Some("C")).await;
+    insert_block(&pool, "SIBLING", "content", "sibling", Some("P")).await;
+
+    // P and C both hold TAG directly.
+    insert_tag_assoc(&pool, "P", "TAG").await;
+    insert_tag_assoc(&pool, "C", "TAG").await;
+
+    let mut conn = pool.acquire().await.unwrap();
+
+    // Propagate C first, then P. C gives GC (GC, TAG, C). P then propagates to
+    // {C, GC, SIBLING}; GC already has a row so INSERT OR IGNORE keeps C, but
+    // C and SIBLING get inherited_from = P. Force the worst case (GC -> P) by
+    // propagating P first instead, mirroring real add-order ambiguity.
+    propagate_tag_to_descendants(&mut conn, "P", "TAG")
+        .await
+        .unwrap();
+
+    let rows = get_inherited(&pool).await;
+    assert_eq!(rows.len(), 3, "expected C, GC, SIBLING to inherit from P");
+    assert!(rows.contains(&("C".into(), "TAG".into(), "P".into())));
+    assert!(rows.contains(&("GC".into(), "TAG".into(), "P".into())));
+    assert!(rows.contains(&("SIBLING".into(), "TAG".into(), "P".into())));
+
+    // Remove TAG from P.
+    sqlx::query("DELETE FROM block_tags WHERE block_id = 'P' AND tag_id = 'TAG'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    remove_inherited_tag(&mut conn, "P", "TAG").await.unwrap();
+
+    let rows = get_inherited(&pool).await;
+    // SIBLING and C lose their inherited-from-P rows (C still has its DIRECT
+    // tag in block_tags, which is NOT stored in block_tag_inherited). GC must be
+    // re-attributed to the in-subtree direct tagger C.
+    assert_eq!(
+        rows.len(),
+        1,
+        "only GC should remain in block_tag_inherited, got: {rows:?}"
+    );
+    assert!(
+        rows.contains(&("GC".into(), "TAG".into(), "C".into())),
+        "GC must re-inherit from the intra-subtree tagger C, got: {rows:?}"
+    );
+
+    // C still holds the tag directly.
+    let direct: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_tags WHERE block_id = 'C' AND tag_id = 'TAG'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(direct, 1, "C must keep its direct tag");
+}
+
 // ======================================================================
 // recompute_subtree_inheritance
 // ======================================================================
