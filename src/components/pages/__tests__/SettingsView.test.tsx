@@ -1208,11 +1208,21 @@ describe('SettingsView', () => {
       expect(localStorage.getItem('agaric:quickCaptureShortcut')).toBe(null)
     })
 
-    it('hides the entire row on mobile', () => {
-      mockUseIsMobile.mockReturnValue(true)
-      render(<SettingsView />)
-
-      expect(screen.queryByTestId('quick-capture-settings-row')).not.toBeInTheDocument()
+    it('hides the entire row on a mobile platform (#742: capability gate, not width)', () => {
+      // #742: visibility follows isMobilePlatform() (the UA capability check
+      // registerGlobalShortcut uses), NOT the viewport-width useIsMobile hook.
+      const originalUA = navigator.userAgent
+      Object.defineProperty(navigator, 'userAgent', {
+        configurable: true,
+        get: () =>
+          'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
+      })
+      try {
+        render(<SettingsView />)
+        expect(screen.queryByTestId('quick-capture-settings-row')).not.toBeInTheDocument()
+      } finally {
+        Object.defineProperty(navigator, 'userAgent', { configurable: true, get: () => originalUA })
+      }
     })
   })
 })

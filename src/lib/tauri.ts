@@ -3,6 +3,7 @@ import { Channel } from '@tauri-apps/api/core'
 import { commands } from './bindings'
 import { logger } from './logger'
 import { setLogBackendSink } from './logger-transport'
+import { isMobilePlatform } from './platform'
 import type { SafeLimit } from './safe-limit'
 
 export type {
@@ -2307,26 +2308,14 @@ export async function createSpace(params: {
 // Quick capture (FEAT-12)
 // ---------------------------------------------------------------------------
 
-/**
- * FEAT-12: a coarse mobile-detect used to gate the global-shortcut JS API.
- *
- * `tauri-plugin-global-shortcut` is desktop-only — its native dependency
- * (`global-hotkey` crate) compiles only on Linux/macOS/Windows, and the
- * Rust-side registration in `src-tauri/src/lib.rs` is gated behind
- * `#[cfg(desktop)]`. The matching JS API import would resolve at module
- * load time on every platform; calling the underlying `invoke('plugin:…')`
- * on Android / iOS would throw at runtime. Guard at the wrapper boundary
- * so callers (Settings UI, App.tsx startup hook) get a no-op promise on
- * mobile instead of an unhandled rejection.
- *
- * The detection mirrors `useIsMobile` (matchMedia / innerWidth) but is
- * SSR-safe and does not depend on React state.
- */
-function isMobilePlatform(): boolean {
-  if (typeof navigator === 'undefined') return false
-  const ua = navigator.userAgent ?? ''
-  return /Android|iPhone|iPad|iPod/i.test(ua)
-}
+// FEAT-12: the global-shortcut JS API below is gated on `isMobilePlatform()`
+// (a CAPABILITY check, exported from `./platform`) rather than `useIsMobile`
+// (a width breakpoint). `tauri-plugin-global-shortcut` is desktop-only — its
+// native dependency (`global-hotkey` crate) compiles only on
+// Linux/macOS/Windows, and the Rust-side registration in
+// `src-tauri/src/lib.rs` is gated behind `#[cfg(desktop)]`. Calling the
+// underlying `invoke('plugin:…')` on Android / iOS would throw at runtime, so
+// we guard at the wrapper boundary and return a no-op promise on mobile.
 
 /**
  * FEAT-12 + FEAT-3p5: drop a single content block onto today's journal

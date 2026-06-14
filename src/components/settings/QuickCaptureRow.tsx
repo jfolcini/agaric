@@ -18,9 +18,16 @@
  * lives in one place. We still re-register here so a save attempt
  * actually surfaces "this chord conflicts" feedback in real time.
  *
- * Hidden entirely on mobile (`useIsMobile`) — matches FEAT-12's
- * desktop-only requirement without depending on `tauri-apps/plugin-os`
- * or another IPC round-trip.
+ * Hidden entirely on mobile PLATFORMS (`isMobilePlatform()` — the coarse
+ * UA capability check from `@/lib/platform`), matching FEAT-12's
+ * desktop-only requirement. This is a CAPABILITY gate, not a layout one:
+ * the chord it configures is wired to `registerGlobalShortcut`, which
+ * no-ops on the same `isMobilePlatform()` check (the underlying
+ * `tauri-plugin-global-shortcut` compiles only on desktop). Gating
+ * visibility on the viewport width (`useIsMobile`, < 768 px) instead
+ * would let an Android tablet ≥ 768 px render the row and silently
+ * accept a chord that never registers (#742). Width drives LAYOUT
+ * (`useDialogOrSheet`); capability drives whether this SETTING exists.
  */
 
 import type React from 'react'
@@ -29,9 +36,9 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import { useIsMobile } from '@/hooks/useIsMobile'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { isMobilePlatform } from '@/lib/platform'
 import {
   defaultQuickCaptureShortcut,
   loadQuickCaptureShortcut,
@@ -42,7 +49,6 @@ import { registerGlobalShortcut, unregisterGlobalShortcut } from '@/lib/tauri'
 
 export function QuickCaptureRow(): React.ReactElement | null {
   const { t } = useTranslation()
-  const isMobile = useIsMobile()
   const [shortcut, setShortcut] = useState<string>(() => loadQuickCaptureShortcut())
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -114,7 +120,11 @@ export function QuickCaptureRow(): React.ReactElement | null {
     }
   }, [draft, shortcut, t])
 
-  if (isMobile) return null
+  // Capability gate, NOT a width gate (#742): hide the row wherever the
+  // global-shortcut plugin can't register the chord. `isMobilePlatform()`
+  // is the same check `registerGlobalShortcut` uses, so we never render a
+  // setting that would silently no-op (e.g. an Android tablet ≥ 768 px).
+  if (isMobilePlatform()) return null
 
   return (
     <div

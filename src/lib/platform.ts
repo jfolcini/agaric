@@ -62,6 +62,30 @@ export function isAndroid(): boolean {
   return cachedIsAndroid
 }
 
+/**
+ * Returns true on a mobile platform (Android / iOS) via a coarse
+ * user-agent sniff. This is a CAPABILITY check — "can this device run the
+ * desktop-only Tauri plugins?" — and is deliberately distinct from the
+ * width-based layout breakpoint in `useIsMobile` (which answers "is the
+ * viewport narrow?"). An Android tablet ≥ 768 px is `isMobilePlatform()`
+ * === true but `useIsMobile()` === false.
+ *
+ * Use this to gate capability-dependent SETTINGS — e.g. the global-
+ * shortcut JS API (`registerGlobalShortcut`), the Tauri updater
+ * (`useUpdateCheck`), and the desktop-only Quick Capture chord row — so
+ * the gate matches the platform the underlying native plugin compiles
+ * for, not the current window size.
+ *
+ * Intentionally NOT cached: callers (and tests) may need it to re-read a
+ * mutated `navigator.userAgent` per call, mirroring the three former
+ * inline copies it replaced.
+ */
+export function isMobilePlatform(): boolean {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent ?? ''
+  return /Android|iPhone|iPad|iPod/i.test(ua)
+}
+
 /** Test-only reset hook — lets tests swap `navigator.platform` between runs. */
 export function __resetPlatformCacheForTests(): void {
   cachedIsMac = null
