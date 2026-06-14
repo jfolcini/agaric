@@ -74,10 +74,20 @@ import { useInPageFindStore } from '@/stores/useInPageFindStore'
  * height MINUS the keyboard; subtracting `window.innerHeight` yields
  * a negative number when the keyboard is up. Falls back to 0 outside
  * browsers that expose the API (every test under happy-dom).
+ *
+ * Pinch zoom ALSO shrinks `visualViewport.height` without any keyboard —
+ * on a desktop browser / touchscreen (trackpad pinch, WebView2 touch
+ * zoom) a zoomed viewport would otherwise float the toolbar up by a bogus
+ * "keyboard" offset. `scale > 1` is the discriminator: the IME never
+ * changes scale, pinch zoom always does. Treat a zoomed viewport as "no
+ * keyboard" and return 0. (`undefined > 1` is false, so WebViews lacking
+ * `scale` keep the plain keyboard math.) Mirrors the #760 guard in
+ * `useSoftKeyboardInset` (src/components/ui/sheet.tsx).
  */
 function computeViewportOffset(): number {
   const vv = (typeof window !== 'undefined' && window.visualViewport) || null
   if (!vv) return 0
+  if (vv.scale > 1) return 0
   return vv.height - window.innerHeight
 }
 
