@@ -1,20 +1,26 @@
 /**
- * FormField — shared label + control + help-text + error wrapper.
+ * FormField — the vertical `<div className="space-y-2"><Label/>{control}
+ * {help|error}</div>` stack: a label above a single control, with an
+ * optional muted help paragraph or a `role="alert"` error below it.
  *
- * Replaces the inline `<div className="space-y-2"><label ...>label</label>
- * <Control /></div>` shape recurring across settings tabs and property
- * editors (see plan `pending/design-system-maintainability-2026-05-09.md`
- * § 2d).
- *
+ * Use it wherever a setting/property is a labelled field laid out as a
+ * vertical stack — e.g. `AppearanceTab` (theme / font-size / week-start
+ * selects) and the Google Calendar window-size input (`SettingsForm`).
  * The component delegates labelling to the shared `Label` primitive so
  * typography stays consistent. Pass `htmlFor` to associate the label
  * with a control; otherwise the label is purely visual.
  *
- * Scope of this change: AppearanceTab is migrated as the smallest case
- * study. `PropertyRowEditor`, `KeyboardSettingsTab`, and
- * `GoogleCalendarSettingsTab` are deliberately deferred to a follow-up
- * — the plan calls those out as larger surfaces best migrated
- * separately.
+ * This is NOT a fit for, and deliberately does not model:
+ *   - Toggle rows (`flex items-start justify-between gap-4` with the
+ *     Label + help on the left and a `Switch` on the right) — see
+ *     EditorTab, NotificationsTab, AutostartRow, QuickCaptureRow and the
+ *     GCal privacy row. They are horizontal, not a vertical stack.
+ *   - `PropertyRowEditor`, which is a row editor that puts `aria-label`
+ *     on inline editors and has no Label + control + help/error stack.
+ *   - Inline validation/status errors that need their own element `id`
+ *     for `aria-describedby` linkage (KeyboardSettingsTab) or that float
+ *     free of any labelled control (GoogleCalendarSettingsTab's
+ *     `statusError`). FormField's error region has no addressable id.
  */
 
 import type * as React from 'react'

@@ -20,6 +20,7 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { FormField } from '@/components/ui/form-field'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -60,11 +61,14 @@ export function SettingsForm({
 
   return (
     <>
-      {/* Window size */}
-      <div className="space-y-2">
-        <Label htmlFor="gcal-window-days" muted={false}>
-          {t('gcal.windowLabel')}
-        </Label>
+      {/* Window size — the vertical Label + control + muted-help stack
+          that FormField models. (The privacy block below is a
+          justify-between toggle row, not a FormField candidate.) */}
+      <FormField
+        label={t('gcal.windowLabel')}
+        htmlFor="gcal-window-days"
+        description={t('gcal.windowHelp')}
+      >
         <Input
           id="gcal-window-days"
           type="number"
@@ -79,8 +83,7 @@ export function SettingsForm({
           disabled={!connected}
           data-testid="gcal-window-input"
         />
-        <p className="text-xs text-muted-foreground">{t('gcal.windowHelp')}</p>
-      </div>
+      </FormField>
 
       {/* Privacy mode */}
       <div className="flex items-start justify-between gap-4">
