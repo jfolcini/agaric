@@ -79,6 +79,17 @@ pub enum ApplyOutcome {
         space_id: SpaceId,
         /// Block ids the import changed (may be empty for a no-op import).
         changed_blocks: Vec<crate::ulid::BlockId>,
+        /// #1071: the deduped set of owning *page* ids (page-root block ids)
+        /// the changed blocks belong to. Resolved from the committed
+        /// `parent_id`/`block_type` chain right after the projection tx (a
+        /// page block resolves to itself). The orchestrator threads these
+        /// out via [`crate::sync_events::SyncEvent::Complete`] so the
+        /// frontend can reload ONLY the affected page stores instead of
+        /// every mounted BlockTree. May be empty when no blocks changed or
+        /// when a changed block has no resolvable page ancestor (orphan /
+        /// cross-doc ordering) — the frontend falls back to a full reload
+        /// when the set is empty.
+        changed_page_ids: Vec<String>,
     },
     /// The message was a [`LoroSyncMessage::Update`] whose `from_vv`
     /// is not reachable from our current `oplog_vv()` — applying the
@@ -332,13 +343,88 @@ pub async fn apply_remote(
     let changed_blocks =
         import_and_project(pool, registry, device_id, &space_id, &bytes, inbox_id).await?;
 
+    // #1071: resolve the owning page id of every changed block so the
+    // orchestrator can thread a targeted-invalidation set out via
+    // `SyncEvent::Complete`. Runs AFTER `import_and_project`'s projection tx
+    // committed, so the `parent_id`/`block_type` chain it walks reflects the
+    // ops just applied.
+    let changed_page_ids = resolve_changed_page_ids(pool, &changed_blocks).await?;
+
     // #421: hand the changed-block set to the caller so it can drive a
     // targeted FTS reindex (per-block `UpdateFtsBlock`) instead of a full
     // O(vault) rebuild. The set is moved out here (last use).
     Ok(ApplyOutcome::Imported {
         space_id,
         changed_blocks,
+        changed_page_ids,
     })
+}
+
+/// #1071: resolve the deduped set of owning *page* ids (page-root block ids)
+/// for `changed_blocks`, walking the committed `parent_id` chain in SQL.
+///
+/// A page block resolves to itself (`page_id = id` invariant, migration
+/// 0073). The recursive CTE mirrors [`crate::cache::page_id`]'s ancestor walk
+/// (Invariant #9 `depth < 100` runaway guard) but is scoped to just the
+/// changed-block id set instead of the whole vault — bounded by the number of
+/// blocks one inbound sync message actually touched.
+///
+/// Blocks with no resolvable page ancestor (orphans, or cross-doc ordering
+/// where the page block has not yet arrived) contribute no id; the result may
+/// therefore be empty even when `changed_blocks` is not. The frontend treats
+/// an empty set as "fall back to a full reload", so a missed resolution
+/// degrades to the old behaviour rather than dropping an update.
+async fn resolve_changed_page_ids(
+    pool: &SqlitePool,
+    changed_blocks: &[crate::ulid::BlockId],
+) -> Result<Vec<String>, AppError> {
+    if changed_blocks.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Bind the changed ids as an IN-list (bounded by message size, well under
+    // MAX_SQL_PARAMS in practice; chunk defensively to stay within the SQLite
+    // variable limit for an unusually large single-message import).
+    let mut page_ids: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for chunk in changed_blocks.chunks(crate::db::MAX_SQL_PARAMS) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        // Walk each seed block up its parent chain until a `page` row is hit
+        // (or depth/orphan cuts it off). `WHERE a.cur_type != 'page'` stops
+        // the recursion as soon as the page root is reached, so a page block
+        // seeded directly resolves to itself at depth 0.
+        let sql = format!(
+            "WITH RECURSIVE ancestors(seed_id, cur_id, cur_type, depth) AS ( \
+                 SELECT b.id, b.id, b.block_type, 0 FROM blocks b \
+                 WHERE b.id IN ({placeholders}) \
+                 UNION ALL \
+                 SELECT a.seed_id, parent.id, parent.block_type, a.depth + 1 \
+                 FROM ancestors a \
+                 JOIN blocks child ON child.id = a.cur_id \
+                 JOIN blocks parent ON parent.id = child.parent_id \
+                 WHERE a.cur_type != 'page' \
+                   AND a.depth < 100 \
+             ) \
+             SELECT DISTINCT cur_id FROM ancestors WHERE cur_type = 'page'",
+        );
+        // dynamic-sql: recursive ancestor CTE with a runtime-built IN-list
+        // placeholder set (chunked over the changed-block ids); not expressible
+        // as a compile-checked `query_scalar!` because the placeholder count
+        // varies per chunk. #646.
+        let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
+        for id in chunk {
+            q = q.bind(id.as_str());
+        }
+        let rows = q.fetch_all(pool).await?;
+        for id in rows {
+            if seen.insert(id.clone()) {
+                page_ids.push(id);
+            }
+        }
+    }
+    Ok(page_ids)
 }
 
 /// Import `bytes` into the per-space engine and project every changed
@@ -982,6 +1068,96 @@ mod tests {
             keys,
             vec!["effort".to_string()],
             "engine-backed `effort` survives; SQL-only `sql_only` is swept by re-projection"
+        );
+    }
+
+    /// #1071 happy path: `apply_remote` resolves the owning *page* id of every
+    /// changed block and surfaces a DEDUPED set on `ApplyOutcome::Imported`.
+    /// A page block and two of its content children, all touched by one
+    /// inbound snapshot, must collapse to the single page-root id (the page
+    /// resolves to itself; the children resolve up the `parent_id` chain).
+    #[tokio::test]
+    async fn apply_remote_imported_carries_deduped_changed_page_ids() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        // No `spaces` row needed: `project_block_full_to_sql` stamps
+        // `blocks.space_id` via a `(SELECT id FROM spaces WHERE id = ?)`
+        // subquery that resolves to NULL when the space block isn't
+        // registered, and the #1071 page-id resolution walks `parent_id`
+        // independent of `space_id`.
+
+        // A builds a page (BLOCK_C) with two content children (A1, D4) and
+        // syncs a full snapshot to B.
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_C, "page", "the page", None, 0)
+                .expect("create page");
+            e.apply_create_block(BLOCK_A, "content", "child one", Some(BLOCK_C), 0)
+                .expect("create child A1");
+            e.apply_create_block(BLOCK_D, "content", "child two", Some(BLOCK_C), 1)
+                .expect("create child D4");
+        }
+        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare");
+
+        let registry_b = LoroEngineRegistry::new();
+        let outcome = apply_remote(&pool, &registry_b, "device-B", msg)
+            .await
+            .expect("apply_remote");
+
+        let page_ids = match outcome {
+            ApplyOutcome::Imported {
+                changed_page_ids, ..
+            } => changed_page_ids,
+            other => panic!("expected Imported, got {other:?}"),
+        };
+        assert_eq!(
+            page_ids,
+            vec![BLOCK_C.to_string()],
+            "the page and both its children must resolve to the single page-root id (deduped)"
+        );
+    }
+
+    /// #1071 empty case: when an import changes no blocks, the resolved
+    /// page-id set is empty — the frontend then falls back to a full reload
+    /// rather than skipping a phantom update. Exercised directly through the
+    /// resolution helper (no changed blocks → empty), which is the exact
+    /// degenerate path `apply_remote` hits for a no-op import.
+    #[tokio::test]
+    async fn resolve_changed_page_ids_empty_when_no_blocks_changed() {
+        let (pool, _dir) = fresh_pool().await;
+        let page_ids = resolve_changed_page_ids(&pool, &[]).await.expect("resolve");
+        assert!(
+            page_ids.is_empty(),
+            "no changed blocks must yield no page ids, got {page_ids:?}"
+        );
+    }
+
+    /// #1071: an orphan changed block (no page ancestor in the `parent_id`
+    /// chain) contributes no page id — the resolution degrades to empty
+    /// rather than inventing a root, so the frontend falls back to a full
+    /// reload (the in-doubt-reload-everything contract).
+    #[tokio::test]
+    async fn resolve_changed_page_ids_skips_orphan_without_page_ancestor() {
+        let (pool, _dir) = fresh_pool().await;
+        // A content block whose parent chain never reaches a `page` row.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'orphan', NULL, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let page_ids = resolve_changed_page_ids(&pool, &[crate::ulid::BlockId::from(BLOCK_A)])
+            .await
+            .expect("resolve");
+        assert!(
+            page_ids.is_empty(),
+            "an orphan block resolves to no page id, got {page_ids:?}"
         );
     }
 

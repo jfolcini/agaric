@@ -689,6 +689,12 @@ pub(crate) async fn try_receive_snapshot_catchup(
         remote_device_id: remote_device_id.to_string(),
         ops_received: 0,
         ops_sent: 0,
+        // #1071: snapshot catch-up reimports an ENTIRE space snapshot, so a
+        // per-page targeted reload would be both incorrect (every page may
+        // have changed) and impossible to enumerate cheaply here. Send an
+        // empty set — the frontend falls back to a full reload + preload,
+        // which is exactly the right response to a whole-space catch-up.
+        changed_page_ids: Vec::new(),
     });
 
     Ok(CatchupOutcome::Applied {

@@ -165,6 +165,7 @@ impl SyncOrchestrator {
                 remote_device_id: String::new(),
                 ops_received: 0,
                 ops_sent: 0,
+                changed_page_ids: Vec::new(),
             },
             pool,
             device_id,
@@ -455,7 +456,23 @@ impl SyncOrchestrator {
                             )
                             .await?;
                             match outcome {
-                                ApplyOutcome::Imported { changed_blocks, .. } => {
+                                ApplyOutcome::Imported {
+                                    changed_blocks,
+                                    changed_page_ids,
+                                    ..
+                                } => {
+                                    // #1071: accumulate the resolved page ids
+                                    // (deduped) across this session's inbound
+                                    // LoroSync messages so the terminal
+                                    // `SyncEvent::Complete` carries the full
+                                    // targeted-invalidation set. A space with
+                                    // many touched pages, or a multi-space
+                                    // session, contributes them all here.
+                                    for pid in changed_page_ids {
+                                        if !self.session.changed_page_ids.contains(&pid) {
+                                            self.session.changed_page_ids.push(pid);
+                                        }
+                                    }
                                     // #705: this counts inbound LoroSync
                                     // *messages* (one per space, each a full
                                     // CRDT snapshot/update), not individual
@@ -561,6 +578,9 @@ impl SyncOrchestrator {
                     remote_device_id: self.session.remote_device_id.clone(),
                     ops_received: self.session.ops_received,
                     ops_sent: self.session.ops_sent,
+                    // #1071: deduped page ids accumulated from this session's
+                    // applied ops (empty when no Imported outcome occurred).
+                    changed_page_ids: self.session.changed_page_ids.clone(),
                 });
                 Ok(Some(SyncMessage::SyncComplete { last_hash }))
             }
@@ -634,6 +654,9 @@ impl SyncOrchestrator {
                     remote_device_id: self.session.remote_device_id.clone(),
                     ops_received: self.session.ops_received,
                     ops_sent: self.session.ops_sent,
+                    // #1071: deduped page ids accumulated from this session's
+                    // applied ops (empty when no Imported outcome occurred).
+                    changed_page_ids: self.session.changed_page_ids.clone(),
                 });
                 Ok(None)
             }
@@ -781,6 +804,10 @@ impl SyncOrchestrator {
                 remote_device_id: self.session.remote_device_id.clone(),
                 ops_received: self.session.ops_received,
                 ops_sent: self.session.ops_sent,
+                // #1071: empty-stream short-circuit applies no inbound ops, so
+                // the accumulated set is empty here — but read it from the
+                // session uniformly with the other Complete sites.
+                changed_page_ids: self.session.changed_page_ids.clone(),
             });
             return Ok(Some(SyncMessage::SyncComplete { last_hash }));
         }

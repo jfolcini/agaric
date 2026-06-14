@@ -779,6 +779,10 @@ pub(crate) async fn try_sync_with_peer(
                 remote_device_id: peer_id.clone(),
                 ops_received: session.ops_received,
                 ops_sent: session.ops_sent,
+                // #1071: forward the session's accumulated targeted-
+                // invalidation page-id set so the frontend reloads only the
+                // affected stores. Empty when the session applied no ops.
+                changed_page_ids: session.changed_page_ids.clone(),
             });
             tracing::info!(
                 peer_id,

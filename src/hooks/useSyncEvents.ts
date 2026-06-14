@@ -37,6 +37,20 @@ export interface SyncCompletePayload {
   remote_device_id: string
   ops_received: number
   ops_sent: number
+  /**
+   * #1071 — deduped set of owning *page* ids (page-root block ids) touched by
+   * the ops applied during this sync session. When present and non-empty, the
+   * handler reloads ONLY the mounted page stores whose id is in this set and
+   * runs the resolve preload (a changed page's / tag's title may have moved).
+   *
+   * Optional for backward compatibility: a peer on the old protocol (or the
+   * snapshot-catch-up path, which reimports a whole space) omits it / sends an
+   * empty array, and the handler falls back to reloading EVERY mounted store
+   * plus a full preload. The field is NOT specta-exported — it rides on the
+   * `sync:complete` Tauri event (`SyncEvent::Complete`), which is serialize-
+   * only, so this hand-written shape is the single source of truth for it.
+   */
+  changed_page_ids?: string[]
 }
 
 export interface SyncErrorPayload {
@@ -85,7 +99,7 @@ export function useSyncEvents(): void {
     'sync:complete',
     (event) => {
       try {
-        const { ops_received, ops_sent } = event.payload
+        const { ops_received, ops_sent, changed_page_ids } = event.payload
         const store = useSyncStore.getState()
         store.setState('idle')
         store.setOpsReceived(ops_received)
@@ -99,10 +113,34 @@ export function useSyncEvents(): void {
         }
 
         // Reload blocks if we received ops (data changed).
-        // Reload ALL mounted page stores so every visible BlockTree updates.
+        //
+        // #1071 — TARGETED invalidation. The backend now threads the set of
+        // page-root ids its applied ops actually touched
+        // (`changed_page_ids`). When that set is present and non-empty we
+        // reload + re-anchor ONLY the mounted page stores in the set, and
+        // run the resolve preload once (a changed page's / tag's title may
+        // have moved). This replaces the old O(mounted-pages) fan-out where
+        // one remote op touching one block reloaded every visible BlockTree
+        // (up to ~30 DaySection stores in the monthly journal).
+        //
+        // FALLBACK (mandatory backward-compat): when the field is absent or
+        // empty — an older backend, a peer on the old protocol, or the
+        // snapshot-catch-up path that reimports a whole space — reload ALL
+        // mounted stores + a full preload, exactly the pre-#1071 behaviour.
+        // When in doubt we fall back rather than risk a missed update.
         if (ops_received > 0) {
           const reanchorUndo = useUndoStore.getState().reanchorAfterRemoteOps
-          for (const [pageId, store] of pageBlockRegistry.entries()) {
+          const targeted =
+            Array.isArray(changed_page_ids) && changed_page_ids.length > 0
+              ? new Set(changed_page_ids)
+              : null
+
+          for (const [pageId, pageStore] of pageBlockRegistry.entries()) {
+            // In targeted mode, skip stores whose page wasn't touched by the
+            // applied ops — they cannot have changed, so reloading them is
+            // pure waste. In fallback mode (`targeted == null`) reload every
+            // store, as before.
+            if (targeted && !targeted.has(pageId)) continue
             // #731 — re-anchor this page's positional undo state BEFORE the
             // reload. The remote ops just applied shifted the backend op-log
             // indexing that `undoDepth` addresses; without this reset the next
@@ -111,14 +149,21 @@ export function useSyncEvents(): void {
             // 0 / empty redo is the safe re-anchor (a fresh undo re-reads the
             // newest op). Keyed by the same pageId the block reload uses.
             reanchorUndo(pageId)
-            store.getState().load()
+            pageStore.getState().load()
           }
-          // FEAT-3p7 — preload now takes the active space id so the
-          // post-sync re-fetch only re-keys current-space pages into
-          // the cache. Foreign-space rows that were synced from the
-          // peer never land in the cache here; they will be filtered
-          // by the next BlockTree-level batchResolve and rendered as
-          // broken-link chips.
+
+          // Resolve-cache preload. In targeted mode the set is non-empty
+          // here (the `ops_received > 0` + non-empty guard), so a page/tag
+          // title may have changed — run the preload. In fallback mode
+          // (unknown change scope) we always preload. Either way the
+          // condition is "we had something to reconcile", which is true in
+          // both branches inside this `ops_received > 0` block.
+          //
+          // FEAT-3p7 — preload takes the active space id so the post-sync
+          // re-fetch only re-keys current-space pages into the cache.
+          // Foreign-space rows synced from the peer never land in the cache
+          // here; they are filtered by the next BlockTree-level batchResolve
+          // and rendered as broken-link chips.
           const refreshSpaceId = useSpaceStore.getState().currentSpaceId
           useResolveStore.getState().preload(refreshSpaceId ?? undefined, true)
         }

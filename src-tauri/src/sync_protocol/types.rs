@@ -262,6 +262,14 @@ pub struct SyncSession {
     pub remote_device_id: String,
     pub ops_received: usize,
     pub ops_sent: usize,
+    /// #1071: deduped set of owning *page* ids (page-root block ids) touched
+    /// by ops applied during this session, accumulated across the session's
+    /// inbound `LoroSync` messages. Threaded out via
+    /// [`crate::sync_events::SyncEvent::Complete`] so the frontend reloads
+    /// ONLY the affected page stores instead of every mounted BlockTree.
+    /// Empty when nothing changed (or nothing resolved) — the frontend then
+    /// falls back to its full-reload behaviour.
+    pub changed_page_ids: Vec<String>,
 }
 
 // The Loro-side push/apply path (`sync_protocol::loro_sync`) does not

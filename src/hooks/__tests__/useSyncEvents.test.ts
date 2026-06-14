@@ -17,6 +17,7 @@ const {
   mockSetOpsSent,
   mockUpdateLastSynced,
   mockLoad,
+  mockLoad2,
   mockPageBlockRegistry,
   mockPreload,
   mockReanchorUndo,
@@ -35,12 +36,22 @@ const {
   const mockSetOpsSent = vi.fn()
   const mockUpdateLastSynced = vi.fn()
   const mockLoad = vi.fn().mockResolvedValue(undefined)
+  // #1071 — a SECOND mounted page store so targeted-vs-fallback tests can
+  // assert that only the changed page reloads (PAGE_1) while the untouched
+  // one (PAGE_2) is skipped, and that the fallback reloads BOTH.
+  const mockLoad2 = vi.fn().mockResolvedValue(undefined)
 
   const mockPageBlockRegistry = new Map()
   mockPageBlockRegistry.set('PAGE_1', {
     getState: () => ({
       load: mockLoad,
       rootParentId: 'PAGE_1',
+    }),
+  })
+  mockPageBlockRegistry.set('PAGE_2', {
+    getState: () => ({
+      load: mockLoad2,
+      rootParentId: 'PAGE_2',
     }),
   })
 
@@ -56,6 +67,7 @@ const {
     mockSetOpsSent,
     mockUpdateLastSynced,
     mockLoad,
+    mockLoad2,
     mockPageBlockRegistry,
     mockPreload,
     mockReanchorUndo,
@@ -530,6 +542,142 @@ describe('useSyncEvents', () => {
       })
 
       expect(mockPreload).not.toHaveBeenCalled()
+
+      unmount()
+    })
+  })
+
+  // #1071 — targeted post-sync invalidation. When the backend threads the
+  // set of page-root ids its applied ops touched (`changed_page_ids`), the
+  // handler reloads ONLY those mounted page stores; when the field is
+  // absent/empty it falls back to reloading EVERY mounted store.
+  describe('targeted invalidation (#1071)', () => {
+    it('reloads ONLY the changed page store when changed_page_ids is present', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(2)
+      })
+
+      const callback = getListenerCallback('sync:complete')
+      callback({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 5,
+          ops_sent: 0,
+          changed_page_ids: ['PAGE_1'],
+        },
+      })
+
+      // PAGE_1 was touched → reloaded + re-anchored; PAGE_2 was NOT in the
+      // set → skipped entirely (the whole point of #1071: no O(mounted) fan-out).
+      expect(mockLoad).toHaveBeenCalledTimes(1)
+      expect(mockLoad2).not.toHaveBeenCalled()
+      expect(mockReanchorUndo).toHaveBeenCalledWith('PAGE_1')
+      expect(mockReanchorUndo).not.toHaveBeenCalledWith('PAGE_2')
+
+      unmount()
+    })
+
+    it('reloads ALL mounted stores when changed_page_ids is absent (fallback)', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(2)
+      })
+
+      const callback = getListenerCallback('sync:complete')
+      // No changed_page_ids field — an older backend / unknown protocol.
+      callback({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 5,
+          ops_sent: 0,
+        },
+      })
+
+      // Fallback: every mounted store reloads + re-anchors (pre-#1071 behaviour).
+      expect(mockLoad).toHaveBeenCalledTimes(1)
+      expect(mockLoad2).toHaveBeenCalledTimes(1)
+      expect(mockReanchorUndo).toHaveBeenCalledWith('PAGE_1')
+      expect(mockReanchorUndo).toHaveBeenCalledWith('PAGE_2')
+
+      unmount()
+    })
+
+    it('reloads ALL mounted stores when changed_page_ids is empty (fallback)', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(2)
+      })
+
+      const callback = getListenerCallback('sync:complete')
+      // Empty set (e.g. snapshot catch-up reimports a whole space, or no
+      // page resolved) → fall back to reloading everything.
+      callback({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 5,
+          ops_sent: 0,
+          changed_page_ids: [],
+        },
+      })
+
+      expect(mockLoad).toHaveBeenCalledTimes(1)
+      expect(mockLoad2).toHaveBeenCalledTimes(1)
+
+      unmount()
+    })
+
+    it('skips unmounted page ids in the changed set (no crash)', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(2)
+      })
+
+      const callback = getListenerCallback('sync:complete')
+      // A page changed remotely but isn't mounted locally → nothing to
+      // reload; the mounted-but-untouched stores stay untouched too.
+      callback({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 2,
+          ops_sent: 0,
+          changed_page_ids: ['PAGE_NOT_MOUNTED'],
+        },
+      })
+
+      expect(mockLoad).not.toHaveBeenCalled()
+      expect(mockLoad2).not.toHaveBeenCalled()
+
+      unmount()
+    })
+
+    it('still preloads the resolve cache in targeted mode (a page/tag title may have changed)', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(2)
+      })
+
+      const callback = getListenerCallback('sync:complete')
+      callback({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 5,
+          ops_sent: 0,
+          changed_page_ids: ['PAGE_1'],
+        },
+      })
+
+      expect(mockPreload).toHaveBeenCalledWith('SPACE_TEST', true)
 
       unmount()
     })
