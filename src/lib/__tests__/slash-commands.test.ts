@@ -101,6 +101,20 @@ describe('SLASH_COMMANDS catalog', () => {
     expect(turn?.category).toBe('slashCommand.categories.structure')
     expect(turn?.icon).toBeDefined()
   })
+
+  // #976 (item 13) — the `/duplicate` slash entry that fires the
+  // serialize-subtree → pasteBlocks duplicate path.
+  it('registers the /duplicate command in the structure group', () => {
+    const dup = SLASH_COMMANDS.find((c) => c.id === 'duplicate')
+    expect(dup).toBeDefined()
+    expect(dup?.category).toBe('slashCommand.categories.structure')
+    expect(dup?.icon).toBeDefined()
+  })
+
+  it('searchSlashCommands surfaces /duplicate for a "duplicate" query', () => {
+    const ids = searchSlashCommands('duplicate').map((r) => r.id)
+    expect(ids).toContain('duplicate')
+  })
 })
 
 describe('TURN_INTO commands (#264)', () => {

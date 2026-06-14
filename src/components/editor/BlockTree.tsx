@@ -685,6 +685,21 @@ export function BlockTree({
   const handleShowFocusedHistory = useCallback(() => {
     if (focusedBlockId) handleShowHistory(focusedBlockId)
   }, [focusedBlockId, handleShowHistory])
+  // #976 (item 13) — duplicate the focused block + its subtree via the
+  // `duplicateBlock` keyboard binding, reusing the same `handleDuplicate` the
+  // context-menu row and `/duplicate` slash command fire.
+  const handleDuplicateFocused = useCallback(() => {
+    if (focusedBlockId) void handleDuplicate(focusedBlockId)
+  }, [focusedBlockId, handleDuplicate])
+  // #976 (item 14) — open the "Turn into" type picker for the focused block via
+  // the `turnIntoBlock` keyboard binding. Rather than reimplement the type list,
+  // insert the `/turn` slash trigger into the live editor so the existing slash
+  // suggestion plugin surfaces the same conversion family (`turn-*`) the context
+  // menu submenu and `/turn` command expose.
+  const handleTurnIntoFocused = useCallback(() => {
+    if (!focusedBlockId) return
+    rovingEditor.editor?.chain().focus().insertContent('/turn').run()
+  }, [focusedBlockId, rovingEditor])
 
   useBlockKeyboard(rovingEditor.editor, {
     onFocusPrev: handleFocusPrev,
@@ -702,6 +717,8 @@ export function BlockTree({
     onToggleCollapse: handleToggleFocusedCollapse,
     onShowProperties: handleShowFocusedProperties,
     onShowHistory: handleShowFocusedHistory,
+    onDuplicate: handleDuplicateFocused,
+    onTurnInto: handleTurnIntoFocused,
   })
 
   // ── Extracted event listeners (custom DOM events from toolbar) ───────

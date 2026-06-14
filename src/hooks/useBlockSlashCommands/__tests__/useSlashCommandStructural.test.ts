@@ -8,6 +8,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { makeBlock } from '../../../__tests__/fixtures'
 import { useUndoStore } from '../../../stores/undo'
 import { useSlashCommandStructural } from '../useSlashCommandStructural'
 import { makeSyntheticCtx } from './test-utils'
@@ -141,6 +142,42 @@ describe('useSlashCommandStructural — list, divider', () => {
     const { ctx } = makeSyntheticCtx()
     await result.current.exact['divider']?.(ctx, { id: 'divider', label: 'Divider' })
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'BLOCK_1', toText: '---' })
+  })
+})
+
+describe('useSlashCommandStructural — duplicate (#976 item 13)', () => {
+  it('/duplicate clones the block + subtree via pasteBlocks anchored on the block', async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore } = makeSyntheticCtx()
+    // Anchor the focused block plus one child so the serialized subtree is
+    // non-empty (a leaf-only page would still serialize the single block).
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'BLOCK_1', content: 'parent', parent_id: 'PAGE_1' }),
+        makeBlock({ id: 'BLOCK_2', content: 'child', parent_id: 'BLOCK_1' }),
+      ],
+    })
+    const pasteBlocks = vi.fn(async (_anchorId: string, _markdown: string) => [] as string[])
+    pageStore.setState({ pasteBlocks })
+
+    await result.current.exact['duplicate']?.(ctx, { id: 'duplicate', label: 'Duplicate' })
+
+    expect(pasteBlocks).toHaveBeenCalledTimes(1)
+    // Anchored on the focused block; the serialized subtree is the same
+    // indented-markdown the context-menu Duplicate row + Ctrl+Shift+J binding
+    // feed to pasteBlocks.
+    expect(pasteBlocks).toHaveBeenCalledWith('BLOCK_1', expect.stringContaining('parent'))
+  })
+
+  it('/duplicate is a no-op when the focused block is gone (no pasteBlocks)', async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore } = makeSyntheticCtx()
+    const pasteBlocks = vi.fn(async (_anchorId: string, _markdown: string) => [] as string[])
+    pageStore.setState({ blocks: [], pasteBlocks })
+
+    await result.current.exact['duplicate']?.(ctx, { id: 'duplicate', label: 'Duplicate' })
+
+    expect(pasteBlocks).not.toHaveBeenCalled()
   })
 })
 
