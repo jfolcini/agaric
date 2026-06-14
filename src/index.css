@@ -110,6 +110,21 @@
    * is intentionally a 1-px dark halo, not a brand shadow — keeping it
    * a token so the two SpaceManageDialog call sites don't drift. */
   --shadow-accent-stroke: 0 0 1.5px rgb(0 0 0 / 0.9);
+  /* Elevation-by-prominence scale (#1098). The third prominence axis
+   * alongside radius and motion. Larger shadow = more "lifted" the surface.
+   * Apply by tier, not by component whim — the tiers mirror the radius scale:
+   *   resting  — in-flow cards (the default resting surface) [was shadow-sm].
+   *   floating — tight/transient floating surfaces: popover, select, command,
+   *              tooltip, dropdown/context menus, combobox [was shadow-md].
+   *   overlay  — modals that float above everything: dialog, alert-dialog,
+   *              sheet [was shadow-lg].
+   * Registered in @theme so they're usable as `shadow-(--shadow-floating)`;
+   * the actual box-shadow values are per-theme custom props (--elevation-*)
+   * defined in :root / .dark, so dark mode can soften its shadows with a
+   * one-line token edit instead of per-component `dark:` tweaks. */
+  --shadow-resting: var(--elevation-resting);
+  --shadow-floating: var(--elevation-floating);
+  --shadow-overlay: var(--elevation-overlay);
   /* Radius-by-prominence scale (#1010). Larger radius = more prominent /
    * more "lifted" the surface. Apply by tier, not by component whim:
    *   sm  (6px)  — concentric inner items (select/command rows, swatches)
@@ -265,6 +280,13 @@
   --accent-slate: oklch(0.55 0.04 257);
   --accent-orange: oklch(0.7 0.18 50);
   --accent-current: var(--primary);
+  /* Elevation tier values (#1098) — light theme. These reproduce Tailwind's
+   * stock shadow-sm / shadow-md / shadow-lg exactly (the values the migrated
+   * components carried before this change), so perceived elevation is
+   * unchanged; tokenizing them just gives a single place to tune per theme. */
+  --elevation-resting: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --elevation-floating: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --elevation-overlay: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
   /* Animation/transition tokens */
   --duration-fast: 100ms;
   --duration-normal: 150ms;
@@ -408,6 +430,15 @@
   --accent-slate: oklch(0.7 0.04 257);
   --accent-orange: oklch(0.76 0.18 50);
   --accent-current: var(--primary);
+  /* Elevation tier values (#1098) — dark theme. Held identical to :root for
+   * now to preserve the current appearance exactly (the migrated components
+   * never had a `dark:` shadow override; their stock Tailwind shadows did not
+   * vary by theme). This block is the single place to soften dark-mode
+   * shadows in future (dark surfaces generally want lighter shadows) without
+   * touching any component class string. */
+  --elevation-resting: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --elevation-floating: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --elevation-overlay: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
 }
 
 /* ── Solarized Light theme (UX-203) ────────────────────────────────── */
