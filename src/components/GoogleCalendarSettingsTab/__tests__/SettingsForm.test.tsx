@@ -30,6 +30,17 @@ describe('SettingsForm', () => {
     expect(screen.getByTestId('gcal-window-input')).toHaveValue(45)
   })
 
+  it('renders the window field via FormField: labelled control + muted help', () => {
+    render(<SettingsForm {...baseProps} />)
+    // The FormField <Label htmlFor> associates the label with the input,
+    // so it is reachable by its accessible name (spinbutton = number input).
+    expect(screen.getByRole('spinbutton', { name: /Sync days forward from today/i })).toBe(
+      screen.getByTestId('gcal-window-input'),
+    )
+    // The muted help paragraph still renders below the control.
+    expect(screen.getByText(/Agaric will mirror the next N days/i)).toBeInTheDocument()
+  })
+
   it('renders the privacy toggle as unchecked when mode is full', () => {
     render(<SettingsForm {...baseProps} privacyMode="full" />)
     expect(screen.getByRole('switch', { name: /Hide agenda content/i })).toHaveAttribute(
