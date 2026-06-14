@@ -623,6 +623,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn from_sqlx_configuration_routes_to_database_variant() {
+        // #655: the read-pool `query_only` boot assertion surfaces a
+        // *configuration* failure (read pool not write-protected). It is
+        // raised as `sqlx::Error::Configuration` so it routes to the
+        // `database` domain instead of being misattributed to `snapshot`.
+        // Pin both the variant and the serialized `kind`.
+        let app_err: AppError =
+            sqlx::Error::Configuration("read pool failed query_only assertion at boot".into())
+                .into();
+        assert!(
+            matches!(app_err, AppError::Database(_)),
+            "sqlx::Error::Configuration must route to AppError::Database, got: {app_err:?}"
+        );
+        let json = serde_json::to_value(&app_err).expect("Database should serialize");
+        assert_eq!(
+            json["kind"], "database",
+            "a read-pool config failure serializes as kind: 'database', not 'snapshot'"
+        );
+    }
+
     // --- Issue #106: serialize the new kinds ---
 
     #[test]

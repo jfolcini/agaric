@@ -311,9 +311,18 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
         .fetch_one(&read_pool)
         .await?;
     if query_only != 1 {
-        return Err(crate::error::AppError::Snapshot(format!(
-            "read pool failed query_only assertion at boot: PRAGMA query_only = {query_only} \
-             (expected 1); the read pool is not write-protected"
+        // #655: this is a read-pool *configuration* failure, not a snapshot
+        // failure — surface it in the database domain so logs and the IPC
+        // `kind` attribute the failure correctly. Route through
+        // `sqlx::Error::Configuration` → `From<sqlx::Error>` so we honour the
+        // "never construct `AppError::Database` directly" invariant on the
+        // enum and the failure lands as `kind: "database"`.
+        return Err(crate::error::AppError::from(sqlx::Error::Configuration(
+            format!(
+                "read pool failed query_only assertion at boot: PRAGMA query_only = {query_only} \
+                 (expected 1); the read pool is not write-protected"
+            )
+            .into(),
         )));
     }
 
