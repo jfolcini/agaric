@@ -66,6 +66,9 @@ function makeProps(
       isOffscreen: () => false,
       createObserveRef: () => vi.fn(),
       getHeight: () => 40,
+      // #1067 — wrappers read offscreen state via useSyncExternalStore; these
+      // static mocks never flip, so subscribe is a no-op returning unsubscribe.
+      subscribe: () => () => {},
     },
     rovingEditor: {
       editor: null,
@@ -114,6 +117,7 @@ describe('SortableBlockWrapper', () => {
       isOffscreen: (id: string) => id === 'BLK001',
       createObserveRef: () => vi.fn(),
       getHeight: () => 120,
+      subscribe: () => () => {},
     }
     const { container } = renderInList(makeProps({ viewport }))
 
@@ -129,6 +133,7 @@ describe('SortableBlockWrapper', () => {
       isOffscreen: () => true,
       createObserveRef: () => vi.fn(),
       getHeight: () => 120,
+      subscribe: () => () => {},
     }
     const { container } = renderInList(makeProps({ viewport, focusedBlockId: 'BLK001' }))
 
@@ -190,6 +195,7 @@ describe('SortableBlockWrapper', () => {
       isOffscreen: () => true,
       createObserveRef: () => vi.fn(),
       getHeight: () => 40,
+      subscribe: () => () => {},
     }
     const { container } = renderInList(
       makeProps({ viewport, hasChildren: true, isCollapsed: true }),
@@ -477,6 +483,7 @@ describe('SortableBlockWrapper', () => {
       isOffscreen: () => true,
       createObserveRef: () => vi.fn(),
       getHeight: () => 80,
+      subscribe: () => () => {},
     }
     const { container } = renderInList(
       makeProps({

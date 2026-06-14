@@ -14,7 +14,7 @@
  * from context.
  */
 
-import React from 'react'
+import React, { useCallback, useSyncExternalStore } from 'react'
 
 import { SortableBlock } from '@/components/editor/SortableBlock'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
@@ -105,6 +105,17 @@ function SortableBlockWrapperInner({
   // on unmount (BUG-29).
   const observeRef = viewport.createObserveRef(block.id)
 
+  // #1067 — subscribe to THIS block's off-screen membership via a per-id
+  // external-store source. The `viewport` object identity is now permanently
+  // stable, so a scroll tick that flips another block does NOT re-render this
+  // row; only a flip of *this* block's membership notifies this subscriber and
+  // schedules this wrapper's re-render. (Previously a single `viewport` memo
+  // churned on every flip and invalidated all N `React.memo`'d wrappers.)
+  const offscreen = useSyncExternalStore(
+    useCallback((onChange) => viewport.subscribe(block.id, onChange), [viewport, block.id]),
+    () => viewport.isOffscreen(block.id),
+  )
+
   // #923 — the drop indicator shows where the dragged block will land. It
   // renders for the over-row only (overId === block.id) and never on the
   // active drag row itself. `dropAfter` decides placement: ABOVE the row when
@@ -121,7 +132,7 @@ function SortableBlockWrapperInner({
   ) : null
 
   // Focused block is never virtualized — always render fully
-  if (!isFocused && viewport.isOffscreen(block.id)) {
+  if (!isFocused && offscreen) {
     return (
       <li
         ref={observeRef}
@@ -204,10 +215,13 @@ function SortableBlockWrapperInner({
  * Stability of those two props is enforced at their source:
  *  - `useRovingEditor` memoizes its returned handle (deps: `editor`),
  *    so identity only changes when the TipTap editor instance changes.
- *  - `useViewportObserver` memoizes its return so identity is tied to
- *    `offscreenIds` (the only state the consumers observe transitively).
+ *  - `useViewportObserver` returns a PERMANENTLY stable object (#1067):
+ *    off-screen membership lives in a ref + per-id `useSyncExternalStore`
+ *    subscription (above), so the `viewport` prop never changes identity and
+ *    a scroll tick re-renders only the row whose membership actually flipped,
+ *    not all N wrappers.
  *
- * (design-system-perf-review-2026-05-09.md item 5.)
+ * (design-system-perf-review-2026-05-09.md item 5; #1067.)
  */
 export const SortableBlockWrapper = React.memo(SortableBlockWrapperInner)
 SortableBlockWrapper.displayName = 'SortableBlockWrapper'
