@@ -23,7 +23,7 @@ import { extractFileInfo, isAttachmentAllowed, readFileBytes } from '@/lib/file-
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import { addAttachmentWithBytes } from '@/lib/tauri'
+import { addAttachmentWithBytes, deleteDraft } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
 import { type PageBlockState, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
@@ -32,6 +32,19 @@ import { type PageBlockState, usePageBlockStore, usePageBlockStoreApi } from '@/
  * Unmount the roving editor from the given block and persist its content.
  * Uses `shouldSplitOnBlur` to decide between split and edit.
  * Returns the changed markdown, or null if unchanged.
+ *
+ * #770 gap 1 — ALWAYS drop the previous block's `block_drafts` row here.
+ * This function is the programmatic-move path (auto-mount effect +
+ * `handleFocus`), which does NOT go through `useEditorBlur`'s
+ * `discardDraft()`. Without this delete a debounced draft row left behind by
+ * the previous block survives to the next boot, where `flush_all_drafts`
+ * replays it as an `edit_block` op — potentially clobbering newer content.
+ * The op we just appended via `editFn`/`splitBlockFn` (or the unchanged
+ * existing content) is the canonical record, so the stale draft row is always
+ * safe to delete. Fire-and-forget: a failed delete only leaves the pre-
+ * existing orphan-recovery behaviour, never loses committed content. We delete
+ * even when `changed === null` because a >2 s pause can have persisted a row
+ * for content that ended up unchanged at unmount.
  */
 function persistUnmount(
   re: RovingEditorHandle,
@@ -47,6 +60,11 @@ function persistUnmount(
       editFn(prevId, changed)
     }
   }
+  // #770 gap 1 — drop the previous block's draft row so it can't resurrect at
+  // boot. Best-effort; deleting an absent row is a harmless no-op.
+  void deleteDraft(prevId).catch((err: unknown) => {
+    logger.warn('EditableBlock', 'deleteDraft failed during programmatic unmount', { prevId }, err)
+  })
   return changed
 }
 
