@@ -39,6 +39,7 @@ use crate::domain::search_types::{
     DateFilter, DateOp, NamedDateRange, SearchFilter, SearchPropertyFilter,
 };
 use crate::error::AppError;
+use crate::error::validation_code::{INVALID_DATE_FILTER, prefixed};
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
 
 /// Pre-validated metadata predicates ready for SQL composition.
@@ -257,8 +258,9 @@ fn resolve_date_filter(df: &DateFilter, today: NaiveDate) -> Result<DatePredicat
         DateFilter::Named(range) => Ok(resolve_named_range(*range, today)),
         DateFilter::Op { op, date } => {
             let parsed = NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|_| {
-                AppError::Validation(format!(
-                    "InvalidDateFilter: expected YYYY-MM-DD, got '{date}'"
+                AppError::Validation(prefixed(
+                    INVALID_DATE_FILTER,
+                    &format!("expected YYYY-MM-DD, got '{date}'"),
                 ))
             })?;
             Ok(DatePredicate::Op {

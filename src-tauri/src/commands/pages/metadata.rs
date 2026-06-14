@@ -13,6 +13,7 @@ use tauri::State;
 
 use crate::db::ReadPool;
 use crate::error::AppError;
+use crate::error::validation_code::{INVALID_DATE_FILTER, prefixed};
 use crate::filters::{FilterPrimitive, PagesProjection, Projection};
 use crate::pagination::{Cursor, PageRequest, PageResponse};
 use crate::ulid::{BlockId, PageId};
@@ -515,8 +516,9 @@ impl SortKeyset {
 /// results (the bug D15 closes).
 fn validate_last_edited_date(label: &str, value: &str) -> Result<(), AppError> {
     if value.trim().is_empty() {
-        return Err(AppError::Validation(format!(
-            "InvalidDateFilter: {label} must not be empty"
+        return Err(AppError::Validation(prefixed(
+            INVALID_DATE_FILTER,
+            &format!("{label} must not be empty"),
         )));
     }
     // Accept a bare calendar date first, then a full RFC 3339 timestamp.
@@ -525,8 +527,9 @@ fn validate_last_edited_date(label: &str, value: &str) -> Result<(), AppError> {
     {
         return Ok(());
     }
-    Err(AppError::Validation(format!(
-        "InvalidDateFilter: {label} expected YYYY-MM-DD or RFC 3339, got '{value}'"
+    Err(AppError::Validation(prefixed(
+        INVALID_DATE_FILTER,
+        &format!("{label} expected YYYY-MM-DD or RFC 3339, got '{value}'"),
     )))
 }
 

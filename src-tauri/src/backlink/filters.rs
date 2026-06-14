@@ -8,6 +8,7 @@ use sqlx::SqlitePool;
 use super::types::{BacklinkFilter, CompareOp};
 use super::{FTS_ROW_CAP, SMALL_IN_LIMIT};
 use crate::error::AppError;
+use crate::error::validation_code::{INVALID_DATE_FILTER, prefixed};
 use crate::fts::sanitize_fts_query;
 use crate::sql_utils::escape_like;
 use crate::tag_query::{resolve_tag_leaves, resolve_tag_prefix_leaves};
@@ -1095,8 +1096,9 @@ fn resolve_range_bound(bound: Option<&String>) -> Result<Option<String>, AppErro
         None => Ok(None),
         Some(raw) => match parse_iso_to_ms(raw) {
             Some(ms) => Ok(Some(ms_to_ulid_prefix(ms))),
-            None => Err(AppError::Validation(format!(
-                "InvalidDateFilter: expected ISO 8601 date (YYYY-MM-DD or RFC 3339), got '{raw}'"
+            None => Err(AppError::Validation(prefixed(
+                INVALID_DATE_FILTER,
+                &format!("expected ISO 8601 date (YYYY-MM-DD or RFC 3339), got '{raw}'"),
             ))),
         },
     }

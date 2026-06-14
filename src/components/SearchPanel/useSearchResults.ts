@@ -24,6 +24,7 @@ import { useTranslation } from 'react-i18next'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { notify } from '@/lib/notify'
 import { astToFilterProjection, type SearchQueryAST } from '@/lib/search-query'
+import { parseValidationReason, ValidationCode } from '@/lib/search-query/validation-codes'
 
 import { useListKeyboardNavigation } from '../../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../../hooks/usePaginatedQuery'
@@ -173,10 +174,12 @@ export function useSearchResults({
     if (!toggles.isRegex) return null
     if (!error) return null
     const msg = typeof error === 'string' ? error : ''
-    const prefix = 'InvalidRegex:'
-    const idx = msg.indexOf(prefix)
-    if (idx < 0) return null
-    return t('search.invalidRegex', { message: msg.slice(idx + prefix.length).trim() })
+    // #1061 — match on the shared `ValidationCode.InvalidRegex` constant
+    // (single source of truth in `validation-codes.ts`) instead of a raw
+    // `'InvalidRegex:'` literal.
+    const reason = parseValidationReason(msg, ValidationCode.InvalidRegex)
+    if (reason === null) return null
+    return t('search.invalidRegex', { message: reason })
   }, [error, t, toggles.isRegex])
 
   // Issue #153 — every page_id ever fed into `batchResolve` for

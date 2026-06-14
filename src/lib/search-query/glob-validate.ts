@@ -15,21 +15,28 @@
  * parser) as the more user-friendly "path: value required".
  */
 
+import { prefixed, ValidationCode } from './validation-codes'
+
 export type GlobValidationError = {
   /** `InvalidGlob: …` — the same prefix the backend emits. */
   message: string
 }
 
+/** Build an `InvalidGlob: <reason>` error from the shared code (#1061). */
+function globError(reason: string): GlobValidationError {
+  return { message: prefixed(ValidationCode.InvalidGlob, reason) }
+}
+
 /** Returns `null` for OK, otherwise a typed error. */
 export function validateGlob(input: string): GlobValidationError | null {
-  if (input.length === 0) return { message: 'InvalidGlob: empty pattern' }
+  if (input.length === 0) return globError('empty pattern')
   const state = { bracket: 0, brace: 0 }
   for (let i = 0; i < input.length; i++) {
     const err = stepGlobValidate(input, i, state)
     if (err) return err
   }
-  if (state.bracket !== 0) return { message: 'InvalidGlob: unbalanced bracket' }
-  if (state.brace !== 0) return { message: 'InvalidGlob: unbalanced brace' }
+  if (state.bracket !== 0) return globError('unbalanced bracket')
+  if (state.brace !== 0) return globError('unbalanced brace')
   return null
 }
 
@@ -42,7 +49,7 @@ function stepGlobValidate(
   if (ch === '\\') {
     const next = input[i + 1]
     if (next === '{' || next === '}' || next === '[' || next === ']') {
-      return { message: 'InvalidGlob: escapes not supported' }
+      return globError('escapes not supported')
     }
     return null
   }
@@ -51,15 +58,15 @@ function stepGlobValidate(
       state.bracket++
       return null
     case ']':
-      if (state.bracket === 0) return { message: 'InvalidGlob: unbalanced bracket' }
+      if (state.bracket === 0) return globError('unbalanced bracket')
       state.bracket--
       return null
     case '{':
       state.brace++
-      if (state.brace > 1) return { message: 'InvalidGlob: brace nesting not supported' }
+      if (state.brace > 1) return globError('brace nesting not supported')
       return null
     case '}':
-      if (state.brace === 0) return { message: 'InvalidGlob: unbalanced brace' }
+      if (state.brace === 0) return globError('unbalanced brace')
       state.brace--
       return null
     default:
