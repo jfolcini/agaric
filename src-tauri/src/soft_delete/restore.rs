@@ -7,8 +7,8 @@ use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::op_log::OpRecord;
 
-/// Restore a soft-deleted block and descendants sharing the same `deleted_at`
-/// timestamp.
+/// Restore a soft-deleted block and the connected same-cohort subtree
+/// descending from it.
 ///
 /// **Currently exercised only by tests.** As of #386 this primitive has
 /// no non-test callers — the production restore paths are
@@ -19,12 +19,17 @@ use crate::op_log::OpRecord;
 /// the behaviour those tests assert; it is not, today, a load-bearing
 /// production path.
 ///
-/// Recursive member bounds the walk with `depth < 100` (invariant
-/// #9).
-///
-/// Canonical CTE in `crate::block_descendants::DESCENDANTS_CTE_STANDARD`.
-/// This site inlines the SQL because `sqlx::query!` requires a string
-/// literal and cannot accept `concat!()` of a `macro_rules!` expansion.
+/// #1119: cohort filter uses the shared [`crate::descendants_cte_cohort`]
+/// walk (the same primitive #1055 adopted in
+/// `project_restore_block_to_sql`, `apply_restore_block_sql_only`, and
+/// `collect_restore_cohort`), so cohort identity is keyed on
+/// **structure** — the recursive arm descends only through blocks that
+/// share the seed's `deleted_at` — rather than on a flat `deleted_at = ?`
+/// equality over the whole subtree (which over-restored an independently
+/// soft-deleted descendant whenever a different cohort collided on the
+/// non-monotonic `now_ms` value). The recursive member bounds the walk
+/// with `depth < 100` (invariant #9). Three binds: seed id, then the
+/// cohort timestamp twice (recursive arm + outer filter).
 ///
 /// SQL-review M-3: takes `materializer: &Materializer` so the cache-
 /// invalidation fan-out is enforced by the type system. Any caller of
@@ -54,20 +59,24 @@ pub async fn restore_block(
     // op enqueued below).
     let mut tx = CommandTx::begin_immediate(pool, "soft_delete_restore_block").await?;
 
-    let result = sqlx::query!(
-        "WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT id, 0 FROM blocks WHERE id = ? \
-             UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
-             INNER JOIN descendants d ON b.parent_id = d.id \
-             WHERE d.depth < 100 \
-         ) \
-         UPDATE blocks SET deleted_at = NULL \
-         WHERE id IN (SELECT id FROM descendants) \
-           AND deleted_at = ?",
-        block_id,
-        deleted_at_ref,
-    )
+    // #1119: mirror `project_restore_block_to_sql`'s cohort-contiguous
+    // walk exactly via the shared `descendants_cte_cohort!` macro so this
+    // primitive restores the seed's connected same-cohort subtree, not
+    // every block under the seed that merely shares the `deleted_at`
+    // value. Uses untyped `sqlx::query` so the macro expansion can be
+    // `concat!`d in (the compile-time `sqlx::query!` requires a string
+    // literal and cannot accept `concat!()` of a `macro_rules!`
+    // expansion). Three binds: seed id, then the cohort timestamp for the
+    // recursive arm and again for the outer filter.
+    // dynamic-sql: recursive cohort CTE built via `concat!` of the `descendants_cte_cohort!` macro expansion (not a string literal, so `sqlx::query!` is unusable)
+    let result = sqlx::query(concat!(
+        crate::descendants_cte_cohort!(),
+        "UPDATE blocks SET deleted_at = NULL \
+         WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
+    ))
+    .bind(block_id)
+    .bind(deleted_at_ref)
+    .bind(deleted_at_ref)
     .execute(&mut **tx)
     .await?;
 
