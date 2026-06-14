@@ -37,7 +37,7 @@ import {
   loadJournalTemplateForSpace,
 } from '../lib/template-utils'
 import { useBlockStore } from '../stores/blocks'
-import { pageBlockRegistry } from '../stores/page-blocks'
+import { getPageStore } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
 
@@ -125,7 +125,7 @@ export function useJournalBlockCreation({
             const ids = await insertTemplateBlocksFromString(perSpaceTemplate, pageId, {
               pageTitle: dateStr,
             })
-            await pageBlockRegistry.get(pageId)?.getState().load()
+            await getPageStore(pageId)?.getState().load()
             if (ids.length > 0) {
               useBlockStore.setState({ focusedBlockId: ids[0] ?? null })
             }
@@ -139,7 +139,7 @@ export function useJournalBlockCreation({
               const ids = await insertTemplateBlocks(journalTemplate.id, pageId, currentSpaceId, {
                 pageTitle: dateStr,
               })
-              await pageBlockRegistry.get(pageId)?.getState().load()
+              await getPageStore(pageId)?.getState().load()
               if (ids.length > 0) {
                 useBlockStore.setState({ focusedBlockId: ids[0] ?? null })
               }
@@ -172,7 +172,7 @@ export function useJournalBlockCreation({
             content: '',
             parentId: pageId,
           })
-          await pageBlockRegistry.get(pageId)?.getState().load()
+          await getPageStore(pageId)?.getState().load()
           useBlockStore.setState({ focusedBlockId: block.id })
         }
       } catch (err) {

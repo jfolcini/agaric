@@ -22,7 +22,7 @@
  * ```
  */
 
-import { createContext, createElement, useContext, useEffect, useRef } from 'react'
+import { createContext, createElement, useContext, useLayoutEffect, useMemo } from 'react'
 import { createStore, type StoreApi, useStore } from 'zustand'
 
 import { notify } from '@/lib/notify'
@@ -1449,21 +1449,120 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
 /**
  * Module-level registry of mounted per-page stores.
  *
- * Used by global hooks (useSyncEvents, useUndoShortcuts) that need to
- * reload specific pages without being inside a provider context.
- * Providers register on mount, unregister on unmount.
+ * Used by global hooks (useSyncEvents, useUndoShortcuts, useJournalBlock
+ * creation) that need to reach specific page stores without being inside a
+ * provider context. The registry is a *derived index* over the providers'
+ * lifecycle: entries are set/deleted synchronously at the same point
+ * `PageBlockStoreProvider`'s storeRef is created/swapped (render time), so
+ * membership can no longer lag mount by an effect tick (#1075).
  *
- * **Race condition note:** A theoretical race exists if Provider A unmounts
- * while Provider B mounts for the same `pageId` — A's cleanup could delete
- * B's entry. In practice this is prevented by React's batched state updates:
- * unmount effects for the old tree run before mount effects for the new tree
- * within the same commit phase. The monthly view mounts up to 30 concurrent
- * PageBlockStoreProviders (one per DaySection) without issues. As cheap
- * insurance (FE-L-3), the cleanup below only deletes when the registry slot
- * still points to *this* store, so a stale unmount cannot clobber a newer
- * registration.
+ * **Ref-counting (same-pageId race):** The monthly view mounts up to 30
+ * concurrent PageBlockStoreProviders, and fast journal-scroll churn can mount
+ * a new provider for a `pageId` before the old one's unmount runs. Each slot
+ * therefore carries a reference count: the first provider for a `pageId`
+ * inserts the slot, additional providers increment the count, and unregister
+ * only deletes the slot when the count returns to zero. Because all concurrent
+ * same-pageId providers create one shared store (see `acquirePageStore`), the
+ * slot's store identity is stable for as long as *any* provider holds it, so
+ * unmount ordering no longer matters and a stale unmount cannot drop a slot a
+ * newer mount still depends on.
+ *
+ * External consumers MUST go through the {@link getPageStore} /
+ * {@link forEachPageStore} accessors rather than reading the Map directly, so
+ * the registry can stay an internal implementation detail.
+ *
+ * `pageBlockRegistry` remains exported for tests that drive the registry
+ * directly; production code uses the accessors below.
+ */
+type RegistrySlot = { store: StoreApi<PageBlockState>; refCount: number }
+
+const pageBlockSlots = new Map<string, RegistrySlot>()
+
+/**
+ * Back-compat view of the registry as a `pageId → store` Map.
+ *
+ * Kept for tests that seed/inspect the registry directly. Production consumers
+ * use {@link getPageStore} / {@link forEachPageStore}.
  */
 export const pageBlockRegistry = new Map<string, StoreApi<PageBlockState>>()
+
+/**
+ * Resolve (creating if needed) the shared store for `pageId` WITHOUT touching
+ * the reference count. Called from `PageBlockStoreProvider`'s render to get a
+ * stable store value before the ref-counting layout effect commits.
+ *
+ * Creating a slot here at refCount 0 is safe: the external accessors only
+ * surface slots with a live reference (refCount > 0), and the layout effect
+ * that follows a committed render will bump the count via `acquirePageStore`.
+ * A render React discards (StrictMode) leaves at most a refCount-0 slot, which
+ * is invisible to consumers and reclaimed by the next acquire/release cycle.
+ */
+function peekOrCreatePageStore(pageId: string): StoreApi<PageBlockState> {
+  const existing = pageBlockSlots.get(pageId)
+  if (existing) return existing.store
+  const store = createPageBlockStore(pageId)
+  pageBlockSlots.set(pageId, { store, refCount: 0 })
+  return store
+}
+
+/**
+ * Acquire (ref-count++) the shared store for `pageId`, ensuring it is exposed
+ * in the back-compat `pageBlockRegistry` Map. The first reference makes the
+ * slot externally visible; concurrent providers for the same `pageId` share the
+ * one store, so mount/unmount ordering becomes irrelevant.
+ */
+function acquirePageStore(pageId: string): StoreApi<PageBlockState> {
+  const store = peekOrCreatePageStore(pageId)
+  const slot = pageBlockSlots.get(pageId) as RegistrySlot
+  slot.refCount += 1
+  pageBlockRegistry.set(pageId, store)
+  return store
+}
+
+/**
+ * Release one reference to `pageId`'s store. Removes the registry slot — and
+ * clears the page's session undo state (#753) — only when the last reference is
+ * dropped, so a stale unmount cannot clobber a slot a newer mount still holds.
+ */
+function releasePageStore(pageId: string): void {
+  const slot = pageBlockSlots.get(pageId)
+  if (!slot) return
+  slot.refCount -= 1
+  if (slot.refCount > 0) return
+  pageBlockSlots.delete(pageId)
+  pageBlockRegistry.delete(pageId)
+  // #753 — drop the page's session undo state alongside the registry slot.
+  // PageEditor already clears on navigation away, but journal day pages
+  // (DaySection mounts one provider per day) had NO clear path — every
+  // visited day accumulated up to MAX_REDO_STACK OpRefs in the undo store for
+  // the whole session. Released only on the LAST provider for the pageId, so a
+  // stale unmount must not wipe a newer mount's live undo state.
+  useUndoStore.getState().clearPage(pageId)
+}
+
+/**
+ * Resolve the live per-page store for `pageId`, or `undefined` if no provider
+ * is currently mounted for it. Single accessor for non-provider consumers
+ * (useUndoShortcuts, useJournalBlockCreation). Surfaces only slots with a live
+ * reference, never a provisional render-phase slot.
+ */
+export function getPageStore(pageId: string): StoreApi<PageBlockState> | undefined {
+  const slot = pageBlockSlots.get(pageId)
+  return slot && slot.refCount > 0 ? slot.store : undefined
+}
+
+/**
+ * Iterate every currently-mounted per-page store. Single accessor for
+ * non-provider consumers that fan out over all pages (useSyncEvents). Skips
+ * provisional (refCount 0) slots.
+ */
+export function forEachPageStore(
+  fn: (pageId: string, store: StoreApi<PageBlockState>) => void,
+): void {
+  for (const [pageId, slot] of pageBlockSlots) {
+    if (slot.refCount > 0) fn(pageId, slot.store)
+  }
+}
 
 // ── React context ────────────────────────────────────────────────────────
 
@@ -1483,35 +1582,33 @@ export function PageBlockStoreProvider({
   pageId: string
   children: React.ReactNode
 }): React.ReactElement {
-  const storeRef = useRef<{ store: StoreApi<PageBlockState>; pageId: string } | null>(null)
-  if (!storeRef.current || storeRef.current.pageId !== pageId) {
-    storeRef.current = { store: createPageBlockStore(pageId), pageId }
-  }
+  // Resolve the store for render synchronously from the shared registry: if a
+  // slot for this pageId already exists (another concurrent provider, e.g. a
+  // sibling DaySection), reuse its store; otherwise create one. This read does
+  // NOT touch the reference count — ref-counting is owned entirely by the
+  // layout effect below, which runs once per committed mount and is the only
+  // path that can be discarded/replayed by React. Resolving for render this way
+  // (rather than in an effect) is what removes the effect-tick lag the registry
+  // used to have (#1075). Memoized per pageId so the render-time value is
+  // stable across re-renders.
+  const store = useMemo(() => peekOrCreatePageStore(pageId), [pageId])
 
-  const store = storeRef.current.store
-
-  // Register in the global registry for cross-context access. `store` is
-  // stable for a given pageId (storeRef only swaps it when pageId changes),
-  // so including it adds no extra runs and fixes the stale-closure the linter
-  // flags in the cleanup's `pageBlockRegistry.get(pageId) === store` guard.
-  useEffect(() => {
-    pageBlockRegistry.set(pageId, store)
+  // Ref-counted registration is paired strictly with effect setup/cleanup, so
+  // it stays balanced even under StrictMode's mount→unmount→remount and across
+  // discarded renders. A layout effect (not a passive one) ties membership to
+  // the commit phase. Because the slot is ref-counted and the store is SHARED
+  // across all concurrent same-pageId providers, unmount ORDERING no longer
+  // matters: a stale unmount just decrements the count; the slot (and the
+  // page's undo state, #753) survives until the LAST provider releases it.
+  // This supersedes the old per-store identity guard (FE-L-3) — there is no
+  // longer a second store to be clobbered. The 30-concurrent-DaySection case is
+  // covered: all 30 share one slot with refCount 30.
+  useLayoutEffect(() => {
+    acquirePageStore(pageId)
     return () => {
-      // Guard (FE-L-3): only delete if the slot still points to OUR store, so a
-      // stale unmount cannot clobber a newer registration for the same pageId.
-      if (pageBlockRegistry.get(pageId) === store) {
-        pageBlockRegistry.delete(pageId)
-        // #753 — drop the page's session undo state alongside the
-        // registry slot. PageEditor already clears on navigation away,
-        // but journal day pages (DaySection mounts one provider per
-        // day) had NO clear path — every visited day accumulated up to
-        // MAX_REDO_STACK OpRefs in the undo store for the whole
-        // session. Same guard as the registry delete: a stale unmount
-        // must not wipe a newer mount's live undo state.
-        useUndoStore.getState().clearPage(pageId)
-      }
+      releasePageStore(pageId)
     }
-  }, [pageId, store])
+  }, [pageId])
 
   return createElement(PageBlockContext.Provider, { value: store }, children)
 }

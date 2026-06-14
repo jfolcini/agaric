@@ -9,6 +9,8 @@ import { makeBlock } from '../../__tests__/fixtures'
 import {
   createPageBlockStore,
   type FlatBlock,
+  forEachPageStore,
+  getPageStore,
   PageBlockContext,
   type PageBlockState,
   PageBlockStoreProvider,
@@ -2958,38 +2960,109 @@ describe('PageBlockStore', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // pageBlockRegistry guard (FE-L-3)
+  // #1075 — registry as a synchronously-maintained, ref-counted derived index
   // ---------------------------------------------------------------------------
-  describe('pageBlockRegistry cleanup guard', () => {
-    it('does not delete a newer registration when an older provider unmounts', () => {
-      const pageId = 'GUARD_PAGE'
+  describe('pageBlockRegistry lifecycle (#1075)', () => {
+    // PageBlockStoreProvider declares `children` as a required prop, so the props
+    // arg must include it. We cast to a permissive shape here to keep the props
+    // object simple while satisfying both TS and Biome's noChildrenProp rule.
+    const Provider = PageBlockStoreProvider as unknown as (props: {
+      pageId: string
+      children?: ReactNode
+    }) => ReactElement
+
+    it('registers a store synchronously on mount and resolves it via getPageStore', () => {
+      const pageId = 'SYNC_REGISTER'
+      pageBlockRegistry.delete(pageId)
+      expect(getPageStore(pageId)).toBeUndefined()
+
+      const view = render(createElement(Provider, { pageId }, 'x'))
+      // Membership is established by the commit-phase layout effect — no extra
+      // passive-effect tick. After render+commit the accessor resolves it.
+      const store = getPageStore(pageId)
+      expect(store).toBeDefined()
+      // The back-compat Map view exposes the same store identity.
+      expect(pageBlockRegistry.get(pageId)).toBe(store)
+
+      view.unmount()
+      // Cleanup removes the slot once the last reference is dropped.
+      expect(getPageStore(pageId)).toBeUndefined()
+      expect(pageBlockRegistry.has(pageId)).toBe(false)
+    })
+
+    it('shares one ref-counted store across concurrent same-pageId providers', () => {
+      // The monthly view mounts up to 30 concurrent DaySection providers for
+      // the same pageId; they must share one slot so unmount ordering cannot
+      // drop a slot a sibling still depends on.
+      const pageId = 'SHARED_DAY'
       pageBlockRegistry.delete(pageId)
 
-      // PageBlockStoreProvider declares `children` as a required prop, so the props
-      // arg must include it. We cast to a permissive shape here to keep the props
-      // object simple while satisfying both TS and Biome's noChildrenProp rule.
-      const Provider = PageBlockStoreProvider as unknown as (props: {
-        pageId: string
-        children?: ReactNode
-      }) => ReactElement
-
-      // Mount provider A → registers store A.
       const a = render(createElement(Provider, { pageId }, 'a'))
-      const storeA = pageBlockRegistry.get(pageId)
+      const storeA = getPageStore(pageId)
       expect(storeA).toBeDefined()
 
-      // Mount provider B for the same pageId → overwrites the slot with store B.
       const b = render(createElement(Provider, { pageId }, 'b'))
-      const storeB = pageBlockRegistry.get(pageId)
-      expect(storeB).toBeDefined()
-      expect(storeB).not.toBe(storeA)
+      const storeB = getPageStore(pageId)
+      // Ref-counted: both providers resolve the SAME store (one shared slot).
+      expect(storeB).toBe(storeA)
 
-      // Unmount provider A: its cleanup must NOT delete B's registration.
+      // Same-pageId race: unmount A first. The slot must survive because B
+      // still holds a reference, and the resolved store is unchanged.
       a.unmount()
-      expect(pageBlockRegistry.get(pageId)).toBe(storeB)
+      expect(getPageStore(pageId)).toBe(storeA)
+
+      // Only when the LAST provider unmounts does the slot disappear.
+      b.unmount()
+      expect(getPageStore(pageId)).toBeUndefined()
+      expect(pageBlockRegistry.has(pageId)).toBe(false)
+    })
+
+    it('forEachPageStore iterates only currently-mounted stores', () => {
+      const p1 = 'FE_PAGE_1'
+      const p2 = 'FE_PAGE_2'
+      pageBlockRegistry.delete(p1)
+      pageBlockRegistry.delete(p2)
+
+      const a = render(createElement(Provider, { pageId: p1 }, 'a'))
+      const b = render(createElement(Provider, { pageId: p2 }, 'b'))
+
+      const seen = new Map<string, StoreApi<PageBlockState>>()
+      forEachPageStore((pageId, store) => {
+        if (pageId === p1 || pageId === p2) seen.set(pageId, store)
+      })
+      expect(seen.get(p1)).toBe(getPageStore(p1))
+      expect(seen.get(p2)).toBe(getPageStore(p2))
+
+      // After unmounting one, it is no longer iterated.
+      a.unmount()
+      const seenAfter = new Set<string>()
+      forEachPageStore((pageId) => {
+        if (pageId === p1 || pageId === p2) seenAfter.add(pageId)
+      })
+      expect(seenAfter.has(p1)).toBe(false)
+      expect(seenAfter.has(p2)).toBe(true)
 
       b.unmount()
-      expect(pageBlockRegistry.has(pageId)).toBe(false)
+    })
+
+    it('a stale (out-of-order) unmount does not drop a slot a newer mount holds', () => {
+      // Fast journal-scroll churn: provider A and B mount for the same pageId,
+      // and A's unmount can fire after B's mount. Ref-counting makes the order
+      // irrelevant — the slot survives until BOTH release it.
+      const pageId = 'STALE_UNMOUNT'
+      pageBlockRegistry.delete(pageId)
+
+      const a = render(createElement(Provider, { pageId }, 'a'))
+      const sharedStore = getPageStore(pageId)
+      const b = render(createElement(Provider, { pageId }, 'b'))
+
+      a.unmount()
+      // The newer mount's slot is intact (registry still resolves it).
+      expect(getPageStore(pageId)).toBe(sharedStore)
+      expect(pageBlockRegistry.get(pageId)).toBe(sharedStore)
+
+      b.unmount()
+      expect(getPageStore(pageId)).toBeUndefined()
     })
   })
 
@@ -2998,7 +3071,7 @@ describe('PageBlockStore', () => {
   // ---------------------------------------------------------------------------
   describe('undo clearPage on provider unmount (#753)', () => {
     // PageBlockStoreProvider declares `children` as required; cast keeps the
-    // props object simple (same pattern as the registry-guard tests above).
+    // props object simple (same pattern as the registry tests above).
     const Provider = PageBlockStoreProvider as unknown as (props: {
       pageId: string
       children?: ReactNode
@@ -3027,11 +3100,12 @@ describe('PageBlockStore', () => {
       const b = render(createElement(Provider, { pageId }, 'b'))
       mockClearPage.mockClear()
 
-      // Provider A's cleanup sees B's registration in the slot — it must
-      // neither delete the registry entry NOR wipe B's live undo state.
+      // Provider A's cleanup only decrements the shared ref count — B still
+      // holds a reference, so the undo state must NOT be cleared yet.
       a.unmount()
       expect(mockClearPage).not.toHaveBeenCalled()
 
+      // Cleared exactly once, when the LAST provider for the pageId unmounts.
       b.unmount()
       expect(mockClearPage).toHaveBeenCalledTimes(1)
       expect(mockClearPage).toHaveBeenCalledWith(pageId)

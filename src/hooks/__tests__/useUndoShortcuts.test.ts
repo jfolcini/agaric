@@ -16,6 +16,7 @@ const {
   mockReplacePage,
   mockGetBlock,
   mockPageBlockRegistry,
+  mockGetPageStore,
 } = vi.hoisted(() => {
   const mock: ReturnType<typeof vi.fn> & { error: ReturnType<typeof vi.fn> } = Object.assign(
     vi.fn(),
@@ -38,6 +39,10 @@ const {
     getState: () => ({ ...mockPageBlockStoreState, rootParentId: 'PAGE_3' }),
   })
 
+  // #1075 — useUndoShortcuts now resolves stores via getPageStore instead of
+  // reading the registry Map directly. Back it with the same seeded Map.
+  const mockGetPageStore = vi.fn((pageId: string) => mockPageBlockRegistry.get(pageId))
+
   return {
     toastMock: mock,
     mockUndo,
@@ -46,6 +51,7 @@ const {
     mockReplacePage,
     mockGetBlock,
     mockPageBlockRegistry,
+    mockGetPageStore,
   }
 })
 
@@ -86,6 +92,7 @@ vi.mock('@/stores/undo', () => ({
 
 vi.mock('@/stores/page-blocks', () => ({
   pageBlockRegistry: mockPageBlockRegistry,
+  getPageStore: mockGetPageStore,
 }))
 
 vi.mock('../../lib/tauri', () => ({

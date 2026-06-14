@@ -23,7 +23,7 @@ import { announce } from '@/lib/announcer'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { pageBlockRegistry } from '@/stores/page-blocks'
+import { forEachPageStore } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useSyncStore } from '@/stores/sync'
@@ -102,7 +102,7 @@ export function useSyncEvents(): void {
         // Reload ALL mounted page stores so every visible BlockTree updates.
         if (ops_received > 0) {
           const reanchorUndo = useUndoStore.getState().reanchorAfterRemoteOps
-          for (const [pageId, store] of pageBlockRegistry.entries()) {
+          forEachPageStore((pageId, store) => {
             // #731 — re-anchor this page's positional undo state BEFORE the
             // reload. The remote ops just applied shifted the backend op-log
             // indexing that `undoDepth` addresses; without this reset the next
@@ -112,7 +112,7 @@ export function useSyncEvents(): void {
             // newest op). Keyed by the same pageId the block reload uses.
             reanchorUndo(pageId)
             store.getState().load()
-          }
+          })
           // FEAT-3p7 — preload now takes the active space id so the
           // post-sync re-fetch only re-keys current-space pages into
           // the cache. Foreign-space rows that were synced from the
