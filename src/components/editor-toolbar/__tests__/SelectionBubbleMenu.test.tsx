@@ -110,6 +110,7 @@ const mockEditorState = {
   italic: false,
   code: false,
   strike: false,
+  underline: false,
   highlight: false,
   link: false,
 }
@@ -216,6 +217,7 @@ const mockToggleItalic = vi.fn(() => ({ run: mockRun }))
 const mockToggleCode = vi.fn(() => ({ run: mockRun }))
 const mockToggleStrike = vi.fn(() => ({ run: mockRun }))
 const mockToggleHighlight = vi.fn(() => ({ run: mockRun }))
+const mockToggleUnderline = vi.fn(() => ({ run: mockRun }))
 const mockSetLink = vi.fn(() => ({ run: mockRun }))
 const mockUnsetLink = vi.fn(() => ({ run: mockRun }))
 const mockInsertContent = vi.fn(() => ({ run: mockRun }))
@@ -225,6 +227,7 @@ const mockFocus = vi.fn(() => ({
   toggleCode: mockToggleCode,
   toggleStrike: mockToggleStrike,
   toggleHighlight: mockToggleHighlight,
+  toggleUnderline: mockToggleUnderline,
   setLink: mockSetLink,
   unsetLink: mockUnsetLink,
   insertContent: mockInsertContent,
@@ -340,6 +343,7 @@ describe('SelectionBubbleMenu', () => {
         t('toolbar.code'),
         t('toolbar.strikethrough'),
         t('toolbar.highlight'),
+        t('toolbar.underline'),
         t('toolbar.link'),
       ]) {
         expect(screen.queryByRole('button', { name: label })).toBeNull()
@@ -363,13 +367,16 @@ describe('SelectionBubbleMenu', () => {
       expect(container.className).toContain('ease-smooth')
     })
 
-    it('renders the 5 mark toggles + External link button', () => {
+    it('renders the 6 mark toggles + External link button', () => {
       render(<SelectionBubbleMenu editor={makeEditor()} />)
       expect(screen.getByRole('button', { name: t('toolbar.bold') })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: t('toolbar.italic') })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: t('toolbar.code') })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: t('toolbar.strikethrough') })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: t('toolbar.highlight') })).toBeInTheDocument()
+      // #1170 — Underline was missing from the bubble unit test entirely; the
+      // bubble renders all 6 marks from createMarkToggles, Underline included.
+      expect(screen.getByRole('button', { name: t('toolbar.underline') })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: t('toolbar.link') })).toBeInTheDocument()
     })
 
@@ -449,6 +456,14 @@ describe('SelectionBubbleMenu', () => {
       expect(btn.className).toContain('bg-accent')
     })
 
+    it('shows underline as pressed when active (#1170 selector fix)', () => {
+      mockEditorState.underline = true
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: t('toolbar.underline') })
+      expect(btn).toHaveAttribute('aria-pressed', 'true')
+      expect(btn.className).toContain('bg-accent')
+    })
+
     it('shows marks as not pressed when inactive', () => {
       render(<SelectionBubbleMenu editor={makeEditor()} />)
 
@@ -515,6 +530,15 @@ describe('SelectionBubbleMenu', () => {
       expect(mockRun).toHaveBeenCalled()
     })
 
+    // #1170 — Underline was never rendered nor exercised by the bubble unit
+    // test. Assert its pointerdown drives the toggleUnderline chain command.
+    it('toggles underline via editor chain on pointerdown', () => {
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.underline') }))
+      expect(mockToggleUnderline).toHaveBeenCalled()
+      expect(mockRun).toHaveBeenCalled()
+    })
+
     it('mark-toggle preserves editor focus by calling preventDefault on pointerdown', () => {
       render(<SelectionBubbleMenu editor={makeEditor()} />)
       for (const label of [
@@ -523,6 +547,7 @@ describe('SelectionBubbleMenu', () => {
         t('toolbar.code'),
         t('toolbar.strikethrough'),
         t('toolbar.highlight'),
+        t('toolbar.underline'),
       ]) {
         const btn = screen.getByRole('button', { name: label })
         const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
