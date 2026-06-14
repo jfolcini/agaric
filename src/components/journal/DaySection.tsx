@@ -18,6 +18,7 @@ import { BlockTree } from '@/components/editor/BlockTree'
 import { PageQuickActions } from '@/components/pages/PageQuickActions'
 import { Button } from '@/components/ui/button'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
+import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import { cn } from '@/lib/utils'
 
 import { getSourceColor, getSourceLabel } from '../../lib/date-property-colors'
@@ -142,12 +143,10 @@ function DaySectionInner({
   // Lazy-mount the BlockTree only when (a) the caller opted in via
   // `lazyMount` and (b) reduced-motion is NOT requested. Reduced-motion
   // users get eager mount to avoid the one-frame placeholder→tree swap
-  // that would otherwise be visible during scroll. SSR-safe: matchMedia
-  // is only invoked at module-mount time, after hydration in a Tauri SPA.
-  const prefersReducedMotion =
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  // that would otherwise be visible during scroll. `usePrefersReducedMotion`
+  // reads matchMedia once on mount and subscribes to changes, so the value
+  // is not re-evaluated in this render body on every WeeklyView re-render.
+  const prefersReducedMotion = usePrefersReducedMotion()
   const shouldLazyMount = lazyMount && !prefersReducedMotion
   const [hasEntered, lazyRef] = useEnteredViewport(shouldLazyMount)
 
