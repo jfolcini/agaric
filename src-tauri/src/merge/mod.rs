@@ -39,11 +39,13 @@ mod apply;
 /// through to [`LoroEngine::with_peer_id`] so the engine's Loro
 /// peer id is stable across the process lifetime.
 ///
-/// `op_created_at` is the originating op's RFC-3339 `created_at`. It is
-/// the real `deleted_at` timestamp the `DeleteBlock` arm writes onto
-/// the engine seed (PEND-80 Phase 2) so the value is lossless across
-/// sync — see [`LoroEngine::apply_delete_block`]. All other arms ignore
-/// it (their ops carry no timestamp the engine stores).
+/// `op_created_at` is the originating op's `created_at` as an epoch-ms
+/// decimal string (what production writes via `created_at.to_string()`;
+/// #668 — NOT RFC-3339). It is the real `deleted_at` timestamp the
+/// `DeleteBlock` arm writes onto the engine seed (PEND-80 Phase 2) so
+/// the value is lossless across sync — see
+/// [`LoroEngine::apply_delete_block`]. All other arms ignore it (their
+/// ops carry no timestamp the engine stores).
 ///
 /// Returns nothing.  Errors `tracing::warn!` and never propagate —
 /// the engine dispatch must not break the materializer hot path.
