@@ -16,7 +16,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -2246,6 +2246,102 @@ describe('SearchPanel', () => {
       input.focus()
       await screen.findByTestId('search-history-list')
       await user.keyboard('{ArrowUp}')
+
+      // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
+      const results = await axe(container as any)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  // #1103 — the dedicated Search view's no-results state offers a one-click
+  // recovery when filter chips over-constrain to zero results.
+  describe('no-results recovery action (#1103)', () => {
+    it('shows a "Clear filters" button when filters are active and zero results', async () => {
+      mockedInvoke.mockImplementation(async (cmd) => {
+        if (cmd === 'list_tags_by_prefix') {
+          return [{ tag_id: 'TAG_WIP', name: 'wip', color: null }]
+        }
+        return emptyPage
+      })
+      render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      typeAndSubmit(input, 'tag:wip foo')
+
+      await waitFor(() => {
+        expect(screen.getByText(t('search.noResultsFound'))).toBeInTheDocument()
+      })
+
+      // The recovery button is present because a filter chip is active.
+      expect(screen.getByTestId('search-no-results-clear-filters')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('search.clearFilters') })).toBeInTheDocument()
+    })
+
+    it('clicking "Clear filters" clears the active filters (calls handleClearAllFilters)', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd) => {
+        if (cmd === 'list_tags_by_prefix') {
+          return [{ tag_id: 'TAG_WIP', name: 'wip', color: null }]
+        }
+        return emptyPage
+      })
+      render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder')) as HTMLInputElement
+      typeAndSubmit(input, 'tag:wip foo')
+
+      // The chip renders from the parsed AST.
+      await waitFor(() => {
+        const chipBar = screen.getByTestId('filter-chip-bar')
+        expect(within(chipBar).getByText('tag:#wip')).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByTestId('search-no-results-clear-filters'))
+
+      // handleClearAllFilters resets the query to the live free text, dropping
+      // the filter token → the chip (and the recovery button) disappear. The
+      // chip bar itself persists because it always renders its trailing
+      // `+ Filter` popover, so assert on the chip, not the bar.
+      await waitFor(() => {
+        expect(input.value).toBe('foo')
+      })
+      expect(screen.queryByText('tag:#wip')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('search-no-results-clear-filters')).not.toBeInTheDocument()
+    })
+
+    it('shows only the message (no button) when there are no active filters', async () => {
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      typeAndSubmit(input, 'nothing')
+
+      await waitFor(() => {
+        expect(screen.getByText(t('search.noResultsFound'))).toBeInTheDocument()
+      })
+
+      // No filters were typed → no recovery action; behavior identical to before.
+      expect(screen.queryByTestId('search-no-results-clear-filters')).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: t('search.clearFilters') }),
+      ).not.toBeInTheDocument()
+    })
+
+    it('no-results state with an active filter has no axe violations', async () => {
+      mockedInvoke.mockImplementation(async (cmd) => {
+        if (cmd === 'list_tags_by_prefix') {
+          return [{ tag_id: 'TAG_WIP', name: 'wip', color: null }]
+        }
+        return emptyPage
+      })
+      const { container } = render(<SearchPanel />)
+
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      typeAndSubmit(input, 'tag:wip foo')
+
+      await waitFor(() => {
+        expect(screen.getByTestId('search-no-results-clear-filters')).toBeInTheDocument()
+      })
 
       // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
       const results = await axe(container as any)
