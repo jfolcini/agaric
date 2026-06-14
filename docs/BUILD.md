@@ -57,6 +57,30 @@ Xcode Command Line Tools (`xcode-select --install`). The rest installs via `brew
 
 Set `ANDROID_HOME` / `ANDROID_NDK_HOME` per Tauri's [Android setup](https://v2.tauri.app/start/prerequisites/#android).
 
+### Developer tools (prek hook host-binaries)
+
+The [`prek`](https://github.com/j178/prek) hooks shell out to host-installed binaries. Nothing installs them automatically, so a fresh contributor who runs the hooks otherwise hits hook-by-hook `command not found`. Install them up front:
+
+```sh
+# Cargo-installable tools (cross-platform)
+cargo install --locked prek          # the hook runner itself
+cargo install --locked cargo-nextest # backend test runner
+cargo install lychee                 # markdown link checker
+cargo install --locked typos-cli     # spell checker
+cargo install --locked zizmor        # GitHub Actions auditor
+cargo install --locked taplo-cli     # TOML lint + format
+cargo install sqruff                 # SQLite migration linter
+cargo install cargo-deny             # advisories + licenses + bans
+cargo install cargo-machete          # unused-dependency detector
+
+# System package (no cargo crate)
+sudo apt install shellcheck          # shell-script linter (or `brew install shellcheck`)
+```
+
+`prek.toml` is the source of truth — each hook's exact `entry` and any install hint live there, so re-check it if a command above ever drifts. `mold` (see [Speed up Rust builds](#speed-up-rust-builds-linux-only-optional)) is an optional Linux linker, not a hook binary.
+
+These local hooks are **optional**: if you cannot install them, open your PR anyway — CI runs the same gate via `.github/workflows/_validate.yml` (see [`CONTRIBUTING.md`](../CONTRIBUTING.md#bootstrap)).
+
 ## Development
 
 ```bash
