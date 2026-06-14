@@ -14,12 +14,26 @@
  * Optionally calls `onOpenExternal` to open the current image in an external app.
  */
 
-import { ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ExternalLink, Maximize2, Minus, Plus } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
+import { IconButton } from '@/components/ui/icon-button'
+import { getShortcutKeys } from '@/lib/keyboard-config'
 import { cn } from '@/lib/utils'
+
+/**
+ * #1104 — append the current keyboard binding (if any) to a label so the
+ * icon-only zoom buttons surface their hotkey via the accessible name. Mirrors
+ * GraphView's `withShortcut` (UX-356); returns the bare label when no binding
+ * is configured to avoid a stray "()". The lightbox shares the graph's `+/-/0`
+ * bindings, so it reuses the `graphZoom*` shortcut ids.
+ */
+function withShortcut(label: string, shortcutId: string): string {
+  const keys = getShortcutKeys(shortcutId)
+  return keys ? `${label} (${keys})` : label
+}
 
 /** Zoom bounds and step for lightbox zoom/pan (#294 item 7). */
 const ZOOM_MIN = 1
@@ -242,6 +256,16 @@ export function ImageLightbox({
           'flex items-center justify-center',
           '[&>[data-slot=dialog-close]]:text-white [&>[data-slot=dialog-close]]:hover:text-white/80',
         )}
+        // #1104 — direct initial focus to the dialog container rather than the
+        // first focusable control (the new zoom cluster). IconButton embeds a
+        // Radix tooltip that opens on focus; an open tooltip is a DismissableLayer
+        // that swallows Escape, so auto-focusing a zoom button would break the
+        // lightbox's Escape-to-close. Focusing the content keeps the focus trap
+        // intact while letting Escape reach the Dialog's own dismiss handler.
+        onOpenAutoFocus={(e) => {
+          e.preventDefault()
+          if (e.currentTarget instanceof HTMLElement) e.currentTarget.focus()
+        }}
       >
         <DialogTitle className="sr-only">{current.alt}</DialogTitle>
         <DialogDescription className="sr-only">
@@ -289,6 +313,60 @@ export function ImageLightbox({
             {current.caption}
           </p>
         )}
+
+        {/*
+         * #1104 — persistent on-screen zoom cluster (bottom-left, mirroring
+         * GraphView's bottom-right stack at GraphView.tsx:335-359). Surfaces the
+         * otherwise wheel/keyboard-only zoom and advertises the +/-/0 shortcuts
+         * via `withShortcut` in each button's accessible name. Wired to the same
+         * `zoomBy`/`resetZoom` handlers the wheel/keyboard paths use, so all
+         * input paths stay in sync. Disabled at the bounds: ZoomIn at ZOOM_MAX,
+         * ZoomOut + Reset when not zoomed in (ZOOM_MIN).
+         */}
+        <div
+          className="absolute bottom-4 left-4 flex flex-col gap-1"
+          data-testid="lightbox-zoom-controls"
+        >
+          <IconButton
+            variant="outline"
+            disabled={zoom >= ZOOM_MAX}
+            onClick={(e) => {
+              e.stopPropagation()
+              zoomBy(ZOOM_STEP)
+            }}
+            tooltip={t('lightbox.zoomIn')}
+            ariaLabel={withShortcut(t('lightbox.zoomIn'), 'graphZoomIn')}
+            data-testid="lightbox-zoom-in"
+          >
+            <Plus className="h-4 w-4" />
+          </IconButton>
+          <IconButton
+            variant="outline"
+            disabled={!zoomed}
+            onClick={(e) => {
+              e.stopPropagation()
+              zoomBy(-ZOOM_STEP)
+            }}
+            tooltip={t('lightbox.zoomOut')}
+            ariaLabel={withShortcut(t('lightbox.zoomOut'), 'graphZoomOut')}
+            data-testid="lightbox-zoom-out"
+          >
+            <Minus className="h-4 w-4" />
+          </IconButton>
+          <IconButton
+            variant="outline"
+            disabled={!zoomed}
+            onClick={(e) => {
+              e.stopPropagation()
+              resetZoom()
+            }}
+            tooltip={t('lightbox.zoomReset')}
+            ariaLabel={withShortcut(t('lightbox.zoomReset'), 'graphZoomReset')}
+            data-testid="lightbox-zoom-reset"
+          >
+            <Maximize2 className="h-4 w-4" />
+          </IconButton>
+        </div>
 
         {hasMultiple && (
           <>
