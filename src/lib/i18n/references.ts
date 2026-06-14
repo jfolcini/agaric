@@ -178,7 +178,9 @@ export const references: Record<string, string> = {
   'search.cjkLimitationNote':
     'CJK search is limited in v1. Some results may be incomplete. Try queries of 3 or more characters for the best matches.',
   'search.recentTitle': 'Recent',
+  'search.noResultsHeadline': 'No results',
   'search.noResultsFound': 'No results found. Try different keywords or check your spelling.',
+  'search.clearFilters': 'Clear filters',
   'search.loadingMessage': 'Loading...',
   'search.loadMoreButton': 'Load more',
   'search.resultsCount': '{{count}} results found',

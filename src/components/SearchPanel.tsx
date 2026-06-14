@@ -27,7 +27,7 @@
  *    (PEND-73 Phase 4.M4 removed the stub `SearchResultList.tsx`).
  */
 
-import { Search } from 'lucide-react'
+import { FilterX, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -36,6 +36,7 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { ResultCard } from '@/components/common/ResultCard'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
+import { Button } from '@/components/ui/button'
 import { CardButton } from '@/components/ui/card-button'
 import type { FilterToken } from '@/lib/search-query'
 import { addFilter, parse, removeFilterAt, serialize } from '@/lib/search-query'
@@ -587,7 +588,30 @@ export function SearchPanel(): React.ReactElement {
       />
 
       {searched && !searchLoading && results.length === 0 && !error && !aliasMatch && (
-        <EmptyState icon={Search} message={t('search.noResultsFound')} />
+        <EmptyState
+          icon={Search}
+          message={t('search.noResultsHeadline')}
+          description={t('search.noResultsFound')}
+          // #1103 — when filter chips over-constrain to zero, offer a one-click
+          // recovery instead of forcing a scroll back up to the chip row. No
+          // active filters → no action (behavior identical to before).
+          {...(ast.filters.length > 0
+            ? {
+                action: (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 mx-auto flex items-center gap-1"
+                    onClick={handleClearAllFilters}
+                    data-testid="search-no-results-clear-filters"
+                  >
+                    <FilterX className="h-4 w-4" />
+                    {t('search.clearFilters')}
+                  </Button>
+                ),
+              }
+            : {})}
+        />
       )}
 
       {/* UX-2 — a generic (non-regex) failure previously left the panel blank.
