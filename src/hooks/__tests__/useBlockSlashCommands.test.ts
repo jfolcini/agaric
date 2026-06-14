@@ -9,6 +9,8 @@ import type { StoreApi } from 'zustand'
 import { makeBlock } from '../../__tests__/fixtures'
 import { logger } from '../../lib/logger'
 import { _resetPropertyKeysCacheForTest } from '../../lib/property-keys-cache'
+import { addRecentCommand, getRecentCommands, RECENT_SLASH_PREFIX } from '../../lib/recent-commands'
+import { RECENT_SLASH_CATEGORY } from '../../lib/slash-commands'
 import {
   createPageBlockStore,
   PageBlockContext,
@@ -89,6 +91,10 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockSlashCo
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // #1105 — the slash MRU is localStorage-backed; clear it so the
+  // empty-query test sees an empty recents band and cross-test recents
+  // never leak.
+  localStorage.clear()
   mockedInvoke.mockResolvedValue(undefined)
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({
@@ -115,9 +121,50 @@ describe('SLASH_COMMANDS', () => {
 })
 
 describe('searchSlashCommands', () => {
-  it('returns all base commands for empty query', () => {
+  it('returns all base commands for empty query (no recents recorded)', () => {
+    // #1105 — with an empty MRU the band is omitted, so empty `/` still
+    // yields exactly the full base catalog (re-export shares the lib MRU,
+    // localStorage is cleared in beforeEach).
     const results = searchSlashCommands('')
     expect(results.length).toBe(SLASH_COMMANDS.length)
+  })
+
+  it('prepends a Recent band of most-recently-run commands on empty query (#1105)', () => {
+    // Record two slash runs into the slash MRU (most-recent first).
+    addRecentCommand('done', RECENT_SLASH_PREFIX)
+    addRecentCommand('todo', RECENT_SLASH_PREFIX)
+
+    const results = searchSlashCommands('')
+
+    // Band first, tagged with the synthetic Recent category, MRU order.
+    expect(results[0]).toMatchObject({ id: 'todo', category: RECENT_SLASH_CATEGORY })
+    expect(results[1]).toMatchObject({ id: 'done', category: RECENT_SLASH_CATEGORY })
+    // Full base catalog still follows (everything stays reachable).
+    expect(results.length).toBe(SLASH_COMMANDS.length + 2)
+    const tail = results.slice(2)
+    expect(tail.map((r) => r.id)).toEqual(SLASH_COMMANDS.map((c) => c.id))
+  })
+
+  it('skips stale recent ids absent from the base catalog (#1105)', () => {
+    addRecentCommand('todo', RECENT_SLASH_PREFIX)
+    // `table:3:3` is an expanded sub-option, not a base SLASH_COMMANDS id.
+    addRecentCommand('table:3:3', RECENT_SLASH_PREFIX)
+
+    const results = searchSlashCommands('')
+
+    // Only the base id surfaces in the band; the stale id is dropped.
+    expect(results[0]).toMatchObject({ id: 'todo', category: RECENT_SLASH_CATEGORY })
+    expect(results.length).toBe(SLASH_COMMANDS.length + 1)
+  })
+
+  it('omits the Recent band for a typed query (#1105)', () => {
+    addRecentCommand('done', RECENT_SLASH_PREFIX)
+
+    const results = searchSlashCommands('todo')
+
+    // Normal filtered list; no Recent-category rows injected.
+    expect(results.some((r) => r.category === RECENT_SLASH_CATEGORY)).toBe(false)
+    expect(results[0]?.id).toBe('todo')
   })
 
   it('filters by query string', () => {
@@ -261,6 +308,31 @@ describe('useBlockSlashCommands handleSlashCommand', () => {
       blockId: 'BLOCK_1',
       level: '1',
     })
+  })
+
+  it('records the run into the slash MRU (#1105)', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    expect(getRecentCommands(RECENT_SLASH_PREFIX)).toHaveLength(0)
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'todo', label: 'TODO' })
+    })
+
+    const recents = getRecentCommands(RECENT_SLASH_PREFIX)
+    expect(recents[0]?.id).toBe('todo')
+  })
+
+  it('does not record into the MRU when focusedBlockId is null (#1105)', async () => {
+    const params = makeDefaultParams({ focusedBlockId: null })
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'todo', label: 'TODO' })
+    })
+
+    expect(getRecentCommands(RECENT_SLASH_PREFIX)).toHaveLength(0)
   })
 
   it('opens date picker for /date command', async () => {
