@@ -88,6 +88,43 @@ macro_rules! descendants_cte_active {
     };
 }
 
+/// Recursive descendant CTE, cohort variant.
+///
+/// Like [`descendants_cte_standard`] but the recursive arm only descends
+/// into a child whose `deleted_at` equals a caller-bound timestamp. The
+/// walk therefore stays *contiguous* within a single soft-delete cohort:
+/// it stops at the first descendant that belongs to a different cohort
+/// (a separately-deleted nested subtree, or a still-live boundary),
+/// rather than blindly sweeping every block under the seed regardless of
+/// how it came to be deleted.
+///
+/// Used by the restore projection (#1055) so cohort identity is keyed on
+/// **structure** (a connected chain of same-cohort blocks descending from
+/// the restored seed) rather than on a flat `deleted_at = ?` equality
+/// over the whole subtree. The flat form over-restored an independently
+/// soft-deleted descendant whenever a *different* cohort happened to
+/// share the seed's `deleted_at` value but sat below a boundary block
+/// that itself belonged to yet another cohort — leaving that descendant
+/// live under a still-tombstoned parent.
+///
+/// Binding order: `?` #1 = seed id (anchor); `?` #2 = the cohort
+/// timestamp used by BOTH the recursive-arm filter and the caller's
+/// outer `WHERE deleted_at = ?` clause. Bind the seed once, then the
+/// timestamp once for the recursive arm, then once more for the outer
+/// filter (three binds total at the call site).
+#[macro_export]
+macro_rules! descendants_cte_cohort {
+    () => {
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT id, 0 FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.deleted_at = ? AND d.depth < 100 \
+         ) "
+    };
+}
+
 /// Recursive descendant CTE, purge variant.
 ///
 /// Purge sweeps every row descended from the target block — the goal

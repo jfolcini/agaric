@@ -402,8 +402,27 @@ pub async fn project_move_block_to_sql(
 
 /// Project a `RestoreBlock` engine state into SQL. Mirrors the cohort
 /// UPDATE in `apply_restore_block_tx` — clears `deleted_at` for every
-/// block in the descendant CTE that was soft-deleted at the same
-/// `deleted_at_ref` timestamp.
+/// block in the seed's *cohort-contiguous* descendant CTE that was
+/// soft-deleted at the same `deleted_at_ref` timestamp.
+///
+/// **Cohort identity is structural, not value-only (#1055).** The walk
+/// uses [`descendants_cte_cohort`], whose recursive arm only descends
+/// into a child that shares the cohort timestamp. This keeps the restore
+/// set a *connected* chain of same-cohort blocks rooted at the seed, so a
+/// separately-deleted nested subtree sitting below a boundary block of a
+/// different cohort is never reached — even when its `deleted_at` happens
+/// to equal `deleted_at_ref`. The earlier flat form
+/// (`id IN (subtree) AND deleted_at = ?`) keyed cohort membership purely
+/// on timestamp equality and would resurrect such a descendant, leaving
+/// it live under a still-tombstoned parent.
+///
+/// The cohort timestamp is non-monotonic wall-clock ms
+/// (`crate::db::now_ms`), so two independent deletes CAN collide on the
+/// same value; scoping to a contiguous parent-chain from the seed makes
+/// cohort identity robust against that collision for every case except a
+/// fully-contiguous same-ms nested re-delete (seed and the nested
+/// subtree separated only by blocks that all share the colliding ts),
+/// which is structurally indistinguishable without a stored cohort id.
 ///
 /// **Engine fan-out trade-off.** The engine's `apply_restore_block` is
 /// per-block-id only, so only the SEED block is applied to the engine
@@ -412,20 +431,22 @@ pub async fn project_move_block_to_sql(
 /// the full cohort is correct as soon as this projection runs; engine
 /// state for descendants follows).
 ///
-/// **Idempotence.** The `WHERE deleted_at = ?` filter on the CTE makes
-/// a re-apply a no-op for rows that have already been restored
-/// (their `deleted_at` is now NULL and won't match `= ?`).
+/// **Idempotence.** The `WHERE deleted_at = ?` filter makes a re-apply a
+/// no-op for rows that have already been restored (their `deleted_at` is
+/// now NULL and won't match `= ?`, and the recursive arm likewise stops
+/// descending past a restored boundary).
 pub async fn project_restore_block_to_sql(
     conn: &mut SqliteConnection,
     block_id: &str,
     deleted_at_ref: i64,
 ) -> Result<(), AppError> {
     sqlx::query(concat!(
-        crate::descendants_cte_standard!(),
+        crate::descendants_cte_cohort!(),
         "UPDATE blocks SET deleted_at = NULL \
          WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
     ))
     .bind(block_id)
+    .bind(deleted_at_ref)
     .bind(deleted_at_ref)
     .execute(&mut *conn)
     .await?;
@@ -1605,6 +1626,131 @@ mod tests {
             child_row.0,
             Some(other_ts),
             "child from other cohort must NOT be restored"
+        );
+    }
+
+    #[tokio::test]
+    async fn project_restore_block_same_ms_sibling_cohort_not_restored() {
+        // #1055: two INDEPENDENT sibling subtrees soft-deleted at the
+        // SAME millisecond (a `now_ms` collision). Restoring one seed
+        // must restore ONLY that seed's subtree; the sibling cohort
+        // sharing the identical `deleted_at` must stay deleted. Cohort
+        // identity is the seed's connected subtree, NOT the timestamp.
+        let (pool, _dir) = fresh_pool().await;
+        const SEED_A: &str = "01HZ0000000000000000SEEDA0";
+        const CHILD_A: &str = "01HZ000000000000000CHILDA0";
+        const SEED_B: &str = "01HZ0000000000000000SEEDB0";
+        const CHILD_B: &str = "01HZ000000000000000CHILDB0";
+        // Both cohorts share this exact ms (forced collision).
+        let same_ms: i64 = 1_778_414_400_000;
+
+        for (id, parent) in [
+            (SEED_A, None),
+            (CHILD_A, Some(SEED_A)),
+            (SEED_B, None),
+            (CHILD_B, Some(SEED_B)),
+        ] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+                 VALUES (?, 'content', '', ?, 0, ?)",
+            )
+            .bind(id)
+            .bind(parent)
+            .bind(same_ms)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_restore_block_to_sql(&mut conn, SEED_A, same_ms)
+            .await
+            .expect("restore seed A");
+        drop(conn);
+
+        let get = |id: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap()
+            }
+        };
+        assert_eq!(get(SEED_A).await, None, "seed A restored");
+        assert_eq!(get(CHILD_A).await, None, "child A restored with its seed");
+        assert_eq!(
+            get(SEED_B).await,
+            Some(same_ms),
+            "sibling cohort seed B stays deleted despite identical deleted_at"
+        );
+        assert_eq!(
+            get(CHILD_B).await,
+            Some(same_ms),
+            "sibling cohort child B stays deleted despite identical deleted_at"
+        );
+    }
+
+    #[tokio::test]
+    async fn project_restore_block_skips_boundary_deleted_descendant() {
+        // #1055: structural cohort identity. A nested descendant N shares
+        // the restored seed's `deleted_at` (collision) but sits BELOW a
+        // boundary block P that belongs to a DIFFERENT cohort. The
+        // cohort-contiguous walk must stop at P, so N is NOT resurrected
+        // — restoring it would leave it live under a still-tombstoned
+        // parent. The flat `deleted_at = ?` form over-restored N.
+        let (pool, _dir) = fresh_pool().await;
+        const SEED: &str = "01HZ0000000000000000SEED01";
+        const BOUNDARY: &str = "01HZ0000000000000000BOUND0";
+        const NESTED: &str = "01HZ0000000000000000NESTD0";
+        let seed_ms: i64 = 1_778_414_400_000;
+        let boundary_ms: i64 = 1_735_689_600_000; // separate cohort
+
+        for (id, parent, d) in [
+            (SEED, None, seed_ms),
+            (BOUNDARY, Some(SEED), boundary_ms),
+            (NESTED, Some(BOUNDARY), seed_ms), // collides with seed ms
+        ] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+                 VALUES (?, 'content', '', ?, 0, ?)",
+            )
+            .bind(id)
+            .bind(parent)
+            .bind(d)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_restore_block_to_sql(&mut conn, SEED, seed_ms)
+            .await
+            .expect("restore seed");
+        drop(conn);
+
+        let fetch = |id: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap()
+            }
+        };
+        assert_eq!(fetch(SEED).await, None, "seed restored");
+        assert_eq!(
+            fetch(BOUNDARY).await,
+            Some(boundary_ms),
+            "boundary block (other cohort) stays deleted"
+        );
+        assert_eq!(
+            fetch(NESTED).await,
+            Some(seed_ms),
+            "nested block below a deleted boundary must NOT be resurrected \
+             despite sharing the seed's deleted_at"
         );
     }
 

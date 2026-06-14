@@ -566,12 +566,16 @@ pub(super) async fn collect_restore_cohort(
     conn: &mut sqlx::SqliteConnection,
     p: &RestoreBlockPayload,
 ) -> Result<Vec<String>, AppError> {
+    // #1055: mirror `project_restore_block_to_sql`'s cohort-contiguous
+    // walk exactly so the captured fanout set equals the rows the UPDATE
+    // clears (the recursive arm descends only through same-cohort blocks).
     let rows: Vec<(String,)> = sqlx::query_as::<_, (String,)>(concat!(
-        crate::descendants_cte_standard!(),
+        crate::descendants_cte_cohort!(),
         "SELECT id FROM blocks \
          WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
     ))
     .bind(p.block_id.as_str())
+    .bind(p.deleted_at_ref)
     .bind(p.deleted_at_ref)
     .fetch_all(&mut *conn)
     .await?;
