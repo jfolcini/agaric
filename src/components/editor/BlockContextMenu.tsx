@@ -24,6 +24,7 @@ import {
   Merge,
   MoveDown,
   MoveUp,
+  MoveVertical,
   Replace,
   Settings2,
   Signal,
@@ -115,13 +116,26 @@ interface MenuItem {
    */
   indented?: boolean
   /**
-   * #1003 — marks the "Turn into" disclosure toggle. When set, the row renders
-   * a trailing chevron (right when collapsed, down when expanded) in place of a
-   * shortcut hint, and carries `aria-expanded` + `aria-controls` so screen
-   * readers announce the parent/child relationship to the inline-expanded
-   * options group.
+   * #1003 — marks a disclosure toggle ("Turn into", #1109 "Move & arrange").
+   * When set, the row renders a trailing chevron (right when collapsed, down
+   * when expanded) in place of a shortcut hint, and carries `aria-expanded` +
+   * `aria-controls` so screen readers announce the parent/child relationship to
+   * the inline-expanded options group it controls (see `disclosureId`).
    */
   expanded?: boolean
+  /**
+   * #1109 — id of the inline-expanded options group this row participates in.
+   * On a toggle row (with `expanded`) it is the `aria-controls` target; on an
+   * `indented` child row it is the id of the wrapping `role="group"`. Lets the
+   * menu host more than one disclosure group ("Turn into" and "Move & arrange")
+   * without the previously-hardcoded single `turnIntoGroupId`.
+   */
+  disclosureId?: string
+  /**
+   * #1109 — accessible label for the wrapping `role="group"` of `indented`
+   * child rows (e.g. "Turn into", "Move & arrange"), announced to AT.
+   */
+  disclosureLabel?: string
 }
 
 // ── State-aware label helpers ─────────────────────────────────────────
@@ -209,6 +223,15 @@ export function BlockContextMenu({
   // #1003 — stable id linking the "Turn into" toggle (`aria-controls`) to the
   // inline-expanded options group, so screen readers announce the relationship.
   const turnIntoGroupId = useId()
+  // #1109 — the low-frequency block-ops (Duplicate / Merge / Move up / Move
+  // down) are collapsed behind a single "Move & arrange" toggle, mirroring the
+  // "Turn into" disclosure machinery above. Collapsed by default so the menu
+  // opens compact; expanding reveals the ops inline (no nested popover, so the
+  // single-list keyboard navigation keeps working).
+  const [moveArrangeOpen, setMoveArrangeOpen] = useState(false)
+  // #1109 — stable id linking the "Move & arrange" toggle (`aria-controls`) to
+  // its inline-expanded options group, announced to screen readers.
+  const moveArrangeGroupId = useId()
 
   const handleCloseWithFocus = useCallback(() => {
     // If the trigger element has been removed from the DOM during the menu's
@@ -436,8 +459,10 @@ export function BlockContextMenu({
     },
   ]
 
-  // Group 2: Indent, Dedent, Move Up, Move Down
-  const group2: MenuItem[] = [
+  // Group 2: Indent / Dedent stay inline (high-frequency, single-press chorded);
+  // the low-frequency ops (Move up/down, Duplicate, Merge) collapse behind a
+  // "Move & arrange" disclosure (#1109).
+  const indentDedentItems: MenuItem[] = [
     {
       label: t('contextMenu.indent'),
       icon: <ArrowRightToLine className="h-3.5 w-3.5" />,
@@ -450,17 +475,31 @@ export function BlockContextMenu({
       action: onDedent ? () => dispatch(onDedent) : undefined,
       shortcut: 'Ctrl+Shift+←',
     },
+  ]
+
+  // #1109 — the collapsible "Move & arrange" children: Move up/down, Duplicate,
+  // Merge. Each child keeps its EXACT prior action + shortcut (no behaviour
+  // change); only its disclosure/organisation moves behind the toggle. Children
+  // carry `indented` + `disclosureId` so they render as a labelled, indented
+  // subgroup (mirroring the "Turn into" options).
+  const moveArrangeChildren: MenuItem[] = [
     {
       label: t('contextMenu.moveUp'),
       icon: <MoveUp className="h-3.5 w-3.5" />,
       action: onMoveUp ? () => dispatch(onMoveUp) : undefined,
       shortcut: 'Ctrl+Shift+↑',
+      indented: true,
+      disclosureId: moveArrangeGroupId,
+      disclosureLabel: t('contextMenu.moveArrange'),
     },
     {
       label: t('contextMenu.moveDown'),
       icon: <MoveDown className="h-3.5 w-3.5" />,
       action: onMoveDown ? () => dispatch(onMoveDown) : undefined,
       shortcut: 'Ctrl+Shift+↓',
+      indented: true,
+      disclosureId: moveArrangeGroupId,
+      disclosureLabel: t('contextMenu.moveArrange'),
     },
     // #976 (item 13) — Duplicate the block + its subtree (insert after the
     // original at the same depth). Single-block only: in bulk mode the action
@@ -472,6 +511,9 @@ export function BlockContextMenu({
             label: t('contextMenu.duplicate'),
             icon: <CopyPlus className="h-3.5 w-3.5" />,
             action: () => handleAction(onDuplicate),
+            indented: true,
+            disclosureId: moveArrangeGroupId,
+            disclosureLabel: t('contextMenu.moveArrange'),
           },
         ]
       : []),
@@ -486,7 +528,30 @@ export function BlockContextMenu({
             // hint carries the "(at start)" condition to avoid implying a bare
             // Backspace deletes the block.
             shortcut: 'Backspace (at start)',
+            indented: true,
+            disclosureId: moveArrangeGroupId,
+            disclosureLabel: t('contextMenu.moveArrange'),
           },
+        ]
+      : []),
+  ]
+
+  // Only show the "Move & arrange" toggle when at least one child action is
+  // actually wired (else the disclosure would expand to nothing). The toggle is
+  // a plain expand/collapse — it dispatches no block action itself.
+  const hasMoveArrangeChildren = moveArrangeChildren.some((item) => item.action !== undefined)
+  const group2: MenuItem[] = [
+    ...indentDedentItems,
+    ...(hasMoveArrangeChildren
+      ? [
+          {
+            label: t('contextMenu.moveArrange'),
+            icon: <MoveVertical className="h-3.5 w-3.5" />,
+            action: () => setMoveArrangeOpen((o) => !o),
+            expanded: moveArrangeOpen,
+            disclosureId: moveArrangeGroupId,
+          },
+          ...(moveArrangeOpen ? moveArrangeChildren : []),
         ]
       : []),
   ]
@@ -627,6 +692,7 @@ export function BlockContextMenu({
           icon: <Replace className="h-3.5 w-3.5" />,
           action: () => setTurnIntoOpen((o) => !o),
           expanded: turnIntoOpen,
+          disclosureId: turnIntoGroupId,
         },
         ...(turnIntoOpen
           ? TURN_INTO_OPTIONS.map((opt): MenuItem => {
@@ -641,6 +707,8 @@ export function BlockContextMenu({
                 icon: Icon ? <Icon className="h-3.5 w-3.5" /> : <span className="h-3.5 w-3.5" />,
                 active: isActive,
                 indented: true,
+                disclosureId: turnIntoGroupId,
+                disclosureLabel: t('contextMenu.turnInto'),
                 action: isActive
                   ? undefined
                   : () => {
@@ -760,10 +828,11 @@ export function BlockContextMenu({
         type="button"
         role="menuitem"
         tabIndex={idx === focusedIndex ? 0 : -1}
-        // #1003 — the "Turn into" toggle announces its expand state and the
-        // inline-expanded options group it controls.
+        // #1003/#1109 — a disclosure toggle announces its expand state and the
+        // inline-expanded options group it controls (its own `disclosureId`, so
+        // "Turn into" and "Move & arrange" each link to the right subgroup).
         {...(item.expanded !== undefined
-          ? { 'aria-expanded': item.expanded, 'aria-controls': turnIntoGroupId }
+          ? { 'aria-expanded': item.expanded, 'aria-controls': item.disclosureId }
           : {})}
         className={cn(
           // #1000 — `focus-ring-visible` is the app-wide keyboard-focus signal
@@ -798,12 +867,16 @@ export function BlockContextMenu({
       data-editor-portal=""
     >
       {groups.map((group, groupIdx) => {
-        // #1003 — the "Turn into" child options (marked `indented`) are wrapped
-        // in their own `role="group" aria-label="Turn into"` so the nesting is
-        // exposed to screen readers. They're always contiguous at the tail of
-        // their group; the non-indented rows render flat above them.
+        // #1003/#1109 — a disclosure's child options (marked `indented`) are
+        // wrapped in their own labelled `role="group"` (linked to the toggle via
+        // `disclosureId`) so the nesting is exposed to screen readers. They're
+        // always contiguous at the tail of their group; the non-indented rows
+        // render flat above them. Each indented subgroup carries its own id +
+        // label ("Turn into", "Move & arrange") read from its first child.
         const flatItems = group.filter((item) => !item.indented)
         const indentedItems = group.filter((item) => item.indented)
+        const subgroupId = indentedItems[0]?.disclosureId
+        const subgroupLabel = indentedItems[0]?.disclosureLabel
         return (
           // oxlint-disable-next-line react/no-array-index-key -- groups are static per render, never reorder
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- menu-item group inside a custom menu; <fieldset>/<optgroup> etc. would inject form/list semantics that conflict with the menu role
@@ -812,7 +885,7 @@ export function BlockContextMenu({
             {flatItems.map(renderItem)}
             {indentedItems.length > 0 && (
               // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- nested menu-item subgroup; see above
-              <div id={turnIntoGroupId} role="group" aria-label={t('contextMenu.turnInto')}>
+              <div id={subgroupId} role="group" aria-label={subgroupLabel}>
                 {indentedItems.map(renderItem)}
               </div>
             )}
