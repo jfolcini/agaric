@@ -213,7 +213,9 @@ export function BugReportDialog({
   >({
     call: async ({ redact: r, metadata: md }) => {
       const entries = await readLogsForReport(r)
-      const blob = await buildReportZip(entries, md)
+      // #840: thread the redact toggle into the ZIP composer so metadata.json
+      // scrubs device_id to the same sentinel the logs use when redaction is on.
+      const blob = await buildReportZip(entries, md, r)
       downloadBlob(blob, zipFileName)
       return true
     },

@@ -43,6 +43,49 @@ describe('buildReportZip', () => {
     expect(todayContents).toBe('today content\n')
   })
 
+  // #840: with the redact toggle ON, metadata.json's device_id must be
+  // scrubbed to the SAME sentinel the backend writes into logs/*.
+  it('scrubs device_id in metadata.json when redact is ON', async () => {
+    // The exact token the backend redaction pipeline writes for logs/*
+    // (src-tauri/src/commands/bug_report.rs). Pinned here so a drift in
+    // either side surfaces as a test failure.
+    const REDACTED_DEVICE_ID = '[REDACTED_DEVICE_ID]'
+
+    const entries: LogFileEntry[] = [
+      { name: 'agaric.log', contents: `device=${REDACTED_DEVICE_ID} ok\n` },
+    ]
+
+    const blob = await buildReportZip(entries, METADATA, true)
+    const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
+
+    const metaFile = unzipped.file('metadata.json')
+    expect(metaFile).not.toBeNull()
+    const meta = JSON.parse(await (metaFile as JSZip.JSZipObject).async('string')) as BugReport
+    expect(meta.device_id).toBe(REDACTED_DEVICE_ID)
+    // The cleartext id must not survive anywhere in the metadata.
+    expect(meta.device_id).not.toBe(METADATA.device_id)
+
+    // Consistency: metadata.json uses the very token logs/* carry.
+    const logFile = unzipped.file('logs/agaric.log')
+    const logContents = await (logFile as JSZip.JSZipObject).async('string')
+    expect(logContents).toContain(meta.device_id)
+
+    // The rest of the metadata shape is otherwise identical.
+    expect(meta).toEqual({ ...METADATA, device_id: REDACTED_DEVICE_ID })
+  })
+
+  // #840: with redact OFF (the default), device_id stays cleartext.
+  it('keeps the real device_id in metadata.json when redact is OFF', async () => {
+    const blobDefault = await buildReportZip([], METADATA)
+    const blobExplicit = await buildReportZip([], METADATA, false)
+
+    for (const blob of [blobDefault, blobExplicit]) {
+      const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
+      const metaRaw = await (unzipped.file('metadata.json') as JSZip.JSZipObject).async('string')
+      expect(JSON.parse(metaRaw)).toEqual(METADATA)
+    }
+  })
+
   it('produces a valid ZIP with only metadata.json when entries is empty', async () => {
     const blob = await buildReportZip([], METADATA)
 
