@@ -54,6 +54,7 @@ vi.mock('../../hooks/useViewportObserver', () => ({
     isOffscreen: () => false,
     createObserveRef: () => vi.fn(),
     getHeight: () => 40,
+    subscribe: () => () => {},
   }),
 }))
 
