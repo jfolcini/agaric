@@ -176,6 +176,7 @@ export const common: Record<string, string> = {
   'contextMenu.moveUp': 'Move Up',
   'contextMenu.moveDown': 'Move Down',
   'contextMenu.merge': 'Merge with previous',
+  'contextMenu.moveArrange': 'Move & arrange',
   'contextMenu.collapse': 'Collapse',
   'contextMenu.expand': 'Expand',
   'contextMenu.history': 'History',

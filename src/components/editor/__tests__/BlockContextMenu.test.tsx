@@ -189,19 +189,34 @@ function renderMenu(overrides: MenuOverrides = {}) {
   return { ...result, props: { ...finalProps, ...actions } }
 }
 
+// #1109 — Move up / Move down / Duplicate / Merge are collapsed behind a "Move &
+// arrange" disclosure toggle. Expand it so the nested rows become reachable.
+async function expandMoveArrange(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.moveArrange')) }))
+}
+
 describe('BlockContextMenu', () => {
-  it('renders all menu items when all callbacks are wired', () => {
+  it('renders all menu items when all callbacks are wired', async () => {
+    const user = userEvent.setup()
     renderMenu()
 
     const menu = screen.getByRole('menu')
+    // Top-level rows.
     expect(within(menu).getByText(t('contextMenu.delete'))).toBeInTheDocument()
     expect(within(menu).getByText(t('contextMenu.indent'))).toBeInTheDocument()
     expect(within(menu).getByText(t('contextMenu.dedent'))).toBeInTheDocument()
-    expect(within(menu).getByText(t('contextMenu.moveUp'))).toBeInTheDocument()
-    expect(within(menu).getByText(t('contextMenu.moveDown'))).toBeInTheDocument()
     expect(within(menu).getByText(t('contextMenu.collapse'))).toBeInTheDocument()
     expect(within(menu).getByText(t('contextMenu.setTodo'))).toBeInTheDocument()
     expect(within(menu).getByText(t('contextMenu.setPriority1'))).toBeInTheDocument()
+    // #1109 — the "Move & arrange" disclosure toggle is top-level; Move up /
+    // Move down are nested under it and surface only when it expands.
+    expect(within(menu).getByText(t('contextMenu.moveArrange'))).toBeInTheDocument()
+    expect(within(menu).queryByText(t('contextMenu.moveUp'))).not.toBeInTheDocument()
+    expect(within(menu).queryByText(t('contextMenu.moveDown'))).not.toBeInTheDocument()
+
+    await expandMoveArrange(user)
+    expect(within(menu).getByText(t('contextMenu.moveUp'))).toBeInTheDocument()
+    expect(within(menu).getByText(t('contextMenu.moveDown'))).toBeInTheDocument()
   })
 
   it('clicking Delete calls onDelete with blockId and closes menu', async () => {
@@ -258,6 +273,8 @@ describe('BlockContextMenu', () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
 
+    // #1109 — Move up is nested under the "Move & arrange" disclosure.
+    await expandMoveArrange(user)
     await user.click(screen.getByText(t('contextMenu.moveUp')))
 
     expect(props.onMoveUp).toHaveBeenCalledWith('BLOCK_01')
@@ -268,6 +285,8 @@ describe('BlockContextMenu', () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
 
+    // #1109 — Move down is nested under the "Move & arrange" disclosure.
+    await expandMoveArrange(user)
     await user.click(screen.getByText(t('contextMenu.moveDown')))
 
     expect(props.onMoveDown).toHaveBeenCalledWith('BLOCK_01')
@@ -431,16 +450,16 @@ describe('BlockContextMenu', () => {
 
   // ── Shortcut hints ──────────────────────────────────────────────
 
-  it('renders shortcut hints for items', () => {
+  it('renders shortcut hints for top-level items', () => {
     // #976 (items 16-19) — wire the actions whose hints were previously missing
     // (merge, zoom-in) so we can assert their newly-added shortcut hints too.
     renderMenu({ onMerge: vi.fn(), onZoomIn: vi.fn(), onShowHistory: vi.fn() })
 
     const menu = screen.getByRole('menu')
+    // Hints on rows that stay top-level (Indent/Dedent inline, tasks, view,
+    // history, delete).
     expect(within(menu).getByText('Ctrl+Shift+→')).toBeInTheDocument()
     expect(within(menu).getByText('Ctrl+Shift+←')).toBeInTheDocument()
-    expect(within(menu).getByText('Ctrl+Shift+↑')).toBeInTheDocument()
-    expect(within(menu).getByText('Ctrl+Shift+↓')).toBeInTheDocument()
     expect(within(menu).getByText('Ctrl+.')).toBeInTheDocument()
     expect(within(menu).getByText('Ctrl+Enter')).toBeInTheDocument()
     // #976 (item 19) — alternation notation, no longer the ambiguous "1-3".
@@ -448,24 +467,48 @@ describe('BlockContextMenu', () => {
     expect(within(menu).queryByText('Ctrl+Shift+1-3')).not.toBeInTheDocument()
     // #976 (item 16) — delete hint (positional: Backspace when empty).
     expect(within(menu).getByText('Backspace (when empty)')).toBeInTheDocument()
-    // #976 (item 17) — merge hint (positional: Backspace at block start).
-    expect(within(menu).getByText('Backspace (at start)')).toBeInTheDocument()
     // #976 (item 18) — zoom-in hint (Alt+.).
     expect(within(menu).getByText('Alt+.')).toBeInTheDocument()
     // #976 (item 15) — block-history keyboard binding hint.
     expect(within(menu).getByText('Ctrl+Shift+Y')).toBeInTheDocument()
   })
 
+  it('#1109 — surfaces the move/merge hints once "Move & arrange" is expanded', async () => {
+    // #1109 — the move/merge shortcut hints (the primary discoverability path
+    // for those chords) must NOT be dropped — they relocate behind the
+    // "Move & arrange" disclosure and appear when it expands.
+    const user = userEvent.setup()
+    renderMenu({ onMerge: vi.fn() })
+
+    const menu = screen.getByRole('menu')
+    // Collapsed: the nested hints are not yet rendered.
+    expect(within(menu).queryByText('Ctrl+Shift+↑')).not.toBeInTheDocument()
+    expect(within(menu).queryByText('Ctrl+Shift+↓')).not.toBeInTheDocument()
+    expect(within(menu).queryByText('Backspace (at start)')).not.toBeInTheDocument()
+
+    await expandMoveArrange(user)
+
+    expect(within(menu).getByText('Ctrl+Shift+↑')).toBeInTheDocument()
+    expect(within(menu).getByText('Ctrl+Shift+↓')).toBeInTheDocument()
+    // #976 (item 17) — merge hint (positional: Backspace at block start).
+    expect(within(menu).getByText('Backspace (at start)')).toBeInTheDocument()
+  })
+
   // #976 (item 13) — Duplicate action: present in the menu and dispatches.
+  // #1109 — Duplicate now lives under the "Move & arrange" disclosure.
   describe('duplicate action (#976)', () => {
-    it('renders a Duplicate item when onDuplicate is wired', () => {
+    it('renders a Duplicate item when onDuplicate is wired (under Move & arrange)', async () => {
+      const user = userEvent.setup()
       renderMenu({ onDuplicate: vi.fn() })
+      await expandMoveArrange(user)
       const menu = screen.getByRole('menu')
       expect(within(menu).getByText(t('contextMenu.duplicate'))).toBeInTheDocument()
     })
 
-    it('omits Duplicate when onDuplicate is not wired', () => {
+    it('omits Duplicate when onDuplicate is not wired', async () => {
+      const user = userEvent.setup()
       renderMenu()
+      await expandMoveArrange(user)
       expect(screen.queryByText(t('contextMenu.duplicate'))).not.toBeInTheDocument()
     })
 
@@ -473,16 +516,20 @@ describe('BlockContextMenu', () => {
       const user = userEvent.setup()
       const onDuplicate = vi.fn()
       renderMenu({ onDuplicate, blockId: 'BLOCK_99' })
+      await expandMoveArrange(user)
       await user.click(screen.getByText(t('contextMenu.duplicate')))
       expect(onDuplicate).toHaveBeenCalledWith('BLOCK_99')
     })
 
-    it('omits Duplicate in bulk (multi-selection) mode', () => {
+    it('omits Duplicate in bulk (multi-selection) mode', async () => {
+      const user = userEvent.setup()
       renderMenu({
         onDuplicate: vi.fn(),
         blockId: 'BLOCK_01',
         selectedBlockIds: ['BLOCK_01', 'BLOCK_02'],
       })
+      // Even with the disclosure expanded, Duplicate stays absent in bulk mode.
+      await expandMoveArrange(user)
       expect(screen.queryByText(t('contextMenu.duplicate'))).not.toBeInTheDocument()
     })
   })
@@ -640,8 +687,11 @@ describe('BlockContextMenu', () => {
     renderMenu()
 
     const items = screen.getAllByRole('menuitem')
-    // 8 items: Delete, Indent, Dedent, Move Up, Move Down, Collapse, Set as TODO, Set priority 1
-    expect(items.length).toBe(8)
+    // #1109 — Move up / Move down now live behind the collapsed "Move &
+    // arrange" disclosure, so the default (collapsed) menu shows 7 rows:
+    // Set as TODO, Set priority 1, Indent, Dedent, Move & arrange (toggle),
+    // Collapse, Delete. The two move ops surface only once the toggle expands.
+    expect(items.length).toBe(7)
   })
 
   it('menu has aria-label', () => {
@@ -701,15 +751,19 @@ describe('BlockContextMenu', () => {
 
   // ── Merge menu item ──────────────────────────────────────────────
 
-  it('renders Merge item when onMerge is provided', () => {
+  it('renders Merge item when onMerge is provided (under Move & arrange)', async () => {
+    const user = userEvent.setup()
     renderMenu({ onMerge: vi.fn() })
 
+    await expandMoveArrange(user)
     expect(screen.getByText(t('contextMenu.merge'))).toBeInTheDocument()
   })
 
-  it('does not render Merge item when onMerge is not provided', () => {
+  it('does not render Merge item when onMerge is not provided', async () => {
+    const user = userEvent.setup()
     renderMenu({ onMerge: undefined })
 
+    await expandMoveArrange(user)
     expect(screen.queryByText(t('contextMenu.merge'))).not.toBeInTheDocument()
   })
 
@@ -717,6 +771,7 @@ describe('BlockContextMenu', () => {
     const user = userEvent.setup()
     const { props } = renderMenu({ onMerge: vi.fn() })
 
+    await expandMoveArrange(user)
     await user.click(screen.getByText(t('contextMenu.merge')))
 
     expect(props.onMerge).toHaveBeenCalledWith('BLOCK_01')
@@ -1270,6 +1325,155 @@ describe('BlockContextMenu', () => {
       expect(props.onClose).toHaveBeenCalled()
     })
   })
+
+  // ── "Move & arrange" disclosure (#1109) ─────────────────────────────
+  //
+  // The low-frequency block-ops (Move up/down, Duplicate, Merge) collapse
+  // behind a single "Move & arrange" toggle, mirroring the "Turn into"
+  // disclosure. These tests assert: the toggle renders top-level + collapsed by
+  // default; expanding reveals every nested op (all reachable); the nested ops
+  // still fire their action; the aria wiring (expanded/controls/labelled group);
+  // and that the disclosure introduces no a11y violations.
+  describe('Move & arrange disclosure (#1109)', () => {
+    function getToggle() {
+      return screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.moveArrange')) })
+    }
+
+    it('renders the toggle top-level and collapsed by default (ops hidden)', () => {
+      renderMenu({ onMerge: vi.fn(), onDuplicate: vi.fn() })
+
+      const toggle = getToggle()
+      expect(toggle).toBeInTheDocument()
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      // None of the nested ops are rendered while collapsed.
+      expect(screen.queryByText(t('contextMenu.moveUp'))).not.toBeInTheDocument()
+      expect(screen.queryByText(t('contextMenu.moveDown'))).not.toBeInTheDocument()
+      expect(screen.queryByText(t('contextMenu.duplicate'))).not.toBeInTheDocument()
+      expect(screen.queryByText(t('contextMenu.merge'))).not.toBeInTheDocument()
+    })
+
+    it('expanding reveals all four ops in a labelled group; each remains reachable', async () => {
+      const user = userEvent.setup()
+      renderMenu({ onMerge: vi.fn(), onDuplicate: vi.fn() })
+
+      const toggle = getToggle()
+      const controls = toggle.getAttribute('aria-controls')
+      expect(controls).toBeTruthy()
+
+      await user.click(toggle)
+      expect(toggle).toHaveAttribute('aria-expanded', 'true')
+
+      // The nested ops live in their own labelled group linked via the id.
+      const group = screen.getByRole('group', { name: t('contextMenu.moveArrange') })
+      expect(group.id).toBe(controls)
+      expect(within(group).getByText(t('contextMenu.moveUp'))).toBeInTheDocument()
+      expect(within(group).getByText(t('contextMenu.moveDown'))).toBeInTheDocument()
+      expect(within(group).getByText(t('contextMenu.duplicate'))).toBeInTheDocument()
+      expect(within(group).getByText(t('contextMenu.merge'))).toBeInTheDocument()
+
+      // Collapses again, hiding the ops.
+      await user.click(toggle)
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.queryByText(t('contextMenu.moveUp'))).not.toBeInTheDocument()
+    })
+
+    it('nested Move up fires onMoveUp when activated from the expanded group', async () => {
+      const user = userEvent.setup()
+      const { props } = renderMenu({ onMerge: vi.fn(), onDuplicate: vi.fn() })
+      await user.click(getToggle())
+      await user.click(screen.getByText(t('contextMenu.moveUp')))
+      expect(props.onMoveUp).toHaveBeenCalledWith('BLOCK_01')
+      expect(props.onClose).toHaveBeenCalled()
+    })
+
+    it('nested Move down fires onMoveDown when activated from the expanded group', async () => {
+      const user = userEvent.setup()
+      const { props } = renderMenu({ onMerge: vi.fn(), onDuplicate: vi.fn() })
+      await user.click(getToggle())
+      await user.click(screen.getByText(t('contextMenu.moveDown')))
+      expect(props.onMoveDown).toHaveBeenCalledWith('BLOCK_01')
+    })
+
+    it('nested Duplicate fires onDuplicate when activated from the expanded group', async () => {
+      const user = userEvent.setup()
+      const onDuplicate = vi.fn()
+      renderMenu({ onMerge: vi.fn(), onDuplicate })
+      await user.click(getToggle())
+      await user.click(screen.getByText(t('contextMenu.duplicate')))
+      expect(onDuplicate).toHaveBeenCalledWith('BLOCK_01')
+    })
+
+    it('nested Merge fires onMerge when activated from the expanded group', async () => {
+      const user = userEvent.setup()
+      const onMerge = vi.fn()
+      renderMenu({ onMerge })
+      await user.click(getToggle())
+      await user.click(screen.getByText(t('contextMenu.merge')))
+      expect(onMerge).toHaveBeenCalledWith('BLOCK_01')
+    })
+
+    it('the toggle shows a lucide chevron (collapsed→expanded), not a unicode triangle', async () => {
+      const user = userEvent.setup()
+      renderMenu()
+
+      const toggle = getToggle()
+      expect(toggle.textContent).not.toContain('▸')
+      expect(toggle.textContent).not.toContain('▾')
+      // svgs present: the leading move icon + the trailing chevron.
+      expect(toggle.querySelectorAll('svg').length).toBeGreaterThanOrEqual(2)
+      await user.click(toggle)
+      expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    })
+
+    it('omits the toggle entirely when no nested op is wired', () => {
+      // Only Indent/Dedent wired (no move/duplicate/merge) → the disclosure has
+      // no children, so the toggle must not render (no dead-end disclosure).
+      render(
+        <BlockContextMenu
+          blockId="BLOCK_01"
+          position={{ x: 0, y: 0 }}
+          onClose={vi.fn()}
+          actions={{ onIndent: vi.fn(), onDedent: vi.fn() }}
+          hasChildren={false}
+        />,
+      )
+      expect(
+        screen.queryByRole('menuitem', { name: new RegExp(t('contextMenu.moveArrange')) }),
+      ).not.toBeInTheDocument()
+    })
+
+    it('has no a11y violations with the disclosure expanded', async () => {
+      const user = userEvent.setup()
+      const { container } = renderMenu({ onMerge: vi.fn(), onDuplicate: vi.fn() })
+
+      await user.click(getToggle())
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+
+    it('keeps the two disclosures independent (Turn into vs Move & arrange)', async () => {
+      // Both disclosures present: each toggle controls its OWN group id, and
+      // expanding one does not expand the other.
+      const user = userEvent.setup()
+      renderMenu({ onMerge: vi.fn(), onTurnInto: vi.fn() })
+
+      const moveToggle = getToggle()
+      const turnToggle = screen.getByRole('menuitem', {
+        name: new RegExp(t('contextMenu.turnInto')),
+      })
+      expect(moveToggle.getAttribute('aria-controls')).not.toBe(
+        turnToggle.getAttribute('aria-controls'),
+      )
+
+      await user.click(moveToggle)
+      expect(moveToggle).toHaveAttribute('aria-expanded', 'true')
+      // Turn into stays collapsed.
+      expect(turnToggle).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.queryByText(t('contextMenu.turnIntoType.paragraph'))).not.toBeInTheDocument()
+      // The move ops are visible.
+      expect(screen.getByText(t('contextMenu.merge'))).toBeInTheDocument()
+    })
+  })
 })
 
 /* ── A2 (#1020): single `actions` bag prop ───────────────────────────── */
@@ -1295,7 +1499,11 @@ describe('BlockContextMenu actions bag (#1020)', () => {
       />,
     )
 
-    // Both wired actions render and dispatch with the block id.
+    // Both wired actions render and dispatch with the block id. #1109 — Merge
+    // is nested under the "Move & arrange" disclosure; expand it first.
+    await user.click(
+      screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.moveArrange')) }),
+    )
     await user.click(screen.getByText(t('contextMenu.merge')))
     expect(onMerge).toHaveBeenCalledWith('BLOCK_01')
     expect(onClose).toHaveBeenCalled()
@@ -1408,6 +1616,11 @@ describe('BlockContextMenu bulk mode (Fix 6)', () => {
     const user = userEvent.setup()
     const { props } = renderMenu({ selectedBlockIds: SELECTION })
 
+    // #1109 — Move up now lives behind the "Move & arrange" disclosure; expand
+    // it first, then activate the (now-visible) Move up row.
+    await user.click(
+      screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.moveArrange')) }),
+    )
     await user.click(screen.getByText(t('contextMenu.moveUp')))
 
     expect(props.onMoveUp).toHaveBeenCalledTimes(SELECTION.length)
