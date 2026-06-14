@@ -30,7 +30,7 @@ import Text from '@tiptap/extension-text'
 import { type Editor, Extension, useEditor } from '@tiptap/react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 
-import { configKeyToTipTap, getShortcutKeys } from '@/lib/keyboard-config'
+import { tipTapShortcutMap } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { curatedLowlight } from '@/lib/lowlight-curated'
 
@@ -154,9 +154,7 @@ const INITIAL_CONTENT: Content = { type: 'doc', content: [{ type: 'paragraph' }]
 /** Inline Code with configurable shortcut to toggle inline code. @internal Exported for testing. */
 export const CodeWithShortcut = Code.extend({
   addKeyboardShortcuts() {
-    return {
-      [configKeyToTipTap(getShortcutKeys('inlineCode'))]: () => this.editor.commands.toggleCode(),
-    }
+    return tipTapShortcutMap('inlineCode', () => this.editor.commands.toggleCode())
   },
 })
 
@@ -165,7 +163,7 @@ export const StrikeWithShortcut = Strike.extend({
   addKeyboardShortcuts() {
     const toggle = () => this.editor.commands.toggleStrike()
     return {
-      [configKeyToTipTap(getShortcutKeys('strikethrough'))]: toggle,
+      ...tipTapShortcutMap('strikethrough', toggle),
       // #211 P2-11 — keep the legacy `Ctrl+Shift+X` working for one release
       // after the primary binding moved to `Ctrl+Shift+S`. Remove next release.
       'Mod-Shift-x': toggle,
@@ -176,10 +174,7 @@ export const StrikeWithShortcut = Strike.extend({
 /** Highlight with configurable shortcut to toggle highlight. @internal Exported for testing. */
 export const HighlightWithShortcut = Highlight.extend({
   addKeyboardShortcuts() {
-    return {
-      [configKeyToTipTap(getShortcutKeys('highlight'))]: () =>
-        this.editor.commands.toggleHighlight(),
-    }
+    return tipTapShortcutMap('highlight', () => this.editor.commands.toggleHighlight())
   },
 })
 
@@ -188,10 +183,10 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
   addKeyboardShortcuts() {
     return {
       ...this.parent?.(),
-      [configKeyToTipTap(getShortcutKeys('codeBlock'))]: () => {
+      ...tipTapShortcutMap('codeBlock', () => {
         toggleCodeBlockSafely(this.editor as Editor)
         return true
-      },
+      }),
     }
   },
 })
@@ -206,18 +201,18 @@ export const PriorityShortcuts = Extension.create({
   name: 'priorityShortcuts',
   addKeyboardShortcuts() {
     return {
-      [configKeyToTipTap(getShortcutKeys('priority1'))]: () => {
+      ...tipTapShortcutMap('priority1', () => {
         dispatchPriorityEvent(1)
         return true
-      },
-      [configKeyToTipTap(getShortcutKeys('priority2'))]: () => {
+      }),
+      ...tipTapShortcutMap('priority2', () => {
         dispatchPriorityEvent(2)
         return true
-      },
-      [configKeyToTipTap(getShortcutKeys('priority3'))]: () => {
+      }),
+      ...tipTapShortcutMap('priority3', () => {
         dispatchPriorityEvent(3)
         return true
-      },
+      }),
     }
   },
 })

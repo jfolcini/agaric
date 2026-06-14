@@ -10,17 +10,50 @@ import { normalizeBinding } from './parse'
 
 const STORAGE_KEY = 'agaric-keyboard-shortcuts'
 
-// #754 — module-level parse cache. `getCustomOverrides` sits on the hot
-// path of `matchesShortcutBinding`, which the always-on keydown listeners
-// call ~10-20× per keystroke; without the cache every keydown re-runs
-// `JSON.parse` on the same blob that many times. The cache is keyed on
-// the RAW string so it self-invalidates on ANY write (same-document
-// `setCustomShortcut`, another tab's storage event, a test poking
-// `localStorage` directly) — no event plumbing required. Writers below
-// clone before mutating so the cached object stays immutable even when a
-// `localStorage.setItem` throws mid-write.
+// #754 / #789 — module-level overrides cache. `getCustomOverrides` sits on
+// the hot path of `matchesShortcutBinding`, which the always-on keydown
+// listeners call ~10-20× per keystroke; without caching every keydown
+// re-runs `JSON.parse` on the same blob that many times (the cost #754/#789
+// removes).
+//
+// #754 caches the PARSED object keyed on the raw string, so repeated calls
+// against an unchanged blob skip the parse. #789 adds explicit invalidation
+// on the settings-changed signals so the cache is dropped the instant a
+// rebinding is saved, rather than relying solely on the raw string differing:
+//
+//   - Same-tab writes go through this module (`setCustomShortcut` /
+//     `resetShortcut` / `resetAllShortcuts`), which call `invalidateCache`.
+//   - Cross-tab writes — and the synthetic same-tab `storage` events the
+//     Settings/quick-capture hooks already dispatch — hit the `storage`
+//     listener below.
+//
+// We keep reading the (cheap) raw string and comparing it as the correctness
+// backstop: a direct `localStorage.setItem`/`clear()` that bypasses the
+// module (out-of-band writes, and the storage-spy idiom used throughout the
+// test suite) is still honoured even without an explicit invalidation. The
+// per-call `JSON.parse` — the cost the issue flags — happens only when the
+// blob actually changes.
 let cachedRaw: string | null = null
 let cachedOverrides: Record<string, string> = {}
+
+function invalidateCache(): void {
+  // Force the next `getCustomOverrides` to re-parse even if the raw string
+  // happens to compare equal (it won't, for a real write — but an explicit
+  // drop keeps the contract obvious and survives any future caller that
+  // mutates in place).
+  cachedRaw = null
+}
+
+// Cross-tab + synthetic same-tab writes. Other surfaces in the app
+// (`useQuickCaptureShortcut`, `useWeekStart`, the Settings tabs) already
+// dispatch `storage` events for same-tab listeners, so this single listener
+// covers both real cross-tab writes and any synthetic same-tab signal. Only
+// invalidate when our key (or a full clear, `e.key === null`) changed.
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e: StorageEvent) => {
+    if (e.key === null || e.key === STORAGE_KEY) invalidateCache()
+  })
+}
 
 export function getCustomOverrides(): Record<string, string> {
   try {
@@ -108,6 +141,11 @@ export function setCustomShortcut(id: string, keys: string): void {
   }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides))
+    // #789 — same-tab writes no longer self-invalidate via a raw re-read,
+    // so the writer must drop the cache itself. Only invalidate after the
+    // write actually landed; a throwing `setItem` leaves storage (and thus
+    // the cache) unchanged.
+    invalidateCache()
   } catch {
     logger.warn('KeyboardConfig', 'failed to save keyboard shortcut override')
   }
@@ -119,6 +157,7 @@ export function resetShortcut(id: string): void {
   delete overrides[id]
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides))
+    invalidateCache()
   } catch {
     logger.warn('KeyboardConfig', 'failed to reset keyboard shortcut')
   }
@@ -127,6 +166,7 @@ export function resetShortcut(id: string): void {
 export function resetAllShortcuts(): void {
   try {
     localStorage.removeItem(STORAGE_KEY)
+    invalidateCache()
   } catch {
     logger.warn('KeyboardConfig', 'failed to reset all keyboard shortcuts')
   }

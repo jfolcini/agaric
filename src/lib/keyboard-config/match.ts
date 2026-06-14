@@ -90,15 +90,23 @@ function matchesSingleBinding(
   if (!parsed) return false
   const normalizedKey = normalizeKey(parsed.key)
   const normalizedEventKey = normalizeKey(e.key)
+  const symbolKey = isSymbolKey(normalizedKey)
   // Relax shift check for symbol punctuation keys — on many layouts
   // the same physical key produces different glyphs with/without shift
   // (US: `Shift+=` → `+`; `Shift+/` → `?`). Ignoring shift for symbols
   // makes these shortcuts work regardless of how the user types them.
-  const matchShift = parsed.shift ? e.shiftKey : isSymbolKey(normalizedKey) ? true : !e.shiftKey
-  return (
-    (e.ctrlKey || e.metaKey) === parsed.ctrl &&
-    matchShift &&
-    e.altKey === parsed.alt &&
-    normalizedEventKey === normalizedKey
-  )
+  const matchShift = parsed.shift ? e.shiftKey : symbolKey ? true : !e.shiftKey
+  // #789 — AltGr layout shift. On Windows, AltGr presents as Ctrl+Alt
+  // pressed together; on several non-US layouts a symbol like `?` is only
+  // reachable via AltGr (so the event arrives with `ctrlKey && altKey`).
+  // For an unmodified symbol binding (`?`) that pair is the layout's way of
+  // PRODUCING the glyph, not a chord, so we must not let the strict
+  // ctrl/alt comparison reject it. Treat a simultaneous Ctrl+Alt as a
+  // layout shift (don't-care) ONLY for symbol-key bindings that require
+  // neither Ctrl nor Alt — a real `Ctrl + ?` / `Alt + ?` binding still
+  // matches strictly, and non-symbol chords are unaffected.
+  const altGrLayoutShift = symbolKey && !parsed.ctrl && !parsed.alt && e.ctrlKey && e.altKey
+  const matchCtrl = altGrLayoutShift ? true : (e.ctrlKey || e.metaKey) === parsed.ctrl
+  const matchAlt = altGrLayoutShift ? true : e.altKey === parsed.alt
+  return matchCtrl && matchShift && matchAlt && normalizedEventKey === normalizedKey
 }

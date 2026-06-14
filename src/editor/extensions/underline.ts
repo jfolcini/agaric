@@ -11,7 +11,7 @@
 
 import { Mark, mergeAttributes } from '@tiptap/core'
 
-import { configKeyToTipTap, getShortcutKeys } from '@/lib/keyboard-config'
+import { tipTapShortcutMap } from '@/lib/keyboard-config'
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -59,9 +59,6 @@ export const Underline = Mark.create({
   },
 
   addKeyboardShortcuts() {
-    return {
-      [configKeyToTipTap(getShortcutKeys('underline'))]: () =>
-        this.editor.commands.toggleUnderline(),
-    }
+    return tipTapShortcutMap('underline', () => this.editor.commands.toggleUnderline())
   },
 })

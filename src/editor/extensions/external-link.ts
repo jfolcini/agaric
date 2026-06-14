@@ -18,7 +18,7 @@
 import Link from '@tiptap/extension-link'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 
-import { configKeyToTipTap, getShortcutKeys } from '@/lib/keyboard-config'
+import { tipTapShortcutMap } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { openUrl } from '@/lib/open-url'
 import { fetchLinkMetadata } from '@/lib/tauri'
@@ -42,20 +42,18 @@ const pastePluginKey = new PluginKey('externalLinkPaste')
 
 export const ExternalLink = Link.extend({
   addKeyboardShortcuts() {
-    return {
-      [configKeyToTipTap(getShortcutKeys('linkPopover'))]: () => {
-        // Dispatch a custom event on the editor DOM element.
-        // FormattingToolbar listens for this and opens the link popover.
-        const { from, to } = this.editor.state.selection
-        this.editor.view.dom.dispatchEvent(
-          new CustomEvent('open-link-popover', {
-            bubbles: true,
-            detail: { from, to },
-          }),
-        )
-        return true
-      },
-    }
+    return tipTapShortcutMap('linkPopover', () => {
+      // Dispatch a custom event on the editor DOM element.
+      // FormattingToolbar listens for this and opens the link popover.
+      const { from, to } = this.editor.state.selection
+      this.editor.view.dom.dispatchEvent(
+        new CustomEvent('open-link-popover', {
+          bubbles: true,
+          detail: { from, to },
+        }),
+      )
+      return true
+    })
   },
 
   addProseMirrorPlugins() {

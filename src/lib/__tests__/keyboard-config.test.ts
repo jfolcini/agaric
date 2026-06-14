@@ -17,6 +17,7 @@ import {
   resetAllShortcuts,
   resetShortcut,
   setCustomShortcut,
+  tipTapShortcutMap,
   toAriaKeyshortcuts,
   validateBindingInput,
 } from '../keyboard-config'
@@ -388,9 +389,57 @@ describe('keyboard-config', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ indentBlock: 'Ctrl + Alt + 1' }))
     expect(getCustomOverrides()).toEqual({ indentBlock: 'Ctrl + Alt + 1' })
 
-    // Bypass setCustomShortcut entirely — e.g. another tab's write.
+    // Bypass setCustomShortcut entirely — e.g. another tab's write. The
+    // raw-string compare backstop picks it up even without an event.
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ dedentBlock: 'Ctrl + Alt + 2' }))
     expect(getCustomOverrides()).toEqual({ dedentBlock: 'Ctrl + Alt + 2' })
+  })
+
+  it('getCustomOverrides serves the parsed cache without re-parsing per call (#754/#789)', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ indentBlock: 'Ctrl + Alt + P' }))
+    const parseSpy = vi.spyOn(JSON, 'parse')
+
+    // Hammer the getter; the blob never changes between calls.
+    getCustomOverrides()
+    getCustomOverrides()
+    getCustomOverrides()
+    getCustomOverrides()
+
+    // The expensive per-call cost the issue flags (JSON.parse) runs ONCE.
+    expect(parseSpy).toHaveBeenCalledTimes(1)
+    parseSpy.mockRestore()
+  })
+
+  it('matchesShortcutBinding does not JSON.parse the overrides per keystroke (#789)', () => {
+    setCustomShortcut('showShortcuts', 'Ctrl + /')
+    const e = { ctrlKey: true, metaKey: false, shiftKey: false, altKey: false, key: '/' }
+    // Warm the cache once (the write above invalidated it).
+    matchesShortcutBinding(e, 'showShortcuts')
+    // Now simulate a keystroke fanning out across several always-on
+    // listeners (each calls matchesShortcutBinding ~once) and assert the
+    // overrides blob is not re-parsed across the whole fan-out.
+    const parseSpy = vi.spyOn(JSON, 'parse')
+    for (let i = 0; i < 10; i++) matchesShortcutBinding(e, 'showShortcuts')
+    expect(parseSpy).not.toHaveBeenCalled()
+    parseSpy.mockRestore()
+  })
+
+  it('cache invalidates on the storage event (cross-tab / synthetic same-tab write) (#789)', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ indentBlock: 'Ctrl + Alt + 1' }))
+    window.dispatchEvent(new StorageEvent('storage', { key: STORAGE_KEY }))
+    expect(getCustomOverrides()).toEqual({ indentBlock: 'Ctrl + Alt + 1' })
+
+    // Another tab writes; the storage event invalidates our in-memory cache.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ dedentBlock: 'Ctrl + Alt + 2' }))
+    window.dispatchEvent(new StorageEvent('storage', { key: STORAGE_KEY }))
+    expect(getCustomOverrides()).toEqual({ dedentBlock: 'Ctrl + Alt + 2' })
+  })
+
+  it('cache invalidates immediately on a same-tab setCustomShortcut write (#789)', () => {
+    expect(getCustomOverrides()).toEqual({})
+    setCustomShortcut('indentBlock', 'Ctrl + Alt + 9')
+    // No storage event needed — the writer drops the cache itself.
+    expect(getCustomOverrides()).toEqual({ indentBlock: 'Ctrl + Alt + 9' })
   })
 
   it('a failed setCustomShortcut write does not corrupt the cached overrides (#754)', () => {
@@ -821,6 +870,51 @@ describe('keyboard-config', () => {
 
     it('converts Alt + T to Alt-t', () => {
       expect(configKeyToTipTap('Alt + T')).toBe('Alt-t')
+    })
+  })
+
+  // #789 item 2 — `tipTapShortcutMap` expands ` / ` alternatives into one
+  // TipTap keymap entry per alternative. Before this, a rebinding with
+  // alternatives was fed straight into `configKeyToTipTap` as a single
+  // computed object key, producing a malformed token TipTap never fires.
+  describe('tipTapShortcutMap (#789)', () => {
+    it('maps a single-chord binding to one keymap entry (default underline = Ctrl+U)', () => {
+      const handler = vi.fn()
+      const map = tipTapShortcutMap('underline', handler)
+      expect(Object.keys(map)).toEqual(['Mod-u'])
+      expect(map['Mod-u']).toBe(handler)
+    })
+
+    it('expands a ` / ` alternatives rebind into one keymap entry per chord', () => {
+      setCustomShortcut('underline', 'Ctrl + U / Ctrl + Shift + U')
+      const handler = vi.fn()
+      const map = tipTapShortcutMap('underline', handler)
+      expect(Object.keys(map).sort()).toEqual(['Mod-Shift-u', 'Mod-u'])
+      // Every expanded entry routes to the same handler.
+      expect(map['Mod-u']).toBe(handler)
+      expect(map['Mod-Shift-u']).toBe(handler)
+    })
+
+    it('does not emit a malformed combined key for an alternatives binding', () => {
+      setCustomShortcut('underline', 'Ctrl + U / Ctrl + Shift + U')
+      const map = tipTapShortcutMap('underline', vi.fn())
+      // The pre-#789 bug produced a single key containing the `/` separator.
+      expect(Object.keys(map).some((k) => k.includes('/'))).toBe(false)
+      expect(Object.keys(map)).not.toContain('Mod-u-/-mod-shift-u')
+    })
+
+    it('skips empty alternatives rather than mapping the handler under ``', () => {
+      // A malformed override with a stray separator must not bind `''`.
+      setCustomShortcut('underline', 'Ctrl + U')
+      // Force a raw blank-alternative blob past the normaliser via storage;
+      // the raw-string compare picks the out-of-band write up on next read.
+      localStorage.setItem(
+        'agaric-keyboard-shortcuts',
+        JSON.stringify({ underline: 'Ctrl + U /  ' }),
+      )
+      const map = tipTapShortcutMap('underline', vi.fn())
+      expect(Object.keys(map)).toEqual(['Mod-u'])
+      expect(map['']).toBeUndefined()
     })
   })
 
@@ -1425,6 +1519,51 @@ describe('keyboard-config', () => {
       setCustomShortcut('showShortcuts', 'Ctrl + /')
       expect(matchesShortcutBinding(ev('/', { ctrlKey: true }), 'showShortcuts')).toBe(true)
       expect(matchesShortcutBinding(ev('?', { shiftKey: true }), 'showShortcuts')).toBe(false)
+    })
+
+    // #789 item 1 — AltGr layouts present as Ctrl+Alt together. On several
+    // non-US layouts `?` is only reachable via AltGr, so the event arrives
+    // with ctrlKey && altKey set even though the user pressed no chord. The
+    // matcher must treat that pair as a layout shift for unmodified symbol
+    // bindings, not as stray Ctrl/Alt modifiers that exclude the match.
+    it('showShortcuts: default `?` fires on AltGr layouts (Ctrl+Alt presents the glyph)', () => {
+      // AltGr = ctrl+alt together; the layout yields the `?` glyph.
+      expect(
+        matchesShortcutBinding(ev('?', { ctrlKey: true, altKey: true }), 'showShortcuts'),
+      ).toBe(true)
+      // …and with shift also held (some layouts), since `?` relaxes shift.
+      expect(
+        matchesShortcutBinding(
+          ev('?', { ctrlKey: true, altKey: true, shiftKey: true }),
+          'showShortcuts',
+        ),
+      ).toBe(true)
+    })
+
+    it('showShortcuts: Ctrl-only or Alt-only `?` still does NOT fire (only the AltGr pair)', () => {
+      // A lone Ctrl (e.g. real `Ctrl+?` on a layout where `?` is unshifted)
+      // is a genuine chord, not AltGr — must not open the sheet.
+      expect(matchesShortcutBinding(ev('?', { ctrlKey: true }), 'showShortcuts')).toBe(false)
+      expect(matchesShortcutBinding(ev('?', { altKey: true }), 'showShortcuts')).toBe(false)
+    })
+
+    it('AltGr relaxation is symbol-only — a letter binding ignores the Ctrl+Alt pair', () => {
+      // toggleSidebar is `Ctrl + B` (letter, non-symbol). Ctrl+Alt+B must
+      // NOT match it: the AltGr layout-shift relaxation is symbol-key only.
+      expect(
+        matchesShortcutBinding(ev('b', { ctrlKey: true, altKey: true }), 'toggleSidebar'),
+      ).toBe(false)
+    })
+
+    it('AltGr relaxation does not weaken a real Ctrl+Alt symbol rebind', () => {
+      // If the user deliberately rebinds to `Ctrl + Alt + ?`, that exact
+      // chord still matches (parsed.ctrl/alt true → strict path, no AltGr
+      // special-casing needed), and a bare `?` does not fire it.
+      setCustomShortcut('showShortcuts', 'Ctrl + Alt + ?')
+      expect(
+        matchesShortcutBinding(ev('?', { ctrlKey: true, altKey: true }), 'showShortcuts'),
+      ).toBe(true)
+      expect(matchesShortcutBinding(ev('?'), 'showShortcuts')).toBe(false)
     })
 
     it('toggleSidebar: default Ctrl+B / Cmd+B matches, plain b does not', () => {
