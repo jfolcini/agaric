@@ -26,7 +26,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { JournalCalendarDropdown } from '@/components/journal/JournalCalendarDropdown'
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import {
   formatDate,
@@ -193,86 +193,84 @@ export function JournalControls(): React.ReactElement {
         {/* UX-260 sub-fix 2: surface the Alt+Left / Alt+Right / Alt+T
             shortcuts via Tooltips so users discover the bindings without
             opening the KeyboardShortcuts sheet. */}
-        <TooltipProvider>
-          {mode !== 'agenda' && (
-            <>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={navLabels.prev}
-                    onClick={goPrev}
-                    disabled={!canGoPrev}
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {navLabels.prev}{' '}
-                  <Kbd className="ml-1" aria-hidden="true">
-                    Alt+←
-                  </Kbd>
-                </TooltipContent>
-              </Tooltip>
-              <span
-                className="sm:min-w-[100px] text-center text-sm font-medium"
-                data-testid="date-display"
-              >
-                {getDateDisplay()}
-              </span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={navLabels.next}
-                    onClick={goNext}
-                    disabled={!canGoNext}
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {navLabels.next}{' '}
-                  <Kbd className="ml-1" aria-hidden="true">
-                    Alt+→
-                  </Kbd>
-                </TooltipContent>
-              </Tooltip>
-            </>
-          )}
-          {!todayButtonHidden && (
+        {mode !== 'agenda' && (
+          <>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  variant="outline"
-                  size="xs"
-                  onClick={() => {
-                    const today = new Date()
-                    if (mode === 'agenda') {
-                      setMode('daily')
-                      setCurrentDate(today)
-                    } else if (mode === 'weekly' || mode === 'monthly') {
-                      goToDateAndScroll(today, formatDate(today))
-                    } else {
-                      setCurrentDate(today)
-                    }
-                  }}
-                  aria-label={t('journal.goToToday')}
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={navLabels.prev}
+                  onClick={goPrev}
+                  disabled={!canGoPrev}
                 >
-                  {t('journal.today')}
+                  <ChevronLeft className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                {t('journal.goToToday')}{' '}
+                {navLabels.prev}{' '}
                 <Kbd className="ml-1" aria-hidden="true">
-                  Alt+T
+                  Alt+←
                 </Kbd>
               </TooltipContent>
             </Tooltip>
-          )}
-        </TooltipProvider>
+            <span
+              className="sm:min-w-[100px] text-center text-sm font-medium"
+              data-testid="date-display"
+            >
+              {getDateDisplay()}
+            </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={navLabels.next}
+                  onClick={goNext}
+                  disabled={!canGoNext}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {navLabels.next}{' '}
+                <Kbd className="ml-1" aria-hidden="true">
+                  Alt+→
+                </Kbd>
+              </TooltipContent>
+            </Tooltip>
+          </>
+        )}
+        {!todayButtonHidden && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => {
+                  const today = new Date()
+                  if (mode === 'agenda') {
+                    setMode('daily')
+                    setCurrentDate(today)
+                  } else if (mode === 'weekly' || mode === 'monthly') {
+                    goToDateAndScroll(today, formatDate(today))
+                  } else {
+                    setCurrentDate(today)
+                  }
+                }}
+                aria-label={t('journal.goToToday')}
+              >
+                {t('journal.today')}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {t('journal.goToToday')}{' '}
+              <Kbd className="ml-1" aria-hidden="true">
+                Alt+T
+              </Kbd>
+            </TooltipContent>
+          </Tooltip>
+        )}
         {mode !== 'agenda' && (
           <Button
             variant="outline"

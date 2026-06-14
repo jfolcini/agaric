@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 import type { DensityMode } from '../../hooks/usePageBrowserDensity'
 import type { SortOption } from '../../hooks/usePageBrowserSort'
@@ -194,20 +194,18 @@ export function PageBrowserHeader({
             </span>
           )}
           <Select value={sortOption} onValueChange={(v) => onSortChange(v as SortOption)}>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <SelectTrigger
-                    size="sm"
-                    className="w-auto min-w-[7rem]"
-                    aria-label={t('pageBrowser.sortLabel')}
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                </TooltipTrigger>
-                <TooltipContent>{t('pageBrowser.sortPersistedTooltip')}</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <SelectTrigger
+                  size="sm"
+                  className="w-auto min-w-[7rem]"
+                  aria-label={t('pageBrowser.sortLabel')}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+              </TooltipTrigger>
+              <TooltipContent>{t('pageBrowser.sortPersistedTooltip')}</TooltipContent>
+            </Tooltip>
             <SelectContent>
               <SelectItem value="alphabetical">{t('pageBrowser.sortAlphabetical')}</SelectItem>
               <SelectItem value="recent">{t('pageBrowser.sortRecent')}</SelectItem>
@@ -225,36 +223,32 @@ export function PageBrowserHeader({
               pages; while more remain, surface a muted cue so the user
               knows the visible order isn't the global order yet. */}
           {frontendSortAtScale && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span
-                    className="text-xs text-muted-foreground whitespace-nowrap cursor-default"
-                    data-testid="page-browser-frontend-sort-cue"
-                  >
-                    {t('pageBrowser.frontendSortHint')}
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>{t('pageBrowser.frontendSortHintTooltip')}</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  className="text-xs text-muted-foreground whitespace-nowrap cursor-default"
+                  data-testid="page-browser-frontend-sort-cue"
+                >
+                  {t('pageBrowser.frontendSortHint')}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{t('pageBrowser.frontendSortHintTooltip')}</TooltipContent>
+            </Tooltip>
           )}
           <Select value={density} onValueChange={(v) => onDensityChange(v as DensityMode)}>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <SelectTrigger
-                    size="sm"
-                    className="w-auto min-w-[7rem]"
-                    aria-label={t('pageBrowser.densityLabel')}
-                  >
-                    <Rows3 className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                    <SelectValue />
-                  </SelectTrigger>
-                </TooltipTrigger>
-                <TooltipContent>{t('pageBrowser.densityPersistedTooltip')}</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <SelectTrigger
+                  size="sm"
+                  className="w-auto min-w-[7rem]"
+                  aria-label={t('pageBrowser.densityLabel')}
+                >
+                  <Rows3 className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                  <SelectValue />
+                </SelectTrigger>
+              </TooltipTrigger>
+              <TooltipContent>{t('pageBrowser.densityPersistedTooltip')}</TooltipContent>
+            </Tooltip>
             <SelectContent>
               <SelectItem value="compact">{t('pageBrowser.densityCompact')}</SelectItem>
               <SelectItem value="regular">{t('pageBrowser.densityRegular')}</SelectItem>

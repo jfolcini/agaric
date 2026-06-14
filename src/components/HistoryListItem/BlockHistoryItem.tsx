@@ -36,7 +36,7 @@ import { DiffDisplay } from '@/components/rendering/DiffDisplay'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 
@@ -246,19 +246,17 @@ export function BlockHistoryItem({
               and SR users). i18n keys `history.nonReversibleLabel` /
               `history.nonReversibleTooltip` are reused from the
               legacy path — no new translations needed. */}
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground shrink-0">
-                  <Lock className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>{t('history.nonReversibleLabel')}</span>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{t('history.nonReversibleTooltip')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground shrink-0">
+                <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>{t('history.nonReversibleLabel')}</span>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('history.nonReversibleTooltip')}</p>
+            </TooltipContent>
+          </Tooltip>
         </div>
       )}
       {isExpanded && isRestorable && rawContent != null && (

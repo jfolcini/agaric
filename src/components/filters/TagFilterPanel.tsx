@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '@/hooks/usePaginatedQuery'
@@ -296,57 +296,51 @@ export function TagFilterPanel(): React.ReactElement {
       {/* AND/OR/NOT mode toggle */}
       <div className="flex items-center gap-2">
         <span className="text-sm text-muted-foreground">{t('tagFilter.modeLabel')}</span>
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant={mode === 'and' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setMode('and')}
-                aria-pressed={mode === 'and'}
-              >
-                {t('tagFilter.andMode')}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{t('tagFilter.andModeTooltip')}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant={mode === 'or' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setMode('or')}
-                aria-pressed={mode === 'or'}
-              >
-                {t('tagFilter.orMode')}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{t('tagFilter.orModeTooltip')}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant={mode === 'not' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setMode('not')}
-                aria-pressed={mode === 'not'}
-              >
-                {t('tagFilter.notMode')}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{t('tagFilter.notModeTooltip')}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant={mode === 'and' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setMode('and')}
+              aria-pressed={mode === 'and'}
+            >
+              {t('tagFilter.andMode')}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{t('tagFilter.andModeTooltip')}</p>
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant={mode === 'or' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setMode('or')}
+              aria-pressed={mode === 'or'}
+            >
+              {t('tagFilter.orMode')}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{t('tagFilter.orModeTooltip')}</p>
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant={mode === 'not' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setMode('not')}
+              aria-pressed={mode === 'not'}
+            >
+              {t('tagFilter.notMode')}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{t('tagFilter.notModeTooltip')}</p>
+          </TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Filter feedback summary */}

@@ -22,7 +22,7 @@ import { Label } from '@/components/ui/label'
 import { ListItem } from '@/components/ui/list-item'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
@@ -193,27 +193,25 @@ export function TemplatesView(): React.ReactElement {
       {/* #215 — dynamic-variable discoverability hint. Low-chrome muted row;
           each token carries a tooltip describing what it expands to. */}
       <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        <TooltipProvider>
-          <Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="font-medium cursor-help">{t('templates.variablesHintLabel')}</span>
+          </TooltipTrigger>
+          <TooltipContent>{t('templates.variablesHintIntro')}</TooltipContent>
+        </Tooltip>
+        {TEMPLATE_VARIABLES.map(({ token, descKey }) => (
+          <Tooltip key={token}>
             <TooltipTrigger asChild>
-              <span className="font-medium cursor-help">{t('templates.variablesHintLabel')}</span>
+              <code
+                className="rounded bg-muted px-1 py-0.5 font-mono text-[0.7rem] cursor-help"
+                data-testid={`template-variable-${token.replace(/[^a-z]+/g, '-').replace(/^-|-$/g, '')}`}
+              >
+                {token}
+              </code>
             </TooltipTrigger>
-            <TooltipContent>{t('templates.variablesHintIntro')}</TooltipContent>
+            <TooltipContent>{t(descKey)}</TooltipContent>
           </Tooltip>
-          {TEMPLATE_VARIABLES.map(({ token, descKey }) => (
-            <Tooltip key={token}>
-              <TooltipTrigger asChild>
-                <code
-                  className="rounded bg-muted px-1 py-0.5 font-mono text-[0.7rem] cursor-help"
-                  data-testid={`template-variable-${token.replace(/[^a-z]+/g, '-').replace(/^-|-$/g, '')}`}
-                >
-                  {token}
-                </code>
-              </TooltipTrigger>
-              <TooltipContent>{t(descKey)}</TooltipContent>
-            </Tooltip>
-          ))}
-        </TooltipProvider>
+        ))}
       </p>
 
       <ListViewState
@@ -241,52 +239,48 @@ export function TemplatesView(): React.ReactElement {
               <ul className="space-y-1">
                 {filtered.map((tpl) => (
                   <ListItem key={tpl.id} className="active:bg-accent/70 cursor-pointer">
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            className="flex min-w-0 flex-1 flex-col text-left"
-                            aria-label={t('templates.navigateLabel', { name: tpl.content })}
-                            onClick={() => handleNavigate(tpl.id, tpl.content)}
-                          >
-                            <span className="text-sm font-medium truncate">{tpl.content}</span>
-                            {tpl.preview && (
-                              <span className="text-xs text-muted-foreground truncate">
-                                {tpl.preview}
-                              </span>
-                            )}
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>{t('templates.navigateLabel', { name: tpl.content })}</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="flex min-w-0 flex-1 flex-col text-left"
+                          aria-label={t('templates.navigateLabel', { name: tpl.content })}
+                          onClick={() => handleNavigate(tpl.id, tpl.content)}
+                        >
+                          <span className="text-sm font-medium truncate">{tpl.content}</span>
+                          {tpl.preview && (
+                            <span className="text-xs text-muted-foreground truncate">
+                              {tpl.preview}
+                            </span>
+                          )}
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>{t('templates.navigateLabel', { name: tpl.content })}</p>
+                      </TooltipContent>
+                    </Tooltip>
                     {/* #215 — scope badge. Every template carries a scope
                         indicator so a journal template is distinguishable from
                         a regular page template at a glance. Journal templates
                         keep the `secondary` tone; page templates use the calmer
                         `outline` tone so the journal flag stays the louder one. */}
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Badge
-                            tone={tpl.isJournalTemplate ? 'secondary' : 'outline'}
-                            className="shrink-0 text-xs"
-                          >
-                            {tpl.isJournalTemplate
-                              ? t('templates.journalIndicator')
-                              : t('templates.pageIndicator')}
-                          </Badge>
-                        </TooltipTrigger>
-                        <TooltipContent>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Badge
+                          tone={tpl.isJournalTemplate ? 'secondary' : 'outline'}
+                          className="shrink-0 text-xs"
+                        >
                           {tpl.isJournalTemplate
-                            ? t('templates.journalTooltip')
-                            : t('templates.pageTooltip')}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
+                            ? t('templates.journalIndicator')
+                            : t('templates.pageIndicator')}
+                        </Badge>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {tpl.isJournalTemplate
+                          ? t('templates.journalTooltip')
+                          : t('templates.pageTooltip')}
+                      </TooltipContent>
+                    </Tooltip>
                     <Button
                       variant="ghost"
                       size="icon-xs"

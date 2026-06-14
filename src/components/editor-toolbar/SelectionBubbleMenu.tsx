@@ -28,7 +28,7 @@ import { LinkEditPopover } from '@/components/editor-toolbar/LinkEditPopover'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Separator } from '@/components/ui/separator'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { getShortcutKeys, toAriaKeyshortcuts } from '@/lib/keyboard-config'
 import { createMarkToggles, toolbarActiveClass } from '@/lib/toolbar-config'
@@ -97,7 +97,12 @@ const Tip = ({
   children: React.ReactElement
   ref?: React.Ref<HTMLButtonElement>
 }) => (
-  <Tooltip>
+  // #1094: this surface deliberately uses a 200ms hover delay (snappier than
+  // the 300ms app baseline) — the bubble menu sits right under a fresh text
+  // selection, so its action tips should appear fast. The override lives on
+  // the Tooltip itself now that the per-surface TooltipProvider is gone; it no
+  // longer silently inherits the app-level default.
+  <Tooltip delayDuration={200}>
     <TooltipTrigger asChild ref={ref}>
       {children}
     </TooltipTrigger>
@@ -265,79 +270,77 @@ export function SelectionBubbleMenu({
       className="selection-bubble-menu flex items-center gap-0.5 rounded-md border border-border bg-popover px-1 py-0.5 shadow-md animate-in fade-in-0 zoom-in-95 duration-fast ease-smooth"
       data-testid="selection-bubble-menu"
     >
-      <TooltipProvider delayDuration={200}>
-        {markToggles.map((btn) => {
-          const shortcutId = BUBBLE_MENU_SHORTCUT_IDS[btn.label]
-          const tooltip = shortcutId ? tooltipWithShortcut(t(btn.label), shortcutId) : t(btn.tip)
-          const active = btn.activeKey
-            ? (state[btn.activeKey as keyof typeof state] as boolean)
-            : false
-          return (
-            <Tip key={btn.label} label={tooltip}>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t(btn.label)}
-                aria-pressed={active}
-                aria-keyshortcuts={ariaKeyshortcutsFor(btn.label)}
-                className={cn(active && toolbarActiveClass)}
-                onPointerDown={(e) => {
-                  e.preventDefault()
-                  btn.action()
-                }}
-              >
-                <btn.icon className="h-3.5 w-3.5" />
-              </Button>
-            </Tip>
-          )
-        })}
+      {markToggles.map((btn) => {
+        const shortcutId = BUBBLE_MENU_SHORTCUT_IDS[btn.label]
+        const tooltip = shortcutId ? tooltipWithShortcut(t(btn.label), shortcutId) : t(btn.tip)
+        const active = btn.activeKey
+          ? (state[btn.activeKey as keyof typeof state] as boolean)
+          : false
+        return (
+          <Tip key={btn.label} label={tooltip}>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={t(btn.label)}
+              aria-pressed={active}
+              aria-keyshortcuts={ariaKeyshortcutsFor(btn.label)}
+              className={cn(active && toolbarActiveClass)}
+              onPointerDown={(e) => {
+                e.preventDefault()
+                btn.action()
+              }}
+            >
+              <btn.icon className="h-3.5 w-3.5" />
+            </Button>
+          </Tip>
+        )
+      })}
 
-        <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
+      <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
-        <Tip label={tooltipWithShortcut(t('toolbar.link'), 'linkPopover')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.link')}
-            aria-pressed={state.link}
-            className={cn(state.link && toolbarActiveClass)}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              if (!linkPopoverOpen) {
-                if (state.link) {
-                  const range = getLinkMarkRange(editor)
-                  if (range) setSavedSelection(range)
-                } else if (!editor.state.selection.empty) {
-                  setSavedSelection({
-                    from: editor.state.selection.from,
-                    to: editor.state.selection.to,
-                  })
-                }
+      <Tip label={tooltipWithShortcut(t('toolbar.link'), 'linkPopover')}>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={t('toolbar.link')}
+          aria-pressed={state.link}
+          className={cn(state.link && toolbarActiveClass)}
+          onPointerDown={(e) => {
+            e.preventDefault()
+            if (!linkPopoverOpen) {
+              if (state.link) {
+                const range = getLinkMarkRange(editor)
+                if (range) setSavedSelection(range)
+              } else if (!editor.state.selection.empty) {
+                setSavedSelection({
+                  from: editor.state.selection.from,
+                  to: editor.state.selection.to,
+                })
               }
-              setLinkPopoverOpen((prev) => !prev)
-            }}
-          >
-            <Link2 className="h-3.5 w-3.5" />
-          </Button>
-        </Tip>
-        <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
-          <PopoverAnchor virtualRef={virtualAnchorRef} />
-          <PopoverContent
-            align="start"
-            className="w-72 max-w-[calc(100vw-2rem)] p-3"
-            data-editor-portal
-          >
-            <LinkEditPopover
-              editor={editor}
-              isEditing={isEditingLink}
-              initialUrl={currentUrl}
-              initialLabel={currentLabel}
-              onClose={handleLinkPopoverClose}
-              savedSelection={savedSelection}
-            />
-          </PopoverContent>
-        </Popover>
-      </TooltipProvider>
+            }
+            setLinkPopoverOpen((prev) => !prev)
+          }}
+        >
+          <Link2 className="h-3.5 w-3.5" />
+        </Button>
+      </Tip>
+      <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
+        <PopoverAnchor virtualRef={virtualAnchorRef} />
+        <PopoverContent
+          align="start"
+          className="w-72 max-w-[calc(100vw-2rem)] p-3"
+          data-editor-portal
+        >
+          <LinkEditPopover
+            editor={editor}
+            isEditing={isEditingLink}
+            initialUrl={currentUrl}
+            initialLabel={currentLabel}
+            onClose={handleLinkPopoverClose}
+            savedSelection={savedSelection}
+          />
+        </PopoverContent>
+      </Popover>
     </BubbleMenu>
   )
 }

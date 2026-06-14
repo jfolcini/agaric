@@ -22,7 +22,7 @@ import { BatchActionToolbar } from '@/components/common/BatchActionToolbar'
 import { Button } from '@/components/ui/button'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { SearchInput } from '@/components/ui/search-input'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { notify } from '@/lib/notify'
 
@@ -376,29 +376,27 @@ export function TrashView(): React.ReactElement {
           </Button>
           {/* UX-343 — surface the BATCH_RESTORE_CONFIRM_THRESHOLD boundary so
               users know a confirmation kicks in for selections > 5. */}
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={requestBatchRestore}
-                  data-testid="trash-batch-restore-btn"
-                  aria-keyshortcuts="Shift+R"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  {t('trash.restoreSelectedButton')}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>
-                  {t('trash.restoreThresholdTooltip', {
-                    threshold: BATCH_RESTORE_CONFIRM_THRESHOLD,
-                  })}
-                </p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={requestBatchRestore}
+                data-testid="trash-batch-restore-btn"
+                aria-keyshortcuts="Shift+R"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                {t('trash.restoreSelectedButton')}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>
+                {t('trash.restoreThresholdTooltip', {
+                  threshold: BATCH_RESTORE_CONFIRM_THRESHOLD,
+                })}
+              </p>
+            </TooltipContent>
+          </Tooltip>
           <Button
             variant="destructive"
             size="sm"
