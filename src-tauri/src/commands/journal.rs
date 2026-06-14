@@ -5,8 +5,7 @@ use sqlx::SqlitePool;
 use tauri::State;
 use tracing::instrument;
 
-use crate::db::{CommandTx, ReadPool, WritePool};
-use crate::device::DeviceId;
+use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::pagination::BlockRow;
@@ -288,16 +287,14 @@ pub async fn quick_capture_block_inner(
 #[tauri::command]
 #[specta::specta]
 pub async fn quick_capture_block(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     content: String,
     space_id: String,
 ) -> Result<BlockRow, AppError> {
     quick_capture_block_inner(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         content,
         &space_id,
     )

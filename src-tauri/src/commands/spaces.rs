@@ -26,8 +26,7 @@ use tauri::State;
 use tracing::instrument;
 
 use crate::commands::{create_block_in_tx, set_property_in_tx};
-use crate::db::{CommandTx, ReadPool, WritePool};
-use crate::device::DeviceId;
+use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::ulid::BlockId;
@@ -304,17 +303,15 @@ pub async fn create_page_in_space_inner(
 #[tauri::command]
 #[specta::specta]
 pub async fn create_page_in_space(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     parent_id: Option<String>,
     content: String,
     space_id: String,
 ) -> Result<String, AppError> {
     let id = create_page_in_space_inner(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         parent_id,
         content,
         space_id,
@@ -433,16 +430,14 @@ pub async fn create_space_inner(
 #[tauri::command]
 #[specta::specta]
 pub async fn create_space(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     name: String,
     accent_color: Option<String>,
 ) -> Result<String, AppError> {
     let id = create_space_inner(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         name,
         accent_color,
     )

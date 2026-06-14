@@ -5,8 +5,7 @@ use tracing::instrument;
 
 use tauri::State;
 
-use crate::db::{CommandTx, ReadPool, WritePool};
-use crate::device::DeviceId;
+use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::op::{OpPayload, OpRef, UndoResult};
@@ -988,12 +987,10 @@ pub async fn list_page_history(
 #[tauri::command]
 #[specta::specta]
 pub async fn revert_ops(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     ops: Vec<OpRef>,
 ) -> Result<Vec<UndoResult>, AppError> {
-    revert_ops_inner(&pool.0, device_id.as_str(), &materializer, ops)
+    revert_ops_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), ops)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1002,17 +999,15 @@ pub async fn revert_ops(
 #[tauri::command]
 #[specta::specta]
 pub async fn restore_page_to_op(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     page_id: String,
     target_device_id: String,
     target_seq: i64,
 ) -> Result<RestoreToOpResult, AppError> {
     restore_page_to_op_inner(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         page_id,
         target_device_id,
         target_seq,
@@ -1025,16 +1020,14 @@ pub async fn restore_page_to_op(
 #[tauri::command]
 #[specta::specta]
 pub async fn undo_page_op(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     page_id: String,
     undo_depth: i64,
 ) -> Result<UndoResult, AppError> {
     undo_page_op_inner(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         page_id,
         undo_depth,
     )
@@ -1046,16 +1039,14 @@ pub async fn undo_page_op(
 #[tauri::command]
 #[specta::specta]
 pub async fn redo_page_op(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     undo_device_id: String,
     undo_seq: i64,
 ) -> Result<UndoResult, AppError> {
     redo_page_op_inner(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         undo_device_id,
         undo_seq,
     )

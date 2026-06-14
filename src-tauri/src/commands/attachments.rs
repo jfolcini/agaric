@@ -9,8 +9,7 @@ use tauri::Manager;
 use tauri::State;
 
 use crate::db::now_ms;
-use crate::db::{CommandTx, ReadPool, WritePool};
-use crate::device::DeviceId;
+use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::op::OpPayload;
@@ -560,12 +559,9 @@ pub async fn list_attachments_batch_inner(
 /// Tauri command: add an attachment to a block. Delegates to [`add_attachment_inner`].
 #[tauri::command]
 #[specta::specta]
-#[allow(clippy::too_many_arguments)]
 pub async fn add_attachment(
     app: tauri::AppHandle,
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     filename: String,
     mime_type: String,
@@ -577,9 +573,9 @@ pub async fn add_attachment(
         .app_data_dir()
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
     add_attachment_inner(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         &app_data_dir,
         block_id,
         filename,
@@ -595,12 +591,9 @@ pub async fn add_attachment(
 /// [`add_attachment_with_bytes_inner`].
 #[tauri::command]
 #[specta::specta]
-#[allow(clippy::too_many_arguments)]
 pub async fn add_attachment_with_bytes(
     app: tauri::AppHandle,
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     filename: String,
     mime_type: String,
@@ -611,9 +604,9 @@ pub async fn add_attachment_with_bytes(
         .app_data_dir()
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
     add_attachment_with_bytes_inner(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         &app_data_dir,
         block_id,
         filename,
@@ -647,9 +640,7 @@ pub async fn read_attachment(
 #[specta::specta]
 pub async fn delete_attachment(
     app: tauri::AppHandle,
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     attachment_id: AttachmentId,
 ) -> Result<(), AppError> {
     let app_data_dir = app
@@ -657,9 +648,9 @@ pub async fn delete_attachment(
         .app_data_dir()
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
     delete_attachment_inner(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         &app_data_dir,
         attachment_id,
     )
@@ -671,16 +662,14 @@ pub async fn delete_attachment(
 #[tauri::command]
 #[specta::specta]
 pub async fn rename_attachment(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     attachment_id: AttachmentId,
     new_filename: String,
 ) -> Result<(), AppError> {
     rename_attachment_inner(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         attachment_id,
         new_filename,
     )

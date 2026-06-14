@@ -4,8 +4,7 @@ use sqlx::SqlitePool;
 use tauri::State;
 use tracing::instrument;
 
-use crate::db::{CommandTx, ReadPool, WritePool};
-use crate::device::DeviceId;
+use crate::db::{CommandTx, ReadPool, WriteCtx, WritePool};
 use crate::draft;
 use crate::error::AppError;
 use crate::materializer::Materializer;
@@ -285,13 +284,8 @@ pub async fn save_draft(
 /// Delegates to [`flush_draft_inner`].
 #[tauri::command]
 #[specta::specta]
-pub async fn flush_draft(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    block_id: BlockId,
-    materializer: State<'_, Materializer>,
-) -> Result<(), AppError> {
-    flush_draft_inner(&pool.0, device_id.as_str(), block_id, &materializer)
+pub async fn flush_draft(ctx: State<'_, WriteCtx>, block_id: BlockId) -> Result<(), AppError> {
+    flush_draft_inner(ctx.pool(), ctx.device_id(), block_id, ctx.materializer())
         .await
         .map_err(sanitize_internal_error)
 }
@@ -301,12 +295,8 @@ pub async fn flush_draft(
 /// comment for the all-or-nothing atomicity contract.
 #[tauri::command]
 #[specta::specta]
-pub async fn flush_all_drafts(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
-) -> Result<FlushAllDraftsResult, AppError> {
-    flush_all_drafts_inner(&pool.0, device_id.as_str(), &materializer)
+pub async fn flush_all_drafts(ctx: State<'_, WriteCtx>) -> Result<FlushAllDraftsResult, AppError> {
+    flush_all_drafts_inner(ctx.pool(), ctx.device_id(), ctx.materializer())
         .await
         .map_err(sanitize_internal_error)
 }

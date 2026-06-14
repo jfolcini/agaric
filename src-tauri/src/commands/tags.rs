@@ -5,8 +5,7 @@ use tracing::instrument;
 
 use tauri::State;
 
-use crate::db::{CommandTx, ReadPool, WritePool};
-use crate::device::DeviceId;
+use crate::db::{CommandTx, ReadPool, WriteCtx};
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::op::{AddTagPayload, OpPayload, RemoveTagPayload, SetPropertyPayload};
@@ -493,15 +492,19 @@ pub async fn list_tags_for_block_inner(
 #[tauri::command]
 #[specta::specta]
 pub async fn add_tag(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     tag_id: BlockId,
 ) -> Result<TagResponse, AppError> {
-    add_tag_inner(&pool.0, device_id.as_str(), &materializer, block_id, tag_id)
-        .await
-        .map_err(sanitize_internal_error)
+    add_tag_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        block_id,
+        tag_id,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// #81 / PEND-57 — bulk variant of [`add_tag_inner`]: apply ONE `tag_id`
@@ -640,16 +643,14 @@ pub async fn add_tags_by_ids_inner(
 #[tauri::command]
 #[specta::specta]
 pub async fn add_tags_by_ids(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_ids: Vec<BlockId>,
     tag_id: BlockId,
 ) -> Result<i64, AppError> {
     add_tags_by_ids_inner(
-        &pool.0,
-        device_id.as_str(),
-        &materializer,
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
         block_ids,
         tag_id,
     )
@@ -661,15 +662,19 @@ pub async fn add_tags_by_ids(
 #[tauri::command]
 #[specta::specta]
 pub async fn remove_tag(
-    pool: State<'_, WritePool>,
-    device_id: State<'_, DeviceId>,
-    materializer: State<'_, Materializer>,
+    ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     tag_id: BlockId,
 ) -> Result<TagResponse, AppError> {
-    remove_tag_inner(&pool.0, device_id.as_str(), &materializer, block_id, tag_id)
-        .await
-        .map_err(sanitize_internal_error)
+    remove_tag_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        block_id,
+        tag_id,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`].

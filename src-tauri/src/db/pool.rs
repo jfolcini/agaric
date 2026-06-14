@@ -194,6 +194,65 @@ pub struct WritePool(pub SqlitePool);
 /// Commands that perform SELECT-only queries should extract `State<'_, ReadPool>`.
 pub struct ReadPool(pub SqlitePool);
 
+/// #1056 — bundled write-path context for the IPC arg ceiling.
+///
+/// Write commands previously threaded the same three Tauri `State` args —
+/// `pool: State<'_, WritePool>` + `device_id: State<'_, DeviceId>` +
+/// `materializer: State<'_, Materializer>` — which permanently burned 3 of
+/// tauri-specta's hard 10-argument IPC ceiling (see
+/// `commands/AGENTS.md` §`tauri-specta` 10-argument ceiling). Bundling the
+/// triple into one managed `WriteCtx` collapses those 3 slots to 1, raising
+/// the usable user-arg budget from 7 to ~9 and letting the
+/// `#[allow(clippy::too_many_arguments)]` attributed to the base params be
+/// removed.
+///
+/// Every field is cheaply cloneable (the pool and [`Materializer`] are
+/// `Arc`-backed; [`DeviceId`] wraps a small `String`), so `WriteCtx` is
+/// constructed once at boot from the same values that back the standalone
+/// `WritePool` / `DeviceId` / `Materializer` managed states (which are kept
+/// for the read-only / partial-triple consumers — e.g. `get_device_id`,
+/// `sync_cmds`, `link_metadata`).
+///
+/// The accessors return exactly the borrow shapes the `*_inner` cores expect
+/// (`&SqlitePool`, `&str`, `&Materializer`), so wrappers forward
+/// `ctx.pool()` / `ctx.device_id()` / `ctx.materializer()` with no behaviour
+/// change.
+pub struct WriteCtx {
+    write: SqlitePool,
+    device_id: crate::device::DeviceId,
+    materializer: crate::materializer::Materializer,
+}
+
+impl WriteCtx {
+    /// Construct from the same values backing the standalone managed states.
+    pub fn new(
+        write: SqlitePool,
+        device_id: crate::device::DeviceId,
+        materializer: crate::materializer::Materializer,
+    ) -> Self {
+        Self {
+            write,
+            device_id,
+            materializer,
+        }
+    }
+
+    /// The write-capable pool (matches the `&SqlitePool` an `*_inner` takes).
+    pub fn pool(&self) -> &SqlitePool {
+        &self.write
+    }
+
+    /// The device UUID string (matches the `&str` an `*_inner` takes).
+    pub fn device_id(&self) -> &str {
+        self.device_id.as_str()
+    }
+
+    /// The materializer handle (matches the `&Materializer` an `*_inner` takes).
+    pub fn materializer(&self) -> &crate::materializer::Materializer {
+        &self.materializer
+    }
+}
+
 /// Per-connection page-cache pragma value (negative = KB).
 ///
 /// #420 — SQLite's page cache is **per-connection** heap, not shared. With up

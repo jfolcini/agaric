@@ -20,12 +20,10 @@ pub async fn delete_block_inner(
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_block(
-    pool: tauri::State<'_, SqlitePool>,
-    device_id: tauri::State<'_, DeviceId>,
-    materializer: tauri::State<'_, Materializer>,
+    ctx: tauri::State<'_, WriteCtx>,
     block_id: String,
 ) -> Result<(), AppError> {
-    delete_block_inner(&pool, &device_id.0, &materializer, BlockId::from_trusted(&block_id)).await
+    delete_block_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), BlockId::from_trusted(&block_id)).await
 }
 ```
 
@@ -33,9 +31,11 @@ Tests call `*_inner` directly with a `test_pool() + TempDir` fixture. The wrappe
 
 ## `tauri-specta` 10-argument ceiling
 
-The IPC bridge codegen has a hard 10-argument limit per Tauri command. `pool` + `device_id` + `materializer` already burn 3 slots; you have 7 for user args.
+The IPC bridge codegen has a hard 10-argument limit per Tauri command. **Tauri `State<'_, T>` params are injected by the runtime, not part of the specta IPC arg list** — so they cost a Rust signature slot but do NOT appear in `bindings.ts` / the TS wrapper. They still count toward the 10-arg Rust ceiling, though.
 
-When you need more, bundle args into a request struct with `#[serde(default)]` on every optional field:
+**#1056 — write commands take ONE `ctx: State<'_, WriteCtx>` (not the old `pool` + `device_id` + `materializer` triple).** `WriteCtx` (`db/pool.rs`) bundles the write pool, device id, and materializer behind cheap `Arc`-backed accessors `ctx.pool()` / `ctx.device_id()` / `ctx.materializer()`, which return exactly the `&SqlitePool` / `&str` / `&Materializer` an `*_inner` core expects. This collapses the 3 base slots to 1, leaving ~9 for user args (and removes the `#[allow(clippy::too_many_arguments)]` the triple used to force on real commands). It is `app.manage()`'d once in `lib.rs::register_managed_state` alongside the standalone `WritePool` / `DeviceId` / `Materializer` states, which are kept for the read-only and partial-triple consumers (`get_device_id`, `sync_cmds`, `link_metadata`/`aliases`/`links`).
+
+When you still need more, bundle args into a request struct with `#[serde(default)]` on every optional field:
 
 ```rust
 #[derive(Debug, Clone, Default, Deserialize, Type)]
@@ -170,18 +170,16 @@ The sequence below is the full path from "I wrote some Rust" to "the frontend ca
 
 1. **Write `*_inner(...)` in the handler module.** This is the testable core (see [§The `_inner` / Tauri-wrapper split](#the-_inner--tauri-wrapper-split)). It takes `&SqlitePool` (not `State`), returns `Result<T, AppError>`, carries no `#[tauri::command]` decorator, and is what the unit tests in `src-tauri/src/commands/tests/` exercise. Pick the module by domain — e.g. block CRUD lives in `src-tauri/src/commands/blocks/crud.rs`, properties in `src-tauri/src/commands/properties.rs`.
 
-2. **Write the thin Tauri wrapper** in the same module. Decorate with `#[tauri::command]` + `#[specta::specta]`, resolve the `State` args, and delegate to `*_inner`. For write commands the wrapper takes `pool: State<'_, WritePool>` and passes `&pool.0`; it ends with `.map_err(sanitize_internal_error)`. Any multi-row write inside `*_inner` opens `CommandTx::begin_immediate(pool, "label")` (see [§`CommandTx` for atomic multi-row writes](#commandtx-for-atomic-multi-row-writes)) — verify the helper name against an existing command rather than guessing.
+2. **Write the thin Tauri wrapper** in the same module. Decorate with `#[tauri::command]` + `#[specta::specta]`, resolve the `State` args, and delegate to `*_inner`. A write command that needs the pool + device id + materializer takes the bundled `ctx: State<'_, WriteCtx>` (#1056) and forwards `ctx.pool()` / `ctx.device_id()` / `ctx.materializer()`; a read-only command takes `pool: State<'_, ReadPool>` and passes `&pool.0`. It ends with `.map_err(sanitize_internal_error)`. Any multi-row write inside `*_inner` opens `CommandTx::begin_immediate(pool, "label")` (see [§`CommandTx` for atomic multi-row writes](#commandtx-for-atomic-multi-row-writes)) — verify the helper name against an existing command rather than guessing.
 
    ```rust
    #[tauri::command]
    #[specta::specta]
    pub async fn my_command(
-       pool: State<'_, WritePool>,
-       device_id: State<'_, DeviceId>,
-       materializer: State<'_, Materializer>,
+       ctx: State<'_, WriteCtx>,
        block_ids: Vec<BlockId>,
    ) -> Result<i64, AppError> {
-       my_command_inner(&pool.0, device_id.as_str(), &materializer, block_ids)
+       my_command_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), block_ids)
            .await
            .map_err(sanitize_internal_error)
    }
