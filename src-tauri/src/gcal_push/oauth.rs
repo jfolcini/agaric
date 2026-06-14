@@ -504,7 +504,13 @@ impl OAuthClient {
             .set_pkce_verifier(verifier)
             .request_async(&self.http_client)
             .await
-            .map_err(|e| AppError::Validation(format!("oauth.exchange_failed: {e}")))?;
+            // #689 / L-129: route through the shared closed-set
+            // classifier so the server-controlled `error_description`
+            // is never interpolated into the message or recorded by the
+            // `#[instrument(err)]` span — the exchange body carries the
+            // auth code + PKCE verifier, so the same redaction
+            // discipline as `classify_refresh_error` applies.
+            .map_err(|e| classify_exchange_error(&e))?;
 
         let (access_part, refresh) =
             token_from_response(&response, /* require_refresh = */ true)?;
@@ -800,9 +806,74 @@ pub(crate) fn extract_email_from_id_token(id_token: &str) -> Option<String> {
         .map(std::string::ToString::to_string)
 }
 
-/// Map an oauth2 request error into our [`AppError`] taxonomy,
-/// distinguishing revocation errors (which trigger reauth) from
-/// transient failures (which the caller may retry later).
+/// Convenience alias for the concrete `oauth2` request-error type the
+/// token endpoint produces for both the code-exchange and refresh
+/// flows.  Both `exchange_code` and `refresh_token` drive the same
+/// `BasicClient` against the same token URL, so the error shape is
+/// identical and the closed-set classifier below is shared.
+type TokenRequestError = oauth2::RequestTokenError<
+    oauth2::HttpClientError<oauth2::reqwest::Error>,
+    StandardErrorResponse<BasicErrorResponseType>,
+>;
+
+/// Shared closed-set classifier for token-endpoint errors.
+///
+/// L-129: do NOT interpolate `err` (or any of its inner fields) into
+/// the resulting message.  The upstream `Display` impls for
+/// `RequestTokenError` and `StandardErrorResponse` include the parsed,
+/// server-controlled `error_description` text — and a future `oauth2`
+/// upgrade could broaden them to include the outgoing request body
+/// (which carries the refresh token on the refresh path, and the
+/// authorization code + PKCE verifier on the exchange path) — either of
+/// which would surface secret bytes in tracing spans and bug-report
+/// bundles.  Instead we categorise into a closed set and emit only the
+/// variant name.
+///
+/// `key` is the flow-layer diagnostic prefix (`oauth.refresh_failed` or
+/// `oauth.exchange_failed`).  `unauthorized_to_gcal` selects whether the
+/// revocation variants (`invalid_grant` / `unauthorized_client`)
+/// collapse to the HTTP-layer [`AppError::Gcal`]
+/// ([`GcalErrorKind::Unauthorized`]) taxonomy — true for the refresh
+/// path (FEAT-5c: these trip the connector's reauth flow), false for the
+/// initial code exchange (a bad auth code is a flow-layer failure, not a
+/// token-revocation event, and the caller is already inside the OAuth
+/// flow).  Either way the raw `error_description` is never emitted.
+fn classify_token_request_error(
+    err: &TokenRequestError,
+    key: &str,
+    unauthorized_to_gcal: bool,
+) -> AppError {
+    use BasicErrorResponseType as B;
+    let category = match err {
+        oauth2::RequestTokenError::ServerResponse(resp) => match resp.error() {
+            B::InvalidGrant | B::UnauthorizedClient => {
+                if unauthorized_to_gcal {
+                    return AppError::Gcal(GcalErrorKind::Unauthorized);
+                }
+                match resp.error() {
+                    B::InvalidGrant => "invalid_grant",
+                    _ => "unauthorized_client",
+                }
+            }
+            B::InvalidClient => "invalid_client",
+            B::InvalidRequest => "invalid_request",
+            B::InvalidScope => "invalid_scope",
+            B::UnsupportedGrantType => "unsupported_grant_type",
+            // `BasicErrorResponseType::Extension(_)` and any other
+            // future variants collapse to a generic category — never
+            // include the extension string itself, which is
+            // server-controlled text.
+            B::Extension(_) => "server_response",
+        },
+        oauth2::RequestTokenError::Request(_) => "request",
+        oauth2::RequestTokenError::Parse(_, _) => "parse",
+        oauth2::RequestTokenError::Other(_) => "other",
+    };
+    AppError::Validation(format!("{key}: {category}"))
+}
+
+/// Map a refresh-token request error into our [`AppError`] taxonomy via
+/// the shared closed-set classifier ([`classify_token_request_error`]).
 ///
 /// Taxonomy split (FEAT-5c):
 ///
@@ -811,54 +882,34 @@ pub(crate) fn extract_email_from_id_token(id_token: &str) -> Option<String> {
 ///   and route through [`AppError::Gcal`] ([`GcalErrorKind::Unauthorized`])
 ///   so downstream code (Settings UI, connector retry) can treat them
 ///   uniformly with a 401 from the Calendar API itself.
-/// * Every other `oauth2::RequestTokenError` variant — transport
-///   failures, timeouts, non-auth HTTP errors — stays on
-///   [`AppError::Validation`] with the `oauth.refresh_failed:` key,
-///   which is a flow-layer diagnostic, not an HTTP status.  Callers
-///   that need to retry transient failures do so based on the
-///   validation key.
-fn classify_refresh_error(
-    err: &oauth2::RequestTokenError<
-        oauth2::HttpClientError<oauth2::reqwest::Error>,
-        StandardErrorResponse<BasicErrorResponseType>,
-    >,
-) -> AppError {
-    // L-129: do NOT interpolate `err` (or any of its
-    // inner fields) into the validation message.  The upstream
-    // `Display` impls for `RequestTokenError` and
-    // `StandardErrorResponse` include the parsed `error_description`
-    // text — and a future `oauth2` upgrade could broaden them to
-    // include the request body — which would surface refresh-token
-    // bytes in tracing spans and bug-report bundles.  Instead we
-    // categorise into a closed set and emit only the variant name.
-    use BasicErrorResponseType as B;
-    match err {
-        oauth2::RequestTokenError::ServerResponse(resp) => match resp.error() {
-            B::InvalidGrant | B::UnauthorizedClient => AppError::Gcal(GcalErrorKind::Unauthorized),
-            B::InvalidClient => AppError::Validation("oauth.refresh_failed: invalid_client".into()),
-            B::InvalidRequest => {
-                AppError::Validation("oauth.refresh_failed: invalid_request".into())
-            }
-            B::InvalidScope => AppError::Validation("oauth.refresh_failed: invalid_scope".into()),
-            B::UnsupportedGrantType => {
-                AppError::Validation("oauth.refresh_failed: unsupported_grant_type".into())
-            }
-            // `BasicErrorResponseType::Extension(_)` and any other
-            // future variants collapse to a generic category — never
-            // include the extension string itself, which is
-            // server-controlled text.
-            B::Extension(_) => AppError::Validation("oauth.refresh_failed: server_response".into()),
-        },
-        oauth2::RequestTokenError::Request(_) => {
-            AppError::Validation("oauth.refresh_failed: request".into())
-        }
-        oauth2::RequestTokenError::Parse(_, _) => {
-            AppError::Validation("oauth.refresh_failed: parse".into())
-        }
-        oauth2::RequestTokenError::Other(_) => {
-            AppError::Validation("oauth.refresh_failed: other".into())
-        }
-    }
+/// * Every other variant stays on [`AppError::Validation`] with the
+///   `oauth.refresh_failed:` key, a flow-layer diagnostic, not an HTTP
+///   status.  Callers retry transient failures based on the key.
+fn classify_refresh_error(err: &TokenRequestError) -> AppError {
+    classify_token_request_error(
+        err,
+        "oauth.refresh_failed",
+        /* unauthorized_to_gcal = */ true,
+    )
+}
+
+/// Map a code-exchange request error into our [`AppError`] taxonomy via
+/// the shared closed-set classifier ([`classify_token_request_error`]).
+///
+/// L-129 / #689: mirrors [`classify_refresh_error`]'s redaction
+/// discipline — the server-controlled `error_description` is never
+/// interpolated into the message (and therefore never recorded by
+/// `#[instrument(err)]`), even though the exchange request body carries
+/// the authorization code and PKCE verifier.  Unlike the refresh path,
+/// the revocation variants stay on the `oauth.exchange_failed:`
+/// Validation key (a bad auth code mid-flow is not a reauth trigger),
+/// while remaining distinguishable for triage.
+fn classify_exchange_error(err: &TokenRequestError) -> AppError {
+    classify_token_request_error(
+        err,
+        "oauth.exchange_failed",
+        /* unauthorized_to_gcal = */ false,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1285,11 +1336,16 @@ mod tests {
         let client = build_client(&mock).await;
         let authorize = client.begin_authorize(TEST_REDIRECT.to_owned()).unwrap();
 
+        // #689: the `error_description` is server-controlled text and
+        // must never reach the flow-layer message or the
+        // `#[instrument(err)]` span — use a sentinel to pin redaction
+        // end-to-end through the real `request_async` error path.
+        const DESC_SENTINEL: &str = "MISSING_PKCE_SERVER_CONTROLLED_SENTINEL";
         Mock::given(method("POST"))
             .and(path("/token"))
             .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
                 "error": "invalid_request",
-                "error_description": "missing pkce",
+                "error_description": DESC_SENTINEL,
             })))
             .mount(&mock)
             .await;
@@ -1297,9 +1353,16 @@ mod tests {
         let result = client
             .exchange_code("the-code".to_owned(), authorize.state, None)
             .await;
+        let Err(AppError::Validation(msg)) = result else {
+            panic!("server error on exchange must surface AppError::Validation, got {result:?}");
+        };
+        assert_eq!(
+            msg, "oauth.exchange_failed: invalid_request",
+            "server error must surface the closed-set category, got {msg:?}"
+        );
         assert!(
-            matches!(result, Err(AppError::Validation(ref m)) if m.contains("oauth.exchange_failed")),
-            "server error on exchange must surface oauth.exchange_failed, got {result:?}"
+            !msg.contains(DESC_SENTINEL),
+            "server-controlled error_description must not leak into the message, got {msg:?}"
         );
     }
 
@@ -1527,6 +1590,83 @@ mod tests {
             panic!("expected AppError::Validation");
         };
         assert_eq!(msg, "oauth.refresh_failed: invalid_client");
+    }
+
+    // ── classify_exchange_error: closed-set categorisation (#689) ───
+
+    #[test]
+    fn classify_exchange_error_does_not_leak_raw_err_display() {
+        // #689 / L-129: the previous `exchange_code` implementation
+        // interpolated the upstream `RequestTokenError::Display`
+        // (which includes the server-controlled `error_description`)
+        // straight into the `oauth.exchange_failed:` message — and the
+        // `#[instrument(err)]` span recorded it.  The exchange request
+        // body carries the authorization code + PKCE verifier, so a
+        // future `oauth2` formatter broadening (mirroring the refresh
+        // concern) would leak those bytes.  This pins the closed-set
+        // categorisation: the message must be exactly the pre-defined
+        // `oauth.exchange_failed: other` string with no smuggled
+        // sentinel.
+        const SENTINEL: &str = "EXCHANGE_SECRET_LEAKED_HERE";
+
+        let err: TokenRequestError = oauth2::RequestTokenError::Other(SENTINEL.to_owned());
+
+        let mapped = classify_exchange_error(&err);
+        let AppError::Validation(msg) = mapped else {
+            panic!("expected AppError::Validation, got {mapped:?}");
+        };
+
+        assert_eq!(
+            msg, "oauth.exchange_failed: other",
+            "Other(...) variant must produce literal closed-set category, got {msg:?}"
+        );
+        assert!(
+            !msg.contains(SENTINEL),
+            "validation message must not interpolate underlying err Display, got {msg:?}"
+        );
+    }
+
+    #[test]
+    fn classify_exchange_error_server_response_does_not_leak_description() {
+        // The exchange path must NOT collapse revocation variants to
+        // `AppError::Gcal(Unauthorized)` (a bad auth code mid-flow is a
+        // flow-layer failure, not a reauth trigger) — but it must keep
+        // the category distinguishable while never surfacing the
+        // server-controlled extension/description text.
+        const EXT_SENTINEL: &str = "evil_exchange_extension_with_secret";
+        let resp: StandardErrorResponse<BasicErrorResponseType> = StandardErrorResponse::new(
+            BasicErrorResponseType::Extension(EXT_SENTINEL.to_owned()),
+            None,
+            None,
+        );
+        let err: TokenRequestError = oauth2::RequestTokenError::ServerResponse(resp);
+
+        let AppError::Validation(msg) = classify_exchange_error(&err) else {
+            panic!("expected AppError::Validation");
+        };
+        assert_eq!(msg, "oauth.exchange_failed: server_response");
+        assert!(
+            !msg.contains(EXT_SENTINEL),
+            "extension string must not surface in validation message, got {msg:?}"
+        );
+    }
+
+    #[test]
+    fn classify_exchange_error_invalid_grant_stays_validation_not_gcal() {
+        // Mirror of the refresh `invalid_grant` test, but pinning the
+        // exchange-path divergence: `invalid_grant` on the initial code
+        // exchange is a flow-layer `oauth.exchange_failed: invalid_grant`
+        // Validation (distinguishable for triage), NOT the reauth-routing
+        // `AppError::Gcal(Unauthorized)`.
+        let resp: StandardErrorResponse<BasicErrorResponseType> =
+            StandardErrorResponse::new(BasicErrorResponseType::InvalidGrant, None, None);
+        let err: TokenRequestError = oauth2::RequestTokenError::ServerResponse(resp);
+
+        let mapped = classify_exchange_error(&err);
+        let AppError::Validation(msg) = mapped else {
+            panic!("expected AppError::Validation, got {mapped:?}");
+        };
+        assert_eq!(msg, "oauth.exchange_failed: invalid_grant");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
