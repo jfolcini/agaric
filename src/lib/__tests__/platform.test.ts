@@ -2,9 +2,18 @@
  * Tests for platform detection helpers (UX-223 / BUG-31 bundled fix).
  */
 
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { __resetPlatformCacheForTests, isAndroid, isMac, modKey } from '../platform'
+import {
+  __resetPlatformCacheForTests,
+  isAndroid,
+  isMac,
+  isMobilePlatform,
+  modKey,
+} from '../platform'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform')
 const originalUserAgent = Object.getOwnPropertyDescriptor(navigator, 'userAgent')
@@ -139,6 +148,92 @@ describe('platform', () => {
       expect(isMac()).toBe(false)
       __resetPlatformCacheForTests()
       expect(isMac()).toBe(true)
+    })
+  })
+
+  describe('isMobilePlatform (#742 — capability check)', () => {
+    it('returns true for an Android user agent', () => {
+      setNavigatorUserAgent(
+        'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
+      )
+      expect(isMobilePlatform()).toBe(true)
+    })
+
+    it('returns true for an Android TABLET user agent (the >= 768 px width case)', () => {
+      // Landscape Android tablet: viewport >= 768 px (so `useIsMobile`
+      // would be false), but the device still can't run the desktop-only
+      // global-shortcut plugin — capability detection must catch it.
+      setNavigatorUserAgent(
+        'Mozilla/5.0 (Linux; Android 14; SM-X710) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+      )
+      expect(isMobilePlatform()).toBe(true)
+    })
+
+    it('returns true for iPhone / iPad / iPod user agents', () => {
+      for (const ua of [
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15',
+        'Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15',
+        'Mozilla/5.0 (iPod touch; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15',
+      ]) {
+        setNavigatorUserAgent(ua)
+        expect(isMobilePlatform()).toBe(true)
+      }
+    })
+
+    it('returns false for a desktop Linux/Windows/macOS user agent', () => {
+      setNavigatorUserAgent(
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+      )
+      expect(isMobilePlatform()).toBe(false)
+    })
+
+    it('is NOT cached — re-reads navigator.userAgent on every call', () => {
+      setNavigatorUserAgent('Mozilla/5.0 (X11; Linux x86_64)')
+      expect(isMobilePlatform()).toBe(false)
+      setNavigatorUserAgent('Mozilla/5.0 (Linux; Android 15)')
+      // No reset needed, unlike isMac/isAndroid — capability gating sites
+      // (and their tests) flip the UA per render.
+      expect(isMobilePlatform()).toBe(true)
+    })
+  })
+
+  // Dedup guard (#742, LOW): `isMobilePlatform` must live in ONE place.
+  // The three former-duplicate sites must import it from `lib/platform`
+  // and must NOT re-declare a local copy or carry the stale
+  // `tauri.ts:1871` doc anchor.
+  describe('isMobilePlatform dedup — single export, three import sites', () => {
+    const sites = [
+      { name: 'tauri.ts', path: '../tauri.ts', spec: "from './platform'" },
+      {
+        name: 'useUpdateCheck.ts',
+        path: '../../hooks/useUpdateCheck.ts',
+        spec: "from '../lib/platform'",
+      },
+      {
+        name: 'HelpTab.tsx',
+        path: '../../components/settings/HelpTab.tsx',
+        spec: "from '@/lib/platform'",
+      },
+    ] as const
+
+    function readSite(rel: string): string {
+      return readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
+    }
+
+    it.each(sites)('$name imports isMobilePlatform from lib/platform', ({ path, spec }) => {
+      const src = readSite(path)
+      expect(src).toContain('isMobilePlatform')
+      expect(src).toContain(spec)
+    })
+
+    it.each(sites)('$name no longer declares a local isMobilePlatform', ({ path }) => {
+      const src = readSite(path)
+      expect(src).not.toMatch(/function\s+isMobilePlatform\s*\(/)
+    })
+
+    it.each(sites)('$name no longer carries the stale tauri.ts:1871 doc anchor', ({ path }) => {
+      const src = readSite(path)
+      expect(src).not.toContain('tauri.ts:1871')
     })
   })
 

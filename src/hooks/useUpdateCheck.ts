@@ -12,8 +12,8 @@
  *     `cancel` field).
  *
  * Desktop-only — mobile platforms route through the Play Store / App Store
- * and have no Tauri updater plugin; the boot check short-circuits on
- * the `isMobilePlatform()` UA sniff that mirrors `src/lib/tauri.ts:1871`.
+ * and have no Tauri updater plugin; the boot check short-circuits on the
+ * shared `isMobilePlatform()` capability check from `../lib/platform`.
  *
  * The 24-hour debounce uses `localStorage` (`agaric:last-update-check`)
  * so it survives page reloads. The exported `checkForUpdatesNow()`
@@ -38,6 +38,7 @@ import { useEffect } from 'react'
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import { notify } from '../lib/notify'
+import { isMobilePlatform } from '../lib/platform'
 import { flushAllDrafts } from '../lib/tauri'
 
 /** localStorage key holding the ISO timestamp of the last successful update check. */
@@ -48,17 +49,6 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000
 
 /** Stable sonner toast id for the update-available toast; dedupes across renders. */
 const UPDATE_AVAILABLE_TOAST_ID = 'update-available'
-
-/**
- * Coarse mobile detect — mirrors the canonical site at
- * `src/lib/tauri.ts:1871`. Re-implemented here because that helper is
- * private to `tauri.ts`. Keep these two in sync.
- */
-function isMobilePlatform(): boolean {
-  if (typeof navigator === 'undefined') return false
-  const ua = navigator.userAgent ?? ''
-  return /Android|iPhone|iPad|iPod/i.test(ua)
-}
 
 /** Read the last-check ISO timestamp from localStorage, defensively. */
 function readLastCheckIso(): string | null {

@@ -25,19 +25,10 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { checkForUpdatesNow, LAST_UPDATE_CHECK_STORAGE_KEY } from '@/hooks/useUpdateCheck'
 import { formatRelativeTime } from '@/lib/format-relative-time'
+import { isMobilePlatform } from '@/lib/platform'
 
 interface HelpTabProps {
   onReportBugClick: () => void
-}
-
-/**
- * Coarse mobile detect — mirrors `src/lib/tauri.ts:1871` and the
- * matching helper in `useUpdateCheck.ts`. Keep the three in sync.
- */
-function isMobilePlatform(): boolean {
-  if (typeof navigator === 'undefined') return false
-  const ua = navigator.userAgent ?? ''
-  return /Android|iPhone|iPad|iPod/i.test(ua)
 }
 
 function readLastCheckIso(): string | null {
