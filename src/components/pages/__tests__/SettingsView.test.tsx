@@ -15,7 +15,7 @@
  *  - axe a11y audit
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -188,17 +188,142 @@ describe('SettingsView', () => {
 
     const tabs = screen.getAllByRole('tab')
     expect(tabs).toHaveLength(11)
-    expect(tabs[0]).toHaveTextContent(t('settings.tabGeneral'))
-    expect(tabs[1]).toHaveTextContent(t('settings.tabProperties'))
-    expect(tabs[2]).toHaveTextContent(t('settings.tabAppearance'))
-    expect(tabs[3]).toHaveTextContent(t('settings.tabEditor'))
-    expect(tabs[4]).toHaveTextContent(t('settings.tabKeyboard'))
-    expect(tabs[5]).toHaveTextContent(t('settings.tabData'))
-    expect(tabs[6]).toHaveTextContent(t('settings.tabSync'))
-    expect(tabs[7]).toHaveTextContent(t('settings.tabAgentAccess'))
-    expect(tabs[8]).toHaveTextContent(t('settings.tabGoogleCalendar'))
-    expect(tabs[9]).toHaveTextContent(t('settings.tabNotifications'))
-    expect(tabs[10]).toHaveTextContent(t('settings.tabHelp'))
+    // Every tab is still present and reachable, regardless of which group
+    // it now lives in.
+    const labels = tabs.map((tab) => tab.textContent)
+    expect(labels).toEqual(
+      expect.arrayContaining([
+        t('settings.tabGeneral'),
+        t('settings.tabProperties'),
+        t('settings.tabAppearance'),
+        t('settings.tabEditor'),
+        t('settings.tabKeyboard'),
+        t('settings.tabData'),
+        t('settings.tabSync'),
+        t('settings.tabAgentAccess'),
+        t('settings.tabGoogleCalendar'),
+        t('settings.tabNotifications'),
+        t('settings.tabHelp'),
+      ]),
+    )
+  })
+
+  // ── #1108: grouped tab navigation ─────────────────────────────────────
+  describe('grouped tab rail (#1108)', () => {
+    it('renders a single vertical tablist labelled with the Settings section', () => {
+      render(<SettingsView />)
+
+      const tablists = screen.getAllByRole('tablist')
+      expect(tablists).toHaveLength(1)
+      const rail = tablists[0]
+      expect(rail).toHaveAccessibleName(t('sidebar.settings'))
+      expect(rail).toHaveAttribute('aria-orientation', 'vertical')
+    })
+
+    it('renders the four section headers', () => {
+      render(<SettingsView />)
+
+      // Headers are role="presentation" (a real heading can't live inside a
+      // WAI-ARIA tablist), so assert on the known header element ids — the
+      // "Help" group label collides with the "Help" tab label, so a plain
+      // text query would be ambiguous.
+      expect(document.getElementById('settings-group-workspace')).toHaveTextContent(
+        t('settings.groupWorkspace'),
+      )
+      expect(document.getElementById('settings-group-integrations')).toHaveTextContent(
+        t('settings.groupIntegrations'),
+      )
+      expect(document.getElementById('settings-group-data')).toHaveTextContent(
+        t('settings.groupData'),
+      )
+      expect(document.getElementById('settings-group-help')).toHaveTextContent(
+        t('settings.groupHelp'),
+      )
+    })
+
+    it('groups each tab under its labeled section', () => {
+      render(<SettingsView />)
+
+      // Each section is a presentation wrapper whose header span has a known
+      // id; the tabs it owns resolve within that wrapper and point back at
+      // the header via aria-describedby.
+      const expectations: ReadonlyArray<readonly [string, string, readonly string[]]> = [
+        [
+          'settings-group-workspace',
+          t('settings.groupWorkspace'),
+          [
+            t('settings.tabGeneral'),
+            t('settings.tabAppearance'),
+            t('settings.tabEditor'),
+            t('settings.tabKeyboard'),
+            t('settings.tabProperties'),
+          ],
+        ],
+        [
+          'settings-group-integrations',
+          t('settings.groupIntegrations'),
+          [
+            t('settings.tabGoogleCalendar'),
+            t('settings.tabNotifications'),
+            t('settings.tabAgentAccess'),
+          ],
+        ],
+        [
+          'settings-group-data',
+          t('settings.groupData'),
+          [t('settings.tabData'), t('settings.tabSync')],
+        ],
+        ['settings-group-help', t('settings.groupHelp'), [t('settings.tabHelp')]],
+      ]
+
+      for (const [headerId, headerText, tabNames] of expectations) {
+        const header = document.getElementById(headerId)
+        expect(header).not.toBeNull()
+        expect(header).toHaveTextContent(headerText)
+        // The presentation wrapper holds the header + this group's tabs.
+        const wrapper = header?.parentElement as HTMLElement
+        const tabsInGroup = within(wrapper)
+          .getAllByRole('tab')
+          .map((tab) => tab.textContent)
+        expect(tabsInGroup).toEqual([...tabNames])
+        // Each tab in the group references the header for screen readers.
+        for (const tab of within(wrapper).getAllByRole('tab')) {
+          expect(tab).toHaveAttribute('aria-describedby', headerId)
+        }
+      }
+    })
+
+    it('every tab is reachable and selectable from its group', async () => {
+      const user = userEvent.setup()
+      render(<SettingsView />)
+
+      const allTabNames = [
+        t('settings.tabGeneral'),
+        t('settings.tabProperties'),
+        t('settings.tabAppearance'),
+        t('settings.tabEditor'),
+        t('settings.tabKeyboard'),
+        t('settings.tabData'),
+        t('settings.tabSync'),
+        t('settings.tabAgentAccess'),
+        t('settings.tabGoogleCalendar'),
+        t('settings.tabNotifications'),
+        t('settings.tabHelp'),
+      ]
+
+      for (const name of allTabNames) {
+        const tab = screen.getByRole('tab', { name })
+        await user.click(tab)
+        expect(tab).toHaveAttribute('aria-selected', 'true')
+      }
+    })
+
+    it('does not render the old horizontal-overflow scroll viewport', () => {
+      render(<SettingsView />)
+      // The wheel-scroll workaround lived on a ScrollArea viewport; the
+      // grouped rail wraps instead, so no such viewport should exist.
+      expect(document.querySelector('[data-radix-scroll-area-viewport]')).toBeNull()
+    })
   })
 
   it('Google Calendar tab renders the GoogleCalendarSettingsTab panel', async () => {
