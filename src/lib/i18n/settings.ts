@@ -258,6 +258,13 @@ export const settings: Record<string, string> = {
   'gcal.disconnect.successKeep': 'Disconnected. Calendar kept in your Google account.',
   'gcal.disconnect.successWithDelete': 'Disconnected. Calendar deleted from Google.',
   'gcal.disconnect.failed': 'Failed to disconnect Google Calendar',
+  // #1108 — grouped tab navigation. Shallow sections lower the altitude of
+  // experimental/niche tabs so they no longer sit as flat peers of the core
+  // ones (and remove the horizontal-overflow wheel workaround).
+  'settings.groupWorkspace': 'Workspace',
+  'settings.groupIntegrations': 'Integrations',
+  'settings.groupData': 'Data & Sync',
+  'settings.groupHelp': 'Help',
   'settings.weekStartLabel': 'Week starts on',
   'settings.weekStartMonday': 'Monday',
   'settings.weekStartSunday': 'Sunday',

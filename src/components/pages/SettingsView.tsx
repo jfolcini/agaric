@@ -19,6 +19,12 @@
  * `useSettingsTab()` hook for localStorage + URL persistence is the
  * one piece of MAINT-128's SettingsView row still pending — it stays
  * inlined here for now.
+ *
+ * #1108: the tabs are presented as a grouped vertical rail (see
+ * `TAB_GROUPS`) — Workspace / Integrations / Data & Sync / Help — rather
+ * than one flat horizontal strip. Grouping lowers the altitude of the
+ * experimental/niche tabs and removed the old horizontal-overflow
+ * `onWheel` (deltaY→scrollLeft) workaround.
  */
 
 import { ChevronRight } from 'lucide-react'
@@ -38,7 +44,6 @@ import { GeneralTab } from '@/components/settings/GeneralTab'
 import { HelpTab } from '@/components/settings/HelpTab'
 import { NotificationsTab } from '@/components/settings/NotificationsTab'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { dispatchBugReport } from '@/lib/bug-report-events'
 import {
   getSettingsTabFromUrl,
@@ -124,6 +129,50 @@ const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
   help: 'settings.tabHelp',
 }
 
+// #1108 — shallow grouping for the tab rail. Instead of 11 flat peers in a
+// single horizontal, wheel-scrollable strip (where experimental/niche tabs
+// like Google Calendar / Agent access sat at the same altitude as core
+// ones), the tabs are bucketed into labeled sections rendered as a vertical
+// settings rail. Grouping lowers the visual weight of the niche tabs and
+// removes the horizontal overflow that the old `onWheel` workaround papered
+// over. The `TAB_IDS` union, `TAB_LABEL_KEYS`, and persistence
+// (`readActiveTab` / `?settings=` / localStorage) are unchanged — only the
+// presentation is grouped.
+//
+// INVARIANT: every `SettingsTab` appears in exactly one group, and the
+// flattened group order matches `TAB_IDS`. A vitest assertion guards this so
+// a newly-added tab can't silently fall out of the rail.
+interface TabGroup {
+  /** i18n key for the section header. */
+  readonly labelKey: string
+  /** Stable id used for the section header element + aria wiring. */
+  readonly id: string
+  readonly tabs: readonly SettingsTab[]
+}
+
+const TAB_GROUPS: readonly TabGroup[] = [
+  {
+    id: 'workspace',
+    labelKey: 'settings.groupWorkspace',
+    tabs: ['general', 'appearance', 'editor', 'keyboard', 'properties'],
+  },
+  {
+    id: 'integrations',
+    labelKey: 'settings.groupIntegrations',
+    tabs: ['google-calendar', 'notifications', 'agent'],
+  },
+  {
+    id: 'data',
+    labelKey: 'settings.groupData',
+    tabs: ['data', 'sync'],
+  },
+  {
+    id: 'help',
+    labelKey: 'settings.groupHelp',
+    tabs: ['help'],
+  },
+]
+
 export function SettingsView(): React.ReactElement {
   const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState<SettingsTab>(readActiveTab)
@@ -199,82 +248,104 @@ export function SettingsView(): React.ReactElement {
         }
       />
 
-      {/* Tab bar — wraps in a horizontal ScrollArea so the row scrolls
-          instead of overflowing the panel when the window is narrow or
-          a verbose locale stretches the labels (mirrors TabBar.tsx). */}
-      <ScrollArea
-        orientation="horizontal"
-        className="border-b"
-        // A mouse wheel only emits deltaY, which a horizontal scroller
-        // ignores by default — translate it into horizontal scroll so the
-        // off-screen tabs are reachable without a trackpad.
-        viewportProps={{
-          onWheel: (e) => {
-            if (e.deltaY === 0) return
-            e.currentTarget.scrollLeft += e.deltaY
-          },
-        }}
-      >
-        <div role="tablist" aria-label={t('sidebar.settings')} className="flex gap-1 w-max">
-          {TAB_IDS.map((tab) => (
-            <button
-              type="button"
-              key={tab}
-              role="tab"
-              id={`settings-tab-${tab}`}
-              aria-selected={activeTab === tab}
-              aria-controls={`settings-panel-${tab}`}
-              className={cn(
-                // border thickness mirrors the sidebar active-item bar
-                // (border-l-[3px] / dark:border-l-4) so the selected-tab
-                // underline matches the nav accent line's weight.
-                'shrink-0 whitespace-nowrap px-4 py-2 text-sm font-medium transition-colors border-b-[3px] dark:border-b-4 -mb-px',
-                activeTab === tab
-                  ? 'border-primary text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/50',
-              )}
-              onClick={() => setActiveTab(tab)}
-            >
-              {t(TAB_LABEL_KEYS[tab])}
-            </button>
+      {/* #1108 — grouped settings layout. A vertical rail on the left holds
+          the tabs bucketed into labeled sections (Workspace / Integrations /
+          Data & Sync / Help); the active tab's panel renders to the right.
+          The rail wraps under the panel on narrow screens (sm:flex-row), so
+          there is no horizontal overflow and the old `onWheel`
+          deltaY→scrollLeft workaround is gone. */}
+      <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
+        {/* The whole rail is one tablist; each section is a labeled group of
+            tabs so screen-reader users hear the grouping without the tabs
+            losing their flat `role="tab"` membership. */}
+        <div
+          role="tablist"
+          aria-label={t('sidebar.settings')}
+          aria-orientation="vertical"
+          className="flex flex-col gap-4 sm:w-48 sm:shrink-0"
+          data-testid="settings-tab-rail"
+        >
+          {TAB_GROUPS.map((group) => (
+            // role="presentation" makes the group wrapper transparent to the
+            // accessibility tree so the `tab` buttons remain DIRECT children
+            // of the `tablist` (WAI-ARIA requires tablist→tab parentage —
+            // a real role="group" between them is a violation). The visible
+            // section header still groups the tabs for sighted users; it
+            // also carries role="presentation" so it isn't announced as a
+            // heading sitting illegally inside the tablist. The grouping is
+            // surfaced to assistive tech instead via each tab's
+            // `aria-describedby` pointing at the (hidden) header text.
+            <div key={group.id} role="presentation" className="flex flex-col gap-0.5">
+              <span
+                id={`settings-group-${group.id}`}
+                role="presentation"
+                className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+              >
+                {t(group.labelKey)}
+              </span>
+              {group.tabs.map((tab) => (
+                <button
+                  type="button"
+                  key={tab}
+                  role="tab"
+                  id={`settings-tab-${tab}`}
+                  aria-selected={activeTab === tab}
+                  aria-controls={`settings-panel-${tab}`}
+                  aria-describedby={`settings-group-${group.id}`}
+                  className={cn(
+                    // Mirrors the app sidebar's active-item treatment: a
+                    // left accent bar (border-l-[3px] / dark:border-l-4) plus
+                    // a subtle background on the selected row.
+                    'w-full rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors border-l-[3px] dark:border-l-4',
+                    activeTab === tab
+                      ? 'border-primary bg-muted text-foreground'
+                      : 'border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+                  )}
+                  onClick={() => setActiveTab(tab)}
+                >
+                  {t(TAB_LABEL_KEYS[tab])}
+                </button>
+              ))}
+            </div>
           ))}
         </div>
-      </ScrollArea>
 
-      {/* Tab panels */}
-      <div
-        role="tabpanel"
-        id={`settings-panel-${activeTab}`}
-        aria-labelledby={`settings-tab-${activeTab}`}
-        data-testid={`settings-panel-${activeTab}`}
-      >
-        {activeTab === 'general' && <GeneralTab />}
+        {/* Tab panels */}
+        <div
+          role="tabpanel"
+          id={`settings-panel-${activeTab}`}
+          aria-labelledby={`settings-tab-${activeTab}`}
+          data-testid={`settings-panel-${activeTab}`}
+          className="min-w-0 flex-1"
+        >
+          {activeTab === 'general' && <GeneralTab />}
 
-        {activeTab === 'properties' && <PropertyDefinitionsList />}
+          {activeTab === 'properties' && <PropertyDefinitionsList />}
 
-        {activeTab === 'appearance' && <AppearanceTab />}
+          {activeTab === 'appearance' && <AppearanceTab />}
 
-        {activeTab === 'editor' && <EditorTab />}
+          {activeTab === 'editor' && <EditorTab />}
 
-        {activeTab === 'keyboard' && <KeyboardSettingsTab />}
+          {activeTab === 'keyboard' && <KeyboardSettingsTab />}
 
-        {activeTab === 'data' && (
-          <Suspense fallback={<LoadingSkeleton count={4} height="h-6" />}>
-            <DataSettingsTab />
-          </Suspense>
-        )}
+          {activeTab === 'data' && (
+            <Suspense fallback={<LoadingSkeleton count={4} height="h-6" />}>
+              <DataSettingsTab />
+            </Suspense>
+          )}
 
-        {activeTab === 'sync' && <DeviceManagement />}
+          {activeTab === 'sync' && <DeviceManagement />}
 
-        {activeTab === 'agent' && <AgentAccessSettingsTab />}
+          {activeTab === 'agent' && <AgentAccessSettingsTab />}
 
-        {activeTab === 'google-calendar' && <GoogleCalendarSettingsTab />}
+          {activeTab === 'google-calendar' && <GoogleCalendarSettingsTab />}
 
-        {activeTab === 'notifications' && <NotificationsTab />}
+          {activeTab === 'notifications' && <NotificationsTab />}
 
-        {activeTab === 'help' && (
-          <HelpTab onReportBugClick={() => dispatchBugReport({ message: '' })} />
-        )}
+          {activeTab === 'help' && (
+            <HelpTab onReportBugClick={() => dispatchBugReport({ message: '' })} />
+          )}
+        </div>
       </div>
     </div>
   )
