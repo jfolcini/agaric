@@ -55,6 +55,19 @@ A block is soft-deleted via `deleted_at`. The Trash view lists root-only soft-de
 
 Soft-pointer columns (`block_properties.value_ref`) `CASCADE` on hard delete to keep the exactly-one-value-column CHECK valid.
 
+## Property values
+
+Non-built-in properties live in `block_properties`, one row per (block, key), with the value held in exactly one of `value_text` / `value_num` / `value_date` / `value_ref` / `value_bool` (the `exactly_one_value` CHECK enforces precisely one non-NULL arm). Built-in keys (`todo_state`, `due_date`, …) are denormalised to dedicated `blocks` columns instead and never hit this table.
+
+**All numeric properties are stored as `REAL` (`value_num`), by design.** The numeric pipeline is `f64` end-to-end: SQL `value_num REAL` ↔ `PropertyValue::Num(f64)` (`src-tauri/src/loro/engine.rs`) ↔ `LoroValue::Double` in the CRDT. There is deliberately **no `value_int` arm**. The consequence is that an integer-valued property (count, ordinal, priority) round-trips as `3.0` rather than `3`, and an integer above 2⁵³ would lose precision in the IEEE-754 double.
+
+This is an accepted, *documented* tradeoff (#587), not an oversight:
+
+- It is **unreachable with real payloads** today — every numeric property in use (priority levels, date-as-epoch-ms) is far below 2⁵³, so no value is actually mis-stored.
+- Adding a `value_int` arm is **not a DB-only migration**. The same `f64` cast exists at the engine layer (`PropertyValue::Num(f64)` persisted as `LoroValue::Double`), so a faithful fix would need a matching `PropertyValue::Int` / `LoroValue::I64` variant threaded through `to_loro`/`from_loro` and the SQL projection in lock-step — otherwise the fidelity loss just moves one layer down. Touching only the column would be a false fix.
+
+If a property type is ever introduced that is *semantically* a large exact integer (IDs, byte counts > 2⁵³, monotonic counters), revisit this as a coordinated three-layer change (column arm + `PropertyValue` variant + engine persistence) — not before. Until then `REAL` is sufficient and this note exists so the gap is not re-litigated as a bug.
+
 ## Concurrent edits
 
 There is **one op-application path**, and that path always fans out into the per-space `LoroEngine` (`src-tauri/src/loro/`). Concurrent writes from peers converge deterministically; same op inputs produce identical state on every replica. The legacy three-way merge / `is_conflict` model is gone (PEND-09 cutover).
