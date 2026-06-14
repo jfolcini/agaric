@@ -164,6 +164,19 @@ export function JournalCalendarDropdown({
     [agendaBySource],
   )
 
+  // Restore focus to the element that opened the dropdown (the trigger button)
+  // when it unmounts via ANY dismiss path — Escape, backdrop click, or
+  // date/week/month select (all unmount this component). Without this, focus
+  // falls to <body> and keyboard/SR users are stranded after each date jump
+  // (WCAG 2.4.3 Focus Order). Mirrors TemplatePicker; no focus trap is added,
+  // preserving the intentional non-modal design (CR-A11Y, #151, #1101).
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null
+    return () => {
+      previouslyFocused?.focus?.()
+    }
+  }, [])
+
   // Escape key closes the calendar
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
