@@ -29,10 +29,15 @@ import { parseValidationReason, ValidationCode } from '@/lib/search-query/valida
 import { useListKeyboardNavigation } from '../../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../../hooks/usePaginatedQuery'
 import { logger } from '../../lib/logger'
-import { addRecentPage, getRecentPages, type RecentPage } from '../../lib/recent-pages'
 import { reportIpcError } from '../../lib/report-ipc-error'
 import type { BlockRow, SearchBlockRow } from '../../lib/tauri'
 import { batchResolve, getBlock, searchBlocks } from '../../lib/tauri'
+import {
+  type RecentPage,
+  selectRecentPagesForSpace,
+  toRecentPage,
+  useRecentPagesStore,
+} from '../../stores/recent-pages'
 import { useTabsStore } from '../../stores/tabs'
 import { groupResultsByPage, type SearchResultGroup } from '../search/SearchResultGroups'
 import type { SearchToggleState } from '../search/SearchToggleRow'
@@ -79,15 +84,16 @@ export function useSearchResults({
 }: UseSearchResultsOptions): UseSearchResultsValue {
   const { t } = useTranslation()
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
+  // #1149 — recent pages now come from the reactive zustand store (single
+  // source of truth, shared with QuickAccessBar/CommandPalette). The
+  // mount-time `getRecentPages()` localStorage seed is gone: the selector
+  // re-renders on every `addRecentPage` so the list is always live.
+  const addRecentPage = useRecentPagesStore((s) => s.addRecentPage)
+  const recentPageRefs = useRecentPagesStore((s) => selectRecentPagesForSpace(s, currentSpaceId))
+  const recentPages: RecentPage[] = recentPageRefs.map(toRecentPage)
 
   const [loadingResultId, setLoadingResultId] = useState<string | null>(null)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
-  const [recentPages, setRecentPages] = useState<RecentPage[]>([])
-
-  // Load recent pages from localStorage on mount.
-  useEffect(() => {
-    setRecentPages(getRecentPages())
-  }, [])
 
   const debouncedProjection = useMemo(() => astToFilterProjection(debouncedAst), [debouncedAst])
   // FE-9 — tag name→id resolution (prefix lookup; FE-5 space-scoped cache
@@ -250,7 +256,6 @@ export function useSearchResults({
       try {
         if (block.block_type === 'page') {
           addRecentPage(block.id, block.content ?? 'Untitled')
-          setRecentPages(getRecentPages())
           navigateToPage(block.id, block.content ?? 'Untitled')
           return
         }
@@ -260,7 +265,6 @@ export function useSearchResults({
             // A newer click superseded this one while the parent loaded.
             if (navGenerationRef.current !== gen) return
             addRecentPage(block.parent_id, parent.content ?? 'Untitled')
-            setRecentPages(getRecentPages())
             navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
           } catch (err) {
             reportIpcError('SearchPanel', 'search.loadResultsFailed', err, t, {
@@ -277,7 +281,7 @@ export function useSearchResults({
         if (navGenerationRef.current === gen) setLoadingResultId(null)
       }
     },
-    [navigateToPage, t],
+    [addRecentPage, navigateToPage, t],
   )
 
   // PEND-50 Phase 1 — page-group results. Groups are derived from the flat
@@ -323,10 +327,9 @@ export function useSearchResults({
   const handleRecentClick = useCallback(
     (page: RecentPage) => {
       addRecentPage(page.id, page.title)
-      setRecentPages(getRecentPages())
       navigateToPage(page.id, page.title)
     },
-    [navigateToPage],
+    [addRecentPage, navigateToPage],
   )
 
   return {

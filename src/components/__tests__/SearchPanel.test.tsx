@@ -25,8 +25,8 @@ import { axe } from 'vitest-axe'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { t } from '@/lib/i18n'
 
-import { addRecentPage } from '../../lib/recent-pages'
 import { useNavigationStore } from '../../stores/navigation'
+import { type PageRef, useRecentPagesStore } from '../../stores/recent-pages'
 import { useSearchHistoryStore } from '../../stores/search-history'
 import { useSpaceStore } from '../../stores/space'
 import { selectPageStack, useTabsStore } from '../../stores/tabs'
@@ -85,6 +85,15 @@ beforeEach(() => {
   // copy). Reset it so a prior test's searches don't render the history
   // dropdown over an auto-focused empty input.
   useSearchHistoryStore.setState({ bySpace: {}, historyEnabled: true })
+  // #1149 — recent-pages is now the single zustand store source of truth
+  // (was `lib/recent-pages` raw localStorage). Reset its in-memory state so
+  // a prior test's slices don't leak; `rawKeysMerged: true` skips the
+  // raw-key migration during the per-test renders.
+  useRecentPagesStore.setState({
+    recentPages: [],
+    recentPagesBySpace: {},
+    rawKeysMerged: true,
+  })
   // FEAT-3 Phase 2 — SearchPanel now gates on `useSpaceStore.isReady`
   // and passes `currentSpaceId` to `searchBlocks`. Seed the store so
   // tests exercise the real code path (not the loading skeleton).
@@ -110,6 +119,24 @@ function typeAndSubmit(input: HTMLElement, value: string) {
   fireEvent.change(input, { target: { value } })
   const form = input.closest('form')
   if (form) fireEvent.submit(form)
+}
+
+/**
+ * #1149 — seed the recent-pages store's `SPACE_TEST` slice (the active
+ * space in this suite). Replaces the former raw `recent_pages:SPACE_TEST`
+ * localStorage seeding now that the store is the single source of truth.
+ */
+function seedRecentPages(entries: PageRef[]): void {
+  useRecentPagesStore.setState((s) => ({
+    recentPages: entries,
+    recentPagesBySpace: { ...s.recentPagesBySpace, SPACE_TEST: entries },
+  }))
+}
+
+/** #1149 — read the `SPACE_TEST` slice back as `{ id }`-keyed entries. */
+function readRecentPages(): Array<{ id: string; title: string }> {
+  const slice = useRecentPagesStore.getState().recentPagesBySpace['SPACE_TEST'] ?? []
+  return slice.map((p) => ({ id: p.pageId, title: p.title }))
 }
 
 /**
@@ -1197,14 +1224,11 @@ describe('SearchPanel', () => {
   // Recent pages tests (F-6)
   // =========================================================================
 
-  it('shows recent pages when query is empty and localStorage has entries', () => {
-    localStorage.setItem(
-      'recent_pages:SPACE_TEST',
-      JSON.stringify([
-        { id: 'P1', title: 'Page One', visitedAt: '2024-01-01T00:00:00.000Z' },
-        { id: 'P2', title: 'Page Two', visitedAt: '2024-01-01T00:00:00.000Z' },
-      ]),
-    )
+  it('shows recent pages when query is empty and the store has entries', () => {
+    seedRecentPages([
+      { pageId: 'P1', title: 'Page One', visitedAt: '2024-01-01T00:00:00.000Z' },
+      { pageId: 'P2', title: 'Page Two', visitedAt: '2024-01-01T00:00:00.000Z' },
+    ])
 
     render(<SearchPanel />)
 
@@ -1213,17 +1237,14 @@ describe('SearchPanel', () => {
     expect(screen.getByText('Page Two')).toBeInTheDocument()
   })
 
-  it('does not show recent section when localStorage is empty', () => {
+  it('does not show recent section when the store is empty', () => {
     render(<SearchPanel />)
 
     expect(screen.queryByText(t('search.recentTitle'))).not.toBeInTheDocument()
   })
 
   it('hides recent section when user types a query', () => {
-    localStorage.setItem(
-      'recent_pages:SPACE_TEST',
-      JSON.stringify([{ id: 'P1', title: 'Page One', visitedAt: '2024-01-01T00:00:00.000Z' }]),
-    )
+    seedRecentPages([{ pageId: 'P1', title: 'Page One', visitedAt: '2024-01-01T00:00:00.000Z' }])
 
     render(<SearchPanel />)
     expect(screen.getByText(t('search.recentTitle'))).toBeInTheDocument()
@@ -1237,10 +1258,7 @@ describe('SearchPanel', () => {
   it('navigates to page when clicking a recent item', async () => {
     const user = userEvent.setup()
 
-    localStorage.setItem(
-      'recent_pages:SPACE_TEST',
-      JSON.stringify([{ id: 'P1', title: 'Page One', visitedAt: '2024-01-01T00:00:00.000Z' }]),
-    )
+    seedRecentPages([{ pageId: 'P1', title: 'Page One', visitedAt: '2024-01-01T00:00:00.000Z' }])
 
     render(<SearchPanel />)
     await user.click(screen.getByText('Page One'))
@@ -1251,7 +1269,7 @@ describe('SearchPanel', () => {
     expect(selectPageStack(useTabsStore.getState())[0]?.title).toBe('Page One')
   })
 
-  it('updates recent pages in localStorage when clicking a search result (page type)', async () => {
+  it('updates recent pages in the store when clicking a search result (page type)', async () => {
     const user = userEvent.setup()
 
     mockedInvoke.mockResolvedValueOnce({
@@ -1279,13 +1297,13 @@ describe('SearchPanel', () => {
     const option = await screen.findByRole('option')
     await user.click(option)
 
-    const stored = JSON.parse(localStorage.getItem('recent_pages:SPACE_TEST') ?? '[]')
+    const stored = readRecentPages()
     expect(stored).toHaveLength(1)
-    expect(stored[0].id).toBe('PAGE1')
-    expect(stored[0].title).toBe('My Page')
+    expect(stored[0]?.id).toBe('PAGE1')
+    expect(stored[0]?.title).toBe('My Page')
   })
 
-  it('updates recent pages in localStorage when clicking a search result (child block)', async () => {
+  it('updates recent pages in the store when clicking a search result (child block)', async () => {
     const user = userEvent.setup()
 
     // Dispatch by command name rather than queue-order. SearchPanel's
@@ -1338,45 +1356,43 @@ describe('SearchPanel', () => {
     await user.click(screen.getByText(textContent('child content')))
 
     await waitFor(() => {
-      const stored = JSON.parse(localStorage.getItem('recent_pages:SPACE_TEST') ?? '[]')
+      const stored = readRecentPages()
       expect(stored).toHaveLength(1)
-      expect(stored[0].id).toBe('PARENT1')
-      expect(stored[0].title).toBe('Parent Page Title')
+      expect(stored[0]?.id).toBe('PARENT1')
+      expect(stored[0]?.title).toBe('Parent Page Title')
     })
   })
 
   it('moves existing page to top of recent list on re-visit', async () => {
     const user = userEvent.setup()
 
-    localStorage.setItem(
-      'recent_pages:SPACE_TEST',
-      JSON.stringify([
-        { id: 'P1', title: 'First', visitedAt: '2024-01-01T00:00:00.000Z' },
-        { id: 'P2', title: 'Second', visitedAt: '2024-01-01T00:00:00.000Z' },
-      ]),
-    )
+    seedRecentPages([
+      { pageId: 'P1', title: 'First', visitedAt: '2024-01-01T00:00:00.000Z' },
+      { pageId: 'P2', title: 'Second', visitedAt: '2024-01-01T00:00:00.000Z' },
+    ])
 
     render(<SearchPanel />)
     await user.click(screen.getByText('Second'))
 
-    const stored = JSON.parse(localStorage.getItem('recent_pages:SPACE_TEST') ?? '[]')
-    expect(stored[0].id).toBe('P2')
-    expect(stored[1].id).toBe('P1')
+    const stored = readRecentPages()
+    expect(stored[0]?.id).toBe('P2')
+    expect(stored[1]?.id).toBe('P1')
   })
 
   it('caps recent pages at 10 entries', () => {
-    const pages = Array.from({ length: 10 }, (_, i) => ({
-      id: `P${i}`,
+    const pages: PageRef[] = Array.from({ length: 10 }, (_, i) => ({
+      pageId: `P${i}`,
       title: `Page ${i}`,
       visitedAt: '2024-01-01T00:00:00.000Z',
     }))
-    localStorage.setItem('recent_pages:SPACE_TEST', JSON.stringify(pages))
+    seedRecentPages(pages)
 
-    addRecentPage('NEW1', 'New Page')
+    // SPACE_TEST is the active space, so the store's `addRecentPage` writes here.
+    useRecentPagesStore.getState().addRecentPage('NEW1', 'New Page')
 
-    const stored = JSON.parse(localStorage.getItem('recent_pages:SPACE_TEST') ?? '[]')
+    const stored = readRecentPages()
     expect(stored).toHaveLength(10)
-    expect(stored[0].id).toBe('NEW1')
+    expect(stored[0]?.id).toBe('NEW1')
   })
 
   // --- PageLink breadcrumb navigation ---
