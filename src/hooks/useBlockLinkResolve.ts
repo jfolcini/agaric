@@ -65,8 +65,19 @@ export async function fetchAndCacheLinks(
     if (isCancelled()) return
     const store = useResolveStore.getState()
     const resolvedIds = new Set(resolved.map((r) => r.id))
+    // #1072 — collapse the per-id writeback into a single batchSet so the
+    // resolve cache is cloned and `version` is bumped at most once for the
+    // whole batch (zero when everything was already cached), instead of
+    // K+M full-Map clones + K+M version bumps. batchSet diffs-once /
+    // clones-once / bumps-once (#753) and, like `set`, writes under
+    // activeSpaceId() and caps via evictOldest — behaviour is preserved.
+    const entries: Array<{ id: string; title: string; deleted: boolean }> = []
     for (const r of resolved) {
-      store.set(r.id, r.title?.slice(0, 60) || `[[${r.id.slice(0, 8)}...]]`, r.deleted)
+      entries.push({
+        id: r.id,
+        title: r.title?.slice(0, 60) || `[[${r.id.slice(0, 8)}...]]`,
+        deleted: r.deleted,
+      })
     }
     // FEAT-3p7 — every requested id the backend did not return is a
     // foreign-space (or genuinely unknown) target. Cache a deleted
@@ -75,8 +86,9 @@ export async function fetchAndCacheLinks(
     // 'active' default and the chip silently renders as live.
     for (const id of ids) {
       if (resolvedIds.has(id)) continue
-      store.set(id, `[[${id.slice(0, 8)}...]]`, true)
+      entries.push({ id, title: `[[${id.slice(0, 8)}...]]`, deleted: true })
     }
+    store.batchSet(entries)
   } catch (err) {
     logger.warn('BlockTree', 'Batch resolve failed for uncached block links', undefined, err)
   }

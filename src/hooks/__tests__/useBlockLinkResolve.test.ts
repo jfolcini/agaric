@@ -25,8 +25,13 @@ import { logger } from '../../lib/logger'
 import type { ResolvedBlock } from '../../lib/tauri'
 import { batchResolve } from '../../lib/tauri'
 import { useResolveStore } from '../../stores/resolve'
+import { keyFor } from '../../stores/resolve'
 import { useSpaceStore } from '../../stores/space'
-import { collectUncachedLinkIds, useBlockLinkResolve } from '../useBlockLinkResolve'
+import {
+  collectUncachedLinkIds,
+  fetchAndCacheLinks,
+  useBlockLinkResolve,
+} from '../useBlockLinkResolve'
 
 const mockedBatchResolve = vi.mocked(batchResolve)
 const mockedLoggerWarn = vi.mocked(logger.warn)
@@ -158,5 +163,106 @@ describe('useBlockLinkResolve', () => {
         expect.any(Error),
       )
     })
+  })
+})
+
+// 26-char Crockford base32 ULIDs to satisfy the [[ULID]] regex / id slices.
+const ULID_C = '01TESTLINK0000000000ULIDC3'
+const ULID_D = '01TESTLINK0000000000ULIDD4'
+
+describe('fetchAndCacheLinks — single-batchSet writeback (#1072)', () => {
+  it('resolving K links + M missing bumps version exactly ONCE', async () => {
+    // K = 2 resolved, M = 2 missing (requested but not returned).
+    mockedBatchResolve.mockResolvedValueOnce([
+      { id: ULID_A, title: 'Linked A', block_type: 'content', deleted: false },
+      { id: ULID_B, title: 'Linked B', block_type: 'content', deleted: false },
+    ])
+
+    const versionBefore = useResolveStore.getState().version
+    let bumps = 0
+    const unsub = useResolveStore.subscribe((s, prev) => {
+      if (s.version !== prev.version) bumps += 1
+    })
+
+    await fetchAndCacheLinks(new Set([ULID_A, ULID_B, ULID_C, ULID_D]), TEST_SPACE_ID, () => false)
+    unsub()
+
+    // Exactly one version bump for the whole K+M batch (was K+M = 4 before #1072).
+    expect(bumps).toBe(1)
+    expect(useResolveStore.getState().version).toBe(versionBefore + 1)
+  })
+
+  it('writes the same titles/deleted flags as the old per-item set loops', async () => {
+    mockedBatchResolve.mockResolvedValueOnce([
+      // resolved with a title — cached verbatim (≤60 chars here).
+      { id: ULID_A, title: 'Linked A', block_type: 'content', deleted: false },
+      // resolved, deleted flag preserved.
+      { id: ULID_B, title: 'Deleted B', block_type: 'content', deleted: true },
+      // resolved with an empty title — falls back to the [[id…]] placeholder.
+      { id: ULID_C, title: '', block_type: 'content', deleted: false },
+    ])
+
+    await fetchAndCacheLinks(new Set([ULID_A, ULID_B, ULID_C, ULID_D]), TEST_SPACE_ID, () => false)
+
+    const cache = useResolveStore.getState().cache
+    expect(cache.get(keyFor(TEST_SPACE_ID, ULID_A))).toEqual({
+      title: 'Linked A',
+      deleted: false,
+    })
+    expect(cache.get(keyFor(TEST_SPACE_ID, ULID_B))).toEqual({
+      title: 'Deleted B',
+      deleted: true,
+    })
+    // Empty title → [[<first 8 of id>...]] fallback (matches old `set` loop).
+    expect(cache.get(keyFor(TEST_SPACE_ID, ULID_C))).toEqual({
+      title: `[[${ULID_C.slice(0, 8)}...]]`,
+      deleted: false,
+    })
+    // Requested but not returned → deleted placeholder (FEAT-3p7).
+    expect(cache.get(keyFor(TEST_SPACE_ID, ULID_D))).toEqual({
+      title: `[[${ULID_D.slice(0, 8)}...]]`,
+      deleted: true,
+    })
+  })
+
+  it('truncates resolved titles to 60 chars like the old loop', async () => {
+    const longTitle = 'x'.repeat(120)
+    mockedBatchResolve.mockResolvedValueOnce([
+      { id: ULID_A, title: longTitle, block_type: 'content', deleted: false },
+    ])
+
+    await fetchAndCacheLinks(new Set([ULID_A]), TEST_SPACE_ID, () => false)
+
+    expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, ULID_A))).toEqual({
+      title: longTitle.slice(0, 60),
+      deleted: false,
+    })
+  })
+
+  it('a fully-cached re-resolve causes ZERO version bumps', async () => {
+    // First pass populates the cache.
+    mockedBatchResolve.mockResolvedValueOnce([
+      { id: ULID_A, title: 'Linked A', block_type: 'content', deleted: false },
+      { id: ULID_B, title: 'Linked B', block_type: 'content', deleted: false },
+    ])
+    await fetchAndCacheLinks(new Set([ULID_A, ULID_B]), TEST_SPACE_ID, () => false)
+
+    // Second pass returns identical results — batchSet must diff-and-no-op.
+    mockedBatchResolve.mockResolvedValueOnce([
+      { id: ULID_A, title: 'Linked A', block_type: 'content', deleted: false },
+      { id: ULID_B, title: 'Linked B', block_type: 'content', deleted: false },
+    ])
+
+    const versionBefore = useResolveStore.getState().version
+    let bumps = 0
+    const unsub = useResolveStore.subscribe((s, prev) => {
+      if (s.version !== prev.version) bumps += 1
+    })
+
+    await fetchAndCacheLinks(new Set([ULID_A, ULID_B]), TEST_SPACE_ID, () => false)
+    unsub()
+
+    expect(bumps).toBe(0)
+    expect(useResolveStore.getState().version).toBe(versionBefore)
   })
 })
