@@ -45,6 +45,15 @@ export const editor: Record<string, string> = {
   'slashCommand.categories.templates': 'Templates',
   'slashCommand.categories.queries': 'Queries',
   'slashCommand.categories.repeat': 'Repeat',
+  // #1106 — split the flat 17-item Repeat group into three orthogonal
+  // sub-groups so the picker renders a divider/header per family instead of
+  // one undifferentiated list: cadence (plain daily/weekly/… + base), anchoring
+  // (.+ from-completion / ++ catch-up variants + remove), and end-conditions
+  // (until / limit). Dispatch is keyed off item.id, so the new category labels
+  // are presentation-only.
+  'slashCommand.categories.repeat.cadence': 'Repeat — Cadence',
+  'slashCommand.categories.repeat.anchoring': 'Repeat — Anchoring',
+  'slashCommand.categories.repeat.endCondition': 'Repeat — End condition',
   // #1105 — heading for the "Recent" band the slash menu prepends on an empty
   // query (mirrors the command palette's recents strip).
   'slashCommand.categories.recent': 'Recent',
