@@ -90,15 +90,25 @@ function makeCallbacks(): BlockKeyboardCallbacks & { _calls: Record<string, numb
  * production `isSuggestionPopupVisible()` DOM probe sees it (jsdom/happy-dom
  * lack a real layout, so we stub `checkVisibility`).
  */
-function renderPopup(items: PickerItem[], command: (item: PickerItem) => void) {
+function renderPopup(
+  items: PickerItem[],
+  command: (item: PickerItem) => void,
+  extra?: { onActiveDescendantChange?: (id: string | null) => void },
+) {
   const ref = createRef<SuggestionListRef>()
   const popup = document.createElement('div')
   popup.className = 'suggestion-popup'
   popup.checkVisibility = () => true
   document.body.appendChild(popup)
-  const utils = render(<SuggestionList ref={ref} items={items} command={command} label="Tags" />, {
-    container: popup,
-  })
+  const cbProps = extra?.onActiveDescendantChange
+    ? { onActiveDescendantChange: extra.onActiveDescendantChange }
+    : {}
+  const utils = render(
+    <SuggestionList ref={ref} items={items} command={command} label="Tags" {...cbProps} />,
+    {
+      container: popup,
+    },
+  )
   return { ref, popup, ...utils }
 }
 
@@ -225,6 +235,80 @@ describe('T4 — a11y: focused listbox has no violations', () => {
     expect(listbox).toHaveAttribute('aria-activedescendant', 'suggestion-2')
     expect(document.getElementById('suggestion-2')).not.toBeNull()
 
+    const results = await axe(popup)
+    expect(results).toHaveNoViolations()
+  })
+})
+
+describe('#1102 — listbox carries a stable id for aria-controls', () => {
+  it('gives the listbox the default stable id so the combobox can target it', () => {
+    const command = vi.fn()
+    renderPopup(sampleItems, command)
+    const listbox = screen.getByRole('listbox')
+    // Matches SUGGESTION_LISTBOX_ID, which the renderer wires into the
+    // contenteditable's aria-controls.
+    expect(listbox).toHaveAttribute('id', 'suggestion-listbox')
+  })
+})
+
+describe('#1102 — onActiveDescendantChange reports the highlighted option id', () => {
+  it('reports the default (first) option id on mount', () => {
+    const command = vi.fn()
+    const onActiveDescendantChange = vi.fn()
+    renderPopup(sampleItems, command, { onActiveDescendantChange })
+    // First item is highlighted by default → its id is reported.
+    expect(onActiveDescendantChange).toHaveBeenLastCalledWith('suggestion-1')
+  })
+
+  it('tracks the highlighted option id across arrow navigation', () => {
+    const command = vi.fn()
+    const onActiveDescendantChange = vi.fn()
+    const { ref } = renderPopup(sampleItems, command, { onActiveDescendantChange })
+
+    act(() => {
+      ref.current?.onKeyDown({ event: makeKeyEvent('ArrowDown') })
+    })
+    expect(onActiveDescendantChange).toHaveBeenLastCalledWith('suggestion-2')
+
+    act(() => {
+      ref.current?.onKeyDown({ event: makeKeyEvent('ArrowDown') })
+    })
+    expect(onActiveDescendantChange).toHaveBeenLastCalledWith('suggestion-3')
+
+    // Wrap from last back to first.
+    act(() => {
+      ref.current?.onKeyDown({ event: makeKeyEvent('ArrowDown') })
+    })
+    expect(onActiveDescendantChange).toHaveBeenLastCalledWith('suggestion-1')
+  })
+
+  it('reports null when the list is empty (no active option)', () => {
+    const command = vi.fn()
+    const onActiveDescendantChange = vi.fn()
+    renderPopup([], command, { onActiveDescendantChange })
+    expect(onActiveDescendantChange).toHaveBeenLastCalledWith(null)
+  })
+})
+
+describe('#1102 — aria-live status announces result counts on every update', () => {
+  it('announces the count when results exist (plural)', () => {
+    const command = vi.fn()
+    renderPopup(sampleItems, command)
+    const status = screen.getByTestId('suggestion-status')
+    expect(status).toHaveAttribute('aria-live', 'polite')
+    expect(status).toHaveTextContent('3 results available')
+  })
+
+  it('announces the singular form for a single result', () => {
+    const command = vi.fn()
+    renderPopup([{ id: '1', label: 'Alpha' }], command)
+    expect(screen.getByTestId('suggestion-status')).toHaveTextContent('1 result available')
+  })
+
+  it('renders the focused listbox with the live status with no axe violations', async () => {
+    const command = vi.fn()
+    const { popup } = renderPopup(sampleItems, command)
+    expect(screen.getByTestId('suggestion-status')).toHaveTextContent('3 results available')
     const results = await axe(popup)
     expect(results).toHaveNoViolations()
   })

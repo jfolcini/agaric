@@ -1317,3 +1317,165 @@ describe('onUpdate rAF coalescing (PEND-27 P7)', () => {
     expect(mockedComputePosition).not.toHaveBeenCalled()
   })
 })
+
+// ---------------------------------------------------------------------------
+// #1102 — WCAG editable-combobox wiring on the FOCUSED contenteditable.
+// ---------------------------------------------------------------------------
+describe('editable-combobox ARIA wiring (#1102)', () => {
+  /**
+   * Build a mock editor whose `view.dom` is a REAL contenteditable carrying the
+   * resting `role="textbox"` (mirrors `use-roving-editor.ts` EDITOR_PROPS), so
+   * we can assert the renderer flips it to a combobox and back without any
+   * `instanceof` on ProseMirror types (it manipulates DOM attrs directly).
+   */
+  function makeComboboxEditor() {
+    const dom = document.createElement('div')
+    dom.setAttribute('role', 'textbox')
+    dom.setAttribute('aria-multiline', 'true')
+    dom.setAttribute('aria-label', 'Block editor')
+    document.body.appendChild(dom)
+    // oxlint-disable-next-line typescript/no-explicit-any -- minimal editor mock
+    const editor = { view: { dom, isDestroyed: false } } as any
+    return { editor, dom }
+  }
+
+  // oxlint-disable-next-line typescript/no-explicit-any -- minimal mock props
+  function makeProps(editor: any, query = ''): any {
+    return {
+      items: [],
+      command: vi.fn(),
+      clientRect: () =>
+        ({ left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }) as DOMRect,
+      editor,
+      query,
+      range: { from: 0, to: 1 },
+      text: '@',
+      decorationNode: null,
+    }
+  }
+
+  /** The `onActiveDescendantChange` callback handed to the most recent SuggestionList. */
+  function lastActiveDescendantCb(): (id: string | null) => void {
+    const calls = mockReactRenderer.mock.calls
+    const last = calls[calls.length - 1]
+    if (!last) throw new Error('ReactRenderer was never constructed')
+    // oxlint-disable-next-line typescript/no-explicit-any -- mock call args
+    return (last[1] as any).props.onActiveDescendantChange
+  }
+
+  afterEach(() => {
+    for (const el of document.querySelectorAll('.suggestion-popup')) el.remove()
+    document.body.querySelectorAll('[role="textbox"],[role="combobox"]').forEach((el) => {
+      el.remove()
+    })
+  })
+
+  it('onStart promotes the contenteditable to a combobox with controls + autocomplete', () => {
+    const { editor, dom } = makeComboboxEditor()
+    const renderer = createSuggestionRenderer('Tags')
+
+    renderer.onStart(makeProps(editor))
+
+    expect(dom.getAttribute('role')).toBe('combobox')
+    expect(dom.getAttribute('aria-expanded')).toBe('true')
+    expect(dom.getAttribute('aria-controls')).toBe('suggestion-listbox')
+    expect(dom.getAttribute('aria-autocomplete')).toBe('list')
+
+    renderer.onExit()
+  })
+
+  it('passes a stable listboxId to the SuggestionList so aria-controls has a target', () => {
+    const { editor } = makeComboboxEditor()
+    const renderer = createSuggestionRenderer('Tags')
+
+    renderer.onStart(makeProps(editor))
+
+    const calls = mockReactRenderer.mock.calls
+    const last = calls[calls.length - 1]
+    if (!last) throw new Error('ReactRenderer was never constructed')
+    // oxlint-disable-next-line typescript/no-explicit-any -- mock call args
+    expect((last[1] as any).props.listboxId).toBe('suggestion-listbox')
+
+    renderer.onExit()
+  })
+
+  it('onExit restores role=textbox and strips every combobox attribute', () => {
+    const { editor, dom } = makeComboboxEditor()
+    const renderer = createSuggestionRenderer('Tags')
+
+    renderer.onStart(makeProps(editor))
+    // Simulate a highlighted option mid-session.
+    lastActiveDescendantCb()('suggestion-2')
+    expect(dom.getAttribute('aria-activedescendant')).toBe('suggestion-2')
+
+    renderer.onExit()
+
+    expect(dom.getAttribute('role')).toBe('textbox')
+    expect(dom.hasAttribute('aria-expanded')).toBe(false)
+    expect(dom.hasAttribute('aria-controls')).toBe(false)
+    expect(dom.hasAttribute('aria-autocomplete')).toBe(false)
+    expect(dom.hasAttribute('aria-activedescendant')).toBe(false)
+  })
+
+  it('Escape close restores role=textbox on the contenteditable', () => {
+    const { editor, dom } = makeComboboxEditor()
+    const renderer = createSuggestionRenderer('Tags')
+
+    renderer.onStart(makeProps(editor))
+    expect(dom.getAttribute('role')).toBe('combobox')
+
+    renderer.onKeyDown({
+      event: new KeyboardEvent('keydown', { key: 'Escape' }),
+      view: {} as never,
+      range: { from: 0, to: 0 },
+    })
+
+    expect(dom.getAttribute('role')).toBe('textbox')
+    expect(dom.hasAttribute('aria-expanded')).toBe(false)
+  })
+
+  it('outside click restores role=textbox on the contenteditable', () => {
+    const { editor, dom } = makeComboboxEditor()
+    const renderer = createSuggestionRenderer('Tags')
+
+    renderer.onStart(makeProps(editor))
+    expect(dom.getAttribute('role')).toBe('combobox')
+
+    // rAF is synchronous in this suite, so the outside-click listener is live.
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+
+    expect(dom.getAttribute('role')).toBe('textbox')
+    expect(dom.hasAttribute('aria-expanded')).toBe(false)
+  })
+
+  it('aria-activedescendant on the contenteditable tracks the highlighted option id', () => {
+    const { editor, dom } = makeComboboxEditor()
+    const renderer = createSuggestionRenderer('Tags')
+
+    renderer.onStart(makeProps(editor))
+    const report = lastActiveDescendantCb()
+
+    // No active option yet → attribute absent (never points at a stale id).
+    expect(dom.hasAttribute('aria-activedescendant')).toBe(false)
+
+    report('suggestion-1')
+    expect(dom.getAttribute('aria-activedescendant')).toBe('suggestion-1')
+
+    // Arrow navigation moves the highlight → the contenteditable follows.
+    report('suggestion-3')
+    expect(dom.getAttribute('aria-activedescendant')).toBe('suggestion-3')
+
+    // List emptied (query with no matches) → attribute removed.
+    report(null)
+    expect(dom.hasAttribute('aria-activedescendant')).toBe(false)
+
+    renderer.onExit()
+  })
+
+  it('does not throw when the editor view is unavailable (no contenteditable)', () => {
+    const renderer = createSuggestionRenderer('Tags')
+    // oxlint-disable-next-line typescript/no-explicit-any -- editor with no view
+    expect(() => renderer.onStart(makeProps({} as any))).not.toThrow()
+    renderer.onExit()
+  })
+})
