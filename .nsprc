@@ -63,5 +63,45 @@
     "active": true,
     "expiresOn": "2026-09-13T00:00:00.000Z",
     "notes": "js-yaml quadratic-complexity DoS in YAML merge keys (GHSA-h67p-54hq-rp68) via markdownlint-cli2 > js-yaml. markdownlint-cli2 is a dev-only lint tool (not in the production Tauri app or dev runtime) parsing trusted in-repo markdown/config — no adversarial YAML input per the AGENTS.md threat model. No upstream fix published yet. Expires 90d; re-review on expiry."
+  },
+  "1120800": {
+    "active": true,
+    "expiresOn": "2026-09-14T00:00:00.000Z",
+    "notes": "dompurify IN_PLACE mode trusts existing nodes (GHSA-x4vx-rjvf-j5p4). dompurify is a transitive dep (via mermaid) sanitizing locally-rendered diagram/markdown HTML; IN_PLACE-mode XSS requires attacker-controlled DOM, which does not exist in a single-user local-first app with no adversarial input per the AGENTS.md threat model. Expires 90d; re-review on expiry."
+  },
+  "1120801": {
+    "active": true,
+    "expiresOn": "2026-09-14T00:00:00.000Z",
+    "notes": "dompurify hook mutation of data.allowedTags/allowedAttributes pollutes defaults (GHSA-76mc-f452-cxcm). Requires app-controlled malicious hooks + adversarial input; Agaric (transitive via mermaid) registers no such hooks and per the AGENTS.md threat model is single-user local-first with no adversarial input. Expires 90d; re-review on expiry."
+  },
+  "1120802": {
+    "active": true,
+    "expiresOn": "2026-09-14T00:00:00.000Z",
+    "notes": "dompurify cross-realm IN_PLACE sanitization bypass (GHSA-hpcv-96wg-7vj8). IN_PLACE cross-realm XSS requires attacker-controlled DOM; not reachable in a single-user local-first app with no adversarial input per the AGENTS.md threat model. Expires 90d; re-review on expiry."
+  },
+  "1120803": {
+    "active": true,
+    "expiresOn": "2026-09-14T00:00:00.000Z",
+    "notes": "dompurify IN_PLACE preserves attributes of a clobbered root element → XSS (GHSA-r47g-fvhr-h676). Requires attacker-controlled DOM in IN_PLACE mode; no adversarial input per the AGENTS.md threat model (single-user local-first). Expires 90d; re-review on expiry."
+  },
+  "1120805": {
+    "active": true,
+    "expiresOn": "2026-09-14T00:00:00.000Z",
+    "notes": "dompurify Trusted Types policy survives across calls (GHSA-vxr8-fq34-vvx9). Low severity; requires adversarial input which does not exist in a single-user local-first app per the AGENTS.md threat model. Expires 90d; re-review on expiry."
+  },
+  "1120812": {
+    "active": true,
+    "expiresOn": "2026-09-14T00:00:00.000Z",
+    "notes": "dompurify SAFE_FOR_TEMPLATES bypass via template literals (GHSA-gvmj-g25r-r7wr). Requires adversarial template input; Agaric content is the user's own (single-user local-first, no adversarial input) per the AGENTS.md threat model. Expires 90d; re-review on expiry."
+  },
+  "1120813": {
+    "active": true,
+    "expiresOn": "2026-09-14T00:00:00.000Z",
+    "notes": "dompurify IN_PLACE sanitization bypass (GHSA-rp9w-3fw7-7cwq). IN_PLACE XSS requires attacker-controlled DOM; not reachable under the AGENTS.md single-user local-first, no-adversarial-input threat model. Expires 90d; re-review on expiry."
+  },
+  "1120820": {
+    "active": true,
+    "expiresOn": "2026-09-14T00:00:00.000Z",
+    "notes": "markdown-it quadratic-complexity DoS (GHSA-6v5v-wf23-fmfq). DoS requires adversarial markdown; Agaric renders the user's own local content (single-user local-first, no adversarial input) per the AGENTS.md threat model. No upstream fix matching the pinned version yet. Expires 90d; re-review on expiry."
   }
 }

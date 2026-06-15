@@ -313,7 +313,11 @@ test.describe('Task and priority shortcuts', () => {
     await expect(chevron).toBeVisible()
     await expect(chevron).toHaveAttribute('aria-expanded', 'true')
 
-    // Click the collapse chevron to toggle collapse
+    // Click the collapse chevron to toggle collapse. #1243: an EXPANDED
+    // parent's chevron is hover-revealed (opacity-0 / pointer-events-none at
+    // rest), so hover the row first to make it actionable — matching how a
+    // mouse user reaches it.
+    await parentBlock.hover()
     await chevron.click()
 
     // Verify the chevron now shows collapsed (aria-expanded=false)
