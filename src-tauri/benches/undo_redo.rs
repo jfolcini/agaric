@@ -402,6 +402,8 @@ fn bench_list_page_history_deep_nesting(c: &mut Criterion) {
 fn bench_undo_page_op_various_depths(c: &mut Criterion) {
     let mut group = c.benchmark_group("undo_page_op_depth");
 
+    // Cap intentional (#1231): undo depth is bounded session/undo history;
+    // 500 ops is already generous, so this is not pushed to a 100K axis.
     for depth in [0, 10, 50, 100, 500] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
@@ -483,6 +485,8 @@ fn bench_revert_ops_batch_50(c: &mut Criterion) {
 fn bench_restore_page_to_op(c: &mut Criterion) {
     let mut group = c.benchmark_group("restore_page_to_op");
 
+    // Cap intentional (#1231): op-history length is bounded by undo session
+    // size; 1000 ops is generous, so this is not pushed to a 100K axis.
     for total_ops in [100, 500, 1000] {
         let num_blocks = total_ops / 2;
 

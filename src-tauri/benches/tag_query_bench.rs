@@ -112,7 +112,11 @@ fn bench_resolve_tag_no_inheritance(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("resolve_tag_no_inheritance");
 
-    for count in [100, 1_000, 10_000] {
+    // Size axis = blocks under the tagged tree, which scales with the vault,
+    // so this sweeps to the realistic 100K-block ceiling (#1231). Distinct-tag
+    // count stays at 1 (one tagged root) and depth at 3 — only the block count
+    // grows, matching how a large vault accumulates blocks under a tag.
+    for count in [100, 1_000, 10_000, 100_000] {
         let dir = TempDir::new().unwrap();
         let pool = make_pool(&rt, &dir);
         let tag_id = "TAG_BENCH_0000000000000001";
@@ -138,7 +142,9 @@ fn bench_resolve_tag_with_inheritance(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("resolve_tag_with_inheritance");
 
-    for count in [100, 1_000, 10_000] {
+    // Block-count axis = vault scale; sweep to 100K (#1231). Tag count (1) and
+    // depth (3) stay realistic — only the block count grows.
+    for count in [100, 1_000, 10_000, 100_000] {
         let dir = TempDir::new().unwrap();
         let pool = make_pool(&rt, &dir);
         let tag_id = "TAG_BENCH_0000000000000001";
@@ -251,12 +257,12 @@ async fn bench_cte_query(pool: &SqlitePool, tag_id: &str) -> i64 {
             SELECT bt.block_id AS id
             FROM block_tags bt
             JOIN blocks b ON b.id = bt.block_id
-            WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0
+            WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL
             UNION ALL
             SELECT b.id
             FROM blocks b
             JOIN tagged_tree tt ON b.parent_id = tt.id
-            WHERE b.deleted_at IS NULL AND b.is_conflict = 0
+            WHERE b.deleted_at IS NULL
         )
         SELECT COUNT(DISTINCT id) FROM tagged_tree
         "#,
@@ -271,7 +277,9 @@ fn bench_cte_vs_materialized(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("cte_vs_materialized");
 
-    for count in [1_000, 10_000] {
+    // Block-count axis = vault scale; sweep to 100K (#1231) so the
+    // materialized-vs-recursive-CTE gap is measured at the realistic ceiling.
+    for count in [1_000, 10_000, 100_000] {
         let dir = TempDir::new().unwrap();
         let pool = make_pool(&rt, &dir);
         let tag_id = "TAG_BENCH_0000000000000001";
@@ -336,6 +344,9 @@ fn bench_list_tags_by_prefix(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("list_tags_by_prefix");
 
+    // `count` = number of DISTINCT tags, which is schema-like / human-bounded
+    // (nobody defines 100K distinct tags); 10K is already generous, so this
+    // cap is intentional and NOT extended to 100K (#1231).
     for count in [100, 1_000, 10_000] {
         let dir = TempDir::new().unwrap();
         let pool = make_pool(&rt, &dir);
@@ -406,7 +417,9 @@ fn bench_list_tags_for_block(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("list_tags_for_block");
 
-    for count in [100, 1_000, 10_000] {
+    // `count` = filler block count (vault scale); sweep to 100K (#1231). The
+    // target block keeps a realistic 5 tags — only the surrounding vault grows.
+    for count in [100, 1_000, 10_000, 100_000] {
         let dir = TempDir::new().unwrap();
         let pool = make_pool(&rt, &dir);
         rt.block_on(seed_blocks_with_tags_for_target(&pool, count));

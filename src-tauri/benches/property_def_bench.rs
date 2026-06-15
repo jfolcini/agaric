@@ -98,6 +98,8 @@ fn bench_create_property_def(c: &mut Criterion) {
 fn bench_list_property_defs(c: &mut Criterion) {
     let mut group = c.benchmark_group("list_property_defs");
 
+    // Cap intentional (#1231): `count` = distinct property *definitions*,
+    // which is schema-like / human-bounded — ~100 is realistic, 100K is not.
     for count in [10, 50, 100] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
@@ -140,6 +142,8 @@ fn bench_list_property_defs(c: &mut Criterion) {
 fn bench_update_property_def_options(c: &mut Criterion) {
     let mut group = c.benchmark_group("update_property_def_options");
 
+    // Cap intentional (#1231): `count` = distinct property *definitions*,
+    // which is schema-like / human-bounded — ~100 is realistic, 100K is not.
     for count in [10, 50, 100] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
@@ -183,6 +187,8 @@ fn bench_update_property_def_options(c: &mut Criterion) {
 fn bench_delete_property_def(c: &mut Criterion) {
     let mut group = c.benchmark_group("delete_property_def");
 
+    // Cap intentional (#1231): `count` = distinct property *definitions*,
+    // which is schema-like / human-bounded — ~100 is realistic, 100K is not.
     for count in [10, 50, 100] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
