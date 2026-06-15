@@ -753,4 +753,74 @@ describe('dispatchLaunchUrl', () => {
     // matching to handle).
     expect(localStorage.getItem(SETTINGS_ACTIVE_TAB_KEY)).toBe('Keyboard')
   })
+
+  // ── Android App Links (https://agaric.app/o/…) — cold-start path (#741) ──
+
+  it('routes valid App Link block URLs', async () => {
+    dispatchLaunchUrl('https://agaric.app/o/block/BLOCK01HJKLMN012345VPQRSTW3')
+    await vi.waitFor(() => {
+      expect(mockNavigateToPage).toHaveBeenCalledWith('BLOCK01HJKLMN012345VPQRSTW3', '')
+    })
+  })
+
+  it('routes valid App Link page URLs', async () => {
+    dispatchLaunchUrl('https://agaric.app/o/page/PAGE001HJKLMN012345VPQRSTW')
+    await vi.waitFor(() => {
+      expect(mockNavigateToPage).toHaveBeenCalledWith('PAGE001HJKLMN012345VPQRSTW', '')
+    })
+  })
+
+  it('routes valid App Link settings URLs', () => {
+    dispatchLaunchUrl('https://agaric.app/o/settings/sync')
+    expect(localStorage.getItem(SETTINGS_ACTIVE_TAB_KEY)).toBe('sync')
+    expect(mockSetPendingSettingsTab).toHaveBeenCalledWith('sync')
+    expect(mockSetView).toHaveBeenCalledWith('settings')
+  })
+
+  it('App Link route host is case-insensitive', async () => {
+    dispatchLaunchUrl('https://agaric.app/o/BLOCK/BLOCK01HJKLMN012345VPQRSTW3')
+    await vi.waitFor(() => {
+      expect(mockNavigateToPage).toHaveBeenCalledWith('BLOCK01HJKLMN012345VPQRSTW3', '')
+    })
+  })
+
+  it('normalises lowercase App Link ULIDs to uppercase', async () => {
+    dispatchLaunchUrl('https://agaric.app/o/block/block01hjklmn012345vpqrstw3')
+    await vi.waitFor(() => {
+      expect(mockNavigateToPage).toHaveBeenCalledWith('BLOCK01HJKLMN012345VPQRSTW3', '')
+    })
+  })
+
+  it('tolerates trailing/doubled slashes in App Links', async () => {
+    dispatchLaunchUrl('https://agaric.app/o//block//BLOCK01HJKLMN012345VPQRSTW3/')
+    await vi.waitFor(() => {
+      expect(mockNavigateToPage).toHaveBeenCalledWith('BLOCK01HJKLMN012345VPQRSTW3', '')
+    })
+  })
+
+  it('rejects App Links from a foreign https authority', async () => {
+    dispatchLaunchUrl('https://example.com/o/block/BLOCK01HJKLMN012345VPQRSTW3')
+    await Promise.resolve()
+    expect(mockNavigateToPage).not.toHaveBeenCalled()
+    expect(mockSetView).not.toHaveBeenCalled()
+  })
+
+  it('rejects App Links with a wrong path prefix', async () => {
+    dispatchLaunchUrl('https://agaric.app/x/block/BLOCK01HJKLMN012345VPQRSTW3')
+    await Promise.resolve()
+    expect(mockNavigateToPage).not.toHaveBeenCalled()
+  })
+
+  it('rejects App Links with an unknown route host', async () => {
+    dispatchLaunchUrl('https://agaric.app/o/attack/whatever')
+    await Promise.resolve()
+    expect(mockNavigateToPage).not.toHaveBeenCalled()
+    expect(mockSetView).not.toHaveBeenCalled()
+  })
+
+  it('rejects App Links with no identifier', async () => {
+    dispatchLaunchUrl('https://agaric.app/o/block')
+    await Promise.resolve()
+    expect(mockNavigateToPage).not.toHaveBeenCalled()
+  })
 })
