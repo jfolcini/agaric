@@ -58,5 +58,10 @@
     "active": true,
     "expiresOn": "2026-08-14T00:00:00.000Z",
     "notes": "mermaid classDef state-diagram HTML injection; per AGENTS.md threat model the app is single-user local-first with no adversarial input. Expires 90d; re-review on expiry."
+  },
+  "1120792": {
+    "active": true,
+    "expiresOn": "2026-09-13T00:00:00.000Z",
+    "notes": "js-yaml quadratic-complexity DoS in YAML merge keys (GHSA-h67p-54hq-rp68) via markdownlint-cli2 > js-yaml. markdownlint-cli2 is a dev-only lint tool (not in the production Tauri app or dev runtime) parsing trusted in-repo markdown/config — no adversarial YAML input per the AGENTS.md threat model. No upstream fix published yet. Expires 90d; re-review on expiry."
   }
 }
