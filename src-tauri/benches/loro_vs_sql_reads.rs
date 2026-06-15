@@ -187,13 +187,16 @@ async fn bootstrap(pool: &SqlitePool) -> (Vec<String>, Vec<String>) {
     let mut tx = pool.begin().await.unwrap();
     for i in 0..PAGE_ROOTS {
         let id = format!("PAGE_{i:04}");
+        // A 'page' block must set `page_id = id` (migration 0073's
+        // `page_id_self_for_pages` CHECK).
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, position) \
-             VALUES (?, 'page', ?, ?)",
+            "INSERT INTO blocks (id, block_type, content, position, page_id) \
+             VALUES (?, 'page', ?, ?, ?)",
         )
         .bind(&id)
         .bind(format!("Page {i}"))
         .bind((i as i64) * 10_000)
+        .bind(&id)
         .execute(&mut *tx)
         .await
         .unwrap();

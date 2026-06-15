@@ -20,29 +20,43 @@ use agaric_lib::commands::{
 // surface. Mirror any signature change across both copies.
 const TEST_SPACE_ID: &str = "01TESTSPACE000000000000001";
 
+/// Base `op_log.created_at` value, epoch milliseconds (2025-01-15T12:00:00Z).
+/// `created_at` is INTEGER-NOT-NULL since migration 0079 (#109 Phase 2); the
+/// STRICT table rejects the RFC-3339 TEXT this bench used to bind. Seeders add
+/// a monotonic per-op offset so ordering matches the old string ordering.
+const BASE_TS_MS: i64 = 1_736_942_400_000;
+
 async fn assign_all_to_test_space(pool: &SqlitePool) {
+    // A 'page' block must set `page_id = id` (migration 0073's
+    // `page_id_self_for_pages` CHECK); omitting it makes INSERT OR IGNORE
+    // silently drop the row, leaving TEST_SPACE_ID absent and the space_id FK
+    // below unsatisfiable.
     sqlx::query(
-        "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position) \
-         VALUES (?, 'page', 'TestSpace', NULL, NULL)",
-    )
-    .bind(TEST_SPACE_ID)
-    .execute(pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO block_properties (block_id, key, value_ref) \
-         SELECT b.id, 'space', ? FROM blocks b \
-         WHERE b.id <> ? \
-           AND NOT EXISTS ( \
-                SELECT 1 FROM block_properties bp \
-                WHERE bp.block_id = b.id AND bp.key = 'space' \
-           )",
+        "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'page', 'TestSpace', NULL, NULL, ?)",
     )
     .bind(TEST_SPACE_ID)
     .bind(TEST_SPACE_ID)
     .execute(pool)
     .await
     .unwrap();
+    // Register the page in the `spaces` registry (#708, migration 0089):
+    // `blocks.space_id` REFERENCES spaces(id), so the space owner must exist
+    // there before any block can point its space_id at it.
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(TEST_SPACE_ID)
+        .execute(pool)
+        .await
+        .unwrap();
+    // Space membership is the first-class `blocks.space_id` column (#533,
+    // migration 0086); the canonical filter is `b.space_id = ?` and `space`
+    // is a reserved key the 0088 CHECK forbids in `block_properties`.
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE id <> ?")
+        .bind(TEST_SPACE_ID)
+        .bind(TEST_SPACE_ID)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
@@ -93,7 +107,7 @@ async fn seed_blocks_bulk(pool: &SqlitePool, n: usize) -> Vec<String> {
     for i in 0..n {
         let id = format!("SEED{i:020}");
         let content = format!("Seeded block {i} with some placeholder content.");
-        let ts = format!("2025-01-15T12:00:{:06}+00:00", i);
+        let ts = BASE_TS_MS + i as i64;
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, position) \
              VALUES (?, 'content', ?, ?)",
@@ -113,7 +127,7 @@ async fn seed_blocks_bulk(pool: &SqlitePool, n: usize) -> Vec<String> {
         .bind(format!(
             r#"{{"block_id":"{id}","block_type":"content","content":"{content}"}}"#,
         ))
-        .bind(&ts)
+        .bind(ts)
         .execute(&mut *tx)
         .await
         .unwrap();
@@ -444,7 +458,10 @@ fn bench_list_blocks_100_items(c: &mut Criterion) {
                     None,
                     None,
                     None,
-                    Some(200),
+                    // `list_blocks_inner` caps `limit` at 100 (Validation:
+                    // "limit must be in [1, 100]"); the bench seeds exactly 100
+                    // blocks, so a 100-row page returns the whole set.
+                    Some(100),
                     TEST_SPACE_ID.into(),
                 )
                 .await
@@ -582,24 +599,35 @@ fn bench_batch_resolve(c: &mut Criterion) {
         let ids = rt.block_on(seed_blocks(&pool, &materializer, size));
 
         rt.block_on(async {
+            // Space-owner page: `page_id = id` (migration 0073 CHECK) so the
+            // INSERT OR IGNORE isn't silently dropped.
             sqlx::query(
-                "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position) \
-                 VALUES (?, 'page', 'BenchSpace', NULL, NULL)",
+                "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, 'page', 'BenchSpace', NULL, NULL, ?)",
             )
+            .bind(BENCH_SPACE_ID)
             .bind(BENCH_SPACE_ID)
             .execute(&pool)
             .await
             .unwrap();
-            for id in &ids {
-                sqlx::query(
-                    "INSERT INTO block_properties (block_id, key, value_ref) \
-                     VALUES (?, 'space', ?)",
-                )
-                .bind(id)
+            // Register in the `spaces` registry (#708, migration 0089):
+            // `blocks.space_id` REFERENCES spaces(id).
+            sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
                 .bind(BENCH_SPACE_ID)
                 .execute(&pool)
                 .await
                 .unwrap();
+            // Membership is the first-class `blocks.space_id` column (#533,
+            // migration 0086) — the canonical `batch_resolve` filter is
+            // `b.space_id = ?`. `space` is a reserved key the 0088 CHECK
+            // forbids in `block_properties`, so set the column directly.
+            for id in &ids {
+                sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ?")
+                    .bind(BENCH_SPACE_ID)
+                    .bind(id)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
             }
         });
 
@@ -646,7 +674,12 @@ fn bench_batch_properties(c: &mut Criterion) {
     let pool = rt.block_on(fresh_pool(&dir, "batch_props"));
     let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
 
-    // Seed 100 blocks with 2 properties each
+    // Seed 100 blocks with 2 properties each. Both keys are free-form:
+    // `category` is not reserved (the 0088 CHECK forbids `priority`, which is
+    // also a built-in enum property whose definition restricts values to
+    // `1, 2, 3` — `set_property_inner` validates against it), and `status` is
+    // likewise free-form. The keys are incidental to what this bench measures
+    // (batch property-read fan-out), so non-validated names keep the seed valid.
     let ids = rt.block_on(async {
         let ids = seed_blocks(&pool, &materializer, 100).await;
         for id in &ids {
@@ -655,8 +688,8 @@ fn bench_batch_properties(c: &mut Criterion) {
                 "dev-bench",
                 &materializer,
                 id.clone().into(),
-                "priority".into(),
-                Some("high".into()),
+                "category".into(),
+                Some("urgent".into()),
                 None,
                 None,
                 None,

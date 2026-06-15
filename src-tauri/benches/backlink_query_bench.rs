@@ -36,16 +36,24 @@ async fn fresh_pool(dir: &TempDir, name: &str) -> SqlitePool {
 /// - Every 10th source includes "benchmark" in content (10% FTS match rate)
 /// - Every 5th source has parent_id set to TARGET (20% parent relationship)
 /// - Every 4th source is tagged with TAG01 (25% tag match rate)
-/// - Every 3rd source has priority="high" (33% property match rate)
-/// - All sources have `score` (num) and `due_date` (date) properties
+/// - Every 3rd source has severity="high" (33% property match rate)
+/// - All sources have `score` (num) and `duedate` (date) properties
 ///
 /// This distribution is designed to test realistic filter selectivity.
+///
+/// Note: the free-form property keys are deliberately `severity`/`duedate`
+/// rather than the column-backed `priority`/`due_date`, which migration
+/// 0088's `key_not_reserved` CHECK forbids in `block_properties`. The keys
+/// are arbitrary for what this bench measures (free-form property-filter
+/// selectivity), so non-reserved names keep the seed valid.
 async fn seed_backlinks_full(pool: &SqlitePool, n: usize) {
     let mut tx = pool.begin().await.unwrap();
 
     // Target block
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content) VALUES ('TARGET', 'page', 'Target Page')",
+        // A 'page' block must set `page_id = id` (migration 0073's
+        // `page_id_self_for_pages` CHECK).
+        "INSERT INTO blocks (id, block_type, content, page_id) VALUES ('TARGET', 'page', 'Target Page', 'TARGET')",
     )
     .execute(&mut *tx)
     .await
@@ -100,7 +108,7 @@ async fn seed_backlinks_full(pool: &SqlitePool, n: usize) {
 
         // Properties
         sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'priority', ?)",
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'severity', ?)",
         )
         .bind(&id)
         .bind(if i % 3 == 0 { "high" } else { "low" })
@@ -118,7 +126,7 @@ async fn seed_backlinks_full(pool: &SqlitePool, n: usize) {
         .unwrap();
 
         sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_date) VALUES (?, 'due_date', ?)",
+            "INSERT INTO block_properties (block_id, key, value_date) VALUES (?, 'duedate', ?)",
         )
         .bind(&id)
         .bind(format!("2025-{:02}-{:02}", (i % 12) + 1, (i % 28) + 1))
@@ -144,7 +152,9 @@ async fn seed_backlinks_minimal(pool: &SqlitePool, n: usize) {
     let mut tx = pool.begin().await.unwrap();
 
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content) VALUES ('TARGET', 'page', 'Target Page')",
+        // A 'page' block must set `page_id = id` (migration 0073's
+        // `page_id_self_for_pages` CHECK).
+        "INSERT INTO blocks (id, block_type, content, page_id) VALUES ('TARGET', 'page', 'Target Page', 'TARGET')",
     )
     .execute(&mut *tx)
     .await
@@ -184,7 +194,7 @@ async fn seed_blocks_with_properties(pool: &SqlitePool, n: usize) {
             .unwrap();
 
         sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'priority', 'high')",
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'severity', 'high')",
         )
         .bind(&id)
         .execute(&mut *tx)
@@ -275,7 +285,7 @@ fn bench_filter(c: &mut Criterion) {
     group.bench_function("property_text_eq", |b| {
         b.to_async(&rt).iter(|| {
             let filters = vec![BacklinkFilter::PropertyText {
-                key: "priority".into(),
+                key: "severity".into(),
                 op: CompareOp::Eq,
                 value: "high".into(),
             }];
@@ -309,7 +319,7 @@ fn bench_filter(c: &mut Criterion) {
                         tag_id: "TAG01".into(),
                     },
                     BacklinkFilter::PropertyText {
-                        key: "priority".into(),
+                        key: "severity".into(),
                         op: CompareOp::Eq,
                         value: "high".into(),
                     },
@@ -335,7 +345,7 @@ fn bench_filter(c: &mut Criterion) {
     group.bench_function("property_date_eq", |b| {
         b.to_async(&rt).iter(|| {
             let filters = vec![BacklinkFilter::PropertyDate {
-                key: "due_date".into(),
+                key: "duedate".into(),
                 op: CompareOp::Eq,
                 value: "2025-06-15".into(),
             }];
@@ -347,7 +357,7 @@ fn bench_filter(c: &mut Criterion) {
     group.bench_function("property_is_set", |b| {
         b.to_async(&rt).iter(|| {
             let filters = vec![BacklinkFilter::PropertyIsSet {
-                key: "priority".into(),
+                key: "severity".into(),
             }];
             eval_backlink_query(&pool, "TARGET", Some(filters), None, &page, None)
         });
@@ -443,7 +453,7 @@ fn bench_sort(c: &mut Criterion) {
     group.bench_function("property_text", |b| {
         b.to_async(&rt).iter(|| {
             let sort = BacklinkSort::PropertyText {
-                key: "priority".into(),
+                key: "severity".into(),
                 dir: SortDir::Asc,
             };
             eval_backlink_query(&pool, "TARGET", None, Some(sort), &page, None)
@@ -465,7 +475,7 @@ fn bench_sort(c: &mut Criterion) {
     group.bench_function("property_date", |b| {
         b.to_async(&rt).iter(|| {
             let sort = BacklinkSort::PropertyDate {
-                key: "due_date".into(),
+                key: "duedate".into(),
                 dir: SortDir::Asc,
             };
             eval_backlink_query(&pool, "TARGET", None, Some(sort), &page, None)
@@ -582,15 +592,19 @@ fn bench_scale(c: &mut Criterion) {
 async fn seed_backlinks_for_batch(pool: &SqlitePool, n: usize) {
     let mut tx = pool.begin().await.unwrap();
 
-    // Create 10 target pages
+    // Create 10 target pages. A 'page' block must set `page_id = id`
+    // (migration 0073's `page_id_self_for_pages` CHECK).
     for p in 0..10 {
         let page_id = format!("PAGE{p:020}");
-        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', ?)")
-            .bind(&page_id)
-            .bind(format!("Page {p}"))
-            .execute(&mut *tx)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)",
+        )
+        .bind(&page_id)
+        .bind(format!("Page {p}"))
+        .bind(&page_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
     }
 
     // Create N source blocks, each linking to one of the 10 pages (round-robin)
@@ -657,11 +671,14 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
 async fn seed_unlinked_refs(pool: &SqlitePool, n: usize) {
     let mut tx = pool.begin().await.unwrap();
 
-    // Target page whose title we search for as unlinked mentions
+    // Target page whose title we search for as unlinked mentions. A 'page'
+    // block must set `page_id = id` (migration 0073's `page_id_self_for_pages`
+    // CHECK).
     let page_id = "UNLINK_TARGET_0000000000";
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', 'Benchmark Topic')",
+        "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'Benchmark Topic', ?)",
     )
+    .bind(page_id)
     .bind(page_id)
     .execute(&mut *tx)
     .await

@@ -46,12 +46,16 @@ async fn seed_pages(pool: &SqlitePool, count: usize) {
     let mut tx = pool.begin().await.unwrap();
     for i in 0..count {
         let id = format!("PG{i:021}");
-        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', ?)")
-            .bind(&id)
-            .bind(format!("Page Title {i}"))
-            .execute(&mut *tx)
-            .await
-            .unwrap();
+        // A 'page' block must set `page_id = id` (migration 0073 CHECK).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)",
+        )
+        .bind(&id)
+        .bind(format!("Page Title {i}"))
+        .bind(&id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
     }
     tx.commit().await.unwrap();
 }
@@ -123,12 +127,16 @@ async fn seed_page_id_data(pool: &SqlitePool, count: usize) {
     let mut tx = pool.begin().await.unwrap();
     for i in 0..count {
         let page_id = format!("PAGE{i:020}");
-        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', ?)")
-            .bind(&page_id)
-            .bind(format!("Page {i}"))
-            .execute(&mut *tx)
-            .await
-            .unwrap();
+        // A 'page' block must set `page_id = id` (migration 0073 CHECK).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)",
+        )
+        .bind(&page_id)
+        .bind(format!("Page {i}"))
+        .bind(&page_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
 
         // Level-1 child
         let child1_id = format!("L1C{i:021}");

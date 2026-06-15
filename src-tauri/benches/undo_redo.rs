@@ -12,7 +12,7 @@
 //!
 //! Manual only — never in CI or pre-commit (see AGENTS.md).
 
-use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 use agaric_lib::commands::{
     compute_edit_diff_inner, redo_page_op_inner, restore_page_to_op_inner, revert_ops_inner,
@@ -34,6 +34,18 @@ use tokio::runtime::Runtime;
 
 const BENCH_DEVICE: &str = "bench-device";
 
+/// Base `op_log.created_at` value, epoch milliseconds (2025-01-15T12:00:00Z).
+/// `created_at` is INTEGER-NOT-NULL since migration 0079 (#109 Phase 2); the
+/// STRICT table rejects the RFC-3339 TEXT this bench used to bind. Seeders add
+/// a monotonic per-op offset so ordering matches the old string ordering.
+const BASE_TS_MS: i64 = 1_736_942_400_000;
+
+/// Deterministic, monotonic `op_log.created_at` (epoch ms) from a seq counter.
+/// INTEGER since migration 0079 — see `BASE_TS_MS`.
+fn ts_for(seq: i64) -> i64 {
+    BASE_TS_MS + seq
+}
+
 // ---------------------------------------------------------------------------
 // Seeding helpers
 // ---------------------------------------------------------------------------
@@ -54,28 +66,33 @@ async fn seed_flat_page(
 
     let mut tx = pool.begin().await.unwrap();
 
-    // Create page block
+    // Create page block. A 'page' block must set `page_id = id`
+    // (migration 0073's `page_id_self_for_pages` CHECK).
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'page', 'Bench Page', 1)",
+        "INSERT INTO blocks (id, block_type, content, position, page_id) VALUES (?, 'page', 'Bench Page', 1, ?)",
     )
+    .bind(&page_id)
     .bind(&page_id)
     .execute(&mut *tx)
     .await
     .unwrap();
 
     seq += 1;
-    let ts = format!("2025-01-15T12:00:00.{seq:03}Z");
     let payload_json = format!(
         r#"{{"block_id":"{page_id}","block_type":"page","parent_id":null,"position":1,"content":"Bench Page"}}"#
     );
+    // op_log.block_id (indexed, migration 0030) must be set: the revert/undo
+    // path's `find_prior_text` filters edit/create ops by this column, not by
+    // json_extract(payload). Unset → NULL → "no prior text found".
     sqlx::query(
-        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-         VALUES (?, ?, 'fakehash', 'create_block', ?, ?)",
+        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, 'fakehash', 'create_block', ?, ?, ?)",
     )
     .bind(BENCH_DEVICE)
     .bind(seq)
     .bind(&payload_json)
-    .bind(&ts)
+    .bind(ts_for(seq))
+    .bind(&page_id)
     .execute(&mut *tx)
     .await
     .unwrap();
@@ -100,23 +117,18 @@ async fn seed_flat_page(
 
         // Append create_block op
         seq += 1;
-        let ts = format!(
-            "2025-01-15T12:{:02}:{:02}.{:03}Z",
-            seq / 3600,
-            (seq / 60) % 60,
-            seq % 1000
-        );
         let create_json = format!(
             r#"{{"block_id":"{block_id}","block_type":"content","parent_id":"{page_id}","position":{position},"content":"Initial content {i}"}}"#
         );
         sqlx::query(
-            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-             VALUES (?, ?, 'fakehash', 'create_block', ?, ?)",
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+             VALUES (?, ?, 'fakehash', 'create_block', ?, ?, ?)",
         )
         .bind(BENCH_DEVICE)
         .bind(seq)
         .bind(&create_json)
-        .bind(&ts)
+        .bind(ts_for(seq))
+        .bind(&block_id)
         .execute(&mut *tx)
         .await
         .unwrap();
@@ -124,23 +136,18 @@ async fn seed_flat_page(
         // Append edit_block ops
         for j in 0..ops_per_block {
             seq += 1;
-            let ts = format!(
-                "2025-01-15T12:{:02}:{:02}.{:03}Z",
-                seq / 3600,
-                (seq / 60) % 60,
-                seq % 1000
-            );
             let edit_json = format!(
                 r#"{{"block_id":"{block_id}","to_text":"Edit {j} of block {i}","prev_edit":null}}"#
             );
             sqlx::query(
-                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-                 VALUES (?, ?, 'fakehash', 'edit_block', ?, ?)",
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+                 VALUES (?, ?, 'fakehash', 'edit_block', ?, ?, ?)",
             )
             .bind(BENCH_DEVICE)
             .bind(seq)
             .bind(&edit_json)
-            .bind(&ts)
+            .bind(ts_for(seq))
+            .bind(&block_id)
             .execute(&mut *tx)
             .await
             .unwrap();
@@ -181,28 +188,32 @@ async fn seed_deep_page(
 
     let mut tx = pool.begin().await.unwrap();
 
-    // Create root page block
+    // Create root page block. A 'page' block must set `page_id = id`
+    // (migration 0073's `page_id_self_for_pages` CHECK).
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'page', 'Root', 1)",
+        "INSERT INTO blocks (id, block_type, content, position, page_id) VALUES (?, 'page', 'Root', 1, ?)",
     )
+    .bind(&root_id)
     .bind(&root_id)
     .execute(&mut *tx)
     .await
     .unwrap();
 
     seq += 1;
-    let ts = format!("2025-01-15T12:00:00.{seq:03}Z");
     let payload_json = format!(
         r#"{{"block_id":"{root_id}","block_type":"page","parent_id":null,"position":1,"content":"Root"}}"#
     );
+    // op_log.block_id (indexed, migration 0030) feeds the revert/undo
+    // `find_prior_text` filter — must be set.
     sqlx::query(
-        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-         VALUES (?, ?, 'fakehash', 'create_block', ?, ?)",
+        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, 'fakehash', 'create_block', ?, ?, ?)",
     )
     .bind(BENCH_DEVICE)
     .bind(seq)
     .bind(&payload_json)
-    .bind(&ts)
+    .bind(ts_for(seq))
+    .bind(&root_id)
     .execute(&mut *tx)
     .await
     .unwrap();
@@ -242,24 +253,19 @@ async fn seed_deep_page(
 
             // Append create op
             seq += 1;
-            let ts = format!(
-                "2025-01-15T12:{:02}:{:02}.{:03}Z",
-                (seq / 3600) % 24,
-                (seq / 60) % 60,
-                seq % 1000
-            );
             let create_json = format!(
                 r#"{{"block_id":"{block_id}","block_type":"content","parent_id":"{}","position":{position},"content":"depth={} width={w}"}}"#,
                 item.parent_id, item.current_depth
             );
             sqlx::query(
-                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-                 VALUES (?, ?, 'fakehash', 'create_block', ?, ?)",
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+                 VALUES (?, ?, 'fakehash', 'create_block', ?, ?, ?)",
             )
             .bind(BENCH_DEVICE)
             .bind(seq)
             .bind(&create_json)
-            .bind(&ts)
+            .bind(ts_for(seq))
+            .bind(&block_id)
             .execute(&mut *tx)
             .await
             .unwrap();
@@ -267,22 +273,17 @@ async fn seed_deep_page(
             // Append edit ops
             for j in 0..ops_per_block {
                 seq += 1;
-                let ts = format!(
-                    "2025-01-15T12:{:02}:{:02}.{:03}Z",
-                    (seq / 3600) % 24,
-                    (seq / 60) % 60,
-                    seq % 1000
-                );
                 let edit_json =
                     format!(r#"{{"block_id":"{block_id}","to_text":"Edit {j}","prev_edit":null}}"#);
                 sqlx::query(
-                    "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-                     VALUES (?, ?, 'fakehash', 'edit_block', ?, ?)",
+                    "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+                     VALUES (?, ?, 'fakehash', 'edit_block', ?, ?, ?)",
                 )
                 .bind(BENCH_DEVICE)
                 .bind(seq)
                 .bind(&edit_json)
-                .bind(&ts)
+                .bind(ts_for(seq))
+                .bind(&block_id)
                 .execute(&mut *tx)
                 .await
                 .unwrap();
@@ -490,26 +491,33 @@ fn bench_restore_page_to_op(c: &mut Criterion) {
             BenchmarkId::from_parameter(total_ops),
             &total_ops,
             |b, _| {
-                b.to_async(&rt).iter_batched(
-                    || {
-                        rt.block_on(async {
-                            let dir = TempDir::new().unwrap();
-                            let pool = fresh_pool(&dir, "restore").await;
-                            let materializer = Materializer::new(pool.clone());
+                // `iter_custom` rather than `iter_batched`: the latter runs its
+                // setup closure on the same thread that drives the async
+                // runtime, so a `rt.block_on(...)` in setup panics with
+                // "Cannot start a runtime from within a runtime". We instead
+                // seed a fresh (destructive-restore-safe) DB *inside* the async
+                // closure and time only the `restore_page_to_op_inner` call —
+                // the same fresh-DB-per-iteration pattern `compaction_bench`
+                // uses for its destructive `compact_op_log` bench.
+                b.to_async(&rt).iter_custom(move |iters| async move {
+                    let mut total = std::time::Duration::ZERO;
+                    for _ in 0..iters {
+                        let dir = TempDir::new().unwrap();
+                        let pool = fresh_pool(&dir, "restore").await;
+                        let materializer = Materializer::new(pool.clone());
 
-                            // Seed: num_blocks children × 1 edit each = 2*num_blocks ops + 1 page create
-                            let (_page_id, _last_seq) = seed_flat_page(&pool, num_blocks, 1).await;
+                        // Seed: num_blocks children × 1 edit each = 2*num_blocks
+                        // ops + 1 page create.
+                        let (_page_id, _last_seq) = seed_flat_page(&pool, num_blocks, 1).await;
 
-                            // target_seq at midpoint: the Nth op (= num_blocks-th op, which is the
-                            // last create_block before edits start; seq is 1-based, page create is seq=1,
-                            // then creates are seq 2..num_blocks+1, edits are num_blocks+2..2*num_blocks+1)
-                            let target_seq = (num_blocks as i64) + 1; // last create_block seq
-                            let page_id = format!("PAGE{:020}", 0);
+                        // target_seq at midpoint: the Nth op (= num_blocks-th op,
+                        // the last create_block before edits start; seq is
+                        // 1-based, page create is seq=1, creates are seq
+                        // 2..num_blocks+1, edits are num_blocks+2..2*num_blocks+1).
+                        let target_seq = (num_blocks as i64) + 1;
+                        let page_id = format!("PAGE{:020}", 0);
 
-                            (dir, pool, materializer, page_id, target_seq)
-                        })
-                    },
-                    |(dir, pool, materializer, page_id, target_seq)| async move {
+                        let start = std::time::Instant::now();
                         restore_page_to_op_inner(
                             &pool,
                             BENCH_DEVICE,
@@ -520,11 +528,14 @@ fn bench_restore_page_to_op(c: &mut Criterion) {
                         )
                         .await
                         .unwrap();
+                        total += start.elapsed();
+
                         materializer.shutdown();
+                        pool.close().await;
                         drop(dir);
-                    },
-                    BatchSize::PerIteration,
-                );
+                    }
+                    total
+                });
             },
         );
     }
@@ -566,19 +577,22 @@ fn bench_redo_page_op(c: &mut Criterion) {
             .await
             .unwrap();
 
-            // create_block op
+            // create_block op. op_log.block_id (migration 0030) feeds the
+            // undo/redo `find_prior_text` filter; created_at is INTEGER ms.
             let create_seq = _last_seq + 1;
             let create_json = format!(
                 r#"{{"block_id":"{target_block_id}","block_type":"content","parent_id":"{page_id}","position":{},"content":"before"}}"#,
                 db_blocks as i64 + 1
             );
             sqlx::query(
-                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-                 VALUES (?, ?, 'fakehash', 'create_block', ?, '2025-01-15T13:00:00.000Z')",
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+                 VALUES (?, ?, 'fakehash', 'create_block', ?, ?, ?)",
             )
             .bind(BENCH_DEVICE)
             .bind(create_seq)
             .bind(&create_json)
+            .bind(ts_for(create_seq))
+            .bind(&target_block_id)
             .execute(&mut *tx)
             .await
             .unwrap();
@@ -589,12 +603,14 @@ fn bench_redo_page_op(c: &mut Criterion) {
                 r#"{{"block_id":"{target_block_id}","to_text":"after","prev_edit":null}}"#
             );
             sqlx::query(
-                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-                 VALUES (?, ?, 'fakehash', 'edit_block', ?, '2025-01-15T13:00:01.000Z')",
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+                 VALUES (?, ?, 'fakehash', 'edit_block', ?, ?, ?)",
             )
             .bind(BENCH_DEVICE)
             .bind(edit_seq)
             .bind(&edit_json)
+            .bind(ts_for(edit_seq))
+            .bind(&target_block_id)
             .execute(&mut *tx)
             .await
             .unwrap();
@@ -669,25 +685,30 @@ fn bench_compute_edit_diff(c: &mut Criterion) {
         let edit_seq: i64 = rt.block_on(async {
             let mut tx = pool.begin().await.unwrap();
 
-            // Create page block
+            // Create page block. A 'page' block must set `page_id = id`
+            // (migration 0073's `page_id_self_for_pages` CHECK).
             sqlx::query(
-                "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'page', 'Diff Page', 1)",
+                "INSERT INTO blocks (id, block_type, content, position, page_id) VALUES (?, 'page', 'Diff Page', 1, ?)",
             )
+            .bind(&page_id)
             .bind(&page_id)
             .execute(&mut *tx)
             .await
             .unwrap();
 
-            // Create page op
+            // Create page op. created_at is INTEGER ms (migration 0079);
+            // op_log.block_id (migration 0030) feeds find_prior_text.
             let page_create_json = format!(
                 r#"{{"block_id":"{page_id}","block_type":"page","parent_id":null,"position":1,"content":"Diff Page"}}"#
             );
             sqlx::query(
-                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-                 VALUES (?, 1, 'fakehash', 'create_block', ?, '2025-01-15T12:00:00.000Z')",
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+                 VALUES (?, 1, 'fakehash', 'create_block', ?, ?, ?)",
             )
             .bind(BENCH_DEVICE)
             .bind(&page_create_json)
+            .bind(ts_for(1))
+            .bind(&page_id)
             .execute(&mut *tx)
             .await
             .unwrap();
@@ -708,11 +729,13 @@ fn bench_compute_edit_diff(c: &mut Criterion) {
                 r#"{{"block_id":"{block_id}","block_type":"content","parent_id":"{page_id}","position":1,"content":"{initial_content}"}}"#
             );
             sqlx::query(
-                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-                 VALUES (?, 2, 'fakehash', 'create_block', ?, '2025-01-15T12:00:01.000Z')",
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+                 VALUES (?, 2, 'fakehash', 'create_block', ?, ?, ?)",
             )
             .bind(BENCH_DEVICE)
             .bind(&create_json)
+            .bind(ts_for(2))
+            .bind(&block_id)
             .execute(&mut *tx)
             .await
             .unwrap();
@@ -722,11 +745,13 @@ fn bench_compute_edit_diff(c: &mut Criterion) {
                 r#"{{"block_id":"{block_id}","to_text":"{edited_content}","prev_edit":null}}"#
             );
             sqlx::query(
-                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-                 VALUES (?, 3, 'fakehash', 'edit_block', ?, '2025-01-15T12:00:02.000Z')",
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+                 VALUES (?, 3, 'fakehash', 'edit_block', ?, ?, ?)",
             )
             .bind(BENCH_DEVICE)
             .bind(&edit_json)
+            .bind(ts_for(3))
+            .bind(&block_id)
             .execute(&mut *tx)
             .await
             .unwrap();

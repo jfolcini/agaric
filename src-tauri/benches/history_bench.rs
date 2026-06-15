@@ -48,6 +48,12 @@ const BENCH_DEVICE: &str = "bench-device";
 /// Op-log sweep points — single page, [1K, 10K, 100K] total ops.
 const SWEEP_SIZES: [usize; 3] = [1_000, 10_000, 100_000];
 
+/// Base `op_log.created_at` value, epoch milliseconds (2025-01-15T12:00:00Z).
+/// `created_at` is INTEGER-NOT-NULL since migration 0079 (#109 Phase 2); the
+/// STRICT table rejects the RFC-3339 TEXT this bench used to bind. Seeders add
+/// a monotonic per-op offset so ordering matches the old string ordering.
+const BASE_TS_MS: i64 = 1_736_942_400_000;
+
 // ---------------------------------------------------------------------------
 // Fixture helpers — duplicated rather than extracted to a shared module
 // because Cargo's `[[bench]]` layout makes cross-bench module sharing
@@ -63,18 +69,11 @@ async fn fresh_pool(dir: &TempDir, name: &str) -> SqlitePool {
     init_pool(&db_path).await.unwrap()
 }
 
-/// Build a deterministic, valid RFC-3339 timestamp from a monotonically
-/// increasing seq counter. Mirrors the `% 24` modulo in
-/// `undo_redo.rs::seed_deep_page` (the flat seeder there overflows hours
-/// at 100K, which we cannot tolerate at this scale).
-fn ts_for(seq: i64) -> String {
-    format!(
-        "2025-01-15T{:02}:{:02}:{:02}.{:03}Z",
-        (seq / 3600) % 24,
-        (seq / 60) % 60,
-        seq % 60,
-        seq % 1000
-    )
+/// Deterministic, monotonic `op_log.created_at` (epoch ms) from a seq counter.
+/// INTEGER since migration 0079 — see `BASE_TS_MS`. Strictly increasing in
+/// `seq` so the most-recent-N op selectors see a stable order.
+fn ts_for(seq: i64) -> i64 {
+    BASE_TS_MS + seq
 }
 
 /// Seed a single page with exactly `total_ops` ops in its history.
@@ -101,11 +100,13 @@ async fn seed_single_page_history(pool: &SqlitePool, total_ops: usize) -> (Strin
 
     let mut tx = pool.begin().await.unwrap();
 
-    // 1. Page block + create_block op
+    // 1. Page block + create_block op. A 'page' block must set
+    //    `page_id = id` (migration 0073's `page_id_self_for_pages` CHECK).
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, position) \
-         VALUES (?, 'page', 'Bench Page', 1)",
+        "INSERT INTO blocks (id, block_type, content, position, page_id) \
+         VALUES (?, 'page', 'Bench Page', 1, ?)",
     )
+    .bind(&page_id)
     .bind(&page_id)
     .execute(&mut *tx)
     .await
@@ -115,14 +116,18 @@ async fn seed_single_page_history(pool: &SqlitePool, total_ops: usize) -> (Strin
     let page_create_json = format!(
         r#"{{"block_id":"{page_id}","block_type":"page","parent_id":null,"position":1,"content":"Bench Page"}}"#
     );
+    // op_log.block_id (indexed, migration 0030) must be set: the revert path's
+    // `find_prior_text` filters edit/create ops by this column, not by
+    // json_extract(payload). Unset → NULL → "no prior text found".
     sqlx::query(
-        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-         VALUES (?, ?, 'fakehash', 'create_block', ?, ?)",
+        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, 'fakehash', 'create_block', ?, ?, ?)",
     )
     .bind(BENCH_DEVICE)
     .bind(seq)
     .bind(&page_create_json)
     .bind(ts_for(seq))
+    .bind(&page_id)
     .execute(&mut *tx)
     .await
     .unwrap();
@@ -143,13 +148,14 @@ async fn seed_single_page_history(pool: &SqlitePool, total_ops: usize) -> (Strin
         r#"{{"block_id":"{block_id}","block_type":"content","parent_id":"{page_id}","position":1,"content":"initial"}}"#
     );
     sqlx::query(
-        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-         VALUES (?, ?, 'fakehash', 'create_block', ?, ?)",
+        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, 'fakehash', 'create_block', ?, ?, ?)",
     )
     .bind(BENCH_DEVICE)
     .bind(seq)
     .bind(&child_create_json)
     .bind(ts_for(seq))
+    .bind(&block_id)
     .execute(&mut *tx)
     .await
     .unwrap();
@@ -163,13 +169,14 @@ async fn seed_single_page_history(pool: &SqlitePool, total_ops: usize) -> (Strin
         let edit_json =
             format!(r#"{{"block_id":"{block_id}","to_text":"edit-{j}","prev_edit":null}}"#);
         sqlx::query(
-            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-             VALUES (?, ?, 'fakehash', 'edit_block', ?, ?)",
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+             VALUES (?, ?, 'fakehash', 'edit_block', ?, ?, ?)",
         )
         .bind(BENCH_DEVICE)
         .bind(seq)
         .bind(&edit_json)
         .bind(ts_for(seq))
+        .bind(&block_id)
         .execute(&mut *tx)
         .await
         .unwrap();

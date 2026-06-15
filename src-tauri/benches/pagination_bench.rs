@@ -14,10 +14,13 @@ use tokio::runtime::Runtime;
 /// Seed a parent block and `n` children with sequential positions.
 async fn seed_children(pool: &sqlx::SqlitePool, n: usize) {
     let mut tx = pool.begin().await.unwrap();
-    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('PARENT', 'page', 'p')")
-        .execute(&mut *tx)
-        .await
-        .unwrap();
+    // A 'page' block must set `page_id = id` (migration 0073 CHECK).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id) VALUES ('PARENT', 'page', 'p', 'PARENT')",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
 
     for i in 0..n {
         let id = format!("CHILD{i:020}");

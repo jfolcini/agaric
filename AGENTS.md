@@ -40,6 +40,7 @@ Local-first block-based note-taking app inspired by Org-mode and Logseq. React 1
 | [`src/stores/__tests__/AGENTS.md`](src/stores/__tests__/AGENTS.md) | Zustand store testing (global / per-page / undo store) |
 | [`e2e/AGENTS.md`](e2e/AGENTS.md) | Playwright e2e patterns (mock backend, portal-scoped helpers, undo/redo helpers) |
 | [`src-tauri/migrations/AGENTS.md`](src-tauri/migrations/AGENTS.md) | SQL migration rules (append-only, STRICT tables, index timing) |
+| [`src-tauri/benches/AGENTS.md`](src-tauri/benches/AGENTS.md) | Bench pitfalls: only `interactive_slo` runs in CI, the E0308 `Pool<Sqlite>` build-race (run prebuilt binaries), fixture schema-drift checklist, cold `--test` vs warm budgets |
 | [`src-tauri/src/commands/AGENTS.md`](src-tauri/src/commands/AGENTS.md) | Tauri command patterns (`_inner` split, `CommandTx`, `MAX_BATCH_BLOCK_IDS`, `LAST_APPEND`, `AppError` prefixes) |
 | [`src-tauri/src/mcp/AGENTS.md`](src-tauri/src/mcp/AGENTS.md) | MCP server rules (rmcp adapter, `ACTOR.scope`, activity-feed emission, `MCP_DISCONNECT_GRACE_PERIOD`, RO/RW split) |
 | [GitHub Issues](https://github.com/jfolcini/agaric/issues) | Deferred items, tech debt backlog, future features |

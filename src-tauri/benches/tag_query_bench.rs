@@ -36,11 +36,15 @@ async fn seed_tagged_tree(
 
     // Create root page and tag it
     let root_id = "ROOT_PAGE_00000000000000";
-    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', 'Root page')")
-        .bind(root_id)
-        .execute(&mut *tx)
-        .await
-        .unwrap();
+    // A 'page' block must set `page_id = id` (migration 0073 CHECK).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'Root page', ?)",
+    )
+    .bind(root_id)
+    .bind(root_id)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
         .bind(root_id)
         .bind(tag_id)

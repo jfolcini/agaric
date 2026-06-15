@@ -39,13 +39,16 @@ async fn seed_pages_with_links(pool: &SqlitePool, n: usize) {
         let title = format!("Graph Page {i}");
         let content = format!("Content of page {i} with a [[link]] reference.");
 
+        // A 'page' block must set `page_id = id` (migration 0073's
+        // `page_id_self_for_pages` CHECK).
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, position) \
-             VALUES (?, 'page', ?, ?)",
+            "INSERT INTO blocks (id, block_type, content, position, page_id) \
+             VALUES (?, 'page', ?, ?, ?)",
         )
         .bind(&page_id)
         .bind(&title)
         .bind(i as i64 + 1)
+        .bind(&page_id)
         .execute(&mut *tx)
         .await
         .unwrap();

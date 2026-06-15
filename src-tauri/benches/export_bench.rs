@@ -31,11 +31,13 @@ async fn seed_page_with_children(pool: &SqlitePool, n: usize) {
     let page_id = "EXPORTPAGE0000000000000";
     let mut tx = pool.begin().await.unwrap();
 
-    // Parent page
+    // Parent page. A 'page' block must set `page_id = id` (migration 0073's
+    // `page_id_self_for_pages` CHECK).
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, position) \
-         VALUES (?, 'page', 'Benchmark Export Page', 1)",
+        "INSERT INTO blocks (id, block_type, content, position, page_id) \
+         VALUES (?, 'page', 'Benchmark Export Page', 1, ?)",
     )
+    .bind(page_id)
     .bind(page_id)
     .execute(&mut *tx)
     .await

@@ -22,7 +22,12 @@ const BENCH_DEVICE: &str = "dev-bench";
 
 /// A deliberately old timestamp that will always be older than any retention
 /// cutoff (even `retention_days=0` uses `Utc::now()` as the cutoff).
-const OLD_TIMESTAMP: &str = "2020-01-01T00:00:00.000Z";
+///
+/// `op_log.created_at` is INTEGER epoch-milliseconds since migration 0079
+/// (#109 Phase 2); the STRICT table rejects the RFC-3339 TEXT this bench used
+/// to bind. 2020-01-01T00:00:00Z in epoch-ms — comfortably older than any
+/// `Utc::now()`-derived retention cutoff.
+const OLD_TIMESTAMP_MS: i64 = 1_577_836_800_000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -54,7 +59,7 @@ async fn seed_old_ops(pool: &SqlitePool, n: usize) {
                 r#"{{"block_id":"BENCH{j:06}","block_type":"content","parent_id":null,"position":{pos},"content":"seed"}}"#,
                 pos = j + 1,
             ))
-            .bind(OLD_TIMESTAMP)
+            .bind(OLD_TIMESTAMP_MS)
             .execute(&mut *tx)
             .await
             .unwrap();
@@ -125,7 +130,13 @@ fn bench_compact_op_log(c: &mut Criterion) {
                         seed_old_ops(&pool, n).await;
 
                         let start = std::time::Instant::now();
-                        compact_op_log_cmd_inner(&pool, BENCH_DEVICE, 0)
+                        // `retention_days` must be >= MIN_RETENTION_DAYS (7);
+                        // `compact_op_log_cmd_inner` rejects 0 with
+                        // `retention_days.too_small` (M-38 IPC guard). The
+                        // seeded ops are dated 2020 (OLD_TIMESTAMP_MS), so a
+                        // 7-day cutoff still leaves every seeded op eligible
+                        // for compaction.
+                        compact_op_log_cmd_inner(&pool, BENCH_DEVICE, 7)
                             .await
                             .unwrap();
                         total += start.elapsed();
