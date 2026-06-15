@@ -150,6 +150,60 @@ describe('CodeLanguageSelector', () => {
       expect(onClose).toHaveBeenCalledTimes(1)
     })
 
+    // Per-option coverage (#1170): assert that EACH built-in language, when
+    // clicked inside a code block, drives `updateAttributes('codeBlock', { language })`
+    // with that exact language — not just one representative entry.
+    it.each([...CODE_LANGUAGES])(
+      'within a code block: clicking %s sets that language via updateAttributes',
+      async (lang) => {
+        const user = userEvent.setup()
+        const onClose = vi.fn()
+        render(
+          <CodeLanguageSelector
+            editor={makeEditor()}
+            isCodeBlock={true}
+            currentLanguage=""
+            onClose={onClose}
+          />,
+        )
+
+        await user.click(screen.getByRole('button', { name: lang }))
+
+        expect(mockToggleCodeBlock).not.toHaveBeenCalled()
+        expect(mockUpdateAttributes).toHaveBeenCalledTimes(1)
+        expect(mockUpdateAttributes).toHaveBeenCalledWith('codeBlock', { language: lang })
+        expect(mockRun).toHaveBeenCalledTimes(1)
+        expect(onClose).toHaveBeenCalledTimes(1)
+      },
+    )
+
+    // Per-option coverage (#1170): the same set, but starting OUTSIDE a code
+    // block, must route through `toggleCodeBlockSafely(editor, { language })` so
+    // the language is set as part of the single toggle chain.
+    it.each([...CODE_LANGUAGES])(
+      'outside a code block: clicking %s toggles a code block carrying that language',
+      async (lang) => {
+        const user = userEvent.setup()
+        const onClose = vi.fn()
+        render(
+          <CodeLanguageSelector
+            editor={makeEditor()}
+            isCodeBlock={false}
+            currentLanguage=""
+            onClose={onClose}
+          />,
+        )
+
+        await user.click(screen.getByRole('button', { name: lang }))
+
+        expect(mockToggleCodeBlock).toHaveBeenCalledTimes(1)
+        expect(mockToggleCodeBlock).toHaveBeenCalledWith({ language: lang })
+        expect(mockUpdateAttributes).not.toHaveBeenCalled()
+        expect(mockRun).toHaveBeenCalledTimes(1)
+        expect(onClose).toHaveBeenCalledTimes(1)
+      },
+    )
+
     it('outside a code block: clicking a language calls toggleCodeBlock with the language attrs (single chain via toggleCodeBlockSafely)', async () => {
       const user = userEvent.setup()
       const onClose = vi.fn()

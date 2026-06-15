@@ -106,6 +106,28 @@ describe('ImageResizeToolbar', () => {
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('imageResize.saveFailed'))
   })
 
+  // Per-preset coverage (#1170): each width preset (25/50/75/100), when
+  // clicked, must fire onWidthChange AND persist image_width with that exact
+  // value — not just the 25/50 representatives the older tests exercised.
+  it.each([...IMAGE_WIDTH_PRESETS])(
+    'clicking the $value% preset updates width and persists image_width=$value',
+    async (preset) => {
+      const user = userEvent.setup()
+      const onWidthChange = vi.fn()
+      // Start from a different width so the click is always a real change.
+      renderToolbar({ currentWidth: preset.value === '25' ? '100' : '25', onWidthChange })
+
+      await user.click(screen.getByTestId(`image-resize-${preset.value}`))
+
+      expect(onWidthChange).toHaveBeenCalledWith(preset.value)
+      expect(mockedSetProperty).toHaveBeenCalledWith({
+        blockId: 'B1',
+        key: 'image_width',
+        valueText: preset.value,
+      })
+    },
+  )
+
   it('active preset uses secondary variant', () => {
     renderToolbar({ currentWidth: '50' })
 
@@ -196,6 +218,31 @@ describe('ImageResizeToolbar', () => {
       valueText: 'left',
     })
   })
+
+  // Per-alignment coverage (#1170): each alignment (left/center/right), when
+  // clicked, must fire onAlignmentChange AND persist image_alignment with that
+  // exact value — the older test only exercised `left`.
+  it.each([...IMAGE_ALIGNMENTS])(
+    'clicking the $value alignment updates alignment and persists image_alignment=$value',
+    async (align) => {
+      const user = userEvent.setup()
+      const onAlignmentChange = vi.fn()
+      // Start from a different alignment so the click is always a real change.
+      renderToolbar({
+        currentAlignment: align.value === 'center' ? 'left' : 'center',
+        onAlignmentChange,
+      })
+
+      await user.click(screen.getByTestId(`image-align-${align.value}`))
+
+      expect(onAlignmentChange).toHaveBeenCalledWith(align.value as ImageAlignment)
+      expect(mockedSetProperty).toHaveBeenCalledWith({
+        blockId: 'B1',
+        key: 'image_alignment',
+        valueText: align.value,
+      })
+    },
+  )
 
   it('has no a11y violations', async () => {
     const { container } = renderToolbar()
