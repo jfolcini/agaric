@@ -22,6 +22,7 @@ How the system is built. Companion to:
 | Pages view (density, sort modes, grooming) | [`architecture/pages-view.md`](architecture/pages-view.md) |
 | Filters (compound grooming + agenda filter model) | [`architecture/filters.md`](architecture/filters.md) |
 | CRDT convergence + snapshots + crash recovery | [`architecture/crdt-and-recovery.md`](architecture/crdt-and-recovery.md) |
+| ↳ Converging the `sql_only` apply fallback with the projection helpers | [`architecture/sql-only-convergence.md`](architecture/sql-only-convergence.md) |
 | Sync transport + protocol + Android constraints | [`architecture/sync-and-network.md`](architecture/sync-and-network.md) |
 | ↳ Sync protocol specification (message framing, handshake) | [`architecture/sync-protocol-spec.md`](architecture/sync-protocol-spec.md) |
 | Integrations (Google Calendar, MCP / agent access) | [`architecture/integrations.md`](architecture/integrations.md) |
