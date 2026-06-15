@@ -35,6 +35,7 @@ import { useBlockResolvers } from '@/hooks/useBlockResolvers'
 import { useBlockSwipeActions } from '@/hooks/useBlockSwipeActions'
 import { useBlockTouchLongPress } from '@/hooks/useBlockTouchLongPress'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { usePropertyDefForEdit } from '@/hooks/usePropertyDefForEdit'
 import { performActivePageUndo } from '@/hooks/useUndoShortcuts'
 import { detectBlockType } from '@/lib/block-type-convert'
@@ -206,8 +207,9 @@ function SortableBlockInner({
     reset: swipeReset,
   } = useBlockSwipeActions(handleSwipeDelete)
 
-  const isTouchDevice =
-    typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
+  // #1232: use the shared robust detector (coarse pointer AND real touch
+  // hardware) — WebKitGTK mis-reports `(pointer: coarse)` for a mouse.
+  const isTouchDevice = useIsTouch()
 
   useEffect(() => {
     isDraggingRef.current = isDragging

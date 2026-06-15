@@ -39,6 +39,14 @@ vi.mock('lucide-react', async (importOriginal) => {
  * `vi.restoreAllMocks()` here.
  */
 function setMatchMedia(isTouch: boolean) {
+  // #1232: `useIsTouch` now requires BOTH a coarse pointer AND real touch
+  // hardware (`navigator.maxTouchPoints > 0`) — WebKitGTK mis-reports coarse
+  // for a mouse. Drive both signals so touch simulation resolves correctly.
+  Object.defineProperty(navigator, 'maxTouchPoints', {
+    writable: true,
+    configurable: true,
+    value: isTouch ? 5 : 0,
+  })
   const original = Object.getOwnPropertyDescriptor(window, 'matchMedia')
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
@@ -56,6 +64,18 @@ function setMatchMedia(isTouch: boolean) {
   })
   return original
 }
+
+// #1232: `setMatchMedia(true)` raises `navigator.maxTouchPoints` (the new
+// touch-hardware signal) but callers only restore `matchMedia`. Reset the
+// touch-point count after every test so a touch case can't leak into a later
+// desktop case (which would wrongly render the touch gutter).
+afterEach(() => {
+  Object.defineProperty(navigator, 'maxTouchPoints', {
+    writable: true,
+    configurable: true,
+    value: 0,
+  })
+})
 
 import { BlockGutterControls, GutterButton } from '@/components/editor/BlockGutterControls'
 import { TooltipProvider } from '@/components/ui/tooltip'
