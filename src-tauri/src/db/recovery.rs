@@ -304,7 +304,25 @@ async fn recover_blocks_from_op_log(
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("");
                 let parent_id = payload.get("parent_id").and_then(serde_json::Value::as_str);
-                let position = payload.get("position").and_then(serde_json::Value::as_i64);
+                // #1252: a new-scheme (#400/#603) `create_block` carries a
+                // 0-based `index` and OMITS the legacy sparse `position`
+                // (`CreateBlockPayload.position` is
+                // `skip_serializing_if = "Option::is_none"`). Reading only
+                // `position` here wrote `blocks.position = NULL` for every
+                // such block, collapsing recovered siblings to ULID order.
+                // Mirror the SQL-only materializer fallback
+                // (`apply_create_block_sql_only`): prefer the legacy
+                // `position`, else derive a 1-based provisional position from
+                // `index` via `index_to_provisional_position`.
+                let position = payload
+                    .get("position")
+                    .and_then(serde_json::Value::as_i64)
+                    .or_else(|| {
+                        payload
+                            .get("index")
+                            .and_then(serde_json::Value::as_i64)
+                            .map(crate::pagination::index_to_provisional_position)
+                    });
 
                 sqlx::query(
                     "INSERT OR IGNORE INTO blocks \
@@ -335,9 +353,22 @@ async fn recover_blocks_from_op_log(
                 let new_parent_id = payload
                     .get("new_parent_id")
                     .and_then(serde_json::Value::as_str);
+                // #1252: prefer the new-scheme 0-based `new_index` (as a
+                // 1-based provisional position) when present, else the legacy
+                // `new_position`. Mirrors `apply_move_block_sql_only`. The
+                // `move_block` arm was less broken than `create_block`
+                // (`MoveBlockPayload.new_position` is always serialized and
+                // mirrors `new_index`), but routing on `new_index` keeps
+                // recovery consistent with the live materializer.
                 let new_position = payload
-                    .get("new_position")
-                    .and_then(serde_json::Value::as_i64);
+                    .get("new_index")
+                    .and_then(serde_json::Value::as_i64)
+                    .map(crate::pagination::index_to_provisional_position)
+                    .or_else(|| {
+                        payload
+                            .get("new_position")
+                            .and_then(serde_json::Value::as_i64)
+                    });
 
                 sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
                     .bind(new_parent_id)
@@ -1176,6 +1207,130 @@ mod tests {
             deleted_at("sibling").await.is_some(),
             "TEXT-era restore must NOT resurrect a different cohort \
              (deleted_at parses to a different ms via julianday)"
+        );
+    }
+
+    /// #1252: recovery must honor the new-scheme (#400/#603) `index`/`new_index`
+    /// sibling-placement fields, not just the legacy `position`/`new_position`.
+    ///
+    /// Production `create_block` ops have carried only a 0-based `index` (with
+    /// `position` OMITTED — `CreateBlockPayload.position` is
+    /// `skip_serializing_if = "Option::is_none"`) since #400. The old recovery
+    /// arm read only `payload["position"]`, so every recovered block got
+    /// `position = NULL` and `ORDER BY position` collapsed siblings to ULID
+    /// order. This seeds three siblings created in REVERSE id order at
+    /// ascending `index` slots (and one moved via `new_index`), then asserts the
+    /// recovered `ORDER BY position, id` matches the index order — NOT the ulid
+    /// order. Fails on the pre-fix code (all positions NULL ⇒ id order).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_honors_new_scheme_index_for_sibling_order() {
+        let (pool, _dir) = test_pool().await;
+
+        // Seed a new-scheme `create_block` op carrying ONLY `index` (no
+        // `position` key — exactly how production serializes #400 creates).
+        let seed_create = |id: &'static str, index: i64, seq: i64| {
+            let pool = pool.clone();
+            async move {
+                let payload = serde_json::json!({
+                    "block_id": id,
+                    "block_type": "content",
+                    "parent_id": "parent",
+                    "index": index,
+                    "content": id,
+                })
+                .to_string();
+                // Guard: the bug is that `position` is ABSENT on new-scheme ops.
+                assert!(
+                    !payload.contains("\"position\""),
+                    "new-scheme create payload must omit the legacy position key"
+                );
+                sqlx::query(
+                    "INSERT INTO op_log \
+                     (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                     VALUES ('dev', ?, NULL, ?, 'create_block', ?, ?)",
+                )
+                .bind(seq)
+                .bind(format!("h{seq}"))
+                .bind(&payload)
+                .bind(1_767_225_600_000_i64 + seq)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+
+        // The parent itself, then three children created at slots 0,1,2 — but
+        // in REVERSE id order, so an id/ULID-collapse would invert them.
+        seed_create("parent", 0, 1).await;
+        seed_create("ccc", 0, 2).await;
+        seed_create("bbb", 1, 3).await;
+        seed_create("aaa", 2, 4).await;
+
+        // A new-scheme `move_block` carrying ONLY `new_index` (mirrors the
+        // breadcrumb `new_position`, but recovery must route on `new_index`).
+        // Move "aaa" to slot 0 — it should sort first after recovery.
+        let move_payload = serde_json::json!({
+            "block_id": "aaa",
+            "new_parent_id": "parent",
+            "new_position": 1, // stale breadcrumb; new_index is authoritative
+            "new_index": 0,
+        })
+        .to_string();
+        sqlx::query(
+            "INSERT INTO op_log \
+             (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES ('dev', 5, NULL, 'h5', 'move_block', ?, ?)",
+        )
+        .bind(&move_payload)
+        .bind(1_767_225_600_005_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        // Recovered sibling order by the canonical key. Pre-fix: all positions
+        // NULL ⇒ id order [aaa, bbb, ccc]. Post-fix: index order, with the
+        // moved "aaa" at slot 0 ⇒ position 1, then ccc (idx0→pos1 on create but
+        // unmoved), bbb (idx1→pos2)... assert the moved node sorts first and
+        // the create-index order is preserved among the others.
+        let order: Vec<String> = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM blocks WHERE parent_id = 'parent' \
+             ORDER BY position ASC, id ASC",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        // Verify no sibling has a NULL position (the core defect).
+        let null_positions: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE parent_id = 'parent' AND position IS NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            null_positions, 0,
+            "recovery must derive a position from `index`/`new_index`, not write NULL (#1252)"
+        );
+
+        // "aaa" was moved to new_index 0 ⇒ provisional position 1 ⇒ sorts
+        // first; this must NOT be the id-order coincidence, so also assert the
+        // unmoved siblings keep their create-index order relative to each other.
+        assert_eq!(
+            order.first().map(String::as_str),
+            Some("aaa"),
+            "moved-to-slot-0 block must sort first by recovered position, got {order:?}"
+        );
+        let ccc = order.iter().position(|id| id == "ccc").unwrap();
+        let bbb = order.iter().position(|id| id == "bbb").unwrap();
+        assert!(
+            ccc < bbb,
+            "create-index order must be preserved (ccc@idx0 before bbb@idx1), got {order:?}"
         );
     }
 }
