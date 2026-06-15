@@ -8,6 +8,7 @@ import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useBlockActions } from '@/hooks/useBlockActions'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { dueDateColor, formatCompactDate, MONTH_SHORT } from '@/lib/date-utils'
 import { priorityColor } from '@/lib/priority-color'
@@ -231,6 +232,13 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
   const isMobile = useIsMobile()
   const inlinePropLimit = maxInlineProperties ?? getInlinePropertyLimit(isMobile)
 
+  // #1236: the bullet's at-rest hidden state is gated on pointer-type. We use a
+  // JS gate (`useIsTouch()`) rather than a `[@media(pointer:fine)]` CSS query
+  // because the Linux WebKitGTK webview lies about that media query too
+  // (reports coarse for a plain mouse) — `useIsTouch` additionally checks
+  // `navigator.maxTouchPoints` to short-circuit the false-coarse.
+  const isTouch = useIsTouch()
+
   // UX-308: Play a one-shot bump animation when the attachment count changes
   // (file dropped/pasted). `animKey` starts as null so the very first render
   // has no animation classes; subsequent count changes set it to the new
@@ -307,7 +315,12 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
               // GUTTER_BUTTON_BASE. COARSE pointers (touch): NOT hidden — there is
               // no hover, and the bullet is the tap-to-zoom target (#927 f3), so it
               // must stay visible/tappable at rest (like the touch drag handle).
-              '[@media(pointer:fine)]:opacity-0 [@media(pointer:fine)]:pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto',
+              // #1236: gate the at-rest hidden state on `!isTouch` (JS) rather
+              // than `[@media(pointer:fine)]` (CSS) — WebKitGTK lies about that
+              // media query, so a desktop mouse would otherwise keep the bullet
+              // always-visible on every row.
+              !isTouch && 'opacity-0 pointer-events-none',
+              'group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto',
             )}
             data-testid="block-bullet"
             data-has-children={hasChildren}

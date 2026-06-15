@@ -54,7 +54,24 @@ function setMatchMedia(isTouch: boolean) {
       dispatchEvent: vi.fn(),
     })),
   })
+  // #1236: useIsTouch() now requires real touch hardware
+  // (navigator.maxTouchPoints > 0) in addition to a coarse pointer. Simulate
+  // it for the touch case; callers reset it via resetMaxTouchPoints() on
+  // teardown so it doesn't leak to desktop-default tests.
+  setMaxTouchPoints(isTouch ? 5 : 0)
   return original
+}
+
+function setMaxTouchPoints(value: number) {
+  Object.defineProperty(navigator, 'maxTouchPoints', {
+    value,
+    writable: true,
+    configurable: true,
+  })
+}
+
+function resetMaxTouchPoints() {
+  setMaxTouchPoints(0)
 }
 
 import { BlockGutterControls, GutterButton } from '@/components/editor/BlockGutterControls'
@@ -498,6 +515,7 @@ describe('BlockGutterControls multi-select checkbox (B1, #217)', () => {
       expect(selected.className).not.toContain('[@media(pointer:coarse)]:hidden')
     } finally {
       if (original) Object.defineProperty(window, 'matchMedia', original)
+      resetMaxTouchPoints()
     }
   })
 
@@ -541,6 +559,7 @@ describe('BlockGutterControls (touch / pointer:coarse)', () => {
     if (originalMatchMedia) {
       Object.defineProperty(window, 'matchMedia', originalMatchMedia)
     }
+    resetMaxTouchPoints()
   })
 
   it('renders only drag handle and overflow button (not inline history/delete)', () => {
@@ -800,6 +819,7 @@ describe('BlockGutterControls multiselect mode (Fix 6)', () => {
       expect(screen.queryByTestId('more-actions')).not.toBeInTheDocument()
     } finally {
       if (original) Object.defineProperty(window, 'matchMedia', original)
+      resetMaxTouchPoints()
     }
   })
 

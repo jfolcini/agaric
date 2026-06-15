@@ -4448,10 +4448,23 @@ describe('SortableBlock touch drag handle hittability (#918/#919)', () => {
       removeEventListener: vi.fn(),
       dispatchEvent: vi.fn(),
     }))
+    // #1236: useIsTouch() now also requires navigator.maxTouchPoints > 0; the
+    // coarse-pointer alone (a WebKitGTK mouse) would otherwise resolve to fine.
+    Object.defineProperty(navigator, 'maxTouchPoints', {
+      value: 5,
+      writable: true,
+      configurable: true,
+    })
   })
 
   afterEach(() => {
     window.matchMedia = originalMatchMedia
+    // Reset so the simulated touch hardware doesn't leak to later tests.
+    Object.defineProperty(navigator, 'maxTouchPoints', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
   })
 
   it('renders the touch drag grip and keeps it out of any w-0 / overflow-hidden wrapper', () => {
@@ -4570,11 +4583,23 @@ describe('SortableBlock swipe-to-delete progressive cue (UX-304)', () => {
       removeEventListener: vi.fn(),
       dispatchEvent: vi.fn(),
     }))
+    // #1236: useIsTouch() now also requires navigator.maxTouchPoints > 0.
+    Object.defineProperty(navigator, 'maxTouchPoints', {
+      value: 5,
+      writable: true,
+      configurable: true,
+    })
   })
 
   afterEach(() => {
     window.matchMedia = originalMatchMedia
     mockUseBlockSwipeActions.mockImplementation(defaultSwipeReturn)
+    // Reset so the simulated touch hardware doesn't leak to later tests.
+    Object.defineProperty(navigator, 'maxTouchPoints', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
   })
 
   it('renders the muted destructive variant while revealed but below threshold', () => {
