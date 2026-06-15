@@ -46,9 +46,7 @@ async fn apply_op_arc_record_does_not_leak_strong_count() {
     // for its `DeferredNotification` push (refcount 3 inside the call)
     // and drops both back when the handler returns.
     let task = MaterializeTask::ApplyOp(StdArc::clone(&record));
-    handle_foreground_task(&pool, &task, &empty_gcal_handle())
-        .await
-        .unwrap();
+    handle_foreground_task(&pool, &task).await.unwrap();
     drop(task);
 
     // After the handler returns and the task is dropped, only our
@@ -120,9 +118,7 @@ async fn remove_tag_handler_cleans_inherited() {
     )
     .await;
     let task = MaterializeTask::ApplyOp(StdArc::new(r));
-    handle_foreground_task(&pool, &task, &empty_gcal_handle())
-        .await
-        .unwrap();
+    handle_foreground_task(&pool, &task).await.unwrap();
 
     // Verify direct tag is gone
     let direct: i64 = sqlx::query_scalar(

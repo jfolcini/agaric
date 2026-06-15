@@ -1,5 +1,4 @@
 //! Tests for materializer queue coordination, dispatch routing, dedup logic, shutdown, flush barriers, and metrics.
-use super::DirtySink;
 use super::*;
 use crate::db::init_pool;
 use crate::error::AppError;
@@ -12,30 +11,14 @@ use crate::op_log::append_local_op;
 use crate::ulid::BlockId;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
+use std::sync::Arc as StdArc;
 use std::sync::atomic::Ordering as AtomicOrdering;
-use std::sync::{Arc as StdArc, OnceLock};
 use std::time::Duration;
 use tempfile::TempDir;
 
 const DEV: &str = "test-device-mat";
 const FIXED_TS: i64 = 1_735_689_600_000;
 const FAKE_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
-
-/// Empty [`DirtySink`] cell used by every existing materializer test
-/// that predates FEAT-5h.  The cell is never populated, so no snapshot
-/// is captured and no dirty event is ever computed — the test behaves
-/// exactly as it did before the sink parameter was added.
-///
-/// #643: this used to be an `OnceLock<GcalConnectorHandle>`; the
-/// pipeline now takes an integration-agnostic
-/// `OnceLock<Arc<dyn DirtySink>>`.
-pub(super) fn empty_gcal_handle() -> OnceLock<StdArc<dyn DirtySink + Send + Sync>> {
-    OnceLock::new()
-}
-
-pub(super) fn empty_gcal_handle_arc() -> StdArc<OnceLock<StdArc<dyn DirtySink + Send + Sync>>> {
-    StdArc::new(OnceLock::new())
-}
 
 pub(super) async fn test_pool() -> (SqlitePool, TempDir) {
     let dir = TempDir::new().unwrap();
@@ -119,7 +102,6 @@ mod dispatch;
 mod enqueue_shutdown;
 mod fifo_regression;
 mod fifo_status;
-mod gcal_hook;
 mod lifecycle;
 mod metrics_dedup;
 mod page_link_cache;

@@ -34,7 +34,6 @@ pub(crate) mod blocks;
 pub(crate) mod bug_report;
 pub(crate) mod compaction;
 pub(crate) mod drafts;
-pub(crate) mod gcal;
 pub(crate) mod history;
 pub(crate) mod journal;
 pub(crate) mod link_metadata;
@@ -92,13 +91,6 @@ pub use compaction::{
 pub use drafts::{
     FlushAllDraftsResult, delete_draft, flush_all_drafts, flush_all_drafts_inner, flush_draft,
     flush_draft_inner, list_drafts, list_drafts_inner, save_draft,
-};
-pub use gcal::{
-    BeginOauthOutcome, GcalClientState, GcalEventEmitterState, GcalOAuthClientState, GcalStatus,
-    GcalTokenStoreState, LeaseHolder, begin_gcal_oauth, begin_gcal_oauth_inner, disconnect_gcal,
-    disconnect_gcal_inner, force_gcal_resync, force_gcal_resync_inner, get_gcal_status,
-    get_gcal_status_inner, set_gcal_privacy_mode, set_gcal_privacy_mode_inner,
-    set_gcal_window_days, set_gcal_window_days_inner,
 };
 pub use history::{
     apply_reverse_in_tx, compute_block_vs_current_diff, compute_block_vs_current_diff_inner,
@@ -206,12 +198,6 @@ pub use drafts::{
     __specta__fn__list_drafts, __specta__fn__save_draft,
 };
 #[doc(hidden)]
-pub use gcal::{
-    __specta__fn__begin_gcal_oauth, __specta__fn__disconnect_gcal, __specta__fn__force_gcal_resync,
-    __specta__fn__get_gcal_status, __specta__fn__set_gcal_privacy_mode,
-    __specta__fn__set_gcal_window_days,
-};
-#[doc(hidden)]
 pub use history::{
     __specta__fn__compute_block_vs_current_diff, __specta__fn__compute_edit_diff,
     __specta__fn__find_undo_group, __specta__fn__list_page_history, __specta__fn__redo_page_op,
@@ -305,11 +291,6 @@ pub use compaction::{__cmd__compact_op_log_cmd, __cmd__get_compaction_status};
 pub use drafts::{
     __cmd__delete_draft, __cmd__flush_all_drafts, __cmd__flush_draft, __cmd__list_drafts,
     __cmd__save_draft,
-};
-#[doc(hidden)]
-pub use gcal::{
-    __cmd__begin_gcal_oauth, __cmd__disconnect_gcal, __cmd__force_gcal_resync,
-    __cmd__get_gcal_status, __cmd__set_gcal_privacy_mode, __cmd__set_gcal_window_days,
 };
 #[doc(hidden)]
 pub use history::{
@@ -709,14 +690,6 @@ async fn delete_property_core(
         )));
     }
 
-    // FEAT-5i — snapshot pre-mutation block dates so the post-commit
-    // `notify_gcal_for_op` call can compute `old_affected_dates`.
-    let gcal_snapshot = if materializer.is_gcal_hook_active() {
-        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &block_id).await?)
-    } else {
-        None
-    };
-
     // 3. Append DeleteProperty op
     let payload = OpPayload::DeleteProperty(DeletePropertyPayload {
         block_id: BlockId::from_trusted(&block_id),
@@ -788,17 +761,8 @@ async fn delete_property_core(
     }
 
     // 5. Dispatch background cache tasks after commit (fire-and-forget).
-    //    PEND-25 L9: wrap in `Arc` once so the dispatch queue and the
-    //    post-commit `notify_gcal_for_op` borrow share the record by
-    //    refcount rather than deep-cloning the owned `String` payloads.
-    let op_record = Arc::new(op_record);
-    tx.enqueue_background(Arc::clone(&op_record));
+    tx.enqueue_background(Arc::new(op_record));
     tx.commit_and_dispatch(materializer).await?;
-
-    // FEAT-5i — notify GCal connector post-commit.
-    if let Some(snapshot) = gcal_snapshot {
-        materializer.notify_gcal_for_op(&op_record, &snapshot);
-    }
 
     Ok(())
 }

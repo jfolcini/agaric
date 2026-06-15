@@ -2,7 +2,6 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
-import { GcalReauthBanner } from '@/components/gcal/GcalReauthBanner'
 import { AppSidebar } from '@/components/layout/AppSidebar'
 import { QuickAccessBar } from '@/components/layout/QuickAccessBar'
 import { QuickCaptureFab } from '@/components/layout/QuickCaptureFab'
@@ -388,16 +387,6 @@ function App() {
        * is announced by the SpaceSwitcher / OS title.
        */}
       <SpaceTopStripe />
-      {/*
-       * MAINT-216: top-of-app reauth banner. Subscribes once to the
-       * `gcal:reauth_required` Tauri event emitted by the PEND-24 H3
-       * backend when Google revokes the GCal refresh token. Renders
-       * `null` until an event fires so it has zero footprint on the
-       * happy path; mounting at shell level (above the sidebar) makes
-       * it visible from every view, since the connector pauses
-       * silently and the user has no other signal that sync is gone.
-       */}
-      <GcalReauthBanner />
       <SidebarProvider>
         <AppSidebar
           currentView={currentView}

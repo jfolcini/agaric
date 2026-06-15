@@ -755,7 +755,7 @@ describe('ConfirmDialog', () => {
     })
   })
 
-  // ─── secondaryAction escape hatch (multi-action dialogs, e.g. GCal disconnect) ─
+  // ─── secondaryAction escape hatch (multi-action dialogs) ─────────────────────
 
   describe('secondaryAction', () => {
     const props = {
@@ -849,24 +849,22 @@ describe('ConfirmDialog', () => {
         <ConfirmDialog
           open={true}
           onOpenChange={vi.fn()}
-          titleKey="gcal.disconnect.title"
-          descriptionKey="gcal.disconnect.description"
-          confirmKey="gcal.disconnect.deleteCalendar"
-          cancelKey="gcal.disconnect.cancel"
+          titleKey="pairing.confirmCloseTitle"
+          descriptionKey="pairing.confirmCloseDescription"
+          confirmKey="pairing.confirmCloseAction"
+          cancelKey="dialog.cancel"
           variant="destructive"
           onConfirm={vi.fn()}
           secondaryAction={{
-            labelKey: 'gcal.disconnect.keepCalendar',
+            labelKey: 'pairing.confirmCloseKeep',
             variant: 'outline',
             onConfirm: vi.fn(),
           }}
         />,
       )
 
-      // gcal.disconnect.keepCalendar resolves to "Disconnect but keep calendar"
-      expect(
-        screen.getByRole('button', { name: 'Disconnect but keep calendar' }),
-      ).toBeInTheDocument()
+      // pairing.confirmCloseKeep resolves to "Keep pairing"
+      expect(screen.getByRole('button', { name: 'Keep pairing' })).toBeInTheDocument()
     })
   })
 })

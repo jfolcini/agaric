@@ -3272,59 +3272,6 @@ export const HANDLERS: Record<string, Handler> = {
   },
 
   // ---------------------------------------------------------------------------
-  // Google Calendar integration (FEAT-5) — MAINT-160
-  //
-  // The real backend talks to Google over OAuth and exposes a `GcalStatus`
-  // snapshot to the Settings tab. The mock returns a stable "disconnected"
-  // status so the GoogleCalendarSettingsTab renders its sign-in CTA without
-  // any per-call invoke stubbing in Playwright. Mutating commands return
-  // `null` (or the new value where the binding declares one) and do not
-  // persist state — this is enough to exercise the rendering paths.
-  // ---------------------------------------------------------------------------
-
-  get_gcal_status: () => ({
-    connected: false,
-    account_email: null,
-    calendar_id: null,
-    window_days: 30,
-    privacy_mode: 'full',
-    last_push_at: null,
-    last_error: null,
-    reauth_required: false,
-    push_lease: {
-      held_by_this_device: false,
-      device_id: null,
-      expires_at: null,
-    },
-  }),
-
-  force_gcal_resync: returnNull,
-
-  // Browser mock for the FEAT-5b OAuth flow. Real loopback OAuth is a
-  // Tauri-only concern; in the browser preview just return an empty
-  // outcome so the UI can exercise the success path without spinning up
-  // a real listener. Real-flow tests live under src-tauri.
-  begin_gcal_oauth: () => ({ account_email: null }),
-
-  disconnect_gcal: (args) => {
-    // Acknowledge the binding's `deleteCalendar: boolean` arg even though
-    // the mock has no calendar to delete — the destructured (and discarded)
-    // binding documents the contract for parity with the Rust command at
-    // `src-tauri/src/commands/gcal.rs:332`. The mock has no observable
-    // state to mutate either way, so this is a no-op.
-    const a = args as { deleteCalendar?: boolean }
-    void a.deleteCalendar
-    return null
-  },
-
-  set_gcal_window_days: (args) => {
-    const a = args as Record<string, unknown>
-    return (a['n'] as number) ?? 30
-  },
-
-  set_gcal_privacy_mode: returnNull,
-
-  // ---------------------------------------------------------------------------
   // MCP read-only / read-write servers (FEAT-4) — MAINT-160
   //
   // The real backend manages a Unix-domain-socket lifecycle that can't run

@@ -209,9 +209,7 @@ async fn handle_fg_apply_op() {
         r#"{"block_id":"NOOP_BLK","to_text":"modified","prev_edit":null}"#,
     )));
     assert!(
-        handle_foreground_task(&pool, &task, &empty_gcal_handle())
-            .await
-            .is_ok(),
+        handle_foreground_task(&pool, &task).await.is_ok(),
         "handle_foreground_task should succeed for valid ApplyOp"
     );
     let c: Option<String> = sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'NOOP_BLK'")
@@ -229,13 +227,9 @@ async fn handle_fg_barrier() {
     let (pool, _dir) = test_pool().await;
     let n = Arc::new(tokio::sync::Notify::new());
     assert!(
-        handle_foreground_task(
-            &pool,
-            &MaterializeTask::Barrier(Arc::clone(&n)),
-            &empty_gcal_handle()
-        )
-        .await
-        .is_ok(),
+        handle_foreground_task(&pool, &MaterializeTask::Barrier(Arc::clone(&n)),)
+            .await
+            .is_ok(),
         "barrier task should succeed"
     );
     assert!(
@@ -252,12 +246,7 @@ async fn handle_fg_unexpected() {
     // `fg_errors` and reviewers see a real signal instead of a silent
     // drop.
     let (pool, _dir) = test_pool().await;
-    let result = handle_foreground_task(
-        &pool,
-        &MaterializeTask::RebuildTagsCache,
-        &empty_gcal_handle(),
-    )
-    .await;
+    let result = handle_foreground_task(&pool, &MaterializeTask::RebuildTagsCache).await;
     match result {
         Err(AppError::Validation(msg)) => {
             assert!(
@@ -278,7 +267,6 @@ async fn handle_fg_unexpected_reindex() {
         &MaterializeTask::ReindexBlockLinks {
             block_id: "01FAKE00000000000000000000".into(),
         },
-        &empty_gcal_handle(),
     )
     .await;
     match result {
@@ -378,12 +366,7 @@ async fn handle_fg_rebuild_fts_index_returns_validation_err() {
     // any single variant cannot accidentally re-introduce the silent-Ok
     // behavior.
     let (pool, _dir) = test_pool().await;
-    let result = handle_foreground_task(
-        &pool,
-        &MaterializeTask::RebuildFtsIndex,
-        &empty_gcal_handle(),
-    )
-    .await;
+    let result = handle_foreground_task(&pool, &MaterializeTask::RebuildFtsIndex).await;
     match result {
         Err(AppError::Validation(msg)) => {
             assert!(

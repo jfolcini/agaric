@@ -90,16 +90,6 @@ vi.mock('@/components/AgentAccessSettingsTab', () => ({
   AgentAccessSettingsTab: () => <div data-testid="agent-access-settings-tab">Agent Access</div>,
 }))
 
-// FEAT-5f: GoogleCalendarSettingsTab is rendered inside the "Google
-// Calendar" tab panel. Mock it as an inert marker so the SettingsView
-// tests stay focused on tab routing and do not need to stub the
-// `get_gcal_status` IPC + event listeners.
-vi.mock('@/components/GoogleCalendarSettingsTab', () => ({
-  GoogleCalendarSettingsTab: () => (
-    <div data-testid="google-calendar-settings-tab">Google Calendar</div>
-  ),
-}))
-
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
@@ -183,11 +173,11 @@ describe('SettingsView', () => {
     })
   })
 
-  it('renders with 11 tabs', () => {
+  it('renders with 10 tabs', () => {
     render(<SettingsView />)
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(11)
+    expect(tabs).toHaveLength(10)
     // Every tab is still present and reachable, regardless of which group
     // it now lives in.
     const labels = tabs.map((tab) => tab.textContent)
@@ -201,7 +191,6 @@ describe('SettingsView', () => {
         t('settings.tabData'),
         t('settings.tabSync'),
         t('settings.tabAgentAccess'),
-        t('settings.tabGoogleCalendar'),
         t('settings.tabNotifications'),
         t('settings.tabHelp'),
       ]),
@@ -262,11 +251,7 @@ describe('SettingsView', () => {
         [
           'settings-group-integrations',
           t('settings.groupIntegrations'),
-          [
-            t('settings.tabGoogleCalendar'),
-            t('settings.tabNotifications'),
-            t('settings.tabAgentAccess'),
-          ],
+          [t('settings.tabNotifications'), t('settings.tabAgentAccess')],
         ],
         [
           'settings-group-data',
@@ -306,7 +291,6 @@ describe('SettingsView', () => {
         t('settings.tabData'),
         t('settings.tabSync'),
         t('settings.tabAgentAccess'),
-        t('settings.tabGoogleCalendar'),
         t('settings.tabNotifications'),
         t('settings.tabHelp'),
       ]
@@ -324,16 +308,6 @@ describe('SettingsView', () => {
       // grouped rail wraps instead, so no such viewport should exist.
       expect(document.querySelector('[data-radix-scroll-area-viewport]')).toBeNull()
     })
-  })
-
-  it('Google Calendar tab renders the GoogleCalendarSettingsTab panel', async () => {
-    const user = userEvent.setup()
-    render(<SettingsView />)
-
-    const gcalTab = screen.getByRole('tab', { name: t('settings.tabGoogleCalendar') })
-    await user.click(gcalTab)
-    expect(gcalTab).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByTestId('google-calendar-settings-tab')).toBeInTheDocument()
   })
 
   it('Notifications tab renders the NotificationsTab panel', async () => {

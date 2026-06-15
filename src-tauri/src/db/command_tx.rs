@@ -76,8 +76,8 @@ use super::pool::begin_immediate_logged;
 /// `Edit` variant, never propagated to the caller.
 ///
 /// PEND-25 L2 + L9: the inner `OpRecord` is held as `Arc<OpRecord>` so
-/// command sites that need both the dispatch queue and a post-commit
-/// `notify_gcal_for_op` borrow can share one record via refcount
+/// command sites that need both the dispatch queue and another
+/// post-commit borrow can share one record via refcount
 /// instead of deep-cloning. The enqueue methods accept
 /// `impl Into<Arc<OpRecord>>` so the existing call sites that hand off
 /// a freshly-built `OpRecord` by value continue to compile unchanged
@@ -171,8 +171,7 @@ impl CommandTx {
     /// PEND-25 L9: accepts `impl Into<Arc<OpRecord>>` so callers can pass
     /// either a fresh `OpRecord` by value (Rust's blanket
     /// `impl<T> From<T> for Arc<T>` does the wrap) or an existing
-    /// `Arc<OpRecord>` they need to share with a post-commit borrow
-    /// (e.g. `materializer.notify_gcal_for_op(&op_record, ...)`).
+    /// `Arc<OpRecord>` they need to share with a post-commit borrow.
     pub fn enqueue_background(&mut self, record: impl Into<Arc<crate::op_log::OpRecord>>) {
         self.pending
             .push(PendingDispatch::Background(record.into()));

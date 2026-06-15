@@ -3,7 +3,6 @@ mod block_cmd_tests;
 pub mod common;
 mod compaction_cmd_tests;
 mod edge_case_tests;
-mod gcal_hook_tests;
 mod glob_filter_tests;
 mod history_cmd_tests;
 mod list_pages_with_metadata_tests;

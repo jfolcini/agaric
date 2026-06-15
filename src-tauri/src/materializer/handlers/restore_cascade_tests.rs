@@ -197,10 +197,7 @@ async fn restore_block_dispatches_to_loro_for_each_descendant() {
 
     // Drive the materializer's apply path (which fans out the
     // engine cohort dispatch).
-    let dirty_sink: OnceLock<std::sync::Arc<dyn DirtySink + Send + Sync>> = OnceLock::new();
-    super::apply_op(&pool, &record, &dirty_sink)
-        .await
-        .expect("apply_op");
+    super::apply_op(&pool, &record).await.expect("apply_op");
 
     // Every block in the cohort — root + three descendants — must
     // now be alive in the engine.  This is the load-bearing

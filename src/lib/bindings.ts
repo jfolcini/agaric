@@ -620,7 +620,7 @@ export const commands = {
 	 *  device id, recent ERROR/WARN log lines). Delegates to
 	 *  [`collect_bug_report_metadata_inner`].
 	 *
-	 *  #609: redaction inputs (home dir, GCal email, peer device ids) are
+	 *  #609: redaction inputs (home dir, peer device ids) are
 	 *  resolved here — same sources as [`read_logs_for_report`] — so the
 	 *  recent-error tail embedded in the prefilled public GitHub issue body
 	 *  goes through the same redaction pipeline as the ZIP export.
@@ -629,7 +629,7 @@ export const commands = {
 	/**
 	 *  Tauri command: enumerate the log files eligible for inclusion in a
 	 *  bug-report ZIP, applying per-file size caps and optional PII
-	 *  redaction (home path, device id, GCal email, peer device ids).
+	 *  redaction (home path, device id, peer device ids).
 	 *  Delegates to [`read_logs_for_report_inner`].
 	 */
 	readLogsForReport: (redact: boolean) => typedError<LogFileEntry[], AppError>(__TAURI_INVOKE("read_logs_for_report", { redact })),
@@ -703,47 +703,6 @@ export const commands = {
 	mcpRwSetEnabled: (enabled: boolean) => typedError<boolean, AppError>(__TAURI_INVOKE("mcp_rw_set_enabled", { enabled })),
 	/**  Tauri command: disconnect every in-flight RW MCP connection. */
 	mcpRwDisconnectAll: () => typedError<null, AppError>(__TAURI_INVOKE("mcp_rw_disconnect_all")),
-	/**
-	 *  Tauri command: report the GCal connector's connect/sync status to
-	 *  the Settings tab. Delegates to [`get_gcal_status_inner`].
-	 */
-	getGcalStatus: () => typedError<GcalStatus, AppError>(__TAURI_INVOKE("get_gcal_status")),
-	/**
-	 *  Tauri command: poke the GCal connector to run a resync immediately
-	 *  (rather than waiting for the next scheduled tick). Delegates to
-	 *  [`force_gcal_resync_inner`].
-	 */
-	forceGcalResync: () => typedError<null, AppError>(__TAURI_INVOKE("force_gcal_resync")),
-	/**
-	 *  Tauri command: disconnect the GCal account. Best-effort revokes the
-	 *  OAuth grant with Google (#690 — a failed/timed-out revoke is logged
-	 *  and does not block the disconnect), then clears the local OAuth
-	 *  tokens and account email, and optionally deletes the synced
-	 *  calendar. Delegates to [`disconnect_gcal_inner`].
-	 */
-	disconnectGcal: (deleteCalendar: boolean) => typedError<null, AppError>(__TAURI_INVOKE("disconnect_gcal", { deleteCalendar })),
-	/**
-	 *  Tauri command: update the GCal sync window (days before/after today
-	 *  that are mirrored to the connected calendar). The value is clamped
-	 *  to `[MIN_WINDOW_DAYS, MAX_WINDOW_DAYS]` in the inner. Delegates to
-	 *  [`set_gcal_window_days_inner`].
-	 */
-	setGcalWindowDays: (n: number) => typedError<number, AppError>(__TAURI_INVOKE("set_gcal_window_days", { n })),
-	/**
-	 *  Tauri command: update the GCal privacy mode (`"full"` vs.
-	 *  `"minimal"` event-body sharing). Delegates to
-	 *  [`set_gcal_privacy_mode_inner`].
-	 */
-	setGcalPrivacyMode: (mode: string) => typedError<null, AppError>(__TAURI_INVOKE("set_gcal_privacy_mode", { mode })),
-	/**
-	 *  Tauri command: kick off the desktop OAuth flow. Binds a loopback
-	 *  listener, opens the authorize URL in the OS browser, waits for the
-	 *  redirect, exchanges the code, persists the token + email.
-	 *
-	 *  Returns the unverified account email so the FE can update its
-	 *  connected-state label without waiting for the next status poll.
-	 */
-	beginGcalOauth: () => typedError<BeginOauthOutcome, AppError>(__TAURI_INVOKE("begin_gcal_oauth")),
 	/**  Tauri command: list every space. Delegates to [`list_spaces_inner`]. */
 	listSpaces: () => typedError<SpaceRow[], AppError>(__TAURI_INVOKE("list_spaces")),
 	/**
@@ -1173,17 +1132,6 @@ export type BacklinkQueryResponse = {
 export type BacklinkSort = { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir };
 
 /**
- *  Outcome of [`begin_gcal_oauth`] — the connected account's email
- *  (when Google returned it in the ID token). The frontend uses this
- *  to update its connected-state label without waiting for the next
- *  status poll, though it also refetches `get_gcal_status` to land
- *  the canonical state.
- */
-export type BeginOauthOutcome = {
-	account_email: string | null,
-};
-
-/**
  *  Newtype wrapper around ULID for type safety and consistent serialisation.
  *  Stores the canonical uppercase Crockford base32 representation.
  *
@@ -1517,40 +1465,6 @@ export type FlushAllDraftsResult = {
 	flushed: number,
 };
 
-/**
- *  Full status snapshot for the Settings tab.  `connected` reflects
- *  the presence of an OAuth token in the keychain; `calendar_id` is
- *  only populated after the first push-cycle has created the
- *  dedicated calendar.
- *
- *  L-45: the previous shape carried both `enabled` and `connected`,
- *  populated from the same expression. `connected` is the canonical
- *  field consumed by the frontend (`GoogleCalendarSettingsTab.tsx`);
- *  `enabled` was unused and has been removed to prevent FE/BE drift on
- *  future refactors. If a separate "feature toggle" surface is ever
- *  needed it should be a distinct field with its own provenance.
- */
-export type GcalStatus = {
-	connected: boolean,
-	account_email: string | null,
-	calendar_id: string | null,
-	window_days: number,
-	privacy_mode: string,
-	last_push_at: string | null,
-	last_error: string | null,
-	/**
-	 *  #630: `true` when the connector is paused waiting for the user
-	 *  to re-authorize (`gcal_settings.reauth_required`).  Without this
-	 *  field the pause was invisible after a restart: the one-shot
-	 *  `gcal:reauth_required` event had already fired in a previous
-	 *  session, `connected` stays `true` (the token is not cleared by
-	 *  the terminal-401 path) and `last_error` is untouched — Settings
-	 *  showed a healthy connection while push was permanently paused.
-	 */
-	reauth_required: boolean,
-	push_lease: LeaseHolder,
-};
-
 /**  Response for grouped backlink queries — backlinks organized by source page. */
 export type GroupedBacklinkResponse = {
 	groups: BacklinkGroup[],
@@ -1662,16 +1576,6 @@ export type LastEditedSpec =
  *  `Rolling`). Used by PEND-58's `last-edited:older` chip.
  */
 { type: "OlderThan"; days: number };
-
-/**
- *  Holder metadata for the push-lease, surfaced to the Settings tab so
- *  users can see which device is currently pushing.
- */
-export type LeaseHolder = {
-	held_by_this_device: boolean,
-	device_id: string | null,
-	expires_at: string | null,
-};
 
 export type LinkMetadata = {
 	url: string,

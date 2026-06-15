@@ -331,13 +331,7 @@ async fn fg_retry_success() {
         }),
     )
     .await;
-    process_single_foreground_task(
-        &pool,
-        MaterializeTask::ApplyOp(StdArc::new(r)),
-        &metrics,
-        &empty_gcal_handle_arc(),
-    )
-    .await;
+    process_single_foreground_task(&pool, MaterializeTask::ApplyOp(StdArc::new(r)), &metrics).await;
     assert_eq!(
         metrics.fg_processed.load(AtomicOrdering::Relaxed),
         1,
@@ -362,7 +356,6 @@ async fn fg_retry_barrier() {
         &pool,
         MaterializeTask::Barrier(Arc::new(tokio::sync::Notify::new())),
         &metrics,
-        &empty_gcal_handle_arc(),
     )
     .await;
     assert_eq!(
@@ -384,7 +377,6 @@ async fn fg_retry_bad_payload() {
         &pool,
         MaterializeTask::ApplyOp(StdArc::new(fake_op_record("bogus_op_type", "{}"))),
         &metrics,
-        &empty_gcal_handle_arc(),
     )
     .await;
     assert_eq!(
@@ -555,10 +547,8 @@ async fn apply_op_different_device_trips_single_device_cursor_assert() {
         }),
     )
     .await;
-    let sink = empty_gcal_handle();
     // Should panic on the `debug_assert!` before the cursor advances.
-    let _ =
-        handle_foreground_task(&pool, &MaterializeTask::ApplyOp(StdArc::new(mine)), &sink).await;
+    let _ = handle_foreground_task(&pool, &MaterializeTask::ApplyOp(StdArc::new(mine))).await;
 }
 
 #[cfg(debug_assertions)]
@@ -578,9 +568,8 @@ async fn apply_op_same_device_does_not_trip_single_device_cursor_assert() {
         }),
     )
     .await;
-    let sink = empty_gcal_handle();
     // Must NOT panic; the apply succeeds on a single-device op_log.
-    handle_foreground_task(&pool, &MaterializeTask::ApplyOp(StdArc::new(mine)), &sink)
+    handle_foreground_task(&pool, &MaterializeTask::ApplyOp(StdArc::new(mine)))
         .await
         .expect("same-device single-op apply must succeed without tripping the #412 assert");
     let count = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM blocks WHERE id = ?")

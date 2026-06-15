@@ -18,7 +18,6 @@ pub mod draft;
 pub mod error;
 pub mod filters;
 pub mod fts;
-pub mod gcal_push;
 pub mod hash;
 pub mod import;
 pub mod lifecycle;
@@ -258,14 +257,6 @@ macro_rules! agaric_commands {
             $crate::commands::mcp::get_mcp_rw_socket_path,
             $crate::commands::mcp::mcp_rw_set_enabled,
             $crate::commands::mcp::mcp_rw_disconnect_all,
-            // Google Calendar push (FEAT-5e) — Settings "Google Calendar" tab
-            $crate::commands::gcal::get_gcal_status,
-            $crate::commands::gcal::force_gcal_resync,
-            $crate::commands::gcal::disconnect_gcal,
-            $crate::commands::gcal::set_gcal_window_days,
-            $crate::commands::gcal::set_gcal_privacy_mode,
-            // Desktop OAuth flow entry point (FEAT-5b).
-            $crate::commands::gcal::begin_gcal_oauth,
             // Spaces (FEAT-3 Phase 1 + Phase 2 + Phase 6)
             $crate::commands::spaces::list_spaces,
             $crate::commands::spaces::create_page_in_space,
@@ -1497,215 +1488,6 @@ fn wire_mcp_servers<R: tauri::Runtime>(
     );
 }
 
-/// Boot-phase 15 — wire the Google Calendar push connector (FEAT-5e): keyring
-/// token store, production API client, the FEAT-3p9 legacy→per-space
-/// migration, the connector task, and the materializer `DirtySink` hookup.
-///
-/// Spawned unconditionally so the managed-state resolvers for the five
-/// `gcal_*` commands always find their backing state; the task stays idle
-/// until a Google account is connected.
-fn wire_gcal_connector<R: tauri::Runtime>(
-    app: &tauri::App<R>,
-    gcal_write_pool: &sqlx::SqlitePool,
-    gcal_device_id: &str,
-    materializer_for_gcal: &materializer::Materializer,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use gcal_push::api::GcalApi;
-    use gcal_push::connector::spawn_connector;
-    use gcal_push::keyring_store::{
-        KeyringTokenStore, NoopEventEmitter, TauriGcalEventEmitter, TokenStore,
-    };
-    use tauri::Manager;
-
-    let gcal_emitter: std::sync::Arc<dyn gcal_push::keyring_store::GcalEventEmitter> =
-        std::sync::Arc::new(TauriGcalEventEmitter::new(app.handle().clone()));
-
-    // Best-effort keyring init.  A headless Linux box without
-    // Secret Service will fail here; fall back to a
-    // closed-shut `NoopTokenStore` so the rest of the wiring
-    // still lands.  The Settings UI surfaces the unavailable
-    // keychain via the `gcal:keyring_unavailable` event.
-    let gcal_token_store: std::sync::Arc<dyn TokenStore> =
-        match KeyringTokenStore::new(gcal_emitter.clone()) {
-            Ok(store) => std::sync::Arc::new(store),
-            Err(e) => {
-                tracing::warn!(
-                    target: "gcal",
-                    error = %e,
-                    "gcal keyring unavailable; TokenStore seeded with noop shim",
-                );
-                struct NoopTokenStore;
-                #[async_trait::async_trait]
-                impl TokenStore for NoopTokenStore {
-                    async fn load(
-                        &self,
-                    ) -> Result<Option<gcal_push::oauth::Token>, error::AppError>
-                    {
-                        Ok(None)
-                    }
-                    async fn store(
-                        &self,
-                        _t: &gcal_push::oauth::Token,
-                    ) -> Result<(), error::AppError> {
-                        Err(error::AppError::Validation(
-                            "keyring.unavailable".to_owned(),
-                        ))
-                    }
-                    async fn clear(&self) -> Result<(), error::AppError> {
-                        Ok(())
-                    }
-                }
-                std::sync::Arc::new(NoopTokenStore)
-            }
-        };
-
-    // Production API.  `GcalApi::new` only fails on a
-    // `reqwest::Client::builder().build()` failure (rustls
-    // misconfig) — propagate via `?` so the launch fails
-    // visibly rather than silently spawning a dead connector.
-    let gcal_client: std::sync::Arc<GcalApi> = std::sync::Arc::new(GcalApi::new()?);
-
-    // Silence the unused-import warning on the
-    // `NoopEventEmitter` — the constant is used via
-    // `keyring_store::NoopEventEmitter` elsewhere; this
-    // closure just prevents a dead_code diagnostic in rare
-    // build flavors.
-    let _ = NoopEventEmitter;
-
-    // FEAT-3p9 M1 — one-shot migration: copy the legacy
-    // single-space `gcal_settings` row + keychain entry into
-    // the per-space `gcal_space_config` row keyed by the
-    // seeded Personal-space ULID. Idempotent across boots via
-    // the `gcal_per_space_migrated` flag in `gcal_settings`.
-    // MUST run AFTER `bootstrap_spaces` so SPACE_PERSONAL_ULID
-    // exists, and BEFORE the GCal connector spawns. Keychain
-    // failures are non-fatal: the migration logs and lets the
-    // next boot retry.
-    let personal_token_store_for_migration: std::sync::Arc<dyn TokenStore> =
-        match KeyringTokenStore::new_for_space(
-            gcal_emitter.clone(),
-            spaces::bootstrap::SPACE_PERSONAL_ULID,
-        ) {
-            Ok(store) => std::sync::Arc::new(store),
-            Err(e) => {
-                tracing::warn!(
-                    target: "gcal",
-                    error = %e,
-                    "FEAT-3p9 M1: per-space keyring unavailable; \
-                     migration keychain step will fail-and-retry next boot",
-                );
-                // #608: do NOT fall back to the legacy store
-                // handle here. Pre-fix, that made the migration
-                // "copy" the legacy entry onto itself and then
-                // clear it — deleting the only credential
-                // production reads. Even post-fix (the clear is
-                // gone), a self-copy would "succeed" and set the
-                // migration flag without ever writing the real
-                // per-space entry. Instead hand the migration a
-                // store whose `store()` fails: per its
-                // documented failure model it copies the DB row,
-                // leaves the flag unset, and retries the
-                // keychain step on the next boot. The legacy
-                // entry is never touched either way.
-                struct UnavailablePerSpaceStore;
-                #[async_trait::async_trait]
-                impl TokenStore for UnavailablePerSpaceStore {
-                    async fn load(
-                        &self,
-                    ) -> Result<Option<gcal_push::oauth::Token>, error::AppError>
-                    {
-                        Err(error::AppError::Validation(
-                            "keyring.unavailable: per-space entry not constructible".to_owned(),
-                        ))
-                    }
-                    async fn store(
-                        &self,
-                        _t: &gcal_push::oauth::Token,
-                    ) -> Result<(), error::AppError> {
-                        Err(error::AppError::Validation(
-                            "keyring.unavailable: per-space entry not constructible".to_owned(),
-                        ))
-                    }
-                    async fn clear(&self) -> Result<(), error::AppError> {
-                        Err(error::AppError::Validation(
-                            "keyring.unavailable: per-space entry not constructible".to_owned(),
-                        ))
-                    }
-                }
-                std::sync::Arc::new(UnavailablePerSpaceStore)
-            }
-        };
-    if let Err(e) =
-        tauri::async_runtime::block_on(gcal_push::migration::migrate_legacy_gcal_to_personal_space(
-            gcal_write_pool,
-            gcal_token_store.as_ref(),
-            personal_token_store_for_migration.as_ref(),
-            gcal_emitter.as_ref(),
-            chrono::Utc::now(),
-        ))
-    {
-        tracing::warn!(
-            target: "gcal",
-            error = %e,
-            "FEAT-3p9 M1 migration failed; will retry on next boot",
-        );
-    }
-
-    // Spawn the connector task.  The handle + state trio are
-    // registered on Tauri so the five gcal commands can
-    // resolve.
-    // FEAT-5b — shared `OAuthClient` for the desktop OAuth
-    // flow. A single shared instance is load-bearing: the
-    // PKCE verifier produced by `begin_authorize` must be
-    // recoverable by the matching `exchange_code` call, and
-    // both go through this client. The `redirect_url`
-    // configured here is a sentinel — every flow overrides
-    // it with its per-flow loopback port in `begin_authorize`
-    // / `exchange_code`. A construction-time failure here
-    // means the pinned Google endpoint URLs failed to parse,
-    // which is structurally impossible — surface via `expect`
-    // so a regression in `OAuthClient::google` panics at
-    // startup rather than silently disabling Connect.
-    // The client is also passed to `spawn_connector` so the
-    // background loop can proactively refresh expiring tokens
-    // before calling `run_cycle` (#462).
-    let oauth_client = std::sync::Arc::new(
-        gcal_push::oauth::OAuthClient::google(0).expect("Google OAuth endpoints must parse"),
-    );
-
-    let pool_for_gcal_connector = gcal_write_pool.clone();
-    let device_for_gcal_connector = gcal_device_id.to_owned();
-    let connector_task = spawn_connector(
-        pool_for_gcal_connector,
-        gcal_client.clone(),
-        gcal_token_store.clone(),
-        gcal_emitter.clone(),
-        device_for_gcal_connector,
-        oauth_client.clone(),
-    );
-    app.manage(connector_task.handle.clone());
-    // FEAT-5h / #643 — register the connector handle as the
-    // materializer's `DirtySink` so the foreground queue's
-    // `apply_op` hands it every remote op that could shift the
-    // projected agenda; the connector (not the materializer)
-    // computes the resulting `DirtyEvent`s. Without this hook,
-    // the connector would only catch changes on the 15-minute
-    // reconcile tick. The materializer holds the sink behind
-    // `dyn DirtySink`, so the GCal coupling lives entirely on
-    // this wiring line plus `gcal_push`'s `impl DirtySink`.
-    materializer_for_gcal.set_dirty_sink(std::sync::Arc::new(connector_task.handle.clone()));
-    // Keep the `ConnectorTask` alive for the lifetime of the
-    // app via managed state.
-    app.manage(connector_task);
-
-    app.manage(commands::GcalTokenStoreState(gcal_token_store));
-    app.manage(commands::GcalEventEmitterState(gcal_emitter));
-    app.manage(commands::GcalClientState(gcal_client));
-    app.manage(commands::GcalOAuthClientState(oauth_client));
-
-    Ok(())
-}
-
 /// #634: extract the human-readable payload + source location from a
 /// [`std::panic::PanicHookInfo`].
 ///
@@ -1879,16 +1661,7 @@ pub fn run() {
         // (desktop + mobile), so no `#[cfg(desktop)]` gate.  Part of the
         // Tauri plugin coupled stack per AGENTS.md §"Coupled Dependency
         // Updates" — move in lockstep with the other tauri-plugin-* crates.
-        .plugin(tauri_plugin_notification::init())
-        // FEAT-5b — OAuth 2.0 PKCE loopback listener for the Agaric →
-        // Google Calendar connector (FEAT-5). The
-        // plugin spawns a localhost server on demand (via
-        // `tauri-plugin-oauth`'s `start()` helper) so the OS browser can
-        // redirect back to Agaric after Google's authorization screen.
-        // Part of the Tauri plugin coupled stack per AGENTS.md §"Coupled
-        // Dependency Updates" — move in lockstep with the rest of the
-        // tauri-plugin-* crates.
-        .plugin(tauri_plugin_oauth::init());
+        .plugin(tauri_plugin_notification::init());
 
     // MAINT-108: remember window size / position / monitor / maximized
     // state across launches.  Operates entirely Rust-side (no frontend
@@ -2033,12 +1806,6 @@ pub fn run() {
             let mcp_rw_materializer = materializer.clone();
             let mcp_rw_device_id = device_id.clone();
 
-            // FEAT-5e / FEAT-5h — clone the write pool + device_id + a
-            // materializer handle for the GCal connector wiring.
-            let gcal_write_pool = pools.write.clone();
-            let gcal_device_id = device_id.clone();
-            let materializer_for_gcal = materializer.clone();
-
             // Move all originals into Tauri managed state + install the
             // window-focus lifecycle listener. Returns the shared sync
             // cancel flag (#528) used by the daemon spawned next.
@@ -2073,14 +1840,6 @@ pub fn run() {
                     rw_device_id: mcp_rw_device_id,
                 },
             );
-
-            // FEAT-5e — Google Calendar push connector.
-            wire_gcal_connector(
-                app,
-                &gcal_write_pool,
-                &gcal_device_id,
-                &materializer_for_gcal,
-            )?;
 
             Ok(())
         })

@@ -142,15 +142,6 @@ pub async fn set_property_inner(
     }
     // MAINT-112: CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "set_property").await?;
-    // FEAT-5i — snapshot pre-mutation agenda-relevant state so the
-    // post-commit `notify_gcal_for_op` call can compute the
-    // `old_affected_dates` half of the `DirtyEvent`.  Skip the
-    // extra SELECT when no connector is wired (common in tests).
-    let gcal_snapshot = if materializer.is_gcal_hook_active() {
-        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, block_id.as_str()).await?)
-    } else {
-        None
-    };
     let (block, op_record) = set_property_in_tx(
         &mut tx,
         device_id,
@@ -163,17 +154,8 @@ pub async fn set_property_inner(
         value_bool,
     )
     .await?;
-    // PEND-25 L9: wrap once in `Arc` so the dispatch queue and the
-    // post-commit `notify_gcal_for_op` borrow share the record by
-    // refcount (one atomic increment) instead of deep-cloning the
-    // owned `String` payloads. Pairs with PEND-25 L2 on
-    // `DeferredNotification`.
-    let op_record = Arc::new(op_record);
-    tx.enqueue_background(Arc::clone(&op_record));
+    tx.enqueue_background(Arc::new(op_record));
     tx.commit_and_dispatch(materializer).await?;
-    if let Some(snapshot) = gcal_snapshot {
-        materializer.notify_gcal_for_op(&op_record, &snapshot);
-    }
     Ok(ActiveBlockRow::from_block_row_unchecked(block))
 }
 
@@ -242,15 +224,7 @@ pub async fn set_todo_state_inner(
         )?;
     }
 
-    // FEAT-5i — snapshot pre-mutation agenda-relevant state once for
-    // the post-commit `notify_gcal_for_op` call below. Skip the extra
-    // SELECT when no connector is wired (common in tests).
     let block_id_str = block_id.as_str();
-    let gcal_snapshot = if materializer.is_gcal_hook_active() {
-        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, block_id_str).await?)
-    } else {
-        None
-    };
 
     // Fetch only `todo_state` — the full SELECT * is unnecessary here
     // since `set_property_in_tx` (called below) issues its own SELECT.
@@ -278,9 +252,6 @@ pub async fn set_todo_state_inner(
         None,
     )
     .await?;
-    // Keep `todo_op` clone for the post-commit GCal notify (the queued
-    // background dispatch consumes the original).
-    let todo_op_for_gcal = todo_op.clone();
     tx.enqueue_background(todo_op);
 
     // Auto-populate timestamps based on state transitions
@@ -358,16 +329,6 @@ pub async fn set_todo_state_inner(
     }
 
     tx.commit_and_dispatch(materializer).await?;
-
-    // FEAT-5i — notify GCal connector post-commit. Only the
-    // `todo_state` op is agenda-relevant for GCal (created_at /
-    // completed_at are not in `is_agenda_relevant_key`'s set; the
-    // recurrence sibling's CreateBlock + SetProperty ops do not have a
-    // pre-mutation snapshot since the block is brand new and are
-    // therefore picked up by the periodic reconcile sweep).
-    if let Some(snapshot) = gcal_snapshot {
-        materializer.notify_gcal_for_op(&todo_op_for_gcal, &snapshot);
-    }
 
     Ok(ActiveBlockRow::from_block_row_unchecked(result))
 }
@@ -599,16 +560,6 @@ pub async fn set_priority_inner(
         validate_reserved_property_value(def_row.is_some(), "priority", l, &["1", "2", "3"])?;
     }
 
-    // FEAT-5i — snapshot pre-mutation agenda-relevant state so the
-    // post-commit `notify_gcal_for_op` call can compute the
-    // `old_affected_dates` half of the `DirtyEvent`. Skip the extra
-    // SELECT when no connector is wired (common in tests).
-    let gcal_snapshot = if materializer.is_gcal_hook_active() {
-        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, block_id.as_str()).await?)
-    } else {
-        None
-    };
-
     let (block, op_record) = set_property_in_tx(
         &mut tx,
         device_id,
@@ -621,15 +572,8 @@ pub async fn set_priority_inner(
         None,
     )
     .await?;
-    // PEND-25 L9: same Arc-share pattern as `set_property_inner`. The
-    // dispatch queue and the post-commit GCal notify borrow the same
-    // record via refcount.
-    let op_record = Arc::new(op_record);
-    tx.enqueue_background(Arc::clone(&op_record));
+    tx.enqueue_background(Arc::new(op_record));
     tx.commit_and_dispatch(materializer).await?;
-    if let Some(snapshot) = gcal_snapshot {
-        materializer.notify_gcal_for_op(&op_record, &snapshot);
-    }
     Ok(ActiveBlockRow::from_block_row_unchecked(block))
 }
 
