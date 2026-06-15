@@ -101,7 +101,12 @@ describe('useSlashCommandStructural — callouts', () => {
     })
   })
 
-  it('callout-warning prefixed handler picks up the type from the id', async () => {
+  it.each([
+    ['callout-warning', '> [!WARNING] careful'],
+    ['callout-tip', '> [!TIP] careful'],
+    ['callout-error', '> [!ERROR] careful'],
+    ['callout-note', '> [!NOTE] careful'],
+  ] as const)('%s prefixed handler picks up the type from the id', async (id, expected) => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const { ctx } = makeSyntheticCtx()
     ctx.pageStore.setState({
@@ -110,10 +115,11 @@ describe('useSlashCommandStructural — callouts', () => {
         .blocks.map((b) => (b.id === 'BLOCK_1' ? { ...b, content: 'careful' } : b)),
     })
     const handler = result.current.prefix.find(([p]) => p === 'callout-')?.[1]
-    await handler?.(ctx, { id: 'callout-warning', label: 'Warning' })
+    expect(handler).toBeDefined()
+    await handler?.(ctx, { id, label: id })
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: 'BLOCK_1',
-      toText: '> [!WARNING] careful',
+      toText: expected,
     })
   })
 })
@@ -194,17 +200,44 @@ describe('useSlashCommandStructural — turn into (#264)', () => {
     })
   }
 
-  it('turn-h2 converts a paragraph to a heading 2', async () => {
+  it.each([
+    ['turn-h1', '# hello world'],
+    ['turn-h2', '## hello world'],
+    ['turn-h3', '### hello world'],
+  ] as const)('%s converts a paragraph to the right heading level', async (id, expected) => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const { ctx, pageStore } = makeSyntheticCtx()
     setContent(pageStore, 'hello world')
     const handler = result.current.prefix.find(([p]) => p === 'turn-')?.[1]
     expect(handler).toBeDefined()
-    await handler?.(ctx, { id: 'turn-h2', label: 'Heading 2' })
+    await handler?.(ctx, { id, label: id })
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: 'BLOCK_1',
-      toText: '## hello world',
+      toText: expected,
     })
+  })
+
+  it('turn-code wraps content in a fenced code block', async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore } = makeSyntheticCtx()
+    setContent(pageStore, 'hello world')
+    const handler = result.current.prefix.find(([p]) => p === 'turn-')?.[1]
+    await handler?.(ctx, { id: 'turn-code', label: 'Code block' })
+    expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+      blockId: 'BLOCK_1',
+      toText: '```\nhello world\n```',
+    })
+  })
+
+  it('the bare /turn parent is a no-op (no edit)', async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore } = makeSyntheticCtx()
+    setContent(pageStore, 'hello world')
+    await result.current.exact['turn']?.(ctx, { id: 'turn', label: 'Turn into' })
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      'edit_block',
+      expect.objectContaining({ blockId: 'BLOCK_1' }),
+    )
   })
 
   it('turn-paragraph strips an existing heading marker', async () => {
