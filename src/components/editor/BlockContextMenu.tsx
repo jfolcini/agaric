@@ -820,7 +820,10 @@ export function BlockContextMenu({
           aria-disabled="true"
           aria-current="true"
           className={cn(
-            'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-accent-foreground bg-accent/60',
+            // #1232 — `text-left`: a <button>/<div role> defaults to
+            // text-align:center, which the flex-1 label span inherits and
+            // centers the label text. Force left so labels align under the icons.
+            'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-accent-foreground bg-accent/60',
             item.indented && 'pl-7',
           )}
         >
@@ -854,7 +857,9 @@ export function BlockContextMenu({
           // (ring, not just bg). `ring-inset` keeps the 3px ring from clipping
           // against the popover edge / `hr` separators. Hover stays bg-only so
           // focus and hover are visually distinct (WCAG 2.4.7).
-          'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground focus-ring-visible [&:focus-visible]:ring-inset transition-colors touch-target',
+          // #1232 — `text-left`: <button> defaults to text-align:center, which
+          // the flex-1 label span inherits; force left so labels align left.
+          'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground focus-ring-visible [&:focus-visible]:ring-inset transition-colors touch-target',
           item.indented && 'pl-7',
           item.className,
         )}
