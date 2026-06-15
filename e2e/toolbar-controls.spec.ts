@@ -505,6 +505,18 @@ test.describe('Image resize / align toolbar (#1170)', () => {
     // Default alignment is center; pick left and assert it becomes active.
     const leftAlign = toolbar.getByTestId('image-align-left')
     await leftAlign.click()
-    await expect(leftAlign).toHaveAttribute('aria-pressed', 'true')
+    // Applying left alignment moves the image to the row's left edge, sliding it
+    // out from under the (stationary) cursor. That fires the wrapper's
+    // `onPointerLeave`, which closes the hover-gated toolbar and detaches the
+    // button before the assertion — a race that loses on slower CI runners. The
+    // alignment itself is durable (the image row's `data-alignment` reflects it),
+    // so assert that first, then re-reveal the toolbar to confirm the button now
+    // marks itself pressed.
+    await expect(page.getByTestId('attachment-section').first()).toHaveAttribute(
+      'data-alignment',
+      'left',
+    )
+    await revealImageToolbar(page)
+    await expect(toolbar.getByTestId('image-align-left')).toHaveAttribute('aria-pressed', 'true')
   })
 })
