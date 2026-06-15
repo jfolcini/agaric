@@ -70,16 +70,16 @@ Sentinel-drop-zone behind every block prevents the "no drop target on the empty 
 
 ## Spaces
 
-A space is a `blocks` row with `block_type = 'page'` and an `is_space = 'true'` property. No new tables. No new op types. No new sync messages. The space model is layered on the existing property system — that's the architectural commitment.
+A space is a `blocks` row with `block_type = 'page'` and an `is_space = 'true'` property. No new op types. No new sync messages.
 
-Every page carries a `space` property whose `value_ref` is the space's ULID. Lists, search, agenda, backlinks, history, journal, link picker all filter by this property when the active scope is `Active(space_id)` (the canonical `SpaceScope`).
+Page membership lives in the native, indexed `blocks.space_id` column (migration 0086, #533) — the sole source of truth. `space` is no longer a property (forbidden by the 0088 `key_not_reserved` CHECK); the `is_space = 'true'` marker on a space's own page is the only space-related property that remains. Lists, search, agenda, backlinks, history, journal, link picker all filter by `b.space_id = ?N` when the active scope is `Active(space_id)` (the canonical `SpaceScope`).
 
 ### Data model
 
 - **Seeded spaces** — Personal and Work are seeded on first boot. Both use deterministic ULIDs (`SPACE_PERSONAL_ULID` / `SPACE_WORK_ULID` constants) so peer devices converge without a name match.
 - **Per-space keychain accounts** — GCal stores OAuth tokens under per-space keychain entries (`oauth_tokens_<SPACE_ULID>`).
 - **Legacy migration** — pre-spaces pages are routed to Personal or Work by a time-gated boot migration (one-shot, idempotent).
-- **Bootstrap re-runs every boot** — `pages_without_space` backfill is defensive: any page lacking a `space` property gets one (handles peer-synced or future-bypass cases).
+- **Bootstrap re-runs every boot** — `pages_without_space` backfill is defensive: any page lacking a `space_id` gets one via `UPDATE blocks SET space_id = ?` (`bootstrap.rs`, handles peer-synced or future-bypass cases).
 
 ### Scoping rules
 
