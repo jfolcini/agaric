@@ -10,7 +10,7 @@
  * from BlockTree.tsx for MAINT-128.
  */
 
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 
 import { logger } from '../lib/logger'
 import { batchResolve } from '../lib/tauri'
@@ -95,11 +95,37 @@ export async function fetchAndCacheLinks(
 }
 
 /**
- * Effect-only hook: every time `blocks` changes, scan for uncached
- * `[[ULID]]` references and trigger a batch resolve. Returns nothing —
- * results land in `useResolveStore` and are read by chip renderers.
+ * Effect-only hook: scans loaded blocks for uncached `[[ULID]]`
+ * references and triggers a batch resolve. Returns nothing — results
+ * land in `useResolveStore` and are read by chip renderers.
+ *
+ * Identity invariants (#1266): the effect re-fires only when the
+ * blocks' ids+content actually change, NOT on every fresh `blocks`
+ * array. The page store reallocates `s.blocks` to a new outer array on
+ * every edit / reorder / indent, but `collectUncachedLinkIds` runs an
+ * O(N x content-length) `matchAll(ULID_LINK_RE)` scan over every block;
+ * re-running that on identity churn alone is wasted CPU. So we derive a
+ * stable `contentSignature` (id + content per block) in a memo and key
+ * the effect on it — mirroring `useBlockPropertiesBatch`'s `idSignature`
+ * guard, but including content because `[[ULID]]` tokens live there.
  */
-export function useBlockLinkResolve(blocks: ReadonlyArray<{ content: string | null }>): void {
+export function useBlockLinkResolve(
+  blocks: ReadonlyArray<{ id: string; content: string | null }>,
+): void {
+  // `\0` (NUL) separates a block's id from its content and `\x01` (SOH)
+  // separates blocks, so the join is unambiguous for any id/content —
+  // no real content can collide a boundary. The signature is stable
+  // across reallocations that change neither ids nor content (the common
+  // keystroke-flush / indent / no-op refresh churn the page store emits),
+  // so the full-page regex scan is skipped on those. It changes when any
+  // block's id or content changes — including edits to blocks *without*
+  // links, but that re-scan stays purely local CPU and the IPC remains
+  // guarded by the uncached-id check.
+  const contentSignature = useMemo(
+    () => blocks.map((b) => b.id + '\0' + (b.content ?? '')).join('\x01'),
+    [blocks],
+  )
+
   useEffect(() => {
     let cancelled = false
     async function resolveUncachedLinks(): Promise<void> {
@@ -121,5 +147,6 @@ export function useBlockLinkResolve(blocks: ReadonlyArray<{ content: string | nu
     return () => {
       cancelled = true
     }
-  }, [blocks])
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- `blocks` is read inside the effect but keyed via `contentSignature`, which is recomputed from `blocks` in the memo above and changes iff some block's id/content changes. Depending on raw `blocks` would defeat the signature guard (#1266); a same-id/content reorder reallocation must NOT re-run the full-page scan.
+  }, [contentSignature])
 }
