@@ -178,17 +178,22 @@ describe('useSlashCommandProperty — assignee + location', () => {
     )
   })
 
-  it('location-* preset extracts value from label and sets it', async () => {
+  it.each([
+    ['location-office', 'office'],
+    ['location-home', 'home'],
+    ['location-remote', 'remote'],
+  ] as const)('%s preset extracts value from label and sets it', async (id, value) => {
     const { result } = renderHook(() => useSlashCommandProperty())
     const { ctx } = makeSyntheticCtx()
     const handler = result.current.prefix.find(([p]) => p === 'location-')?.[1]
-    await handler?.(ctx, { id: 'location-office', label: 'LOCATION office — At the office' })
+    expect(handler).toBeDefined()
+    await handler?.(ctx, { id, label: `LOCATION ${value} — At the ${value}` })
     expect(mockedInvoke).toHaveBeenCalledWith(
       'set_property',
       expect.objectContaining({
         blockId: 'BLOCK_1',
         key: 'location',
-        value: expect.objectContaining({ value_text: 'office' }),
+        value: expect.objectContaining({ value_text: value }),
       }),
     )
   })
@@ -210,20 +215,24 @@ describe('useSlashCommandProperty — assignee + location', () => {
 })
 
 describe('useSlashCommandProperty — effort', () => {
-  it('effort-1h sets value_text=1h', async () => {
-    const { result } = renderHook(() => useSlashCommandProperty())
-    const { ctx } = makeSyntheticCtx()
-    const handler = result.current.prefix.find(([p]) => p === 'effort-')?.[1]
-    await handler?.(ctx, { id: 'effort-1h', label: 'EFFORT 1h' })
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'set_property',
-      expect.objectContaining({
-        blockId: 'BLOCK_1',
-        key: 'effort',
-        value: expect.objectContaining({ value_text: '1h' }),
-      }),
-    )
-  })
+  it.each(['15m', '30m', '1h', '2h', '4h', '1d'] as const)(
+    'effort-%s sets value_text=%s',
+    async (preset) => {
+      const { result } = renderHook(() => useSlashCommandProperty())
+      const { ctx } = makeSyntheticCtx()
+      const handler = result.current.prefix.find(([p]) => p === 'effort-')?.[1]
+      expect(handler).toBeDefined()
+      await handler?.(ctx, { id: `effort-${preset}`, label: `EFFORT ${preset}` })
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'set_property',
+        expect.objectContaining({
+          blockId: 'BLOCK_1',
+          key: 'effort',
+          value: expect.objectContaining({ value_text: preset }),
+        }),
+      )
+    },
+  )
 
   it('effort-custom routes through the empty-value branch (escape hatch, #1107)', async () => {
     const { result } = renderHook(() => useSlashCommandProperty())
@@ -261,17 +270,32 @@ describe('useSlashCommandProperty — effort', () => {
 })
 
 describe('useSlashCommandProperty — repeat / repeat-limit', () => {
-  it('repeat-daily sets value_text=daily', async () => {
+  it.each([
+    // Plain cadences.
+    ['repeat-daily', 'daily'],
+    ['repeat-weekly', 'weekly'],
+    ['repeat-monthly', 'monthly'],
+    ['repeat-yearly', 'yearly'],
+    // From-completion anchoring (`.+` passthrough).
+    ['repeat-.+daily', '.+daily'],
+    ['repeat-.+weekly', '.+weekly'],
+    ['repeat-.+monthly', '.+monthly'],
+    // Catch-up anchoring (`++` passthrough).
+    ['repeat-++daily', '++daily'],
+    ['repeat-++weekly', '++weekly'],
+    ['repeat-++monthly', '++monthly'],
+  ] as const)('%s sets value_text=%s', async (id, value) => {
     const { result } = renderHook(() => useSlashCommandProperty())
     const { ctx } = makeSyntheticCtx()
     const handler = result.current.prefix.find(([p]) => p === 'repeat-')?.[1]
-    await handler?.(ctx, { id: 'repeat-daily', label: 'REPEAT DAILY' })
+    expect(handler).toBeDefined()
+    await handler?.(ctx, { id, label: id })
     expect(mockedInvoke).toHaveBeenCalledWith(
       'set_property',
       expect.objectContaining({
         blockId: 'BLOCK_1',
         key: 'repeat',
-        value: expect.objectContaining({ value_text: 'daily' }),
+        value: expect.objectContaining({ value_text: value }),
       }),
     )
   })
@@ -287,17 +311,18 @@ describe('useSlashCommandProperty — repeat / repeat-limit', () => {
     })
   })
 
-  it('repeat-limit-5 sets repeat-count=5', async () => {
+  it.each([5, 10, 20] as const)('repeat-limit-%i sets repeat-count=%i', async (count) => {
     const { result } = renderHook(() => useSlashCommandProperty())
     const { ctx } = makeSyntheticCtx()
     const handler = result.current.prefix.find(([p]) => p === 'repeat-limit-')?.[1]
-    await handler?.(ctx, { id: 'repeat-limit-5', label: 'REPEAT LIMIT 5' })
+    expect(handler).toBeDefined()
+    await handler?.(ctx, { id: `repeat-limit-${count}`, label: `REPEAT LIMIT ${count}` })
     expect(mockedInvoke).toHaveBeenCalledWith(
       'set_property',
       expect.objectContaining({
         blockId: 'BLOCK_1',
         key: 'repeat-count',
-        value: expect.objectContaining({ value_num: 5 }),
+        value: expect.objectContaining({ value_num: count }),
       }),
     )
   })
