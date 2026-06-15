@@ -63,6 +63,14 @@ function setCoarse(coarse: boolean): void {
       dispatchEvent: vi.fn(),
     })),
   })
+  // #1236: useIsTouch() now requires real touch hardware
+  // (navigator.maxTouchPoints > 0) alongside a coarse pointer. The afterEach
+  // calls setCoarse(false), which resets this back to the desktop default (0).
+  Object.defineProperty(navigator, 'maxTouchPoints', {
+    value: coarse ? 5 : 0,
+    writable: true,
+    configurable: true,
+  })
 }
 
 function renderWithTooltip(ui: React.ReactElement) {

@@ -23,7 +23,23 @@ describe('useBlockSwipeActions', () => {
 
   afterEach(() => {
     window.matchMedia = originalMatchMedia
+    // #1236: reset the simulated touch hardware so it doesn't leak to later
+    // tests (useIsTouch now requires maxTouchPoints > 0 alongside coarse).
+    setMaxTouchPoints(0)
   })
+
+  /**
+   * #1236: useIsTouch() now requires BOTH a coarse pointer AND
+   * `navigator.maxTouchPoints > 0`. Simulating a real touch device therefore
+   * needs maxTouchPoints set too (happy-dom defaults to 0 = desktop).
+   */
+  function setMaxTouchPoints(value: number) {
+    Object.defineProperty(navigator, 'maxTouchPoints', {
+      value,
+      writable: true,
+      configurable: true,
+    })
+  }
 
   /** Simulate a coarse-pointer device (touch screen). */
   function mockCoarsePointer() {
@@ -37,6 +53,7 @@ describe('useBlockSwipeActions', () => {
       removeEventListener: vi.fn(),
       dispatchEvent: vi.fn(),
     }))
+    setMaxTouchPoints(5)
   }
 
   /** Simulate a fine-pointer device (mouse / desktop). */
@@ -318,6 +335,9 @@ describe('useBlockSwipeActions', () => {
         dispatchEvent: vi.fn(),
       }
       window.matchMedia = vi.fn().mockReturnValue(mql)
+      // #1236: real touch hardware (a 2-in-1 whose pointer mode toggles) keeps
+      // maxTouchPoints > 0; only the matchMedia coarseness flips.
+      setMaxTouchPoints(5)
       return {
         setCoarse(next: boolean) {
           matches = next
