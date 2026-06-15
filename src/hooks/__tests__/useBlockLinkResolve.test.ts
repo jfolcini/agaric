@@ -81,9 +81,14 @@ describe('collectUncachedLinkIds', () => {
   })
 })
 
+// Block ids for the hook fixtures (the hook now keys its memo on
+// id+content, so fixtures must carry an `id`).
+const BLOCK_1 = '01TESTBLOCK000000000BLOCK1'
+const BLOCK_2 = '01TESTBLOCK000000000BLOCK2'
+
 describe('useBlockLinkResolve', () => {
   it('does nothing when no uncached link tokens exist', async () => {
-    renderHook(() => useBlockLinkResolve([{ content: 'plain text' }]))
+    renderHook(() => useBlockLinkResolve([{ id: BLOCK_1, content: 'plain text' }]))
 
     // Allow the async effect's promise chain to settle.
     await new Promise<void>((r) => queueMicrotask(r))
@@ -95,7 +100,7 @@ describe('useBlockLinkResolve', () => {
       { id: ULID_A, title: 'Linked block A', block_type: 'content', deleted: false },
     ])
 
-    renderHook(() => useBlockLinkResolve([{ content: `see [[${ULID_A}]]` }]))
+    renderHook(() => useBlockLinkResolve([{ id: BLOCK_1, content: `see [[${ULID_A}]]` }]))
 
     await waitFor(() => {
       expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], TEST_SPACE_ID)
@@ -110,7 +115,9 @@ describe('useBlockLinkResolve', () => {
   it('caches ids the backend did not return as deleted placeholders (FEAT-3p7)', async () => {
     mockedBatchResolve.mockResolvedValueOnce([])
 
-    renderHook(() => useBlockLinkResolve([{ content: `[[${ULID_A}]] and [[${ULID_B}]]` }]))
+    renderHook(() =>
+      useBlockLinkResolve([{ id: BLOCK_1, content: `[[${ULID_A}]] and [[${ULID_B}]]` }]),
+    )
 
     await waitFor(() => {
       expect(mockedBatchResolve).toHaveBeenCalledTimes(1)
@@ -133,7 +140,9 @@ describe('useBlockLinkResolve', () => {
         }),
     )
 
-    const { unmount } = renderHook(() => useBlockLinkResolve([{ content: `[[${ULID_A}]]` }]))
+    const { unmount } = renderHook(() =>
+      useBlockLinkResolve([{ id: BLOCK_1, content: `[[${ULID_A}]]` }]),
+    )
 
     await waitFor(() => {
       expect(mockedBatchResolve).toHaveBeenCalledTimes(1)
@@ -153,7 +162,7 @@ describe('useBlockLinkResolve', () => {
   it('logs and swallows transport failures from batchResolve', async () => {
     mockedBatchResolve.mockRejectedValueOnce(new Error('transport-fail'))
 
-    renderHook(() => useBlockLinkResolve([{ content: `[[${ULID_A}]]` }]))
+    renderHook(() => useBlockLinkResolve([{ id: BLOCK_1, content: `[[${ULID_A}]]` }]))
 
     await waitFor(() => {
       expect(mockedLoggerWarn).toHaveBeenCalledWith(
@@ -163,6 +172,101 @@ describe('useBlockLinkResolve', () => {
         expect.any(Error),
       )
     })
+  })
+})
+
+describe('useBlockLinkResolve — content-signature memo guard (#1266)', () => {
+  it('does NOT re-run the full-page scan when the block array is reallocated with unchanged ids+content', async () => {
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_A, title: 'Linked A', block_type: 'content', deleted: false },
+    ])
+
+    // The scan (`collectUncachedLinkIds`) reads `useResolveStore.getState()`
+    // exactly once per invocation, so a spy on `getState` is a faithful
+    // counter for "did the expensive matchAll scan run?". (The store is
+    // also read elsewhere, so we measure the *delta* across a rerender,
+    // not an absolute count.)
+    const getStateSpy = vi.spyOn(useResolveStore, 'getState')
+
+    const { rerender } = renderHook(({ blocks }) => useBlockLinkResolve(blocks), {
+      initialProps: { blocks: [{ id: BLOCK_1, content: `see [[${ULID_A}]]` }] },
+    })
+
+    await waitFor(() => {
+      expect(mockedBatchResolve).toHaveBeenCalledTimes(1)
+    })
+    // Let the post-IPC writeback's store reads settle so the spy delta
+    // below isolates *only* the rerender's scan (if any).
+    await new Promise<void>((r) => queueMicrotask(r))
+    const getStateCallsBefore = getStateSpy.mock.calls.length
+
+    // Reallocate the outer array AND the block object, but keep id +
+    // content byte-identical (simulates a keystroke-flush / indent that
+    // produces a fresh array without touching link content).
+    rerender({ blocks: [{ id: BLOCK_1, content: `see [[${ULID_A}]]` }] })
+    await new Promise<void>((r) => queueMicrotask(r))
+    await new Promise<void>((r) => queueMicrotask(r))
+
+    // The memo guard kept `contentSignature` stable → the effect did not
+    // re-fire → the scan did not run again → no new store read.
+    expect(getStateSpy.mock.calls.length).toBe(getStateCallsBefore)
+    getStateSpy.mockRestore()
+  })
+
+  it('DOES re-scan when a block`s content changes (new uncached token appears)', async () => {
+    mockedBatchResolve.mockResolvedValue([])
+
+    const { rerender } = renderHook(({ blocks }) => useBlockLinkResolve(blocks), {
+      initialProps: { blocks: [{ id: BLOCK_1, content: 'no links yet' }] },
+    })
+
+    // No tokens initially → no IPC.
+    await new Promise<void>((r) => queueMicrotask(r))
+    expect(mockedBatchResolve).not.toHaveBeenCalled()
+
+    // Edit the block to introduce a `[[ULID]]` token → signature changes
+    // → effect re-fires → scan finds the uncached token → IPC fires.
+    rerender({ blocks: [{ id: BLOCK_1, content: `now [[${ULID_B}]]` }] })
+
+    await waitFor(() => {
+      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_B], TEST_SPACE_ID)
+    })
+  })
+
+  it('does NOT re-fire on a different block`s content change unrelated to ids set', async () => {
+    // Sanity: a content change anywhere bumps the signature and re-runs
+    // the (cheap, local) scan — but the IPC stays guarded. Here BLOCK_2
+    // gains plain text (no token), so no new IPC despite the re-scan.
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_A, title: 'Linked A', block_type: 'content', deleted: false },
+    ])
+
+    const { rerender } = renderHook(({ blocks }) => useBlockLinkResolve(blocks), {
+      initialProps: {
+        blocks: [
+          { id: BLOCK_1, content: `[[${ULID_A}]]` },
+          { id: BLOCK_2, content: 'plain' },
+        ],
+      },
+    })
+
+    await waitFor(() => {
+      expect(mockedBatchResolve).toHaveBeenCalledTimes(1)
+    })
+    const callsAfterFirst = mockedBatchResolve.mock.calls.length
+
+    rerender({
+      blocks: [
+        { id: BLOCK_1, content: `[[${ULID_A}]]` },
+        { id: BLOCK_2, content: 'plain edited' },
+      ],
+    })
+    await new Promise<void>((r) => queueMicrotask(r))
+    await new Promise<void>((r) => queueMicrotask(r))
+
+    // Signature changed → effect re-fired → scan re-ran, but ULID_A is
+    // now cached and BLOCK_2 has no token → no additional IPC.
+    expect(mockedBatchResolve.mock.calls.length).toBe(callsAfterFirst)
   })
 })
 
