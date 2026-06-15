@@ -8,7 +8,6 @@ import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useBlockActions } from '@/hooks/useBlockActions'
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { useIsTouch } from '@/hooks/useIsTouch'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { dueDateColor, formatCompactDate, MONTH_SHORT } from '@/lib/date-utils'
 import { priorityColor } from '@/lib/priority-color'
@@ -230,11 +229,6 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
   // The parent may pass `maxInlineProperties` explicitly (inspectable contract);
   // otherwise we derive it from the viewport via the named limits.
   const isMobile = useIsMobile()
-  // #1232: robust touch detection (coarse pointer AND real touch hardware).
-  // The bullet's at-rest hidden state is gated on this in JS rather than a
-  // bare `@media(pointer:fine)` CSS query, which WebKitGTK mis-evaluates for a
-  // mouse (leaving the bullet painted on every block).
-  const isTouch = useIsTouch()
   const inlinePropLimit = maxInlineProperties ?? getInlinePropertyLimit(isMobile)
 
   // UX-308: Play a one-shot bump animation when the attachment count changes
@@ -308,18 +302,12 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
             className={cn(
               'block-bullet group/bullet flex-shrink-0 flex items-center justify-center w-5 h-5 p-0 text-muted-foreground transition-colors focus-ring-visible active:scale-95 touch-target',
               'hover:text-foreground',
-              // FINE pointers (desktop, incl. a mouse under WebKitGTK that
-              // mis-reports `pointer: coarse`): hidden at rest, revealed only on
-              // this block's hover / focus-within / active, matching
-              // GUTTER_BUTTON_BASE. The at-rest hidden state is gated on the
-              // robust JS `isTouch` (#1232) rather than a bare
-              // `@media(pointer:fine)` CSS query so the bullet isn't painted on
-              // every block in the Linux webview.
-              !isTouch && 'opacity-0 pointer-events-none',
-              // COARSE pointers (real touch hardware): NOT hidden — there is no
-              // hover, and the bullet is the tap-to-zoom target (#927 f3), so it
-              // stays visible/tappable at rest (like the touch drag handle).
-              'group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto',
+              // FINE pointers (desktop): hidden at rest, revealed only on this
+              // block's hover / focus-within / active (selection), matching
+              // GUTTER_BUTTON_BASE. COARSE pointers (touch): NOT hidden — there is
+              // no hover, and the bullet is the tap-to-zoom target (#927 f3), so it
+              // must stay visible/tappable at rest (like the touch drag handle).
+              '[@media(pointer:fine)]:opacity-0 [@media(pointer:fine)]:pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto',
             )}
             data-testid="block-bullet"
             data-has-children={hasChildren}
