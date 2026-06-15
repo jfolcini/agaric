@@ -1665,9 +1665,10 @@ describe('SortableBlock visibility controls', () => {
     expect(handle.className).toContain('[.block-active_&]:opacity-100')
   })
 
-  // #929 — the focused/active block row carries a calm visual treatment (faint
-  // tint + accent bar), not just the gutter-reveal hook class.
-  it('focused row carries the active-row treatment (block-active + tint)', () => {
+  // #1232 — the row keeps ONLY the `block-active` reveal-hook class; the visual
+  // highlight (warm-grey `sidebar-accent` tint + flush `primary` accent bar)
+  // moved onto the editor body so it wraps the editor, not the gutter controls.
+  it('focused block: block-active on the row, tint + accent bar on the editor body', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1678,7 +1679,12 @@ describe('SortableBlock visibility controls', () => {
     )
     const row = container.querySelector('.sortable-block') as HTMLElement
     expect(row.className).toContain('block-active')
-    expect(row.className).toContain('bg-muted/50')
+    // The tint is NOT on the row (it would wrap the gutter controls).
+    expect(row.className).not.toContain('bg-sidebar-accent')
+    // It lives on the editor body, alongside the primary accent bar.
+    const body = container.querySelector('.bg-sidebar-accent') as HTMLElement | null
+    expect(body).not.toBeNull()
+    expect(body?.className).toContain('border-l-primary')
   })
 
   it('unfocused row has no active-row tint', () => {
