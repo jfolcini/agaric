@@ -49,6 +49,46 @@ describe('TablePicker', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  // Per-cell coverage (#1170): every grid cell, when clicked, must insert a
+  // table whose dimensions match that cell's row/col — across the corners and
+  // interior of the 8×8 grid — through the same header-row insert path.
+  it.each([
+    [1, 1],
+    [1, 8],
+    [8, 1],
+    [8, 8],
+    [4, 6],
+    [6, 2],
+    [5, 5],
+  ])('clicking cell %i×%i inserts that exact N×M table', (r, c) => {
+    const onClose = vi.fn()
+    render(<TablePicker editor={editor} onClose={onClose} />)
+
+    fireEvent.pointerDown(screen.getByTestId(`table-cell-${r}-${c}`))
+
+    expect(insertTable).toHaveBeenCalledTimes(1)
+    expect(insertTable).toHaveBeenCalledWith({ rows: r, cols: c, withHeaderRow: true })
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  // Per-cell coverage (#1170): a click is preceded by a hover (pointerEnter)
+  // that sets the highlighted dimensions; the inserted table must match the
+  // HOVERED/clicked cell, not any earlier highlight.
+  it('inserts the hovered/clicked cell dimensions even after hovering a different cell', () => {
+    const onClose = vi.fn()
+    render(<TablePicker editor={editor} onClose={onClose} />)
+
+    // Hover one cell, then move to and click another.
+    fireEvent.pointerEnter(screen.getByTestId('table-cell-2-2'))
+    fireEvent.pointerEnter(screen.getByTestId('table-cell-5-3'))
+    fireEvent.pointerDown(screen.getByTestId('table-cell-5-3'))
+
+    expect(insertTable).toHaveBeenCalledTimes(1)
+    expect(insertTable).toHaveBeenCalledWith({ rows: 5, cols: 3, withHeaderRow: true })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
   it('hovering highlights the R×C rectangle and updates the dimension label', () => {
     render(<TablePicker editor={editor} onClose={vi.fn()} />)
 
