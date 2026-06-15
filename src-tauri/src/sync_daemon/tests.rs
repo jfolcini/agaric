@@ -963,6 +963,7 @@ async fn handle_incoming_sync_rejects_sync_with_self() {
                 seq: 0,
                 hash: "fakehash".to_string(),
             }],
+            loro_vvs: vec![],
         })
         .await
         .unwrap();
@@ -1213,6 +1214,7 @@ async fn handle_incoming_sync_rejects_unpaired_device() {
                 seq: 0,
                 hash: "fakehash".to_string(),
             }],
+            loro_vvs: vec![],
         })
         .await
         .unwrap();
@@ -1551,6 +1553,7 @@ async fn inmem_handle_incoming_sync_rejects_self() {
                 seq: 0,
                 hash: "fakehash".to_string(),
             }],
+            loro_vvs: vec![],
         })
         .await
         .unwrap();
@@ -1609,7 +1612,10 @@ async fn inmem_handle_incoming_sync_rejects_unidentifiable_peer() {
     // Empty heads (a fresh device's HeadExchange) + no cert: there is
     // nothing to identify the peer by.
     client_conn
-        .send_json(&SyncMessage::HeadExchange { heads: vec![] })
+        .send_json(&SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+        })
         .await
         .unwrap();
 
@@ -1666,6 +1672,7 @@ async fn inmem_handle_incoming_sync_rejects_unpaired() {
                 seq: 0,
                 hash: "fakehash".to_string(),
             }],
+            loro_vvs: vec![],
         })
         .await
         .unwrap();
@@ -1732,6 +1739,7 @@ async fn inmem_handle_incoming_sync_rejects_busy_peer() {
                 seq: 0,
                 hash: "fakehash".to_string(),
             }],
+            loro_vvs: vec![],
         })
         .await
         .unwrap();
@@ -1860,6 +1868,7 @@ async fn inmem_handle_incoming_sync_rejects_cert_cn_mismatch() {
                     hash: "fakehash".to_string(),
                 },
             ],
+            loro_vvs: vec![],
         })
         .await
         .unwrap();
@@ -1938,6 +1947,7 @@ async fn inmem_handle_incoming_sync_rejects_cert_hash_mismatch() {
                     hash: "fakehash".to_string(),
                 },
             ],
+            loro_vvs: vec![],
         })
         .await
         .unwrap();
@@ -2024,6 +2034,7 @@ async fn inmem_handle_incoming_sync_rejects_certless_claim_of_pinned_peer_800() 
                 seq: 0,
                 hash: "fakehash".to_string(),
             }],
+            loro_vvs: vec![],
         })
         .await
         .unwrap();
@@ -3682,6 +3693,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     client_conn
         .send_json(&SyncMessage::HeadExchange {
             heads: vec![init_self_head, stale_resp_head],
+            loro_vvs: vec![],
         })
         .await
         .unwrap();
@@ -4234,6 +4246,149 @@ async fn issue610_empty_registry_initiator_records_via_synccomplete() {
     mat_b.shutdown();
 }
 
+/// Incremental sync (MAINT-228 / #87 §10.5): when the initiator advertises a
+/// per-space Loro version vector in `HeadExchange`, the responder ships a
+/// delta `Update` (the ops since that vv) instead of a full `Snapshot`. A
+/// space the initiator did not advertise — or an older peer that sends no
+/// vvs — still gets a full `Snapshot`. This is what ends the
+/// full-snapshot-every-session churn (`prepare_outgoing` was hardcoded
+/// `peer_vv=None` before).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn head_exchange_streams_update_when_initiator_advertises_vv() {
+    use crate::sync_protocol::SyncOrchestrator;
+    use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
+    use crate::sync_protocol::types::{DeviceHead, SpaceVersionVector};
+
+    const DEV_A: &str = "DEVVVA";
+    const DEV_B: &str = "DEVVVB";
+    const BLOCK_A: &str = "01HZVVBLKAXXXXXXXXXXXXXXXX";
+    const BLOCK_B: &str = "01HZVVBLKBXXXXXXXXXXXXXXXX";
+    let space = crate::space::SpaceId::from_trusted("01HZVVSPACEXXXXXXXXXXXXXXX");
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    let mat_b = Materializer::new(pool_b.clone());
+    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+
+    peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
+
+    // Both devices have an edit in the space, so A holds a non-empty vv to
+    // advertise and B holds an op A is missing (the delta).
+    make_local_edit_602(
+        &pool_a,
+        &mat_a,
+        state_a,
+        DEV_A,
+        &space,
+        BLOCK_A,
+        "a",
+        1_736_942_400_000,
+    )
+    .await;
+    make_local_edit_602(
+        &pool_b,
+        &mat_b,
+        state_b,
+        DEV_B,
+        &space,
+        BLOCK_B,
+        "b",
+        1_736_942_401_000,
+    )
+    .await;
+
+    let a_vv = {
+        let mut g = state_a.registry.for_space(&space, DEV_A).expect("space A");
+        g.engine_mut().version_vector()
+    };
+    let head = DeviceHead {
+        device_id: DEV_A.into(),
+        seq: 1,
+        hash: String::new(),
+    };
+
+    // Case 1: initiator advertises its vv → responder streams an Update.
+    let mut resp = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+        .with_loro_state(state_b)
+        .with_expected_remote_id(DEV_A.into());
+    let out = resp
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![head.clone()],
+            loro_vvs: vec![SpaceVersionVector {
+                space_id: space.clone(),
+                vv: a_vv.clone(),
+            }],
+        })
+        .await
+        .expect("responder handle_message")
+        .expect("responder must reply with a LoroSync");
+    match out {
+        SyncMessage::LoroSync { msg, .. } => {
+            assert!(
+                matches!(&msg, LoroSyncMessage::Update { .. }),
+                "responder must stream an incremental Update when the initiator \
+                 advertised a vv, got {msg:?}"
+            );
+            // Round-trip: feed the Update into A's apply path and assert the
+            // newly-live incremental apply converges (A gains B's block). The
+            // Update's from_vv == A's own advertised vv, so the MAINT-228
+            // reachability gate passes and the delta imports.
+            let outcome = crate::sync_protocol::loro_sync::apply_remote(
+                &pool_a,
+                &state_a.registry,
+                DEV_A,
+                msg,
+            )
+            .await
+            .expect("A must apply the responder's incremental Update");
+            assert!(
+                matches!(
+                    outcome,
+                    crate::sync_protocol::loro_sync::ApplyOutcome::Imported { .. }
+                ),
+                "A must import the Update (its own from_vv is reachable), got {outcome:?}"
+            );
+            let got: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+                .bind(BLOCK_B)
+                .fetch_optional(&pool_a)
+                .await
+                .unwrap();
+            assert_eq!(
+                got.as_deref(),
+                Some("b"),
+                "A must converge: the responder's block lands in A's DB via the incremental Update"
+            );
+        }
+        other => panic!("expected LoroSync, got {other:?}"),
+    }
+
+    // Case 2: no advertised vv (older peer / fresh space) → full Snapshot.
+    let mut resp2 = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+        .with_loro_state(state_b)
+        .with_expected_remote_id(DEV_A.into());
+    let out2 = resp2
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![head],
+            loro_vvs: vec![],
+        })
+        .await
+        .expect("responder handle_message")
+        .expect("responder must reply with a LoroSync");
+    match out2 {
+        SyncMessage::LoroSync { msg, .. } => assert!(
+            matches!(msg, LoroSyncMessage::Snapshot { .. }),
+            "responder must fall back to a full Snapshot when no vv is \
+             advertised, got {msg:?}"
+        ),
+        other => panic!("expected LoroSync, got {other:?}"),
+    }
+
+    mat_a.shutdown();
+    mat_b.shutdown();
+}
+
 // ======================================================================
 // #778 — fresh device (empty op_log) must not be rejected as self-sync
 // ======================================================================
@@ -4329,7 +4484,7 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
 
     let first = init_orch.start().await.expect("initiator start");
     match &first {
-        SyncMessage::HeadExchange { heads } => {
+        SyncMessage::HeadExchange { heads, .. } => {
             assert!(
                 heads.is_empty(),
                 "#778 precondition: a fresh device's op_log yields EMPTY heads, got {heads:?}"

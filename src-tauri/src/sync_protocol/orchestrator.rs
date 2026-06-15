@@ -133,9 +133,10 @@ pub struct SyncOrchestrator {
     last_sent_hash: Option<String>,
     /// Pending [`LoroSyncMessage`]s queued for streaming. Populated
     /// when entering [`SyncState::StreamingOps`] from
-    /// [`crate::loro::shared`] (one [`LoroSyncMessage::Snapshot`] per
-    /// registered space — initial sync only; per-peer-vv-tracked
-    /// Updates are a follow-up); drained one per call to
+    /// [`crate::loro::shared`] (one message per registered space — a
+    /// [`LoroSyncMessage::Update`] delta when the initiator advertised a
+    /// version vector for that space in its `HeadExchange`, otherwise a
+    /// full [`LoroSyncMessage::Snapshot`]); drained one per call to
     /// [`next_message`](Self::next_message).
     pending_loro_messages: VecDeque<crate::sync_protocol::loro_sync_types::LoroSyncMessage>,
     /// #602 test seam: per-orchestrator Loro state override.
@@ -226,6 +227,29 @@ impl SyncOrchestrator {
         crate::loro::shared::get()
     }
 
+    /// Incremental sync: collect this device's per-space Loro version
+    /// vectors to advertise in `HeadExchange`. The responder uses them to
+    /// stream an incremental [`LoroSyncMessage::Update`] (the delta since
+    /// our vv) per space instead of a full snapshot. Empty when no Loro
+    /// state is initialised (the responder then falls back to snapshots).
+    fn collect_local_loro_vvs(&self) -> Vec<crate::sync_protocol::types::SpaceVersionVector> {
+        let Some(state) = self.loro_state() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for sid in state.registry.space_ids() {
+            // Read-only accessor: must NOT bump the registry dirty_count, or
+            // every initiated session would arm a spurious full-disk snapshot
+            // of all spaces — the opposite of this change's goal. `None` only
+            // races a concurrent unregister; the responder then sends a full
+            // snapshot for that space, which is safe.
+            if let Some(vv) = state.registry.loro_vv(&sid) {
+                out.push(crate::sync_protocol::types::SpaceVersionVector { space_id: sid, vv });
+            }
+        }
+        out
+    }
+
     /// Set the expected remote device_id for peer identity validation.
     ///
     /// When set, the orchestrator will reject HeadExchange messages where
@@ -246,6 +270,9 @@ impl SyncOrchestrator {
     /// Generate the initial `HeadExchange` message to kick off sync.
     pub async fn start(&mut self) -> Result<SyncMessage, AppError> {
         let heads = get_local_heads(&self.pool).await?;
+        // Advertise our per-space Loro version vectors so the responder can
+        // ship deltas (Update) instead of full snapshots (MAINT-228 / #87 §10.5).
+        let loro_vvs = self.collect_local_loro_vvs();
         self.state = SyncState::ExchangingHeads;
         self.session.state = SyncState::ExchangingHeads;
         self.emit(crate::sync_events::SyncEvent::Progress {
@@ -254,7 +281,7 @@ impl SyncOrchestrator {
             ops_received: self.session.ops_received,
             ops_sent: self.session.ops_sent,
         });
-        Ok(SyncMessage::HeadExchange { heads })
+        Ok(SyncMessage::HeadExchange { heads, loro_vvs })
     }
 
     /// Process a received message and optionally produce a response.
@@ -368,7 +395,7 @@ impl SyncOrchestrator {
 
         match msg {
             // ---- HeadExchange ------------------------------------------------
-            SyncMessage::HeadExchange { heads } => {
+            SyncMessage::HeadExchange { heads, loro_vvs } => {
                 // Identify the remote device from received heads. A peer that
                 // has never originated its own ops will only advertise per-
                 // device heads for *other* devices (including ours), so an
@@ -426,8 +453,10 @@ impl SyncOrchestrator {
                 // from [`crate::loro::shared`]). If the registry exists
                 // but is empty the head-exchange short-circuits to
                 // `SyncMessage::SyncComplete` rather than emitting a
-                // zero-byte sentinel `LoroSync`.
-                return self.head_exchange_outgoing_loro().await;
+                // zero-byte sentinel `LoroSync`. The initiator's advertised
+                // per-space version vectors select an incremental Update
+                // (delta since their vv) over a full snapshot where present.
+                return self.head_exchange_outgoing_loro(&loro_vvs).await;
             }
 
             // ---- LoroSync ----------------------------
@@ -822,7 +851,10 @@ impl SyncOrchestrator {
     /// State transition: `ExchangingHeads` → `StreamingOps` (when at
     /// least one space is registered) or `ExchangingHeads` →
     /// `Complete` (empty-stream short-circuit).
-    async fn head_exchange_outgoing_loro(&mut self) -> Result<Option<SyncMessage>, AppError> {
+    async fn head_exchange_outgoing_loro(
+        &mut self,
+        peer_vvs: &[crate::sync_protocol::types::SpaceVersionVector],
+    ) -> Result<Option<SyncMessage>, AppError> {
         use crate::sync_protocol::loro_sync;
         use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
 
@@ -875,13 +907,22 @@ impl SyncOrchestrator {
         let loro_state = loro_state_opt
             .expect("space_ids non-empty implies loro_state_opt was Some on the read above");
 
-        // Enumerate spaces and build one LoroSync per space. The
-        // `peer_vv = None` choice ships a full snapshot; per-peer-vv
-        // tracking (and hence Update messages) is a follow-up.
+        // Enumerate spaces and build one LoroSync per space. When the
+        // initiator advertised a version vector for a space, ship an
+        // incremental Update (the delta since their vv); otherwise — a
+        // space the initiator doesn't have, or an older peer that sent no
+        // vvs — ship a full Snapshot. The receiver's MAINT-228 reachability
+        // gate (`apply_remote`) catches an unreachable `from_vv` and falls
+        // back to a snapshot, so a stale advertised vv is safe.
         let mut messages: VecDeque<LoroSyncMessage> = VecDeque::with_capacity(space_ids.len());
         for sid in &space_ids {
-            let m = loro_sync::prepare_outgoing(&loro_state.registry, sid, &self.device_id, None)
-                .await?;
+            let peer_vv = peer_vvs
+                .iter()
+                .find(|v| &v.space_id == sid)
+                .map(|v| v.vv.as_slice());
+            let m =
+                loro_sync::prepare_outgoing(&loro_state.registry, sid, &self.device_id, peer_vv)
+                    .await?;
             messages.push_back(m);
         }
         // #705: this counts outbound LoroSync *messages* (one per

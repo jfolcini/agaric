@@ -16,6 +16,21 @@ pub struct DeviceHead {
     pub hash: String,
 }
 
+/// The initiator's Loro version vector for one space, advertised in
+/// [`SyncMessage::HeadExchange`] so the responder can ship an incremental
+/// [`LoroSyncMessage::Update`] (the delta since this vv) instead of a full
+/// snapshot (MAINT-228 / #87 §10.5 per-peer-vv exchange).
+///
+/// `vv` is the opaque encoding from
+/// [`crate::loro::engine::LoroEngine::version_vector`]. A space the initiator
+/// does not list here (or an older peer that sends none) falls back to a full
+/// snapshot for that space — the field is purely an optimisation hint.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SpaceVersionVector {
+    pub space_id: crate::space::SpaceId,
+    pub vv: Vec<u8>,
+}
+
 /// Wire-format mirror of `OpRecord` for sync transfer.
 ///
 /// **I-Sync-4 — deliberate boundary, not duplication.** Today every field
@@ -165,7 +180,17 @@ pub enum SyncMessage {
     /// First exchanged in a session; advertises `(device_id, seq, hash)`
     /// tuples. Sent by the initiator only (exactly once); the responder
     /// replies with the streaming phase rather than its own `HeadExchange`.
-    HeadExchange { heads: Vec<DeviceHead> },
+    ///
+    /// `loro_vvs` carries the initiator's per-space Loro version vectors so
+    /// the responder can stream an incremental [`LoroSyncMessage::Update`]
+    /// (the delta since the initiator's vv) instead of a full snapshot. It is
+    /// `#[serde(default)]` for wire back-compat: an older initiator omits it,
+    /// and the responder falls back to a full snapshot per space.
+    HeadExchange {
+        heads: Vec<DeviceHead>,
+        #[serde(default)]
+        loro_vvs: Vec<SpaceVersionVector>,
+    },
     /// Loro-CRDT-based sync wire envelope.
     ///
     /// Carries one [`LoroSyncMessage`] (Snapshot or Update) per

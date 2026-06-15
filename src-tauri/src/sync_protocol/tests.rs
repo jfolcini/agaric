@@ -576,7 +576,7 @@ async fn orchestrator_start_returns_head_exchange() {
     let msg = orchestrator.start().await.unwrap();
 
     match msg {
-        SyncMessage::HeadExchange { heads } => {
+        SyncMessage::HeadExchange { heads, .. } => {
             assert!(heads.is_empty(), "empty DB should produce empty heads");
         }
         other => panic!("expected HeadExchange, got {:?}", other),
@@ -596,6 +596,7 @@ fn sync_message_serde_roundtrip() {
                 seq: 5,
                 hash: "abc123".into(),
             }],
+            loro_vvs: vec![],
         },
         SyncMessage::LoroSync {
             msg: crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
@@ -926,7 +927,10 @@ async fn orchestrator_rejects_messages_in_terminal_state() {
 
     // Now try sending another HeadExchange — should fail
     let result = orch
-        .handle_message(SyncMessage::HeadExchange { heads: vec![] })
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+        })
         .await;
     assert!(
         result.is_err(),
@@ -991,7 +995,10 @@ async fn orchestrator_rejects_head_exchange_in_streaming_state() {
     // Send a HeadExchange in StreamingOps → should fail with the
     // wrong-state rejection (not the terminal-state reject).
     let result = orch
-        .handle_message(SyncMessage::HeadExchange { heads: vec![] })
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+        })
         .await;
     assert!(
         result.is_err(),
@@ -1145,6 +1152,7 @@ async fn orchestrator_rejects_unexpected_peer_device_id() {
                 seq: 1,
                 hash: "abc".into(),
             }],
+            loro_vvs: vec![],
         })
         .await;
 
@@ -1184,6 +1192,7 @@ async fn orchestrator_accepts_matching_peer_device_id() {
                 seq: 1,
                 hash: "abc".into(),
             }],
+            loro_vvs: vec![],
         })
         .await;
 
@@ -1256,6 +1265,7 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
                 seq: 1,
                 hash: "abc".into(),
             }],
+            loro_vvs: vec![],
         })
         .await
         .unwrap();
@@ -1391,6 +1401,7 @@ fn serde_roundtrip_sync_message_head_exchange() {
                 hash: "h5".into(),
             },
         ],
+        loro_vvs: vec![],
     };
     let json = serde_json::to_string(&msg).expect("serialize HeadExchange");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize HeadExchange");
@@ -1464,6 +1475,7 @@ fn json_shape_head_exchange_matches_wire_format() {
             seq: 3,
             hash: "abc".into(),
         }],
+        loro_vvs: vec![],
     };
     let json: serde_json::Value =
         serde_json::to_value(&msg).expect("SyncMessage must serialize to Value");
@@ -1483,11 +1495,37 @@ fn json_shape_head_exchange_matches_wire_format() {
 }
 
 #[test]
+fn head_exchange_deserializes_without_loro_vvs_field() {
+    // Wire back-compat: an older peer sends `HeadExchange` with no `loro_vvs`
+    // field. `#[serde(default)]` must fill an empty vec (the responder then
+    // falls back to a full snapshot) rather than failing to parse.
+    let json = r#"{"type":"HeadExchange","heads":[{"device_id":"d","seq":1,"hash":"h"}]}"#;
+    let msg: SyncMessage =
+        serde_json::from_str(json).expect("old-format HeadExchange (no loro_vvs) must deserialize");
+    match msg {
+        SyncMessage::HeadExchange { heads, loro_vvs } => {
+            assert_eq!(heads.len(), 1, "heads must round-trip");
+            assert!(
+                loro_vvs.is_empty(),
+                "a missing loro_vvs field must default to empty"
+            );
+        }
+        other => panic!("expected HeadExchange, got {other:?}"),
+    }
+}
+
+#[test]
 fn json_shape_all_variants_have_type_tag() {
     use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
 
     let variants: Vec<(&str, SyncMessage)> = vec![
-        ("HeadExchange", SyncMessage::HeadExchange { heads: vec![] }),
+        (
+            "HeadExchange",
+            SyncMessage::HeadExchange {
+                heads: vec![],
+                loro_vvs: vec![],
+            },
+        ),
         (
             "LoroSync",
             SyncMessage::LoroSync {
@@ -1614,7 +1652,10 @@ fn json_shape_reset_required_has_reason() {
 
 #[test]
 fn serde_roundtrip_empty_heads() {
-    let msg = SyncMessage::HeadExchange { heads: vec![] };
+    let msg = SyncMessage::HeadExchange {
+        heads: vec![],
+        loro_vvs: vec![],
+    };
     let json = serde_json::to_string(&msg).expect("serialize empty HeadExchange");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize empty HeadExchange");
     assert_eq!(
@@ -1654,6 +1695,7 @@ fn serde_roundtrip_many_heads() {
 
     let msg = SyncMessage::HeadExchange {
         heads: heads.clone(),
+        loro_vvs: vec![],
     };
     let json = serde_json::to_string(&msg).expect("serialize many-heads HeadExchange");
     let deser: SyncMessage =
@@ -1740,7 +1782,10 @@ async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
 
     // Send a HeadExchange — must be rejected
     let duplicate_result = orch
-        .handle_message(SyncMessage::HeadExchange { heads: vec![] })
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+        })
         .await;
     assert!(
         duplicate_result.is_err(),
@@ -1829,7 +1874,10 @@ async fn handle_message_emits_within_sync_msg_span() {
     let mut orch = SyncOrchestrator::new(pool.clone(), "dev-local".into(), materializer.clone());
 
     let _ = orch
-        .handle_message(SyncMessage::HeadExchange { heads: vec![] })
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+        })
         .await;
 
     let contents = writer.contents();
@@ -1875,7 +1923,10 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
     // advertises (local-dev, 0). HeadExchange path proceeds without
     // touching local op_log (no ops to compute).
     let resp = orch
-        .handle_message(SyncMessage::HeadExchange { heads: vec![] })
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+        })
         .await
         .expect("HeadExchange must not error under the engine path");
 
