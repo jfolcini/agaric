@@ -50,6 +50,7 @@ import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
 import { insertEmojiIntoActiveEditor } from '@/editor/insert-emoji'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { useBlockKeyboard } from '@/editor/use-block-keyboard'
+import { useEditorEventDispatch } from '@/editor/use-editor-event-dispatch'
 import { type RovingEditorHandle, useRovingEditor } from '@/editor/use-roving-editor'
 import { BatchAttachmentsProvider } from '@/hooks/useBatchAttachments'
 import { BlockActionsProvider } from '@/hooks/useBlockActions'
@@ -161,16 +162,25 @@ export function BlockTree({
     extendSelection,
   } = useBlockStore.getState()
 
+  // ── Editor-event dispatch (#1019) ──────────────────────────────────
+  // Owns the late-bound handler refs for the editor events whose handlers are
+  // created further down in this render (slashCommand / checkbox /
+  // propertySelect / beforeCollapse / flush), but whose consuming hooks run
+  // earlier. `dispatch.thunks` are stable, captured up front; the real
+  // handlers are registered via `dispatch.on(...)` and synced post-commit.
+  // See `use-editor-event-dispatch.ts` for the concurrent-rendering rationale.
+  const dispatch = useEditorEventDispatch()
+
   // ── Collapse hook (state + visible block filtering) ────────────────
-  // onBeforeCollapse needs handleFlush (defined later), so use a ref indirection.
-  const handleBeforeCollapseRef = useRef<((blockId: string) => void) | undefined>(undefined)
+  // onBeforeCollapse needs handleFlush (defined later), so it is dispatched
+  // through the stable `beforeCollapse` thunk and registered via dispatch.on.
   const {
     collapsedIds,
     toggleCollapse,
     visibleBlocks: collapsedVisible,
     hasChildrenSet,
   } = useBlockCollapse(blocks, {
-    onBeforeCollapse: (blockId) => handleBeforeCollapseRef.current?.(blockId),
+    onBeforeCollapse: dispatch.thunks.beforeCollapse,
     // #752 — persistence is scoped per page root (one pruned localStorage
     // entry per page instead of one unbounded global key).
     pageKey: rootParentId,
@@ -235,25 +245,17 @@ export function BlockTree({
   const properties = useBlockProperties()
   const { handleToggleTodo, handleTogglePriority } = properties
 
-  // ── Cross-callback ref indirections ────────────────────────────────
-  // `useRovingEditor` (below) captures these refs before the matching
-  // handlers exist. `handleNavigateRef` is owned by `useBlockNavigateToLink`;
-  // the rest are populated further down in this component.
-  const handleSlashCommandRef = useRef<(item: PickerItem) => void>(() => {})
-  const handleCheckboxRef = useRef<(state: 'TODO' | 'DONE') => void>(() => {})
-  const handlePropertySelectRef = useRef<(item: PickerItem) => void>(() => {})
-
   // ── Refs that bridge handlers defined later in the render ──────────
   // `rovingEditorRef` is read by `handleNavigate` (and others) which run
-  // before `useRovingEditor` returns; `handleFlushRef` is read by
-  // `handleNavigate` whose hook runs before `handleFlush` is created.
+  // before `useRovingEditor` returns. The editor-event handler indirections
+  // (slashCommand / checkbox / propertySelect / flush) are owned by
+  // `dispatch` above; `handleNavigateRef` is owned by `useBlockNavigateToLink`.
   const rovingEditorRef = useRef<RovingEditorHandle | null>(null)
-  const handleFlushRef = useRef<() => string | null>(() => null)
 
   // ── Block-link navigation hook (owns handleNavigateRef indirection) ─
   const { handleNavigate, handleNavigateRef } = useBlockNavigateToLink({
     rovingEditorRef,
-    handleFlushRef,
+    handleFlushRef: dispatch.flushRef,
     load,
     setFocused,
     rootParentId,
@@ -289,10 +291,10 @@ export function BlockTree({
     onCreatePage: resolve.onCreatePage,
     onCreateTag: resolve.onCreateTag,
     searchSlashCommands,
-    onSlashCommand: (item: PickerItem) => handleSlashCommandRef.current(item),
-    onCheckbox: (state: 'TODO' | 'DONE') => handleCheckboxRef.current(state),
+    onSlashCommand: dispatch.thunks.slashCommand,
+    onCheckbox: dispatch.thunks.checkbox,
     searchPropertyKeys,
-    onPropertySelect: (item: PickerItem) => handlePropertySelectRef.current(item),
+    onPropertySelect: dispatch.thunks.propertySelect,
     placeholder: editorPlaceholder,
   })
 
@@ -510,8 +512,9 @@ export function BlockTree({
     t,
   })
 
-  // (`handleFlushRef` — read lazily by `useBlockNavigateToLink` — is synced
-  // in the consolidated ref-sync layout effect below, #752.)
+  // (`handleFlush` — read lazily by `useBlockNavigateToLink` via
+  // `dispatch.flushRef` — is registered via `dispatch.on('flush', …)` below
+  // and synced post-commit by the dispatch hook, #752/#1019.)
 
   // ── Scroll container ref (for auto-scroll during drag) ──────────────
   const scrollContainerRef = useRef<HTMLElement | null>(null)
@@ -542,8 +545,8 @@ export function BlockTree({
     scrollContainerRef,
   })
 
-  // (`handleBeforeCollapseRef` is wired in the consolidated ref-sync layout
-  // effect below, #752, now that `handleFlush` is available.)
+  // (`beforeCollapse` is registered via `dispatch.on(...)` below, #752,
+  // now that `handleFlush` is available.)
 
   // ── B-14: Clear focus when zoom changes and focused block is outside view ──
   useEffect(() => {
@@ -578,35 +581,38 @@ export function BlockTree({
     [focusedBlockId, t],
   )
 
-  // ── Consolidated late-bound ref sync (#752) ─────────────────────────
-  // These refs bridge handlers created at different points of this render
-  // to hooks that captured the ref objects earlier (`useRovingEditor`
-  // callbacks, `useBlockNavigateToLink`, `useBlockCollapse`). They used to
-  // be written DURING render, which is a concurrent-rendering hazard: a
-  // render React throws away (StrictMode double-render, a suspended or
-  // aborted concurrent pass) would still have published its handlers. All
-  // of these refs are read exclusively at event time, never during render,
-  // so syncing them once per commit in a layout effect (before the browser
-  // paints, hence before any user event can read them) is equivalent and
-  // safe. No dependency array on purpose — the sync must track every commit.
+  // ── Late-bound editor-event handler registration (#752/#1019) ───────
+  // These handlers are created at different points of this render but their
+  // consuming hooks (`useRovingEditor`, `useBlockCollapse`,
+  // `useBlockNavigateToLink`) captured stable `dispatch.thunks` earlier.
+  // Registering here routes the real handlers through the dispatch hook,
+  // which publishes them into its backing refs in a single post-commit
+  // `useLayoutEffect` — the concurrent-rendering-safe replacement for writing
+  // refs during render. See `use-editor-event-dispatch.ts` for the rationale.
+  dispatch.on('flush', handleFlush)
+  dispatch.on('slashCommand', handleSlashCommand)
+  dispatch.on('checkbox', handleCheckboxSyntax)
+  dispatch.on('propertySelect', handlePropertySelect)
+  // beforeCollapse — rescue focus (flush + clear) when the collapsing subtree
+  // contains the focused block.
+  dispatch.on('beforeCollapse', (blockId: string) => {
+    if (focusedBlockId) {
+      const descendants = getDragDescendants(blocks, blockId)
+      if (descendants.has(focusedBlockId)) {
+        handleFlush()
+        setFocused(null)
+      }
+    }
+  })
+
+  // `rovingEditorRef` carries the editor HANDLE (not an event handler) to
+  // consumers that captured it earlier (`useBlockNavigateToLink`, etc.).
+  // Synced post-commit for the same concurrent-rendering reason: writing it
+  // during render would publish a handle from a render that never committed.
+  // No dependency array on purpose — the sync must track every commit.
   // (`handleNavigateRef` is owned by `useBlockNavigateToLink` above.)
   useLayoutEffect(() => {
     rovingEditorRef.current = rovingEditor
-    handleFlushRef.current = handleFlush
-    handleSlashCommandRef.current = handleSlashCommand
-    handleCheckboxRef.current = handleCheckboxSyntax
-    handlePropertySelectRef.current = handlePropertySelect
-    // onBeforeCollapse — rescue focus (flush + clear) when the collapsing
-    // subtree contains the focused block.
-    handleBeforeCollapseRef.current = (blockId: string) => {
-      if (focusedBlockId) {
-        const descendants = getDragDescendants(blocks, blockId)
-        if (descendants.has(focusedBlockId)) {
-          handleFlush()
-          setFocused(null)
-        }
-      }
-    }
   })
 
   // ── Draft discard callback for Escape ────────────────────────────────
