@@ -282,6 +282,32 @@ pub async fn project_set_property_to_sql(
     } else {
         let value_bool_int: Option<i64> = payload.value_bool.map(|b| b as i64);
         let block_id = payload.block_id.as_str();
+        // The `block_properties.exactly_one_value` CHECK (migration 0062)
+        // forbids an all-NULL row. An all-None payload represents a cleared
+        // property, whose correct SQL representation is row-absent (DELETE) —
+        // NOT an all-NULL INSERT, which would abort the apply/replay
+        // transaction. Mirror the sibling `reproject_block_properties_from_engine`
+        // guard (projection.rs ~821) which `continue`s past the INSERT for the
+        // same case. `validate_set_property` (op.rs) only logs an all-None
+        // SetProperty for reserved keys today (routed to `blocks` columns
+        // above), so this is defense-in-depth against a corrupted / older- or
+        // future-version op-log entry replayed via undo/redo or the engine-less
+        // SQL-only fallback.
+        if payload.value_text.is_none()
+            && payload.value_num.is_none()
+            && payload.value_date.is_none()
+            && payload.value_ref.is_none()
+            && value_bool_int.is_none()
+        {
+            sqlx::query!(
+                "DELETE FROM block_properties WHERE block_id = ? AND key = ?",
+                block_id,
+                payload.key,
+            )
+            .execute(&mut *conn)
+            .await?;
+            return Ok(());
+        }
         sqlx::query!(
             "INSERT OR REPLACE INTO block_properties \
                  (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
@@ -1345,6 +1371,66 @@ mod tests {
         assert_eq!(prop_row.0, None);
         assert_eq!(prop_row.1, Some(2.5));
         assert_eq!(prop_row.2, None);
+    }
+
+    /// #1253: a non-reserved `SetProperty` whose five typed value fields are
+    /// all `None` (a cleared property) must NOT INSERT an all-NULL
+    /// `block_properties` row — that violates the `exactly_one_value` CHECK
+    /// (migration 0062) and aborts the apply/replay transaction. The correct
+    /// representation of a cleared property is row-absent: any prior row is
+    /// DELETEd and no row is inserted. Mirrors the
+    /// `reproject_block_properties_from_engine` sibling guard.
+    #[tokio::test]
+    async fn project_set_property_all_none_non_reserved_is_row_absent_no_check_abort() {
+        let (pool, _dir) = fresh_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Seed a prior typed value for the key so we can assert the cleared
+        // op removes it (not merely skips the insert when nothing existed).
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_num) VALUES (?, 'effort', 2.5)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // All five value fields None → cleared property.
+        let cleared_payload = SetPropertyPayload {
+            block_id: BlockId::from_trusted(BLOCK_A),
+            key: "effort".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        };
+        let mut conn = pool.acquire().await.expect("acquire");
+        // Before the fix this aborts with the `exactly_one_value` CHECK; the
+        // guard must make it a clean no-op (row-absent).
+        project_set_property_to_sql(&mut conn, &cleared_payload)
+            .await
+            .expect("all-None non-reserved SetProperty must not violate the CHECK");
+        drop(conn);
+
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'effort'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch count");
+        assert_eq!(
+            count.0, 0,
+            "cleared property must be row-absent, not an all-NULL row"
+        );
     }
 
     #[tokio::test]
