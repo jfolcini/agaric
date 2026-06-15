@@ -293,7 +293,11 @@ export function SettingsView(): React.ReactElement {
                     // a subtle background on the selected row.
                     'w-full rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors border-l-[3px] dark:border-l-4',
                     activeTab === tab
-                      ? 'border-primary bg-muted text-foreground'
+                      ? // Unified active-indicator (#1232): square left corner so the
+                        // accent bar sits flush (no rounded curve), warm-grey
+                        // `sidebar-accent` tint + `primary` accent bar — identical to
+                        // the app sidebar's active item and the active-block highlight.
+                        'rounded-l-none border-primary bg-sidebar-accent text-sidebar-accent-foreground'
                       : 'border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground',
                   )}
                   onClick={() => setActiveTab(tab)}

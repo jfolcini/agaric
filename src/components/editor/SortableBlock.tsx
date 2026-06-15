@@ -246,12 +246,12 @@ function SortableBlockInner({
         // long-press context menu. Only applied on coarse pointers so
         // desktop text-selection within static blocks still works.
         '[@media(pointer:coarse)]:[-webkit-touch-callout:none]',
-        // #929 — `block-active` keeps the gutter-reveal selector working;
-        // the calm row treatment (faint tint + a 2px left accent bar) gives
-        // the focused/active block a visible home, like Logseq/Notion. Static
-        // styling, so it's reduced-motion-safe by construction.
-        isFocused &&
-          'block-active rounded-sm bg-muted/50 shadow-[inset_2px_0_0_var(--muted-foreground)]',
+        // #1232 — keep ONLY the `block-active` class on the row: the
+        // `[.block-active_&]` gutter-reveal selector depends on it being an
+        // ancestor of the gutter buttons. The visual highlight (warm-grey tint
+        // + flush primary accent bar) moves onto the editor body below so it
+        // wraps the editor, never the gutter controls.
+        isFocused && 'block-active',
         // Lifted-placeholder affordance: dashed outline marks the
         // source row's origin while the overlay floats elsewhere.
         isDragging && 'outline-dashed outline-1 outline-border rounded-sm',
@@ -403,6 +403,14 @@ function SortableBlockInner({
         <div
           className={cn(
             'flex-1 min-w-0 transition-[text-decoration-color,opacity] duration-moderate',
+            // #1232: the active-block highlight lives HERE (the editor body),
+            // not on the row — so the gutter controls stay clean. Unified with
+            // the sidebar / settings-nav active indicator: a flush primary
+            // accent bar + warm-grey `sidebar-accent` tint, square left corner.
+            // The transparent border is always reserved so focusing a block
+            // doesn't nudge its text sideways.
+            'rounded-sm rounded-l-none border-l-[3px] dark:border-l-4 border-l-transparent pl-2',
+            isFocused && 'border-l-primary bg-sidebar-accent',
             // Strikethrough + fade for DONE and CANCELLED (both are "closed" states).
             (todoState === 'DONE' || todoState === 'CANCELLED') && !isFocused
               ? 'line-through opacity-50'
