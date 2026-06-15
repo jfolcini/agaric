@@ -153,6 +153,16 @@ pub struct SyncOrchestrator {
     /// When set, the orchestrator validates that the remote device_id
     /// received in HeadExchange matches this expected peer identity.
     expected_remote_id: Option<String>,
+    /// #610: `true` once we have streamed our own state to the peer this
+    /// session (set in [`Self::head_exchange_outgoing_loro`], the
+    /// responder-only path). Gates the post-session `synced_at`
+    /// bookkeeping: only the side that actually **pulled** the peer's
+    /// state advances `peer_refs.synced_at` (see [`Self::record_pull_in_tx`]).
+    /// The streamer must NOT advance it — doing so refreshes the
+    /// responder's `synced_at[initiator]` on every inbound session and
+    /// starves the reverse direction (`peers_due_for_resync` never finds
+    /// the initiator overdue under sustained activity).
+    streamed_to_peer: bool,
     event_sink: Option<Box<dyn crate::sync_events::SyncEventSink>>,
 }
 
@@ -177,6 +187,7 @@ impl SyncOrchestrator {
             loro_state_override: None,
             remote_device_id: None,
             expected_remote_id: None,
+            streamed_to_peer: false,
             event_sink: None,
         }
     }
@@ -572,6 +583,22 @@ impl SyncOrchestrator {
                     .map(|h| h.hash)
                     .unwrap_or_default();
 
+                // #610: we just PULLED the peer's full state (only the
+                // puller receives LoroSync — the streamer never reaches
+                // this arm). Record `synced_at` so the scheduler stops
+                // marking us due every tick and re-pulling a full snapshot.
+                // Skip the write only when the peer was never identified —
+                // never fabricate a bogus empty-`peer_id` row (BUG-27).
+                if let Some(peer_id) = self.resolve_remote_peer_id() {
+                    self.record_pull_in_tx(&peer_id, &last_hash).await?;
+                } else {
+                    tracing::warn!(
+                        device_id = %self.device_id,
+                        "completed a pull session but the remote device_id was \
+                         never identified; skipping synced_at bookkeeping (#610)"
+                    );
+                }
+
                 self.state = SyncState::Complete;
                 self.session.state = SyncState::Complete;
                 self.emit(crate::sync_events::SyncEvent::Complete {
@@ -598,55 +625,32 @@ impl SyncOrchestrator {
                 // set by the sync daemon from the mTLS/mDNS peer identity.
                 // If neither is available, transition to Failed instead of
                 // silently proceeding with `peer_id = ""`.
-                let peer_id = match self.remote_device_id.as_deref() {
-                    Some(id) if !id.is_empty() => id.to_owned(),
-                    _ => match self.expected_remote_id.as_deref() {
-                        Some(id) if !id.is_empty() => {
-                            tracing::warn!(
-                                device_id = %self.device_id,
-                                expected_remote_id = id,
-                                "remote_device_id was empty at SyncComplete; \
-                                 falling back to expected_remote_id from mTLS/mDNS"
-                            );
-                            // Backfill so the event sink sees a real peer id.
-                            self.remote_device_id = Some(id.to_owned());
-                            self.session.remote_device_id = id.to_owned();
-                            id.to_owned()
-                        }
-                        _ => {
-                            let msg = "SyncComplete received before remote device_id \
-                                       was identified; refusing to record sync with \
-                                       empty peer_id"
-                                .to_owned();
-                            self.state = SyncState::Failed(msg.clone());
-                            self.session.state = self.state.clone();
-                            self.emit(crate::sync_events::SyncEvent::Error {
-                                message: msg.clone(),
-                                remote_device_id: self.session.remote_device_id.clone(),
-                            });
-                            return Err(AppError::InvalidOperation(msg));
-                        }
-                    },
+                let Some(peer_id) = self.resolve_remote_peer_id() else {
+                    let msg = "SyncComplete received before remote device_id \
+                               was identified; refusing to record sync with \
+                               empty peer_id"
+                        .to_owned();
+                    self.state = SyncState::Failed(msg.clone());
+                    self.session.state = self.state.clone();
+                    self.emit(crate::sync_events::SyncEvent::Error {
+                        message: msg.clone(),
+                        remote_device_id: self.session.remote_device_id.clone(),
+                    });
+                    return Err(AppError::InvalidOperation(msg));
                 };
-                // #490 M1: `last_sent_hash` is always None (never
-                // assigned by the loro-vv send path). `unwrap_or_default()`
-                // produces the empty-string sentinel that
-                // `peer_refs::update_on_sync` expects when no op-hash
-                // tracking was performed this session.
-                let last_sent_hash = self.last_sent_hash.clone().unwrap_or_default();
 
-                // PEND-24 M2: wrap the post-session bookkeeping pair
-                // (ensure peer row + record final hashes) in a single
-                // `BEGIN IMMEDIATE` transaction so a crash or error
-                // between the two writes cannot leave a peer row whose
-                // `last_hash` is stale relative to the ops actually
-                // applied. The orchestrator runs serially per peer so
-                // contention on this lock is bounded; the tx exists for
-                // crash atomicity, not concurrency.
-                let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-                peer_refs::upsert_peer_ref_in_tx(&mut tx, &peer_id).await?;
-                complete_sync_in_tx(&mut tx, &peer_id, &last_hash, &last_sent_hash).await?;
-                tx.commit().await?;
+                // #610: record `synced_at` ONLY when WE pulled this session.
+                // A normal responder reaches this arm having STREAMED its
+                // state and received nothing back (`streamed_to_peer`), so it
+                // must NOT advance `synced_at[initiator]` — doing so refreshes
+                // the responder's clock for the initiator on every inbound
+                // session and starves the reverse direction. The empty-registry
+                // initiator also reaches this arm (the responder short-circuits
+                // straight to SyncComplete); it never streamed, so it records
+                // (it has synced with the peer's — empty — state).
+                if !self.streamed_to_peer {
+                    self.record_pull_in_tx(&peer_id, &last_hash).await?;
+                }
 
                 self.state = SyncState::Complete;
                 self.session.state = SyncState::Complete;
@@ -741,6 +745,60 @@ impl SyncOrchestrator {
         }
     }
 
+    /// #610: resolve the remote peer id for post-session bookkeeping.
+    ///
+    /// Prefers the `remote_device_id` learned during HeadExchange; falls
+    /// back to the daemon-supplied `expected_remote_id` (the mTLS/mDNS peer
+    /// identity) and backfills `remote_device_id`/`session.remote_device_id`
+    /// so the event sink sees a real id. Returns `None` when neither is
+    /// available — the caller must then refuse to write a bogus
+    /// empty-`peer_id` row (BUG-27).
+    fn resolve_remote_peer_id(&mut self) -> Option<String> {
+        if let Some(id) = self.remote_device_id.as_deref()
+            && !id.is_empty()
+        {
+            return Some(id.to_owned());
+        }
+        match self.expected_remote_id.as_deref() {
+            Some(id) if !id.is_empty() => {
+                tracing::warn!(
+                    device_id = %self.device_id,
+                    expected_remote_id = id,
+                    "remote_device_id was empty at session completion; \
+                     falling back to expected_remote_id from mTLS/mDNS"
+                );
+                // Backfill so the event sink sees a real peer id.
+                self.remote_device_id = Some(id.to_owned());
+                self.session.remote_device_id = id.to_owned();
+                Some(id.to_owned())
+            }
+            _ => None,
+        }
+    }
+
+    /// #610: record the post-session bookkeeping for a session in which WE
+    /// pulled the peer's state — ensure the peer row exists and advance
+    /// `peer_refs.synced_at` (+ `last_hash`). **Only the puller calls this.**
+    /// The streamer (responder) must not, or it refreshes `synced_at` for a
+    /// peer it never pulled from and starves the reverse direction.
+    ///
+    /// PEND-24 M2: the ensure-row + record pair runs in one `BEGIN IMMEDIATE`
+    /// transaction so a crash between the two writes cannot leave a peer row
+    /// whose `last_hash` is stale relative to the ops actually applied. The
+    /// orchestrator runs serially per peer, so lock contention is bounded;
+    /// the tx exists for crash atomicity, not concurrency.
+    async fn record_pull_in_tx(&self, peer_id: &str, last_hash: &str) -> Result<(), AppError> {
+        // #490 M1: `last_sent_hash` is always None under the loro-vv send
+        // path; the empty-string sentinel is what `peer_refs::update_on_sync`
+        // expects when no op-hash delta was tracked this session.
+        let last_sent_hash = self.last_sent_hash.clone().unwrap_or_default();
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
+        complete_sync_in_tx(&mut tx, peer_id, last_hash, &last_sent_hash).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Build and queue outgoing [`SyncMessage::LoroSync`] messages,
     /// one per [`SpaceId`] currently held in
     /// [`crate::loro::shared::get`]'s registry.
@@ -831,6 +889,12 @@ impl SyncOrchestrator {
         // individual CRDT operations. Surfaced in the UI as "Ops Sent";
         // the i18n tooltip is worded as "sync messages" to match.
         self.session.ops_sent = messages.len();
+
+        // #610: we are streaming our own state to the peer — this is the
+        // responder (pull-from-us) role. Mark it so the post-session
+        // bookkeeping does NOT advance our `synced_at` for this peer (we
+        // pulled nothing from them); only the puller records `synced_at`.
+        self.streamed_to_peer = true;
 
         self.state = SyncState::StreamingOps;
         self.session.state = SyncState::StreamingOps;

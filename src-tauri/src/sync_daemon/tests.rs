@@ -4036,6 +4036,204 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
     mat_b.shutdown();
 }
 
+/// #610 — directional `synced_at`: only the side that PULLED records it.
+///
+/// In a normal pull-only session the **initiator** pulls the responder's
+/// state; the **responder** streams and pulls nothing back. Therefore:
+///   * the initiator must record `synced_at` for the responder (so the
+///     scheduler stops marking it due every tick and re-pulling a full
+///     snapshot), and
+///   * the responder must NOT advance `synced_at` for the initiator — it
+///     pulled nothing, and advancing it refreshes the responder's clock
+///     for the initiator on every inbound session, starving the reverse
+///     direction (`peers_due_for_resync` would never find the initiator
+///     overdue under sustained activity).
+///
+/// Pre-#610 the semantics were inverted: the initiator wrote nothing and
+/// the responder advanced `synced_at` from the initiator's `SyncComplete`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn issue610_only_the_puller_records_synced_at() {
+    use crate::sync_protocol::{SyncOrchestrator, SyncState};
+
+    const DEV_A: &str = "DEV610A";
+    const DEV_B: &str = "DEV610B";
+    const BLOCK_B: &str = "01HZ610BLKBXXXXXXXXXXXXXXX";
+    let space = crate::space::SpaceId::from_trusted("01HZ610SPACEXXXXXXXXXXXXXX");
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    let mat_b = Materializer::new(pool_b.clone());
+    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+
+    // Mutually paired; both peer rows start with synced_at = NULL.
+    peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
+    peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
+
+    // Only B has state to stream (B is the puller's source this session).
+    make_local_edit_602(
+        &pool_b,
+        &mat_b,
+        state_b,
+        DEV_B,
+        &space,
+        BLOCK_B,
+        "edit from device B",
+        1_736_942_401_000,
+    )
+    .await;
+
+    // ── Session: A initiates (pulls from B); B responds (streams) ────
+    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+        .with_loro_state(state_a)
+        .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+        .with_loro_state(state_b)
+        .with_expected_remote_id(DEV_A.into());
+    pump_full_session_602(&mut init_a, &mut resp_b).await;
+
+    assert_eq!(
+        init_a.session().state,
+        SyncState::Complete,
+        "initiator must complete the pull session"
+    );
+    assert_eq!(
+        resp_b.session().state,
+        SyncState::Complete,
+        "responder must complete the pull session"
+    );
+
+    // Initiator A PULLED B's state → must have recorded synced_at[B].
+    let a_view_of_b = peer_refs::get_peer_ref(&pool_a, DEV_B)
+        .await
+        .unwrap()
+        .expect("A's peer row for B must exist");
+    assert!(
+        a_view_of_b.synced_at.is_some(),
+        "#610: the initiator (puller) must record synced_at after pulling the \
+         peer's state (pre-#610 it stayed NULL → re-pulled a full snapshot every tick)"
+    );
+
+    // Responder B STREAMED to A and pulled nothing → must NOT advance synced_at[A].
+    let b_view_of_a = peer_refs::get_peer_ref(&pool_b, DEV_A)
+        .await
+        .unwrap()
+        .expect("B's peer row for A must exist");
+    assert!(
+        b_view_of_a.synced_at.is_none(),
+        "#610: the responder (streamer) must NOT advance synced_at — it pulled \
+         nothing this session; advancing it (the pre-#610 bug) starves the reverse direction"
+    );
+
+    // Consequence: the reverse direction is still 'due' — B will pull A's
+    // state on its next scheduled tick (this is how A's edits reach B).
+    let scheduler = crate::sync_scheduler::SyncScheduler::default();
+    let b_peers = peer_refs::list_peer_refs(&pool_b).await.unwrap();
+    assert!(
+        scheduler
+            .peers_due_for_resync(&b_peers)
+            .iter()
+            .any(|p| p == DEV_A),
+        "#610: B must still consider A due for resync (reverse direction not starved)"
+    );
+
+    mat_a.shutdown();
+    mat_b.shutdown();
+}
+
+/// #610 — the OTHER puller path: an initiator whose peer has an EMPTY
+/// registry still records `synced_at`.
+///
+/// When the responder has no registered spaces, `head_exchange_outgoing_loro`
+/// short-circuits straight to `SyncComplete` (no streaming phase), so the
+/// initiator reaches the `SyncComplete`-receive arm with
+/// `streamed_to_peer == false` and records via that arm's `!streamed_to_peer`
+/// branch (the normal pull records via the `is_last` LoroSync arm instead).
+/// This is the deliberately-preserved sub-case; without it a fresh peer
+/// would leave the initiator perpetually "due". A regression that dropped
+/// recording on the short-circuit branch would otherwise go undetected.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn issue610_empty_registry_initiator_records_via_synccomplete() {
+    use crate::sync_protocol::{SyncOrchestrator, SyncState};
+
+    const DEV_A: &str = "DEV610EA";
+    const DEV_B: &str = "DEV610EB";
+    const BLOCK_A: &str = "01HZ610EBLKAXXXXXXXXXXXXXX";
+    let space = crate::space::SpaceId::from_trusted("01HZ610ESPACEXXXXXXXXXXXXX");
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    let mat_b = Materializer::new(pool_b.clone());
+    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+
+    peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
+    peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
+
+    // Only A has state; B's Loro registry stays EMPTY, so B short-circuits
+    // straight to SyncComplete (no LoroSync stream) — the path under test.
+    make_local_edit_602(
+        &pool_a,
+        &mat_a,
+        state_a,
+        DEV_A,
+        &space,
+        BLOCK_A,
+        "edit from device A",
+        1_736_942_400_000,
+    )
+    .await;
+
+    // ── Session: A initiates; B (empty) responds via SyncComplete ────
+    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+        .with_loro_state(state_a)
+        .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+        .with_loro_state(state_b)
+        .with_expected_remote_id(DEV_A.into());
+    pump_full_session_602(&mut init_a, &mut resp_b).await;
+
+    assert_eq!(
+        init_a.session().state,
+        SyncState::Complete,
+        "initiator must complete against an empty-registry responder"
+    );
+    assert_eq!(
+        resp_b.session().state,
+        SyncState::Complete,
+        "empty-registry responder must complete via the SyncComplete short-circuit"
+    );
+
+    // Initiator A reached the SyncComplete arm with streamed_to_peer=false
+    // (B never streamed) → it must have recorded synced_at[B] via the
+    // `!streamed_to_peer` branch.
+    let a_view_of_b = peer_refs::get_peer_ref(&pool_a, DEV_B)
+        .await
+        .unwrap()
+        .expect("A's peer row for B must exist");
+    assert!(
+        a_view_of_b.synced_at.is_some(),
+        "#610: the initiator must record synced_at via the empty-registry \
+         SyncComplete short-circuit branch (!streamed_to_peer)"
+    );
+
+    // B short-circuited (it streamed nothing and never reaches the
+    // SyncComplete-receive arm) → it must not have recorded synced_at[A].
+    let b_view_of_a = peer_refs::get_peer_ref(&pool_b, DEV_A)
+        .await
+        .unwrap()
+        .expect("B's peer row for A must exist");
+    assert!(
+        b_view_of_a.synced_at.is_none(),
+        "#610: the empty-registry responder must not record synced_at"
+    );
+
+    mat_a.shutdown();
+    mat_b.shutdown();
+}
+
 // ======================================================================
 // #778 — fresh device (empty op_log) must not be rejected as self-sync
 // ======================================================================
@@ -4198,15 +4396,22 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
         "#778: the responder's seeded block must reach the fresh initiator's DB"
     );
 
-    // ── BUG-27 fallback: responder recorded the session under the
-    //    cert-CN identity (the heads never identified the peer) ───────
+    // ── BUG-27 fallback: the responder identified the session under the
+    //    cert-CN identity (the heads never identified the peer), so the
+    //    peer row exists under FRESH_DEV (pinned during cert TOFU). ─────
     let peer = peer_refs::get_peer_ref(&resp_pool, FRESH_DEV)
         .await
         .unwrap()
         .expect("peer_refs row for the fresh device must exist on the responder");
+    // #610: the responder STREAMED its seeded block to the fresh initiator
+    // and pulled nothing back, so it must NOT advance synced_at for that
+    // peer — only the puller (here the initiator) records synced_at. The
+    // row existing above is the cert-CN identity signal; synced_at staying
+    // NULL keeps the reverse direction schedulable.
     assert!(
-        peer.synced_at.is_some(),
-        "responder must record synced_at for the cert-CN-identified fresh device"
+        peer.synced_at.is_none(),
+        "#610: the responder (streamer) must NOT record synced_at for the \
+         fresh device — it pulled nothing this session"
     );
 
     resp_mat.shutdown();

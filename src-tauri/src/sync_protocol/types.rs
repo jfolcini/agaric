@@ -119,10 +119,14 @@ impl From<OpTransfer> for OpRecord {
 ///    per-space message tells the receiver to transition to
 ///    `SyncComplete`. Loro's CRDT import converges concurrent edits.
 ///
-/// 3. **`SyncComplete`** — exactly once per side, after that side has
-///    streamed its final `LoroSync`. Carries `last_hash` (the receiver's
-///    new frontier-of-record), which is written to `peer_refs` to
-///    bookmark the next session's starting point.
+/// 3. **`SyncComplete`** — sent once by the **puller** after it has
+///    imported the streamer's final `LoroSync` (in the normal flow that
+///    is the initiator; in the empty-registry short-circuit the responder
+///    sends it directly because it had nothing to stream). Carries
+///    `last_hash` (the sender's local frontier). #610: only the puller
+///    records `peer_refs.synced_at` for the peer — the streamer, which
+///    pulled nothing this session, must not, or it starves the reverse
+///    direction.
 ///
 /// 4. **`ResetRequired`** — terminal *side-exit* in place of
 ///    `SyncComplete`, sent by the responder when its op log has been
@@ -159,13 +163,15 @@ impl From<OpTransfer> for OpRecord {
 #[serde(tag = "type")]
 pub enum SyncMessage {
     /// First exchanged in a session; advertises `(device_id, seq, hash)`
-    /// tuples. Both peers must send exactly one.
+    /// tuples. Sent by the initiator only (exactly once); the responder
+    /// replies with the streaming phase rather than its own `HeadExchange`.
     HeadExchange { heads: Vec<DeviceHead> },
     /// Loro-CRDT-based sync wire envelope.
     ///
     /// Carries one [`LoroSyncMessage`] (Snapshot or Update) per
-    /// [`crate::space::SpaceId`]. Sent zero-or-more times in either
-    /// direction. The `is_last` flag tells the receiver this is the
+    /// [`crate::space::SpaceId`]. Sent zero-or-more times by the responder
+    /// only (the streamer), after it processes the initiator's
+    /// `HeadExchange`. The `is_last` flag tells the receiver this is the
     /// final per-space message of the batch so it can transition to
     /// `SyncComplete` once it processes the last one. The sole
     /// streaming-phase payload.
