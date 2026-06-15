@@ -191,6 +191,10 @@ export const block: Record<string, string> = {
   'blockTree.setScheduledDateFailed': 'Failed to set scheduled date',
   'blockTree.setPropertyFailed': 'Failed to set property',
   'blockTree.loadingLabel': 'Loading blocks',
+  // #1258 — page-subtree truncation notice. The backend caps a page at
+  // PAGE_SUBTREE_MAX_BLOCKS; before this, the excess was dropped silently.
+  'blockTree.truncatedNotice':
+    'Showing the first {{shown}} blocks of {{total}} — this page is very large. Some blocks are not displayed; consider splitting it into smaller pages.',
   'block.emptyPlaceholder': 'Type / for commands...',
   'block.attachHint': 'Drop files here, or paste — images, text, PDF, JSON, ZIP (max 50 MB)',
   'block.attachDropZoneCaption': 'Drop to attach — images, text, PDF, JSON, ZIP (max 50 MB)',

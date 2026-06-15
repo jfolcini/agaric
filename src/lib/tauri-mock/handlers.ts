@@ -678,7 +678,10 @@ export const HANDLERS: Record<string, Handler> = {
       if (px !== py) return px - py
       return (x['id'] as string).localeCompare(y['id'] as string)
     })
-    return items
+    // #1258 — backend returns `{ blocks, truncated, total }` (see
+    // `PageSubtree`). The mock never exceeds the 10k cap, so `truncated`
+    // is always false and `total === items.length`.
+    return { blocks: items, truncated: false, total: items.length }
   },
 
   // PEND-56 — paginated page list with per-page metadata columns.

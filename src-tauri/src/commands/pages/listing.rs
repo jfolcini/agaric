@@ -457,6 +457,33 @@ pub async fn list_template_page_ids_in_space(
 /// page; the loader truncates rather than blocking the editor.
 pub(crate) const PAGE_SUBTREE_MAX_BLOCKS: i64 = 10_000;
 
+/// Result of [`load_page_subtree_inner`] — the (possibly capped) block
+/// set plus an honest truncation signal so the FE can surface a
+/// non-blocking notice instead of silently dropping descendants.
+///
+/// #1258 — the loader caps its returned set at [`PAGE_SUBTREE_MAX_BLOCKS`]
+/// by flat `(position, id)` order, which is NOT structure-preserving: a
+/// surviving deeply-nested child whose parent row was cut becomes an
+/// orphan that `buildFlatTree`'s DFS can never reach. Before, the only
+/// response was a backend `tracing::warn`; the user saw a page missing
+/// arbitrary blocks with no signal. We now carry `total` (the true active
+/// descendant count, computed independently of the cap) and `truncated`
+/// (`total > returned`) so the FE can tell the user "showing the first
+/// N of M".
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct PageSubtree {
+    /// The (possibly capped) active descendant rows, excluding the root.
+    pub blocks: Vec<BlockRow>,
+    /// True when the page has more active descendants than were returned —
+    /// i.e. the [`PAGE_SUBTREE_MAX_BLOCKS`] cap fired and some blocks were
+    /// dropped from `blocks`.
+    pub truncated: bool,
+    /// The true count of active descendants under the root (excluding the
+    /// root and soft-deleted blocks), computed independently of the cap.
+    /// `blocks.len()` is `min(total, PAGE_SUBTREE_MAX_BLOCKS)`.
+    pub total: i64,
+}
+
 /// Load every active descendant under `root_block_id` in `space_id`,
 /// in a single SELECT against the materializer-maintained `page_id`
 /// index.  No per-parent pagination, no per-call clamp the FE can
@@ -466,7 +493,11 @@ pub(crate) const PAGE_SUBTREE_MAX_BLOCKS: i64 = 10_000;
 ///
 /// The returned set excludes the root block itself and any soft-deleted
 /// descendant; it is bounded by [`PAGE_SUBTREE_MAX_BLOCKS`] as a safety
-/// rail against pathologically large pages.
+/// rail against pathologically large pages. When the cap fires, the
+/// returned [`PageSubtree`] carries `truncated = true` and the true
+/// `total` count (computed independently of the LIMIT) so the FE can
+/// surface a non-blocking "showing the first N of M" notice (#1258)
+/// rather than silently dropping descendants.
 ///
 /// Order is `(position, id)` ascending — the FE reassembles via
 /// `buildFlatTree` which groups by `parent_id`, so the global order is
@@ -477,7 +508,7 @@ pub async fn load_page_subtree_inner(
     pool: &SqlitePool,
     root_block_id: &str,
     space_id: &str,
-) -> Result<Vec<BlockRow>, AppError> {
+) -> Result<PageSubtree, AppError> {
     BlockId::from_string(root_block_id)?;
 
     // FEAT-3 Phase 7 — enforce space membership.  A request whose root
@@ -516,17 +547,45 @@ pub async fn load_page_subtree_inner(
     .fetch_all(pool)
     .await?;
 
-    if i64::try_from(rows.len()).unwrap_or(i64::MAX) >= PAGE_SUBTREE_MAX_BLOCKS {
+    let returned = i64::try_from(rows.len()).unwrap_or(i64::MAX);
+
+    // #1258 — compute the TRUE active-descendant count independently of the
+    // cap so the FE can surface "showing the first N of M". Only worth a
+    // second query when the returned set actually hit the cap; below the cap
+    // the count is exactly `returned` (the LIMIT could not have fired).
+    let total = if returned >= PAGE_SUBTREE_MAX_BLOCKS {
+        sqlx::query_scalar!(
+            r#"SELECT COUNT(*) AS "count!: i64"
+               FROM blocks
+               WHERE page_id = ?1
+                 AND id != ?1
+                 AND deleted_at IS NULL"#,
+            root_block_id,
+        )
+        .fetch_one(pool)
+        .await?
+    } else {
+        returned
+    };
+
+    let truncated = total > returned;
+
+    if truncated {
         tracing::warn!(
             root_block_id,
             max_blocks = PAGE_SUBTREE_MAX_BLOCKS,
             rows_returned = rows.len(),
+            total,
             "load_page_subtree: result at the safety cap; descendants \
-             may have been truncated. Consider splitting the page."
+             were truncated. Consider splitting the page."
         );
     }
 
-    Ok(rows)
+    Ok(PageSubtree {
+        blocks: rows,
+        truncated,
+        total,
+    })
 }
 
 /// Tauri command: load every active descendant under `root_block_id`
@@ -537,7 +596,7 @@ pub async fn load_page_subtree(
     pool: State<'_, ReadPool>,
     root_block_id: BlockId,
     space_id: String,
-) -> Result<Vec<BlockRow>, AppError> {
+) -> Result<PageSubtree, AppError> {
     load_page_subtree_inner(&pool.0, root_block_id.as_str(), &space_id)
         .await
         .map_err(sanitize_internal_error)

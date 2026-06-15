@@ -125,12 +125,13 @@ export function BlockTree({
 }: BlockTreeProps = {}): React.ReactElement {
   const { t } = useTranslation()
   // Per-page data from context
-  const { blocks, blocksById, rootParentId, loading } = usePageBlockStore(
+  const { blocks, blocksById, rootParentId, loading, truncatedTotal } = usePageBlockStore(
     useShallow((s) => ({
       blocks: s.blocks,
       blocksById: s.blocksById,
       rootParentId: s.rootParentId,
       loading: s.loading,
+      truncatedTotal: s.truncatedTotal,
     })),
   )
   // Global focus/selection
@@ -894,6 +895,20 @@ export function BlockTree({
         onNavigate={handleZoomIn}
         onZoomToRoot={zoomToRoot}
       />
+      {/* #1258 — the backend caps a page at PAGE_SUBTREE_MAX_BLOCKS and used
+          to drop the excess silently. A non-blocking notice (matches the
+          SearchPanel capped-notice pattern) tells the user the page is only
+          partially displayed. */}
+      {truncatedTotal != null && (
+        <div
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level notice card (border/padding/rounded); <output> is inline-level and would break the boxed layout
+          role="status"
+          data-testid="page-truncated-notice"
+          className="mb-2 rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground"
+        >
+          {t('blockTree.truncatedNotice', { shown: blocks.length, total: truncatedTotal })}
+        </div>
+      )}
       <BlockBatchActionMenu
         selectedBlockIds={selectedBlockIds}
         batchInProgress={batchInProgress}

@@ -184,7 +184,11 @@ export async function insertTemplateBlocks(
   // itself excluded). Group by `parent_id` and sort each sibling group
   // by `position` so the DFS below reproduces the exact ordering the
   // old per-parent `listBlocks` walk produced.
-  const descendants = await loadPageSubtree(templatePageId, effectiveSpaceId)
+  // #1258 — `loadPageSubtree` now returns `{ blocks, truncated, total }`.
+  // Templates are authored, small subtrees, so truncation is not expected
+  // here; take the blocks array. (A pathological >10k-block template would
+  // be capped by the backend, matching the prior bare-array behaviour.)
+  const descendants = (await loadPageSubtree(templatePageId, effectiveSpaceId)).blocks
   const childrenByParent = new Map<string, BlockRow[]>()
   for (const block of descendants) {
     const pid = block.parent_id

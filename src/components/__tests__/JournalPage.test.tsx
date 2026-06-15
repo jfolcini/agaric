@@ -297,14 +297,14 @@ function templateListBlocksResponse(args: unknown): unknown {
 
 /**
  * `load_page_subtree` response used by `insertTemplateBlocks` after
- * limit-clamp-followup.  Returns every active descendant of `TMPL-PAGE`
- * as a flat `BlockRow[]` (the root is excluded by contract — see
- * `tauri.ts:loadPageSubtree`).
+ * limit-clamp-followup.  #1258 — the command now returns the `PageSubtree`
+ * wrapper `{ blocks, truncated, total }` (the root is excluded by contract
+ * — see `tauri.ts:loadPageSubtree`).
  */
 function templateLoadPageSubtreeResponse(args: unknown): unknown {
   const params = args as { rootBlockId?: string } | undefined
   if (params?.rootBlockId === 'TMPL-PAGE') {
-    return [
+    const blocks = [
       {
         id: 'TC1',
         block_type: 'content',
@@ -320,8 +320,9 @@ function templateLoadPageSubtreeResponse(args: unknown): unknown {
         position: 1,
       },
     ]
+    return { blocks, truncated: false, total: blocks.length }
   }
-  return []
+  return { blocks: [], truncated: false, total: 0 }
 }
 
 /** `query_by_property` response that advertises the journal template page. */
