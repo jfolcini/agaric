@@ -159,7 +159,13 @@ export function JournalPage({
   const showConfigureTemplateAction = !loading && mode !== 'agenda'
 
   return (
-    <div ref={journalRef} tabIndex={-1} className="space-y-4 focus-ring-visible">
+    // `tabIndex={-1}` makes this a programmatic primary-focus / scroll target
+    // (usePrimaryFocus, Ctrl+F host). It is NOT an interactive control, so it
+    // must NOT paint a focus ring: `focus-ring-visible` drew a 3px `--ring`
+    // (red, in-theme) outline around the ENTIRE journal whenever primary focus
+    // landed here (#1243). A large panel taking keyboard focus shows no visible
+    // ring — only the block the user actually edits gets a focus treatment.
+    <div ref={journalRef} tabIndex={-1} className="space-y-4">
       {/* PEND-UX item 5 — `<h1>` landmark for the Journal view. The App-
           shell header renders `<JournalControls />` instead of a label
           for journal mode, so this title is purely additive (no visual

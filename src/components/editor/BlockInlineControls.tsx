@@ -268,11 +268,24 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
               type="button"
               className={cn(
                 'collapse-toggle flex-shrink-0 w-5 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center',
+                // #1243: an EXPANDED parent hides its chevron at rest. Its
+                // children are already visible below, so a persistent caret
+                // just floats in the empty left gutter, detached from the
+                // block text (the "caret too far left" report). It reveals on
+                // the SAME per-block hover / focus-within / .block-active
+                // contract as the gutter controls and the zoom bullet, so the
+                // tree reads clean at rest and the toggle is right there the
+                // moment you engage a block. Touch has no hover → always shown.
+                !isCollapsed &&
+                  !isTouch &&
+                  'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto',
                 // C4 (#216): the chevron signals collapsed/expanded by rotation
                 // alone, which colour-blind users (and anyone who misses the
                 // subtle 90° turn) can't reliably perceive. Add a non-rotation
                 // cue — a faint filled background + ring — that only shows when
-                // the block is collapsed (i.e. has hidden children).
+                // the block is collapsed (i.e. has hidden children). A
+                // collapsed block ALSO stays visible at rest (above): it is the
+                // only affordance to reveal the hidden children.
                 isCollapsed && 'rounded-sm bg-muted/60 text-foreground ring-1 ring-border',
               )}
               data-testid="collapse-toggle"

@@ -403,15 +403,14 @@ function SortableBlockInner({
         <div
           className={cn(
             'flex-1 min-w-0 transition-[text-decoration-color,opacity] duration-moderate',
-            // #1232: the active-block highlight lives HERE (the editor body),
-            // not on the row — so the gutter controls stay clean. Unified with
-            // the sidebar / settings-nav active indicator: a flush primary
-            // accent bar + warm-grey `sidebar-accent` tint, square left corner.
-            // The transparent border is always reserved so focusing a block
-            // doesn't nudge its text sideways.
-            'rounded-sm rounded-l-none border-l-[3px] dark:border-l-4 border-l-transparent pl-2',
-            isFocused && 'border-l-primary bg-sidebar-accent',
-            // Strikethrough + fade for DONE and CANCELLED (both are "closed" states).
+            // #1243: NO active-block highlight here. A focused block already
+            // gets its own indicator — the `block-editor` box rendered by
+            // EditableBlock (`ring-1 ring-border bg-accent/[0.06] shadow-sm`,
+            // rounded). The earlier #1232 red `border-l-primary` bar +
+            // `bg-sidebar-accent` tint layered a second, alarm-red highlight on
+            // top of that grey box and let the tint bleed to the left edge
+            // behind the bar. Removing it leaves a single, calm focus
+            // treatment and tightens the negative space left of the text.
             (todoState === 'DONE' || todoState === 'CANCELLED') && !isFocused
               ? 'line-through opacity-50'
               : 'no-underline opacity-100',

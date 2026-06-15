@@ -1665,10 +1665,13 @@ describe('SortableBlock visibility controls', () => {
     expect(handle.className).toContain('[.block-active_&]:opacity-100')
   })
 
-  // #1232 — the row keeps ONLY the `block-active` reveal-hook class; the visual
-  // highlight (warm-grey `sidebar-accent` tint + flush `primary` accent bar)
-  // moved onto the editor body so it wraps the editor, not the gutter controls.
-  it('focused block: block-active on the row, tint + accent bar on the editor body', () => {
+  // #1232 kept `block-active` as the gutter-reveal hook on the row. #1243 then
+  // REMOVED the SortableBlock-level visual highlight entirely: a focused block
+  // already gets its own calm indicator from EditableBlock's `block-editor` box
+  // (`ring-1 ring-border bg-accent/[0.06]`). The earlier red `border-l-primary`
+  // bar + `bg-sidebar-accent` tint layered a second, alarm-red highlight on top
+  // of that box and bled the tint to the left edge, so it was dropped.
+  it('focused block: keeps block-active reveal hook, but no red accent bar / sidebar tint', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1679,12 +1682,10 @@ describe('SortableBlock visibility controls', () => {
     )
     const row = container.querySelector('.sortable-block') as HTMLElement
     expect(row.className).toContain('block-active')
-    // The tint is NOT on the row (it would wrap the gutter controls).
-    expect(row.className).not.toContain('bg-sidebar-accent')
-    // It lives on the editor body, alongside the primary accent bar.
-    const body = container.querySelector('.bg-sidebar-accent') as HTMLElement | null
-    expect(body).not.toBeNull()
-    expect(body?.className).toContain('border-l-primary')
+    // No red left-accent bar or warm-grey tint anywhere on the row subtree —
+    // the focused `block-editor` box is the sole active indicator.
+    expect(container.innerHTML).not.toContain('bg-sidebar-accent')
+    expect(container.innerHTML).not.toContain('border-l-primary')
   })
 
   it('unfocused row has no active-row tint', () => {
@@ -1733,7 +1734,11 @@ describe('SortableBlock visibility controls', () => {
     expect(deleteBtn.className).toContain('group-hover:opacity-100')
   })
 
-  it('collapse toggle does NOT have opacity-0 class (always visible when hasChildren)', () => {
+  // #1243 — an EXPANDED parent hides its chevron at rest (children are already
+  // visible below; a persistent caret just floats in the empty left gutter). It
+  // reveals on the per-block hover / focus-within / .block-active contract, like
+  // the gutter controls and zoom bullet.
+  it('expanded parent chevron is hover-revealed (opacity-0 at rest)', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1745,7 +1750,29 @@ describe('SortableBlock visibility controls', () => {
     )
 
     const collapseBtn = screen.getByRole('button', { name: /collapse children/i })
+    expect(collapseBtn.className).toContain('opacity-0')
+    expect(collapseBtn.className).toContain('group-hover:opacity-100')
+    expect(collapseBtn.className).toContain('[.block-active_&]:opacity-100')
+  })
+
+  // …but a COLLAPSED block keeps its chevron visible at rest: it is the only
+  // affordance to reveal the hidden children and carries the collapsed cue.
+  it('collapsed block chevron stays visible at rest (no opacity-0 gate)', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren
+        isCollapsed
+      />,
+    )
+
+    const collapseBtn = screen.getByRole('button', { name: /expand children/i })
     expect(collapseBtn.className).not.toContain('opacity-0')
+    // Carries the non-rotation collapsed cue (filled bg + ring).
+    expect(collapseBtn.className).toContain('ring-1')
   })
 
   it('drag handle has no per-button coarse-pointer classes for touch devices', () => {
