@@ -154,10 +154,15 @@ function DaySectionInner({
     <section
       id={`journal-${entry.dateStr}`}
       aria-label={t('journal.dayAriaLabel', { date: entry.displayDate })}
-      // `group` enables the hover-reveal opacity on `PageQuickActions
-      // variant="journal"` (matches the `DensityRow` pattern); coarse-
-      // pointer devices always show the actions, no group-hover needed.
-      className={cn('group', isToday && 'bg-accent/[0.08] px-3 py-2 -mx-3')}
+      // NO bare `group` here. Tailwind's `group-hover:` matches ANY ancestor
+      // carrying the literal `group` class, not just the nearest one. Each
+      // block row is itself `.sortable-block.group` and reveals its gutter
+      // controls on `group-hover`; a `group` on this section (an ancestor of
+      // every row) made hovering anywhere in the day reveal EVERY row's gutter
+      // controls at once (#1243). The section-level group is also unnecessary:
+      // `PageQuickActions variant="journal"` is `hoverReveal: false` (always
+      // visible), so nothing depended on it.
+      className={cn(isToday && 'bg-accent/[0.08] px-3 py-2 -mx-3')}
     >
       {/* Day heading — hidden in daily mode since header shows the date */}
       {!hideHeading && (
