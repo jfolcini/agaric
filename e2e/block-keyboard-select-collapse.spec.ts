@@ -74,7 +74,11 @@ test.describe('Keyboard range selection across an ancestor collapse (#922)', () 
     await expect(batchToolbar).toContainText('2')
 
     // 3. Collapse GS_1 — the selected child GS_2 becomes invisible (its row is
-    //    filtered out of the visible list).
+    //    filtered out of the visible list). #1243: the EXPANDED chevron is
+    //    hover-revealed (pointer-events-none at rest), so hover the row first
+    //    to make it actionable. (The later expand-click works without a hover —
+    //    a COLLAPSED chevron stays visible/interactive at rest.)
+    await parentRow.hover()
     await chevron.click()
     await expect(chevron).toHaveAttribute('aria-expanded', 'false')
     // GS_2's static row (targeted by id) is gone from the collapsed-visible tree.
