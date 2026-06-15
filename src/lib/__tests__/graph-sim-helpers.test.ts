@@ -5,11 +5,17 @@
  * `<text>` tree directly.
  */
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
 
-import { renderGraphElements } from '../graph-sim-helpers'
+import {
+  createZoomKeyHandler,
+  renderGraphElements,
+  ZOOM_STEP,
+  zoomIdentity,
+} from '../graph-sim-helpers'
+import { resetAllShortcuts } from '../keyboard-config'
 
 function makeSvg(): SVGSVGElement {
   return document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement
@@ -83,5 +89,117 @@ describe('renderGraphElements — UX-357 native SVG <title> tooltip', () => {
     const title = svg.querySelector('g.node > title')
     expect(text?.textContent).toBe(`${longLabel.slice(0, 20)}\u2026`)
     expect(title?.textContent).toBe(longLabel)
+  })
+})
+
+// \u2500\u2500 createZoomKeyHandler \u2014 keyboard zoom (graphZoomIn/Out/Reset, #1172) \u2500\u2500\u2500\u2500\u2500\u2500
+//
+// BUG-18 moved the graph zoom chords out of GraphView into rebindable catalog
+// entries (`graphZoomIn = '+ / =', graphZoomOut = '-', graphZoomReset = '0'`).
+// `createZoomKeyHandler` is the keydown listener that routes each catalog
+// binding to the matching d3-zoom transform. We drive real KeyboardEvents
+// through it and assert the zoom-behaviour dispatch for every binding (the
+// key\u2192action contract), including the `+ / =` alternative and the
+// editable-target guard.
+describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
+  afterEach(() => {
+    resetAllShortcuts()
+  })
+
+  /** A d3-zoom behaviour stub exposing the two methods the handler calls. */
+  function makeZoomBehavior() {
+    // `scaleBy` / `transform` receive the transition selection as their first
+    // arg; the handler builds that from `select(svg).transition()`. We only
+    // assert the second arg (the zoom factor / identity transform).
+    return {
+      scaleBy: vi.fn(),
+      transform: vi.fn(),
+    }
+  }
+
+  function press(handler: (e: KeyboardEvent) => void, init: KeyboardEventInit): void {
+    handler(new KeyboardEvent('keydown', init))
+  }
+
+  it('graphZoomIn (`+`) scales by the zoom step', () => {
+    const svg = makeSvg()
+    const zb = makeZoomBehavior()
+    // oxlint-disable-next-line @typescript-eslint/no-explicit-any -- minimal d3 stub
+    const handler = createZoomKeyHandler(svg, zb as any)
+
+    press(handler, { key: '+' })
+
+    expect(zb.scaleBy).toHaveBeenCalledTimes(1)
+    expect(zb.scaleBy.mock.calls[0]?.[1]).toBe(ZOOM_STEP)
+  })
+
+  it('graphZoomIn also fires on the `=` alternative (`+ / =`)', () => {
+    const svg = makeSvg()
+    const zb = makeZoomBehavior()
+    // oxlint-disable-next-line @typescript-eslint/no-explicit-any -- minimal d3 stub
+    const handler = createZoomKeyHandler(svg, zb as any)
+
+    press(handler, { key: '=' })
+
+    expect(zb.scaleBy).toHaveBeenCalledTimes(1)
+    expect(zb.scaleBy.mock.calls[0]?.[1]).toBe(ZOOM_STEP)
+  })
+
+  it('graphZoomOut (`-`) scales by the inverse step', () => {
+    const svg = makeSvg()
+    const zb = makeZoomBehavior()
+    // oxlint-disable-next-line @typescript-eslint/no-explicit-any -- minimal d3 stub
+    const handler = createZoomKeyHandler(svg, zb as any)
+
+    press(handler, { key: '-' })
+
+    expect(zb.scaleBy).toHaveBeenCalledTimes(1)
+    expect(zb.scaleBy.mock.calls[0]?.[1]).toBeCloseTo(1 / ZOOM_STEP)
+    expect(zb.transform).not.toHaveBeenCalled()
+  })
+
+  it('graphZoomReset (`0`) transforms to the identity zoom', () => {
+    const svg = makeSvg()
+    const zb = makeZoomBehavior()
+    // oxlint-disable-next-line @typescript-eslint/no-explicit-any -- minimal d3 stub
+    const handler = createZoomKeyHandler(svg, zb as any)
+
+    press(handler, { key: '0' })
+
+    expect(zb.transform).toHaveBeenCalledTimes(1)
+    expect(zb.transform.mock.calls[0]?.[1]).toBe(zoomIdentity)
+    expect(zb.scaleBy).not.toHaveBeenCalled()
+  })
+
+  it('ignores the zoom keys when focus is in an editable target', () => {
+    const svg = makeSvg()
+    const zb = makeZoomBehavior()
+    // oxlint-disable-next-line @typescript-eslint/no-explicit-any -- minimal d3 stub
+    const handler = createZoomKeyHandler(svg, zb as any)
+
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    try {
+      // Re-target the event at the editable element.
+      const e = new KeyboardEvent('keydown', { key: '0' })
+      Object.defineProperty(e, 'target', { value: input })
+      handler(e)
+      expect(zb.transform).not.toHaveBeenCalled()
+      expect(zb.scaleBy).not.toHaveBeenCalled()
+    } finally {
+      input.remove()
+    }
+  })
+
+  it('ignores unrelated keys', () => {
+    const svg = makeSvg()
+    const zb = makeZoomBehavior()
+    // oxlint-disable-next-line @typescript-eslint/no-explicit-any -- minimal d3 stub
+    const handler = createZoomKeyHandler(svg, zb as any)
+
+    press(handler, { key: 'x' })
+
+    expect(zb.scaleBy).not.toHaveBeenCalled()
+    expect(zb.transform).not.toHaveBeenCalled()
   })
 })

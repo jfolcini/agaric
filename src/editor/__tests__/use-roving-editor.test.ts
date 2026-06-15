@@ -514,6 +514,98 @@ describe('custom extension keyboard shortcuts', () => {
   })
 })
 
+// -- Editor keymap key→action firing (#1172) ----------------------------------
+//
+// The existing `custom extension keyboard shortcuts` suite above asserts the
+// extensions REGISTER and that the toggle commands work, plus that the strike
+// keymap exposes both `Mod-Shift-s` and `Mod-Shift-x` (#211 P2-11). What was
+// missing: driving the ACTUAL keydown chord through ProseMirror's keymap and
+// asserting the resulting action — the key→action contract these tests pin.
+//   • priority1/2/3 — Ctrl+Shift+1/2/3 must dispatch the `set-priority-N`
+//     CustomEvent on `document` (the priority handler the toolbar listens on).
+//   • strikethrough legacy alias — Ctrl+Shift+X must still toggle strike for
+//     one release, alongside the primary Ctrl+Shift+S.
+describe('editor keymap key→action firing (#1172)', () => {
+  let editor: Editor
+
+  afterEach(() => {
+    editor?.destroy()
+    resetAllShortcuts()
+  })
+
+  /** Run a keydown through the editor's ProseMirror keymap plugins. */
+  function dispatchKeydown(
+    ed: Editor,
+    key: string,
+    mods: { ctrlKey?: boolean; shiftKey?: boolean; metaKey?: boolean } = {},
+  ): boolean {
+    return (
+      ed.view.someProp('handleKeyDown', (handler) =>
+        handler(ed.view, new KeyboardEvent('keydown', { key, ...mods })),
+      ) ?? false
+    )
+  }
+
+  function setHelloSelected(ed: Editor): void {
+    ed.commands.setContent({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }],
+    })
+    ed.commands.selectAll()
+  }
+
+  it.each([
+    [1, '1'],
+    [2, '2'],
+    [3, '3'],
+  ] as const)('priority%i — Ctrl+Shift+%s dispatches the set-priority-%i event', (level, digit) => {
+    editor = createEditor([PriorityShortcuts])
+    const spy = vi.fn()
+    document.addEventListener(`set-priority-${level}`, spy)
+    try {
+      const handled = dispatchKeydown(editor, digit, { ctrlKey: true, shiftKey: true })
+      expect(handled).toBe(true)
+      expect(spy).toHaveBeenCalledTimes(1)
+    } finally {
+      document.removeEventListener(`set-priority-${level}`, spy)
+    }
+  })
+
+  it('priority chord does NOT fire on a bare Ctrl+digit (that is heading/space)', () => {
+    editor = createEditor([PriorityShortcuts])
+    const spy = vi.fn()
+    document.addEventListener('set-priority-1', spy)
+    try {
+      // Ctrl+1 (no Shift) is the heading / switchSpace chord — the priority
+      // keymap (Mod-Shift-1) must not claim it.
+      dispatchKeydown(editor, '1', { ctrlKey: true })
+      expect(spy).not.toHaveBeenCalled()
+    } finally {
+      document.removeEventListener('set-priority-1', spy)
+    }
+  })
+
+  it('strikethrough — primary Ctrl+Shift+S toggles the strike mark', () => {
+    editor = createEditor([StrikeWithShortcut])
+    setHelloSelected(editor)
+
+    const handled = dispatchKeydown(editor, 's', { ctrlKey: true, shiftKey: true })
+
+    expect(handled).toBe(true)
+    expect(editor.isActive('strike')).toBe(true)
+  })
+
+  it('strikethrough — legacy Ctrl+Shift+X alias still toggles strike (#211 P2-11)', () => {
+    editor = createEditor([StrikeWithShortcut])
+    setHelloSelected(editor)
+
+    const handled = dispatchKeydown(editor, 'x', { ctrlKey: true, shiftKey: true })
+
+    expect(handled).toBe(true)
+    expect(editor.isActive('strike')).toBe(true)
+  })
+})
+
 // -- Frozen-at-creation shortcut bindings (#752) ------------------------------
 
 describe('shortcut bindings are frozen at editor creation (#752)', () => {
