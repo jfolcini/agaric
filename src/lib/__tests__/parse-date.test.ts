@@ -158,10 +158,22 @@ describe('edge cases', () => {
     expect(parseDate('2024-02-29')).toBe('2024-02-29')
   })
 
-  it('month boundary: Jan 31 + 1 month overshoots to March', () => {
+  it('month boundary: Jan 31 + 1 month clamps to end of Feb (date-fns addMonths)', () => {
     vi.setSystemTime(new Date('2026-01-31'))
-    // JS setMonth(1) on Jan 31 → Feb 31 doesn't exist → rolls to March 3
-    expect(parseDate('+1m')).toBe('2026-03-03')
+    // #1254: month arithmetic clamps to the last valid day of the target month
+    // (Feb 28 in 2026) instead of overflowing to March, matching date-fns
+    // addMonths used by the sibling date-utils module.
+    expect(parseDate('+1m')).toBe('2026-02-28')
+  })
+
+  it('month boundary: "in 1 month" from Jan 31 clamps to end of Feb', () => {
+    vi.setSystemTime(new Date('2026-01-31'))
+    expect(parseDate('in 1 month')).toBe('2026-02-28')
+  })
+
+  it('leap-year month boundary: Jan 31 + 1 month clamps to Feb 29 in 2028', () => {
+    vi.setSystemTime(new Date('2028-01-31'))
+    expect(parseDate('+1m')).toBe('2028-02-29')
   })
 
   it('zero offset: +0d returns today', () => {

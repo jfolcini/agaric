@@ -65,23 +65,47 @@ describe('property: parseDate safety', () => {
   })
 
   it('parseDate result is always null or a valid YYYY-MM-DD string', () => {
+    // #1272: this property was conditionally vacuous — every assertion lives
+    // behind `if (result !== null)`, so an always-null regression would pass
+    // green. Track via a closure that the non-null branch actually fired and
+    // assert it afterward so a "parser stopped parsing" regression FAILS
+    // instead of passing vacuously.
+    //
+    // The known-parseable seeds are asserted DETERMINISTICALLY below (not left
+    // to fast-check's random `oneof` branch selection, which only makes the
+    // guard probabilistically non-vacuous). They are *also* fed into the
+    // generator so the shape assertions exercise real parsed output, but the
+    // unconditional checks are what guarantee the guard cannot pass vacuously.
+    const PARSEABLE_SEEDS = ['2026-04-15', '2026/12/31', 'today', 'tomorrow', '+3d', 'in 2 weeks']
+    for (const seed of PARSEABLE_SEEDS) {
+      const parsed = parseDate(seed)
+      expect(parsed, `seed "${seed}" must parse to a non-null date`).not.toBeNull()
+      expect(parsed).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    }
+
+    let nonNullCount = 0
     fc.assert(
-      fc.property(fc.string({ minLength: 0, maxLength: 200 }), (s) => {
-        const result = parseDate(s)
-        if (result !== null) {
-          expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-          // Verify the components represent a valid date
-          const [y, m, d] = result.split('-').map(Number) as [number, number, number]
-          expect(y).toBeGreaterThanOrEqual(1901)
-          expect(y).toBeLessThanOrEqual(2099)
-          expect(m).toBeGreaterThanOrEqual(1)
-          expect(m).toBeLessThanOrEqual(12)
-          expect(d).toBeGreaterThanOrEqual(1)
-          expect(d).toBeLessThanOrEqual(31)
-        }
-      }),
+      fc.property(
+        fc.oneof(fc.constantFrom(...PARSEABLE_SEEDS), fc.string({ minLength: 0, maxLength: 200 })),
+        (s) => {
+          const result = parseDate(s)
+          if (result !== null) {
+            nonNullCount += 1
+            expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+            // Verify the components represent a valid date
+            const [y, m, d] = result.split('-').map(Number) as [number, number, number]
+            expect(y).toBeGreaterThanOrEqual(1901)
+            expect(y).toBeLessThanOrEqual(2099)
+            expect(m).toBeGreaterThanOrEqual(1)
+            expect(m).toBeLessThanOrEqual(12)
+            expect(d).toBeGreaterThanOrEqual(1)
+            expect(d).toBeLessThanOrEqual(31)
+          }
+        },
+      ),
       { numRuns: NUM_RUNS },
     )
+    expect(nonNullCount).toBeGreaterThan(0)
   })
 })
 

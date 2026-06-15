@@ -1,3 +1,5 @@
+import { addMonths } from 'date-fns'
+
 import { formatDate } from './date-utils'
 
 const MONTH_NAMES: Record<string, number> = {
@@ -51,12 +53,6 @@ function buildDate(year: number, month: number, day: number): string | null {
 
 function parseMonthName(name: string): number | undefined {
   return MONTH_NAMES[name.toLowerCase()]
-}
-
-function addMonths(base: Date, n: number): Date {
-  const result = new Date(base)
-  result.setMonth(result.getMonth() + n)
-  return result
 }
 
 function defaultYear(month: number, day: number, today: Date): number {
