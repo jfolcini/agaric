@@ -15,15 +15,19 @@ use tokio::runtime::Runtime;
 /// bypasses normal payload construction).
 async fn seed_op_log(pool: &sqlx::SqlitePool, count: usize) {
     for i in 0..count {
+        // `op_log.created_at` is INTEGER-NOT-NULL epoch-ms since migration 0079
+        // (#109 Phase 2) with no default, so it must be supplied. A monotonic
+        // base + seq keeps ordering stable; `1736942400000` =
+        // 2025-01-15T12:00:00Z.
         sqlx::query(
-            "INSERT INTO op_log (device_id, seq, op_type, payload, hash)
+            "INSERT INTO op_log (device_id, seq, op_type, payload, hash, created_at)
              VALUES ('seed', ?1, 'create_block',
                      json_object('block_id', printf('SEED%04d', ?1),
                                  'block_type', 'content',
                                  'parent_id', NULL,
                                  'position', ?1,
                                  'content', 'seed'),
-                     hex(randomblob(32)))",
+                     hex(randomblob(32)), 1736942400000 + ?1)",
         )
         .bind(i as i64)
         .execute(pool)

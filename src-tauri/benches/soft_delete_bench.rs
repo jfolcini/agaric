@@ -20,11 +20,15 @@ use tokio::runtime::Runtime;
 /// Returns the root block ID.
 async fn seed_tree(pool: &sqlx::SqlitePool, depth: usize, width: usize) -> String {
     let root_id = "ROOT00000000000000000000";
-    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', 'root')")
-        .bind(root_id)
-        .execute(pool)
-        .await
-        .unwrap();
+    // A 'page' block must set `page_id = id` (migration 0073 CHECK).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'root', ?)",
+    )
+    .bind(root_id)
+    .bind(root_id)
+    .execute(pool)
+    .await
+    .unwrap();
 
     let mut parents = vec![root_id.to_string()];
     for level in 1..depth {

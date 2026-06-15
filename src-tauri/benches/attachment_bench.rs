@@ -45,16 +45,25 @@ async fn seed_blocks_bulk(pool: &SqlitePool, n: usize) -> Vec<String> {
 }
 
 /// Insert M attachments on a given block via direct SQL.
+///
+/// `attachments.created_at` is INTEGER epoch-milliseconds since migration 0081
+/// (#109 Phase 2); the STRICT table rejects the RFC-3339 TEXT this bench used
+/// to bind. `1767225600000` = 2026-01-01T00:00:00Z in epoch-ms.
 async fn seed_attachments_for_block(pool: &SqlitePool, block_id: &str, m: usize) {
     let mut tx = pool.begin().await.unwrap();
     for i in 0..m {
         let att_id = format!("ATT{block_id}{i:06}");
+        // `fs_path` carries a partial UNIQUE index (migration 0037,
+        // `idx_attachments_fs_path_unique`); a shared literal path would make
+        // the 2nd row collide. Derive a per-attachment path from `att_id`.
+        let fs_path = format!("/tmp/bench_{att_id}.txt");
         sqlx::query(
             "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-             VALUES (?, ?, 'text/plain', 'file.txt', 1024, '/tmp/bench_file.txt', '2026-01-01T00:00:00.000Z')",
+             VALUES (?, ?, 'text/plain', 'file.txt', 1024, ?, 1767225600000)",
         )
         .bind(&att_id)
         .bind(block_id)
+        .bind(&fs_path)
         .execute(&mut *tx)
         .await
         .unwrap();
@@ -156,7 +165,7 @@ fn bench_delete_attachment(c: &mut Criterion) {
         rt.block_on(async {
             sqlx::query(
                 "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-                 VALUES (?, ?, 'text/plain', 'file.txt', 1024, ?, '2026-01-01T00:00:00.000Z')",
+                 VALUES (?, ?, 'text/plain', 'file.txt', 1024, ?, 1767225600000)",
             )
             .bind(&target_att_id)
             .bind(&target_block)
@@ -186,7 +195,7 @@ fn bench_delete_attachment(c: &mut Criterion) {
                             // Re-insert so there is something to delete
                             sqlx::query(
                                 "INSERT OR REPLACE INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-                                 VALUES (?, ?, 'text/plain', 'file.txt', 1024, ?, '2026-01-01T00:00:00.000Z')",
+                                 VALUES (?, ?, 'text/plain', 'file.txt', 1024, ?, 1767225600000)",
                             )
                             .bind(&target_att_id)
                             .bind(&target_block)

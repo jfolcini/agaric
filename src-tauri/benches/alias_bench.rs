@@ -38,13 +38,16 @@ async fn seed_pages_with_aliases(pool: &SqlitePool, n: usize) -> Vec<String> {
         let id = format!("PAGE{i:020}");
         let title = format!("Bench Page {i}");
 
+        // A 'page' block must set `page_id = id` (migration 0073's
+        // `page_id_self_for_pages` CHECK).
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, position) \
-             VALUES (?, 'page', ?, ?)",
+            "INSERT INTO blocks (id, block_type, content, position, page_id) \
+             VALUES (?, 'page', ?, ?, ?)",
         )
         .bind(&id)
         .bind(&title)
         .bind(i as i64 + 1)
+        .bind(&id)
         .execute(&mut *tx)
         .await
         .unwrap();
@@ -76,13 +79,16 @@ async fn seed_pages_bare(pool: &SqlitePool, n: usize) -> Vec<String> {
         let id = format!("PAGE{i:020}");
         let title = format!("Bench Page {i}");
 
+        // A 'page' block must set `page_id = id` (migration 0073's
+        // `page_id_self_for_pages` CHECK).
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, position) \
-             VALUES (?, 'page', ?, ?)",
+            "INSERT INTO blocks (id, block_type, content, position, page_id) \
+             VALUES (?, 'page', ?, ?, ?)",
         )
         .bind(&id)
         .bind(&title)
         .bind(i as i64 + 1)
+        .bind(&id)
         .execute(&mut *tx)
         .await
         .unwrap();
