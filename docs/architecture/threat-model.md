@@ -19,19 +19,17 @@ The objects below are what the project is defending. Anything not on this list e
 
 - **Notes content.** The user's writing — pages, blocks, attachments, tags, properties — stored in `notes.db` under `~/.local/share/com.agaric.app/` on Linux and the OS-correct equivalent elsewhere. This is the primary asset; everything else exists to keep it intact, available, and confined to the user's own devices.
 - **Sync peer trust state.** The TOFU-pinned device certificate hashes that record "this device-ID is bound to this self-signed cert". Stored alongside the database. Losing this state breaks pairing; corrupting it allows accidental cross-talk between devices the user did not intend to pair.
-- **OAuth tokens.** Today only Google Calendar (PKCE flow via `tauri-plugin-oauth`). Access and refresh tokens live in the OS keychain (Secret Service on Linux, Keychain on macOS, Credential Manager on Windows — see the `keyring` crate feature list in [`src-tauri/Cargo.toml`](../../src-tauri/Cargo.toml)), keyed per space (`oauth_tokens_<SPACE_ULID>`). Compromise grants the holder read/write access to the user's Google Calendar within the scope granted at consent time.
 - **Updater signing keys.** The long-lived `TAURI_SIGNING_PRIVATE_KEY` repository secret signs every auto-update payload; the matching public key is embedded in [`src-tauri/tauri.conf.json`](../../src-tauri/tauri.conf.json) (`plugins.updater.pubkey`) and is what the in-app updater (`src/hooks/useUpdateCheck.ts`) verifies before applying a bundle. This is the root of trust for the entire updater pipeline. Rotation cadence, procedure, and the deferred Sigstore-keyless alternative are documented in [`SECURITY.md`](../../SECURITY.md#updater-signing-key-rotation) § "Updater signing-key rotation".
 - **Release artefacts.** The signed bundles (`.deb`, `.AppImage`, `.msi`, `.exe`, `.dmg`, `.app.tar.gz`, `.apk`) plus the updater tarballs and their detached `.sig` files, plus SLSA build provenance attested by `actions/attest-build-provenance` and pushed to Sigstore and the GitHub attestations API. End-user verification is documented in [`docs/BUILD.md`](../BUILD.md). These artefacts are what reach users; their integrity is what the updater signing key and the provenance attestation jointly defend.
 
 ## Trust boundaries
 
-A trust boundary is where data crosses a control surface — where the decoder on one side cannot assume the encoder on the other followed the contract. Five boundaries matter for Agaric:
+A trust boundary is where data crosses a control surface — where the decoder on one side cannot assume the encoder on the other followed the contract. Four boundaries matter for Agaric:
 
 1. **Frontend ↔ Backend (Tauri IPC).** The WebView (renderer) reaches the Rust backend only through `#[tauri::command]` handlers gated by the capability allowlist in [`src-tauri/capabilities/default.json`](../../src-tauri/capabilities/default.json) and the CSP in [`src-tauri/tauri.conf.json`](../../src-tauri/tauri.conf.json). Capability-based; deny-by-default in spirit (a command must be both registered with `agaric_commands!` and permitted by capability before the frontend can invoke it).
 2. **Backend ↔ SQLite.** Database file in the user's home directory; the trust boundary is the operating system filesystem permissions on `~/.local/share/com.agaric.app/`. No application-level encryption at rest; the OS handles disk encryption (FileVault / BitLocker / LUKS / Android FBE), and SQLCipher was rejected for cost-vs-threat reasons documented in [`tooling.md`](tooling.md#storage).
 3. **Sync daemon ↔ LAN peer.** TLS with mTLS between paired devices; self-signed certificates pinned on first observation (TOFU). Pairing state lives in the database; the verification path is in [`src-tauri/src/sync_daemon/server.rs`](../../src-tauri/src/sync_daemon/server.rs) (see `verify_peer_cert`). The model assumes peers are the user's own devices; the LAN itself is **not** treated as a trusted medium even though the threat model treats adversarial-peer hardening as out of scope.
 4. **Updater ↔ GitHub Releases.** Tauri's auto-updater fetches the manifest from `https://github.com/jfolcini/agaric/releases/latest/download/latest.json` (see [`src-tauri/tauri.conf.json`](../../src-tauri/tauri.conf.json)) and verifies the bundle against the embedded public key. Out-of-band, every release asset is also attested via SLSA provenance to Sigstore and the GitHub attestations API; end-user verification is optional but documented in [`docs/BUILD.md`](../BUILD.md).
-5. **GCal OAuth.** The PKCE authorisation-code flow runs through a loopback HTTP server bound on a random localhost port (`tauri-plugin-oauth` → `oauth_callback::bind_one_shot`); tokens land in the OS keychain. Refresh tokens are long-lived; access tokens are short-lived but stored alongside refresh tokens in the same keyring entry.
 
 ## Data-flow diagram
 
@@ -50,16 +48,16 @@ A trust boundary is where data crosses a control surface — where the decoder o
    │  React + TipTap      │      allowlist        │   #[tauri::command] surface    │
    │  CSP: default-src    │      + CSP            │   sanitize_internal_error      │
    │  'self'              │                       │                                │
-   └──────────────────────┘                       └───┬──────────┬──────────┬─────┘
-                                                     │          │          │
-                                          B2: FS     │          │          │  B5: HTTPS +
-                                          permissions│          │          │  OS keychain
-                                                     ▼          ▼          ▼
-                                            ┌─────────────┐ ┌────────┐ ┌────────────┐
-                                            │  SQLite     │ │ Sync   │ │ Google     │
-                                            │  notes.db   │ │ daemon │ │ Calendar   │
-                                            │  + WAL      │ │        │ │ (OAuth)    │
-                                            └─────────────┘ └───┬────┘ └────────────┘
+   └──────────────────────┘                       └───┬──────────┬───────────────┘
+                                                     │          │
+                                          B2: FS     │          │
+                                          permissions│          │
+                                                     ▼          ▼
+                                            ┌─────────────┐ ┌────────┐
+                                            │  SQLite     │ │ Sync   │
+                                            │  notes.db   │ │ daemon │
+                                            │  + WAL      │ │        │
+                                            └─────────────┘ └───┬────┘
                                                                 │
                                                   B3: TLS + mTLS│ + TOFU pin
                                                                 ▼
@@ -69,7 +67,7 @@ A trust boundary is where data crosses a control surface — where the decoder o
                                                        └────────────────┘
 ```
 
-Each labelled edge marks a trust transition. B1 is the IPC boundary (capability allowlist + CSP). B2 is the on-disk boundary (FS permissions; no app-layer encryption). B3 is the sync boundary (TLS + mTLS + TOFU). B4 is the updater boundary (Sigstore-attested release artefacts + minisign signature on the bundle). B5 is the GCal OAuth boundary (PKCE flow over HTTPS; tokens at rest in the OS keychain). The diagram intentionally omits the MCP UDS socket and the loopback OAuth callback port — they are listed under Attack surface enumeration below; promoting them to the diagram would clutter it without adding distinct trust transitions (UDS is a process-local socket gated by file mode; the OAuth callback port is a one-shot bind during a single interactive flow).
+Each labelled edge marks a trust transition. B1 is the IPC boundary (capability allowlist + CSP). B2 is the on-disk boundary (FS permissions; no app-layer encryption). B3 is the sync boundary (TLS + mTLS + TOFU). B4 is the updater boundary (Sigstore-attested release artefacts + minisign signature on the bundle). The diagram intentionally omits the MCP UDS socket — it is listed under Attack surface enumeration below; promoting it to the diagram would clutter it without adding a distinct trust transition (UDS is a process-local socket gated by file mode).
 
 ## Per-boundary STRIDE
 
@@ -97,7 +95,6 @@ The tables below use one row per (asset × STRIDE category) combination that the
 | Notes content | **Denial of service** — a corrupted database wedges the application; the user cannot open the app to back up their content. | Low | Med | Migrations refuse to run against an unrecognised schema rather than mutating it; the WAL gives a partial recovery surface. The `bug_report` workflow can extract the raw `notes.db` regardless of FE state. | Mitigated |
 | Notes content | **Elevation of privilege** — a frontend caller reads database rows that the application logic intended to gate (e.g. a soft-deleted block, a different space's blocks). | Low | Med | All multi-space queries are space-scoped at the SQL layer; soft-delete filtering is enforced in the query, not in the renderer; sqlx compile-time checks the query shape against the schema. | Mitigated |
 | Sync peer trust state | **Tampering** — a forced edit to the `peer_records` table changes the pinned cert hash and silently re-pairs with a different device. | Low | Med | Same FS-permission boundary as notes content; a writer with that access has already won. The TOFU model intentionally records the *first* hash and refuses subsequent ones (`src-tauri/src/sync_daemon/server.rs`), so the failure mode is a hard rejection rather than a silent re-pair. | Accepted |
-| OAuth tokens | **Information disclosure** — refresh tokens leak via a `log::info!` that prints the token, or a `bug_report` includes the keyring entry. | Low | High | OAuth tokens live in the OS keychain via the `keyring` crate (Secret Service / Keychain / Credential Manager), never in `notes.db`. The `bug_report` deny-by-default redactor (`src-tauri/src/commands/bug_report.rs`) replaces any field value not on a safe-token allowlist with `[REDACTED]` when generating support bundles. The frontend `logger.ts` is a thin console wrapper with no redaction — code authors must not pass token material into log payloads (enforced by review, not by a layered control). | Mitigated |
 
 ### B3 — Sync daemon ↔ LAN peer
 
@@ -129,19 +126,6 @@ The updater is the only outbound network call the application makes that is **no
 | Release artefacts | **Denial of service** — GitHub Releases is unreachable; the updater cannot fetch the manifest. | Med | Low | The application continues to run on the currently-installed version; the updater is best-effort and surfaces a non-blocking toast on failure. | Accepted |
 | Release artefacts | **Elevation of privilege** — a malicious updater payload runs at install time with installer privileges. | Low | High | The in-app signature check (minisign against the embedded pubkey) is the gate. SLSA provenance is the verification path for sophisticated users; OS-level code signing is intentionally not in place today (see the no-OS-signing tradeoff in [`ci-and-tooling.md`](ci-and-tooling.md#slsa-provenance-sigstore-and-the-unsigned-binary-tradeoff)). Windows SignPath OSS is in flight; macOS notarisation is a strict no-go for the current cycle. | Mitigated (in-app) / Accepted (OS-layer first-launch UX) |
 
-### B5 — GCal OAuth
-
-Only the Google Calendar integration uses OAuth today; the row pattern below generalises to any future OAuth integration that lands.
-
-| Asset | Threat (STRIDE) | Likelihood | Impact | Mitigation | Status |
-| --- | --- | --- | --- | --- | --- |
-| OAuth tokens | **Spoofing** — a third party impersonates the user to Google. | Low | High | PKCE flow (RFC 7636) via `tauri-plugin-oauth` binds the authorisation code to a code-verifier that never leaves the device. The callback runs on a one-shot loopback HTTP server (`oauth_callback::bind_one_shot` in `src-tauri/src/gcal_push/oauth_callback.rs`) and rejects requests after the first valid redirect. | Mitigated |
-| OAuth tokens | **Tampering** — a man-in-the-middle on the network intercepts the redirect and rewrites the code. | Low | High | Authorisation runs over HTTPS to Google; the redirect lands on loopback, where there is no network path for a MITM to insert. PKCE binds the code to the code-verifier, so even a leaked authorisation code cannot be exchanged for a token without the verifier. | Mitigated |
-| OAuth tokens | **Repudiation** — the user denies having authorised the integration. | Low | Low | Google's own OAuth consent records are authoritative; the application records the connected account email per space, surfaceable from Settings. | Accepted |
-| OAuth tokens | **Information disclosure** — tokens leak via logs, the keychain backend is misconfigured, or a `bug_report` includes the keyring entry. | Low | High | Tokens live in the OS keychain via the `keyring` crate (Secret Service / Keychain / Credential Manager — see [`src-tauri/Cargo.toml`](../../src-tauri/Cargo.toml)). The `bug_report` deny-by-default redactor (`src-tauri/src/commands/bug_report.rs`) drops any field value not on a safe-token allowlist; keyring contents are never read by the bug-report flow. The frontend `logger.ts` has no redaction layer — code authors must not pass token material into log payloads (enforced by review, not by a layered control). | Mitigated |
-| OAuth tokens | **Denial of service** — Google revokes the token while the user is offline; the integration refuses to sync. | Med | Low | The integration surfaces a typed `Gcal` `AppError` variant (passes through `sanitize_internal_error` unaltered) so the FE shows a clear "reconnect Google Calendar" prompt. No silent retry storms. | Mitigated |
-| OAuth tokens | **Elevation of privilege** — the granted scope exceeds the operations the application performs. | Low | Med | The OAuth scope set is enumerated at connect time and matches the operations the agenda surface needs (read + write on the user's primary calendar). Adding a scope requires a code change reviewed against this list. | Mitigated |
-
 ## Attack surface enumeration
 
 The boundaries above are the *control* surfaces. The list below is the *attack* surface — every place an external byte enters the process or a local byte leaves it. Reviewers walk this list when adding a feature to check whether a new entry needs to appear.
@@ -149,23 +133,20 @@ The boundaries above are the *control* surfaces. The list below is the *attack* 
 **Network listeners.**
 
 - Sync daemon TCP listener (`src-tauri/src/sync_daemon/orchestrator.rs`, `server.rs`). Binds on a configured port on each non-loopback interface; rustls + mTLS terminates the channel. mDNS / multicast service advertisement attaches to the same lifecycle (see `discovery.rs`, with the Android multicast-lock JNI carve-out in [`android_multicast.rs`](../../src-tauri/src/sync_daemon/android_multicast.rs)).
-- OAuth callback loopback server (`src-tauri/src/gcal_push/oauth_callback.rs`). One-shot bind on a random loopback port for the duration of a single interactive OAuth flow; rejects after the first valid redirect.
 - MCP UDS socket — a Unix domain socket under the app data directory (`src-tauri/src/commands/mcp.rs`). RO and RW variants; gated by a marker file in the app data directory; not a TCP listener. File-mode is the trust boundary.
 
 **File paths.**
 
 - `~/.local/share/com.agaric.app/` (Linux) and the OS-correct equivalent elsewhere — hosts `notes.db` + WAL, sync peer state, the MCP socket, the MCP enable markers, and the log file (`agaric.log` rolled by `tracing-appender`).
-- OS keychain entries — `oauth_tokens_<SPACE_ULID>` per connected space, plus the sync TLS certificate's private key under a keyring entry rather than on disk plaintext. See [`tooling.md`](tooling.md#storage).
 - Tauri updater cache — operating-system-dependent location; transient.
 
 **IPC commands.**
 
-- The full handler tree is enumerated by `agaric_commands!` in `src-tauri/src/lib.rs` and lives under `src-tauri/src/commands/*.rs` (`agenda.rs`, `attachments.rs`, `bug_report.rs`, `compaction.rs`, `drafts.rs`, `gcal.rs`, `history.rs`, `journal.rs`, `link_metadata.rs`, `logging.rs`, `mcp.rs`, `pages.rs`, `properties.rs`, `queries.rs`, `spaces.rs`, `sync_cmds.rs`, `tags.rs`, plus the block-scoped tree under `commands/blocks/`). Every handler routes its error path through `sanitize_internal_error` (`src-tauri/src/commands/mod.rs`), enforced by the `tauri-command-sanitize` prek hook. Capability gating is in [`src-tauri/capabilities/default.json`](../../src-tauri/capabilities/default.json).
+- The full handler tree is enumerated by `agaric_commands!` in `src-tauri/src/lib.rs` and lives under `src-tauri/src/commands/*.rs` (`agenda.rs`, `attachments.rs`, `bug_report.rs`, `compaction.rs`, `drafts.rs`, `history.rs`, `journal.rs`, `link_metadata.rs`, `logging.rs`, `mcp.rs`, `pages.rs`, `properties.rs`, `queries.rs`, `spaces.rs`, `sync_cmds.rs`, `tags.rs`, plus the block-scoped tree under `commands/blocks/`). Every handler routes its error path through `sanitize_internal_error` (`src-tauri/src/commands/mod.rs`), enforced by the `tauri-command-sanitize` prek hook. Capability gating is in [`src-tauri/capabilities/default.json`](../../src-tauri/capabilities/default.json).
 
 **External services touched.**
 
 - **GitHub Releases** — the in-app updater fetches `https://github.com/jfolcini/agaric/releases/latest/download/latest.json` and the bundle URL the manifest references.
-- **Google Calendar API** — OAuth-scoped read + write on the user's primary calendar; only when the user has explicitly connected an account.
 - **GitHub Attestation API + Sigstore Rekor** — fetched only by users who choose to verify SLSA provenance out-of-band (commands documented in [`docs/BUILD.md`](../BUILD.md)); the running application itself does not call this surface.
 
 **Supply-chain entry points.**
@@ -179,12 +160,12 @@ The boundaries above are the *control* surfaces. The list below is the *attack* 
 The lists in [`SECURITY.md`](../../SECURITY.md#out-of-scope) are canonical; this section restates them in the threat-model frame so a reviewer skimming this page does not have to chase the cross-link.
 
 - **Adversarial LAN peers.** Sync peers are the user's own devices. Decoder panics under hostile peer input, packet-injection attacks against a paired peer, traffic-analysis on the sync graph — all welcome as regular bugs, none treated as security findings.
-- **Root-on-device attackers.** An attacker who already has read/write access to `~/.local/share/com.agaric.app/` already holds the user's data and the keychain entries the user's session has unlocked. Local-first apps store local data; that is the model.
+- **Root-on-device attackers.** An attacker who already has read/write access to `~/.local/share/com.agaric.app/` already holds the user's data. Local-first apps store local data; that is the model.
 - **Supply-chain attacks against transitive dependencies already covered by `cargo-deny`.** The block / warn / time-boxed-waiver tiers documented in [`ci-and-tooling.md`](ci-and-tooling.md#advisory-handling--three-concentric-rings) are the current control. Findings against entries on the `deny.toml` ignore list need to be raised against the ignore-entry rationale, not the dependency.
 - **Multi-user / multi-tenant scenarios.** Every paired device belongs to the same person. There is no concept of "other users" with separate permissions inside an Agaric install.
 - **Network-exposed servers, server-mode builds, hosted backends.** None exist; if any were proposed, this document and [`SECURITY.md`](../../SECURITY.md) would be revisited *before* the change landed.
 - **Mobile MDM, secure-enclave attestation, jailbreak detection.** Out of scope; the application targets desktop primarily and a single-user Android build secondarily, and assumes the OS provides the device-integrity story.
-- **DoS / rate-limiting on local-only listeners.** Sync daemon, OAuth callback, MCP socket — all bound to loopback or LAN with the single-user trust model.
+- **DoS / rate-limiting on local-only listeners.** Sync daemon, MCP socket — all bound to loopback or LAN with the single-user trust model.
 - **Anonymity properties of the LAN sync protocol.** Who is paired with whom, traffic-analysis resistance — not in scope.
 
 A proposed change that shifts any of these items into scope (a server build, a multi-user feature, a public deployment, an external-maintainer access model) must update this document and `SECURITY.md` before the change lands. The trust-anchor and mitigation lists upstream of this file all assume the local-first, single-user framing; widening that framing without revisiting them would silently un-mitigate items the documents currently claim mitigated.
@@ -197,12 +178,11 @@ The shape is intentionally narrative, not GSN-formal: the threat model above is 
 
 ### Claim 1 — User data stays on the user's device
 
-**Argument.** Agaric is a local-first application. There is no server-side store, no cloud copy, no telemetry endpoint. The single off-device data flow is the user's own Google Calendar push (opt-in, per-event, via OAuth that the user themselves authorised).
+**Argument.** Agaric is a local-first application. There is no server-side store, no cloud copy, no telemetry endpoint, and no third-party data flow. The only off-device data flow is opt-in LAN sync to the user's own paired devices.
 
 **Evidence.**
 
-- [§Trust boundaries](#trust-boundaries) lists three boundaries that touch off-device surfaces (B3 LAN sync, B4 updater, B5 GCal); all three are either opt-in (B5), self-paired (B3), or read-only (B4).
-- B5 STRIDE row: scopes the OAuth token to the events written by Agaric; revoke at any time via Google account settings.
+- [§Trust boundaries](#trust-boundaries) lists two boundaries that touch off-device surfaces (B3 LAN sync, B4 updater); both are either self-paired (B3) or read-only (B4).
 - [`SECURITY.md`](../../SECURITY.md#out-of-scope) restates "no server-side store, no telemetry" as the contract; this row treats violations as security findings.
 
 ### Claim 2 — The Tauri IPC boundary is capability-gated
@@ -247,16 +227,6 @@ The shape is intentionally narrative, not GSN-formal: the threat model above is 
 - `cargo-deny` runs on every PR (`validate / cargo-tests` job); `cargo audit` runs in the same job as warn-only.
 - `src-tauri/deny.toml` `[advisories].ignore` entries each carry a one-line rationale and an upstream tracking link.
 - The Scorecard `Vulnerabilities` score-vs-policy gap (RUSTSEC noise from atk/gtk3 transitives via `wry → tauri`) auto-recovers when upstream finishes the gtk4 migration.
-
-### Claim 6 — Authentication state is held in OS-native secure storage
-
-**Argument.** The Google Calendar OAuth refresh token (and any future credential) is stored in the OS keychain via `tauri-plugin-keychain` rather than in the SQLite database or filesystem. A user who restores `~/.local/share/com.agaric.app/` to another machine without also moving the keychain entry gets a fresh re-auth prompt.
-
-**Evidence.**
-
-- B5 STRIDE row: token theft via local-storage scrape mitigated by keychain isolation.
-- `src-tauri/src/commands/gcal.rs` reads/writes the refresh token exclusively through the keychain abstraction; no SQLite columns hold it.
-- The per-space variant extends the same pattern — per-space keychain key, never SQLite.
 
 ### How this is maintained
 

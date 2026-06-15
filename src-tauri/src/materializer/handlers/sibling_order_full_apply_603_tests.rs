@@ -1,4 +1,3 @@
-use super::*;
 use crate::db::init_pool;
 use crate::loro::shared::LoroState;
 use crate::op::OpPayload;
@@ -76,10 +75,7 @@ async fn apply(pool: &SqlitePool, payload: OpPayload) {
             .await
             .expect("append op_log"),
     );
-    let dirty_sink: OnceLock<std::sync::Arc<dyn DirtySink + Send + Sync>> = OnceLock::new();
-    super::apply_op(pool, &record, &dirty_sink)
-        .await
-        .expect("apply_op");
+    super::apply_op(pool, &record).await.expect("apply_op");
 }
 
 fn new_scheme_create(block_id: &str, index: i64) -> OpPayload {

@@ -845,8 +845,8 @@ fn resolve_url_handles_all_forms() {
 // `MAX_BODY_SIZE` is reached, then drops the response (closing the
 // connection and aborting the rest of the download).
 //
-// These tests use `wiremock` (already a dev-dependency for the
-// `gcal_push` OAuth/API tests) and assert the truncation semantics —
+// These tests use `wiremock` (a dev-dependency) and assert the
+// truncation semantics —
 // they do NOT measure peak allocations directly. Asserting the returned
 // body length is at most `MAX_BODY_SIZE` is sufficient evidence that the
 // streaming bound holds for all reasonable inputs.

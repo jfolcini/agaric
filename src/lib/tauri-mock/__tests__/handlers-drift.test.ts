@@ -14,7 +14,7 @@
  * allowlist below.
  *
  * We deliberately avoid the camelCase→snake_case conversion approach: acronyms
- * (`gcal`, `mcp`, `id`) and other edge cases mean the mapping isn't 1:1, and
+ * (`mcp`, `id`, `db`) and other edge cases mean the mapping isn't 1:1, and
  * regexing the literal strings the backend actually receives is exact.
  */
 

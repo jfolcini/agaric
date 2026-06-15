@@ -29,7 +29,6 @@ use tracing::{Instrument, instrument};
 use super::FOREGROUND_CAPACITY;
 use super::MaterializeTask;
 use super::dedup::dedup_tasks;
-use super::dirty_sink::DirtySink;
 use super::handlers::{handle_background_task, handle_foreground_task};
 use super::metrics::QueueMetrics;
 
@@ -296,7 +295,6 @@ pub(super) async fn run_foreground(
     mut rx: mpsc::Receiver<MaterializeTask>,
     shutdown_flag: Arc<AtomicBool>,
     metrics: Arc<QueueMetrics>,
-    dirty_sink: Arc<OnceLock<Arc<dyn DirtySink + Send + Sync>>>,
 ) {
     loop {
         let Some(first_task) = rx.recv().await else {
@@ -319,21 +317,15 @@ pub(super) async fn run_foreground(
             for task in batch {
                 if matches!(task, MaterializeTask::Barrier(_)) {
                     if !segment.is_empty() {
-                        process_foreground_segment(
-                            &pool,
-                            mem::take(&mut segment),
-                            &metrics,
-                            &dirty_sink,
-                        )
-                        .await;
+                        process_foreground_segment(&pool, mem::take(&mut segment), &metrics).await;
                     }
-                    process_single_foreground_task(&pool, task, &metrics, &dirty_sink).await;
+                    process_single_foreground_task(&pool, task, &metrics).await;
                 } else {
                     segment.push(task);
                 }
             }
             if !segment.is_empty() {
-                process_foreground_segment(&pool, segment, &metrics, &dirty_sink).await;
+                process_foreground_segment(&pool, segment, &metrics).await;
             }
             // MAINT-24: Record "we just finished a batch" timestamp so status
             // consumers can detect stalled materializers.
@@ -459,7 +451,6 @@ async fn process_foreground_segment(
     pool: &SqlitePool,
     tasks: Vec<MaterializeTask>,
     metrics: &Arc<QueueMetrics>,
-    dirty_sink: &Arc<OnceLock<Arc<dyn DirtySink + Send + Sync>>>,
 ) {
     // H-5 / H-6 (2026-04): the foreground segment used to bucket tasks
     // by `extract_block_id(task)` and dispatch each bucket in parallel
@@ -489,7 +480,7 @@ async fn process_foreground_segment(
     // the "which bucket does this land in" question the batch grouping
     // key could not answer correctly.
     for task in tasks {
-        process_single_foreground_task(pool, task, metrics, dirty_sink).await;
+        process_single_foreground_task(pool, task, metrics).await;
     }
 }
 
@@ -503,12 +494,11 @@ pub(super) async fn process_single_foreground_task(
     pool: &SqlitePool,
     task: MaterializeTask,
     metrics: &Arc<QueueMetrics>,
-    dirty_sink: &Arc<OnceLock<Arc<dyn DirtySink + Send + Sync>>>,
 ) {
     // L-10: Barriers carry a `tokio::sync::Notify`; the only work is
     // `notify.notify_one()`. There is no DB read, no fallible step, no
     // retry semantic worth preserving — wrapping it in `tokio::spawn`
-    // (with the pool / metrics / sink Arc clones the rest of this
+    // (with the pool / metrics Arc clones the rest of this
     // function needs) was leftover panic-isolation scaffolding from
     // the real handler arms. Inline it here, mirroring the bg-side
     // pattern at `run_background` (consumer.rs ~217-223).
@@ -525,7 +515,6 @@ pub(super) async fn process_single_foreground_task(
     // backoff closures here vs. in `run_background`.
     let outcome = {
         let pool = pool.clone();
-        let dirty_sink = Arc::clone(dirty_sink);
         let task = task.clone();
         retry_with_backoff(
             "fg",
@@ -533,9 +522,8 @@ pub(super) async fn process_single_foreground_task(
             |_| std::time::Duration::from_millis(100),
             move || {
                 let pool = pool.clone();
-                let dirty_sink = Arc::clone(&dirty_sink);
                 let task = task.clone();
-                async move { handle_foreground_task(&pool, &task, &dirty_sink).await }
+                async move { handle_foreground_task(&pool, &task).await }
             },
         )
         .await
@@ -644,7 +632,7 @@ pub(super) async fn process_single_foreground_task(
     metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
 }
 
-// #647: background consumer loop (cache fan-out, FTS, gcal dispatch). Same
+// #647: background consumer loop (cache fan-out, FTS). Same
 // rationale + `skip_all` privacy guard as `run_foreground`.
 #[instrument(
     name = "materializer.run_background",

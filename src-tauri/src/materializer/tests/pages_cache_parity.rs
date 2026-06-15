@@ -144,9 +144,7 @@ fn op_task(op_type: &str, payload: &str) -> MaterializeTask {
 /// values for both `child_block_count` (FG) and `inbound_link_count`
 /// (BG, after `block_links` is updated).
 async fn run_op(pool: &SqlitePool, task: MaterializeTask, link_block_ids: &[&str]) {
-    handle_foreground_task(pool, &task, &empty_gcal_handle())
-        .await
-        .unwrap();
+    handle_foreground_task(pool, &task).await.unwrap();
     // Drive ReindexBlockLinks for every block whose `block_links`
     // rows changed. The dispatch in production fires this for
     // create_block / edit_block.

@@ -172,35 +172,6 @@ tracing-appender = "0.2.4"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json", "http2", "charset"] }
 tauri-plugin-process = "2.3.1"
 
-# FEAT-5b — Google Calendar OAuth 2.0 PKCE flow + keychain token storage.
-# Coupled stack (see AGENTS.md §"Coupled Dependency Updates"): `oauth2`,
-# `keyring`, `secrecy`, `tauri-plugin-oauth`, and `async-trait` all enter
-# together.  `tauri-plugin-oauth` follows the same major as every other
-# `tauri-plugin-*` crate — bump in lockstep with the Tauri stack.
-#
-# MAINT-91 status: oauth2 v5.0 pins `reqwest ^0.12` (via its built-in
-# `reqwest` feature) while the repo pins `reqwest 0.13.2` (rustls above).
-# Dropping the `reqwest` feature here and writing a custom `AsyncHttpClient`
-# adapter over reqwest 0.13 is tracked as MAINT-91.
-# FEAT-5c considered tackling it opportunistically and deferred: the
-# adapter requires re-typing `OAuthClient::http_client` and
-# `classify_refresh_error`'s generic error parameter, which expands FEAT-5c's
-# surface beyond its stated scope.  MAINT-91 stays open — to be revisited
-# when oauth2 tracks `reqwest 0.13`, or as a standalone refactor.
-# We still select `rustls-tls` so the *oauth2 crate's* reqwest 0.12 slice
-# uses rustls (not native-tls), keeping a single TLS stack at link time.
-oauth2 = { version = "5", default-features = false, features = ["reqwest", "rustls-tls"] }
-# keyring v3: enable every platform's native backend in one feature list.
-# The per-platform deps (`security-framework`, `windows-sys`, `dbus-secret-service`)
-# are gated on `cfg(target_os = "...")` inside keyring's own Cargo.toml, so a
-# Linux build does not try to compile `security-framework`, and so on.
-# `crypto-rust` selects pure-Rust crypto for the Secret Service backend —
-# avoids pulling OpenSSL in the Linux build.
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
-secrecy = "0.10"
-tauri-plugin-oauth = "2"
-async-trait = "0.1"
-
 # FEAT-10 — `tauri-plugin-deep-link` enables OS-level URL routing for the
 # `agaric://` scheme: `agaric://block/<ULID>` / `agaric://page/<ULID>` for
 # external automation (terminal scripts, OS notifications, Spotlight),

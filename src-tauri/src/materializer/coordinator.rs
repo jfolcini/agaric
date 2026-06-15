@@ -1,7 +1,6 @@
 //! Materializer struct, constructors, and public API.
 
 use super::consumer;
-use super::dirty_sink::{DirtyNotification, DirtySink};
 use super::metrics::{QueueMetrics, StatusInfo};
 use super::{
     BACKGROUND_CAPACITY, FOREGROUND_CAPACITY, MaterializeTask, QUEUE_PRESSURE_DENOMINATOR,
@@ -58,32 +57,14 @@ pub struct Materializer {
     /// 9 real fields). See [`BlockCountTestHooks`].
     #[cfg(test)]
     pub(super) block_count_test_hooks: BlockCountTestHooks,
-    /// FEAT-5h / #643 — optional [`DirtySink`] notified whenever an
-    /// applied op could shift downstream projected state (today: the
-    /// GCal push connector's projected agenda on an in-window date).
-    ///
-    /// #643: this used to be a concrete `OnceLock<GcalConnectorHandle>`,
-    /// which forced the core apply pipeline to name `gcal_push::*` types.
-    /// It is now an integration-agnostic `Arc<dyn DirtySink>`: the
-    /// materializer hands the sink raw materialized data and the sink
-    /// computes its own dirty events. `gcal_push` registers its handle
-    /// as the sink in `lib.rs`.
-    ///
-    /// `OnceLock` gives us set-once semantics without lock overhead on
-    /// the hot `apply_op` read path. The sink is wired in `lib.rs` after
-    /// the connector spawns because the connector needs the DB pool
-    /// (which the materializer was built with) and the materializer
-    /// needs the sink (which the connector produces) — circular
-    /// construction broken by a deferred setter.
-    pub(super) dirty_sink: Arc<OnceLock<Arc<dyn DirtySink + Send + Sync>>>,
     /// C-3c — OS-correct app data directory used by the
     /// `CleanupOrphanedAttachments` background task to walk the
     /// `attachments/` subtree and reconcile orphaned files against
     /// the `attachments` table.
     ///
-    /// Mirrors the `gcal_handle` pattern: an empty `OnceLock` after
-    /// construction, populated by [`Self::set_app_data_dir`] from
-    /// `lib.rs` once `app.path().app_data_dir()` resolves. Tests that
+    /// An empty `OnceLock` after construction, populated by
+    /// [`Self::set_app_data_dir`] from `lib.rs` once
+    /// `app.path().app_data_dir()` resolves. Tests that
     /// do not exercise the GC path leave the field empty —
     /// `cleanup_orphaned_attachments` short-circuits with a debug log
     /// when the dir is not set.
@@ -243,7 +224,6 @@ impl Materializer {
         let reader_pool = reader_pool_for_caches;
         #[cfg(test)]
         let block_count_test_hooks = BlockCountTestHooks::new();
-        let dirty_sink: Arc<OnceLock<Arc<dyn DirtySink + Send + Sync>>> = Arc::new(OnceLock::new());
         let app_data_dir: Arc<OnceLock<PathBuf>> = Arc::new(OnceLock::new());
         // M-12: JoinSet must exist before the four `spawn_task` calls
         // below so every task we spawn is registered for abort-on-shutdown.
@@ -252,8 +232,7 @@ impl Materializer {
             let p = write_pool.clone();
             let s = shutdown_flag.clone();
             let m = metrics.clone();
-            let g = dirty_sink.clone();
-            Self::spawn_task(&tasks, consumer::run_foreground(p, fg_rx, s, m, g));
+            Self::spawn_task(&tasks, consumer::run_foreground(p, fg_rx, s, m));
         }
         // PEND-03: clone write_pool for the queue-saturation persistence
         // path before moving the original into `run_background`.
@@ -332,38 +311,9 @@ impl Materializer {
             write_pool: write_pool_for_struct,
             #[cfg(test)]
             block_count_test_hooks,
-            dirty_sink,
             app_data_dir,
             tasks,
         }
-    }
-
-    /// #643 — register the [`DirtySink`] that downstream integrations
-    /// (today: the GCal push connector) use to learn about applied ops
-    /// that could shift projected state.
-    ///
-    /// Called once from `lib.rs` after the connector spawns. Subsequent
-    /// calls are rejected (the `OnceLock` semantics) and logged at warn
-    /// level — this is a programmer error, not a runtime recoverable
-    /// case. The materializer holds the sink behind `dyn DirtySink`, so
-    /// it never names the concrete integration type.
-    pub fn set_dirty_sink(&self, sink: Arc<dyn DirtySink + Send + Sync>) {
-        if self.dirty_sink.set(sink).is_err() {
-            tracing::warn!("Materializer::set_dirty_sink called twice — ignoring later set",);
-        }
-    }
-
-    /// FEAT-5h — register the GCal push connector handle as the
-    /// materializer's [`DirtySink`].
-    ///
-    /// Thin command-facing shim retained for the FEAT-5i command tests
-    /// and `lib.rs` wiring that already hold a `GcalConnectorHandle`.
-    /// The handle implements [`DirtySink`] in `gcal_push`, so this just
-    /// boxes it through [`Self::set_dirty_sink`]; the materializer's
-    /// internal apply pipeline (`consumer.rs`, `handlers/`) names only
-    /// the trait, never the connector.
-    pub fn set_gcal_handle(&self, handle: crate::gcal_push::connector::GcalConnectorHandle) {
-        self.set_dirty_sink(Arc::new(handle));
     }
 
     /// C-3c — register the OS-correct app data directory
@@ -391,59 +341,6 @@ impl Materializer {
     /// files (e.g. the purge paths, #85 F2) resolve them against this.
     pub fn app_data_dir(&self) -> Option<PathBuf> {
         self.app_data_dir.get().cloned()
-    }
-
-    /// FEAT-5i — return whether a [`DirtySink`] is wired and active.
-    ///
-    /// Local command handlers peek this flag before taking the
-    /// pre-mutation block-date snapshot so they can short-circuit
-    /// the extra `SELECT` query when no sink is listening (common in
-    /// headless dev, tests, and installs where the user never enabled
-    /// GCal push).
-    ///
-    /// The check is a lock-free atomic load on the `OnceLock` plus the
-    /// sink's own [`DirtySink::is_active`] predicate.
-    #[must_use]
-    pub fn is_gcal_hook_active(&self) -> bool {
-        self.dirty_sink.get().is_some_and(|s| s.is_active())
-    }
-
-    /// FEAT-5i — notify the wired [`DirtySink`] of a newly-applied local
-    /// op.
-    ///
-    /// Callers MUST invoke this AFTER their outer transaction has
-    /// committed so the sink only ever observes durable state. A
-    /// mid-command rollback must not fire this call. `snapshot` is the
-    /// pre-mutation block state the command handler captured inside the
-    /// same transaction.
-    ///
-    /// #643: the materializer no longer computes the dirty event itself
-    /// — it hands the sink the raw `(record, snapshot)` and the sink
-    /// (GCal) does its own dirty-date mapping behind [`DirtySink`]. The
-    /// `BlockDateSnapshot` parameter is the command layer's own type
-    /// (the FEAT-5i handlers in `commands/*` snapshot the block before
-    /// the mutation); it is boxed opaquely and replayed through the
-    /// same seam the remote-op pipeline uses.
-    ///
-    /// No-op when no sink is wired (idempotent with
-    /// [`Self::is_gcal_hook_active`]).
-    pub fn notify_gcal_for_op(
-        &self,
-        record: &crate::op_log::OpRecord,
-        snapshot: &crate::gcal_push::dirty_producer::BlockDateSnapshot,
-    ) {
-        let Some(sink) = self.dirty_sink.get() else {
-            return;
-        };
-        // The command path holds the record by `&OpRecord` (some call
-        // sites still pass a non-`Arc` value), so wrap it once here to
-        // satisfy the seam's `Arc<OpRecord>` shape. This is a single
-        // cold-path clone on the local-command notify route — the hot
-        // remote-op pipeline already threads `Arc<OpRecord>` end to end.
-        sink.notify(vec![DirtyNotification {
-            record: Arc::new(record.clone()),
-            snapshot: Box::new(snapshot.clone()),
-        }]);
     }
 
     /// Periodic (5 min) metrics snapshot task.

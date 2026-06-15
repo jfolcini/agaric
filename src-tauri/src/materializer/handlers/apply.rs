@@ -1,33 +1,18 @@
 //! Apply-pipeline handlers: the per-op apply transaction, the apply
-//! cursor, post-commit Restore/Delete cascade fan-out, gcal deferred
-//! notifications, and the descendant-cohort collectors.
+//! cursor, post-commit Restore/Delete cascade fan-out, and the
+//! descendant-cohort collectors.
 
 use super::*;
 
-/// PEND-25 L2/L9: takes `&Arc<OpRecord>` so the post-commit
-/// [`DirtyNotification`] push is a cheap `Arc::clone` (atomic refcount
-/// bump) rather than a deep clone of the record's owned `String`
-/// payloads. Callers (the `MaterializeTask::ApplyOp` arm) already hold
-/// the record as `Arc<OpRecord>`, so the borrow threads through.
-pub(super) async fn apply_op(
-    pool: &SqlitePool,
-    record: &Arc<OpRecord>,
-    dirty_sink: &OnceLock<Arc<dyn DirtySink + Send + Sync>>,
-) -> Result<(), AppError> {
+/// PEND-25 L2/L9: takes `&Arc<OpRecord>` so callers (the
+/// `MaterializeTask::ApplyOp` arm) that already hold the record as
+/// `Arc<OpRecord>` thread the borrow through without a deep clone.
+pub(super) async fn apply_op(pool: &SqlitePool, record: &Arc<OpRecord>) -> Result<(), AppError> {
     // SQL-review M-1: route through `begin_immediate_logged` so
     // sync-burst contention surfaces as upfront serialised wait (with
     // a `warn!` if slow) instead of mid-tx `busy_timeout` stalls
     // under SQLite's default DEFERRED isolation.
     let mut tx = crate::db::begin_immediate_logged(pool, "materializer_apply_op").await?;
-    // #482 / #643: only pay for the pre-mutation snapshot SELECT when a
-    // DirtySink is wired and active (the GCal case); the snapshot is
-    // owned opaquely by the sink and skipped entirely for the vast
-    // majority of users who never enable an integration.
-    let active_sink = dirty_sink.get().filter(|s| s.is_active());
-    let snapshot = match active_sink {
-        Some(sink) => Some(sink.snapshot_for_op(&mut tx, record).await?),
-        None => None,
-    };
     let effects = apply_op_tx(&mut tx, record).await?;
     // #412 / #667 — SINGLE-DEVICE-CURSOR ASSUMPTION (single-op mirror of
     // the `BatchApplyOps` arm's guard in `task_handlers.rs`).
@@ -111,15 +96,6 @@ pub(super) async fn apply_op(
     )
     .await;
 
-    // #643: hand the sink the raw `(record, snapshot)` post-commit. The
-    // sink computes its own dirty events behind the trait — the
-    // materializer no longer maps ops to integration-specific events.
-    if let (Some(sink), Some(snapshot)) = (active_sink, snapshot) {
-        sink.notify(vec![DirtyNotification {
-            record: Arc::clone(record),
-            snapshot,
-        }]);
-    }
     Ok(())
 }
 

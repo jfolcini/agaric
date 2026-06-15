@@ -55,7 +55,6 @@ export type AppErrorKind =
   | 'validation'
   | 'non_reversible'
   | 'cancelled'
-  | 'gcal'
 
 /**
  * Narrowed `AppError` shape. Same fields as the bindings.ts type,

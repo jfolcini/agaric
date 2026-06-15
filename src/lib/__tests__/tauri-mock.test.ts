@@ -2507,59 +2507,6 @@ describe('list_undated_tasks', () => {
 })
 
 // ---------------------------------------------------------------------------
-// MAINT-160: Google Calendar handlers
-// ---------------------------------------------------------------------------
-
-describe('get_gcal_status', () => {
-  it('returns the disconnected default with all 8 fields and push_lease substruct', () => {
-    const status = invoke('get_gcal_status', {}) as Record<string, unknown>
-    expect(status['connected']).toBe(false)
-    expect(status['account_email']).toBeNull()
-    expect(status['calendar_id']).toBeNull()
-    expect(status['window_days']).toBe(30)
-    // Matches the Rust default at src-tauri/src/commands/gcal.rs:142.
-    expect(status['privacy_mode']).toBe('full')
-    expect(status['last_push_at']).toBeNull()
-    expect(status['last_error']).toBeNull()
-    expect(status['reauth_required']).toBe(false)
-    const lease = status['push_lease'] as Record<string, unknown>
-    expect(lease).toBeDefined()
-    expect(lease['held_by_this_device']).toBe(false)
-    expect(lease['device_id']).toBeNull()
-    expect(lease['expires_at']).toBeNull()
-  })
-})
-
-describe('force_gcal_resync', () => {
-  it('returns null', () => {
-    expect(invoke('force_gcal_resync', {})).toBeNull()
-  })
-})
-
-describe('disconnect_gcal', () => {
-  it('returns null and accepts the deleteCalendar arg', () => {
-    expect(invoke('disconnect_gcal', { deleteCalendar: true })).toBeNull()
-    expect(invoke('disconnect_gcal', { deleteCalendar: false })).toBeNull()
-  })
-})
-
-describe('set_gcal_window_days', () => {
-  it('echoes the provided number when called with { n: 7 }', () => {
-    expect(invoke('set_gcal_window_days', { n: 7 })).toBe(7)
-  })
-
-  it('falls back to 30 when n is missing', () => {
-    expect(invoke('set_gcal_window_days', {})).toBe(30)
-  })
-})
-
-describe('set_gcal_privacy_mode', () => {
-  it('returns null', () => {
-    expect(invoke('set_gcal_privacy_mode', { mode: 'full' })).toBeNull()
-  })
-})
-
-// ---------------------------------------------------------------------------
 // MAINT-160: MCP read-only handlers
 // ---------------------------------------------------------------------------
 

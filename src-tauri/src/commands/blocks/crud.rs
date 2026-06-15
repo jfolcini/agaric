@@ -240,15 +240,6 @@ pub async fn edit_block_inner(
         )));
     }
 
-    // FEAT-5i — snapshot pre-mutation dates so the post-commit
-    // `notify_gcal_for_op` call can emit a `DirtyEvent` for blocks
-    // that appear on the agenda (have `due_date` / `scheduled_date`).
-    let gcal_snapshot = if materializer.is_gcal_hook_active() {
-        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &block_id).await?)
-    } else {
-        None
-    };
-
     // 2. Find prev_edit inside transaction (delegates to the shared
     //    helper — same query also used by `flush_draft_inner`; see
     //    MAINT-147 (b)).
@@ -290,18 +281,12 @@ pub async fn edit_block_inner(
     //    The `block_type` hint restricts the rebuild fan-out so content
     //    blocks skip tags/pages cache work.
     //
-    //    PEND-25 L9: wrap once in `Arc` so the dispatch queue and the
-    //    post-commit `notify_gcal_for_op` borrow share the record by
-    //    refcount (atomic increment) rather than deep-cloning the owned
-    //    `String` payloads.
+    //    PEND-25 L9: wrap once in `Arc` so the dispatch queue borrows
+    //    the record by refcount (atomic increment) rather than
+    //    deep-cloning the owned `String` payloads.
     let op_record = Arc::new(op_record);
     tx.enqueue_edit_background(Arc::clone(&op_record), block_type.clone());
     tx.commit_and_dispatch(materializer).await?;
-
-    // FEAT-5i — notify GCal connector post-commit.
-    if let Some(snapshot) = gcal_snapshot {
-        materializer.notify_gcal_for_op(&op_record, &snapshot);
-    }
 
     // 6. Return response
     Ok(BlockRow {
@@ -405,15 +390,6 @@ pub async fn delete_block_inner(
         }
     }
 
-    // FEAT-5i — snapshot pre-delete dates so the post-commit
-    // `notify_gcal_for_op` call can emit `old_affected_dates = {...},
-    // new_affected_dates = []`.
-    let gcal_snapshot = if materializer.is_gcal_hook_active() {
-        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &block_id).await?)
-    } else {
-        None
-    };
-
     // Single timestamp for both op_log and blocks — reverse_delete_block uses
     // record.created_at as deleted_at_ref, so they must match exactly.
     let now = crate::db::now_ms();
@@ -466,16 +442,8 @@ pub async fn delete_block_inner(
     crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &affected_pages).await?;
 
     // Commit + fire-and-forget background cache dispatch.
-    // PEND-25 L9: wrap in `Arc` once so the queue and the post-commit
-    // `notify_gcal_for_op` borrow share the record by refcount.
-    let op_record = Arc::new(op_record);
-    tx.enqueue_background(Arc::clone(&op_record));
+    tx.enqueue_background(Arc::new(op_record));
     tx.commit_and_dispatch(materializer).await?;
-
-    // FEAT-5i — notify GCal connector post-commit.
-    if let Some(snapshot) = gcal_snapshot {
-        materializer.notify_gcal_for_op(&op_record, &snapshot);
-    }
 
     Ok(DeleteResponse {
         block_id,
@@ -703,45 +671,18 @@ pub async fn delete_blocks_by_ids_inner(
     // can match `op_record.created_at` against `blocks.deleted_at`.
     let now = crate::db::now_ms();
 
-    // FEAT-5i — snapshot each root's pre-delete dates inside the tx so
-    // the post-commit notifier can emit per-root `DirtyEvent`s.
-    // Snapshots MUST be taken before the soft-delete UPDATE below;
-    // after the UPDATE the blocks still carry their property rows but
-    // the `deleted_at` guard in the dirty-producer would already see
-    // them as deleted.  Mirrors the pattern in
-    // `restore_blocks_by_ids_inner` and `purge_blocks_by_ids_inner`.
-    let gcal_hook_active = materializer.is_gcal_hook_active();
-    let mut gcal_snapshots: Vec<Option<crate::gcal_push::dirty_producer::BlockDateSnapshot>> =
-        Vec::with_capacity(live_roots.len());
-    for root in &live_roots {
-        if gcal_hook_active {
-            gcal_snapshots.push(Some(
-                crate::gcal_push::dirty_producer::snapshot_block(&mut tx, root).await?,
-            ));
-        } else {
-            gcal_snapshots.push(None);
-        }
-    }
-
     // Append one `DeleteBlock` op per root (NOT per descendant — the
     // cascade is captured by the recursive UPDATE below). This mirrors
     // the single-row path's op_log shape (one op, cascade rolls up via
     // the materialised state) so revert / undo replay against the same
     // rows behaves identically regardless of whether they were deleted
     // via the single or batch path.
-    //
-    // Each op_record is both enqueued for post-commit background
-    // dispatch AND retained (via Arc::clone) for the post-commit GCal
-    // notify loop.
-    let mut op_records: Vec<Arc<crate::op_log::OpRecord>> = Vec::new();
     for root in &live_roots {
         let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
             block_id: BlockId::from_trusted(root),
         });
         let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
-        let op_record = Arc::new(op_record);
-        tx.enqueue_background(Arc::clone(&op_record));
-        op_records.push(op_record);
+        tx.enqueue_background(Arc::new(op_record));
     }
 
     // One recursive CTE seeded from every root in `live_roots` (via
@@ -808,16 +749,6 @@ pub async fn delete_blocks_by_ids_inner(
     }
 
     tx.commit_and_dispatch(materializer).await?;
-
-    // FEAT-5i — notify GCal connector post-commit, one event per root.
-    // For a delete the snapshot carries only `old_affected_dates`;
-    // the dirty producer will produce `new_affected_dates = []`
-    // (block no longer exists / has no future dates).
-    for (op_record, snapshot) in op_records.iter().zip(gcal_snapshots.iter()) {
-        if let Some(snap) = snapshot {
-            materializer.notify_gcal_for_op(op_record, snap);
-        }
-    }
 
     // Return the number of blocks the cascade soft-deleted (roots +
     // descendants combined). Callers can compare against
@@ -1051,17 +982,6 @@ pub async fn restore_block_inner(
         }
     }
 
-    // FEAT-5i — snapshot pre-restore dates so the post-commit
-    // `notify_gcal_for_op` call can emit `old_affected_dates = [],
-    // new_affected_dates = {dates}`.  At snapshot time the block is
-    // still soft-deleted so `was_deleted = true` — `compute_dirty_event`
-    // relies on that to distinguish a real restore from a no-op.
-    let gcal_snapshot = if materializer.is_gcal_hook_active() {
-        Some(crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &block_id).await?)
-    } else {
-        None
-    };
-
     let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
         block_id: BlockId::from_trusted(&block_id),
         deleted_at_ref,
@@ -1132,16 +1052,8 @@ pub async fn restore_block_inner(
     crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &affected_pages).await?;
 
     // Commit + fire-and-forget background cache dispatch.
-    // PEND-25 L9: wrap in `Arc` once so the queue and the post-commit
-    // `notify_gcal_for_op` borrow share the record by refcount.
-    let op_record = Arc::new(op_record);
-    tx.enqueue_background(Arc::clone(&op_record));
+    tx.enqueue_background(Arc::new(op_record));
     tx.commit_and_dispatch(materializer).await?;
-
-    // FEAT-5i — notify GCal connector post-commit.
-    if let Some(snapshot) = gcal_snapshot {
-        materializer.notify_gcal_for_op(&op_record, &snapshot);
-    }
 
     Ok(RestoreResponse {
         block_id,
@@ -1394,33 +1306,7 @@ pub async fn restore_all_deleted_inner(
     }
 
     let now = crate::db::now_ms();
-    // FEAT-5i — snapshot each root's pre-restore dates inside the tx
-    // so the post-commit notifier can emit per-root `DirtyEvent`s.
-    // A single root can contain a subtree of many blocks; the
-    // connector only tracks the *root* because the agenda projection
-    // is keyed on top-level blocks.
-    let gcal_hook_active = materializer.is_gcal_hook_active();
-    let mut gcal_snapshots: Vec<Option<crate::gcal_push::dirty_producer::BlockDateSnapshot>> =
-        Vec::with_capacity(roots.len());
-    for root in &roots {
-        if gcal_hook_active {
-            gcal_snapshots.push(Some(
-                crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &root.id).await?,
-            ));
-        } else {
-            gcal_snapshots.push(None);
-        }
-    }
-
-    let mut op_records: Vec<Arc<crate::op_log::OpRecord>> = Vec::new();
     // Append one RestoreBlock op per root for sync compatibility.
-    // Each op_record is both enqueued for post-commit background
-    // dispatch AND retained (via Arc::clone) for the post-commit GCal
-    // notify loop.
-    //
-    // PEND-25 L9: each record is wrapped once in `Arc` so the dispatch
-    // queue and the `op_records` retention vec share the record by
-    // refcount instead of deep-cloning.
     for root in &roots {
         // The selecting query filters `WHERE deleted_at IS NOT NULL`, so this
         // is a structural invariant. Return a graceful AppError instead of
@@ -1436,9 +1322,7 @@ pub async fn restore_all_deleted_inner(
             deleted_at_ref,
         });
         let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
-        let op_record = Arc::new(op_record);
-        tx.enqueue_background(Arc::clone(&op_record));
-        op_records.push(op_record);
+        tx.enqueue_background(Arc::new(op_record));
     }
 
     // Bulk restore: clear deleted_at on ALL deleted blocks
@@ -1499,13 +1383,6 @@ pub async fn restore_all_deleted_inner(
 
     // Commit + drain enqueued background dispatches in FIFO order.
     tx.commit_and_dispatch(materializer).await?;
-
-    // FEAT-5i — notify GCal connector post-commit, one event per root.
-    for (op_record, snapshot) in op_records.iter().zip(gcal_snapshots.iter()) {
-        if let Some(snap) = snapshot {
-            materializer.notify_gcal_for_op(op_record, snap);
-        }
-    }
 
     Ok(BulkTrashResponse {
         affected_count: count,
@@ -1704,23 +1581,8 @@ pub async fn restore_blocks_by_ids_inner(
 
     let now = crate::db::now_ms();
 
-    // FEAT-5i — snapshot each root's pre-restore dates inside the tx.
-    let gcal_hook_active = materializer.is_gcal_hook_active();
-    let mut gcal_snapshots: Vec<Option<crate::gcal_push::dirty_producer::BlockDateSnapshot>> =
-        Vec::with_capacity(roots.len());
-    for root in &roots {
-        if gcal_hook_active {
-            gcal_snapshots.push(Some(
-                crate::gcal_push::dirty_producer::snapshot_block(&mut tx, &root.id).await?,
-            ));
-        } else {
-            gcal_snapshots.push(None);
-        }
-    }
-
     // One RestoreBlock op per root for sync compatibility (mirrors
     // `restore_all_deleted_inner`).
-    let mut op_records: Vec<Arc<crate::op_log::OpRecord>> = Vec::new();
     for root in &roots {
         // The selecting query filters `WHERE deleted_at IS NOT NULL`, so this
         // is a structural invariant. Return a graceful AppError instead of
@@ -1736,9 +1598,7 @@ pub async fn restore_blocks_by_ids_inner(
             deleted_at_ref,
         });
         let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
-        let op_record = Arc::new(op_record);
-        tx.enqueue_background(Arc::clone(&op_record));
-        op_records.push(op_record);
+        tx.enqueue_background(Arc::new(op_record));
     }
 
     // C3 (#345): restore each root's EXACT delete cohort, not "any
@@ -1796,13 +1656,6 @@ pub async fn restore_blocks_by_ids_inner(
 
     // Commit + drain enqueued background dispatches.
     tx.commit_and_dispatch(materializer).await?;
-
-    // FEAT-5i — notify GCal connector post-commit, one event per root.
-    for (op_record, snapshot) in op_records.iter().zip(gcal_snapshots.iter()) {
-        if let Some(snap) = snapshot {
-            materializer.notify_gcal_for_op(op_record, snap);
-        }
-    }
 
     Ok(BulkTrashResponse {
         affected_count: count,

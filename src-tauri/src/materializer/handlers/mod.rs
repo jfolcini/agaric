@@ -11,8 +11,8 @@
 //!
 //! Submodules:
 //! - `task_handlers`: foreground/background queue task dispatch.
-//! - `apply`: the per-op apply transaction, apply cursor, gcal deferred
-//!   notifications, and Restore/Delete cascade fan-out + cohort collectors.
+//! - `apply`: the per-op apply transaction, apply cursor, and
+//!   Restore/Delete cascade fan-out + cohort collectors.
 //! - `pages_cache`: PEND-56b `pages_cache.{inbound_link_count,
 //!   child_block_count}` maintenance (the canonical recompute SELECT).
 //! - `loro_apply`: engine-routed `apply_*_via_loro` + the SQL purge cascade.
@@ -20,7 +20,6 @@
 //! - `attachments`: attachment apply handlers + orphan-cleanup (C-3c).
 
 use super::MaterializeTask;
-use super::dirty_sink::{DirtyNotification, DirtySink};
 use crate::cache;
 use crate::error::AppError;
 use crate::fts;
@@ -34,7 +33,7 @@ use crate::op_log::OpRecord;
 use crate::tag_inheritance;
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 mod apply;
 mod attachments;

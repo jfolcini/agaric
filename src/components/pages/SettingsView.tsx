@@ -9,7 +9,6 @@
  *  - Data -- DataSettingsTab (lazy)
  *  - Sync & Devices -- DeviceManagement
  *  - Agent access -- AgentAccessSettingsTab (FEAT-4e)
- *  - Google Calendar -- GoogleCalendarSettingsTab (FEAT-5f, experimental)
  *  - Help -- Report a bug (FEAT-5); future home of About / updates
  *
  * MAINT-128 (in progress): the General / Appearance / Help tabs and the
@@ -33,7 +32,6 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AgentAccessSettingsTab } from '@/components/AgentAccessSettingsTab'
-import { GoogleCalendarSettingsTab } from '@/components/GoogleCalendarSettingsTab'
 import { KeyboardSettingsTab } from '@/components/KeyboardSettingsTab'
 import { DeviceManagement } from '@/components/peers/DeviceManagement'
 import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinitionsList'
@@ -68,7 +66,6 @@ type SettingsTab =
   | 'data'
   | 'sync'
   | 'agent'
-  | 'google-calendar'
   | 'notifications'
   | 'help'
 
@@ -81,7 +78,6 @@ const TAB_IDS: SettingsTab[] = [
   'data',
   'sync',
   'agent',
-  'google-calendar',
   'notifications',
   'help',
 ]
@@ -124,7 +120,6 @@ const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
   data: 'settings.tabData',
   sync: 'settings.tabSync',
   agent: 'settings.tabAgentAccess',
-  'google-calendar': 'settings.tabGoogleCalendar',
   notifications: 'settings.tabNotifications',
   help: 'settings.tabHelp',
 }
@@ -159,7 +154,7 @@ const TAB_GROUPS: readonly TabGroup[] = [
   {
     id: 'integrations',
     labelKey: 'settings.groupIntegrations',
-    tabs: ['google-calendar', 'notifications', 'agent'],
+    tabs: ['notifications', 'agent'],
   },
   {
     id: 'data',
@@ -337,8 +332,6 @@ export function SettingsView(): React.ReactElement {
           {activeTab === 'sync' && <DeviceManagement />}
 
           {activeTab === 'agent' && <AgentAccessSettingsTab />}
-
-          {activeTab === 'google-calendar' && <GoogleCalendarSettingsTab />}
 
           {activeTab === 'notifications' && <NotificationsTab />}
 

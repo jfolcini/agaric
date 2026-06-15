@@ -27,13 +27,12 @@ not pre-emptively added (per PEND-49 §5b open question 3).
 ## Scope of each review
 
 1. **STRIDE walkthrough** of [`../architecture/threat-model.md`](../architecture/threat-model.md)
-   trust boundaries B1–B5. Each row: is the mitigation still
+   trust boundaries B1–B4. Each row: is the mitigation still
    load-bearing? Has the threat changed shape? Any new sub-rows?
 2. **Diff-sweep** of code added since the prior review that touches
    any of:
    - IPC boundary (`src-tauri/src/commands/`)
    - Sync transport (`src-tauri/src/sync_*`)
-   - OAuth (`src-tauri/src/commands/gcal.rs`, `src-tauri/src/gcal_push/`)
    - Updater (the `tauri-plugin-updater` integration in `src-tauri/src/lib.rs`)
    - MCP exposure (`src-tauri/src/mcp/`)
 3. **Findings disposition.** Each finding goes to one of:

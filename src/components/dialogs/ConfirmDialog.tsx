@@ -3,9 +3,9 @@
  *
  * Merged in PEND UX-review-2026-05-09 item 11: previously two
  * non-overlapping cousins (`ConfirmDialog` + `ConfirmDestructiveAction`)
- * lived side-by-side, and one screen (`GoogleCalendarSettingsTab`)
- * escaped both with raw `AlertDialog` primitives + a dual-`AlertDialogAction`
- * footer. This file is now the single API:
+ * lived side-by-side, and some screens escaped both with raw
+ * `AlertDialog` primitives + a dual-`AlertDialogAction` footer. This
+ * file is now the single API:
  *
  *  - i18n-first: pass `titleKey` / `descriptionKey` / `confirmKey` /
  *    optional `cancelKey` (and optional `values` for interpolation).

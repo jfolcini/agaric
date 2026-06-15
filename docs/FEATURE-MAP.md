@@ -40,6 +40,4 @@ A handful of facts touch every feature; rather than repeat them in each file:
 Features that aren't yet shipped or that are intentionally deferred are tracked separately. The major outstanding items today:
 
 - **OS notifications** for due tasks and scheduled events (Android-mobile parity).
-- **Per-space Google Calendar push** — foundation landed; the connector still pushes one calendar for all spaces.
-- **Google Calendar on Android** — desktop only today (loopback OAuth + Keychain are non-portable).
 - **iroh transport** (replaces the current mDNS + WebSocket + TLS + TOFU stack) — scoped, not yet started.

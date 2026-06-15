@@ -4991,9 +4991,8 @@ mod active_row_conversions {
 
     /// Pin the always-safe `From<ActiveProjectedAgendaEntry> for
     /// ProjectedAgendaEntry` conversion. Same rationale as
-    /// `from_active_block_row_preserves_every_field` — the
-    /// `gcal_push::connector` downcast feeds the digest pipeline through
-    /// this exact path, one entry at a time.
+    /// `from_active_block_row_preserves_every_field` — projected-agenda
+    /// consumers read this conversion one entry at a time.
     #[test]
     fn from_active_projected_agenda_entry_preserves_every_field() {
         let active = ActiveProjectedAgendaEntry {

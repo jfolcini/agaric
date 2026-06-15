@@ -1,4 +1,3 @@
-use super::*;
 use crate::db::init_pool;
 use crate::loro::shared::LoroState;
 use crate::op::OpPayload;
@@ -145,10 +144,7 @@ async fn delete_block_dispatches_to_loro_for_each_descendant() {
             .expect("append op_log"),
     );
 
-    let dirty_sink: OnceLock<std::sync::Arc<dyn DirtySink + Send + Sync>> = OnceLock::new();
-    super::apply_op(&pool, &record, &dirty_sink)
-        .await
-        .expect("apply_op");
+    super::apply_op(&pool, &record).await.expect("apply_op");
 
     // Every block in the cohort — root + two descendants — must
     // now be deleted in the engine.  This is the load-bearing

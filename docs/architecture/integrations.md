@@ -1,36 +1,7 @@
 <!-- markdownlint-disable MD060 -->
 # Integrations
 
-External-facing surfaces: Google Calendar push, MCP for AI agents, `agaric://` deep links.
-
-## Google Calendar
-
-Per-space architecture; one calendar per space (in design — the connector itself currently walks a single "current space", and the per-space connector slice is the next milestone).
-
-### Schema
-
-`gcal_space_config` keyed by `space_id` carries the per-space OAuth + calendar binding (calendar ID, window-days, privacy mode, push lease, last-push state). Defined in migration 0041.
-
-`gcal_settings` is the legacy global k/v table; it carries the `reauth_required` flag (cleared on successful re-auth; the FE `GcalReauthBanner` reads it).
-
-### Keychain layout
-
-OAuth tokens live in the OS keychain, keyed per space: `oauth_tokens_<SPACE_ULID>`. The `keyring` crate is the abstraction. Tokens are never written to disk in plaintext.
-
-### Push pipeline
-
-Background `gcal_push::connector` task. For each configured space:
-
-1. Build a digest of today's agenda (due + scheduled items within the `window_days` lookahead).
-2. Diff against the last-pushed digest.
-3. PATCH the calendar to apply the diff.
-4. Update `gcal_space_config.last_push_at`.
-
-Failures are non-fatal — bumped into a debounce + retry with a per-space backoff. OAuth-token expiry sets `reauth_required` and pauses the connector loop until the FE clears it (via the GcalReauthBanner → reconnect flow).
-
-### What's not shipped
-
-The connector still passes `space_id = None` to `list_projected_agenda_inner`, so every space's agenda lands in one calendar. The per-space connector slice is the active in-progress item.
+External-facing surfaces: MCP for AI agents, `agaric://` deep links.
 
 ## MCP (agent access)
 
@@ -109,4 +80,4 @@ The OS-side handler is registered on install. The Rust backend parses the incomi
 
 ## Why "integrations" is one file
 
-GCal and MCP have nothing operationally in common — outbound OAuth push vs inbound tool surface — but they're both **integration surfaces with the outside world**, both are opt-in, and both ride on per-space scoping. One file with two clearly-divided sections is more navigable than two thin files. If either grows past ~200 lines independently, that's the cue to split.
+MCP (inbound tool surface for AI clients) and `agaric://` deep links (inbound OS-level URL routing) have nothing operationally in common, but they're both **integration surfaces with the outside world** and both are opt-in. One file with clearly-divided sections is more navigable than several thin files. If either grows past ~200 lines independently, that's the cue to split.

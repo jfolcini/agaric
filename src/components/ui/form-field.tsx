@@ -13,14 +13,14 @@
  * This is NOT a fit for, and deliberately does not model:
  *   - Toggle rows (`flex items-start justify-between gap-4` with the
  *     Label + help on the left and a `Switch` on the right) — see
- *     EditorTab, NotificationsTab, AutostartRow, QuickCaptureRow and the
- *     GCal privacy row. They are horizontal, not a vertical stack.
+ *     EditorTab, NotificationsTab, AutostartRow and QuickCaptureRow.
+ *     They are horizontal, not a vertical stack.
  *   - `PropertyRowEditor`, which is a row editor that puts `aria-label`
  *     on inline editors and has no Label + control + help/error stack.
  *   - Inline validation/status errors that need their own element `id`
  *     for `aria-describedby` linkage (KeyboardSettingsTab) or that float
- *     free of any labelled control (GoogleCalendarSettingsTab's
- *     `statusError`). FormField's error region has no addressable id.
+ *     free of any labelled control. FormField's error region has no
+ *     addressable id.
  */
 
 import type * as React from 'react'
