@@ -117,11 +117,12 @@ fn sync_message_roundtrip_head_exchange() {
             seq: 42,
             hash: "abc123".into(),
         }],
+        loro_vvs: vec![],
     };
     let json = serde_json::to_string(&msg).unwrap();
     let parsed: SyncMessage = serde_json::from_str(&json).unwrap();
     match parsed {
-        SyncMessage::HeadExchange { heads } => {
+        SyncMessage::HeadExchange { heads, .. } => {
             assert_eq!(heads.len(), 1, "should contain exactly one device head");
             assert_eq!(
                 heads[0].device_id, "dev-1",
@@ -513,6 +514,7 @@ async fn tls_roundtrip_json_exchange() {
             seq: 42,
             hash: "abc123".into(),
         }],
+        loro_vvs: vec![],
     };
     client.send_json(&msg).await.unwrap();
 
@@ -1160,13 +1162,14 @@ async fn mtls_full_handshake_both_sides_see_peer_identity() {
                 seq: 1,
                 hash: "head_hash_alice".into(),
             }],
+            loro_vvs: vec![],
         })
         .await
         .unwrap();
 
     let msg: SyncMessage = client_conn.recv_json().await.unwrap();
     match msg {
-        SyncMessage::HeadExchange { heads } => {
+        SyncMessage::HeadExchange { heads, .. } => {
             assert_eq!(
                 heads.len(),
                 1,
@@ -1188,13 +1191,14 @@ async fn mtls_full_handshake_both_sides_see_peer_identity() {
                 seq: 2,
                 hash: "head_hash_bob".into(),
             }],
+            loro_vvs: vec![],
         })
         .await
         .unwrap();
 
     let msg: SyncMessage = server_conn.recv_json().await.unwrap();
     match msg {
-        SyncMessage::HeadExchange { heads } => {
+        SyncMessage::HeadExchange { heads, .. } => {
             assert_eq!(
                 heads.len(),
                 1,

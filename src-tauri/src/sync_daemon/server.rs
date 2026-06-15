@@ -142,13 +142,13 @@ pub(crate) async fn handle_incoming_sync(
     // violation) we leave it empty; the orchestrator will reject the
     // session before we ever reach the snapshot offer path.
     let remote_heads: Vec<DeviceHead> = match &first_msg {
-        SyncMessage::HeadExchange { heads } => heads.clone(),
+        SyncMessage::HeadExchange { heads, .. } => heads.clone(),
         _ => Vec::new(),
     };
 
     // ── Per-peer mutual exclusion ─────────────────────────────────────────
     // We can only identify the peer after seeing the HeadExchange.
-    let _peer_guard = if let SyncMessage::HeadExchange { ref heads } = first_msg {
+    let _peer_guard = if let SyncMessage::HeadExchange { ref heads, .. } = first_msg {
         // The identity the initiator *claims* through its advertised
         // heads. #778: heads are sync state, not identity — a fresh
         // device (empty op_log) has no head of its own, so this can

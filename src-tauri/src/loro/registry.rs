@@ -183,6 +183,26 @@ impl LoroEngineRegistry {
         })
     }
 
+    /// Read-only per-space Loro version vector, **without** bumping
+    /// `dirty_count`.
+    ///
+    /// Incremental sync (#87 §10.5) advertises these vvs in `HeadExchange`
+    /// on every initiated session. Routing that read through
+    /// [`Self::for_space`] would bump the dirty counter (it is the mutation
+    /// chokepoint and over-counts read-only calls) and arm a spurious full
+    /// **disk** snapshot of every space on each otherwise-quiescent session
+    /// — directly counterproductive for a path whose purpose is to *cut*
+    /// snapshot churn. This accessor reads under the lock without that side
+    /// effect and never lazily creates an engine: an unregistered space
+    /// returns `None`, and the sender falls back to a full snapshot for it.
+    pub fn loro_vv(&self, space_id: &SpaceId) -> Option<Vec<u8>> {
+        let guard = match self.inner.lock() {
+            Ok(g) => g,
+            Err(poison) => poison.into_inner(),
+        };
+        guard.get(space_id).map(LoroEngine::version_vector)
+    }
+
     /// All [`SpaceId`]s currently registered, in arbitrary order.
     ///
     /// Used by the sync orchestrator to enumerate which spaces to

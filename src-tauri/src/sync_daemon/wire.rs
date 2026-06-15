@@ -259,7 +259,10 @@ mod tests {
     #[tokio::test]
     async fn non_loro_messages_pass_through() {
         for msg in [
-            SyncMessage::HeadExchange { heads: vec![] },
+            SyncMessage::HeadExchange {
+                heads: vec![],
+                loro_vvs: vec![],
+            },
             SyncMessage::SyncComplete {
                 last_hash: "abc123".into(),
             },
