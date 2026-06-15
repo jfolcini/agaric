@@ -164,6 +164,97 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
   })
 })
 
+// ---------------------------------------------------------------------------
+// 1b. Collision routing — context decides which handler owns a chord (#1172).
+// ---------------------------------------------------------------------------
+
+describe('useAppKeyboardShortcuts — Ctrl+K collision (palette vs editor link)', () => {
+  // `tryPaletteOpen` opens the command palette OUTSIDE the editor, but yields
+  // to TipTap's own Cmd+K link command when focus is inside a ProseMirror /
+  // contenteditable surface (consume WITHOUT preventDefault). Both branches:
+
+  it('OUTSIDE the editor → opens the command palette', async () => {
+    const { useCommandPaletteStore } = await import('../../stores/useCommandPaletteStore')
+    useCommandPaletteStore.setState({ open: false })
+    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+    // Dispatch from a plain (non-editor) element so `isFocusInsideEditor`
+    // runs `target.closest(...)` and finds no ProseMirror ancestor — the
+    // bubbling event still reaches the window-level listener.
+    const div = document.createElement('div')
+    document.body.appendChild(div)
+    try {
+      div.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true }),
+      )
+      expect(useCommandPaletteStore.getState().open).toBe(true)
+    } finally {
+      div.remove()
+    }
+  })
+
+  it('INSIDE the editor → does NOT open the palette (editor owns the link command)', async () => {
+    const { useCommandPaletteStore } = await import('../../stores/useCommandPaletteStore')
+    useCommandPaletteStore.setState({ open: false })
+    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+    // A contenteditable ProseMirror surface as the event target.
+    const pm = document.createElement('div')
+    pm.className = 'ProseMirror'
+    pm.setAttribute('contenteditable', 'true')
+    document.body.appendChild(pm)
+    try {
+      const e = new KeyboardEvent('keydown', {
+        key: 'k',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+      pm.dispatchEvent(e)
+      // Palette stays closed AND the event is NOT prevented — so the editor's
+      // own Cmd+K link keymap can still act on it.
+      expect(useCommandPaletteStore.getState().open).toBe(false)
+      expect(e.defaultPrevented).toBe(false)
+    } finally {
+      pm.remove()
+    }
+  })
+})
+
+describe('useAppKeyboardShortcuts — Ctrl+. collision (runLastCommand vs collapseExpand)', () => {
+  // `tryRunLastCommand` owns Ctrl+. OUTSIDE a field; when typing in a field
+  // (i.e. inside the block editor, where the BlockTree document listener owns
+  // `collapseExpand`) it consumes the event WITHOUT preventDefault so the
+  // editor chord still fires. The outside-field branch (runs the command) is
+  // covered above; here we pin the in-field yield contract.
+  it('inside a field → does NOT preventDefault (yields Ctrl+. to collapseExpand)', () => {
+    localStorage.setItem(
+      'recent_commands:SPACE_PERSONAL',
+      JSON.stringify([{ id: 'go-settings', runAt: '2026-05-19T00:00:00Z' }]),
+    )
+    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    try {
+      const navBefore = useNavigationStore.getState().currentView
+      const e = new KeyboardEvent('keydown', {
+        key: '.',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+      input.dispatchEvent(e)
+      // No command ran (view unchanged) and the chord passes through to the
+      // editor's collapse/expand handler.
+      expect(useNavigationStore.getState().currentView).toBe(navBefore)
+      expect(e.defaultPrevented).toBe(false)
+    } finally {
+      input.remove()
+    }
+  })
+})
+
 describe('useAppKeyboardShortcuts — journal nav (document listener)', () => {
   it('Alt+ArrowRight advances the journal date in daily mode', () => {
     renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
@@ -233,6 +324,81 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
 
     // Still on the original space, no toast, no error.
     expect(useSpaceStore.getState().currentSpaceId).toBe('SPACE_PERSONAL')
+  })
+
+  // #1172 — only Ctrl+2 was exercised before; parametrize all nine digit
+  // hotkeys against a full nine-space roster so every `switchSpace{n}` →
+  // `availableSpaces[n-1]` index is pinned (the verbatim-array contract).
+  describe('switchSpace1..9 — each digit indexes into availableSpaces', () => {
+    /** Nine spaces; index 0 is the current one so 2..9 are distinct switches. */
+    function seedNineSpaces(): void {
+      const availableSpaces = Array.from({ length: 9 }, (_, i) => ({
+        id: `SPACE_${i + 1}`,
+        name: `Space ${i + 1}`,
+        accent_color: null,
+      }))
+      useSpaceStore.setState({
+        currentSpaceId: 'SPACE_1',
+        availableSpaces,
+        isReady: true,
+      })
+    }
+
+    it.each([1, 2, 3, 4, 5, 6, 7, 8, 9] as const)(
+      'Ctrl+%i switches to availableSpaces[%i - 1]',
+      (n) => {
+        seedNineSpaces()
+        const setCurrentSpace = vi.fn()
+        useSpaceStore.setState({ setCurrentSpace })
+        renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+        fireEvent.keyDown(window, { key: String(n), ctrlKey: true })
+
+        if (n === 1) {
+          // Ctrl+1 targets the already-active space → no re-fetch.
+          expect(setCurrentSpace).not.toHaveBeenCalled()
+        } else {
+          expect(setCurrentSpace).toHaveBeenCalledTimes(1)
+          expect(setCurrentSpace).toHaveBeenCalledWith(`SPACE_${n}`)
+        }
+      },
+    )
+
+    it('Ctrl+9 with only five spaces is an out-of-range silent no-op', () => {
+      const availableSpaces = Array.from({ length: 5 }, (_, i) => ({
+        id: `SPACE_${i + 1}`,
+        name: `Space ${i + 1}`,
+        accent_color: null,
+      }))
+      const setCurrentSpace = vi.fn()
+      useSpaceStore.setState({
+        currentSpaceId: 'SPACE_1',
+        availableSpaces,
+        isReady: true,
+        setCurrentSpace,
+      })
+      renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+      fireEvent.keyDown(window, { key: '9', ctrlKey: true })
+
+      expect(setCurrentSpace).not.toHaveBeenCalled()
+    })
+
+    it('digit hotkey is suppressed while typing in a field (so it never steals heading/editor keys)', () => {
+      seedNineSpaces()
+      const setCurrentSpace = vi.fn()
+      useSpaceStore.setState({ setCurrentSpace })
+      renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+      const input = document.createElement('input')
+      document.body.appendChild(input)
+      try {
+        fireEvent.keyDown(input, { key: '3', ctrlKey: true })
+        expect(setCurrentSpace).not.toHaveBeenCalled()
+      } finally {
+        input.remove()
+      }
+    })
   })
 
   it('Ctrl+1 on the already-active space is a no-op (avoids re-fetch)', () => {

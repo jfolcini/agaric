@@ -1743,5 +1743,111 @@ describe('keyboard-config', () => {
       expect(matchesShortcutBinding(ev('r'), 'histRevertSelected')).toBe(true)
       expect(matchesShortcutBinding(ev('Enter'), 'histRevertSelected')).toBe(false)
     })
+
+    // ── Graph zoom (#1172) — plain symbol/digit keys, no modifier ──────────
+    // `graphZoomIn = '+ / =', graphZoomOut = '-', graphZoomReset = '0'`. These
+    // are the catalog bindings the keyboard zoom handler resolves; the matcher
+    // must accept both `+` and `=` for zoom-in (the `/` alternative) and treat
+    // the `+` symbol's Shift as don't-care (US `Shift+= → +`).
+    it('graphZoomIn: both `+` and `=` fire (the `+ / =` alternative), with or without Shift', () => {
+      expect(matchesShortcutBinding(ev('+'), 'graphZoomIn')).toBe(true)
+      expect(matchesShortcutBinding(ev('='), 'graphZoomIn')).toBe(true)
+      // `+` is Shift+= on US layouts — Shift is relaxed for the symbol binding.
+      expect(matchesShortcutBinding(ev('+', { shiftKey: true }), 'graphZoomIn')).toBe(true)
+      // A genuine modifier chord is NOT the unmodified zoom key.
+      expect(matchesShortcutBinding(ev('+', { ctrlKey: true }), 'graphZoomIn')).toBe(false)
+    })
+
+    it('graphZoomOut: `-` fires; graphZoomReset: `0` fires; they are disjoint', () => {
+      expect(matchesShortcutBinding(ev('-'), 'graphZoomOut')).toBe(true)
+      expect(matchesShortcutBinding(ev('0'), 'graphZoomReset')).toBe(true)
+      // Cross-checks: `-` is not reset, `0` is not zoom-out, `+` is not either.
+      expect(matchesShortcutBinding(ev('-'), 'graphZoomReset')).toBe(false)
+      expect(matchesShortcutBinding(ev('0'), 'graphZoomOut')).toBe(false)
+      expect(matchesShortcutBinding(ev('+'), 'graphZoomOut')).toBe(false)
+    })
+
+    // ── Priority chords (#1172) — Ctrl+Shift+1..3 ─────────────────────────
+    it.each([
+      ['priority1', '1'],
+      ['priority2', '2'],
+      ['priority3', '3'],
+    ] as const)('%s resolves from Ctrl+Shift+%s and nothing weaker', (id, digit) => {
+      expect(matchesShortcutBinding(ev(digit, { ctrlKey: true, shiftKey: true }), id)).toBe(true)
+      // Ctrl alone (the heading/space chord) must NOT fire a priority binding.
+      expect(matchesShortcutBinding(ev(digit, { ctrlKey: true }), id)).toBe(false)
+      // Plain digit must not fire it either.
+      expect(matchesShortcutBinding(ev(digit), id)).toBe(false)
+    })
+
+    // ── switchSpace1..9 (#1172) — parametrize all nine, only Ctrl+N fires ──
+    it.each([1, 2, 3, 4, 5, 6, 7, 8, 9] as const)(
+      'switchSpace%i resolves from Ctrl+%i (and Cmd+%i) but not the bare digit',
+      (n) => {
+        const digit = String(n)
+        const id = `switchSpace${n}`
+        expect(matchesShortcutBinding(ev(digit, { ctrlKey: true }), id)).toBe(true)
+        expect(matchesShortcutBinding(ev(digit, { metaKey: true }), id)).toBe(true)
+        expect(matchesShortcutBinding(ev(digit), id)).toBe(false)
+        // Ctrl+Shift+digit is the priority chord, NOT a space switch.
+        expect(matchesShortcutBinding(ev(digit, { ctrlKey: true, shiftKey: true }), id)).toBe(false)
+      },
+    )
+
+    // ── heading1..6 (#1172) — parametrize all six ─────────────────────────
+    it.each([1, 2, 3, 4, 5, 6] as const)(
+      'heading%i resolves from Ctrl+%i but not the bare digit / Shift chord',
+      (n) => {
+        const digit = String(n)
+        const id = `heading${n}`
+        expect(matchesShortcutBinding(ev(digit, { ctrlKey: true }), id)).toBe(true)
+        expect(matchesShortcutBinding(ev(digit), id)).toBe(false)
+        expect(matchesShortcutBinding(ev(digit, { ctrlKey: true, shiftKey: true }), id)).toBe(false)
+      },
+    )
+
+    // ── Collision routing is contextual, not matcher-level (#1172) ────────
+    // Ctrl+1..6 maps to BOTH `heading{n}` and `switchSpace{n}` in the catalog,
+    // and Ctrl+K maps to BOTH `paletteOpen` and `linkPopover`. The matcher is
+    // intentionally ambiguous: it returns true for either id on the shared
+    // chord. The disambiguation lives in the HANDLERS (focused-block ownership
+    // for headings vs the not-typing-in-field guard for space switching;
+    // isFocusInsideEditor for palette vs the editor's own link command), which
+    // are unit-tested in useBlockTreeKeyboardShortcuts / useAppKeyboardShortcuts.
+    // Pin the shared-resolution contract here so a future "dedupe" of the
+    // catalog can't silently break one branch.
+    it.each([1, 2, 3, 4, 5, 6] as const)(
+      'Ctrl+%i resolves to BOTH heading%i and switchSpace%i (collision is handler-gated)',
+      (n) => {
+        const digit = String(n)
+        expect(matchesShortcutBinding(ev(digit, { ctrlKey: true }), `heading${n}`)).toBe(true)
+        expect(matchesShortcutBinding(ev(digit, { ctrlKey: true }), `switchSpace${n}`)).toBe(true)
+      },
+    )
+
+    it('Ctrl+K resolves to BOTH paletteOpen and linkPopover (collision is handler-gated)', () => {
+      expect(matchesShortcutBinding(ev('k', { ctrlKey: true }), 'paletteOpen')).toBe(true)
+      expect(matchesShortcutBinding(ev('k', { ctrlKey: true }), 'linkPopover')).toBe(true)
+      // Cmd+K (macOS) resolves the same way; plain k fires neither.
+      expect(matchesShortcutBinding(ev('k', { metaKey: true }), 'paletteOpen')).toBe(true)
+      expect(matchesShortcutBinding(ev('k'), 'paletteOpen')).toBe(false)
+      expect(matchesShortcutBinding(ev('k'), 'linkPopover')).toBe(false)
+    })
+
+    // ── strikethrough (#1172) — primary chord + legacy alias ──────────────
+    // The catalog default moved to Ctrl+Shift+S (#211 P2-11). The legacy
+    // Ctrl+Shift+X is kept ONLY as a hardcoded TipTap keymap alias inside the
+    // editor (StrikeWithShortcut, asserted in use-roving-editor.test) — the
+    // catalog binding itself is Ctrl+Shift+S, so the matcher resolves S, not X.
+    it('strikethrough: the catalog binding is Ctrl+Shift+S (the X alias is editor-keymap only)', () => {
+      expect(
+        matchesShortcutBinding(ev('s', { ctrlKey: true, shiftKey: true }), 'strikethrough'),
+      ).toBe(true)
+      // The legacy X glyph is NOT the catalog binding — only the editor keymap
+      // honours it (see use-roving-editor.test).
+      expect(
+        matchesShortcutBinding(ev('x', { ctrlKey: true, shiftKey: true }), 'strikethrough'),
+      ).toBe(false)
+    })
   })
 })
