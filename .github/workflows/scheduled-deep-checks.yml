@@ -390,6 +390,13 @@ jobs:
         # `env:` (not inline `${{ }}`) per zizmor template-injection.
         env:
           FUZZ_SECONDS: ${{ github.event.inputs.fuzz_seconds || '120' }}
+          # cargo-fuzz builds with `-Zsanitizer=address`, which rustc rejects
+          # when libc is statically linked ("sanitizer is incompatible with
+          # statically linked libc"). Disable crt-static for the fuzz build;
+          # cargo-fuzz reads RUSTFLAGS and appends its own sanitizer flags, so
+          # both survive. (gnu defaults to dynamic libc, but the nightly + ASan
+          # combo enables crt-static implicitly here — see rust-fuzz/cargo-fuzz.)
+          RUSTFLAGS: "-C target-feature=-crt-static"
         run: |
           set -euo pipefail
           for target in snapshot_decode deeplink_parse; do

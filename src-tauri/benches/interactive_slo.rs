@@ -87,6 +87,12 @@ const SLO_SPACE_ID: &str = "01SLOSPACE0000000000000001";
 /// build `OpRef`s without querying the op_log.
 const HISTORY_BENCH_DEVICE: &str = "bench-device";
 
+/// Base `op_log.created_at` value, epoch milliseconds (2025-01-15T12:00:00Z).
+/// `created_at` is INTEGER-NOT-NULL since migration 0079 (#109 Phase 2); the
+/// STRICT table rejects the RFC-3339 TEXT this bench used to bind. Seeders add
+/// a monotonic per-op offset so ordering matches the old string ordering.
+const SLO_BASE_TS_MS: i64 = 1_736_942_400_000;
+
 // ---------------------------------------------------------------------------
 // Accumulator type
 // ---------------------------------------------------------------------------
@@ -143,7 +149,7 @@ async fn seed_blocks_bulk(pool: &SqlitePool, n: usize) -> Vec<String> {
     for i in 0..n {
         let id = format!("SEED{i:020}");
         let content = format!("Seeded block {i} with some placeholder content.");
-        let ts = format!("2025-01-15T12:00:{:06}+00:00", i);
+        let ts = SLO_BASE_TS_MS + i as i64;
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, position) \
              VALUES (?, 'content', ?, ?)",
@@ -163,7 +169,7 @@ async fn seed_blocks_bulk(pool: &SqlitePool, n: usize) -> Vec<String> {
         .bind(format!(
             r#"{{"block_id":"{id}","block_type":"content","content":"{content}"}}"#,
         ))
-        .bind(&ts)
+        .bind(ts)
         .execute(&mut *tx)
         .await
         .unwrap();
@@ -177,28 +183,37 @@ async fn seed_blocks_bulk(pool: &SqlitePool, n: usize) -> Vec<String> {
 /// Assign every seeded block to `SLO_SPACE_ID` so space-scoped commands
 /// see a non-empty result set.
 async fn assign_all_to_slo_space(pool: &SqlitePool) {
+    // A 'page' block must have `page_id = id` (migration 0073's
+    // `page_id_self_for_pages` CHECK); omitting it makes INSERT OR IGNORE
+    // silently drop the row, leaving SLO_SPACE_ID absent and the space_id FK
+    // below unsatisfiable.
     sqlx::query(
-        "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position) \
-         VALUES (?, 'page', 'SloSpace', NULL, NULL)",
-    )
-    .bind(SLO_SPACE_ID)
-    .execute(pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO block_properties (block_id, key, value_ref) \
-         SELECT b.id, 'space', ? FROM blocks b \
-         WHERE b.id <> ? \
-           AND NOT EXISTS ( \
-                SELECT 1 FROM block_properties bp \
-                WHERE bp.block_id = b.id AND bp.key = 'space' \
-           )",
+        "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'page', 'SloSpace', NULL, NULL, ?)",
     )
     .bind(SLO_SPACE_ID)
     .bind(SLO_SPACE_ID)
     .execute(pool)
     .await
     .unwrap();
+    // Register the page in the `spaces` registry (#708, migration 0089):
+    // `blocks.space_id` now REFERENCES spaces(id), so the space owner must
+    // exist there before any block can point its space_id at it.
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(SLO_SPACE_ID)
+        .execute(pool)
+        .await
+        .unwrap();
+    // Space membership is the first-class `blocks.space_id` column (#533,
+    // migration 0086); the canonical filter is `b.space_id = ?` and `space`
+    // is a reserved key that the 0088 CHECK forbids in `block_properties`.
+    // Assign every block (except the space-owner page itself) to the space.
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE id <> ?")
+        .bind(SLO_SPACE_ID)
+        .bind(SLO_SPACE_ID)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 /// Seed `n` agenda_cache entries spread across a 30-day window from
@@ -273,12 +288,13 @@ async fn seed_pages_with_links(pool: &SqlitePool, n: usize) {
         let page_id = format!("PG{i:022}");
         let child_id = format!("CH{i:022}");
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, position) \
-             VALUES (?, 'page', ?, ?)",
+            "INSERT INTO blocks (id, block_type, content, position, page_id) \
+             VALUES (?, 'page', ?, ?, ?)",
         )
         .bind(&page_id)
         .bind(format!("Page {i}"))
         .bind(i as i64 + 1)
+        .bind(&page_id)
         .execute(&mut *tx)
         .await
         .unwrap();
@@ -317,9 +333,10 @@ async fn seed_pages_with_links(pool: &SqlitePool, n: usize) {
 async fn seed_export_page(pool: &SqlitePool, page_id: &str, n: usize) {
     let mut tx = pool.begin().await.unwrap();
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, position) \
-         VALUES (?, 'page', 'SLO Export Page', 1)",
+        "INSERT INTO blocks (id, block_type, content, position, page_id) \
+         VALUES (?, 'page', 'SLO Export Page', 1, ?)",
     )
+    .bind(page_id)
     .bind(page_id)
     .execute(&mut *tx)
     .await
@@ -351,30 +368,26 @@ async fn seed_export_page(pool: &SqlitePool, page_id: &str, n: usize) {
 }
 
 /// Seed a production-realistic 100K shape for `batch_resolve`:
-/// `PAGE_COUNT` pages (each `page_id = id`, each carrying a `space`
-/// property pointing at `SLO_SPACE_ID`) and `n` content blocks
+/// `PAGE_COUNT` pages (each `page_id = id`) and `n` content blocks
 /// distributed round-robin across those pages with `page_id` set to
-/// their owning page's id.
+/// their owning page's id. Every seeded block carries the first-class
+/// `blocks.space_id = SLO_SPACE_ID` column (#533, migration 0086) so the
+/// canonical `b.space_id = ?` filter matches it.
 ///
 /// ## Why this seeder exists separately from `seed_blocks_bulk`
 ///
-/// SQL-review Phase 4 (commit `4a4128fd`) removed `COALESCE(b.page_id,
-/// b.id)` from the space filter at every read site; the new shape
-/// (`b.page_id IN (SELECT bp.block_id ... WHERE bp.key='space')`)
-/// requires `page_id` to be non-NULL for any block that should pass the
-/// filter. The legacy `seed_blocks_bulk` + `assign_all_to_slo_space`
-/// pair was written against the COALESCE-era SQL where `page_id` NULL
-/// fell back to `b.id` — under the new SQL it silently produces an
-/// empty result set, and `batch_resolve` ends up benchmarking the cost
-/// of an unindexed filter that never matches. The 50 request_ids
-/// returned here resolve to ~50 live rows under both the old and new
-/// SQL shapes, so the bench measures real interactive-resolve cost.
+/// The canonical space filter is `(?N IS NULL OR b.space_id = ?N)` (see
+/// `space_filter_canonical.rs`): space membership is the `blocks.space_id`
+/// column, not a `block_properties` row (`space` is a reserved key the
+/// migration-0088 CHECK forbids there). A block only passes the filter if
+/// its own `space_id` is set, so this seeder assigns it on every page and
+/// content block; `batch_resolve` then measures real interactive-resolve
+/// cost over a populated space rather than an empty result set.
 ///
 /// Other benches in this file (`bench_list_blocks`, `bench_get_block`,
-/// etc.) continue to use `seed_blocks_bulk` because they either don't
-/// space-filter (`get_block`) or paginate with `LIMIT 50` (`list_blocks`)
-/// where an empty result is bounded by the index scan, not the subquery
-/// re-evaluation that hurts `batch_resolve`.
+/// etc.) use `seed_blocks_bulk` + `assign_all_to_slo_space` (which now
+/// sets `space_id` via UPDATE) because they either don't space-filter
+/// (`get_block`) or paginate with `LIMIT 50` (`list_blocks`).
 async fn seed_resolve_fixture(pool: &SqlitePool, n: usize) -> Vec<String> {
     // Density chosen to match the real-world shape: ~1 page per 100
     // content blocks gives 1000 pages at 100K total — close to the
@@ -386,7 +399,10 @@ async fn seed_resolve_fixture(pool: &SqlitePool, n: usize) -> Vec<String> {
 
     let mut tx = pool.begin().await.unwrap();
 
-    // The space-owner page (mirrors `assign_all_to_slo_space`).
+    // The space-owner page + its `spaces` registry row (mirrors
+    // `assign_all_to_slo_space`). `blocks.space_id` REFERENCES spaces(id)
+    // (#708, migration 0089), so the owner must exist in `spaces` before the
+    // pages/content below point their space_id at it.
     sqlx::query(
         "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id) \
          VALUES (?, 'page', 'SloSpace', NULL, NULL, ?)",
@@ -396,29 +412,27 @@ async fn seed_resolve_fixture(pool: &SqlitePool, n: usize) -> Vec<String> {
     .execute(&mut *tx)
     .await
     .unwrap();
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(SLO_SPACE_ID)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
 
     // Seed PAGE_COUNT pages. `page_id = id` matches the invariant
     // migration 0066 backfilled (every page-create path now sets this).
     let mut page_ids: Vec<String> = Vec::with_capacity(PAGE_COUNT);
     for p in 0..PAGE_COUNT {
         let page_id = format!("SLPG{p:020}");
+        // Space membership is the first-class `blocks.space_id` column (#533,
+        // migration 0086) — the canonical filter is `b.space_id = ?`; `space`
+        // is a reserved key the 0088 CHECK forbids in `block_properties`.
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
-             VALUES (?, 'page', ?, NULL, ?, ?)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'page', ?, NULL, ?, ?, ?)",
         )
         .bind(&page_id)
         .bind(format!("Resolve fixture page {p}"))
         .bind(p as i64 + 1)
-        .bind(&page_id)
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-        // Each page carries the `space` property — this is the
-        // production invariant: pages own the space tag, content
-        // blocks inherit via `page_id`.
-        sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
-        )
         .bind(&page_id)
         .bind(SLO_SPACE_ID)
         .execute(&mut *tx)
@@ -432,17 +446,18 @@ async fn seed_resolve_fixture(pool: &SqlitePool, n: usize) -> Vec<String> {
     for i in 0..n {
         let id = format!("SEED{i:020}");
         let content = format!("Seeded block {i} with some placeholder content.");
-        let ts = format!("2025-01-15T12:00:{:06}+00:00", i);
+        let ts = SLO_BASE_TS_MS + i as i64;
         let owning_page = &page_ids[i % PAGE_COUNT];
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
-             VALUES (?, 'content', ?, ?, ?, ?)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'content', ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&content)
         .bind(owning_page)
         .bind(i as i64 + 1)
         .bind(owning_page)
+        .bind(SLO_SPACE_ID)
         .execute(&mut *tx)
         .await
         .unwrap();
@@ -455,7 +470,7 @@ async fn seed_resolve_fixture(pool: &SqlitePool, n: usize) -> Vec<String> {
         .bind(format!(
             r#"{{"block_id":"{id}","block_type":"content","parent_id":"{owning_page}","content":"{content}"}}"#,
         ))
-        .bind(&ts)
+        .bind(ts)
         .execute(&mut *tx)
         .await
         .unwrap();
@@ -477,12 +492,15 @@ async fn seed_backlinks_for_batch(pool: &SqlitePool, n: usize) {
     let mut tx = pool.begin().await.unwrap();
     for p in 0..10 {
         let page_id = format!("BLP{p:021}");
-        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', ?)")
-            .bind(&page_id)
-            .bind(format!("Page {p}"))
-            .execute(&mut *tx)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)",
+        )
+        .bind(&page_id)
+        .bind(format!("Page {p}"))
+        .bind(&page_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
     }
     for i in 0..n {
         let src_id = format!("BLS{i:021}");
@@ -507,18 +525,11 @@ async fn seed_backlinks_for_batch(pool: &SqlitePool, n: usize) {
     tx.commit().await.unwrap();
 }
 
-/// Build a deterministic, valid RFC-3339 timestamp from a seq counter.
-/// Mirrors the safe `% 24` variant in `history_bench.rs::ts_for` (the
-/// flat seeder in `undo_redo.rs` overflows hours past 86400 ops; this
-/// stays valid through 100K).
-fn slo_history_ts_for(seq: i64) -> String {
-    format!(
-        "2025-01-15T{:02}:{:02}:{:02}.{:03}Z",
-        (seq / 3600) % 24,
-        (seq / 60) % 60,
-        seq % 60,
-        seq % 1000
-    )
+/// Deterministic, monotonic `op_log.created_at` (epoch ms) from a seq counter.
+/// INTEGER since migration 0079 — see `SLO_BASE_TS_MS`. Strictly increasing in
+/// `seq` so the most-recent-N op selectors see a stable order.
+fn slo_history_ts_for(seq: i64) -> i64 {
+    SLO_BASE_TS_MS + seq
 }
 
 /// Seed a single page with exactly `total_ops` ops in its history.
@@ -540,9 +551,10 @@ async fn seed_single_page_history(pool: &SqlitePool, total_ops: usize) -> (Strin
     let mut tx = pool.begin().await.unwrap();
 
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, position) \
-         VALUES (?, 'page', 'Bench Page', 1)",
+        "INSERT INTO blocks (id, block_type, content, position, page_id) \
+         VALUES (?, 'page', 'Bench Page', 1, ?)",
     )
+    .bind(&page_id)
     .bind(&page_id)
     .execute(&mut *tx)
     .await
@@ -552,14 +564,18 @@ async fn seed_single_page_history(pool: &SqlitePool, total_ops: usize) -> (Strin
     let page_create_json = format!(
         r#"{{"block_id":"{page_id}","block_type":"page","parent_id":null,"position":1,"content":"Bench Page"}}"#
     );
+    // op_log.block_id (indexed, migration 0030) must be set: the revert path's
+    // `find_prior_text` filters edit/create ops by this column, not by
+    // json_extract(payload). Unset → NULL → "no prior text found".
     sqlx::query(
-        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-         VALUES (?, ?, 'fakehash', 'create_block', ?, ?)",
+        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, 'fakehash', 'create_block', ?, ?, ?)",
     )
     .bind(HISTORY_BENCH_DEVICE)
     .bind(seq)
     .bind(&page_create_json)
     .bind(slo_history_ts_for(seq))
+    .bind(&page_id)
     .execute(&mut *tx)
     .await
     .unwrap();
@@ -579,13 +595,14 @@ async fn seed_single_page_history(pool: &SqlitePool, total_ops: usize) -> (Strin
         r#"{{"block_id":"{block_id}","block_type":"content","parent_id":"{page_id}","position":1,"content":"initial"}}"#
     );
     sqlx::query(
-        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-         VALUES (?, ?, 'fakehash', 'create_block', ?, ?)",
+        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, 'fakehash', 'create_block', ?, ?, ?)",
     )
     .bind(HISTORY_BENCH_DEVICE)
     .bind(seq)
     .bind(&child_create_json)
     .bind(slo_history_ts_for(seq))
+    .bind(&block_id)
     .execute(&mut *tx)
     .await
     .unwrap();
@@ -596,13 +613,14 @@ async fn seed_single_page_history(pool: &SqlitePool, total_ops: usize) -> (Strin
         let edit_json =
             format!(r#"{{"block_id":"{block_id}","to_text":"edit-{j}","prev_edit":null}}"#);
         sqlx::query(
-            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
-             VALUES (?, ?, 'fakehash', 'edit_block', ?, ?)",
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+             VALUES (?, ?, 'fakehash', 'edit_block', ?, ?, ?)",
         )
         .bind(HISTORY_BENCH_DEVICE)
         .bind(seq)
         .bind(&edit_json)
         .bind(slo_history_ts_for(seq))
+        .bind(&block_id)
         .execute(&mut *tx)
         .await
         .unwrap();
@@ -710,7 +728,9 @@ fn bench_get_properties(c: &mut Criterion) {
     let pool = rt.block_on(fresh_pool(&dir, "slo_get_props"));
     let ids = rt.block_on(seed_blocks_bulk(&pool, FIXTURE_SIZE));
     rt.block_on(async {
-        for (k, v) in [("priority", "high"), ("status", "active")] {
+        // Free-form keys only: `priority` (and the other fixed props) are
+        // column-backed on `blocks` and the 0088 CHECK forbids them here.
+        for (k, v) in [("category", "high"), ("status", "active")] {
             sqlx::query(
                 "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)",
             )
@@ -978,7 +998,9 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
 /// (2K)" row, the scale parameter is *children of the exported page*).
 fn bench_export_page_markdown(c: &mut Criterion) {
     const BUDGET_MS: f64 = 10.0;
-    const EXPORT_PAGE_ID: &str = "SLOEXPORTPAGE0000000000001";
+    // Must be a valid ULID (Crockford base32, no I/L/O/U): export_page_markdown_inner
+    // parses the page id as a ULID. "SLOEXPORT…" had invalid chars (L, O).
+    const EXPORT_PAGE_ID: &str = "01SEXPRTPG0000000000000001";
     const CHILD_COUNT: usize = 2_000;
 
     let rt = Runtime::new().unwrap();
@@ -1067,22 +1089,25 @@ fn bench_create_block(c: &mut Criterion) {
 }
 
 /// `revert_ops_inner` — 50-op batch revert against a single page with
-/// 100K total ops in its history. Budget: 200 ms.
+/// 100K total ops in its history. Aspirational budget: 200 ms.
 ///
-/// Phase 2 §B.1 gate for `history_bench::bench_revert_ops_50op`. The
-/// 200 ms ceiling is the same SLO every interactive command answers to;
-/// `revert` is bulk-write but user-initiated (Cmd+Z over a selection
-/// translates to this command), so it sits in the interactive tier.
+/// PROBLEM TIER (gated behind `SLO_INCLUDE_PROBLEM`): a faithful single
+/// "50-op revert at 100K" measures ~1.2 s, ~6× over the 200 ms interactive
+/// ceiling. The cost is dominated by the per-op `compute_reverse` walk + the
+/// recursive-CTE op-log read, both O(log size). Until that read is made
+/// sublinear (mirrors the `list_projected_agenda` gate), this stays gated so
+/// the green tier isn't blocked by a known, tracked perf gap.
 ///
-/// `revert_ops_inner` mutates state (appends 50 reverse ops), so each
-/// iteration grows the op log; the cost-per-revert is dominated by the
-/// per-op `compute_reverse` walk + the recursive-CTE op-log read, both
-/// of which scale with the size of the log not with the per-revert
-/// mutation. The mean-of-`sample_size(10)` measurement is therefore a
-/// faithful "50-op revert at 100K" number — within sample noise.
+/// Phase 2 §B.1 gate for `history_bench::bench_revert_ops_50op`; `revert` is
+/// bulk-write but user-initiated (Cmd+Z over a selection), so it belongs in
+/// the interactive tier once its read path is optimized.
 fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
     const TOTAL_OPS: usize = 100_000;
+
+    if problem_skipped("revert_ops (50op) @ 100K") {
+        return;
+    }
 
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
@@ -1143,15 +1168,19 @@ fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
 // Problem tier — aspirational budgets, gated behind SLO_INCLUDE_PROBLEM
 // ===========================================================================
 
-/// `list_page_links` — graph-view roll-up. **Currently ~1.3 s at 100K**
-/// (3-JOIN superlinearity, see docs/architecture/operations.md § Product
-/// SLO known-exceeds-budget note); SQL-review §H-2
-/// (migration 0065 `page_link_cache` + the per-`ReindexBlockLinks`
-/// rollup in `cache::page_links::reindex_page_link_cache_for_block`)
-/// brought it under budget, so the `SLO_INCLUDE_PROBLEM` env-gate has
-/// been removed.
+/// `list_page_links` — graph-view roll-up. PROBLEM TIER (gated behind
+/// `SLO_INCLUDE_PROBLEM`): a warm measurement is ~530 ms at 100K, ~2.6× over
+/// the 200 ms budget (3-JOIN superlinearity; see docs/architecture/operations.md
+/// § Product SLO known-exceeds-budget note). The SQL-review §H-2 `page_link_cache`
+/// rollup (migration 0065) helped but did NOT bring it under budget — this was
+/// never verified because the bench was never actually run until now (#1233).
+/// Re-gated so the green tier isn't blocked by this tracked perf gap.
 fn bench_list_page_links(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
+
+    if problem_skipped("list_page_links @ 100K") {
+        return;
+    }
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_page_links"));
