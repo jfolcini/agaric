@@ -429,6 +429,18 @@ harness = false
 name = "loro_vs_sql_reads"
 harness = false
 
+# #1231 Phase 2 — cold-start / vault-open at 100K blocks (time-to-first-render:
+# pool open + page-list load + first-page render + initial materialization).
+[[bench]]
+name = "cold_start_bench"
+harness = false
+
+# #1231 Phase 3 — resource envelope at 100K blocks (DB-on-disk size + row
+# counts; peak memory is an out-of-process gap, documented in the bench).
+[[bench]]
+name = "resource_envelope_bench"
+harness = false
+
 # FEAT-4a — stdio ↔ MCP socket bridge binary shipped alongside the Tauri app.
 # The main Tauri binary is `src/main.rs` (auto-detected); this extra bin is
 # a small standalone forwarder that MCP clients spawn as a stdio subprocess.

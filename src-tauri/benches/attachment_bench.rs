@@ -78,6 +78,8 @@ async fn seed_attachments_for_block(pool: &SqlitePool, block_id: &str, m: usize)
 fn bench_add_attachment(c: &mut Criterion) {
     let mut group = c.benchmark_group("add_attachment");
 
+    // Cap intentional (#1231): attachments number in the thousands at most;
+    // 10K is already reasonable, so this is not extended to the 100K ceiling.
     for size in [100, 1_000, 10_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
@@ -141,6 +143,8 @@ fn bench_add_attachment(c: &mut Criterion) {
 fn bench_delete_attachment(c: &mut Criterion) {
     let mut group = c.benchmark_group("delete_attachment");
 
+    // Cap intentional (#1231): attachments number in the thousands at most;
+    // 10K is already reasonable, so this is not extended to the 100K ceiling.
     for size in [100, 1_000, 10_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
@@ -235,6 +239,8 @@ fn bench_delete_attachment(c: &mut Criterion) {
 fn bench_list_attachments(c: &mut Criterion) {
     let mut group = c.benchmark_group("list_attachments");
 
+    // Cap intentional (#1231): attachments number in the thousands at most;
+    // 10K is already reasonable, so this is not extended to the 100K ceiling.
     for size in [100, 1_000, 10_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();

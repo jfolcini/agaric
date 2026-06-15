@@ -178,6 +178,8 @@ fn bench_flush_draft(c: &mut Criterion) {
 // ===========================================================================
 
 fn bench_save_draft_with_background_drafts(c: &mut Criterion) {
+    // Cap intentional (#1231): only a handful of drafts are in flight in
+    // reality; these sizes are already generous, so this is not pushed to 100K.
     let sizes: &[usize] = &[10, 100, 1000];
 
     let mut group = c.benchmark_group("save_draft_bg_drafts");
@@ -219,6 +221,8 @@ fn bench_save_draft_with_background_drafts(c: &mut Criterion) {
 // ===========================================================================
 
 fn bench_flush_draft_with_background_drafts(c: &mut Criterion) {
+    // Cap intentional (#1231): only a handful of drafts are in flight in
+    // reality; these sizes are already generous, so this is not pushed to 100K.
     let sizes: &[usize] = &[10, 100, 1000];
     let rt = Runtime::new().unwrap();
 
@@ -262,6 +266,8 @@ fn bench_flush_draft_with_background_drafts(c: &mut Criterion) {
 // ===========================================================================
 
 fn bench_delete_draft(c: &mut Criterion) {
+    // Cap intentional (#1231): in-flight drafts are bounded by human behavior;
+    // 10K is generous, so this is not extended to the 100K vault ceiling.
     let sizes: &[usize] = &[100, 1000, 10_000];
 
     let mut group = c.benchmark_group("delete_draft");
@@ -309,6 +315,8 @@ fn bench_delete_draft(c: &mut Criterion) {
 // ===========================================================================
 
 fn bench_list_drafts(c: &mut Criterion) {
+    // Cap intentional (#1231): in-flight drafts are bounded by human behavior;
+    // 10K is generous, so this is not extended to the 100K vault ceiling.
     let sizes: &[usize] = &[100, 1000, 10_000];
 
     let mut group = c.benchmark_group("list_drafts");

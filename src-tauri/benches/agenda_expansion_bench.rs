@@ -125,6 +125,8 @@ fn bench_agenda_expansion(c: &mut Criterion) {
     let start_date = "2025-07-01";
     let end_date = "2025-07-30";
 
+    // Cap intentional (#1231): dated/repeating blocks are a fraction of the
+    // vault; 10K is already a heavy agenda, so this is not extended to 100K.
     for m in [100, 1_000, 10_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();

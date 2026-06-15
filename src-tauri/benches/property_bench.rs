@@ -86,7 +86,11 @@ async fn seed_properties(pool: &SqlitePool, ids: &[String]) {
 fn bench_set_property(c: &mut Criterion) {
     let mut group = c.benchmark_group("set_property");
 
-    for size in [100, 1_000, 10_000] {
+    // Size axis = total block count, which scales with the vault, so this
+    // sweeps to the realistic 100K-block ceiling (#1231). `seed_properties`
+    // puts a handful (3) of props per block — property cost grows with the
+    // number of property-bearing blocks, not with props-per-block.
+    for size in [100, 1_000, 10_000, 100_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("set_prop_{size}")));
@@ -136,7 +140,8 @@ fn bench_set_property(c: &mut Criterion) {
 fn bench_get_properties(c: &mut Criterion) {
     let mut group = c.benchmark_group("get_properties");
 
-    for size in [100, 1_000, 10_000] {
+    // 100K = vault-scale ceiling (#1231); see `bench_set_property`.
+    for size in [100, 1_000, 10_000, 100_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("get_prop_{size}")));
@@ -170,7 +175,8 @@ fn bench_get_properties(c: &mut Criterion) {
 fn bench_delete_property(c: &mut Criterion) {
     let mut group = c.benchmark_group("delete_property");
 
-    for size in [100, 1_000, 10_000] {
+    // 100K = vault-scale ceiling (#1231); see `bench_set_property`.
+    for size in [100, 1_000, 10_000, 100_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("del_prop_{size}")));
@@ -245,7 +251,8 @@ fn bench_delete_property(c: &mut Criterion) {
 fn bench_set_todo_state(c: &mut Criterion) {
     let mut group = c.benchmark_group("set_todo_state");
 
-    for size in [100, 1_000, 10_000] {
+    // 100K = vault-scale ceiling (#1231); see `bench_set_property`.
+    for size in [100, 1_000, 10_000, 100_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("todo_{size}")));
@@ -289,7 +296,8 @@ fn bench_set_todo_state(c: &mut Criterion) {
 fn bench_set_priority(c: &mut Criterion) {
     let mut group = c.benchmark_group("set_priority");
 
-    for size in [100, 1_000, 10_000] {
+    // 100K = vault-scale ceiling (#1231); see `bench_set_property`.
+    for size in [100, 1_000, 10_000, 100_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("prio_{size}")));
@@ -333,7 +341,8 @@ fn bench_set_priority(c: &mut Criterion) {
 fn bench_set_due_date(c: &mut Criterion) {
     let mut group = c.benchmark_group("set_due_date");
 
-    for size in [100, 1_000, 10_000] {
+    // 100K = vault-scale ceiling (#1231); see `bench_set_property`.
+    for size in [100, 1_000, 10_000, 100_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("due_{size}")));
@@ -377,7 +386,8 @@ fn bench_set_due_date(c: &mut Criterion) {
 fn bench_set_scheduled_date(c: &mut Criterion) {
     let mut group = c.benchmark_group("set_scheduled_date");
 
-    for size in [100, 1_000, 10_000] {
+    // 100K = vault-scale ceiling (#1231); see `bench_set_property`.
+    for size in [100, 1_000, 10_000, 100_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("sched_{size}")));

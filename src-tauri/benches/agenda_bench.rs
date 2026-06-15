@@ -122,6 +122,8 @@ fn bench_count_agenda_batch(c: &mut Criterion) {
         })
         .collect();
 
+    // Cap intentional (#1231): dated blocks are a fraction of the vault;
+    // 10K is already a heavy agenda, so this is not extended to 100K.
     for size in [100, 1_000, 10_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
@@ -166,6 +168,8 @@ fn bench_count_agenda_batch_by_source(c: &mut Criterion) {
         })
         .collect();
 
+    // Cap intentional (#1231): dated blocks are a fraction of the vault;
+    // 10K is already a heavy agenda, so this is not extended to 100K.
     for size in [100, 1_000, 10_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
@@ -202,6 +206,8 @@ fn bench_count_agenda_batch_by_source(c: &mut Criterion) {
 fn bench_list_projected_agenda(c: &mut Criterion) {
     let mut group = c.benchmark_group("list_projected_agenda");
 
+    // Cap intentional (#1231): dated blocks are a fraction of the vault;
+    // 10K is already a heavy agenda, so this is not extended to 100K.
     for size in [100, 1_000, 10_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();

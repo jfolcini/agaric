@@ -108,6 +108,8 @@ fn bench_set_page_aliases(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("set_page_aliases");
 
+    // Cap intentional (#1231): ~a few aliases per page; 10K pages already
+    // ≈ a 100K-block vault's page count, so this is not extended to 100K.
     for n_pages in [100, 1_000, 10_000] {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("set_alias_{n_pages}")));
