@@ -9,7 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useBlockActions } from '@/hooks/useBlockActions'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
-import { dispatchBlockEvent } from '@/lib/block-events'
+import { type BLOCK_EVENTS, dispatchBlockEvent } from '@/lib/block-events'
 import { dueDateColor, formatCompactDate, MONTH_SHORT } from '@/lib/date-utils'
 import { priorityColor } from '@/lib/priority-color'
 import { formatRepeatLabel } from '@/lib/repeat-utils'
@@ -34,7 +34,12 @@ interface DateChipProps {
   date: string
   icon: LucideIcon
   colorClass: string
-  eventName: string
+  /**
+   * Typed BLOCK_EVENTS key (not a raw event-name string) so the producer here
+   * stays in lockstep with the listener: a constant rename is now a compile
+   * error instead of a silent desync.
+   */
+  eventName: keyof typeof BLOCK_EVENTS
   i18nKey: string
   chipClass: string
 }
@@ -58,7 +63,7 @@ export function DateChip({
       title={t(i18nKey, { date: formatCompactDate(date) })}
       aria-label={t(i18nKey, { date: formatCompactDate(date) })}
       onClick={() => {
-        document.dispatchEvent(new CustomEvent(eventName))
+        dispatchBlockEvent(eventName)
       }}
     >
       <Icon className="h-3.5 w-3.5 flex-shrink-0" />
@@ -453,7 +458,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
           date={dueDate}
           icon={CalendarDays}
           colorClass={dueDateColor(dueDate)}
-          eventName="open-due-date-picker"
+          eventName="OPEN_DUE_DATE_PICKER"
           i18nKey="block.dueDate"
           chipClass="due-date-chip"
         />
@@ -470,7 +475,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
           date={scheduledDate}
           icon={Calendar}
           colorClass="bg-date-scheduled text-date-scheduled-foreground"
-          eventName="open-scheduled-date-picker"
+          eventName="OPEN_SCHEDULED_DATE_PICKER"
           i18nKey="block.scheduledDate"
           chipClass="scheduled-chip"
         />

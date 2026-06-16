@@ -9,6 +9,7 @@ import Text from '@tiptap/extension-text'
 import { common, createLowlight } from 'lowlight'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { BLOCK_EVENTS } from '../../lib/block-events'
 import { resetAllShortcuts, setCustomShortcut } from '../../lib/keyboard-config'
 import { logger } from '../../lib/logger'
 import { Underline } from '../extensions/underline'
@@ -83,6 +84,25 @@ describe('dispatchPriorityEvent', () => {
     dispatchPriorityEvent(1)
     expect(receivedEvent).toBeInstanceOf(CustomEvent)
     document.removeEventListener('set-priority-1', handler)
+  })
+
+  // #1251: the producer now routes through the typed `dispatchBlockEvent`
+  // helper, so the emitted name must equal the `BLOCK_EVENTS` constant a
+  // listener subscribes to (no hand-matched literal that could silently
+  // desync on a rename). Assert producer ↔ constant for each level.
+  it.each([
+    [1, BLOCK_EVENTS.SET_PRIORITY_1],
+    [2, BLOCK_EVENTS.SET_PRIORITY_2],
+    [3, BLOCK_EVENTS.SET_PRIORITY_3],
+  ] as const)('dispatches the typed BLOCK_EVENTS constant for level %i', (level, eventName) => {
+    let receivedType: string | null = null
+    const handler = (e: Event) => {
+      receivedType = e.type
+    }
+    document.addEventListener(eventName, handler)
+    dispatchPriorityEvent(level)
+    expect(receivedType).toBe(eventName)
+    document.removeEventListener(eventName, handler)
   })
 })
 

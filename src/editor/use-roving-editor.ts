@@ -30,6 +30,7 @@ import Text from '@tiptap/extension-text'
 import { type Editor, Extension, useEditor } from '@tiptap/react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 
+import { dispatchBlockEvent } from '@/lib/block-events'
 import { tipTapShortcutMap } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { curatedLowlight } from '@/lib/lowlight-curated'
@@ -193,7 +194,11 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
 
 /** Dispatch a priority custom event on document. Exported for testing. */
 export function dispatchPriorityEvent(level: 1 | 2 | 3): void {
-  document.dispatchEvent(new CustomEvent(`set-priority-${level}`))
+  // Route through the typed helper so the event name is the single-source-of-
+  // truth constant, not a hand-built literal (the producer/consumer can no
+  // longer silently desync on a rename). `SET_PRIORITY_${level}` is a typed key
+  // of BLOCK_EVENTS, so a typo here is a compile error.
+  dispatchBlockEvent(`SET_PRIORITY_${level}`)
 }
 
 /** Custom extension dispatching priority shortcut events. @internal Exported for testing. */

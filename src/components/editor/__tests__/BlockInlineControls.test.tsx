@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { BLOCK_EVENTS } from '@/lib/block-events'
 import { t } from '@/lib/i18n'
 
 vi.mock('lucide-react', () => ({
@@ -241,7 +242,7 @@ describe('DateChip', () => {
           )) as unknown as LucideIcon
         }
         colorClass="bg-muted"
-        eventName="test-event"
+        eventName="OPEN_DUE_DATE_PICKER"
         i18nKey="block.dueDate"
         chipClass="test-chip"
       />,
@@ -250,26 +251,36 @@ describe('DateChip', () => {
     expect(screen.getByTestId('test-icon')).toBeInTheDocument()
   })
 
-  it('dispatches custom event on click', async () => {
+  // #1251: DateChip routes its click through the typed `dispatchBlockEvent`
+  // helper, so it emits the `BLOCK_EVENTS` constant for the given typed key —
+  // not a hand-built literal. Assert producer ↔ constant for both pickers a
+  // chip can open, listening on the same name the consumer subscribes to.
+  it.each([
+    ['OPEN_DUE_DATE_PICKER', BLOCK_EVENTS.OPEN_DUE_DATE_PICKER],
+    ['OPEN_SCHEDULED_DATE_PICKER', BLOCK_EVENTS.OPEN_SCHEDULED_DATE_PICKER],
+  ] as const)('dispatches the %s typed event on click', async (eventName, emittedName) => {
     const user = userEvent.setup()
-    const handler = vi.fn()
-    document.addEventListener('test-event', handler)
+    let receivedType: string | null = null
+    const handler = (e: Event) => {
+      receivedType = e.type
+    }
+    document.addEventListener(emittedName, handler)
 
     render(
       <DateChip
         date="2099-01-01"
         icon={(() => <svg />) as unknown as LucideIcon}
         colorClass=""
-        eventName="test-event"
+        eventName={eventName}
         i18nKey="block.dueDate"
         chipClass=""
       />,
     )
 
     await user.click(screen.getByRole('button'))
-    expect(handler).toHaveBeenCalledOnce()
+    expect(receivedType).toBe(emittedName)
 
-    document.removeEventListener('test-event', handler)
+    document.removeEventListener(emittedName, handler)
   })
 })
 
