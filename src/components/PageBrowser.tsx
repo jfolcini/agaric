@@ -50,12 +50,7 @@ import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import { useStarredPages } from '../hooks/useStarredPages'
 import { isAppError, isConflict, type TypedAppError } from '../lib/app-error'
 import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '../lib/tauri'
-import {
-  createPageInSpace,
-  listBlocks,
-  listPagesWithMetadata,
-  resolvePageByAlias,
-} from '../lib/tauri'
+import { createPageInSpace, listPagesWithMetadata, resolvePageByAlias } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
 import { selectPageFiltersForSpace, usePageBrowserFiltersStore } from '../stores/pageBrowserFilters'
 import { useResolveStore } from '../stores/resolve'
@@ -78,33 +73,6 @@ const HEADER_ROW_HEIGHT = 36
 /// headroom, expanded (68 px) gets one fewer — both well inside the
 /// LoadMoreButton fallback envelope.
 const INFINITE_SCROLL_BOTTOM_THRESHOLD_PX = 300
-
-/**
- * PEND-56 — localStorage key gating the new `listPagesWithMetadata` +
- * `<DensityRow>` code path. Stored as the bare string `'true'` /
- * `'false'` (not JSON) so it can be flipped by hand from devtools.
- *
- * **Rollout (PEND-56 follow-up):** the new path is now the **default**.
- * A missing key — or any value other than `'false'` — reads as ON. The
- * key is now an *opt-out*: set it to `'false'` to fall back to the
- * legacy `listBlocks` + `PageRow` path (the rollback target until that
- * path is removed in a later cleanup). Private-mode `localStorage`
- * throws are treated as "on" so the default experience is consistent.
- */
-const DENSITY_V1_FLAG_KEY = 'pageBrowser.densityV1'
-
-function usePageBrowserDensityV1Flag(): boolean {
-  // No reactive subscription: the flag is read once at mount, never
-  // toggled from the UI.
-  const [flagOn] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(DENSITY_V1_FLAG_KEY) !== 'false'
-    } catch {
-      return true
-    }
-  })
-  return flagOn
-}
 
 /**
  * PEND-56 Phase 3 — wrap a paginating IPC call so that a v2 cursor
@@ -161,24 +129,22 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   // FEAT-3 Phase 2 — honour the current space. When the `SpaceStore`
   // has not yet hydrated (`isReady === false`) we render a
-  // `LoadingSkeleton` instead of firing `listBlocks` so the first render
-  // never leaks cross-space pages. Once ready, `currentSpaceId` is
-  // threaded to `listBlocks` so the backend filters results.
+  // `LoadingSkeleton` instead of firing the page query so the first
+  // render never leaks cross-space pages. Once ready, `currentSpaceId`
+  // is threaded to `listPagesWithMetadata` so the backend filters
+  // results.
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const spaceIsReady = useSpaceStore((s) => s.isReady)
 
-  // PEND-56 Phase 3 — density preference is loaded regardless of the
-  // density-v1 IPC flag so the user's stored choice persists across the
-  // flag flip. With the flag off the value is still threaded to
-  // `<PageBrowserHeader>` (so the selector works) and to
-  // `estimateSize` (so a future toggle re-measures correctly).
+  // PEND-56 Phase 3 — density preference threaded to
+  // `<PageBrowserHeader>` (so the selector works) and to `estimateSize`
+  // (so the rows measure correctly per density).
   const { density, setDensity } = usePageBrowserDensity()
-  const flagOn = usePageBrowserDensityV1Flag()
-  // The two queryFn branches share a `useCallback` identity-stability
-  // contract — `usePaginatedQuery` refetches whenever the function
-  // identity changes, so we want one stable function per
-  // (space, sort, flag) tuple. `sortOption` is read below; declare a
-  // local alias before the queryFn so the dep list stays tight.
+  // The `queryFn` is wrapped in a `useCallback` for identity-stability —
+  // `usePaginatedQuery` refetches whenever the function identity
+  // changes, so we want one stable function per (space, sort, filters)
+  // tuple. `sortOption` is read below; declare a local alias before the
+  // queryFn so the dep list stays tight.
   const { sortOption, setSortOption, sortPages } = usePageBrowserSort()
 
   // PEND-58 Phase 3 — compound filters. Chips live in a per-space store
@@ -190,8 +156,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // monotonic `_addId` assignment (which keeps structurally-identical chips on
   // distinct React keys; the id is stripped before the primitive crosses the
   // IPC) moved into the store; these handlers just bind the active space's key.
-  // Filters only apply on the metadata IPC path (`flagOn`); the legacy
-  // `listBlocks` path has no server-side filter support.
   const filters = usePageBrowserFiltersStore((s) => selectPageFiltersForSpace(s, currentSpaceId))
   const addFilterForSpace = usePageBrowserFiltersStore((s) => s.addFilter)
   const removeFilterForSpace = usePageBrowserFiltersStore((s) => s.removeFilter)
@@ -248,61 +212,55 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   const queryFn = useCallback(
     (cursor?: string) => {
-      // FEAT-3 Phase 4 — both IPCs require a `spaceId`. The `?? ''`
+      // FEAT-3 Phase 4 — the IPC requires a `spaceId`. The `?? ''`
       // fallback is intentional pre-bootstrap behaviour: the empty
       // string forces a no-match SQL filter (returning an empty page)
       // instead of a runtime null deref. The `enabled: spaceIsReady`
       // gate below normally prevents this branch from firing.
       const spaceId = currentSpaceId ?? ''
-      if (flagOn) {
-        // PEND-56 Phase 3 — metadata-rich payload + server-derived
-        // sort. The wire sort enum is a 4-member subset of the
-        // frontend's 7 (`pageSortWireFor` does the mapping); the
-        // frontend-only sorts (`alphabetical`, `recent`, `created`,
-        // `default`) all map to wire `default` and re-sort client-side
-        // via `sortPages`.
-        return withCursorRecovery(
-          (c) =>
-            listPagesWithMetadata({
-              sort: pageSortWireFor(sortOption),
-              spaceId,
-              ...(wireFilters.length > 0 && { filters: wireFilters }),
-              ...(c != null && { cursor: c }),
-              limit: PAGINATION_LIMIT,
-            }),
-          cursor,
-        ).catch((err: unknown) => {
-          // E18 — a malformed/disallowed compound filter rejects with
-          // `InvalidFilter:`. Surface a specific toast (the offending
-          // filter, not the list, is the problem) and re-throw a
-          // cancellation-shaped error so `usePaginatedQuery` swallows it
-          // silently instead of also firing the generic `loadFailed`
-          // toast (double-toast). The `error` state stays clean — the
-          // specific toast already told the user what's wrong.
-          if (isInvalidFilterError(err)) {
-            notify.error(i18nT('pageBrowser.filter.invalidFilter'))
-            const suppressed: TypedAppError = { kind: 'cancelled', message: err.message }
-            throw suppressed
-          }
-          throw err
-        })
-      }
-      return listBlocks({
-        blockType: 'page',
-        ...(cursor != null && { cursor }),
-        limit: PAGINATION_LIMIT,
-        spaceId,
+      // PEND-56 Phase 3 — metadata-rich payload + server-derived
+      // sort. The wire sort enum is a 4-member subset of the
+      // frontend's 7 (`pageSortWireFor` does the mapping); the
+      // frontend-only sorts (`alphabetical`, `recent`, `created`,
+      // `default`) all map to wire `default` and re-sort client-side
+      // via `sortPages`.
+      return withCursorRecovery(
+        (c) =>
+          listPagesWithMetadata({
+            sort: pageSortWireFor(sortOption),
+            spaceId,
+            ...(wireFilters.length > 0 && { filters: wireFilters }),
+            ...(c != null && { cursor: c }),
+            limit: PAGINATION_LIMIT,
+          }),
+        cursor,
+      ).catch((err: unknown) => {
+        // E18 — a malformed/disallowed compound filter rejects with
+        // `InvalidFilter:`. Surface a specific toast (the offending
+        // filter, not the list, is the problem) and re-throw a
+        // cancellation-shaped error so `usePaginatedQuery` swallows it
+        // silently instead of also firing the generic `loadFailed`
+        // toast (double-toast). The `error` state stays clean — the
+        // specific toast already told the user what's wrong.
+        if (isInvalidFilterError(err)) {
+          notify.error(i18nT('pageBrowser.filter.invalidFilter'))
+          const suppressed: TypedAppError = { kind: 'cancelled', message: err.message }
+          throw suppressed
+        }
+        throw err
       })
     },
     // `wireFilters` is `useMemo`'d on `[filters]`, so its identity only
     // changes on a real chip add/remove — safe to depend on directly.
-    [currentSpaceId, flagOn, sortOption, wireFilters],
+    [currentSpaceId, sortOption, wireFilters],
   )
-  // `pages` is typed as the union — the grouping pipeline reads only
-  // the shared `BlockRow` fields, so callers can treat the unified
-  // shape as `BlockRow`. The metadata fields (when present) flow
-  // through unchanged and `<DensityRow>` reads them via the same
-  // typed cast in `PageBrowserRowRenderer`.
+  // `pages` is typed as the union: the query returns
+  // `PageWithMetadataRow`, but the optimistic create path prepends a
+  // raw `BlockRow`. The grouping pipeline reads only the shared
+  // `BlockRow` fields, so callers can treat the unified shape as
+  // `BlockRow`. The metadata fields (when present) flow through
+  // unchanged and `<DensityRow>` reads them via a typed cast in
+  // `PageBrowserRowRenderer`.
   const {
     items: pages,
     loading,
@@ -588,8 +546,8 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const isSinglePageVault = pages.length <= 1 && !hasAnyNamespacedPage
 
   // The grouping pipeline reads only the shared `id` / `content`
-  // fields, which both `BlockRow` (flag-off) and `PageWithMetadataRow`
-  // (flag-on) carry. The metadata extras (`lastModifiedAt`,
+  // fields, which both the optimistic `BlockRow` and the query's
+  // `PageWithMetadataRow` carry. The metadata extras (`lastModifiedAt`,
   // `inboundLinkCount`, etc.) are preserved on the row object and
   // re-read at the leaf via a typed cast in `PageBrowserRowRenderer`.
   // Cast to `BlockRow[]` at the grouping boundary so the existing
@@ -1064,13 +1022,12 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         />
       </ViewHeader>
 
-      {/* PEND-58 Phase 3 — compound-filter chip-row. Only on the
-          metadata IPC path; the legacy `listBlocks` path has no
-          server-side filter support. Rendered when there are pages to
-          groom OR filters are already active — the latter keeps the
-          chips reachable when a filter narrows the result set to zero,
-          so the user can always remove the filter that emptied the view. */}
-      {flagOn && (pages.length > 0 || filters.length > 0) && (
+      {/* PEND-58 Phase 3 — compound-filter chip-row. Rendered when there
+          are pages to groom OR filters are already active — the latter
+          keeps the chips reachable when a filter narrows the result set
+          to zero, so the user can always remove the filter that emptied
+          the view. */}
+      {(pages.length > 0 || filters.length > 0) && (
         <PageBrowserFilterRow
           filters={filters}
           onAddFilter={handleAddFilter}
@@ -1201,7 +1158,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                     onPageSelect={onPageSelect}
                     onCreateUnder={handleCreateUnder}
                     onDeleteRequest={setDeleteTarget}
-                    flagOn={flagOn}
                     density={density}
                     selectedIds={multiSelected}
                     onToggleMultiSelect={handleMultiSelectRowClick}

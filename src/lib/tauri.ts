@@ -519,9 +519,8 @@ export async function listJournalPagesInRange(params: {
  * `last_modified_at`, `inbound_link_count`, `child_block_count`, and a
  * `has_property_flags` bitmask (bit 0 tags / 1 todo / 2 scheduled / 3 due).
  *
- * Sibling of {@link listBlocks} (which serves the existing flat-row Pages
- * view). This wrapper is what `PageBrowser` calls when the
- * `pageBrowser.densityV1` flag is on.
+ * Sibling of {@link listBlocks}. This wrapper backs the `PageBrowser`
+ * page list.
  *
  * Sort modes that need server-derived sort keys (`recently-modified`,
  * `most-linked`, `biggest`) cursor-paginate via the new keysets. The

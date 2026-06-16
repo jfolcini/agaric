@@ -9,8 +9,7 @@
  * `FilterWithKey` pattern) so structurally-identical chips keep distinct
  * identities across reorders.
  *
- * Rendered only on the `pageBrowser.densityV1` path — server-side filtering
- * needs `list_pages_with_metadata`, which the legacy `listBlocks` path lacks.
+ * Server-side filtering is backed by `list_pages_with_metadata`.
  */
 
 import type { TFunction } from 'i18next'

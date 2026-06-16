@@ -8,7 +8,7 @@
  * Tests for PageBrowser component.
  *
  * Validates:
- *  - Initial load calls listBlocks with blockType='page'
+ *  - Initial load calls list_pages_with_metadata
  *  - Cursor-based pagination (Load More button)
  *  - Empty state and loading states
  *  - Page selection callback
@@ -98,14 +98,13 @@ beforeEach(() => {
   sessionStorage.clear()
   localStorage.removeItem('page-browser-sort')
   localStorage.removeItem('page-browser-density')
-  localStorage.removeItem('pageBrowser.densityV1')
   localStorage.removeItem('starred-pages')
   // Compound-filter chips now live in a module-global per-space store; reset it
   // so chips added in one test don't leak into the next.
   usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
-  // FEAT-3 Phase 2 — PageBrowser now gates its render and listBlocks
-  // call on `useSpaceStore.isReady`. Seed the store so tests exercise
-  // the real code path rather than the loading skeleton.
+  // FEAT-3 Phase 2 — PageBrowser now gates its render and page query
+  // on `useSpaceStore.isReady`. Seed the store so tests exercise the
+  // real code path rather than the loading skeleton.
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_TEST',
     availableSpaces: [
@@ -122,23 +121,16 @@ beforeEach(() => {
 })
 
 describe('PageBrowser', () => {
-  it('calls listBlocks with blockType=page on mount', async () => {
-    // Legacy rollback path (flag now defaults on; pin off to assert the
-    // `list_blocks` IPC shape).
-    localStorage.setItem('pageBrowser.densityV1', 'false')
+  it('calls list_pages_with_metadata on mount', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
     render(<PageBrowser />)
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
-        parentId: null,
-        blockType: 'page',
-        tagId: null,
-        agenda: null,
+      expect(mockedInvoke).toHaveBeenCalledWith('list_pages_with_metadata', {
+        filter: { sort: 'default', spaceId: 'SPACE_TEST', filters: [] },
         cursor: null,
         limit: 50,
-        spaceId: 'SPACE_TEST',
       })
     })
   })
@@ -195,8 +187,6 @@ describe('PageBrowser', () => {
   })
 
   it('uses cursor-based pagination with Load More', async () => {
-    // Legacy rollback path — asserts the `list_blocks` cursor shape.
-    localStorage.setItem('pageBrowser.densityV1', 'false')
     const page1 = {
       items: [makePage({ id: 'P1', content: 'Page 1' })],
       next_cursor: 'cursor_abc',
@@ -216,21 +206,17 @@ describe('PageBrowser', () => {
     // PageBrowser pagination UX (2026-05-14) — auto-load now fires
     // when the last visible row is within 5 rows of the end. Under
     // the mocked virtualizer (which renders ALL items) that's true
-    // from the first paint, so a second `list_blocks` IPC fires
-    // immediately without a button click. The existing
+    // from the first paint, so a second `list_pages_with_metadata` IPC
+    // fires immediately without a button click. The existing
     // `<LoadMoreButton>` remains the a11y / no-JS fallback (covered
     // by its own component tests).
 
     // Should call with the cursor from page 1
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
-        parentId: null,
-        blockType: 'page',
-        tagId: null,
-        agenda: null,
+      expect(mockedInvoke).toHaveBeenCalledWith('list_pages_with_metadata', {
+        filter: { sort: 'default', spaceId: 'SPACE_TEST', filters: [] },
         cursor: 'cursor_abc',
         limit: 50,
-        spaceId: 'SPACE_TEST',
       })
     })
 
@@ -1357,9 +1343,6 @@ describe('PageBrowser', () => {
     // -----------------------------------------------------------------
 
     it('alias resolution discards stale promise resolution (PEND-29 B-2)', async () => {
-      // Pin the legacy `list_blocks` path — this test's custom mock only
-      // models that IPC; alias behaviour is path-agnostic.
-      localStorage.setItem('pageBrowser.densityV1', 'false')
       const user = userEvent.setup()
 
       // Two pages: `Apple` (P_APPLE) and `Banana` (P_BANANA). The alias
@@ -1371,7 +1354,7 @@ describe('PageBrowser', () => {
       let resolveBanana!: (v: unknown) => void
       const aliasCalls: string[] = []
       mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
-        if (cmd === 'list_blocks') {
+        if (cmd === 'list_pages_with_metadata') {
           return Promise.resolve({
             items: [
               makePage({ id: 'P_APPLE', content: 'Apple' }),
@@ -2814,8 +2797,6 @@ describe('PageBrowser', () => {
       // The mocked virtualizer renders ALL items; lastVisible.index ===
       // virtualItemCount - 1 every render. So the auto-load effect
       // fires as soon as we mount and there are more pages.
-      // Legacy rollback path — asserts the `list_blocks` cursor IPC.
-      localStorage.setItem('pageBrowser.densityV1', 'false')
       const page1 = {
         items: [makePage({ id: 'P1', content: 'One' }), makePage({ id: 'P2', content: 'Two' })],
         next_cursor: 'cursor_abc',
@@ -2839,14 +2820,10 @@ describe('PageBrowser', () => {
       // page 1 fetched on mount; auto-load should fire a second IPC
       // for page 2 without any click on the Load More button.
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
-          parentId: null,
-          blockType: 'page',
-          tagId: null,
-          agenda: null,
+        expect(mockedInvoke).toHaveBeenCalledWith('list_pages_with_metadata', {
+          filter: { sort: 'default', spaceId: 'SPACE_TEST', filters: [] },
           cursor: 'cursor_abc',
           limit: 50,
-          spaceId: 'SPACE_TEST',
         })
       })
 
@@ -3019,18 +2996,12 @@ describe('PageBrowser', () => {
     })
   })
 
-  // ── PEND-56 Phase 3 — density-v1 flag-on path ─────────────────────
+  // ── PEND-56 Phase 3 — density rows ────────────────────────────────
   //
-  // The localStorage flag `pageBrowser.densityV1` swings the queryFn
-  // from `listBlocks` to `listPagesWithMetadata` and routes the leaf
-  // rows through `<DensityRow>`. These tests pin the flag ON in
-  // `beforeEach`, clear it in `afterEach`, and verify the wiring.
-  describe('PEND-56 — density-v1 flag', () => {
-    beforeEach(() => {
-      localStorage.setItem('pageBrowser.densityV1', 'true')
-    })
+  // The queryFn fetches via `listPagesWithMetadata` and routes the leaf
+  // rows through `<DensityRow>`. These tests verify the wiring.
+  describe('PEND-56 — density rows', () => {
     afterEach(() => {
-      localStorage.removeItem('pageBrowser.densityV1')
       localStorage.removeItem('page-browser-density')
     })
 
@@ -3067,7 +3038,7 @@ describe('PageBrowser', () => {
       }
     }
 
-    it('calls list_pages_with_metadata (and not list_blocks) on mount when the flag is on', async () => {
+    it('calls list_pages_with_metadata (and not list_blocks) on mount', async () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_pages_with_metadata') {
@@ -3449,11 +3420,7 @@ describe('PageBrowser', () => {
   // hand-craft rows with known counts/timestamps and confirm the
   // displayed order matches the comparator (alphabetical tiebreaker).
   describe('PEND-56 — sort comparator vs metadata', () => {
-    beforeEach(() => {
-      localStorage.setItem('pageBrowser.densityV1', 'true')
-    })
     afterEach(() => {
-      localStorage.removeItem('pageBrowser.densityV1')
       localStorage.removeItem('page-browser-sort')
     })
 
@@ -3604,18 +3571,11 @@ describe('PageBrowser', () => {
 
   // ── PEND-58 Phase 3 — compound filters ────────────────────────────
   //
-  // With the densityV1 flag on, the chip-row applies server-side
-  // filters by threading a `filters` array into the metadata IPC.
-  // These tests drive the real Add-Filter popover and assert the IPC
-  // receives the chosen primitive, then that removing it clears it.
+  // The chip-row applies server-side filters by threading a `filters`
+  // array into the metadata IPC. These tests drive the real Add-Filter
+  // popover and assert the IPC receives the chosen primitive, then that
+  // removing it clears it.
   describe('PEND-58 — compound filters', () => {
-    beforeEach(() => {
-      localStorage.setItem('pageBrowser.densityV1', 'true')
-    })
-    afterEach(() => {
-      localStorage.removeItem('pageBrowser.densityV1')
-    })
-
     function metaPage(id: string, content: string) {
       return {
         id,
@@ -3804,42 +3764,6 @@ describe('PageBrowser', () => {
         expect(liveRegion).toHaveTextContent(t('pageBrowser.filter.announceResults', { count: 2 }))
       })
     })
-
-    it('does not render the filter row on the legacy (flag-off) path', async () => {
-      // The flag is now opt-OUT (default on); set it explicitly to
-      // 'false' to exercise the legacy `listBlocks` rollback path.
-      localStorage.setItem('pageBrowser.densityV1', 'false')
-      mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-        if (cmd === 'list_blocks') {
-          return Promise.resolve({
-            items: [
-              {
-                id: 'P1',
-                block_type: 'page',
-                content: 'Apple',
-                parent_id: null,
-                position: null,
-                deleted_at: null,
-                todo_state: null,
-                priority: null,
-                due_date: null,
-                scheduled_date: null,
-                page_id: 'P1',
-              },
-            ],
-            next_cursor: null,
-            has_more: false,
-            total_count: 1,
-          })
-        }
-        return Promise.resolve(undefined)
-      })
-
-      render(<PageBrowser />)
-      await screen.findByText('Apple')
-      expect(screen.queryByRole('button', { name: 'Add filter' })).not.toBeInTheDocument()
-    })
   })
 
   // ── PEND-58d — frontend container hardening ─────────────────────────
@@ -3849,13 +3773,6 @@ describe('PageBrowser', () => {
   // integration (D11), duplicate-chip dedupe (D22), and the
   // cursor-recovery retry-also-fails path (T-F2 / withCursorRecovery).
   describe('PEND-58d — frontend container hardening', () => {
-    beforeEach(() => {
-      localStorage.setItem('pageBrowser.densityV1', 'true')
-    })
-    afterEach(() => {
-      localStorage.removeItem('pageBrowser.densityV1')
-    })
-
     function metaPage(id: string, content: string) {
       return {
         id,
@@ -4209,13 +4126,9 @@ describe('PageBrowser', () => {
   // ── PEND-58e — deep-review fixes (E5 / E7 / E13 / E15 / E16 / E18) ───
   describe('PEND-58e — deep-review fixes', () => {
     beforeEach(() => {
-      localStorage.setItem('pageBrowser.densityV1', 'true')
       // Reset the global resolve cache so E5's tag-name fixture doesn't
       // leak across tests.
       useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
-    })
-    afterEach(() => {
-      localStorage.removeItem('pageBrowser.densityV1')
     })
 
     function metaPage(id: string, content: string) {

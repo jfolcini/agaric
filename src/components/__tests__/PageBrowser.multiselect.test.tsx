@@ -47,11 +47,11 @@ const PAGES = [
   makePage({ id: 'P4', content: 'Delta' }),
 ]
 
-/** Seed the page list (flagOn metadata path consumes the first invoke). */
+/** Seed the page list (the metadata path consumes the first invoke). */
 function mockPageList() {
   mockedInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    if (cmd === 'list_pages_with_metadata' || cmd === 'list_blocks') {
+    if (cmd === 'list_pages_with_metadata') {
       return Promise.resolve({
         items: PAGES,
         next_cursor: null,
@@ -72,7 +72,6 @@ beforeEach(() => {
   vi.clearAllMocks()
   sessionStorage.clear()
   localStorage.removeItem('starred-pages')
-  localStorage.removeItem('pageBrowser.densityV1')
   usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_TEST',

@@ -25,10 +25,8 @@ const axePath = createRequire(import.meta.url).resolve('axe-core')
  * rather than merely rendering a control.
  *
  * Harness notes (shared with `pages-filter.spec.ts`):
- *   - The chip row is the DEFAULT surface: `pageBrowser.densityV1` is an
- *     OPT-OUT (only the literal string `'false'` falls back to legacy
- *     `listBlocks`). The flag is read once at mount, so flag-setting tests
- *     register an init script BEFORE `waitForBoot`'s `page.goto('/')`.
+ *   - The chip row is the Pages surface: rows render via the metadata-rich
+ *     `list_pages_with_metadata` path with the compound-filter chip-row above.
  *   - The tauri-mock derives `block_links` from `[[ULID]]` tokens, so the link
  *     facets reflect the seed topology: `Getting Started` ⇄ `Quick Notes`
  *     cross-reference (neither orphan); `Projects` / `Meetings` / the daily
@@ -48,8 +46,6 @@ const axePath = createRequire(import.meta.url).resolve('axe-core')
 const TAG_WORK_ID = '000000000000000000000TAG01'
 
 interface BootOpts {
-  /** `'off'` exercises the legacy `listBlocks` path (no chip row). */
-  flag?: 'default' | 'off'
   /** Seed N extra "Bulk Page NNN" pages for pagination / virtualization. */
   extraPages?: number
   /** Add the page-level Tag/Priority fixture page. */
@@ -64,14 +60,9 @@ async function openPagesView(page: Page): Promise<void> {
   await expect(page.getByRole('grid')).toBeVisible()
 }
 
-/** Set localStorage flags before boot, then open the Pages view. */
+/** Set localStorage state before boot, then open the Pages view. */
 async function bootPages(page: Page, opts: BootOpts = {}): Promise<void> {
-  const { flag = 'default', extraPages = 0, facetFixture = false } = opts
-  if (flag === 'off') {
-    await page.addInitScript(() => {
-      window.localStorage.setItem('pageBrowser.densityV1', 'false')
-    })
-  }
+  const { extraPages = 0, facetFixture = false } = opts
   if (extraPages > 0) {
     await page.addInitScript((n) => {
       window.localStorage.setItem('__mockExtraPages', String(n))
@@ -720,24 +711,14 @@ test.describe('PEND-58d — CRUD + grooming', () => {
 })
 
 // ===========================================================================
-// 11. Flag paths
+// 11. Chip-row + density rows
 // ===========================================================================
-test.describe('PEND-58d — flag paths', () => {
-  test('densityV1 default-on renders the chip-row + density rows', async ({ page }) => {
+test.describe('PEND-58d — chip-row + density rows', () => {
+  test('renders the chip-row + density rows', async ({ page }) => {
     await bootPages(page)
     await expect(page.getByRole('button', { name: 'Add filter' })).toBeVisible()
     // Density rows expose `data-density`.
     await expect(grid(page).locator('[data-page-item][data-density]').first()).toBeVisible()
-  })
-
-  test("densityV1 = 'false' opt-out hides the chip-row and density chrome", async ({ page }) => {
-    await bootPages(page, { flag: 'off' })
-    await expect(page.getByRole('button', { name: 'Add filter' })).toHaveCount(0)
-    await expect(page.getByTestId('page-browser-filter-row')).toHaveCount(0)
-    // Legacy rows carry no `data-density` attribute.
-    await expect(grid(page).locator('[data-page-item][data-density]')).toHaveCount(0)
-    // The legacy list still renders the seed pages.
-    await expect(grid(page).getByText('Getting Started', { exact: true })).toBeVisible()
   })
 })
 
