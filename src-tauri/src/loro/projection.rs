@@ -66,15 +66,26 @@ pub async fn project_create_block_to_sql(
     snapshot: &BlockSnapshot,
 ) -> Result<(), AppError> {
     let parent_id = snapshot.parent_id.as_deref();
+    // #1324: a page block's `page_id` is `id`. The command path
+    // (`block_ops.rs`) stamps it inline, and the deferred `SetBlockPageId`
+    // materialize task is deliberately skipped for pages (see
+    // `materializer/dispatch.rs`) — so if the projection path leaves it NULL,
+    // a synced / replayed page create stays NULL-owned and drops out of every
+    // `page_id`-scoped read until a full cache rebuild. (The
+    // `page_id_self_for_pages` CHECK, migration 0073, does NOT catch this:
+    // `NULL = id` is unknown, not false, so SQLite accepts the row.) Stamp it
+    // here for parity. Non-page blocks keep NULL; the deferred task fills them.
+    let page_id = (snapshot.block_type == "page").then_some(snapshot.block_id.as_str());
     sqlx::query!(
         "INSERT OR IGNORE INTO blocks \
-             (id, block_type, content, parent_id, position) \
-         VALUES (?, ?, ?, ?, ?)",
+             (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, ?, ?, ?, ?, ?)",
         snapshot.block_id,
         snapshot.block_type,
         snapshot.content,
         parent_id,
         snapshot.position,
+        page_id,
     )
     .execute(&mut *conn)
     .await?;
@@ -656,22 +667,36 @@ pub async fn project_block_full_to_sql(
             // its registering `is_space` property) arrives. `?6`/`?7` both
             // bind the space id.
             let space_id_str = space_id.as_str();
+            // #1324: a page block's `page_id` is `id` (the command path stamps
+            // it inline; the deferred `SetBlockPageId` materialize task is
+            // skipped for pages — see `materializer/dispatch.rs`). This
+            // engine-reproject path is the canonical sync-pull import, so
+            // without stamping it here a synced page lands with NULL `page_id`
+            // and is invisible to every `page_id`-scoped read (page listing,
+            // backlinks, subtree) until a full cache rebuild. Non-page blocks
+            // keep NULL on insert (the deferred task fills them); the conflict
+            // branch must NOT clobber a non-page block's already-resolved
+            // `page_id`, so it only overwrites for pages (`page_id = id`).
+            let page_id = (snap.block_type == "page").then_some(snap.block_id.as_str());
             sqlx::query!(
                 "INSERT INTO blocks \
-                     (id, block_type, content, parent_id, position, space_id) \
-                 VALUES (?, ?, ?, ?, ?, (SELECT id FROM spaces WHERE id = ?)) \
+                     (id, block_type, content, parent_id, position, space_id, page_id) \
+                 VALUES (?, ?, ?, ?, ?, (SELECT id FROM spaces WHERE id = ?), ?) \
                  ON CONFLICT(id) DO UPDATE SET \
                      block_type = excluded.block_type, \
                      content = excluded.content, \
                      parent_id = excluded.parent_id, \
                      position = excluded.position, \
-                     space_id = (SELECT id FROM spaces WHERE id = ?)",
+                     space_id = (SELECT id FROM spaces WHERE id = ?), \
+                     page_id = CASE WHEN excluded.block_type = 'page' \
+                                    THEN excluded.id ELSE blocks.page_id END",
                 snap.block_id,
                 snap.block_type,
                 snap.content,
                 parent_id,
                 snap.position,
                 space_id_str,
+                page_id,
                 space_id_str,
             )
             .execute(&mut *conn)
@@ -1201,6 +1226,55 @@ mod tests {
         assert_eq!(row.2, "hello world");
         assert_eq!(row.3, None);
         assert_eq!(row.4, 5);
+    }
+
+    #[tokio::test]
+    async fn project_create_page_block_stamps_page_id_self() {
+        // #1324: a page block projected through the materializer path must
+        // carry `page_id = id`. Before the fix this INSERT left `page_id` NULL
+        // (the CHECK accepts NULL — `NULL = id` is unknown, not false), and the
+        // deferred `SetBlockPageId` task is skipped for pages, so the page
+        // stayed NULL-owned and invisible to `page_id`-scoped reads.
+        let (pool, _dir) = fresh_pool().await;
+        let snap = snapshot(BLOCK_A, "page", "My Page", None, 1);
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_create_block_to_sql(&mut conn, &snap)
+            .await
+            .expect("page projection must stamp page_id = id");
+        drop(conn);
+
+        let page_id: Option<String> = sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch row");
+        assert_eq!(
+            page_id.as_deref(),
+            Some(BLOCK_A),
+            "a page block must materialize with page_id = id"
+        );
+    }
+
+    #[tokio::test]
+    async fn project_create_non_page_block_keeps_null_page_id() {
+        // The deferred `SetBlockPageId` task fills a non-page block's
+        // `page_id`; the projection itself must leave it NULL.
+        let (pool, _dir) = fresh_pool().await;
+        let snap = snapshot(BLOCK_A, "content", "hello", None, 0);
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_create_block_to_sql(&mut conn, &snap)
+            .await
+            .expect("project");
+        drop(conn);
+
+        let page_id: Option<String> = sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch row");
+        assert_eq!(page_id, None, "non-page projection leaves page_id NULL");
     }
 
     #[tokio::test]
@@ -2265,6 +2339,79 @@ mod tests {
         assert_eq!(row.1, "remote-created");
         assert_eq!(row.2, None);
         assert_eq!(row.3, 4);
+    }
+
+    #[tokio::test]
+    async fn project_block_full_page_block_stamps_page_id_self() {
+        // #1324: the sync-pull reproject path is the canonical import for a
+        // synced page block. It must stamp `page_id = id` (the deferred
+        // `SetBlockPageId` task is skipped for pages), else the page lands
+        // NULL-owned and drops out of every `page_id`-scoped read.
+        let (pool, _dir) = fresh_pool().await;
+        let space = crate::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let snap = snapshot(BLOCK_A, "page", "Synced Page", None, 0);
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_block_full_to_sql(&mut conn, &space, &bid, Some(&snap))
+            .await
+            .expect("project page full");
+        drop(conn);
+
+        let page_id: Option<String> = sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch row");
+        assert_eq!(page_id.as_deref(), Some(BLOCK_A));
+    }
+
+    #[tokio::test]
+    async fn project_block_full_reproject_preserves_non_page_page_id() {
+        // The conflict-update branch must NOT clobber a non-page block's
+        // already-resolved `page_id` (filled by the deferred `SetBlockPageId`
+        // task). A re-projection of a child must leave its `page_id` intact.
+        let (pool, _dir) = fresh_pool().await;
+        // Seed the owning page (BLOCK_B) so the child's page_id FK resolves,
+        // then a content block whose page_id was already resolved to BLOCK_B.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', 'owner', NULL, 0, ?)",
+        )
+        .bind(BLOCK_B)
+        .bind(BLOCK_B)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'content', 'child', NULL, 0, ?)",
+        )
+        .bind(BLOCK_A)
+        .bind(BLOCK_B)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let space = crate::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let snap = snapshot(BLOCK_A, "content", "child-edited", None, 3);
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_block_full_to_sql(&mut conn, &space, &bid, Some(&snap))
+            .await
+            .expect("reproject child");
+        drop(conn);
+
+        let page_id: Option<String> = sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch row");
+        assert_eq!(
+            page_id.as_deref(),
+            Some(BLOCK_B),
+            "non-page page_id must survive re-projection (no clobber to NULL)"
+        );
     }
 
     // ---------------------------------------------------------------------
