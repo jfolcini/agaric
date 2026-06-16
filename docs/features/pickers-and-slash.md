@@ -44,11 +44,11 @@ The repeat-rule mode semantics (`+` vs `.+` vs `++`) are explained in [journal-a
 
 ## How to add a slash command
 
-The command catalog (visibility + category metadata) lives in `src/lib/slash-commands.ts`; the `useBlockSlashCommands` hook just re-exports and drives it. To add a command:
+The command catalog (visibility + category metadata) lives in `src/lib/slash-commands.ts`; the `useBlockSlashCommands` hook (`src/hooks/useBlockSlashCommands.ts`) just re-exports those arrays and `searchSlashCommands`, then drives dispatch. To add a command:
 
 1. Add a `PickerItem` to the right array in `src/lib/slash-commands.ts` — the top-level `SLASH_COMMANDS` array, or a category sub-array (e.g. `HEADING_COMMANDS`, `CALLOUT_COMMANDS`) for sub-menu entries. Set its `category` to the matching `slashCommand.categories.*` i18n key.
-2. Make sure it is reachable from `searchSlashCommands` (`src/lib/slash-commands.ts`), which is what the picker queries — top-level entries are searched directly; sub-menu arrays are surfaced via their parent command.
-3. If the command performs a novel operation (not just a turn-into / property set already handled), add its handler in `useBlockSlashCommands`.
+2. Wire it into `searchSlashCommands` (`src/lib/slash-commands.ts`), which is what the picker queries — top-level `SLASH_COMMANDS` entries are matched directly; sub-menu arrays must be `matchSorter`-ed and spread into the merged `results` (gate on a prefix where appropriate, as `/turn` does for `TURN_INTO_COMMANDS`).
+3. If the command performs a novel operation (not just a turn-into / property set already handled), add its handler in the matching `useBlockSlashCommands/useSlashCommand*` sub-hook (`useSlashCommandDate`, `useSlashCommandProperty`, `useSlashCommandStructural`, `useSlashCommandMarks`, or `useSlashCommandTemplate`) by extending the `SlashHandlerTables` slice (`exact` or `prefix`) it returns. `useBlockSlashCommands` merges the slices and dispatches by `id`.
 
 ## Pitfalls to know
 
