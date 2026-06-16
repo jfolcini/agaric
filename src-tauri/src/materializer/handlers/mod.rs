@@ -71,6 +71,13 @@ pub(crate) use loro_apply::{
     apply_add_tag_via_loro, apply_delete_property_via_loro, apply_edit_block_via_loro,
     apply_remove_tag_via_loro, apply_set_property_via_loro,
 };
+// #1257 PR-4: the LOCAL move_block command path drives the engine-move +
+// dense-position reprojection (of BOTH the source and target sibling groups)
+// through this helper IN-TRANSACTION (without advancing the apply cursor — that
+// stays a boot-replay / dispatch_op concern), so a fresh local move is
+// engine-fresh and densely-positioned in both parents immediately instead of
+// waiting for the next boot replay (#1245 / #1249).
+pub(crate) use loro_apply::apply_move_block_via_loro;
 pub(crate) use pages_cache::recompute_pages_cache_counts_for_pages;
 pub(crate) use task_handlers::{handle_background_task, handle_foreground_task};
 

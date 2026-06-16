@@ -26,6 +26,11 @@ pub(crate) use handlers::apply_create_block_via_loro;
 // #1257 PR-3: re-export the simple-op engine helpers so the LOCAL command paths
 // (edit_block / set_property / delete_property / add_tag / remove_tag) can route
 // through the engine IN-TRANSACTION without advancing the apply cursor.
+// #1257 PR-4: re-export the engine-move-+-dense-reprojection helper so the
+// LOCAL move_block command core (`commands::blocks::move_ops::move_block_inner`)
+// can route a move through the engine IN-TRANSACTION (dense-reprojecting both
+// the source and target sibling groups) without advancing the apply cursor.
+pub(crate) use handlers::apply_move_block_via_loro;
 pub(crate) use handlers::recompute_pages_cache_counts_for_pages;
 pub(crate) use handlers::{
     apply_add_tag_via_loro, apply_delete_property_via_loro, apply_edit_block_via_loro,
