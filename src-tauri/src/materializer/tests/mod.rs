@@ -102,6 +102,7 @@ mod dispatch;
 mod enqueue_shutdown;
 mod fifo_regression;
 mod fifo_status;
+mod idempotency;
 mod lifecycle;
 mod metrics_dedup;
 mod page_link_cache;
