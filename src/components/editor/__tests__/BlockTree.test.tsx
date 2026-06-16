@@ -4122,6 +4122,125 @@ describe('BlockTree handleMergeWithPrev', () => {
     })
   })
 
+  // #1342 — merging away a block that HAS CHILDREN must reparent the children
+  // onto the merge target (via move_block) BEFORE the source is delete_block'd,
+  // so the backend delete cascade can't soft-delete the whole subtree. These
+  // exercise the REAL page store (move_block + reconciling load + the verifying
+  // wrapper), not the hook in isolation.
+  it('reparents the merged-away block’s children onto the target before delete (#1342)', async () => {
+    const tree = [
+      makeBlock({ id: 'A', content: 'Alpha', parent_id: 'PAGE_1', position: 0 }),
+      makeBlock({ id: 'B', content: 'Beta', parent_id: 'PAGE_1', position: 1 }),
+      makeBlock({ id: 'B1', content: 'B-one', parent_id: 'B', position: 0, depth: 1 }),
+    ]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'B' })
+
+    // The MOUNT load reflects the pre-merge tree (B1 still under B) so the merge
+    // handler plans a reparent of B1. AFTER the move commits, the reconciling
+    // load reflects B1 under A — so the verifying wrapper sees the child landed
+    // and does NOT abort, and the source B is then delete_block'd.
+    let moved = false
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'move_block') {
+        moved = true
+        return {}
+      }
+      if (cmd === 'load_page_subtree') {
+        return {
+          blocks: [
+            { ...tree[0], parent_id: 'PAGE_1', position: 0 },
+            { ...tree[1], parent_id: 'PAGE_1', position: 1 },
+            { ...tree[2], parent_id: moved ? 'A' : 'B', position: 0 },
+          ],
+          truncated: false,
+          total: 3,
+        }
+      }
+      return {}
+    })
+
+    renderBlockTree()
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.['onMergeWithPrev']).toBeDefined()
+    })
+
+    await act(async () => {
+      ;(capturedBlockKeyboardOpts?.['onMergeWithPrev'] as () => void)?.()
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'A',
+        toText: 'AlphaBeta',
+      })
+    })
+    // B1 moved under A (slot 0 — A had no children) BEFORE B was deleted.
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
+        blockId: 'B1',
+        newParentId: 'A',
+        newIndex: 0,
+      })
+    })
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'B' })
+    })
+  })
+
+  it('aborts the merge (no delete, edit reverted) when reparenting a child fails (#1342)', async () => {
+    const tree = [
+      makeBlock({ id: 'A', content: 'Alpha', parent_id: 'PAGE_1', position: 0 }),
+      makeBlock({ id: 'B', content: 'Beta', parent_id: 'PAGE_1', position: 1 }),
+      makeBlock({ id: 'B1', content: 'B-one', parent_id: 'B', position: 0, depth: 1 }),
+    ]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({ focusedBlockId: 'B' })
+
+    // The move_block IPC fails. `moveBlocks` swallows the error and reloads;
+    // the reconciling load returns the tree with B1 STILL under B (the move
+    // never committed). The verifying wrapper must detect the child did not
+    // land under A and throw, so the merge aborts: the edit is reverted and
+    // the source block is NEVER delete_block'd (the subtree stays intact).
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'move_block') throw new Error('test: move_block rejected')
+      if (cmd === 'load_page_subtree') {
+        return {
+          blocks: [
+            { ...tree[0], parent_id: 'PAGE_1', position: 0 },
+            { ...tree[1], parent_id: 'PAGE_1', position: 1 },
+            { ...tree[2], parent_id: 'B', position: 0 },
+          ],
+          truncated: false,
+          total: 3,
+        }
+      }
+      return {}
+    })
+
+    renderBlockTree()
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.['onMergeWithPrev']).toBeDefined()
+    })
+
+    await act(async () => {
+      ;(capturedBlockKeyboardOpts?.['onMergeWithPrev'] as () => void)?.()
+    })
+
+    // The edit committed then reverted (A back to 'Alpha').
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'A',
+        toText: 'AlphaBeta',
+      })
+    })
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'A', toText: 'Alpha' })
+    })
+    // CRITICAL: the source is NOT deleted — the child subtree is not lost.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
+  })
+
   it('merge on first block is a no-op', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Only block' })]
     pageStore.setState({ blocks: tree, loading: false })
