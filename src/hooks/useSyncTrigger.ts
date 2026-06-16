@@ -186,9 +186,26 @@ export function useSyncTrigger() {
   const syncInProgressRef = useRef(false)
   const intervalRef = useRef(BASE_INTERVAL_MS)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // #748: monotonically-bumped run id. A resume (visibilitychange→visible)
-  // bumps it to invalidate any in-flight run suspended in the background, so
-  // that run's late `runWithTimeout` rejection swallows its spurious toast.
+  // Run-generation counter (pattern). A monotonic run id, deliberately a
+  // `useRef` (mutable, non-reactive) rather than React state.
+  //
+  // Why a ref, not state:
+  //   - A resume (visibilitychange→visible) must invalidate an in-flight run
+  //     that was suspended in the background, and it must do so WITHOUT a
+  //     re-render: the value is read by an already-captured async closure
+  //     (`shouldToast`, below), not rendered. `useState` would be wrong here —
+  //     it would schedule a needless re-render, and the in-flight closure has
+  //     already captured the old state value anyway.
+  //   - Direct mutation (`syncGenerationRef.current++`, on resume) is therefore
+  //     intentional and correct.
+  //
+  // Invariant: a run surfaces user-facing state/toasts ONLY while
+  // `syncGenerationRef.current === myGeneration` (snapshotted per-run in
+  // `syncAll`). Once a superseding run bumps the counter, it owns the
+  // user-facing state and the stale run goes silent.
+  //
+  // #748 (Android background-suspend recovery): the bump makes a late
+  // `runWithTimeout` rejection from the suspended run swallow its spurious toast.
   const syncGenerationRef = useRef(0)
   const setState = useSyncStore((s) => s.setState)
 

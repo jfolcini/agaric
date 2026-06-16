@@ -109,7 +109,6 @@ Tabbed configuration view. Tabs include:
 - **Data** — import / export (see [import-export.md](import-export.md)).
 - **Sync & Devices** — pair / unpair / rename peers; manual addresses (see [sync.md](sync.md)).
 - **Agent access** — MCP enable / disable + ActivityFeed + SessionRevertControls (see [agent-access.md](agent-access.md)).
-- **Google Calendar** — connect / disconnect, window-days, privacy modes.
 - **Help** — keyboard shortcut reference, *Report a Bug* button, app version.
 
 Tabs are deep-linkable via `?settings=<tab>` (parsed inside the Settings view itself, no router involved).

@@ -71,8 +71,8 @@ us (each is a real migration):
 
 - **`op_log.created_at` is `INTEGER` epoch-ms** (migration 0079, #109 Phase 2) —
   bind an `i64` (e.g. a base + monotonic offset), NOT an RFC-3339 string. The
-  STRICT table rejects TEXT. (Note: the AGENTS.md §Database note that calls
-  `op_log.created_at` a "legacy TEXT" column is stale — 0079 migrated it.)
+  STRICT table rejects TEXT. (The root `AGENTS.md` §Database note correctly
+  reflects that 0079 (#109 Phase 2) migrated this column to INTEGER epoch-ms.)
 - **Reserved property keys** `('todo_state','priority','due_date','scheduled_date','space')`
   are column-backed on `blocks`; migration 0088's `key_not_reserved` CHECK
   FORBIDS them in `block_properties`. Use a free-form key, or set the dedicated

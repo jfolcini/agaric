@@ -61,7 +61,7 @@ Full threat model in `SECURITY.md`. This file documents only the **architectural
 Every Tauri command wraps its inner body with `sanitize_internal_error` (`src-tauri/src/commands/mod.rs`). The wrapper:
 
 - Collapses internal `AppError` variants (`Database`, `Migration`, `Io`, `Json`, `Channel`, `Snapshot`) into a generic `InvalidOperation("an internal error occurred")` over the wire.
-- Lets user-facing variants (`Validation`, `NotFound`, `InvalidOperation`, `NonReversible`, `Gcal`) pass through with their original message.
+- Lets user-facing variants (`Validation`, `NotFound`, `InvalidOperation`, `NonReversible`) pass through with their original message.
 
 The split prevents accidental leakage of file paths, SQL errors, OS error codes, etc. to the frontend (and from there to user-facing toasts, screenshots, bug reports).
 

@@ -81,6 +81,28 @@ sudo apt install shellcheck          # shell-script linter (or `brew install she
 
 These local hooks are **optional**: if you cannot install them, open your PR anyway — CI runs the same gate via `.github/workflows/_validate.yml` (see [`CONTRIBUTING.md`](../CONTRIBUTING.md#bootstrap)).
 
+### Optional: code-review navigation graph
+
+`.mcp.json` wires an optional MCP server, **code-review-graph**, that exposes a symbol/dependency graph for fast, structural code navigation (used in place of ad-hoc `grep`/file-reads when it is available). It is launched on demand via [`uv`](https://docs.astral.sh/uv/)'s `uvx` runner:
+
+```jsonc
+// .mcp.json
+"code-review-graph": { "command": "uvx", "args": ["code-review-graph", "serve"] }
+```
+
+To enable it, install `uv` (which provides `uvx`), then let `uvx` fetch the `code-review-graph` package from PyPI on first run:
+
+```sh
+# Install uv (provides the `uvx` runner) — see https://docs.astral.sh/uv/getting-started/installation/
+curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS/Linux
+# or: brew install uv  /  pipx install uv
+
+# Verify uvx can resolve and launch the server (downloads the package on first run):
+uvx code-review-graph --help
+```
+
+This is **entirely optional** — it is a navigation aid for contributors using an MCP-capable client, not a build or test prerequisite. If `uvx`/the package is not installed, the MCP server simply does not start and nothing else is affected.
+
 ## Development
 
 ```bash
@@ -163,7 +185,7 @@ Pre-push (every `git push`): one chokepoint hook — `verify-ci-equivalent` — 
 
 Wall clock on a warm cache: ≈3-4 min (was ≈5-8 min when each hook ran sequentially via prek's per-hook scheduler).
 
-`SKIP_CI_VERIFY=1 git push` short-circuits the script. Reserve it for docs-only typo fixes that obviously cannot affect CI behaviour; anything that touches source code should let the verifier run.
+`SKIP_CI_VERIFY='<reason>' git push` short-circuits the script. The value must be a real reason (≥8 chars), NOT a truthy flag — a bare `SKIP_CI_VERIFY=1` (or `true`/`yes`/`on`/…) is hard-rejected. Use e.g. `SKIP_CI_VERIFY='docs typo, no source change' git push`. Reserve it for docs-only typo fixes that obviously cannot affect CI behaviour; anything that touches source code should let the verifier run.
 
 ### Release pre-flight
 

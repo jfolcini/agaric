@@ -188,12 +188,13 @@ pass_filenames = false
 types_or = ["ts", "tsx"]
 stages = ["pre-commit"]
 
-# Vitest: smart related-only tests. Pre-push only (#817): running the
-# related-test set degenerates toward the full vitest suite (the FALLBACK
-# patterns in test-related-ts.sh trip on shared modules), which is far too
-# slow for the commit path. The pre-push verifier runs it once, scoped to
-# the push range, in Phase C of scripts/verify-ci-equivalent.sh; Phase A
-# additionally passes SKIP=vitest so this hook is not re-run there.
+# Vitest: smart related-only tests. Pre-push only (#817): test-related-ts.sh
+# runs `npx vitest related` on the changed .ts/.tsx files, and vitest expands
+# that to every test transitively importing them. When a widely-imported
+# shared module changes, that fan-out approaches the full suite — far too slow
+# for the commit path. The pre-push verifier runs it once, scoped to the push
+# range, in Phase C of scripts/verify-ci-equivalent.sh; Phase A additionally
+# passes SKIP=vitest so this hook is not re-run there.
 [[repos]]
 repo = "local"
 [[repos.hooks]]

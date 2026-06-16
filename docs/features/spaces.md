@@ -55,7 +55,6 @@ If you opened Agaric before spaces existed, your existing pages migrated automat
 ## Per-space integrations
 
 - **Journal & journal template** — fully per-space.
-- **Google Calendar** — the data model is per-space (each space can connect its own calendar), but the push connector currently writes everything to a single calendar. The per-space connector is the active in-progress slice of the roadmap.
 - **MCP / agents** — agents see every space and can scope their tool calls; see [agent-access.md](agent-access.md).
 
 ## Pitfalls to know
