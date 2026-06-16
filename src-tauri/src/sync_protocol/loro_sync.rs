@@ -177,36 +177,130 @@ fn classify_from_vv_reachability(
 /// first call for `space_id` since process boot.  Production callers
 /// pass the process-stable UUID-v4 from `crate::device`.
 ///
+/// # #1257 — sync-export freshness gate
+///
+/// Returns `Ok(None)` when the engine is **stale** relative to SQL for
+/// this space and the round MUST emit no payload (the caller skips the
+/// space and a rebuild-from-op-log is signalled). `Ok(Some(msg))` is the
+/// unchanged happy path.
+///
+/// ## Why per-block `deleted_at` reconciliation, not a vv freshness gate
+///
+/// The engine tombstones rather than removes on delete
+/// ([`crate::loro::engine::apply::...apply_delete_block`] sets the
+/// `deleted_at` meta but the node survives in the `LoroDoc` and is still
+/// exported). The hazard a future eager-local-apply introduces is a
+/// *divergence* where SQL has soft-deleted a block but the engine still
+/// holds it as live — so `prepare_outgoing` would export a block SQL
+/// considers gone.
+///
+/// An op-log-head vv gate cannot detect this. `version_vector()` /
+/// `oplog_vv()` are Loro `(PeerID, Counter)` coordinates — the SAME
+/// coordinate system the receive-side `classify_from_vv_reachability`
+/// uses, so a vv gate would *type-check*. But the divergence is not
+/// expressible in vv terms: a block soft-deleted in SQL *only* (the
+/// eager-apply gap) produces NO change to the engine's `oplog_vv` — the
+/// engine never observed a delete op for it. The engine frontier and the
+/// committed op-log head stay byte-identical while SQL and the engine
+/// disagree about that block's liveness. The vv gate is therefore
+/// structurally blind to exactly the hazard we must catch.
+///
+/// So the gate reconciles per-block: take the set of blocks the engine
+/// would export as LIVE (`live_block_ids()`) and ask SQL which of them are
+/// soft-deleted (`deleted_at IS NOT NULL`). If ANY engine-live block is
+/// SQL-deleted, the engine is stale for this space → refuse (return
+/// `Ok(None)`, log, signal rebuild). No inline repair.
+///
 /// Sender-side helper.
 pub async fn prepare_outgoing(
+    pool: &SqlitePool,
     registry: &LoroEngineRegistry,
     space_id: &SpaceId,
     device_id: &str,
     peer_vv: Option<&[u8]>,
-) -> Result<LoroSyncMessage, AppError> {
+) -> Result<Option<LoroSyncMessage>, AppError> {
+    // #1257 freshness gate. Snapshot the engine-live block id set under
+    // the guard, then drop the guard BEFORE the SQL round-trip (the guard
+    // is not `Send` across an `.await`, and the read is a pure snapshot —
+    // the daemon is dormant so nothing mutates the engine concurrently).
+    let live_block_ids: Vec<String> = {
+        let mut guard = registry.for_space(space_id, device_id)?;
+        guard.engine_mut().live_block_ids()?
+    };
+    if let Some(stale_id) = first_engine_live_block_sql_deleted(pool, &live_block_ids).await? {
+        // Refuse + signal rebuild. Emit NO payload this round; a future
+        // caller can trigger a rebuild-from-op-log to reconcile the engine
+        // with SQL. Do NOT repair inline (that is PR-2/PR-3 territory).
+        tracing::warn!(
+            space_id = %space_id.as_str(),
+            device_id = %device_id,
+            stale_block_id = %stale_id,
+            "loro_sync: #1257 freshness gate REFUSED export — engine holds a \
+             block SQL has soft-deleted (engine stale vs SQL); emitting no sync \
+             payload this round, rebuild-from-op-log required"
+        );
+        return Ok(None);
+    }
+
     let mut guard = registry.for_space(space_id, device_id)?;
     let engine = guard.engine_mut();
     match peer_vv {
         None => {
             // Initial sync — full snapshot.
             let bytes = engine.export_snapshot()?;
-            Ok(LoroSyncMessage::Snapshot {
+            Ok(Some(LoroSyncMessage::Snapshot {
                 protocol_version: LORO_SYNC_PROTOCOL_VERSION,
                 space_id: space_id.clone(),
                 bytes,
-            })
+            }))
         }
         Some(vv) => {
             // Incremental — export only ops since `vv`.
             let bytes = engine.export_update_since(vv)?;
-            Ok(LoroSyncMessage::Update {
+            Ok(Some(LoroSyncMessage::Update {
                 protocol_version: LORO_SYNC_PROTOCOL_VERSION,
                 space_id: space_id.clone(),
                 from_vv: vv.to_vec(),
                 bytes,
-            })
+            }))
         }
     }
+}
+
+/// #1257: return the first `block_id` that the engine holds as live but
+/// which SQL has soft-deleted (`deleted_at IS NOT NULL`), or `None` when the
+/// two agree.
+///
+/// The SQL-soft-deleted set is small (deletes are tombstones, periodically
+/// purged), so we fetch it once and intersect against the engine-live set in
+/// memory rather than emitting an `IN (...)` over a potentially large live
+/// set. Returns a deterministic first hit (the set is sorted) for stable log
+/// output.
+async fn first_engine_live_block_sql_deleted(
+    pool: &SqlitePool,
+    live_block_ids: &[String],
+) -> Result<Option<String>, AppError> {
+    if live_block_ids.is_empty() {
+        return Ok(None);
+    }
+    let sql_deleted: std::collections::HashSet<String> =
+        sqlx::query_scalar!("SELECT id FROM blocks WHERE deleted_at IS NOT NULL")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| {
+                AppError::Validation(format!(
+                    "loro_sync: #1257 freshness gate: read SQL soft-deleted ids: {e}"
+                ))
+            })?
+            .into_iter()
+            .collect();
+    let mut hit = live_block_ids
+        .iter()
+        .filter(|id| sql_deleted.contains(*id))
+        .cloned()
+        .collect::<Vec<_>>();
+    hit.sort();
+    Ok(hit.into_iter().next())
 }
 
 /// Apply an incoming [`LoroSyncMessage`] to the local engine and
@@ -696,6 +790,7 @@ mod tests {
     /// engine state.  Initial-sync invariant.
     #[tokio::test]
     async fn prepare_outgoing_with_no_peer_vv_returns_snapshot() {
+        let (pool, _dir) = fresh_pool().await;
         let registry = LoroEngineRegistry::new();
         let space = SpaceId::from_trusted(SPACE_A);
 
@@ -707,9 +802,10 @@ mod tests {
                 .expect("create");
         }
 
-        let msg = prepare_outgoing(&registry, &space, "device-S", None)
+        let msg = prepare_outgoing(&pool, &registry, &space, "device-S", None)
             .await
-            .expect("prepare_outgoing");
+            .expect("prepare_outgoing")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
         match msg {
             LoroSyncMessage::Snapshot {
@@ -731,6 +827,7 @@ mod tests {
     /// pre-vv ones (it has those already).
     #[tokio::test]
     async fn prepare_outgoing_with_peer_vv_returns_update() {
+        let (pool, _dir) = fresh_pool().await;
         let registry = LoroEngineRegistry::new();
         let space = SpaceId::from_trusted(SPACE_A);
 
@@ -752,9 +849,16 @@ mod tests {
             vv
         };
 
-        let msg = prepare_outgoing(&registry, &space, "device-S", Some(&vv_after_first_batch))
-            .await
-            .expect("prepare_outgoing");
+        let msg = prepare_outgoing(
+            &pool,
+            &registry,
+            &space,
+            "device-S",
+            Some(&vv_after_first_batch),
+        )
+        .await
+        .expect("prepare_outgoing")
+        .expect("#1257 freshness gate must not refuse a consistent engine");
 
         let (from_vv, delta_bytes) = match msg {
             LoroSyncMessage::Update {
@@ -811,9 +915,10 @@ mod tests {
                 .apply_create_block(BLOCK_A, "content", "from-A", None, 0)
                 .expect("create");
         }
-        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+        let msg = prepare_outgoing(&pool, &registry_a, &space, "device-A", None)
             .await
-            .expect("prepare");
+            .expect("prepare")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
         // Apply on B (fresh registry).
         let registry_b = LoroEngineRegistry::new();
@@ -854,9 +959,10 @@ mod tests {
                 .apply_create_block(BLOCK_A, "content", "from-A", None, 7)
                 .expect("create");
         }
-        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+        let msg = prepare_outgoing(&pool, &registry_a, &space, "device-A", None)
             .await
-            .expect("prepare");
+            .expect("prepare")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
         // Apply on B (fresh registry, fresh DB).
         let registry_b = LoroEngineRegistry::new();
@@ -993,9 +1099,16 @@ mod tests {
                 .expect("set effort");
             e.apply_add_tag(BLOCK_A, BLOCK_B).expect("add tag");
         }
-        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+        // #1257: `pool` here is the RECEIVER B's SQL (pre-seeded with a
+        // soft-deleted BLOCK_A to exercise the inbound clear). The sender A
+        // has no SQL of its own, so gate A's export against a fresh empty A
+        // pool — otherwise the freshness gate would (correctly) see B's
+        // soft-deleted-but-engine-live divergence and refuse.
+        let (pool_a, _dir_a) = fresh_pool().await;
+        let msg = prepare_outgoing(&pool_a, &registry_a, &space, "device-A", None)
             .await
-            .expect("prepare");
+            .expect("prepare")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
         // B applies the inbound snapshot.
         let registry_b = LoroEngineRegistry::new();
@@ -1107,9 +1220,10 @@ mod tests {
             e.apply_create_block(BLOCK_D, "content", "child two", Some(BLOCK_C), 1)
                 .expect("create child D4");
         }
-        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+        let msg = prepare_outgoing(&pool, &registry_a, &space, "device-A", None)
             .await
-            .expect("prepare");
+            .expect("prepare")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
         let registry_b = LoroEngineRegistry::new();
         let outcome = apply_remote(&pool, &registry_b, "device-B", msg)
@@ -1194,9 +1308,10 @@ mod tests {
             e.apply_delete_block(BLOCK_A, "1779703200000")
                 .expect("delete seed");
         }
-        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+        let msg = prepare_outgoing(&pool, &registry_a, &space, "device-A", None)
             .await
-            .expect("prepare");
+            .expect("prepare")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
         let registry_b = LoroEngineRegistry::new();
         apply_remote(&pool, &registry_b, "device-B", msg)
@@ -1257,9 +1372,15 @@ mod tests {
             e.apply_create_block(BLOCK_C, "content", "", Some(BLOCK_B), 0)
                 .expect("c");
         }
-        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+        // #1257: `pool` is the RECEIVER B's SQL (pre-seeded soft-deleted). A's
+        // engine carries the subtree alive, so gate A's export against a fresh
+        // empty A pool — passing B's stale pool would (correctly) trip the
+        // freshness gate.
+        let (pool_a, _dir_a) = fresh_pool().await;
+        let msg = prepare_outgoing(&pool_a, &registry_a, &space, "device-A", None)
             .await
-            .expect("prepare");
+            .expect("prepare")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
         let registry_b = LoroEngineRegistry::new();
         apply_remote(&pool, &registry_b, "device-B", msg)
@@ -1306,10 +1427,19 @@ mod tests {
         }
 
         let registry_b = LoroEngineRegistry::new();
+        // #1257: `pool` is the RECEIVER B's SQL. After the first import it holds
+        // the descendants soft-deleted, while A's engine still carries them
+        // live (only the seed is tombstoned engine-side) — exactly the kind of
+        // divergence the freshness gate refuses. But that divergence is B's,
+        // not the sender A's: A's own SQL never had these rows. Gate A's export
+        // against a fresh empty A pool so the (correct) gate doesn't fire on a
+        // receiver-side state that is irrelevant to the sender.
+        let (pool_a, _dir_a) = fresh_pool().await;
         // First import: cascades the soft-delete onto B's SQL (seed + descendants).
-        let msg1 = prepare_outgoing(&registry_a, &space, "device-A", None)
+        let msg1 = prepare_outgoing(&pool_a, &registry_a, &space, "device-A", None)
             .await
-            .expect("prepare 1");
+            .expect("prepare 1")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
         apply_remote(&pool, &registry_b, "device-B", msg1)
             .await
             .expect("apply 1");
@@ -1317,9 +1447,10 @@ mod tests {
         // Second import of the SAME snapshot. The descendants are now
         // deleted in SQL but read back `None` from the (seed-only) engine —
         // the resurrection trap. The ancestor guard must keep them deleted.
-        let msg2 = prepare_outgoing(&registry_a, &space, "device-A", None)
+        let msg2 = prepare_outgoing(&pool_a, &registry_a, &space, "device-A", None)
             .await
-            .expect("prepare 2");
+            .expect("prepare 2")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
         apply_remote(&pool, &registry_b, "device-B", msg2)
             .await
             .expect("apply 2");
@@ -1419,9 +1550,10 @@ mod tests {
             e.apply_create_block(BLOCK_C, "content", "pre 3", None, 2)
                 .expect("c");
         }
-        let msg = prepare_outgoing(&registry_pre, &space, "device-F", None)
+        let msg = prepare_outgoing(&pool, &registry_pre, &space, "device-F", None)
             .await
-            .expect("peer-held history");
+            .expect("peer-held history")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
         // device-F after a pre-#792 RESET: fresh registry, SAME device
         // id (epoch 0 ⇒ same peer id), one re-minted block — the fork.
@@ -1488,9 +1620,10 @@ mod tests {
                 .apply_create_block(BLOCK_A, "content", "pre", None, 0)
                 .expect("a");
         }
-        let msg = prepare_outgoing(&registry_pre, &space, "device-F", None)
+        let msg = prepare_outgoing(&pool, &registry_pre, &space, "device-F", None)
             .await
-            .expect("peer-held history");
+            .expect("peer-held history")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
         // Post-reset, zero local ops minted (the safe window).
         let registry_fresh = LoroEngineRegistry::new();
@@ -1611,9 +1744,10 @@ mod tests {
         // Mirror A's pre-second-op state into B so B's local vv
         // exactly matches the `from_vv` A will use.
         let registry_b = LoroEngineRegistry::new();
-        let snap_msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+        let snap_msg = prepare_outgoing(&pool, &registry_a, &space, "device-A", None)
             .await
-            .expect("prepare snapshot");
+            .expect("prepare snapshot")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
         let snap_outcome = apply_remote(&pool, &registry_b, "device-B", snap_msg)
             .await
             .expect("apply snapshot");
@@ -1638,9 +1772,10 @@ mod tests {
                 .apply_create_block(BLOCK_B, "content", "second", None, 1)
                 .expect("create B");
         }
-        let update = prepare_outgoing(&registry_a, &space, "device-A", Some(&b_vv))
+        let update = prepare_outgoing(&pool, &registry_a, &space, "device-A", Some(&b_vv))
             .await
-            .expect("prepare update");
+            .expect("prepare update")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
         let outcome = apply_remote(&pool, &registry_b, "device-B", update)
             .await
@@ -1808,9 +1943,10 @@ mod tests {
                 .apply_create_block(BLOCK_D, "content", "a3", None, 2)
                 .expect("a3");
         }
-        let update = prepare_outgoing(&registry_a, &space, "device-A", Some(&a_vv))
+        let update = prepare_outgoing(&pool, &registry_a, &space, "device-A", Some(&a_vv))
             .await
-            .expect("prepare update");
+            .expect("prepare update")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
         let outcome = apply_remote(&pool, &registry_b, "device-B", update)
             .await
@@ -2213,9 +2349,10 @@ mod tests {
             e.apply_set_property(BLOCK_A, "due", Some("2026-01-01"))
                 .expect("set due");
         }
-        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+        let msg = prepare_outgoing(&pool, &registry_a, &space, "device-A", None)
             .await
-            .expect("prepare");
+            .expect("prepare")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
         // Apply on B.
         let registry_b = LoroEngineRegistry::new();
@@ -2291,9 +2428,10 @@ mod tests {
         let registry_b = LoroEngineRegistry::new();
 
         // First sync: B materialises the `note` property.
-        let msg1 = prepare_outgoing(&registry_a, &space, "device-A", None)
+        let msg1 = prepare_outgoing(&pool, &registry_a, &space, "device-A", None)
             .await
-            .expect("prepare 1");
+            .expect("prepare 1")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
         apply_remote(&pool, &registry_b, "device-B", msg1)
             .await
             .expect("apply 1");
@@ -2319,9 +2457,10 @@ mod tests {
                 .apply_delete_property(BLOCK_A, "note")
                 .expect("delete note");
         }
-        let msg2 = prepare_outgoing(&registry_a, &space, "device-A", Some(&b_vv))
+        let msg2 = prepare_outgoing(&pool, &registry_a, &space, "device-A", Some(&b_vv))
             .await
-            .expect("prepare 2");
+            .expect("prepare 2")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
         apply_remote(&pool, &registry_b, "device-B", msg2)
             .await
             .expect("apply 2");
@@ -2363,9 +2502,10 @@ mod tests {
                 .expect("create tag block");
             e.apply_add_tag(BLOCK_A, BLOCK_B).expect("add tag");
         }
-        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+        let msg = prepare_outgoing(&pool, &registry_a, &space, "device-A", None)
             .await
-            .expect("prepare");
+            .expect("prepare")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
         let registry_b = LoroEngineRegistry::new();
         let outcome = apply_remote(&pool, &registry_b, "device-B", msg)
@@ -2408,9 +2548,10 @@ mod tests {
         let registry_b = LoroEngineRegistry::new();
 
         // First sync: B materialises the edge.
-        let msg1 = prepare_outgoing(&registry_a, &space, "device-A", None)
+        let msg1 = prepare_outgoing(&pool, &registry_a, &space, "device-A", None)
             .await
-            .expect("prepare 1");
+            .expect("prepare 1")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
         apply_remote(&pool, &registry_b, "device-B", msg1)
             .await
             .expect("apply 1");
@@ -2436,9 +2577,10 @@ mod tests {
                 .apply_remove_tag(BLOCK_A, BLOCK_B)
                 .expect("remove tag");
         }
-        let msg2 = prepare_outgoing(&registry_a, &space, "device-A", Some(&b_vv))
+        let msg2 = prepare_outgoing(&pool, &registry_a, &space, "device-A", Some(&b_vv))
             .await
-            .expect("prepare 2");
+            .expect("prepare 2")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
         apply_remote(&pool, &registry_b, "device-B", msg2)
             .await
             .expect("apply 2");
@@ -2478,9 +2620,10 @@ mod tests {
                 .expect("create tag block");
             e.apply_add_tag(BLOCK_A, BLOCK_B).expect("tag parent");
         }
-        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+        let msg = prepare_outgoing(&pool, &registry_a, &space, "device-A", None)
             .await
-            .expect("prepare");
+            .expect("prepare")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
         let registry_b = LoroEngineRegistry::new();
         let outcome = apply_remote(&pool, &registry_b, "device-B", msg)
@@ -2536,9 +2679,10 @@ mod tests {
                 .apply_create_block(BLOCK_A, "content", "from-A", None, 0)
                 .expect("create");
         }
-        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+        let msg = prepare_outgoing(&pool, &registry_a, &space, "device-A", None)
             .await
-            .expect("prepare");
+            .expect("prepare")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
         let registry_b = LoroEngineRegistry::new();
         apply_remote(&pool, &registry_b, "device-B", msg)
@@ -2663,5 +2807,113 @@ mod tests {
             .await
             .expect("count inbox");
         assert_eq!(inbox_count, 0, "both slots must be cleared");
+    }
+
+    /// #1257 freshness gate — DIVERGENCE case. The sender's engine still
+    /// holds a block as LIVE while SQL has soft-deleted it (the eager-apply
+    /// gap: a delete reached SQL but not the engine). `prepare_outgoing` MUST
+    /// refuse: emit NO payload (`Ok(None)`) and never export the stale block.
+    #[tokio::test]
+    async fn prepare_outgoing_refuses_when_engine_live_block_is_sql_deleted() {
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // Engine A holds BLOCK_A as live (never deleted in the engine).
+        {
+            let mut g = registry.for_space(&space, "device-A").expect("for_space");
+            g.engine_mut()
+                .apply_create_block(BLOCK_A, "content", "from-A", None, 0)
+                .expect("create A");
+        }
+        // The engine indeed reports it as exportable-live.
+        {
+            let mut g = registry.for_space(&space, "device-A").expect("for_space");
+            let live = g.engine_mut().live_block_ids().expect("live ids");
+            assert!(
+                live.iter().any(|id| id == BLOCK_A),
+                "precondition: engine must hold BLOCK_A as live"
+            );
+        }
+
+        // SQL has the row but it is SOFT-DELETED (deleted_at set) — and the
+        // engine was NOT told. This is the divergence the gate must catch.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES (?, 'content', 'from-A', NULL, 1, ?)",
+        )
+        .bind(BLOCK_A)
+        .bind(crate::db::now_ms())
+        .execute(&pool)
+        .await
+        .expect("insert soft-deleted block");
+
+        // Initial-sync (snapshot) export must REFUSE.
+        let snap = prepare_outgoing(&pool, &registry, &space, "device-A", None)
+            .await
+            .expect("prepare_outgoing must not error");
+        assert!(
+            snap.is_none(),
+            "stale engine (engine-live block is SQL-deleted) must refuse the \
+             snapshot export, got a payload: {snap:?}"
+        );
+
+        // Incremental (update) export must ALSO refuse — the gate runs before
+        // the export branch, independent of peer_vv.
+        let some_vv: Vec<u8> = {
+            let mut g = registry.for_space(&space, "device-A").expect("for_space");
+            g.engine_mut().version_vector()
+        };
+        let upd = prepare_outgoing(&pool, &registry, &space, "device-A", Some(&some_vv))
+            .await
+            .expect("prepare_outgoing must not error");
+        assert!(
+            upd.is_none(),
+            "stale engine must refuse the update export too, got: {upd:?}"
+        );
+    }
+
+    /// #1257 freshness gate — HAPPY PATH (no false-refuse). When the engine
+    /// and SQL agree (the block is live in both), `prepare_outgoing` exports
+    /// exactly as before and the block is present in the snapshot.
+    #[tokio::test]
+    async fn prepare_outgoing_exports_normally_when_engine_and_sql_agree() {
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        {
+            let mut g = registry.for_space(&space, "device-A").expect("for_space");
+            g.engine_mut()
+                .apply_create_block(BLOCK_A, "content", "from-A", None, 0)
+                .expect("create A");
+        }
+        // SQL row exists and is ALIVE (deleted_at NULL) — consistent state.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'from-A', NULL, 1)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .expect("insert alive block");
+
+        let msg = prepare_outgoing(&pool, &registry, &space, "device-A", None)
+            .await
+            .expect("prepare_outgoing must not error")
+            .expect("consistent engine must NOT be refused (no false-refuse)");
+
+        // The exported snapshot must carry BLOCK_A: import into a fresh
+        // receiver engine and read it back.
+        let bytes = match &msg {
+            LoroSyncMessage::Snapshot { bytes, .. } => bytes.clone(),
+            other => panic!("expected Snapshot, got {other:?}"),
+        };
+        let mut receiver = LoroEngine::with_peer_id("device-B").expect("rcv");
+        receiver.import(&bytes).expect("import snapshot");
+        assert!(
+            receiver.read_block(BLOCK_A).expect("read").is_some(),
+            "happy-path export must include the live block"
+        );
     }
 }

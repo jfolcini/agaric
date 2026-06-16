@@ -4650,9 +4650,11 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
     // Premise: the snapshot the responder will ship is over the inline
     // threshold — i.e. with the pre-#611 wire this session COULD NOT
     // complete (its JSON number-array form would exceed the 10 MB cap).
-    let outgoing = loro_sync::prepare_outgoing(&resp_state.registry, &space, RESP_DEV, None)
-        .await
-        .expect("prepare_outgoing for premise check");
+    let outgoing =
+        loro_sync::prepare_outgoing(&resp_pool, &resp_state.registry, &space, RESP_DEV, None)
+            .await
+            .expect("prepare_outgoing for premise check")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
     let snapshot_len = match &outgoing {
         crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot { bytes, .. } => {
             bytes.len()

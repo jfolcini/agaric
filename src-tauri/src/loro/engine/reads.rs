@@ -302,4 +302,31 @@ impl LoroEngine {
         }
         Ok(alive)
     }
+
+    /// Collect the `block_id`s the engine currently holds as **live**
+    /// (non-hard-purged AND not soft-deleted) — i.e. exactly the blocks an
+    /// `export_snapshot()` / `export_update_since()` would carry as present.
+    ///
+    /// #1257: the sync-export freshness gate cross-checks this set against
+    /// SQL's `deleted_at` column. A block the engine still treats as live but
+    /// which SQL has soft-deleted is the eager-apply divergence hazard — the
+    /// engine tombstones rather than removes on delete, so a delete that
+    /// reached SQL but not the engine leaves the node exportable here.
+    ///
+    /// Mirrors [`Self::count_alive_blocks`]' walk (`get_nodes(false)` live
+    /// forest, then filter on `deleted_at` meta) but returns the ids rather
+    /// than a count.
+    pub fn live_block_ids(&self) -> Result<Vec<String>, AppError> {
+        let tree = self.tree();
+        let mut out = Vec::new();
+        for (node_id, block_id) in self.live_nodes_with_block_id() {
+            let meta = tree.get_meta(node_id).map_err(|e| {
+                AppError::Validation(format!("loro: live_block_ids: get_meta: {e}"))
+            })?;
+            if read_deleted_at_meta(&meta, "live_block_ids")?.is_none() {
+                out.push(block_id);
+            }
+        }
+        Ok(out)
+    }
 }

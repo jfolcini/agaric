@@ -2011,6 +2011,9 @@ async fn loro_sync_e2e_round_trip_block_visible_on_b() {
     let block_id_a = "01HZPHASE3D5SYNCBLKAAAAAAAA";
 
     // Engine A — register one block.
+    // #1257: the sender's freshness gate reads its own SQL `deleted_at`;
+    // A has no soft-deletions, so a fresh empty pool keeps the gate green.
+    let (pool_a, _dir_a) = test_pool().await;
     let registry_a = LoroEngineRegistry::new();
     {
         let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
@@ -2021,9 +2024,10 @@ async fn loro_sync_e2e_round_trip_block_visible_on_b() {
 
     // Build outgoing LoroSync via the prepare helper. Wrap into the
     // SyncMessage envelope (the wire shape).
-    let inner = loro_sync::prepare_outgoing(&registry_a, &space, "device-A", None)
+    let inner = loro_sync::prepare_outgoing(&pool_a, &registry_a, &space, "device-A", None)
         .await
-        .expect("prepare_outgoing");
+        .expect("prepare_outgoing")
+        .expect("#1257 freshness gate must not refuse a consistent engine");
     let outgoing = SyncMessage::LoroSync {
         msg: inner,
         is_last: true,
@@ -2185,6 +2189,9 @@ async fn loro_sync_e2e_multi_space_snapshot_initial_sync() {
     let blk_y2 = "01HZPHASE3D12BLKYSPACEYEEE5";
 
     // Engine A — seed 3 blocks in space_x, 2 in space_y.
+    // #1257: A's freshness gate reads its own SQL `deleted_at`; A has no
+    // soft-deletions, so a fresh empty pool keeps the gate green.
+    let (pool_a, _dir_a) = test_pool().await;
     let registry_a = LoroEngineRegistry::new();
     {
         let mut g = registry_a
@@ -2213,9 +2220,10 @@ async fn loro_sync_e2e_multi_space_snapshot_initial_sync() {
     let registry_b = LoroEngineRegistry::new();
 
     for space in [&space_x, &space_y] {
-        let inner = loro_sync::prepare_outgoing(&registry_a, space, "device-A", None)
+        let inner = loro_sync::prepare_outgoing(&pool_a, &registry_a, space, "device-A", None)
             .await
-            .expect("prepare_outgoing");
+            .expect("prepare_outgoing")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
 
         // Wrap in the day-5 wire envelope and JSON-roundtrip — this
         // mirrors what `conn.send_json` / `conn.recv_json` do on the
@@ -2364,6 +2372,9 @@ async fn loro_sync_e2e_update_against_seeded_peer() {
     let block_y = "01HZPHASE3D12BLOCKYFFFFFFF2";
 
     // ── Step 1 — A creates X, snapshot to B.
+    // #1257: A's freshness gate reads its own SQL `deleted_at`; A has no
+    // soft-deletions, so a fresh empty pool keeps the gate green.
+    let (pool_a, _dir_a) = test_pool().await;
     let registry_a = LoroEngineRegistry::new();
     let registry_b = LoroEngineRegistry::new();
     {
@@ -2375,9 +2386,10 @@ async fn loro_sync_e2e_update_against_seeded_peer() {
             .expect("create X");
     }
     {
-        let inner = loro_sync::prepare_outgoing(&registry_a, &space, "device-A", None)
+        let inner = loro_sync::prepare_outgoing(&pool_a, &registry_a, &space, "device-A", None)
             .await
-            .expect("prepare_outgoing snapshot");
+            .expect("prepare_outgoing snapshot")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
         // Round-trip via the SyncMessage envelope to mirror the wire.
         let outgoing = SyncMessage::LoroSync {
             msg: inner,
@@ -2433,9 +2445,11 @@ async fn loro_sync_e2e_update_against_seeded_peer() {
             .expect("create Y");
     }
 
-    let update_msg = loro_sync::prepare_outgoing(&registry_a, &space, "device-A", Some(&b_vv))
-        .await
-        .expect("prepare_outgoing update");
+    let update_msg =
+        loro_sync::prepare_outgoing(&pool_a, &registry_a, &space, "device-A", Some(&b_vv))
+            .await
+            .expect("prepare_outgoing update")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
     let (echoed_from_vv, update_bytes_len) = match &update_msg {
         LoroSyncMessage::Update { from_vv, bytes, .. } => (from_vv.clone(), bytes.len()),
         other => panic!("expected Update variant, got {other:?}"),
@@ -2544,12 +2558,14 @@ async fn loro_sync_e2e_concurrent_disjoint_creates_converge() {
     // writer of its own ops, a Snapshot is what `prepare_outgoing(None)`
     // would produce — and is the safe choice when neither peer has
     // observed the other yet.
-    let msg_from_a = loro_sync::prepare_outgoing(&registry_a, &space, "device-A", None)
+    let msg_from_a = loro_sync::prepare_outgoing(&pool_a, &registry_a, &space, "device-A", None)
         .await
-        .expect("A prepare_outgoing");
-    let msg_from_b = loro_sync::prepare_outgoing(&registry_b, &space, "device-B", None)
+        .expect("A prepare_outgoing")
+        .expect("#1257 freshness gate must not refuse a consistent engine");
+    let msg_from_b = loro_sync::prepare_outgoing(&pool_b, &registry_b, &space, "device-B", None)
         .await
-        .expect("B prepare_outgoing");
+        .expect("B prepare_outgoing")
+        .expect("#1257 freshness gate must not refuse a consistent engine");
 
     // Wire-roundtrip both snapshots.
     let wire_a: SyncMessage = {
