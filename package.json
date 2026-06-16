@@ -138,6 +138,8 @@
     "vitest-axe": "^0.1.0"
   },
   "overrides": {
+    "js-yaml": "^4.2.0",
+    "markdown-it": "^14.2.0",
     "smol-toml": ">=1.6.1",
     "uuid": "^14.0.0"
   },
