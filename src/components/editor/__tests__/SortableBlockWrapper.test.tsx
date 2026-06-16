@@ -69,6 +69,8 @@ function makeProps(
       // #1067 — wrappers read offscreen state via useSyncExternalStore; these
       // static mocks never flip, so subscribe is a no-op returning unsubscribe.
       subscribe: () => () => {},
+      subscribeWindow: () => () => {},
+      getWindowVersion: () => 0,
     },
     rovingEditor: {
       editor: null,
@@ -118,6 +120,8 @@ describe('SortableBlockWrapper', () => {
       createObserveRef: () => vi.fn(),
       getHeight: () => 120,
       subscribe: () => () => {},
+      subscribeWindow: () => () => {},
+      getWindowVersion: () => 0,
     }
     const { container } = renderInList(makeProps({ viewport }))
 
@@ -134,6 +138,8 @@ describe('SortableBlockWrapper', () => {
       createObserveRef: () => vi.fn(),
       getHeight: () => 120,
       subscribe: () => () => {},
+      subscribeWindow: () => () => {},
+      getWindowVersion: () => 0,
     }
     const { container } = renderInList(makeProps({ viewport, focusedBlockId: 'BLK001' }))
 
@@ -196,6 +202,8 @@ describe('SortableBlockWrapper', () => {
       createObserveRef: () => vi.fn(),
       getHeight: () => 40,
       subscribe: () => () => {},
+      subscribeWindow: () => () => {},
+      getWindowVersion: () => 0,
     }
     const { container } = renderInList(
       makeProps({ viewport, hasChildren: true, isCollapsed: true }),
@@ -484,6 +492,8 @@ describe('SortableBlockWrapper', () => {
       createObserveRef: () => vi.fn(),
       getHeight: () => 80,
       subscribe: () => () => {},
+      subscribeWindow: () => () => {},
+      getWindowVersion: () => 0,
     }
     const { container } = renderInList(
       makeProps({

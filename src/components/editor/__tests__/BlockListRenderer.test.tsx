@@ -79,6 +79,8 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof BlockListRende
       createObserveRef: () => vi.fn(),
       getHeight: () => 40,
       subscribe: () => () => {},
+      subscribeWindow: () => () => {},
+      getWindowVersion: () => 0,
     },
     rovingEditor: {
       editor: null,

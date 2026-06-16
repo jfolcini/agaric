@@ -55,6 +55,8 @@ vi.mock('../../hooks/useViewportObserver', () => ({
     createObserveRef: () => vi.fn(),
     getHeight: () => 40,
     subscribe: () => () => {},
+    subscribeWindow: () => () => {},
+    getWindowVersion: () => 0,
   }),
 }))
 
