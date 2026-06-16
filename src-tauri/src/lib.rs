@@ -288,33 +288,17 @@ macro_rules! agaric_commands {
 /// Return the current UTC time as an RFC 3339 string with millisecond
 /// precision and a `Z` suffix (e.g. `2025-01-15T12:34:56.789Z`).
 ///
-/// Every timestamp stored in the database should go through this helper so
-/// that lexicographic comparisons (e.g. op-log compaction cutoff) are
-/// consistent (see issue #48 for context).
-///
-/// # Lex-monotonic `Z`-suffix invariant (L-98)
-///
-/// The `Z` suffix is **load-bearing**, not cosmetic. Several reverse-op
-/// "find prior op" queries
+/// This helper is retained only for non-database log/display use
+/// (per AGENTS.md "Timestamp encoding for new tables"). Database
+/// timestamps are **not** stored as RFC 3339 strings: `op_log.created_at`
+/// is `INTEGER NOT NULL CHECK (created_at >= 0)` epoch-ms (migration
+/// `0079_op_log_created_at_ms.sql`), sourced from `crate::db::now_ms()`
+/// and compared numerically. The reverse-op "find prior op" queries
 /// (`reverse::block_ops::find_prior_text` / `find_prior_position`,
 /// `reverse::property_ops::find_prior_property`,
-/// `reverse::attachment_ops::reverse_delete_attachment`) compare
-/// `op_log.created_at` lexicographically:
-///
-/// ```sql
-/// WHERE created_at < ?2 OR (created_at = ?2 AND seq < ?3)
-/// ORDER BY created_at DESC, seq DESC
-/// ```
-///
-/// This is correct **only** because every timestamp produced by this
-/// helper has the same `YYYY-MM-DDTHH:MM:SS.sssZ` shape — fixed-width
-/// UTC with a literal `Z`. A future ingest path that wrote
-/// `+00:00`-suffixed timestamps would break the lex-monotonic
-/// assumption (mixing `Z` and `+00:00` sorts incorrectly even though
-/// they encode the same instant). All op-log write paths must therefore
-/// route timestamps through `now_rfc3339()`; `op_log::append_local_op_in_tx`
-/// and `op_log::append_local_op_at` carry a `debug_assert!` enforcing
-/// the `Z` suffix at write time.
+/// `reverse::attachment_ops::reverse_delete_attachment`) rely on that
+/// integer ordering, which is intrinsically monotonic — there is no
+/// lex-collation or `Z`-suffix hazard, and no write-time assertion.
 pub fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
@@ -2497,11 +2481,11 @@ mod log_or_zero_tests {
     }
 }
 
-// L-98: pin down the lex-monotonic `Z`-suffix invariant that several
-// reverse-op queries on `op_log.created_at` rely on. See the
-// doc-comment on `now_rfc3339` for the full invariant; see the
-// `debug_assert!`s in `op_log::append_local_op_in_tx` /
-// `append_local_op_at` for the runtime enforcement.
+// Pin down the format of the `now_rfc3339()` string itself: fixed-width
+// millisecond precision with a literal `Z` suffix. This is a property of
+// the log/display helper only — it is unrelated to `op_log.created_at`,
+// which is INTEGER epoch-ms (migration 0079) compared numerically. See
+// the doc-comment on `now_rfc3339`.
 #[cfg(test)]
 mod now_rfc3339_tests {
     use super::now_rfc3339;
