@@ -649,77 +649,19 @@ pub(crate) async fn set_property_in_tx(
     .await?;
 
     // 3. Append SetProperty op to the op_log
-    let payload = OpPayload::SetProperty(prop_payload);
+    let payload = OpPayload::SetProperty(prop_payload.clone());
     let op_record =
         op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms()).await?;
 
-    // 4. Materialize: route reserved keys to blocks columns, others to block_properties
-    if is_reserved_property_key(key) {
-        // Match-arms with explicit `sqlx::query!` per column — preserves
-        // compile-time SQL validation instead of bypassing it with
-        // runtime `sqlx::query(&format!(...))`. Reserved keys are a
-        // closed set (see `is_reserved_property_key`) so the match is
-        // exhaustive.
-        match key {
-            "todo_state" => {
-                sqlx::query!(
-                    "UPDATE blocks SET todo_state = ? WHERE id = ?",
-                    value_text,
-                    block_id
-                )
-                .execute(&mut **tx)
-                .await?;
-            }
-            "priority" => {
-                sqlx::query!(
-                    "UPDATE blocks SET priority = ? WHERE id = ?",
-                    value_text,
-                    block_id
-                )
-                .execute(&mut **tx)
-                .await?;
-            }
-            "due_date" => {
-                sqlx::query!(
-                    "UPDATE blocks SET due_date = ? WHERE id = ?",
-                    value_date,
-                    block_id
-                )
-                .execute(&mut **tx)
-                .await?;
-            }
-            "scheduled_date" => {
-                sqlx::query!(
-                    "UPDATE blocks SET scheduled_date = ? WHERE id = ?",
-                    value_date,
-                    block_id
-                )
-                .execute(&mut **tx)
-                .await?;
-            }
-            _ => unreachable!(
-                "is_reserved_property_key('{key}') returned true for an unrecognised key"
-            ),
-        }
-    } else if key == SPACE_PROPERTY_KEY {
-        // #533 Phase 2: `space` is column-backed ONLY — no block_properties
-        // row. Stamp the denormalized `blocks.space_id` for the page's own
-        // row AND every block whose owning page is this one
-        // (`page_id = block_id`), so a re-assignment (move-to-space) of a
-        // populated page moves its descendants too (a space change enqueues
-        // no page_id/space_id rebuild). Parity with the sync/replay path
-        // (`project_set_property_to_sql`).
-        //
-        // #612/#708: the generic `set_property` boundary (IPC + MCP RW)
-        // reaches this arm unvalidated, so enforce the space contract HERE
-        // rather than per caller: the value must be a ref (a text/num/date
-        // shape would otherwise NULL `space_id` across the whole page
-        // group), and the target must be a live, registered space. The
-        // dedicated paths (`move_blocks_to_space_inner`,
-        // `create_page_in_space_inner`, journal/pages helpers) pre-validate
-        // the same predicate; this is the TOCTOU-safe backstop. The 0089 FK
-        // (`blocks.space_id REFERENCES spaces(id)`) would reject a
-        // mis-stamp anyway — this turns it into a clean Validation error.
+    // 3b. #533/#612/#708: `space` key registration backstop. The
+    // `project_set_property_to_sql` projection only LOGS+SKIPS an unregistered
+    // space target (the sync/replay degrade contract), but the LOCAL command
+    // boundary must reject it loudly (the generic `set_property` IPC/MCP path
+    // reaches this unvalidated). Keep this TOCTOU-safe Validation check on the
+    // LOCAL path BEFORE the engine helper runs, preserving the pre-#1257
+    // behaviour. (The helper's projection then performs the identical
+    // `UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?` fan-out.)
+    if key == SPACE_PROPERTY_KEY {
         let Some(target) = value_ref.as_deref() else {
             return Err(AppError::Validation(
                 "property 'space' requires a value_ref pointing at a space block".into(),
@@ -738,33 +680,25 @@ pub(crate) async fn set_property_in_tx(
                 "space_id '{target}' does not refer to a live, registered space block"
             )));
         }
-        sqlx::query!(
-            "UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?",
-            value_ref,
-            block_id,
-            block_id
-        )
-        .execute(&mut **tx)
-        .await?;
-    } else {
-        // PEND-14: persist `value_bool` as INTEGER (0/1) — SQLite has no
-        // native boolean type; the column CHECK constraint set in
-        // migration 0042 keeps the stored value to (0, 1, NULL).
-        let value_bool_int: Option<i64> = value_bool.map(|b| b as i64);
-        sqlx::query!(
-            "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-            block_id,
-            key,
-            value_text,
-            value_num,
-            value_date,
-            value_ref,
-            value_bool_int,
-        )
-        .execute(&mut **tx)
-        .await?;
     }
+
+    // 4. #1257 PR-3: route the property write through the SAME engine-apply +
+    // projection the boot-replay / sync `ApplyOp` path uses, IN this CommandTx,
+    // INSTEAD of the inline reserved-column / `space` fan-out / `block_properties`
+    // INSERT branches. `apply_set_property_via_loro` resolves the block's space,
+    // applies the typed value to the per-space Loro engine (sync guard, dropped
+    // before any `.await`), then `project_set_property_to_sql` runs the IDENTICAL
+    // per-key SQL (reserved → `blocks` column UPDATE; `space` → the
+    // `space_id` page-group fan-out; non-reserved → `INSERT OR REPLACE INTO
+    // block_properties`). We do NOT call `apply_op_tx` / `advance_apply_cursor`:
+    // the apply cursor stays put on the LOCAL path so boot replay re-applies
+    // idempotently (the safety net while local engine-apply hardens — #1257). If
+    // the engine can't be resolved (space unresolvable / engine uninitialised —
+    // e.g. a test without `install_for_test`), the helper internally FALLS BACK
+    // to `apply_set_property_sql_only`, which runs the SAME projection — so the
+    // row is never skipped and we never crash. The up-front `space`-registration
+    // Validation above is preserved regardless.
+    crate::materializer::apply_set_property_via_loro(&mut *tx, device_id, &prop_payload).await?;
 
     // Return block + op record; caller is responsible for commit + dispatch.
     Ok((

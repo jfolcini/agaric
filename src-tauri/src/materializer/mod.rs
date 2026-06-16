@@ -23,7 +23,14 @@ use dedup::dedup_tasks;
 // can route a create through the engine IN-TRANSACTION without advancing the
 // apply cursor.
 pub(crate) use handlers::apply_create_block_via_loro;
+// #1257 PR-3: re-export the simple-op engine helpers so the LOCAL command paths
+// (edit_block / set_property / delete_property / add_tag / remove_tag) can route
+// through the engine IN-TRANSACTION without advancing the apply cursor.
 pub(crate) use handlers::recompute_pages_cache_counts_for_pages;
+pub(crate) use handlers::{
+    apply_add_tag_via_loro, apply_delete_property_via_loro, apply_edit_block_via_loro,
+    apply_remove_tag_via_loro, apply_set_property_via_loro,
+};
 #[cfg(test)]
 use handlers::{handle_background_task, handle_foreground_task};
 pub use metrics::{QueueMetrics, StatusInfo};

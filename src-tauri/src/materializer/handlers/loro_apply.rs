@@ -138,7 +138,7 @@ pub(crate) async fn apply_create_block_via_loro(
 /// the guard, project. Edit ops carry no `parent_id`, so the
 /// resolution anchor is the `block_id` itself (which already has a
 /// `parent_id` row in `blocks` — the resolution walks up from there).
-pub(super) async fn apply_edit_block_via_loro(
+pub(crate) async fn apply_edit_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
     p: &EditBlockPayload,
@@ -190,7 +190,7 @@ pub(super) async fn apply_edit_block_via_loro(
 /// by construction, so this is correct — see the projection helper's
 /// docstring). An unresolvable space falls back to the SQL-only
 /// path.
-pub(super) async fn apply_set_property_via_loro(
+pub(crate) async fn apply_set_property_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
     p: &SetPropertyPayload,
@@ -635,7 +635,7 @@ pub(super) async fn purge_block_sql_cascade(
 /// `block_tags` row via `INSERT OR IGNORE`. Tag inheritance fanout
 /// runs AFTER the projection. An unresolvable space falls back to the
 /// SQL-only path.
-pub(super) async fn apply_add_tag_via_loro(
+pub(crate) async fn apply_add_tag_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
     p: &AddTagPayload,
@@ -681,7 +681,7 @@ pub(super) async fn apply_add_tag_via_loro(
 /// deletes the `block_tags` row. Tag inheritance cleanup runs AFTER
 /// the projection. An unresolvable space falls back to the SQL-only
 /// path.
-pub(super) async fn apply_remove_tag_via_loro(
+pub(crate) async fn apply_remove_tag_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
     p: &RemoveTagPayload,
@@ -724,7 +724,7 @@ pub(super) async fn apply_remove_tag_via_loro(
 /// non-reserved key → DELETE block_properties row). No
 /// tag-inheritance fanout — properties don't propagate. An
 /// unresolvable space falls back to the SQL-only path.
-pub(super) async fn apply_delete_property_via_loro(
+pub(crate) async fn apply_delete_property_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
     p: &DeletePropertyPayload,
