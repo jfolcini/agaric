@@ -4,58 +4,113 @@
 use super::*;
 
 /// SQL-only CreateBlock fallback.
+///
+/// #1323 (Step 3): the row INSERT is routed through the shared
+/// [`crate::loro::projection::project_create_block_to_sql`] projection — the
+/// same fn the engine arm calls — so the INSERT *shape* (column list, `page_id`
+/// stamping #1324, `OR IGNORE`) cannot drift between the two arms. We
+/// synthesize the engine's read-back [`crate::loro::engine::BlockSnapshot`]
+/// from the [`CreateBlockPayload`], reproducing the engine-less position
+/// formula exactly: `p.position.or_else(|| p.index.map(index_to_provisional_position))`.
+///
+/// **`position` is a documented divergence from the engine arm, not a value
+/// this convergence equalizes** (#1245 / #1257). The engine arm runs
+/// `reproject_dense_positions` AFTER the projection to re-rank the whole sibling
+/// group into a dense 1-based order over the engine's fractional tree; this
+/// engine-less fallback has no such tree and writes only the *provisional*
+/// rank (`index + 1`, capped). For an index-only insert into a populated
+/// sibling set the two legitimately differ. Step 3 converges the INSERT shape,
+/// not the position value — see `create_edit_convergence_tests.rs`, which pins
+/// this gap rather than masking it.
+///
+/// **`position == None` (both `position` and `index` absent).** The engine
+/// `BlockSnapshot` carries `position: i64` (the engine read-back is always a
+/// concrete rank), so it cannot represent the SQL NULL the old inline INSERT
+/// wrote in that corner. This both-`None` case IS reachable in production: the
+/// canonical create path `domain::block_ops::create_block_in_tx` takes
+/// `index: Option<i64>` and builds `CreateBlockPayload { position: None, index,
+/// .. }`, so a bare-append create (`index: None`) routed to this fallback on a
+/// space-unresolved / engine-uninit miss hits it. We map it to the engine's own
+/// append sentinel — `i64::MAX`, the exact value the engine arm feeds
+/// `apply_create_block` for this case (`loro_apply.rs`:
+/// `p.position.unwrap_or(i64::MAX)`). This changes the persisted byte from SQL
+/// NULL to `i64::MAX`, but is **behavior-preserving**: the pagination layer
+/// defines `NULL_POSITION_SENTINEL == i64::MAX` and substitutes NULL → i64::MAX
+/// for every keyset/order comparison, and the next-provisional-position scan
+/// (`WHERE position < 9223372036854775807`) excludes both NULL and i64::MAX
+/// identically — so a NULL row and an i64::MAX row sort and aggregate the same.
+/// No production code discriminates `position IS NULL` from the sentinel. This
+/// is the only changed byte vs the old fallback; it is observationally inert.
+/// All other inputs keep their exact prior `position`.
 pub(super) async fn apply_create_block_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: CreateBlockPayload,
 ) -> Result<(), AppError> {
+    use crate::loro::engine::BlockSnapshot;
+
     let parent_id_str = p.parent_id.as_ref().map(|id| id.as_str().to_owned());
-    let block_id_str = p.block_id.as_str();
-    let parent_id_ref = parent_id_str.as_deref();
     // #400: a new-scheme op carries a 0-based `index` and no legacy `position`;
-    // fall back to a 1-based position for this engine-less (test-only) path.
-    let position = p.position.or_else(|| {
-        p.index
-            .map(crate::pagination::index_to_provisional_position)
-    });
-    // #1324: a page block's `page_id` is `id`, and the deferred
-    // `SetBlockPageId` task is skipped for pages — so this engine-less fallback
-    // must stamp it, else a replayed / space-unresolved page create lands with
-    // NULL `page_id` and is invisible to `page_id`-scoped reads until a cache
-    // rebuild. (The `page_id_self_for_pages` CHECK does not reject NULL — see
-    // `loro/projection.rs`.) Non-page blocks keep NULL; the deferred task fills
-    // them.
-    let page_id = (p.block_type == "page").then_some(block_id_str);
-    sqlx::query!(
-        "INSERT OR IGNORE INTO blocks \
-             (id, block_type, content, parent_id, position, page_id) \
-         VALUES (?, ?, ?, ?, ?, ?)",
-        block_id_str,
-        p.block_type,
-        p.content,
-        parent_id_ref,
+    // fall back to a 1-based provisional position for this engine-less path.
+    // Same formula the old inline INSERT bound; see the doc comment on the
+    // #1245 / #1257 reproject-gap and on the unreachable both-`None` corner.
+    let position = p
+        .position
+        .or_else(|| {
+            p.index
+                .map(crate::pagination::index_to_provisional_position)
+        })
+        .unwrap_or(i64::MAX);
+    // Synthesize the engine's read-back snapshot. `project_create_block_to_sql`
+    // derives `page_id` from `snapshot.block_type == "page"` (#1324) and binds
+    // every column from these fields, so this reproduces the old INSERT's row
+    // exactly (page_id stamping included).
+    let snapshot = BlockSnapshot {
+        block_id: p.block_id.as_str().to_owned(),
+        block_type: p.block_type.clone(),
+        content: p.content.clone(),
+        parent_id: parent_id_str.clone(),
         position,
-        page_id,
-    )
-    .execute(&mut *conn)
-    .await?;
+    };
+    crate::loro::projection::project_create_block_to_sql(conn, &snapshot).await?;
+    // Tag inheritance stays OUTSIDE the projection and is called after it,
+    // exactly as before (and mirroring the engine arm).
     let parent_str = parent_id_str.as_deref();
     tag_inheritance::inherit_parent_tags(&mut *conn, p.block_id.as_str(), parent_str).await?;
     Ok(())
 }
 
 /// SQL-only EditBlock fallback (formerly `apply_edit_block_tx`).
+///
+/// #1323 (Step 3): routes the content UPDATE through the shared
+/// [`crate::loro::projection::project_edit_block_to_sql`] projection — the same
+/// fn the engine arm calls — so the UPDATE *shape* (`SET content = ? WHERE id =
+/// ? AND deleted_at IS NULL`) cannot drift between arms. We synthesize the
+/// engine's read-back [`crate::loro::engine::BlockSnapshot`] from the
+/// [`EditBlockPayload`], with `content = p.to_text`.
+///
+/// The projection reads `snapshot.content` and `snapshot.block_id` only — the
+/// other snapshot fields are unused by an EditBlock projection, so we fill them
+/// with inert placeholders. In the engine arm `snapshot.content` is the engine's
+/// post-merge read-back, which equals `to_text` in the single-author case and
+/// is the CRDT-merged result under concurrency; this engine-less fallback has
+/// no merge, so `to_text` IS the content — byte-identical to the old inline
+/// UPDATE.
 pub(super) async fn apply_edit_block_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: EditBlockPayload,
 ) -> Result<(), AppError> {
-    let block_id_str = p.block_id.as_str();
-    sqlx::query!(
-        "UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL",
-        p.to_text,
-        block_id_str,
-    )
-    .execute(&mut *conn)
-    .await?;
+    use crate::loro::engine::BlockSnapshot;
+
+    let snapshot = BlockSnapshot {
+        block_id: p.block_id.as_str().to_owned(),
+        // Unused by `project_edit_block_to_sql` (it binds only `content` +
+        // `block_id`); inert placeholders.
+        block_type: String::new(),
+        content: p.to_text.clone(),
+        parent_id: None,
+        position: 0,
+    };
+    crate::loro::projection::project_edit_block_to_sql(conn, &snapshot).await?;
     Ok(())
 }
 

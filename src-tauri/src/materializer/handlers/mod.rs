@@ -60,6 +60,8 @@ pub(crate) use pages_cache::recompute_pages_cache_counts_for_pages;
 pub(crate) use task_handlers::{handle_background_task, handle_foreground_task};
 
 #[cfg(test)]
+mod create_edit_convergence_tests;
+#[cfg(test)]
 mod delete_cascade_tests;
 #[cfg(test)]
 mod delete_restore_convergence_tests;
