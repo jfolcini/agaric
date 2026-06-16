@@ -800,7 +800,7 @@ describe('AgentAccessSettingsTab — undo agent op', () => {
       if (cmd === 'revert_ops') {
         // Mirror the `AppError::Database` wire shape from
         // src-tauri/src/error.rs — `{ kind, message }` carried on an
-        // Error instance so biome's useThrowOnlyError is satisfied.
+        // Error instance so oxlint's typescript/only-throw-error is satisfied.
         throw Object.assign(new Error('disk full'), { kind: 'database' })
       }
       return undefined
@@ -840,7 +840,7 @@ describe('AgentAccessSettingsTab — undo agent op', () => {
         // Matches the `AppError::NonReversible` serialization from
         // src-tauri/src/error.rs — `{ kind, message }` shape with
         // `kind === 'non_reversible'`, carried on an Error instance
-        // so biome's useThrowOnlyError is satisfied.
+        // so oxlint's typescript/only-throw-error is satisfied.
         throw Object.assign(new Error('Non-reversible operation: purge_block cannot be undone'), {
           kind: 'non_reversible',
         })

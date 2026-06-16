@@ -224,7 +224,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const resolveVersion = useResolveStore((s) => s.version)
   // `resolveVersion` is load-bearing: `resolveTitle` reads a mutable store
   // cache, so the version bump is the trigger that re-derives the resolver
-  // (and re-renders the chips) when tags finish loading — biome flags it as
+  // (and re-renders the chips) when tags finish loading — oxlint flags it as
   // an "extra" dep because the callback body never names it directly.
   const tagResolver = useCallback(
     (id: string): string => {
@@ -579,8 +579,8 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // Whether ANY page in the unfiltered set is namespaced. Used only
   // to decide whether to take the single-page-vault shortcut. Pulled
   // out so the grouping memo below doesn't read `pages` directly
-  // (keeps its dependency surface tight and lets biome's
-  // useExhaustiveDependencies trace stay clean).
+  // (keeps its dependency surface tight and lets oxlint's
+  // react-hooks/exhaustive-deps trace stay clean).
   const hasAnyNamespacedPage = useMemo(
     () => pages.some((p) => (p.content ?? '').includes('/')),
     [pages],

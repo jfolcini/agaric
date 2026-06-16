@@ -2,7 +2,7 @@
  * Pure helpers for {@link DonePanel}.
  *
  * Extracted from the component to keep individual effects/callbacks below the
- * Biome cognitive-complexity threshold (MAINT-58). Each helper is pure and
+ * oxlint eslint/complexity threshold (MAINT-58). Each helper is pure and
  * independently unit-tested in `__tests__/DonePanel.helpers.test.ts`.
  */
 

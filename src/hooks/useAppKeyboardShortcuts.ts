@@ -198,7 +198,7 @@ const TAB_SHORTCUTS: ReadonlyArray<TabShortcut> = [
  * selection the store restores the previous query (locked-in Q3).
  *
  * Extracted from the global-shortcuts handler so the main `useEffect`
- * dispatcher stays within Biome's cognitive-complexity budget.
+ * dispatcher stays within oxlint's eslint/complexity budget.
  */
 function openInPageFindFromShortcut(t: (key: string) => string): void {
   const sel = typeof window !== 'undefined' ? window.getSelection?.() : null
@@ -212,7 +212,7 @@ function openInPageFindFromShortcut(t: (key: string) => string): void {
 //
 // Each `try*` helper checks its own binding and returns `true` when it
 // consumed the event. Keeping the bodies out of the `useEffect` dispatcher
-// is what keeps `handleGlobalShortcuts` within Biome's cognitive-complexity
+// is what keeps `handleGlobalShortcuts` within oxlint's eslint/complexity
 // budget. They are module-level (no closure over component state) and read
 // fresh store snapshots via `getState()`, so the dispatcher's only dep is `t`.
 // ---------------------------------------------------------------------------
@@ -361,7 +361,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
   // All go through matchesShortcutBinding so rebinding in Settings takes
   // effect (BUG-18). Each shortcut's action lives in a module-level `try*`
   // helper that returns true once it consumes the event, keeping this
-  // dispatcher within Biome's cognitive-complexity budget (MAINT-53).
+  // dispatcher within oxlint's eslint/complexity budget (MAINT-53).
   useEffect(() => {
     function handleGlobalShortcuts(e: KeyboardEvent) {
       // MAINT-105: ignore auto-repeat so holding the shortcut doesn't

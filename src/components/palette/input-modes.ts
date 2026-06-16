@@ -59,7 +59,7 @@ export function helpModeQuery(input: string): string {
 /**
  * PEND-67 Phase 3 — map a prefix-bearing search-mode query to the
  * target mode + stripped query. Pulled out of `PaletteBody`'s
- * useEffect so the body stays under Biome's cognitive-complexity
+ * useEffect so the body stays under oxlint's eslint/complexity
  * budget as more prefixes are added.
  */
 export function routePrefixToMode(query: string): { next: PaletteMode; q: string } | null {

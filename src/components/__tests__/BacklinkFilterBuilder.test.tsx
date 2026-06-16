@@ -668,7 +668,7 @@ describe('BacklinkFilterBuilder', () => {
   // ====================================================================
   // MAINT-190 — `_addId` per-add monotonic React key on filter pills.
   //
-  // Replaces the previous `key={index}` + biome-ignore workaround. Each
+  // Replaces the previous `key={index}` + oxlint-disable workaround. Each
   // add stamps a fresh `_addId`, so byte-identical filters that bypass
   // the data-level dedup (or any future code that injects duplicates)
   // still get distinct React identities — no "two children with the

@@ -13,7 +13,7 @@ export type ActionMenuRowType = 'recent' | 'page' | 'block'
 /**
  * PEND-67 Phase 5 — build the action set for the currently-open
  * action menu. Pulled out of `PaletteBody` so the inner component
- * stays under Biome's cognitive-complexity budget as more row types
+ * stays under oxlint's eslint/complexity budget as more row types
  * and actions land.
  */
 export function buildActionMenuActions(

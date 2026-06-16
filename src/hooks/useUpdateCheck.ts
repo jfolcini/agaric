@@ -167,7 +167,7 @@ let inFlightCheck: Promise<void> | null = null
  * Not `async` — the body either short-circuits (returns `undefined`
  * for mobile) or returns an existing/newly-created promise directly.
  * Marking it `async` would add an unnecessary microtask hop AND trip
- * biome's `lint/suspicious/useAwait` rule.
+ * oxlint's `typescript/require-await` rule.
  */
 function runUpdateCheck(silentOnNoUpdate: boolean): Promise<void> | undefined {
   if (isMobilePlatform()) return undefined

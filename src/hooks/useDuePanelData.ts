@@ -60,7 +60,7 @@ export function clearProjectedCache(): void {
 }
 
 // ── Pure helpers (MAINT-60) ───────────────────────────────────────────
-// Factored out of doFetch/fetchBlocks to keep Biome cognitive-complexity
+// Factored out of doFetch/fetchBlocks to keep oxlint eslint/complexity
 // bounded. Each helper is side-effect-free and independently testable.
 
 /**
