@@ -17,15 +17,24 @@ pub(super) async fn apply_create_block_sql_only(
         p.index
             .map(crate::pagination::index_to_provisional_position)
     });
+    // #1324: a page block's `page_id` is `id`, and the deferred
+    // `SetBlockPageId` task is skipped for pages — so this engine-less fallback
+    // must stamp it, else a replayed / space-unresolved page create lands with
+    // NULL `page_id` and is invisible to `page_id`-scoped reads until a cache
+    // rebuild. (The `page_id_self_for_pages` CHECK does not reject NULL — see
+    // `loro/projection.rs`.) Non-page blocks keep NULL; the deferred task fills
+    // them.
+    let page_id = (p.block_type == "page").then_some(block_id_str);
     sqlx::query!(
         "INSERT OR IGNORE INTO blocks \
-             (id, block_type, content, parent_id, position) \
-         VALUES (?, ?, ?, ?, ?)",
+             (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, ?, ?, ?, ?, ?)",
         block_id_str,
         p.block_type,
         p.content,
         parent_id_ref,
         position,
+        page_id,
     )
     .execute(&mut *conn)
     .await?;
@@ -238,4 +247,74 @@ pub(super) async fn apply_delete_property_sql_only(
     p: DeletePropertyPayload,
 ) -> Result<(), AppError> {
     crate::loro::projection::project_delete_property_to_sql(conn, p.block_id.as_str(), &p.key).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::init_pool;
+    use crate::ulid::BlockId;
+    use tempfile::TempDir;
+
+    const PAGE_ID: &str = "01HZ00000000000000000000P1";
+    const CONTENT_ID: &str = "01HZ00000000000000000000C1";
+
+    fn create_block_payload(block_id: &str, block_type: &str) -> CreateBlockPayload {
+        CreateBlockPayload {
+            block_id: BlockId::from_trusted(block_id),
+            block_type: block_type.to_string(),
+            parent_id: None,
+            position: None,
+            index: Some(0),
+            content: String::new(),
+        }
+    }
+
+    /// #1324: the engine-less fallback must stamp `page_id = id` for a page
+    /// block. Before the fix this INSERT left `page_id` NULL (the CHECK accepts
+    /// NULL), and the deferred `SetBlockPageId` task is skipped for pages, so a
+    /// replayed / space-unresolved page create stayed NULL-owned.
+    #[tokio::test]
+    async fn sql_only_create_page_block_stamps_page_id_self() {
+        let dir = TempDir::new().expect("tempdir");
+        let pool = init_pool(&dir.path().join("sql_only.db"))
+            .await
+            .expect("init_pool");
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        apply_create_block_sql_only(&mut conn, create_block_payload(PAGE_ID, "page"))
+            .await
+            .expect("page fallback must satisfy the page_id CHECK, not trip it");
+        drop(conn);
+
+        let page_id: Option<String> = sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(PAGE_ID)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch row");
+        assert_eq!(page_id.as_deref(), Some(PAGE_ID));
+    }
+
+    /// A non-page block keeps NULL `page_id`; the deferred `SetBlockPageId`
+    /// task fills it from the parent.
+    #[tokio::test]
+    async fn sql_only_create_non_page_block_keeps_null_page_id() {
+        let dir = TempDir::new().expect("tempdir");
+        let pool = init_pool(&dir.path().join("sql_only.db"))
+            .await
+            .expect("init_pool");
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        apply_create_block_sql_only(&mut conn, create_block_payload(CONTENT_ID, "content"))
+            .await
+            .expect("project");
+        drop(conn);
+
+        let page_id: Option<String> = sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(CONTENT_ID)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch row");
+        assert_eq!(page_id, None);
+    }
 }
