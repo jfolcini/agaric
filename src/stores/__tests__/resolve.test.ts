@@ -2,7 +2,7 @@
  * Tests for the resolve store — preload, set, batchSet, resolveTitle, resolveStatus.
  *
  * Covers the global resolve cache that maps block/tag ULIDs to display titles.
- * The preload function calls listBlocks and listTagsByPrefix (which wrap invoke).
+ * The preload function calls listBlocks and listAllTagsInSpace (#1343) (which wrap invoke).
  *
  * # FEAT-3p7 — Cache key encoding (cross-space link enforcement)
  *
@@ -71,7 +71,7 @@ describe('preload', () => {
           return { items: [mockPages[1]], next_cursor: null, has_more: false }
         }
       }
-      if (cmd === 'list_tags_by_prefix') return mockTags
+      if (cmd === 'list_all_tags_in_space') return mockTags
       return null
     })
 
@@ -101,12 +101,58 @@ describe('preload', () => {
     expect(firstListBlocksArgs?.['spaceId']).toBe(TEST_SPACE_ID)
   })
 
+  it('caches more than 200 tags — no MAX_TAGS_PREFIX truncation (#1343)', async () => {
+    // The preload used to call `listTagsByPrefix({ prefix: '' })`, which the
+    // backend silently clamped to `MAX_TAGS_PREFIX = 200`, so chips beyond
+    // the first 200 tags rendered broken in large vaults. The no-clamp IPC
+    // `listAllTagsInSpace(spaceId)` returns every tag; assert all 250 land in
+    // the cache (none truncated).
+    const TAG_COUNT = 250
+    const mockTags = Array.from({ length: TAG_COUNT }, (_, i) => ({
+      tag_id: `TAG_${i}`,
+      name: `tag-${i}`,
+      usage_count: 1,
+      updated_at: '2025-01-01',
+    }))
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      if (cmd === 'list_all_tags_in_space') return mockTags
+      return null
+    })
+
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+
+    const state = useResolveStore.getState()
+    expect(state.cache.size).toBe(TAG_COUNT)
+    // First, the 200th boundary, and last tag are all present.
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'TAG_0'))).toEqual({
+      title: 'tag-0',
+      deleted: false,
+    })
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'TAG_200'))).toEqual({
+      title: 'tag-200',
+      deleted: false,
+    })
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'TAG_249'))).toEqual({
+      title: 'tag-249',
+      deleted: false,
+    })
+    // The space-scoped IPC must be forwarded the active spaceId.
+    const tagCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_all_tags_in_space')
+    expect(tagCalls).toHaveLength(1)
+    expect((tagCalls[0]?.[1] as Record<string, unknown> | undefined)?.['spaceId']).toBe(
+      TEST_SPACE_ID,
+    )
+  })
+
   it('uses "Untitled" for pages with null content', async () => {
     const mockPages = [{ id: 'PAGE_NULL', content: null, deleted_at: null }]
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
-      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'list_all_tags_in_space') return []
       return null
     })
 
@@ -123,7 +169,7 @@ describe('preload', () => {
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
-      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'list_all_tags_in_space') return []
       return null
     })
 
@@ -148,7 +194,7 @@ describe('preload', () => {
     const fetchErr = new Error('list_blocks boom')
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') throw fetchErr
-      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'list_all_tags_in_space') return []
       return null
     })
 
@@ -165,13 +211,13 @@ describe('preload', () => {
     warnSpy.mockRestore()
   })
 
-  it('logs a warning when listTagsByPrefix rejects (BUG-28)', async () => {
+  it('logs a warning when listAllTagsInSpace rejects (BUG-28)', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const fetchErr = new Error('list_tags boom')
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks')
         return { items: [], next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'list_tags_by_prefix') throw fetchErr
+      if (cmd === 'list_all_tags_in_space') throw fetchErr
       return null
     })
 
@@ -192,7 +238,7 @@ describe('preload', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks')
         return { items: [], next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'list_all_tags_in_space') return []
       return null
     })
 
@@ -215,7 +261,7 @@ describe('preload', () => {
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
-      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'list_all_tags_in_space') return []
       return null
     })
 
@@ -242,7 +288,7 @@ describe('preload', () => {
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
-      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'list_all_tags_in_space') return []
       return null
     })
 
@@ -270,7 +316,7 @@ describe('preload', () => {
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
-      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'list_all_tags_in_space') return []
       return null
     })
 
@@ -293,7 +339,7 @@ describe('preload', () => {
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
-      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'list_all_tags_in_space') return []
       return null
     })
 
@@ -317,7 +363,7 @@ describe('preload', () => {
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
-      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'list_all_tags_in_space') return []
       return null
     })
 
@@ -377,7 +423,7 @@ describe('preload in-flight coalescing (#753)', () => {
         listBlocksCalls++
         return new Promise((resolve) => deferred.push(resolve))
       }
-      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'list_all_tags_in_space') return []
       return null
     })
 
@@ -406,7 +452,7 @@ describe('preload in-flight coalescing (#753)', () => {
         listBlocksCalls++
         return new Promise((resolve) => deferred.push(resolve))
       }
-      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'list_all_tags_in_space') return []
       return null
     })
 
@@ -437,7 +483,7 @@ describe('preload in-flight coalescing (#753)', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks')
         return { items: [], next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'list_all_tags_in_space') return []
       return null
     })
 
@@ -454,7 +500,7 @@ describe('preload in-flight coalescing (#753)', () => {
       if (cmd === 'list_blocks') {
         return new Promise((resolve) => deferred.push(resolve))
       }
-      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'list_all_tags_in_space') return []
       return null
     })
 

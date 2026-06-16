@@ -2151,7 +2151,7 @@ describe('App', () => {
             total_count: null,
           }
         }
-        if (cmd === 'list_tags_by_prefix') return []
+        if (cmd === 'list_all_tags_in_space') return []
         return emptyPage
       })
       useSpaceStore.setState({
@@ -2205,7 +2205,7 @@ describe('App', () => {
         if (cmd === 'list_blocks') {
           return { items: [], next_cursor: null, has_more: false, total_count: null }
         }
-        if (cmd === 'list_tags_by_prefix') return []
+        if (cmd === 'list_all_tags_in_space') return []
         return emptyPage
       })
       useSpaceStore.setState({
