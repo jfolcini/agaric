@@ -34,7 +34,7 @@
 
 use proptest::prelude::*;
 
-use crate::loro::engine::LoroEngine;
+use crate::loro::engine::{LoroEngine, PropertyValue};
 use crate::op::{
     CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
     SetPropertyPayload,
@@ -438,8 +438,10 @@ proptest! {
                 OpPayload::SetProperty(p) => {
                     // The engine must hold the value just written.
                     let stored = engine
-                        .read_property(p.block_id.as_str(), &p.key)
-                        .map_err(|e| TestCaseError::fail(format!("read_property after set failed: {e}")))?;
+                        .read_property_typed(p.block_id.as_str(), &p.key)
+                        .map_err(|e| TestCaseError::fail(format!("read_property_typed after set failed: {e}")))?;
+                    // The generators only ever emit `value_text` (a string),
+                    // which `apply_set_property` stores as `PropertyValue::Str`.
                     let expected: Option<String> = p
                         .value_text
                         .clone()
@@ -449,7 +451,7 @@ proptest! {
                         .or_else(|| p.value_bool.map(|b| b.to_string()));
                     prop_assert_eq!(
                         stored,
-                        Some(expected),
+                        expected.map(PropertyValue::Str),
                         "SetProperty must persist the value in the engine"
                     );
                 }
@@ -601,11 +603,11 @@ mod two_device {
         key: &str,
     ) -> Result<(), String> {
         let a_val = a
-            .read_property(block_id, key)
-            .map_err(|e| format!("A read_property({block_id}, {key}): {e}"))?;
+            .read_property_typed(block_id, key)
+            .map_err(|e| format!("A read_property_typed({block_id}, {key}): {e}"))?;
         let b_val = b
-            .read_property(block_id, key)
-            .map_err(|e| format!("B read_property({block_id}, {key}): {e}"))?;
+            .read_property_typed(block_id, key)
+            .map_err(|e| format!("B read_property_typed({block_id}, {key}): {e}"))?;
         if a_val != b_val {
             return Err(format!(
                 "property {block_id}.{key} diverged: A={a_val:?}, B={b_val:?}"
@@ -785,12 +787,14 @@ mod two_device {
             // catches an entire class of "LWW resolved to garbage"
             // bugs that pure equality-of-reads would miss.
             let winner = engine_a
-                .read_property(seed_id, &key)
+                .read_property_typed(seed_id, &key)
                 .expect("A read winner")
-                .expect("property must exist after both sides wrote it")
-                .expect("non-null after explicit string write");
+                .expect("property must exist after both sides wrote it");
+            // Both sides write strings via `apply_set_property`, so the
+            // stored winner is always a `PropertyValue::Str`.
             prop_assert!(
-                winner == a_value || winner == b_value,
+                winner == PropertyValue::Str(a_value.clone())
+                    || winner == PropertyValue::Str(b_value.clone()),
                 "LWW winner {winner:?} is neither A's {a_value:?} nor B's {b_value:?}",
             );
         }

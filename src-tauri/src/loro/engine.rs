@@ -1866,115 +1866,7 @@ impl LoroEngine {
         }))
     }
 
-    /// Read a property back; returns `Ok(None)` for an unset key (no
-    /// entry in the map) and `Ok(Some(None))` for an explicit-null
-    /// clear.  Production property reads go through SQL; this exists
-    /// for parity-checking and debug paths.
-    pub fn read_property(
-        &self,
-        block_id: &str,
-        key: &str,
-    ) -> Result<Option<Option<String>>, AppError> {
-        let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
-        let Some(voc) = props_root.get(block_id) else {
-            return Ok(None);
-        };
-        let block_props: LoroMap = voc
-            .into_container()
-            .map_err(|_| {
-                AppError::Validation(format!(
-                    "loro: read_property block {block_id} props slot is not a container"
-                ))
-            })?
-            .into_map()
-            .map_err(|_| {
-                AppError::Validation(format!(
-                    "loro: read_property block {block_id} props is not a LoroMap"
-                ))
-            })?;
-        let Some(value_voc) = block_props.get(key) else {
-            return Ok(None);
-        };
-        let value = value_voc.into_value().map_err(|_| {
-            AppError::Validation(format!(
-                "loro: read_property {block_id}/{key} expected scalar"
-            ))
-        })?;
-        // Tolerate native typed values (§2.1): Num/Bool render to their string
-        // form for this legacy string-returning path; Null → explicit clear.
-        Ok(Some(PropertyValue::from_loro(value)?.as_legacy_string()))
-    }
-
-    /// Read back every property of a block as `(key, value)` pairs.
-    ///
-    /// Mirrors [`read_property`]'s container access and value
-    /// conversion, but enumerates the whole per-block properties
-    /// `LoroMap` rather than a single key.  Used by the sync-pull
-    /// re-projection path (`apply_remote`) to mirror remote
-    /// `SetProperty` / `DeleteProperty` state into the SQL
-    /// `block_properties` table.
-    ///
-    /// Value mapping per entry:
-    /// * `LoroValue::Null` (explicit clear) → `None`
-    /// * `LoroValue::String` / `Double` / `I64` / `Bool` → rendered to
-    ///   their legacy-string form via `PropertyValue::from_loro` +
-    ///   `as_legacy_string` (covers all scalar types the engine stores
-    ///   after PEND-80).
-    /// * Container values → `Err(AppError::Validation)` (writer/reader
-    ///   drift — only scalars are ever stored).
-    ///
-    /// Returns an empty `Vec` when the block has never had any
-    /// properties (no entry in the `block_properties` root).
-    ///
-    /// [`read_property`]: Self::read_property
-    pub fn read_all_properties(
-        &self,
-        block_id: &str,
-    ) -> Result<Vec<(String, Option<String>)>, AppError> {
-        let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
-        let Some(voc) = props_root.get(block_id) else {
-            return Ok(Vec::new());
-        };
-        let block_props: LoroMap = voc
-            .into_container()
-            .map_err(|_| {
-                AppError::Validation(format!(
-                    "loro: read_all_properties block {block_id} props slot is not a container"
-                ))
-            })?
-            .into_map()
-            .map_err(|_| {
-                AppError::Validation(format!(
-                    "loro: read_all_properties block {block_id} props is not a LoroMap"
-                ))
-            })?;
-        let mut out: Vec<(String, Option<String>)> = Vec::with_capacity(block_props.len());
-        let mut err: Option<AppError> = None;
-        block_props.for_each(|key, value_voc| {
-            if err.is_some() {
-                return;
-            }
-            match value_voc.into_value() {
-                // §2.1: accept every scalar, rendering Num/Bool to string for
-                // this legacy string-returning path (Null → cleared/None).
-                Ok(v) => match PropertyValue::from_loro(v) {
-                    Ok(pv) => out.push((key.to_string(), pv.as_legacy_string())),
-                    Err(e) => err = Some(e),
-                },
-                Err(_) => {
-                    err = Some(AppError::Validation(format!(
-                        "loro: read_all_properties {block_id}/{key} expected scalar"
-                    )));
-                }
-            }
-        });
-        if let Some(e) = err {
-            return Err(e);
-        }
-        Ok(out)
-    }
-
-    /// Typed variant of [`read_all_properties`] (PEND-80 §2.1): returns each
+    /// Typed variant of the per-block property read (PEND-80 §2.1): returns each
     /// value as a native [`PropertyValue`] so the SQL projection can route
     /// `Num`/`Bool` without consulting `property_definitions`. Used by the
     /// inbound re-projection path and the unified state-projection (Phase 4).
@@ -2022,6 +1914,47 @@ impl LoroEngine {
             return Err(e);
         }
         Ok(out)
+    }
+
+    /// Test-only single-key companion to [`read_all_properties_typed`].
+    ///
+    /// Returns `Ok(None)` for an unset key (no entry in the map),
+    /// `Ok(Some(PropertyValue::Null))` for an explicit-null clear, and
+    /// `Ok(Some(value))` for any present scalar. Production property
+    /// reads go through SQL / `read_all_properties_typed`; this exists
+    /// for parity-checking in tests and proptests.
+    #[cfg(test)]
+    pub fn read_property_typed(
+        &self,
+        block_id: &str,
+        key: &str,
+    ) -> Result<Option<PropertyValue>, AppError> {
+        let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
+        let Some(voc) = props_root.get(block_id) else {
+            return Ok(None);
+        };
+        let block_props: LoroMap = voc
+            .into_container()
+            .map_err(|_| {
+                AppError::Validation(format!(
+                    "loro: read_property_typed block {block_id} props slot is not a container"
+                ))
+            })?
+            .into_map()
+            .map_err(|_| {
+                AppError::Validation(format!(
+                    "loro: read_property_typed block {block_id} props is not a LoroMap"
+                ))
+            })?;
+        let Some(value_voc) = block_props.get(key) else {
+            return Ok(None);
+        };
+        let value = value_voc.into_value().map_err(|_| {
+            AppError::Validation(format!(
+                "loro: read_property_typed {block_id}/{key} expected scalar"
+            ))
+        })?;
+        Ok(Some(PropertyValue::from_loro(value)?))
     }
 
     /// Read the current parent `block_id`, derived from the tree
@@ -2800,20 +2733,6 @@ mod tests {
             ]
         );
 
-        // Legacy string read renders Num/Bool to their string form and a Null
-        // clear to None — back-compatible with the value_type-routed projection.
-        let mut legacy = e.read_all_properties("B1").unwrap();
-        legacy.sort_by(|a, b| a.0.cmp(&b.0));
-        assert_eq!(
-            legacy,
-            vec![
-                ("cleared".to_string(), None),
-                ("count".to_string(), Some("3.5".to_string())),
-                ("done".to_string(), Some("true".to_string())),
-                ("title".to_string(), Some("hi".to_string())),
-            ]
-        );
-
         // The string shim still works and stores a String value.
         e.apply_set_property("B1", "note", Some("x")).unwrap();
         assert_eq!(
@@ -3437,7 +3356,7 @@ mod op_coverage_tests {
             "purged block must be absent"
         );
         assert!(
-            engine.read_property(BLOCK_A, "k").unwrap().is_none(),
+            engine.read_property_typed(BLOCK_A, "k").unwrap().is_none(),
             "purged block's properties must be wiped"
         );
         assert!(
@@ -3474,22 +3393,23 @@ mod op_coverage_tests {
 
     #[test]
     fn apply_delete_property_removes_key() {
+        use super::PropertyValue;
         let mut engine = engine_with_block(BLOCK_A);
         engine
             .apply_set_property(BLOCK_A, "priority", Some("high"))
             .expect("set");
         assert_eq!(
-            engine.read_property(BLOCK_A, "priority").unwrap(),
-            Some(Some("high".to_string()))
+            engine.read_property_typed(BLOCK_A, "priority").unwrap(),
+            Some(PropertyValue::Str("high".to_string()))
         );
         engine
             .apply_delete_property(BLOCK_A, "priority")
             .expect("delete");
         // After delete the key must be entirely absent — distinct
         // from `apply_set_property(value=None)` which would leave
-        // `Some(None)` (explicit-null clear).
+        // `Some(PropertyValue::Null)` (explicit-null clear).
         assert_eq!(
-            engine.read_property(BLOCK_A, "priority").unwrap(),
+            engine.read_property_typed(BLOCK_A, "priority").unwrap(),
             None,
             "deleted property key must be absent (Ok(None)), not present-as-null"
         );
@@ -3497,6 +3417,7 @@ mod op_coverage_tests {
 
     #[test]
     fn apply_delete_property_is_noop_for_missing_key() {
+        use super::PropertyValue;
         let mut engine = engine_with_block(BLOCK_A);
         // Block has no properties yet.
         engine
@@ -3511,24 +3432,25 @@ mod op_coverage_tests {
             .expect("delete other-missing key must not error");
         // Original key survives.
         assert_eq!(
-            engine.read_property(BLOCK_A, "priority").unwrap(),
-            Some(Some("high".to_string()))
+            engine.read_property_typed(BLOCK_A, "priority").unwrap(),
+            Some(PropertyValue::Str("high".to_string()))
         );
     }
 
     #[test]
     fn apply_delete_property_distinct_from_set_property_null() {
+        use super::PropertyValue;
         // `set_property(value=None)` writes an explicit Null at the
-        // key — `read_property` returns `Some(None)`.
-        // `delete_property` removes the key entirely — `read_property`
+        // key — `read_property_typed` returns `Some(PropertyValue::Null)`.
+        // `delete_property` removes the key entirely — `read_property_typed`
         // returns `None`.  This invariant is the reason both ops exist.
         let mut engine_clear = engine_with_block(BLOCK_A);
         engine_clear
             .apply_set_property(BLOCK_A, "k", None)
             .expect("clear");
         assert_eq!(
-            engine_clear.read_property(BLOCK_A, "k").unwrap(),
-            Some(None),
+            engine_clear.read_property_typed(BLOCK_A, "k").unwrap(),
+            Some(PropertyValue::Null),
             "set_property(None) writes explicit-null"
         );
 
@@ -3540,7 +3462,7 @@ mod op_coverage_tests {
             .apply_delete_property(BLOCK_A, "k")
             .expect("delete");
         assert_eq!(
-            engine_delete.read_property(BLOCK_A, "k").unwrap(),
+            engine_delete.read_property_typed(BLOCK_A, "k").unwrap(),
             None,
             "delete_property removes the key entirely"
         );
@@ -3559,7 +3481,9 @@ mod op_coverage_tests {
             .apply_delete_property(BLOCK_A, "k")
             .expect("delete after explicit-null");
         assert_eq!(
-            engine_null_then_delete.read_property(BLOCK_A, "k").unwrap(),
+            engine_null_then_delete
+                .read_property_typed(BLOCK_A, "k")
+                .unwrap(),
             None,
             "delete_property must remove key even when value is explicit-Null"
         );
@@ -3569,6 +3493,7 @@ mod op_coverage_tests {
 
     #[test]
     fn read_all_properties_returns_every_entry_including_explicit_null() {
+        use super::PropertyValue;
         let mut engine = engine_with_block(BLOCK_A);
         engine
             .apply_set_property(BLOCK_A, "effort", Some("3"))
@@ -3582,14 +3507,17 @@ mod op_coverage_tests {
             .apply_set_property(BLOCK_A, "cleared", None)
             .expect("set cleared");
 
-        let mut props = engine.read_all_properties(BLOCK_A).expect("read all");
-        props.sort();
+        let mut props = engine.read_all_properties_typed(BLOCK_A).expect("read all");
+        props.sort_by(|a, b| a.0.cmp(&b.0));
         assert_eq!(
             props,
             vec![
-                ("assignee".to_string(), Some("alice".to_string())),
-                ("cleared".to_string(), None),
-                ("effort".to_string(), Some("3".to_string())),
+                (
+                    "assignee".to_string(),
+                    PropertyValue::Str("alice".to_string())
+                ),
+                ("cleared".to_string(), PropertyValue::Null),
+                ("effort".to_string(), PropertyValue::Str("3".to_string())),
             ],
         );
     }
@@ -3597,7 +3525,7 @@ mod op_coverage_tests {
     #[test]
     fn read_all_properties_for_block_without_props_is_empty() {
         let engine = engine_with_block(BLOCK_A);
-        let props = engine.read_all_properties(BLOCK_A).expect("read all");
+        let props = engine.read_all_properties_typed(BLOCK_A).expect("read all");
         assert!(
             props.is_empty(),
             "block with no properties yields empty vec"
@@ -3608,7 +3536,7 @@ mod op_coverage_tests {
         let fresh = LoroEngine::new();
         assert!(
             fresh
-                .read_all_properties(BLOCK_B)
+                .read_all_properties_typed(BLOCK_B)
                 .expect("read all")
                 .is_empty()
         );
