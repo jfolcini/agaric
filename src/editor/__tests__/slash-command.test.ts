@@ -126,6 +126,20 @@ describe('slash-command — explicit selection only (no auto-execute)', () => {
     expect(onCommand).toHaveBeenCalledWith(item, editor)
   })
 
+  // #1344 — the slash menu must not trigger mid-word (URLs, `6/15`,
+  // "and/or"). The picker-plugin's `allowedPrefixes` gates the trigger to
+  // a block start or after whitespace; the trigger logic itself lives in
+  // picker-plugin (unit-tested there), so here we assert the config value
+  // the slash extension hands to `createPickerPlugin` matches the AtTagPicker
+  // whitelist exactly (regular space, NBSP, newline) — i.e. NOT `null`.
+  it('gates the trigger to whitespace prefixes, matching AtTagPicker (#1344)', () => {
+    setup()
+    expect(capturedPickerConfig['char']).toBe('/')
+    expect(capturedPickerConfig['allowedPrefixes']).toEqual([' ', ' ', '\n'])
+    // Guard against a regression back to the unrestricted (mid-word) config.
+    expect(capturedPickerConfig['allowedPrefixes']).not.toBeNull()
+  })
+
   it('lifecycle has no timer side effects — onKeyDown/onExit are inert pass-throughs', () => {
     vi.useFakeTimers()
     try {

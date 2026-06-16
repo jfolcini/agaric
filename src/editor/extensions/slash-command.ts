@@ -1,8 +1,10 @@
 /**
  * TipTap extension: / slash command picker.
  *
- * Intercepts the / keystroke and opens a suggestion popup
- * with available commands (TODO, DOING, DONE, Date).
+ * Intercepts the / keystroke at a block start or after whitespace and
+ * opens a suggestion popup with available commands (TODO, DOING, DONE,
+ * Date). A `/` mid-word (URLs, `6/15`, "and/or") does not trigger it
+ * (#1344 — `allowedPrefixes`, matching AtTagPicker).
  * On selection, delegates to the onCommand callback.
  *
  * Selection is always explicit: the command runs only on Enter or click
@@ -48,7 +50,13 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
         displayName: 'Slash commands',
         pluginKey: slashCommandPluginKey,
         char: '/',
-        allowedPrefixes: null,
+        // #1344 — only open the slash menu when `/` is at the start of the
+        // block or preceded by whitespace, matching AtTagPicker. Without
+        // this guard the picker fired mid-word on any `/` (URLs, `6/15`,
+        // "and/or"). ProseMirror normalises a trailing space inside a
+        // paragraph to NBSP (`\u00A0`), so we accept it alongside the
+        // regular space; `\n` covers a preceding hard break.
+        allowedPrefixes: [' ', '\u00A0', '\n'],
         editor,
         items: (query) => extensionOptions.items(query),
         command: ({ editor, range, props }) => {

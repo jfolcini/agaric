@@ -36,7 +36,7 @@
 import { create } from 'zustand'
 
 import { logger } from '../lib/logger'
-import { listBlocks, listBlocksLimit, listTagsByPrefix } from '../lib/tauri'
+import { listAllTagsInSpace, listBlocks, listBlocksLimit } from '../lib/tauri'
 import { useSpaceStore } from './space'
 
 const MAX_CACHE_SIZE = 10_000
@@ -168,11 +168,13 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         cursor = pagesResp.next_cursor ?? undefined
       }
 
-      // Fetch all tags. Tags are not space-scoped on the wire (the
-      // tag table is global), but we key them under `spaceId` so a
-      // `clearAllForSpace` flush wipes them too — the next preload
-      // re-fetches them under the new space's prefix.
-      const tags = await listTagsByPrefix({ prefix: '' })
+      // Fetch all tags in the active space. #1343 — `listAllTagsInSpace`
+      // is the no-clamp IPC; `listTagsByPrefix({ prefix: '' })` silently
+      // truncated to `MAX_TAGS_PREFIX = 200`, so chips beyond the first
+      // 200 tags rendered broken in large vaults. We key the rows under
+      // `spaceId` so a `clearAllForSpace` flush wipes them too — the next
+      // preload re-fetches them under the new space's prefix.
+      const tags = await listAllTagsInSpace(spaceId)
       const fetchedTags = new Map<string, ResolveEntry>()
       for (const t of tags) {
         fetchedTags.set(keyFor(spaceId, t.tag_id), {
