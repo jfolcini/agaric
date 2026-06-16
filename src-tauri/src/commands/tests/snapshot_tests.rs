@@ -109,6 +109,12 @@ async fn snapshot_status_info_response() {
     insta::assert_yaml_snapshot!(status, {
         ".last_materialize_at" => "[TIMESTAMP]",
         ".time_since_last_materialize_secs" => "[SECS]",
+        // #1326: `sql_only_fallback_count` is a *process-global* monotonic
+        // counter — other tests in this binary may have recorded fallbacks
+        // before this snapshot samples it, so the value is non-deterministic
+        // across runs. Redact it to keep the snapshot stable; its live wiring
+        // is asserted by the delta test in `materializer::tests::fifo_status`.
+        ".sql_only_fallback_count" => "[FALLBACK_COUNT]",
     });
 }
 

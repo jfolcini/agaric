@@ -26,3 +26,4 @@ time_since_last_materialize_secs: "[SECS]"
 total_ops_in_log: 0
 sync_peer_failure_counts: []
 retry_queue_pending: 0
+sql_only_fallback_count: "[FALLBACK_COUNT]"

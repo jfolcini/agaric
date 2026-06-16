@@ -954,6 +954,9 @@ impl Materializer {
             total_ops_in_log,
             sync_peer_failure_counts,
             retry_queue_pending,
+            // #1326: surface the SQL-only fallback observability counter
+            // (process-global, monotonic) through the status endpoint.
+            sql_only_fallback_count: super::handlers::sql_only_fallback::count(),
         }
     }
 }
