@@ -523,7 +523,7 @@ mod two_device {
     /// Edit/Delete/Move/SetProperty on a deleted block — see
     /// [`resolve_op`]).  Returns the set of block_ids that ended up
     /// created (so the comparator can read them back).
-    fn apply_stream(engine: &mut LoroEngine, ops: &[OpKind]) -> Vec<String> {
+    pub(super) fn apply_stream(engine: &mut LoroEngine, ops: &[OpKind]) -> Vec<String> {
         let mut created: Vec<String> = Vec::new();
         let mut deleted: Vec<String> = Vec::new();
 
@@ -565,7 +565,11 @@ mod two_device {
     /// both engines agree (either both see the block with identical
     /// fields, or both see no block); returns the divergence detail in
     /// `Err` for the prop_assert message.
-    fn compare_block_reads(a: &LoroEngine, b: &LoroEngine, block_id: &str) -> Result<(), String> {
+    pub(super) fn compare_block_reads(
+        a: &LoroEngine,
+        b: &LoroEngine,
+        block_id: &str,
+    ) -> Result<(), String> {
         let a_block = a
             .read_block(block_id)
             .map_err(|e| format!("A read_block({block_id}): {e}"))?;
@@ -596,7 +600,7 @@ mod two_device {
 
     /// Compare a property read across both engines.  `Ok(None)` and
     /// `Ok(Some(_))` shapes must match exactly.
-    fn compare_property_reads(
+    pub(super) fn compare_property_reads(
         a: &LoroEngine,
         b: &LoroEngine,
         block_id: &str,
@@ -862,6 +866,253 @@ mod two_device {
                 parent == parent_a || parent == parent_b,
                 "move winner {parent:?} is neither A's {parent_a:?} nor B's {parent_b:?}",
             );
+        }
+    }
+}
+
+// ===========================================================================
+// N-way (3+ device) concurrent-merge proptest streams.
+//
+// The `two_device` module above proves PAIRWISE convergence: two
+// engines that exchange snapshots agree. What it CANNOT prove is that
+// merge is ASSOCIATIVE and COMMUTATIVE across an arbitrary device
+// topology — that K>=3 engines, each with their own independent op
+// stream, all reach the SAME state regardless of the order in which
+// deltas are exchanged (ring vs star vs all-to-all). Production sync
+// is N-way (a journal syncs across phone + laptop + desktop), so the
+// 2-device assumption is not enough; this module closes that gap.
+//
+// ## Why full-snapshot import is sound for order-independence
+//
+// Each device exports a complete state snapshot (`export_snapshot`),
+// and Loro's `import` is idempotent + commutative over the op-log:
+// importing the same snapshot twice, or in any order, contributes the
+// same set of ops to the merged DAG. So "import everyone's snapshot"
+// in ANY topology is the join of all op-logs, and Loro's deterministic
+// CRDT replay over that join is what we assert is identical across all
+// peers AND across topologies. A failure here is a genuine
+// associativity/commutativity bug in the sync apply path.
+//
+// We REUSE the two-device harness wholesale: `apply_stream` (drives an
+// `OpKind` stream onto one engine), `compare_block_reads` /
+// `compare_property_reads` (the convergence comparators), the
+// `op_stream_strategy` / `block_id_strategy` / `prop_key_strategy`
+// generators, and `export_snapshot` / `import`. No new harness, no new
+// assertion.
+// ===========================================================================
+
+#[cfg(test)]
+mod n_way {
+    use super::two_device::{apply_stream, compare_block_reads, compare_property_reads};
+    use super::*;
+
+    /// Per-case budget for the single-topology all-to-all test. Matched
+    /// to `TWO_DEVICE_CASES` (256): one all-to-all sweep per case is a
+    /// small multiple of a two-device case, so CI runtime stays in line
+    /// with the surrounding two-device suite (~2 s/test at 256 cases).
+    const N_WAY_CASES: u32 = 256;
+
+    /// Per-case budget for the topology-independence test. Lower than
+    /// `N_WAY_CASES` because each case builds the K peers THREE times and
+    /// merges them three ways (all-to-all + an O(K^2) ring loop + star),
+    /// then runs cross-topology compares — ~3-4x the per-case work of the
+    /// single-topology test. 96 cases keeps it well under the 30 s budget
+    /// while still exercising hundreds of distinct K-peer interleavings.
+    const N_WAY_TOPOLOGY_CASES: u32 = 96;
+
+    /// Drive `imports` (one snapshot per peer, including this peer's own
+    /// already-folded-in state, which is a harmless no-op re-import)
+    /// into `engine` in the supplied order. The order is varied per
+    /// topology to prove order-independence.
+    fn import_all(engine: &mut LoroEngine, snapshots: &[Vec<u8>]) {
+        for snap in snapshots {
+            engine.import(snap).expect("import peer snapshot");
+        }
+    }
+
+    /// Build K engines with distinct peer ids and run one independent
+    /// `OpKind` stream on each. Returns the engines plus the union of
+    /// every created block id (so the comparators know what to read
+    /// back). REUSES `apply_stream` per device.
+    fn build_peers(streams: &[Vec<OpKind>]) -> (Vec<LoroEngine>, Vec<String>) {
+        let mut engines: Vec<LoroEngine> = Vec::with_capacity(streams.len());
+        let mut all_ids: Vec<String> = Vec::new();
+
+        for (i, stream) in streams.iter().enumerate() {
+            // Distinct, deterministic peer ids: "DEV-PROP-NWAY-00", etc.
+            let mut engine = LoroEngine::with_peer_id(&format!("DEV-PROP-NWAY-{i:02}"))
+                .expect("with_peer_id N-way");
+            let created = apply_stream(&mut engine, stream);
+            all_ids.extend(created);
+            engines.push(engine);
+        }
+
+        all_ids.sort();
+        all_ids.dedup();
+        (engines, all_ids)
+    }
+
+    /// Assert every engine in `engines` reads back identically for every
+    /// id in `ids` and every property key in `prop_key_strategy`'s set.
+    /// REUSES `compare_block_reads` / `compare_property_reads` against
+    /// `engines[0]` as the reference peer (transitive equality: if all
+    /// agree with peer 0, all agree with each other).
+    fn assert_converged(engines: &[LoroEngine], ids: &[String]) -> Result<(), String> {
+        // The 4 keys the SetProperty generator can emit (see
+        // `prop_key_strategy`). Reading a never-set key returns
+        // `Ok(None)` on every peer, so checking the whole set is safe
+        // and catches property-LWW divergence across peers.
+        const PROP_KEYS: &[&str] = &["status", "priority", "due_date", "owner"];
+
+        let reference = &engines[0];
+        for peer in &engines[1..] {
+            for id in ids {
+                compare_block_reads(reference, peer, id)?;
+                for key in PROP_KEYS {
+                    compare_property_reads(reference, peer, id, key)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: N_WAY_CASES,
+            .. ProptestConfig::default()
+        })]
+
+        /// Test 1 — N-way merge convergence (all-to-all topology).
+        ///
+        /// Generate K devices (K in 3..=5), each running its OWN
+        /// independently-generated mixed-op stream (the same
+        /// `op_stream_strategy` the two-device tests use). Then every
+        /// peer imports every other peer's snapshot (all-to-all). After
+        /// the sweep all K engines must read back identical state across
+        /// every touched block id + property key.
+        ///
+        /// This is the headline N-way property: independent concurrent
+        /// authoring on 3..=5 peers converges to one agreed state. A
+        /// failure is a real CRDT merge bug invisible to the 2-device
+        /// matrix (which can't exhibit 3-way interleavings).
+        #[test]
+        fn n_way_concurrent_mixed_streams_all_to_all_converges(
+            streams in proptest::collection::vec(op_stream_strategy(1..=30), 3..=5),
+        ) {
+            let (mut engines, all_ids) = build_peers(&streams);
+
+            // All-to-all: snapshot every peer ONCE (pre-merge state),
+            // then have every peer import every snapshot. Because each
+            // snapshot is the peer's INDEPENDENT pre-merge state, this
+            // is the full join of all op-logs on every engine.
+            let snapshots: Vec<Vec<u8>> = engines
+                .iter_mut()
+                .map(|e| e.export_snapshot().expect("export peer"))
+                .collect();
+            for engine in &mut engines {
+                import_all(engine, &snapshots);
+            }
+
+            if let Err(msg) = assert_converged(&engines, &all_ids) {
+                prop_assert!(false, "N-way all-to-all divergence: {msg}");
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: N_WAY_TOPOLOGY_CASES,
+            .. ProptestConfig::default()
+        })]
+
+        /// Test 2 — topology-independence (ring vs star vs all-to-all).
+        ///
+        /// The SAME K independent streams are merged three different
+        /// ways:
+        ///   * ring   — peer i imports peer (i-1)'s snapshot, looped
+        ///              enough times to propagate fully around the ring;
+        ///   * star   — a hub peer collects all leaves, then every leaf
+        ///              imports the hub;
+        ///   * all-to-all — every peer imports every pre-merge snapshot.
+        ///
+        /// All three topologies must reach the SAME converged state on
+        /// EVERY peer. This is the associativity + commutativity proof:
+        /// the merge result is independent of the exchange order/route.
+        /// We assert (a) each topology self-converges, and (b) the three
+        /// converged states are equal to each other.
+        #[test]
+        fn n_way_merge_is_topology_independent(
+            streams in proptest::collection::vec(op_stream_strategy(1..=20), 3..=5),
+        ) {
+            let k = streams.len();
+
+            // --- All-to-all (reference topology) ---
+            let (mut ata, all_ids) = build_peers(&streams);
+            let ata_snaps: Vec<Vec<u8>> = ata
+                .iter_mut()
+                .map(|e| e.export_snapshot().expect("export ata"))
+                .collect();
+            for engine in &mut ata {
+                import_all(engine, &ata_snaps);
+            }
+            if let Err(msg) = assert_converged(&ata, &all_ids) {
+                prop_assert!(false, "N-way all-to-all self-divergence: {msg}");
+            }
+
+            // --- Ring: peer i pulls peer (i-1), looped K-1 times so a
+            // delta originating anywhere reaches every peer. After full
+            // propagation the ring must converge to the same join. ---
+            let (mut ring, _) = build_peers(&streams);
+            for _ in 0..k {
+                for i in 0..k {
+                    let prev = (i + k - 1) % k;
+                    let snap = ring[prev].export_snapshot().expect("export ring prev");
+                    ring[i].import(&snap).expect("ring import");
+                }
+            }
+            if let Err(msg) = assert_converged(&ring, &all_ids) {
+                prop_assert!(false, "N-way ring self-divergence: {msg}");
+            }
+
+            // --- Star: hub (peer 0) imports every leaf, then every leaf
+            // imports the now-complete hub. Two-phase gather/scatter. ---
+            let (mut star, _) = build_peers(&streams);
+            let leaf_snaps: Vec<Vec<u8>> = (1..k)
+                .map(|i| star[i].export_snapshot().expect("export star leaf"))
+                .collect();
+            import_all(&mut star[0], &leaf_snaps);
+            let hub_snap = star[0].export_snapshot().expect("export star hub");
+            for leaf in star.iter_mut().skip(1) {
+                leaf.import(&hub_snap).expect("star leaf import hub");
+            }
+            if let Err(msg) = assert_converged(&star, &all_ids) {
+                prop_assert!(false, "N-way star self-divergence: {msg}");
+            }
+
+            // --- Cross-topology equality: every peer of every topology
+            // must agree with the all-to-all reference. REUSES the same
+            // comparators across topology boundaries — this is the core
+            // associativity+commutativity assertion. ---
+            let reference = &ata[0];
+            for (label, engines) in [("ring", &ring), ("star", &star)] {
+                for peer in engines.iter() {
+                    for id in &all_ids {
+                        if let Err(msg) = compare_block_reads(reference, peer, id) {
+                            prop_assert!(false, "{label} vs all-to-all block divergence: {msg}");
+                        }
+                        for key in ["status", "priority", "due_date", "owner"] {
+                            if let Err(msg) =
+                                compare_property_reads(reference, peer, id, key)
+                            {
+                                prop_assert!(
+                                    false,
+                                    "{label} vs all-to-all property divergence: {msg}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
