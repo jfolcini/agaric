@@ -298,7 +298,7 @@ pub(super) async fn apply_delete_block_via_loro(
 /// LWW; we read back the engine's post-apply snapshot and project
 /// both fields into SQL. No sibling-shift on either side (see
 /// projection helper's docstring for the rationale).
-pub(super) async fn apply_move_block_via_loro(
+pub(crate) async fn apply_move_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
     p: &MoveBlockPayload,

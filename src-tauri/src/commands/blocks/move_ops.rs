@@ -68,12 +68,16 @@ pub async fn move_block_inner(
     // is a transient optimistic rank the materializer reprojects, so a caller can
     // no longer push a block into the synthetic sentinel tail bucket.)
     let new_parent_block_id = new_parent_id.as_ref().map(|s| BlockId::from_trusted(s));
-    let payload = OpPayload::MoveBlock(MoveBlockPayload {
+    // #1257 PR-4: keep the typed `MoveBlockPayload` so the command path can both
+    // append it to the op_log AND drive `apply_move_block_via_loro` in-tx
+    // (mirrors PR-2's `create_payload`). The op-log carries an owned
+    // `OpPayload::MoveBlock(move_payload.clone())`.
+    let move_payload = MoveBlockPayload {
         block_id: BlockId::from_trusted(&block_id),
         new_parent_id: new_parent_block_id.clone(),
         new_position: provisional_position,
         new_index: Some(new_index),
-    });
+    };
 
     // 3. Single IMMEDIATE transaction: validation + op_log + move.
     //    BEGIN IMMEDIATE eagerly acquires the write lock, preventing
@@ -172,8 +176,13 @@ pub async fn move_block_inner(
     }
 
     // 4. Append to op_log within transaction
-    let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, crate::db::now_ms()).await?;
+    let op_record = op_log::append_local_op_in_tx(
+        &mut tx,
+        device_id,
+        OpPayload::MoveBlock(move_payload.clone()),
+        crate::db::now_ms(),
+    )
+    .await?;
 
     // #417: capture the moved block's OLD owning page BEFORE the move
     // re-derives `page_id`. The affected-page set for a move is
@@ -192,14 +201,38 @@ pub async fn move_block_inner(
             .await?
             .flatten();
 
-    // 5. Update blocks table within same transaction (optimistic; the
-    //    materializer reprojects the authoritative dense rank from the engine).
-    sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
-        .bind(&new_parent_id)
-        .bind(provisional_position)
-        .bind(&block_id)
-        .execute(&mut **tx)
-        .await?;
+    // 5. #1257 PR-4: route the move through the SAME engine-apply + dense-rank
+    //    reprojection the boot-replay / sync `ApplyOp` path uses, IN this
+    //    CommandTx, INSTEAD of the inline provisional `UPDATE blocks SET
+    //    parent_id, position`. `apply_move_block_via_loro`:
+    //      1. resolves the block's space,
+    //      2. applies the move to the per-space Loro engine (sync guard, dropped
+    //         before any `.await`), reads back the engine `BlockSnapshot` plus the
+    //         authoritative pre/post sibling orders,
+    //      3. `project_move_block_to_sql` UPDATEs the row's `parent_id` +
+    //         engine-dense `position`,
+    //      4. `reproject_dense_positions` re-ranks BOTH the source (old parent)
+    //         and target (new parent) sibling groups so the SQL `position`
+    //         matches the engine's fractional tree order in each (a same-parent
+    //         reorder reprojects the single shared group once), and
+    //      5. runs `recompute_subtree_inheritance` for the moved subtree.
+    //    The op-log append above is unchanged, and the cycle/TOCTOU/depth checks
+    //    above still gate this user-driven move (the helper's own cycle probe
+    //    no-op-warns; the command must surface the error, which we already did).
+    //    We deliberately do NOT call the full `apply_op_tx` wrapper /
+    //    `advance_apply_cursor`: the apply cursor (`materialized_through_seq`)
+    //    must stay put on the LOCAL path so boot replay re-applies these ops
+    //    idempotently (engine apply is idempotent; the projection UPDATEs are by
+    //    construction) — the intended safety net while local engine-apply hardens
+    //    (#1248 / #1257). If the engine can't be resolved (space unresolvable /
+    //    engine uninitialised — e.g. a test without `install_for_test`), the
+    //    helper internally FALLS BACK to `apply_move_block_sql_only`, which writes
+    //    the provisional rank (`index_to_provisional_position`) + `parent_id` — so
+    //    the row is never skipped and we never crash. This mirrors the
+    //    engine-absent handling the sync `ApplyOp` path already relies on, and
+    //    preserves the #1323 convergence (parent_id updated either way; position
+    //    dense on the engine path, provisional on the fallback).
+    crate::materializer::apply_move_block_via_loro(&mut tx, device_id, &move_payload).await?;
 
     // #664: recompute `page_id` AND `space_id` for the moved subtree,
     // synchronously. The async `RebuildPageIds` task chains

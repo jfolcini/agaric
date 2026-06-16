@@ -1290,3 +1290,221 @@ async fn local_add_tag_is_engine_fresh_1257() {
 
     mat.shutdown();
 }
+
+/// #1257 PR-4 — LOCAL `move_block` is engine-fresh and densely positioned in
+/// BOTH the source and target parents IN-TRANSACTION, with the apply cursor
+/// PINNED.
+///
+/// Before PR-4 the LOCAL command path (`move_block_inner`) wrote a PROVISIONAL
+/// `new_index + 1` SQL position via a raw `UPDATE blocks SET parent_id,
+/// position` and NEVER touched the Loro engine: positions were reconciled to
+/// dense ranks (and the source/target sibling groups re-ranked) only on the next
+/// boot replay (the #1245 / #1249 bug, the move counterpart of PR-2's create).
+/// PR-4 routes the move through `apply_move_block_via_loro` inside the same
+/// `CommandTx` — engine apply + `project_move_block_to_sql` +
+/// `reproject_dense_positions` over BOTH the old and new parent sibling groups —
+/// but deliberately does NOT advance `materialized_through_seq` (so boot replay
+/// re-applies idempotently; #1248).
+///
+/// This test drives the REAL command path (`move_block_inner` + `settle()`) to
+/// move a block from parent A into parent B at a MIDDLE index and asserts,
+/// WITHOUT any boot replay:
+///   (a) the engine `children_ordered_block_ids` for BOTH A (the source, now
+///       shrunk) and B (the target, with the moved block spliced in at the
+///       middle) reflect the move;
+///   (b) the SQL `blocks.position` equals the engine's DENSE rank in BOTH
+///       parents — A's survivors re-rank to a gap-free 1..N, B's children
+///       (including the moved block at its middle slot) re-rank to 1..M. Under
+///       the OLD provisional path the moved block would carry
+///       `index_to_provisional_position(new_index)` and the siblings would keep
+///       their seeded ranks, so this dense-rank assertion would FAIL — exactly
+///       the drift PR-4 closes;
+///   (c) the moved block's `parent_id` is updated to B; and
+///   (d) the apply cursor (`materialized_through_seq`) did NOT advance while
+///       `op_log.seq` did.
+/// Finally, a cycle-forming move is still rejected.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_move_is_engine_fresh_and_dense_1257() {
+    // 26-char ids so `seed_label_to_id` treats them as literal ids.
+    let pa = seed_label_to_id("PA");
+    let pb = seed_label_to_id("PB");
+    let a1 = seed_label_to_id("A1");
+    let a2 = seed_label_to_id("A2");
+    let a3 = seed_label_to_id("A3");
+    let b1 = seed_label_to_id("B1");
+    let b2 = seed_label_to_id("B2");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Install the process-global engine so the LOCAL move routes through the
+    // production `apply_move_block_via_loro` ENGINE path (dense reproject of both
+    // parents), not the SQL-only fallback. `registry.clear()` gives a fresh tree.
+    let state = crate::loro::shared::install_for_test();
+    state.registry.clear();
+
+    // Seed two pages: PA > {A1, A2, A3}, PB > {B1, B2}. Parent-first so the
+    // engine seed satisfies parent-before-child.
+    let seed = [
+        json!({"id": "PA", "block_type": "page",    "content": "Page A", "parent_id": null, "position": 1}),
+        json!({"id": "PB", "block_type": "page",    "content": "Page B", "parent_id": null, "position": 2}),
+        json!({"id": "A1", "block_type": "content", "content": "a1", "parent_id": "PA", "position": 1}),
+        json!({"id": "A2", "block_type": "content", "content": "a2", "parent_id": "PA", "position": 2}),
+        json!({"id": "A3", "block_type": "content", "content": "a3", "parent_id": "PA", "position": 3}),
+        json!({"id": "B1", "block_type": "content", "content": "b1", "parent_id": "PB", "position": 1}),
+        json!({"id": "B2", "block_type": "content", "content": "b2", "parent_id": "PB", "position": 2}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    async fn apply_cursor(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+    async fn max_seq(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM op_log")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    let cursor_before = apply_cursor(&pool).await;
+    let seq_before = max_seq(&pool).await;
+
+    // Drive the REAL local command path: move A2 from PA into PB at index 1
+    // (BETWEEN B1 and B2).
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        BlockId::from(a2.as_str()),
+        Some(BlockId::from(pb.as_str())),
+        1,
+    )
+    .await
+    .expect("move_block_inner");
+
+    // Dense ranks are projected synchronously in the CommandTx — even before
+    // settling background work. Drain background tasks anyway to prove they don't
+    // perturb the dense ranks (and to mirror the production lifecycle).
+    settle(&mat).await;
+
+    // (a) ENGINE freshness — WITHOUT boot replay, the engine reflects the move in
+    //     BOTH parents: A2 left A's children; A2 sits between B1 and B2 in B.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        let a_order = guard
+            .engine_mut()
+            .children_ordered_block_ids(Some(pa.as_str()))
+            .expect("children_ordered_block_ids(PA)");
+        let b_order = guard
+            .engine_mut()
+            .children_ordered_block_ids(Some(pb.as_str()))
+            .expect("children_ordered_block_ids(PB)");
+        let moved_parent = guard
+            .engine_mut()
+            .read_parent(&a2)
+            .expect("read_parent(A2)");
+        drop(guard);
+        assert_eq!(
+            a_order,
+            vec![a1.clone(), a3.clone()],
+            "source parent A must lose A2: [A1, A3]; got {a_order:?}",
+        );
+        assert_eq!(
+            b_order,
+            vec![b1.clone(), a2.clone(), b2.clone()],
+            "target parent B must splice A2 at the middle slot: [B1, A2, B2]; got {b_order:?}",
+        );
+        assert_eq!(
+            moved_parent.as_deref(),
+            Some(pb.as_str()),
+            "engine parent of A2 must now be PB",
+        );
+    }
+
+    // (b) SQL `blocks.position` must equal the engine's DENSE rank for EVERY
+    //     sibling in BOTH parents. Source A re-ranks to A1=1, A3=2 (gap-free
+    //     after A2 left); target B re-ranks to B1=1, A2=2, B2=3. Under the OLD
+    //     provisional path A2 would carry `index_to_provisional_position(1)` (=2)
+    //     and the siblings would keep their seeded ranks (A3 still 3, B2 still 2),
+    //     so this block would FAIL.
+    async fn pos(pool: &SqlitePool, id: &str) -> Option<i64> {
+        sqlx::query_scalar::<_, Option<i64>>("SELECT position FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    assert_eq!(pos(&pool, &a1).await, Some(1), "A1 dense rank 1 in PA");
+    assert_eq!(
+        pos(&pool, &a3).await,
+        Some(2),
+        "A3 must reproject to dense rank 2 in PA after A2 left (was seeded 3)",
+    );
+    assert_eq!(pos(&pool, &b1).await, Some(1), "B1 dense rank 1 in PB");
+    assert_eq!(
+        pos(&pool, &a2).await,
+        Some(2),
+        "moved A2 must be densely ranked 2 in PB (middle slot)",
+    );
+    assert_eq!(
+        pos(&pool, &b2).await,
+        Some(3),
+        "B2 must reproject to dense rank 3 in PB after the middle insert (was seeded 2)",
+    );
+
+    // (c) `parent_id` updated to PB in SQL.
+    let parent_in_sql: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(&a2)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        parent_in_sql.as_deref(),
+        Some(pb.as_str()),
+        "SQL parent_id of A2 must be PB",
+    );
+
+    // (d) Apply cursor must NOT advance; the op DID land in the op_log.
+    let cursor_after = apply_cursor(&pool).await;
+    let seq_after = max_seq(&pool).await;
+    assert!(
+        seq_after > seq_before,
+        "local move_block must append to op_log: {seq_before} -> {seq_after}",
+    );
+    assert_eq!(
+        cursor_after, cursor_before,
+        "local command path must NOT advance the apply cursor even though it now \
+         engine-applies in-tx (#1248 / #1257); cursor moved {cursor_before} -> {cursor_after}",
+    );
+
+    // A cycle-forming move is still rejected (PA cannot become a child of its own
+    // descendant A1). The shared `move_would_cycle` probe gates the command path.
+    let cyclic = move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        BlockId::from(pa.as_str()),
+        Some(BlockId::from(a1.as_str())),
+        0,
+    )
+    .await;
+    assert!(
+        matches!(cyclic, Err(AppError::Validation(_))),
+        "moving PA under its own descendant A1 must be rejected as a cycle; got {cyclic:?}",
+    );
+
+    mat.shutdown();
+}
