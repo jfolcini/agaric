@@ -20,6 +20,29 @@ use crate::ulid::{BlockId, PageId};
 
 use super::super::*;
 
+/// #662 — minimum number of content blocks written into one import chunk
+/// before the import is allowed to flush (commit + release the writer
+/// lock) at the next top-level (depth-0) subtree boundary.
+///
+/// Tuning rationale (see #662): a hard *cap* on import size was rejected
+/// because it would break legitimate large imports, and the verified bug
+/// is the writer-lock *hold time*, not the row count. A chunk size of 500
+/// keeps the common case — the import benches exercise 100 / 1000 / 5000
+/// blocks — single-transaction at 100 blocks (preserving the original
+/// whole-import atomicity for typical files) while splitting a 5000-block
+/// import into ~10 chunks, so the writer lock is released ~10 times mid-
+/// import instead of being held throughout. It is a `usize` because it is
+/// compared against the per-chunk `chunk_blocks` counter.
+///
+/// Note this is a *floor*, not a cap: a chunk may exceed it when a single
+/// top-level subtree is itself larger than the floor — the subtree is
+/// never split, so correctness (no half-written subtree) always wins over
+/// the size target.
+///
+/// `pub(crate)` so chunk-boundary tests can size a multi-chunk import
+/// relative to the threshold instead of hardcoding the number.
+pub(crate) const IMPORT_CHUNK_BLOCKS: usize = 500;
+
 /// Replace `#[ULID]` with `#tagname` and `[[ULID]]` with `[[Page Title]]`
 /// in content, preserving all other markdown formatting.
 fn resolve_ulids_for_export(
@@ -406,15 +429,17 @@ pub async fn export_page_markdown_inner(
 /// blocks following the indentation hierarchy. Properties are set via
 /// SetProperty ops. Returns import statistics.
 ///
-/// L-30 — All-or-nothing semantics: any per-block
-/// `create_block_in_tx` or per-property `set_property_in_tx` failure
-/// aborts the import. The enclosing `BEGIN IMMEDIATE` is rolled back on
-/// `Drop` (no commit reached), so partially-imported rows never land in
-/// the DB. `result.warnings` is reserved for non-transactional parse
-/// diagnostics from [`import::parse_logseq_markdown`] (e.g. depth
-/// clamping); per-row write failures surface as `Err(AppError)` rather
-/// than entries in `warnings`. Savepoint-based partial recovery was
-/// considered and rejected as too invasive for the available signal.
+/// #662 — Chunked, atomic-subtree semantics (relaxes the original L-30
+/// single-transaction contract). The import is split into a sequence of
+/// `BEGIN IMMEDIATE` transactions so the single SQLite writer lock is
+/// acquired and released per chunk rather than held for the whole
+/// (unbounded) import — interleaved writes and the UI can proceed between
+/// chunks. See [`import_markdown_with_progress`] for the full chunk-
+/// boundary and partial-import contract. A failure anywhere still surfaces
+/// as `Err(AppError)`; `result.warnings` is reserved for non-transactional
+/// parse diagnostics from [`import::parse_logseq_markdown`] (e.g. depth
+/// clamping). Savepoint-based partial recovery was considered and rejected
+/// as too invasive for the available signal.
 #[instrument(skip(pool, device_id, materializer, content), err)]
 pub async fn import_markdown_inner(
     pool: &SqlitePool,
@@ -442,20 +467,70 @@ pub async fn import_markdown_inner(
 /// Progress-streaming core of [`import_markdown_inner`] (#128, PEND-38 /
 /// PEND-06 Tier 3).
 ///
-/// Identical semantics to [`import_markdown_inner`] (single IMMEDIATE
-/// transaction, all-or-nothing per L-30) plus an optional
-/// [`ImportProgressSink`]. When `progress` is `Some`, the function emits:
+/// # #662 — chunked writer-lock release
+///
+/// The import is written as a *sequence* of `BEGIN IMMEDIATE`
+/// transactions (chunks) instead of one transaction spanning the whole
+/// file. Each chunk acquires the single SQLite writer lock, commits, and
+/// releases it; between chunks the lock is free, so a multi-MB import no
+/// longer blocks every other write (or the UI) for its full duration.
+///
+/// ## Chunk boundaries — never split a subtree
+///
+/// A chunk is only ever closed at a **top-level (depth-0) subtree
+/// boundary**: blocks accumulate into the open transaction and the chunk
+/// is flushed (committed) only once it holds at least
+/// [`IMPORT_CHUNK_BLOCKS`] blocks *and* the next parsed block starts a new
+/// depth-0 subtree. Consequently a parent block and every one of its
+/// descendants always land in the **same** transaction — a child is never
+/// committed without its parent, and a parent is never committed missing
+/// any of its (parsed) children. The page block + its `space` property are
+/// written in the first chunk together with the first subtree(s).
+///
+/// Cross-chunk parent references are sound: a block's `parent_id` may point
+/// at a block committed in an *earlier* chunk (e.g. the page itself, or a
+/// preceding top-level subtree's root is never a parent of a later one), and
+/// `create_block_in_tx`'s `WHERE id = ? AND deleted_at IS NULL` parent check
+/// sees the committed row.
+///
+/// ## Partial-import semantics
+///
+/// If the import is interrupted mid-way (process crash, or an in-tx error
+/// that rolls back the *current* chunk), the visible, durable state is the
+/// page plus a **prefix of its complete top-level subtrees** — every
+/// committed subtree is whole and navigable, and no half-written subtree,
+/// orphaned child, or parent-missing-children state is ever exposed. This
+/// relaxes the original L-30 "all-or-nothing for the whole file" contract
+/// to "all-or-nothing per chunk" (a deliberate trade for the lock-hold fix
+/// — see #662). Imports small enough to fit in a single chunk (the common
+/// case, `<= IMPORT_CHUNK_BLOCKS` blocks) keep the original whole-import
+/// atomicity: there is exactly one chunk, so a mid-import error rolls back
+/// everything including the page.
+///
+/// ## Op-log / materializer correctness
+///
+/// Each chunk's ops still go through the normal `append_local_op_in_tx`
+/// path inside the chunk's transaction and are dispatched (in FIFO order)
+/// by that chunk's `commit_and_dispatch` only *after* the chunk commits —
+/// identical to the single-transaction path, just repeated per chunk.
+/// Global op ordering is preserved because chunks commit strictly in
+/// sequence (the next chunk's `BEGIN IMMEDIATE` cannot start until the
+/// previous chunk has committed and released the lock).
+///
+/// ## Progress events
+///
+/// When `progress` is `Some`, the function emits:
 ///
 ///   1. one [`ImportProgressUpdate::Started`] before any block is written,
 ///   2. one [`ImportProgressUpdate::Progress`] after each block create,
-///   3. one [`ImportProgressUpdate::Complete`] **after** the transaction
-///      commits — never before, so a `Complete` event always implies the
-///      rows are durable.
+///   3. one [`ImportProgressUpdate::Complete`] **after the final chunk
+///      commits** — never before, so a `Complete` event always implies the
+///      whole import is durable.
 ///
 /// On any error the function returns `Err` before reaching the `Complete`
-/// emit, so a consumer that sees `Started` but no `Complete` must treat
-/// the import as failed/rolled-back (matching the L-30 all-or-nothing
-/// contract). Sends are best-effort (see [`ImportProgressSink`]).
+/// emit, so a consumer that sees `Started` but no `Complete` must treat the
+/// import as failed (possibly partially-applied per the chunk semantics
+/// above). Sends are best-effort (see [`ImportProgressSink`]).
 #[instrument(skip(pool, device_id, materializer, content, progress), err)]
 pub async fn import_markdown_with_progress(
     pool: &SqlitePool,
@@ -492,11 +567,19 @@ pub async fn import_markdown_with_progress(
         });
     }
 
-    // --- Single IMMEDIATE transaction for entire import ---
+    // --- Chunked IMMEDIATE transactions (#662) ---
     // MAINT-112: CommandTx couples commit + post-commit dispatch; op
-    // records enqueue in the loop and drain in FIFO order after commit.
-    // L-30: per-block / per-property failures propagate via `?` so the
-    // transaction rolls back as a whole on first error — never partial.
+    // records enqueue per chunk and drain in FIFO order on that chunk's
+    // commit. Pre-#662 this was a *single* IMMEDIATE transaction spanning
+    // the whole (unbounded) import, so a multi-MB file held the single
+    // SQLite writer lock — blocking every other write + the UI — for its
+    // entire duration. We now flush the transaction at top-level
+    // (depth-0) subtree boundaries once it has accumulated at least
+    // `IMPORT_CHUNK_BLOCKS` blocks, releasing and re-acquiring the writer
+    // lock between chunks so interleaved writes can proceed. See this
+    // function's doc comment for the chunk-boundary + partial-import
+    // contract. A per-block / per-property failure still propagates via
+    // `?`, rolling back the *current* chunk (committed chunks survive).
     let mut tx = CommandTx::begin_immediate(pool, "import_markdown").await?;
 
     // PEND-35 Tier 1.1 — validate `space_id` upfront inside the tx,
@@ -561,13 +644,39 @@ pub async fn import_markdown_with_progress(
     let mut blocks_created: i64 = 0;
     let mut properties_set: i64 = 0;
     // Parse-time diagnostics (e.g. depth clamping). Per-row write
-    // failures are reported via `Err(AppError)` instead — see L-30 note.
+    // failures are reported via `Err(AppError)` instead — see the doc note.
     let warnings: Vec<String> = parse_output.warnings;
 
-    // Track parent stack: (depth, block_id)
+    // #662 — number of blocks written into the *current* chunk's
+    // transaction. Reset to 0 each time a chunk is flushed. A new chunk is
+    // only opened at a top-level (depth-0) subtree boundary, so a chunk
+    // never splits a subtree (parent + all descendants commit together).
+    let mut chunk_blocks: usize = 0;
+
+    // Track parent stack: (depth, block_id). Survives chunk flushes
+    // unchanged — every id in it refers to a block committed in this or an
+    // earlier chunk, so `create_block_in_tx`'s in-tx parent check (which
+    // reads committed rows) resolves cross-chunk parents fine.
     let mut parent_stack: Vec<(usize, String)> = vec![(0, page_id.clone())];
 
     for block in &parse_output.blocks {
+        // #662 — chunk-boundary flush. We may only break the import into a
+        // new transaction at a top-level (depth-0) block: that guarantees
+        // the chunk just closed holds whole subtrees (a parent and all its
+        // descendants), never a half-written one. Flush when the open
+        // chunk has reached the size threshold AND this block starts a new
+        // depth-0 subtree. The page + space property written above count
+        // toward neither threshold; `chunk_blocks` tracks content blocks.
+        if block.depth == 0 && chunk_blocks >= IMPORT_CHUNK_BLOCKS {
+            // Commit the current chunk (drains its op queue in FIFO order,
+            // releasing the writer lock) and open a fresh one. A commit
+            // failure here aborts the import; chunks already committed
+            // survive (documented partial-import semantics).
+            tx.commit_and_dispatch(materializer).await?;
+            tx = CommandTx::begin_immediate(pool, "import_markdown").await?;
+            chunk_blocks = 0;
+        }
+
         // Find the correct parent: pop stack until we find a parent at depth < block.depth
         while parent_stack.len() > 1 && parent_stack.last().is_some_and(|(d, _)| *d >= block.depth)
         {
@@ -578,8 +687,9 @@ pub async fn import_markdown_with_progress(
             .map(|(_, id)| id.clone())
             .unwrap_or(page_id.clone());
 
-        // Create the block inside the transaction. L-30: a failure here
-        // aborts the entire import — `?` drops `tx` and rolls back.
+        // Create the block inside the current chunk's transaction. A
+        // failure here aborts the import — `?` drops `tx` and rolls back
+        // the current chunk (earlier committed chunks survive).
         let (new_block, block_op) = create_block_in_tx(
             &mut tx,
             device_id,
@@ -590,6 +700,7 @@ pub async fn import_markdown_with_progress(
         )
         .await?;
         blocks_created += 1;
+        chunk_blocks += 1;
         tx.enqueue_background(block_op);
         parent_stack.push((block.depth, new_block.id.clone().into_string()));
 
@@ -606,13 +717,15 @@ pub async fn import_markdown_with_progress(
             });
         }
 
-        // Set properties inside the same transaction. L-30: same
-        // all-or-nothing contract as the block-create above.
+        // Set properties inside the same chunk transaction as their
+        // owning block — a block and its properties are never split across
+        // a chunk boundary (properties are emitted immediately after the
+        // block create, before the next depth-0 flush check).
         for (key, value) in &block.properties {
             // #623 — build the correct typed `PropertyValue` shape per key:
             // reserved date keys (`due_date`/`scheduled_date`) must hit the
             // `value_date` field, or `validate_property_value` rejects the
-            // whole all-or-nothing import.
+            // chunk.
             let (value_text, value_num, value_date, value_ref, value_bool) =
                 crate::domain::block_ops::typed_property_args_for_string_value(key, value.clone());
             let (_block, prop_op) = set_property_in_tx(
@@ -632,12 +745,13 @@ pub async fn import_markdown_with_progress(
         }
     }
 
-    // Commit + dispatch all queued ops in FIFO order.
+    // Commit + dispatch the final chunk's queued ops in FIFO order,
+    // releasing the writer lock.
     tx.commit_and_dispatch(materializer).await?;
 
-    // #128 — `Complete` is emitted only after the commit succeeds, so a
-    // consumer can treat it as the "rows are durable" signal. Mirrors the
-    // returned `ImportResult` counts.
+    // #128 — `Complete` is emitted only after the final chunk commits, so
+    // a consumer can treat it as the "whole import is durable" signal.
+    // Mirrors the returned `ImportResult` counts.
     if let Some(sink) = progress {
         sink.emit(ImportProgressUpdate::Complete {
             page_title: page_title.clone(),

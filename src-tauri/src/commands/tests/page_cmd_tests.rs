@@ -2106,6 +2106,234 @@ async fn import_markdown_aborts_on_first_validation_error_l30() {
 }
 
 // ======================================================================
+// #662 — chunked import releases the writer lock between chunks
+// ======================================================================
+
+/// Build a Logseq-style markdown string with `n` top-level (depth-0)
+/// content blocks, one per line. Each is its own single-block subtree, so
+/// the import can flush a chunk at any of these boundaries.
+fn flat_markdown(n: usize) -> String {
+    let mut s = String::with_capacity(n * 12);
+    for i in 0..n {
+        s.push_str(&format!("- Block {i}\n"));
+    }
+    s
+}
+
+/// #662 — a multi-chunk import must produce the *same* tree as the
+/// single-chunk (small) path: same page, same number of content blocks,
+/// all parented to the page, all in the right space. This is the
+/// "correctness unchanged after chunking" guard — the chunk boundary is
+/// purely a lock-release point, never a data-shape change.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_multi_chunk_tree_matches_single_chunk() {
+    use crate::commands::pages::markdown::IMPORT_CHUNK_BLOCKS;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // 2.5 chunks' worth of flat top-level blocks → at least 3 chunks, so
+    // the import commits + releases the writer lock at least twice mid-way.
+    let n = IMPORT_CHUNK_BLOCKS * 2 + IMPORT_CHUNK_BLOCKS / 2;
+    let n_i64 = i64::try_from(n).unwrap();
+    let content = flat_markdown(n);
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        content,
+        Some("BigFlat.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.page_title, "BigFlat");
+    assert_eq!(
+        result.blocks_created, n_i64,
+        "all blocks must be created across chunks"
+    );
+    assert!(result.warnings.is_empty());
+
+    // The page exists once.
+    let page: BlockRow = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE block_type = 'page' AND content = 'BigFlat'"#
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Every content block landed, all parented to the page (depth-0), and
+    // all carry the page's `page_id` — identical shape to the single-chunk
+    // path, just committed across several transactions.
+    let content_blocks: Vec<BlockRow> = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE block_type = 'content' ORDER BY position, id"#
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        content_blocks.len(),
+        n,
+        "every content block must be present after a multi-chunk import"
+    );
+    for b in &content_blocks {
+        assert_eq!(
+            b.parent_id.as_ref().map(crate::ulid::BlockId::as_str),
+            Some(page.id.as_str()),
+            "every depth-0 block must be a direct child of the page across chunk boundaries"
+        );
+        assert_eq!(
+            b.page_id.as_ref().map(crate::ulid::BlockId::as_str),
+            Some(page.id.as_str()),
+            "every block must carry the page's page_id regardless of which chunk wrote it"
+        );
+    }
+
+    // op_log: 1 page + 1 set_property(space) + n block creates = n + 2.
+    let op_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
+        .bind(DEV)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        op_count.0,
+        n_i64 + 2,
+        "op_log must hold every op across chunks (1 page + 1 space prop + n blocks)"
+    );
+
+    mat.shutdown();
+}
+
+/// #662 — the core lock-release guard. A progress sink performs ONE read
+/// of the committed content-block count from a *separate pool connection*,
+/// taken at the first `Progress` tick after the first chunk boundary
+/// should have flushed. Under the old single-transaction import the writer
+/// holds an uncommitted transaction for the whole run, so a separate
+/// connection sees ZERO content blocks until the final commit. Under the
+/// chunked import the first chunk has already committed (releasing the
+/// writer lock) by that tick, so the separate reader observes a strictly-
+/// positive, strictly-partial count — proving the lock was released and a
+/// chunk became durable before the import finished.
+///
+/// The read is gated to fire exactly once (an `AtomicBool`) rather than on
+/// every one of the ~`n` ticks: a nested `block_on` read per tick starves
+/// the connection pool (`PoolTimedOut`) and makes the test slow + flaky.
+/// One read at the right moment is both deterministic and cheap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn import_markdown_commits_chunks_visible_to_separate_reader_662() {
+    use crate::commands::pages::markdown::IMPORT_CHUNK_BLOCKS;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // 1.5 chunks → exactly two chunks. Chunk 1 commits `IMPORT_CHUNK_BLOCKS`
+    // blocks partway through; chunk 2 (the rest) commits only at the very
+    // end. So for the *entire* span chunk 2 is being written, the committed
+    // content-block count sits at exactly `IMPORT_CHUNK_BLOCKS` — a stable,
+    // strictly-partial value a separate reader is guaranteed to observe.
+    // (Kept at the minimum that proves ≥2 chunks — the per-block
+    // O(siblings) cache recompute on the import path makes larger flat
+    // imports slow.)
+    let n = IMPORT_CHUNK_BLOCKS + IMPORT_CHUNK_BLOCKS / 2;
+    let n_i64 = i64::try_from(n).unwrap();
+    let chunk_i64 = i64::try_from(IMPORT_CHUNK_BLOCKS).unwrap();
+    let content = flat_markdown(n);
+
+    // A concurrent poller on a *separate, dedicated* connection (acquired
+    // up front so it never competes with the import's pool connections for
+    // acquisition mid-run — the prior `block_in_place`-per-tick design
+    // starved the pool under parallel test load → flaky `PoolTimedOut`).
+    // It records the max committed `content` count it observes *strictly
+    // below* the total `n`, i.e. while the import has not yet finished. The
+    // poller stops once the import signals completion.
+    let done = std::sync::Arc::new(tokio::sync::Notify::new());
+    let poller_pool = pool.clone();
+    let poller_done = done.clone();
+    let poller = tokio::spawn(async move {
+        let mut conn = poller_pool
+            .acquire()
+            .await
+            .expect("dedicated reader connection should be available");
+        let mut max_partial: i64 = 0;
+        loop {
+            let visible: i64 = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM blocks WHERE block_type = 'content'",
+            )
+            .fetch_one(&mut *conn)
+            .await
+            .expect("reader count query should succeed");
+            // Only count observations made *before* the import finished
+            // (committed count still < n). Once the final chunk commits the
+            // count reaches n; that is the completed state, not a mid-import
+            // window.
+            if visible > 0 && visible < n_i64 && visible > max_partial {
+                max_partial = visible;
+            }
+            // Stop promptly once the import signals it is done, after one
+            // last read above.
+            tokio::select! {
+                () = poller_done.notified() => break,
+                () = tokio::task::yield_now() => {}
+            }
+        }
+        max_partial
+    });
+
+    let result = import_markdown_with_progress(
+        &pool,
+        DEV,
+        &mat,
+        content,
+        Some("LockRelease.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.blocks_created, n_i64);
+
+    // Signal the poller and collect the max partial count it observed.
+    done.notify_one();
+    let max_partial = poller.await.expect("poller task should not panic");
+
+    // The separate reader observed a whole committed chunk while the
+    // import was still mid-flight: at least one full chunk's worth of
+    // blocks, strictly fewer than the total. Under the old
+    // single-transaction import nothing commits until the very end, so a
+    // separate connection would have seen only 0 then jumped straight to
+    // `n` — `max_partial` would have stayed 0.
+    assert!(
+        max_partial >= chunk_i64,
+        "a separate reader must observe at least the first committed chunk ({chunk_i64} blocks) mid-import — proving the writer lock was released between chunks; saw {max_partial} of {n}"
+    );
+    assert!(
+        max_partial < n_i64,
+        "the observed mid-import count must be strictly partial (chunking, not a whole-import commit); saw {max_partial} of {n}"
+    );
+
+    // Final state is still complete and correct.
+    let final_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE block_type = 'content'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        final_count.0, n_i64,
+        "all blocks present once the import completes"
+    );
+
+    mat.shutdown();
+}
+
+// ======================================================================
 // PEND-35 Tier 1.1 — `import_markdown_inner` stamps `space` property
 // ======================================================================
 //
