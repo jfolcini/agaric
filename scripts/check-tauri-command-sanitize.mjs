@@ -107,7 +107,7 @@ function* iterCommandFns(src) {
   // Find every `#[tauri::command]` annotation, capture from there to
   // the next `{` to extract the signature, then balance braces for the
   // body. `[\s\S]` is the portable "any char including newline" idiom
-  // (biome flags `[^]` as a negated-empty-class even though it works).
+  // (oxlint's eslint/no-empty-character-class flags `[^]` even though it works).
   const re =
     /#\[tauri::command\][^\n]*\n(?:\s*#\[[^\]]*\][^\n]*\n)*\s*pub\s+(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\s*\(([\s\S]*?)\)\s*->\s*([^{]+?)\s*\{/g
   let m = re.exec(src)

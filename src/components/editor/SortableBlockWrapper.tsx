@@ -2,7 +2,7 @@
  * SortableBlockWrapper — per-block row wrapper for BlockListRenderer (MAINT-55).
  *
  * Extracted from BlockListRenderer's `visibleItems.map` body so the parent's
- * cognitive complexity stays within the Biome threshold. This component owns
+ * cognitive complexity stays within the oxlint eslint/complexity threshold. This component owns
  * the branching between the virtualized placeholder `<li>` and the full
  * `<li>` that renders the drop indicator and `<SortableBlock>`. No new
  * behaviour — pure render reorganisation.

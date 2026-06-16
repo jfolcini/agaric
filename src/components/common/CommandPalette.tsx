@@ -587,7 +587,7 @@ export function PaletteBody({
   }
 
   // PEND-67 Phase 5 — extracted out of `handleListKeyDown` so the
-  // top-level dispatcher stays under Biome's cognitive-complexity
+  // top-level dispatcher stays under oxlint's eslint/complexity
   // budget (≤ 25). Returns true if the Tab was consumed (caller
   // should `return` early).
   function tryOpenActionMenuOnTab(e: React.KeyboardEvent<HTMLDivElement>): boolean {
@@ -686,7 +686,7 @@ export function PaletteBody({
   }
 
   // Per-row-type action handlers — keep each small so the dispatcher
-  // (`handleActionMenuAction`) stays under Biome's complexity budget.
+  // (`handleActionMenuAction`) stays under oxlint's eslint/complexity budget.
   function handleRecentRowAction(actionId: string, rowId: string, newTab: boolean): void {
     if (actionId === 'pin' || actionId === 'unpin') {
       togglePinRecentPage(rowId)

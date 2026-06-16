@@ -79,7 +79,7 @@ export function useTrashListShortcuts({
       }
 
       // UX-275 sub-fix 3: batch toolbar shortcuts. Delegated to a helper so
-      // this effect stays under Biome's cognitive-complexity ceiling.
+      // this effect stays under oxlint's eslint/complexity ceiling.
       tryBatchShortcut(e)
     }
 

@@ -1,8 +1,8 @@
 /**
  * AgendaView.helpers — pure helpers for AgendaView data-fetch flow.
  *
- * Extracted to keep the component's useEffect body below Biome's cognitive
- * complexity threshold (25). No React, no hooks, no IO — all functions are
+ * Extracted to keep the component's useEffect body below oxlint's eslint/complexity
+ * threshold (25). No React, no hooks, no IO — all functions are
  * deterministic and side-effect free.
  */
 

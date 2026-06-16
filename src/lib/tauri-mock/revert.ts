@@ -2,7 +2,7 @@
  * Tauri mock — per-op-type revert helper.
  *
  * Extracted from the `revert_ops` handler so the handler body stays flat and
- * stays under Biome's `noExcessiveCognitiveComplexity` threshold. The branching
+ * stays under oxlint's `eslint/complexity` threshold. The branching
  * over `op_type` lives here as a single switch statement that delegates to a
  * small per-case helper so the public function itself stays well under the
  * complexity budget.

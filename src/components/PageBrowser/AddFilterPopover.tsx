@@ -446,7 +446,7 @@ function PathEditor({
         placeholder={t('pageBrowser.filter.pathPlaceholder')}
         aria-label={t('pageBrowser.filter.pathPlaceholder')}
       />
-      {/* oxlint-disable-next-line jsx-a11y/label-has-associated-control -- the Radix Checkbox (a button) is the control and carries its own aria-label; biome can't see it through the component boundary */}
+      {/* oxlint-disable-next-line jsx-a11y/label-has-associated-control -- the Radix Checkbox (a button) is the control and carries its own aria-label; oxlint can't see it through the component boundary */}
       <label className="flex items-center gap-2 px-1 text-xs">
         <Checkbox
           checked={exclude}

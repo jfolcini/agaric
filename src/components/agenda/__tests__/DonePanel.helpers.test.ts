@@ -3,7 +3,7 @@
  *
  * These cover the building blocks used by `DonePanel`'s data-fetch effects and
  * its render-time grouping pass. Keeping them pure makes the effects testable
- * in isolation and keeps their cognitive complexity below the Biome threshold.
+ * in isolation and keeps their cognitive complexity below the oxlint eslint/complexity threshold.
  */
 
 import { describe, expect, it } from 'vitest'

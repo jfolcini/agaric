@@ -13,7 +13,7 @@ import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
 /**
  * Extract the canonical string value for the current property, picking the
  * first non-null typed slot. Lifted out of the component body so the main
- * function stays under Biome's cognitive-complexity budget.
+ * function stays under oxlint's eslint/complexity budget.
  */
 export function readCurrentValue(prop: PropertyRow): string {
   if (prop.value_ref != null) return prop.value_ref

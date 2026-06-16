@@ -36,7 +36,7 @@ const COMBINING_DIACRITICS = /[\u0300-\u036f]/g
 /**
  * Return `true` when every code unit in `s` is in the ASCII range
  * (`0x00..0x7f`).  Implemented as an imperative scan rather than
- * a regex so biome's `noControlCharactersInRegex` lint stays out
+ * a regex so oxlint's `eslint/no-control-regex` lint stays out
  * of the way — the range intentionally includes the full ASCII
  * control set, which is correct for the "pure ASCII input?"
  * question and short-circuits the more expensive NFKD path.

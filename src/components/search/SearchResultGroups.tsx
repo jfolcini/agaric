@@ -256,7 +256,7 @@ export function groupResultsByPage(
     group.blocks.push(row)
   }
   // `order` mirrors `seen.keys()` insertion order, so every key
-  // resolves; the `?? null` keeps biome happy without `!` non-null.
+  // resolves; the `?? null` keeps oxlint happy without `!` non-null.
   const out: SearchResultGroup[] = []
   for (const k of order) {
     const g = seen.get(k)

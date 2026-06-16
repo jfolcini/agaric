@@ -81,7 +81,7 @@ vi.mock('@tiptap/react/menus', () => ({
     const visible = shouldShow ? shouldShow(fakeProps) : true
     if (!visible) return null
     // The real BubbleMenu always renders a toolbar; hardcoding the role
-    // here lets biome's a11y checker see that aria-label is valid.
+    // here lets oxlint's a11y checker see that aria-label is valid.
     // The `role` prop from the unit under test is asserted in dedicated
     // tests via screen.getByRole('toolbar', { name: t('toolbar.selectionFormatting') }).
     void role

@@ -89,8 +89,8 @@ export interface GroupedRowsResult {
  * lone page is non-namespaced; a single namespaced page falls
  * through to the multi-page branch so the tree shape renders
  * consistently with the multi-namespaced-page case. Extracted from
- * the grouping memo so each helper stays under biome's cognitive
- * complexity threshold.
+ * the grouping memo so each helper stays under oxlint's eslint/complexity
+ * threshold.
  */
 export function buildSinglePageBranch(
   filteredPagesUnsorted: BlockRow[],
@@ -117,8 +117,8 @@ export function buildSinglePageBranch(
 /**
  * Multi-page branch — produces the unified `Starred` + `Pages` row
  * model described in the FEAT-14 doc-comment on `PageBrowserRow`.
- * Extracted from the grouping memo to keep biome's cognitive
- * complexity below 25 per function.
+ * Extracted from the grouping memo to keep oxlint's eslint/complexity
+ * below 25 per function.
  */
 export function buildMultiPageBranch(
   filteredPagesUnsorted: BlockRow[],
