@@ -12,12 +12,12 @@ import { renderHook, waitFor } from '@testing-library/react'
 import type { TFunction } from 'i18next'
 import { act } from 'react'
 import { toast } from 'sonner'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createStore, type StoreApi } from 'zustand'
 
 import { makeBlock } from '../../__tests__/fixtures'
 import { logger } from '../../lib/logger'
-import { setTodoState } from '../../lib/tauri'
+import { getProperty, setTodoState } from '../../lib/tauri'
 import type { PageBlockState } from '../../stores/page-blocks'
 import { useCheckboxSyntax } from '../useCheckboxSyntax'
 
@@ -51,10 +51,17 @@ vi.mock('../../stores/undo', () => ({
 }))
 
 const mockedSetTodoState = vi.mocked(setTodoState)
+const mockedGetProperty = vi.mocked(getProperty)
 const mockedLoggerError = vi.mocked(logger.error)
 const mockedToastError = vi.mocked(toast.error)
 
 describe('useCheckboxSyntax', () => {
+  beforeEach(() => {
+    // Mock call counts accumulate across tests without an explicit reset;
+    // the #1341 guard tests assert exact `setTodoState` call counts.
+    vi.clearAllMocks()
+  })
+
   it('logs via logger.error AND surfaces a toast when setTodoState rejects', async () => {
     const failure = new Error('ipc failed')
     mockedSetTodoState.mockRejectedValue(failure)
@@ -135,5 +142,70 @@ describe('useCheckboxSyntax', () => {
       const block = pageStore.getState().blocks.find((b) => b.id === 'B1')
       expect(block?.todo_state).toBe('TODO')
     })
+  })
+
+  it('drops a rapid second invocation on the same block while the first is in flight (#1341)', async () => {
+    // Pending (never-resolving) promise keeps the first call in flight so the
+    // re-entrancy guard is engaged when the second invocation arrives.
+    mockedSetTodoState.mockReturnValue(new Promise(() => {}))
+
+    const pageStore = {
+      getState: () => ({ blocks: [], blocksById: new Map() }),
+      setState: vi.fn(),
+    } as unknown as StoreApi<PageBlockState>
+
+    const { result } = renderHook(() =>
+      useCheckboxSyntax({
+        focusedBlockId: 'B1',
+        rootParentId: 'R1',
+        pageStore,
+        t: ((k: string) => k) as unknown as TFunction,
+      }),
+    )
+
+    await act(async () => {
+      result.current('DONE')
+      result.current('DONE')
+      await Promise.resolve()
+    })
+
+    // The second invocation is dropped by the guard — only one IPC call fires.
+    expect(mockedSetTodoState).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows a subsequent invocation after the first settles (guard resets via .finally) (#1341)', async () => {
+    // First call resolves so the guard resets; second call is then allowed.
+    mockedSetTodoState.mockResolvedValue(makeBlock({ id: 'B1', todo_state: 'DONE' }))
+    // DONE path reads `blocked_by` via `getProperty`; resolve it (no deps).
+    mockedGetProperty.mockResolvedValue(null)
+
+    const pageStore = {
+      getState: () => ({ blocks: [], blocksById: new Map() }),
+      setState: vi.fn(),
+    } as unknown as StoreApi<PageBlockState>
+
+    const { result } = renderHook(() =>
+      useCheckboxSyntax({
+        focusedBlockId: 'B1',
+        rootParentId: 'R1',
+        pageStore,
+        t: ((k: string) => k) as unknown as TFunction,
+      }),
+    )
+
+    await act(async () => {
+      result.current('DONE')
+      // Flush the resolution + the `.finally` guard reset.
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      result.current('DONE')
+      await Promise.resolve()
+    })
+
+    expect(mockedSetTodoState).toHaveBeenCalledTimes(2)
   })
 })
