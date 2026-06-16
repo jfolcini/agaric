@@ -398,6 +398,12 @@ export function KeyboardShortcuts({
               } catch {
                 // storage may be disabled (private mode etc.) — ignore
               }
+              // #734 — ALSO write the store handoff slot SettingsView subscribes
+              // to while mounted. The localStorage write above only lands on a
+              // fresh mount; when Settings is already the current view it is
+              // ignored, so without this the Keyboard tab never opens. Mirrors
+              // the deep-link router / NoPeersDialog CTA.
+              useNavigationStore.getState().setPendingSettingsTab('keyboard')
               useNavigationStore.getState().setView('settings')
             }}
             data-testid="keyboard-customize-button"

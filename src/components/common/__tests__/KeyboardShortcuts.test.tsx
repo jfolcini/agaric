@@ -18,6 +18,7 @@ import { t } from '@/lib/i18n'
 import { setCustomShortcut } from '@/lib/keyboard-config/storage'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { __resetPlatformCacheForTests } from '@/lib/platform'
+import { useNavigationStore } from '@/stores/navigation'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform')
 
@@ -356,6 +357,20 @@ describe('KeyboardShortcuts', () => {
       // lucide-react renders SVGs with a `lucide-chevron-right` class.
       const chevron = button.querySelector('svg.lucide-chevron-right')
       expect(chevron).not.toBeNull()
+    })
+
+    it('opens Settings on the Keyboard tab via the pending-tab handoff slot', () => {
+      useNavigationStore.getState().setPendingSettingsTab(null)
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      fireEvent.click(screen.getByTestId('keyboard-customize-button'))
+
+      expect(useNavigationStore.getState().currentView).toBe('settings')
+      // #734 — the store slot SettingsView subscribes to while mounted is what
+      // actually flips the tab when Settings is already the current view; the
+      // localStorage write alone (below) only lands on a fresh mount.
+      expect(useNavigationStore.getState().pendingSettingsTab).toBe('keyboard')
+      expect(localStorage.getItem('agaric-settings-active-tab')).toBe('keyboard')
     })
   })
 
