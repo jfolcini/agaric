@@ -104,7 +104,11 @@ pub(crate) use crate::cache::PAGE_LINK_RE;
 ///
 /// `tag_names` maps tag block_id → tag name (content).
 /// `page_titles` maps page block_id → page title (content).
+/// `block_id` is threaded through solely so [`cap_indexed_text`] can name the
+/// offending block in its truncation warning (#1321). It does not affect the
+/// stripped output.
 pub(crate) fn strip_for_fts_with_maps(
+    block_id: &str,
     content: &str,
     tag_names: &HashMap<String, String>,
     page_titles: &HashMap<String, String>,
@@ -151,7 +155,7 @@ pub(crate) fn strip_for_fts_with_maps(
     // the index out of proportion on memory-constrained mobile. The cap bounds
     // any single block's contribution — search over its first
     // `FTS_MAX_INDEXED_BYTES` still works, only the tail is unindexed.
-    cap_indexed_text(nfc_normalise(&result))
+    cap_indexed_text(block_id, nfc_normalise(&result))
 }
 
 /// #435 — hard cap on per-block FTS-indexed text (bytes). Headroom against a
@@ -163,7 +167,12 @@ pub(crate) fn strip_for_fts_with_maps(
 const FTS_MAX_INDEXED_BYTES: usize = 128 * 1024;
 
 /// Truncate `s` to at most [`FTS_MAX_INDEXED_BYTES`] on a UTF-8 char boundary.
-fn cap_indexed_text(mut s: String) -> String {
+///
+/// #1321 — the cap was previously silent: a multi-MB block was truncated with no
+/// log, flag, or signal, so search over the unindexed tail simply missed with no
+/// trace of why. Emit a `tracing::warn!` (naming `block_id` and the original vs
+/// indexed byte counts) before truncating so the loss is at least observable.
+fn cap_indexed_text(block_id: &str, mut s: String) -> String {
     if s.len() <= FTS_MAX_INDEXED_BYTES {
         return s;
     }
@@ -171,6 +180,12 @@ fn cap_indexed_text(mut s: String) -> String {
     while end > 0 && !s.is_char_boundary(end) {
         end -= 1;
     }
+    tracing::warn!(
+        block_id = block_id,
+        original_bytes = s.len(),
+        indexed_bytes = end,
+        "FTS index truncated: block text exceeds FTS_MAX_INDEXED_BYTES; search over the tail will silently miss"
+    );
     s.truncate(end);
     s
 }
