@@ -252,6 +252,82 @@ async fn recovered_draft_is_dispatched_as_foreground_apply_op_620() {
     assert_eq!(content.as_deref(), Some("recovered content"));
 }
 
+/// #1322: when the synthetic edit op is committed to `op_log` but the
+/// foreground `enqueue_foreground` fails, `recover_single_draft` must NOT
+/// report a phantom success (`Ok(true)`) — it must return `Err` so the boot
+/// loop funnels it into `draft_errors` instead of `drafts_recovered`.
+///
+/// The enqueue failure is forced by `shutdown()`-ing the materializer before
+/// the call: a shut-down materializer's `fg_sender()` short-circuits on its
+/// `shutdown_flag` and `enqueue_foreground` returns `AppError::Channel(..)`.
+/// No materializer internals are touched — only its public `shutdown()`.
+///
+/// The committed `op_log` row must still be present (the SQL recovery is
+/// intact; only the success-claim is withheld), so a later boot replay can
+/// apply it — data is not lost, only the report is honest.
+#[tokio::test]
+async fn recover_single_draft_returns_err_when_enqueue_fails_1322() {
+    use std::collections::HashSet;
+
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-1322";
+    let block_id = "BLOCK000000000000000000322";
+
+    insert_test_block(&pool, block_id, "old content").await;
+    // Far-future timestamp so the draft is classified as unflushed and the
+    // recovery path (synthetic op + enqueue) is taken.
+    sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind("recovered content")
+        .bind(FAR_FUTURE)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Pull the inserted draft as a `Draft` so we can drive
+    // `recover_single_draft` directly.
+    let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
+    let draft = drafts.into_iter().next().expect("one draft");
+
+    // Build a materializer and immediately shut it down so the foreground
+    // queue is closed — `enqueue_foreground` will return `Channel(..)`.
+    let materializer = Materializer::new(pool.clone());
+    materializer.shutdown();
+
+    let mut existing_block_ids = HashSet::new();
+    existing_block_ids.insert(block_id.to_string());
+
+    let result = super::draft_recovery::recover_single_draft(
+        &pool,
+        device_id,
+        &materializer,
+        &draft,
+        &existing_block_ids,
+    )
+    .await;
+
+    // The enqueue failed, so recovery must report Err — not a phantom Ok(true).
+    assert!(
+        matches!(result, Err(AppError::Channel(_))),
+        "enqueue failure must surface as Err(Channel), got: {result:?}"
+    );
+
+    // …but the synthetic op WAS committed to op_log (SQL recovery intact),
+    // so a later boot replay can still apply it. Data is not lost.
+    let synthetic_ops: i64 = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "n!: i64" FROM op_log WHERE device_id = ? AND op_type = 'edit_block'"#,
+        device_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        synthetic_ops, 1,
+        "the synthetic edit op must remain committed in op_log despite the \
+         enqueue failure (only the success report is withheld)"
+    );
+}
+
 #[tokio::test]
 async fn already_flushed_draft_just_gets_deleted() {
     let (pool, _dir) = test_pool().await;
