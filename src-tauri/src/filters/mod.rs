@@ -17,8 +17,10 @@
 //! grooming facets (`orphan:`, `stub:`, `has-no-inbound-links:`); Search
 //! keeps regex / case-sensitive / whole-word / snippet specialty.
 
+pub mod expr;
 pub mod primitive;
 
+pub use expr::{CompileExpr, FilterExpr};
 pub use primitive::{
     FilterPrimitive, LastEditedSpec, PAGES_ALLOWED_KEYS, PagesProjection, Projection,
     PropertyPredicate, PropertyValue, SEARCH_ALLOWED_KEYS, SearchProjection, WhereClause,
