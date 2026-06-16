@@ -148,6 +148,39 @@ async fn status_info() {
     );
 }
 
+/// #1326: the SQL-only fallback observability counter must be reachable
+/// through the production `StatusInfo` surface. `record()` increments a
+/// *process-global* monotonic `AtomicU64`, so other tests running in the
+/// same process may have bumped it; we assert a **delta** (count-before vs
+/// count-after) rather than an absolute value to stay robust under nextest
+/// parallelism.
+#[tokio::test]
+async fn status_surfaces_sql_only_fallback_count() {
+    use crate::materializer::handlers::sql_only_fallback;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+
+    let before = mat.status().await.sql_only_fallback_count;
+    assert_eq!(
+        before,
+        sql_only_fallback::count(),
+        "StatusInfo must report the live process-global fallback count"
+    );
+
+    sql_only_fallback::record(
+        "test_op",
+        sql_only_fallback::SqlOnlyFallbackReason::EngineUninit,
+    );
+
+    let after = mat.status().await.sql_only_fallback_count;
+    assert_eq!(
+        after,
+        before + 1,
+        "StatusInfo::sql_only_fallback_count must reflect the +1 from record()"
+    );
+}
+
 #[tokio::test]
 #[should_panic(expected = "edit_block payload has empty block_id")]
 async fn dispatch_bg_empty_block_id() {

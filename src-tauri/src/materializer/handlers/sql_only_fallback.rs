@@ -58,10 +58,9 @@ pub(crate) fn record(op: &'static str, reason: SqlOnlyFallbackReason) {
 
 /// Current process-global SQL-only fallback count. Monotonic.
 ///
-/// The read side is exercised by the unit + integration tests today; the
-/// `cfg_attr(not(test), allow(dead_code))` keeps lib-only builds quiet
-/// while preserving it as the production observability read API (#1057).
-#[cfg_attr(not(test), allow(dead_code))]
+/// The production read side is [`super::super::coordinator`]'s status
+/// builder, which surfaces this through `StatusInfo::sql_only_fallback_count`
+/// (#1326); it is additionally exercised by the unit + integration tests.
 pub(crate) fn count() -> u64 {
     SQL_ONLY_FALLBACK_COUNT.load(Ordering::Relaxed)
 }

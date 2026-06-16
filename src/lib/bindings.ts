@@ -2576,6 +2576,18 @@ export type StatusInfo = {
 	 *  per-block tasks waiting for their next retry window.
 	 */
 	retry_queue_pending: number | null,
+	/**
+	 *  #1326 / #1057: process-global count of SQL-only fallbacks taken by
+	 *  the `apply_*_via_loro` handlers (Loro engine uninitialised or block
+	 *  space unresolved). Monotonic, never reset. **In production both
+	 *  fallback arms are unreachable**, so a non-zero value signals an
+	 *  unexpected engine-uninit or space-resolution miss that warrants
+	 *  investigation — pair with the
+	 *  `target=materializer::sql_only_fallback` debug lines (which carry
+	 *  `op` + `reason`) for triage. Sourced from
+	 *  [`super::handlers::sql_only_fallback::count`].
+	 */
+	sql_only_fallback_count: number,
 };
 
 /**
