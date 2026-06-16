@@ -162,50 +162,57 @@ pub(super) async fn apply_restore_block_sql_only(
 }
 
 /// SQL-only MoveBlock fallback (formerly `apply_move_block_tx`).
+///
+/// #1323 (Step 4): the `parent_id` / `position` write is routed through the
+/// shared [`crate::loro::projection::project_move_block_to_sql`] projection —
+/// the same fn the engine arm calls — so the `UPDATE blocks SET parent_id = ?,
+/// position = ? WHERE id = ?` shape cannot drift between the two arms. We
+/// synthesize the engine's read-back [`crate::loro::engine::BlockSnapshot`]
+/// from the [`MoveBlockPayload`] (`project_move_block_to_sql` reads only
+/// `block_id` / `parent_id` / `position`; the other snapshot fields are
+/// placeholders it never touches).
+///
+/// **`position` is a documented divergence from the engine arm, not a value
+/// this convergence equalizes** (#1245 / #1257). The engine arm runs
+/// `reproject_dense_positions` AFTER the projection on BOTH the source and the
+/// target parent's sibling group, re-ranking them into a dense 1-based order
+/// over the engine's fractional tree; this engine-less fallback has no such
+/// tree and writes only the *provisional* rank (`new_index + 1`, capped, or
+/// the legacy `new_position`). For a cross-parent move into a populated
+/// sibling set the two legitimately differ. Step 4 converges the UPDATE shape,
+/// not the position value — see `move_convergence_tests.rs`, which pins this
+/// gap rather than masking it.
+///
+/// **Cycle probe.** The defensive cycle check (#383) — a malformed/replayed op
+/// could install a `parent_id` cycle that saturates every recursive CTE walk
+/// at the depth-100 bound — now uses the SHARED
+/// [`crate::block_descendants::move_would_cycle`] helper, the SAME probe
+/// `move_block_inner` (the command path) uses, so the two SQL-side paths
+/// cannot drift. The rejection still differs by design: the command path errs,
+/// this sync-replay fallback no-op-warns (aborting would wedge inbound sync;
+/// dropping a self-evidently invalid move is recoverable).
 pub(super) async fn apply_move_block_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: MoveBlockPayload,
 ) -> Result<(), AppError> {
+    use crate::loro::engine::BlockSnapshot;
+
     let new_parent_str = p.new_parent_id.as_ref().map(|id| id.as_str().to_owned());
-    let new_parent_ref = new_parent_str.as_deref();
     let block_id_str = p.block_id.as_str();
 
-    // #383: defensive cycle probe before the bare UPDATE. The engine path
-    // (`commands/blocks/move_ops.rs::move_block_inner`) rejects a move that
-    // would make the new parent a descendant of (or equal to) the block being
-    // moved, but this SQL-only fallback wrote `parent_id` unconditionally — a
-    // malformed/replayed op could install a parent_id cycle that then makes
-    // every recursive CTE walk this subtree saturate at the depth-100 bound.
-    // Mirror the cycle check from `move_block_inner`: walk the new parent's
-    // ancestors (via `ancestors_cte_standard!`) and, if `block_id` appears
-    // among them — or `new_parent == block_id` — skip the write and warn
-    // rather than persisting the cycle. No-op-warn (not error) because this is
-    // the sync-replay fallback arm; aborting would wedge inbound sync, whereas
-    // dropping a self-evidently invalid move is recoverable.
-    if let Some(parent) = new_parent_ref {
-        let would_cycle = if parent == block_id_str {
-            true
-        } else {
-            sqlx::query(concat!(
-                crate::ancestors_cte_standard!(),
-                "SELECT 1 FROM ancestors WHERE id = ?",
-            ))
-            .bind(parent)
-            .bind(block_id_str)
-            .fetch_optional(&mut *conn)
-            .await?
-            .is_some()
-        };
-        if would_cycle {
-            tracing::warn!(
-                block_id = %block_id_str,
-                new_parent_id = %parent,
-                "apply_move_block_sql_only: move would create a parent_id cycle \
-                 (new parent is the block itself or one of its descendants); \
-                 skipping the UPDATE (#383)"
-            );
-            return Ok(());
-        }
+    // #383 / #1323: shared cycle probe (see helper docstring). No-op-warn (not
+    // error) on this sync-replay fallback arm.
+    if let Some(parent) = new_parent_str.as_deref()
+        && crate::block_descendants::move_would_cycle(&mut *conn, block_id_str, parent).await?
+    {
+        tracing::warn!(
+            block_id = %block_id_str,
+            new_parent_id = %parent,
+            "apply_move_block_sql_only: move would create a parent_id cycle \
+             (new parent is the block itself or one of its descendants); \
+             skipping the UPDATE (#383)"
+        );
+        return Ok(());
     }
 
     // #400: prefer the new-scheme 0-based `new_index` (as a 1-based position)
@@ -214,14 +221,17 @@ pub(super) async fn apply_move_block_sql_only(
         .new_index
         .map(crate::pagination::index_to_provisional_position)
         .unwrap_or(p.new_position);
-    sqlx::query!(
-        "UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?",
-        new_parent_ref,
+    // Synthesize the engine's read-back snapshot. `project_move_block_to_sql`
+    // binds only `block_id` / `parent_id` / `position`; `block_type` / `content`
+    // are inert placeholders it never reads.
+    let snapshot = BlockSnapshot {
+        block_id: block_id_str.to_owned(),
+        block_type: String::new(),
+        content: String::new(),
+        parent_id: new_parent_str.clone(),
         position,
-        block_id_str,
-    )
-    .execute(&mut *conn)
-    .await?;
+    };
+    crate::loro::projection::project_move_block_to_sql(conn, &snapshot).await?;
     tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
     Ok(())
 }

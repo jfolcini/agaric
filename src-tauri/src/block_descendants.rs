@@ -266,6 +266,60 @@ where
     Ok(max_depth.unwrap_or(0) >= 99)
 }
 
+/// #1323 (Step 4): shared cycle probe for a `MoveBlock`, used by BOTH the
+/// command path (`commands::blocks::move_ops::move_block_inner`) and the
+/// engine-less SQL fallback
+/// (`materializer::handlers::sql_only::apply_move_block_sql_only`).
+///
+/// Returns `Ok(true)` iff reparenting `block_id` under `new_parent` would
+/// form a `parent_id` cycle — i.e. `new_parent == block_id`, or `block_id`
+/// is itself an ancestor of `new_parent` (moving a node under one of its own
+/// descendants). The two SQL-side paths previously hand-rolled an identical
+/// `ancestors_cte_standard!()` probe; this is the single source of truth so
+/// the two cannot drift.
+///
+/// **It returns the boolean only — NOT a rejection.** The two callers reject
+/// differently and that difference is intentional, so each keeps its own
+/// handling:
+/// * `move_block_inner` → `Err(AppError::Validation("cycle detected"))`
+///   (a user-driven command must surface the error).
+/// * `apply_move_block_sql_only` → no-op-warn + `Ok(())` (the sync-replay
+///   fallback must not wedge inbound sync on a self-evidently invalid op).
+///
+/// The engine arm's cycle rejection is structurally different (CRDT-internal:
+/// the move op keeps the current parent rather than installing a cycle) and
+/// is deliberately NOT unified here.
+///
+/// Mirrors `ancestors_cte_standard!()`'s depth-100 bound (AGENTS.md invariant
+/// #9), so a pre-existing corrupted `parent_id` chain cannot run unbounded
+/// recursion. The CTE seeds at `new_parent` itself (depth 0); the
+/// `new_parent == block_id` short-circuit above means the `WHERE id = block_id`
+/// row match below detects only the genuine descendant-cycle case.
+pub async fn move_would_cycle<'e, E>(
+    executor: E,
+    block_id: &str,
+    new_parent: &str,
+) -> Result<bool, sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    if new_parent == block_id {
+        return Ok(true);
+    }
+    // dynamic-sql: recursive ancestor CTE assembled at runtime from the
+    // `ancestors_cte_standard!()` macro; not expressible via the
+    // compile-checked `query!` macro form.
+    let hit: Option<i64> = sqlx::query_scalar::<_, i64>(concat!(
+        ancestors_cte_standard!(),
+        "SELECT 1 FROM ancestors WHERE id = ?",
+    ))
+    .bind(new_parent)
+    .bind(block_id)
+    .fetch_optional(executor)
+    .await?;
+    Ok(hit.is_some())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
