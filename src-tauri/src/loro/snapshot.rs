@@ -85,16 +85,30 @@ fn now_ms() -> i64 {
 /// The apply-cursor seq a snapshot taken *now* is guaranteed to reflect
 /// (PEND-70 C1/C2 watermark).
 ///
-/// `materializer_apply_cursor.materialized_through_seq` advances in the
-/// same tx as the SQL projection, but the per-space `LoroEngine` dispatch
-/// runs *after* that commit (see `materializer::apply_op`), so an engine
-/// can lag the committed cursor by the single in-flight op. The foreground
-/// apply queue is serial, so every op `<= cursor - 1` has finished its
-/// engine dispatch. `cursor - 1` (clamped at 0) is therefore a safe lower
-/// bound on what every engine reflects; boot replay re-applies the small
-/// idempotent tail above it. A read error degrades to `0` (a conservative
-/// full rebuild next boot) rather than risking a watermark that overshoots
-/// the engine state.
+/// `materializer_apply_cursor.materialized_through_seq` tracks
+/// ENGINE-APPLY progress, NOT SQL-materialization progress. It advances
+/// ONLY via `materializer::handlers::apply::advance_apply_cursor`,
+/// which is called solely inside `apply_op` / the `BatchApplyOps` arm —
+/// i.e. the foreground engine-apply path (boot replay, the test-only
+/// `dispatch_op` helper, remote apply). The live LOCAL command path
+/// (`CommandTx::commit_and_dispatch`) writes the SQL `blocks` row
+/// SYNCHRONOUSLY inside its own tx and then fires only background
+/// cache-rebuild tasks; it NEVER enqueues an `ApplyOp`, never touches the
+/// per-space `LoroEngine`, and therefore never advances this cursor. So
+/// during a live session `op_log.seq` climbs while the cursor stays pinned
+/// at the prior-boot replay watermark (see #1248). Advancing the cursor to
+/// reflect SQL materialization would require routing local ops through
+/// engine-apply — tracked separately in #1257.
+///
+/// What the cursor DOES bound is engine-apply: every op `<= cursor` has
+/// been engine-applied and reprojected. The per-space `LoroEngine`
+/// dispatch for an `ApplyOp` happens INSIDE `apply_op`'s tx (the engine
+/// observes the op before the commit; see `apply_op`), and the foreground
+/// apply queue is serial, so every op `<= cursor` is reflected in its
+/// engine. `cursor - 1` (clamped at 0) is a conservative lower bound on
+/// what every engine reflects; boot replay re-applies the idempotent tail
+/// above it. A read error degrades to `0` (a conservative full rebuild
+/// next boot) rather than risking a watermark that overshoots engine state.
 async fn snapshot_watermark(pool: &SqlitePool) -> i64 {
     let cursor: i64 = sqlx::query_scalar!(
         r#"SELECT materialized_through_seq as "seq!: i64" FROM materializer_apply_cursor WHERE id = 1"#,
