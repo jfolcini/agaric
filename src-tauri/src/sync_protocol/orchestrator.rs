@@ -833,10 +833,12 @@ impl SyncOrchestrator {
     /// [`crate::loro::shared::get`]'s registry.
     ///
     /// Strategy:
-    /// * Snapshot every registered space via
-    ///   [`crate::sync_protocol::loro_sync::prepare_outgoing`] with
-    ///   `peer_vv = None` (initial-sync only — per-peer-vv-tracked
-    ///   incremental Updates are a follow-up; see plan §10.5).
+    /// * Build one message per registered space via
+    ///   [`crate::sync_protocol::loro_sync::prepare_outgoing`]. When the
+    ///   initiator advertised a version vector for the space (looked up
+    ///   from `peer_vvs`), ship an incremental Update (the delta since
+    ///   that vv); otherwise — a space the initiator lacks, or an older
+    ///   peer that sent no vvs — ship a full Snapshot (`peer_vv = None`).
     /// * Mark the **last** message with `is_last: true`; everything
     ///   else with `is_last: false`. The receiver transitions to
     ///   `Merging`/`Complete` when it processes the `is_last: true`
