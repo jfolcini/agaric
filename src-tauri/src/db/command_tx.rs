@@ -125,7 +125,7 @@ pub struct CommandTx {
     /// This flag is load-bearing for correctness, not just diagnostics:
     /// many command sites enqueue a dispatch and only *then* run further
     /// fallible `await?` work before `commit_and_dispatch` (e.g.
-    /// `create_blocks_batch_inner`, `bulk_restore_trash_inner`). When such
+    /// `create_blocks_batch_inner`, `restore_blocks_by_ids_inner`). When such
     /// a call returns `Err`, the `?` drops the `CommandTx` with `pending`
     /// non-empty *on purpose* — the transaction rolls back and the queued
     /// records must be discarded. That drop must NOT trip the assert, and
@@ -211,6 +211,23 @@ impl CommandTx {
     /// propagated. This is the desired behaviour — a failed commit means
     /// the op records never landed in `op_log`, so the materializer must
     /// not be told about them.
+    ///
+    /// # Enqueue-then-`await?`-then-commit contract
+    ///
+    /// The common command shape is: open a `CommandTx`,
+    /// [`enqueue_background`](Self::enqueue_background) one or more op
+    /// records, run *further* fallible `await?` work, and only then call
+    /// `commit_and_dispatch` (see `create_blocks_batch_inner` and
+    /// `restore_blocks_by_ids_inner`, both of which enqueue inside a loop
+    /// and keep awaiting more queries afterwards). If any of that later
+    /// `await?` returns `Err`, the `?` drops the `CommandTx` *before*
+    /// reaching this method: the inner transaction rolls back and the
+    /// queued records are discarded by design — **no dispatch fires on the
+    /// `Err` path**. Enqueuing is therefore always safe before fallible
+    /// work; a record only ever reaches the materializer once the commit
+    /// here has succeeded. (The legitimate rollback-with-pending drop emits
+    /// a `tracing::debug!` for observability — see the [`Drop`] impl,
+    /// issue #1316.)
     ///
     /// Returns the number of dispatches that fired. Dispatch failures
     /// are logged at warn level and do not surface here.
@@ -314,12 +331,14 @@ impl Drop for CommandTx {
     ///
     /// Why this is gated on `committed` rather than asserting
     /// `pending.is_empty()` unconditionally: many command sites
-    /// (`create_blocks_batch_inner`, `bulk_restore_trash_inner`, …)
+    /// (`create_blocks_batch_inner`, `restore_blocks_by_ids_inner`, …)
     /// `enqueue_background` and then run further fallible `await?` work
     /// before `commit_and_dispatch`. An error there drops the `CommandTx`
     /// with `pending` populated *by design* — the transaction rolls back
     /// and the queue is correctly discarded. Such a drop has
     /// `committed == false`, so it does not (and must not) trip the assert.
+    /// A `tracing::debug!` (issue #1316) now records that legitimate
+    /// rollback-with-pending drop so the path is observable in dev logs.
     ///
     /// In release builds `debug_assert!` compiles out entirely, so this
     /// `Drop` is a no-op there beyond running the inner transaction's own
@@ -331,6 +350,21 @@ impl Drop for CommandTx {
             self.label,
             self.pending.len(),
         );
+        // #1316: dev-time observability for the LEGITIMATE counterpart of the
+        // assert above. When an enqueue-then-`await?`-then-`commit_and_dispatch`
+        // command returns `Err` before committing, the `?` drops the
+        // `CommandTx` with `committed == false && !pending.is_empty()` on
+        // purpose — the inner transaction rolls back and the queued records are
+        // correctly discarded, never dispatched. That is silent by design;
+        // this `debug!` gives it a signal so the rollback-with-pending path is
+        // traceable in dev logs without changing any behaviour.
+        if !self.committed && !self.pending.is_empty() {
+            tracing::debug!(
+                label = %self.label,
+                pending = self.pending.len(),
+                "CommandTx rolled back (dropped uncommitted) with pending dispatches — discarding by design"
+            );
+        }
     }
 }
 
@@ -454,5 +488,34 @@ mod tests {
             .expect("commit_and_dispatch should succeed");
         assert_eq!(dispatched, 1, "the enqueued record should have dispatched");
         // No panic on drop ⇒ test passes.
+    }
+
+    /// #1316: the LEGITIMATE rollback-with-pending path. A `CommandTx` that
+    /// enqueues a dispatch and is then dropped WITHOUT committing (the
+    /// enqueue-then-`await?`-then-commit `Err` shape) must drop cleanly —
+    /// `committed == false`, so the Drop assert does not fire, the inner
+    /// transaction rolls back, and the queued record is discarded by design
+    /// (no dispatch, no panic). The `tracing::debug!` added in #1316 is a
+    /// pure side-channel and does not change this behaviour; we assert the
+    /// observable contract: drop is silent (no panic) and nothing was
+    /// dispatched.
+    #[tokio::test]
+    async fn drop_uncommitted_with_pending_does_not_dispatch_or_panic_1316() {
+        let pool = bare_pool().await;
+        let mut tx = CommandTx::begin_immediate(&pool, "test_rollback_with_pending")
+            .await
+            .unwrap();
+        tx.enqueue_background(fake_op_record());
+        assert_eq!(tx.pending_len(), 1, "enqueue should populate pending");
+        assert!(!tx.committed, "no commit method was called");
+
+        // Drop without committing — simulates an `await?` returning `Err`
+        // after the enqueue but before `commit_and_dispatch`. The inner
+        // `sqlx::Transaction` rolls back via its own Drop; the pending queue
+        // is discarded; no materializer is even involved, so no dispatch can
+        // fire. The Drop debug-assert must NOT trip (committed == false).
+        drop(tx);
+        // Reaching here ⇒ no panic. The queued record was discarded, never
+        // dispatched.
     }
 }
