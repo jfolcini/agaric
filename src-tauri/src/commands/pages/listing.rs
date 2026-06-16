@@ -11,6 +11,7 @@ use tracing::instrument;
 
 use tauri::State;
 
+use crate::commands::tags::MAX_FILTER_TAG_IDS;
 use crate::db::ReadPool;
 use crate::error::AppError;
 use crate::pagination::{
@@ -345,6 +346,15 @@ pub struct PageHeading {
 /// intentionally excluded — mirrors the existing GraphView semantics
 /// (its previous `queryByTags(include_inherited=false)` call).
 ///
+/// #1325 — `tag_ids` is capped at [`MAX_FILTER_TAG_IDS`]: the tag-filter
+/// branch builds an `IN (?, ?, …)` clause whose placeholder count and bind
+/// loop scale 1:1 with the array length, so an unbounded array would hit
+/// SQLite's parameter limit (a cheap DoS). Tag filtering is a secondary
+/// predicate over an already-bounded (space-scoped) page set, so the cap is
+/// generous while keeping the dynamic placeholder count safely under the
+/// limit. Oversized input is rejected up-front with
+/// [`AppError::Validation`]`("tag_ids.too_many")` before any SQL is built.
+///
 /// Returns only `(id, content)` because the existing callers
 /// (markdown export, graph view) ignore every other column.
 #[instrument(skip(pool, tag_ids), err)]
@@ -354,6 +364,12 @@ pub async fn list_all_pages_in_space_inner(
     tag_ids: Option<&[String]>,
 ) -> Result<Vec<PageHeading>, AppError> {
     if let Some(tags) = tag_ids.filter(|t| !t.is_empty()) {
+        // #1325: bound the caller-supplied filter array before building any
+        // SQL placeholders or binds (count scales 1:1 with `tags.len()`).
+        if tags.len() > MAX_FILTER_TAG_IDS {
+            return Err(AppError::Validation("tag_ids.too_many".into()));
+        }
+
         // Tag-filter branch: build an `IN (?, ?, ...)` clause inline.  We
         // can't use `query_as!` because the placeholder count is dynamic.
         let placeholders = std::iter::repeat_n("?", tags.len())

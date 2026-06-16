@@ -431,6 +431,39 @@ async fn query_by_tags_inner_empty_inputs_returns_empty() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_tags_inner_rejects_oversized_tag_ids() {
+    // #1325: a `tag_ids` array longer than MAX_FILTER_TAG_IDS must be
+    // rejected up-front with AppError::Validation("tag_ids.too_many") BEFORE
+    // each element is fanned into a `TagExpr::Tag` node (one dynamic SQL
+    // placeholder each) — otherwise the placeholder/bind count scales 1:1
+    // with caller input and trips SQLite's parameter limit (a cheap DoS).
+    // The fresh empty pool means a DB-reaching query would succeed, so an
+    // `Err` proves the guard fired before any expression was built.
+    let (pool, _dir) = test_pool().await;
+
+    let over_cap: Vec<String> = (0..(crate::commands::tags::MAX_FILTER_TAG_IDS + 1))
+        .map(|i| format!("TAG_{i:05}"))
+        .collect();
+    let err = query_by_tags_inner(
+        &pool,
+        over_cap,
+        vec![],
+        "or".into(),
+        None,
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+    )
+    .await
+    .expect_err("oversized tag_ids must be rejected");
+    assert!(
+        matches!(&err, AppError::Validation(msg) if msg == "tag_ids.too_many"),
+        "expected AppError::Validation(\"tag_ids.too_many\"), got {err:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn query_by_tags_inner_or_mode_unions_tag_ids() {
     let (pool, _dir) = test_pool().await;
 

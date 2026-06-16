@@ -18,6 +18,19 @@ use crate::ulid::BlockId;
 
 use super::*;
 
+/// Upper bound on the caller-supplied `tag_ids` filter array accepted by the
+/// no-clamp "return all of X" listing IPCs ([`query_by_tags_inner`] and
+/// [`list_all_pages_in_space_inner`]). #1325.
+///
+/// Tag filtering on those surfaces is a *secondary* predicate over an
+/// already-bounded result set (every page / block in a single space), so a
+/// cap of 1000 is generous for any legitimate UI gesture while keeping the
+/// dynamic SQL placeholder + bind count — which scales 1:1 with this array —
+/// safely under SQLite's default parameter limit (999 / 32 766 depending on
+/// build). Mirrors the [`MAX_BATCH_BLOCK_IDS`](crate::commands::properties::MAX_BATCH_BLOCK_IDS)
+/// cap on the `*_by_ids` write family.
+pub(crate) const MAX_FILTER_TAG_IDS: usize = 1000;
+
 /// Add a tag to a block.
 ///
 /// Validates both the block and the tag block exist and are not deleted,
@@ -351,6 +364,16 @@ pub async fn remove_tag_inner(
 /// `pagesResp.items.filter(p => p.block_type === 'page')` predicate
 /// into SQL so the unbounded `limit:5000` over-fetch and post-filter
 /// discard collapses into one paginated query.
+///
+/// #1325 — `tag_ids` is capped at [`MAX_FILTER_TAG_IDS`]: each element fans
+/// into a `TagExpr::Tag` leaf (resolved via its own per-tag query), so an
+/// unbounded array would scale the query/bind work 1:1 with caller input
+/// (SQLite param-limit error / cheap DoS). Tag filtering here is a
+/// secondary predicate over an already-bounded (space-scoped) result set, so
+/// the cap is generous while keeping the per-tag query count and any dynamic
+/// bind count safely bounded. Oversized input is rejected up-front with
+/// [`AppError::Validation`]`("tag_ids.too_many")` before any expression is
+/// built.
 #[instrument(skip(pool, tag_ids), err)]
 #[allow(clippy::too_many_arguments)]
 pub async fn query_by_tags_inner(
@@ -364,6 +387,12 @@ pub async fn query_by_tags_inner(
     scope: &SpaceScope,
     block_type: Option<String>,
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
+    // #1325: bound the caller-supplied filter array before fanning each
+    // element into a `TagExpr::Tag` leaf (each resolved via its own per-tag query).
+    if tag_ids.len() > MAX_FILTER_TAG_IDS {
+        return Err(AppError::Validation("tag_ids.too_many".into()));
+    }
+
     let mut exprs = Vec::new();
     for tag_id in tag_ids {
         exprs.push(TagExpr::Tag(tag_id));
