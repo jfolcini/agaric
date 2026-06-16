@@ -419,6 +419,7 @@ pub fn spawn_periodic_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::loro::engine::PropertyValue;
     use tempfile::TempDir;
 
     const SPACE_A: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -543,9 +544,9 @@ mod tests {
         assert_eq!(snap.content, "hello world");
 
         let prop = engine_b
-            .read_property("BLOCK1", "todo_state")
-            .expect("read_property");
-        assert_eq!(prop, Some(Some("DONE".to_string())));
+            .read_property_typed("BLOCK1", "todo_state")
+            .expect("read_property_typed");
+        assert_eq!(prop, Some(PropertyValue::Str("DONE".to_string())));
     }
 
     #[tokio::test]

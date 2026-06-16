@@ -335,8 +335,8 @@ async fn apply_op_tx_set_property_engine_path() {
         .expect("for_space");
     let prop_opt = guard
         .engine_mut()
-        .read_property(BLOCK_ID, "effort")
-        .expect("read_property");
+        .read_property_typed(BLOCK_ID, "effort")
+        .expect("read_property_typed");
     drop(guard);
     assert!(prop_opt.is_some(), "engine must see the property");
 }
@@ -825,8 +825,8 @@ async fn apply_op_tx_delete_property_engine_path() {
         .expect("for_space");
     let prop = guard
         .engine_mut()
-        .read_property(BLOCK_ID, "effort")
-        .expect("read_property");
+        .read_property_typed(BLOCK_ID, "effort")
+        .expect("read_property_typed");
     drop(guard);
     assert!(
         prop.is_none(),
