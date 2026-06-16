@@ -173,19 +173,22 @@ pub(super) async fn apply_move_block_sql_only(
 }
 
 /// SQL-only AddTag fallback (formerly `apply_add_tag_tx`).
+///
+/// #1323 (Step 1): delegates the `block_tags` write to
+/// [`crate::loro::projection::project_add_tag_to_sql`] — the exact
+/// projection the via-loro engine arm runs after its engine apply — so
+/// the two arms can never drift on the `block_tags` row shape. The tag
+/// inheritance fan-out lives OUTSIDE the projection (the projection is
+/// kept pure), so this fallback invokes the SAME
+/// `tag_inheritance::propagate_tag_to_descendants` helper AFTER the
+/// projection, mirroring `apply_add_tag_via_loro` exactly. block_id and
+/// tag_id come straight from the op payload — no engine read-back.
 pub(super) async fn apply_add_tag_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: AddTagPayload,
 ) -> Result<(), AppError> {
-    let block_id_str = p.block_id.as_str();
-    let tag_id_str = p.tag_id.as_str();
-    sqlx::query!(
-        "INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)",
-        block_id_str,
-        tag_id_str,
-    )
-    .execute(&mut *conn)
-    .await?;
+    crate::loro::projection::project_add_tag_to_sql(conn, p.block_id.as_str(), p.tag_id.as_str())
+        .await?;
     tag_inheritance::propagate_tag_to_descendants(
         &mut *conn,
         p.block_id.as_str(),
@@ -196,18 +199,24 @@ pub(super) async fn apply_add_tag_sql_only(
 }
 
 /// SQL-only RemoveTag fallback (formerly `apply_remove_tag_tx`).
+///
+/// #1323 (Step 1): delegates the `block_tags` delete to
+/// [`crate::loro::projection::project_remove_tag_to_sql`] — the exact
+/// projection the via-loro engine arm runs — so the two arms can never
+/// drift on the `block_tags` delete shape. The inherited-tag cleanup
+/// lives OUTSIDE the projection, so this fallback invokes the SAME
+/// `tag_inheritance::remove_inherited_tag` helper AFTER the projection,
+/// mirroring `apply_remove_tag_via_loro` exactly. block_id and tag_id
+/// come straight from the op payload — no engine read-back.
 pub(super) async fn apply_remove_tag_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: RemoveTagPayload,
 ) -> Result<(), AppError> {
-    let block_id_str = p.block_id.as_str();
-    let tag_id_str = p.tag_id.as_str();
-    sqlx::query!(
-        "DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?",
-        block_id_str,
-        tag_id_str,
+    crate::loro::projection::project_remove_tag_to_sql(
+        conn,
+        p.block_id.as_str(),
+        p.tag_id.as_str(),
     )
-    .execute(&mut *conn)
     .await?;
     tag_inheritance::remove_inherited_tag(&mut *conn, p.block_id.as_str(), p.tag_id.as_str())
         .await?;
