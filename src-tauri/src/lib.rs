@@ -1340,27 +1340,73 @@ fn register_managed_state<R: tauri::Runtime>(
     let cancel_flag = Arc::new(AtomicBool::new(false));
     app.manage(SyncCancelFlag(cancel_flag.clone()));
 
-    // PERF-24: register the lifecycle hooks in managed state so
-    // future commands (e.g. a "sync now" action) can share the
-    // same wake notifier, and install a window-event listener
-    // that flips `is_foreground` on focus changes. Tauri's
-    // `Focused(bool)` event fires on all supported platforms
-    // (desktop + mobile), so the same listener doubles as a
-    // laptop-lid-closed optimization on desktop.
+    // PERF-24 / #704: register the lifecycle hooks in managed state so
+    // future commands (e.g. a "sync now" action) can share the same
+    // wake notifier, and install a window-event listener that flips
+    // `is_foreground` on genuine background transitions.
+    //
+    // #704: `WindowEvent::Focused(false)` fires both on mere focus-loss
+    // (the app is still on-screen — another window is on top) and as a
+    // side effect of a real minimize/hide. We must NOT treat plain
+    // focus-loss as backgrounded, or maintenance jobs gated on
+    // `!is_foreground` would fire while the user is still looking at the
+    // window and the periodic sync tick would starve. So on focus-loss
+    // we query the window (`is_visible()` / `is_minimized()`) and let
+    // the pure `lifecycle::derive_app_state` decide the regime. The
+    // mobile-only `Suspended` / `Resumed` events are unambiguous OS
+    // background/foreground transitions and are mapped directly.
     app.manage(AppLifecycle(lifecycle.clone()));
     match app.get_webview_window("main") {
         Some(window) => {
             let lifecycle_for_listener = lifecycle.clone();
-            window.on_window_event(move |event| {
-                if let tauri::WindowEvent::Focused(focused) = event {
-                    if *focused {
-                        tracing::info!("app foregrounded — resuming background work");
-                        lifecycle_for_listener.mark_foreground();
-                    } else {
-                        tracing::info!("app backgrounded — daemon + materializer will pause");
-                        lifecycle_for_listener.mark_backgrounded();
-                    }
+            let window_for_query = window.clone();
+            window.on_window_event(move |event| match event {
+                tauri::WindowEvent::Focused(focused) => {
+                    // Query live window state so a minimize/hide that
+                    // arrives as `Focused(false)` is distinguished from a
+                    // mere focus change. `is_visible` / `is_minimized`
+                    // can fail on some platforms; default to the
+                    // focus-implies-foreground reading on error.
+                    //
+                    // #704: on Linux/GTK the `focus-out` and
+                    // `window-state-event` (ICONIFIED) signals have no
+                    // guaranteed relative order, so a minimize MAY briefly
+                    // read `minimized=false` here and be classified as
+                    // foreground. This is benign and self-correcting: the
+                    // only effect is that backgrounded-only maintenance does
+                    // not engage for that transient window (the conservative
+                    // direction — we never falsely background while the user
+                    // is looking), and the next window event reclassifies.
+                    // Mobile backgrounding does not rely on this path — it
+                    // uses the unambiguous `Suspended` event below.
+                    let visible = window_for_query.is_visible().unwrap_or(true);
+                    let minimized = window_for_query.is_minimized().unwrap_or(false);
+                    let state = lifecycle::derive_app_state(lifecycle::WindowStateFlags {
+                        focused: *focused,
+                        visible,
+                        minimized,
+                        os_suspended: false,
+                    });
+                    tracing::info!(
+                        focused = *focused,
+                        visible,
+                        minimized,
+                        ?state,
+                        "window focus changed — derived app lifecycle state"
+                    );
+                    lifecycle_for_listener.apply_state(state);
                 }
+                #[cfg(mobile)]
+                tauri::WindowEvent::Suspended => {
+                    tracing::info!("app suspended by OS — backgrounding");
+                    lifecycle_for_listener.mark_backgrounded();
+                }
+                #[cfg(mobile)]
+                tauri::WindowEvent::Resumed => {
+                    tracing::info!("app resumed by OS — foregrounding");
+                    lifecycle_for_listener.mark_foreground();
+                }
+                _ => {}
             });
         }
         _ => {
