@@ -328,16 +328,23 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
             className={cn(
               'block-bullet group/bullet flex-shrink-0 flex items-center justify-center w-5 h-5 p-0 text-muted-foreground transition-colors focus-ring-visible active:scale-95 touch-target',
               'hover:text-foreground',
-              // FINE pointers (desktop): hidden at rest, revealed only on this
-              // block's hover / focus-within / active (selection), matching
-              // GUTTER_BUTTON_BASE. COARSE pointers (touch): NOT hidden — there is
-              // no hover, and the bullet is the tap-to-zoom target (#927 f3), so it
-              // must stay visible/tappable at rest (like the touch drag handle).
+              // FINE pointers (desktop): revealed to full on this block's hover /
+              // focus-within / active (selection), matching GUTTER_BUTTON_BASE.
+              // COARSE pointers (touch): NOT hidden — there is no hover, and the
+              // bullet is the tap-to-zoom target (#927 f3), so it must stay
+              // visible/tappable at rest (like the touch drag handle).
               // #1236: gate the at-rest hidden state on `!isTouch` (JS) rather
               // than `[@media(pointer:fine)]` (CSS) — WebKitGTK lies about that
               // media query, so a desktop mouse would otherwise keep the bullet
               // always-visible on every row.
-              !isTouch && 'opacity-0 pointer-events-none',
+              // #1348: a parent (hasChildren) keeps a FAINT at-rest dot
+              // (opacity-30) so an EXPANDED parent gives a persistent "has
+              // children" gutter cue without the user having to hover — it firms
+              // to full opacity on hover / focus / active like every other
+              // gutter control. A LEAF (no children) stays fully hidden at rest
+              // (opacity-0) exactly as before, so the tree reads clean.
+              !isTouch &&
+                (hasChildren ? 'opacity-30 pointer-events-none' : 'opacity-0 pointer-events-none'),
               'group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto',
             )}
             data-testid="block-bullet"

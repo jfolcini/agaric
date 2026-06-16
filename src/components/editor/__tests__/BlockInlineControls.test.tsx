@@ -361,6 +361,49 @@ describe('BlockInlineControls', () => {
       const bullet = screen.getByTestId('block-bullet')
       expect(bullet).toHaveAttribute('aria-label', t('block.zoomBulletCollapsed'))
     })
+
+    // ── #1348: persistent at-rest "has children" gutter cue ──────────
+    // On fine pointers (jsdom default: navigator.maxTouchPoints === 0 →
+    // useIsTouch() === false) an EXPANDED parent keeps a FAINT at-rest dot
+    // (opacity-30) so structure is discoverable without hovering; it firms to
+    // full on hover/focus/active. Leaves stay fully hidden at rest (opacity-0).
+    describe('persistent at-rest cue for parents (#1348)', () => {
+      it('an expanded parent keeps a faint at-rest bullet (opacity-30, not fully hidden)', () => {
+        renderControls(makeProps({ hasChildren: true, isCollapsed: false }))
+        const bullet = screen.getByTestId('block-bullet')
+        // Not bare opacity-0 at rest…
+        expect(bullet.className).not.toContain('opacity-0')
+        // …a low at-rest opacity instead…
+        expect(bullet.className).toContain('opacity-30')
+        // …that firms to full on hover / focus / active.
+        expect(bullet.className).toContain('group-hover:opacity-100')
+        expect(bullet.className).toContain('group-focus-within:opacity-100')
+        expect(bullet.className).toContain('[.block-active_&]:opacity-100')
+      })
+
+      it('a collapsed parent also keeps a faint at-rest bullet (opacity-30)', () => {
+        renderControls(makeProps({ hasChildren: true, isCollapsed: true }))
+        const bullet = screen.getByTestId('block-bullet')
+        expect(bullet.className).not.toContain('opacity-0')
+        expect(bullet.className).toContain('opacity-30')
+      })
+
+      it('a leaf block (no children) stays hover-only — fully hidden at rest (opacity-0)', () => {
+        renderControls(makeProps({ hasChildren: false, isCollapsed: false }))
+        const bullet = screen.getByTestId('block-bullet')
+        expect(bullet.className).toContain('opacity-0')
+        expect(bullet.className).not.toContain('opacity-30')
+        // Still revealed on hover (unchanged contract).
+        expect(bullet.className).toContain('group-hover:opacity-100')
+      })
+
+      it('has no a11y violations for an expanded parent bullet', async () => {
+        const { container } = renderControls(makeProps({ hasChildren: true, isCollapsed: false }))
+        await waitFor(async () => {
+          expect(await axe(container)).toHaveNoViolations()
+        })
+      })
+    })
   })
 
   it('calls onToggleCollapse with blockId on chevron click', async () => {
