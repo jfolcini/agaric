@@ -17,6 +17,7 @@
 import React, { useCallback, useSyncExternalStore } from 'react'
 
 import { SortableBlock } from '@/components/editor/SortableBlock'
+import { useRowDragState } from '@/components/editor/use-row-drag-state'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import type { FlatBlock, Projection } from '@/lib/tree-utils'
@@ -30,16 +31,22 @@ export interface SortableBlockWrapperProps {
   /** True if this block is part of the active multi-selection. */
   isSelected: boolean
 
-  // ── DnD state ──────────────────────────────────────────────────────
-  projected: Projection | null
-  activeId: string | null
-  overId: string | null
+  // ── DnD state (fallback only) ──────────────────────────────────────
+  // #1267 — the live per-move drag state normally flows via the
+  // `DragStateStore` (DragStateContext) published by BlockListRenderer, read
+  // per-id through `useRowDragState`. These props are NOT passed by
+  // BlockListRenderer anymore (passing the per-move-fresh `projected` reference
+  // here would defeat the `React.memo`). They remain as an optional fallback
+  // for standalone renders (unit tests) where no provider is mounted.
+  projected?: Projection | null
+  activeId?: string | null
+  overId?: string | null
   /**
    * #923 — true when the projected drop lands AFTER this over-row (the user is
    * dragging downward). The drop indicator then renders BELOW `<SortableBlock>`
    * instead of above it, so the bar sits where the block will actually land.
    */
-  dropAfter: boolean
+  dropAfter?: boolean
 
   // ── Viewport + editor ─────────────────────────────────────────────
   viewport: ViewportObserver
@@ -71,10 +78,10 @@ function SortableBlockWrapperInner({
   block,
   focusedBlockId,
   isSelected,
-  projected,
-  activeId,
-  overId,
-  dropAfter,
+  projected = null,
+  activeId = null,
+  overId = null,
+  dropAfter: dropAfterProp = false,
   viewport,
   rovingEditor,
   hasChildren,
@@ -86,19 +93,32 @@ function SortableBlockWrapperInner({
   properties,
 }: SortableBlockWrapperProps): React.ReactElement {
   const isFocused = focusedBlockId === block.id
-  const isActiveDragRow = activeId === block.id
+
+  // #1267 — read ONLY this row's drag-derived state via a per-id external-store
+  // subscription (the `DragStateStore` published by BlockListRenderer). A bare
+  // pointer-move that doesn't change this row's snapshot no longer re-renders
+  // it, so the `React.memo` below holds for the (N − 2) rows that are neither
+  // the dragged nor the over-row — instead of every row churning on the
+  // per-move-fresh `projected` reference. When no provider is mounted
+  // (standalone unit renders), this derives from the DnD props below, keeping
+  // the prior contract. See `drag-state-store.ts` / `useRowDragState`.
+  const { projectedDepthOverride, showDropIndicator, dropAfter, dropIndicatorDepth } =
+    useRowDragState(block.id, {
+      projected,
+      activeId,
+      overId,
+      dropAfter: dropAfterProp,
+    })
+
   // B3 (#217) — drag depth preview. While a drag is in progress the dragged
   // source row used to keep its *original* depth, so only the drop indicator
   // (which renders at `projected.depth`) hinted at where the block would land;
   // the lifted row itself stayed put horizontally. Reflect the projected depth
   // on the dragged row too so the indent the block will adopt is legible during
   // the drag (it already rests at `opacity: 0.35` as a "lifted placeholder").
-  // The over-target row (`overId === block.id`) also previews projected depth
-  // so the row under the cursor shows the incoming indent.
-  const projectedDepth =
-    projected && activeId && (isActiveDragRow || overId === block.id)
-      ? projected.depth
-      : block.depth
+  // The over-target row also previews projected depth so the row under the
+  // cursor shows the incoming indent.
+  const projectedDepth = projectedDepthOverride ?? block.depth
 
   // Per-id memoized ref callback — same function identity across
   // renders for a given block.id, and unobserves the exact element
@@ -117,17 +137,18 @@ function SortableBlockWrapperInner({
   )
 
   // #923 — the drop indicator shows where the dragged block will land. It
-  // renders for the over-row only (overId === block.id) and never on the
-  // active drag row itself. `dropAfter` decides placement: ABOVE the row when
-  // the drop is before it (dragging upward) and BELOW it (after
-  // `<SortableBlock>`) when the drop is after it (dragging downward), so the
-  // bar always sits at the true landing edge. The indent (marginLeft) is kept
-  // on both placements.
-  const showDropIndicator = projected != null && overId === block.id && activeId !== block.id
+  // renders for the over-row only and never on the active drag row itself
+  // (both encoded in `showDropIndicator`, derived per-row in the drag store).
+  // `dropAfter` decides placement: ABOVE the row when the drop is before it
+  // (dragging upward) and BELOW it (after `<SortableBlock>`) when the drop is
+  // after it (dragging downward), so the bar always sits at the true landing
+  // edge. The indent (marginLeft) is kept on both placements.
   const dropIndicator = showDropIndicator ? (
     <div
       className="drop-indicator h-[5px] bg-primary rounded-full ring-2 ring-primary/20"
-      style={{ marginLeft: `calc(var(--indent-width) * ${projected.depth})` }}
+      style={{
+        marginLeft: `calc(var(--indent-width) * ${dropIndicatorDepth})`,
+      }}
     />
   ) : null
 
