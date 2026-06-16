@@ -90,6 +90,10 @@ pub(crate) enum RetryKind {
     ReindexBlockLinks,
     /// UX-250: incremental `#[ULID]` tag-ref reindex for a single block.
     ReindexBlockTagRefs,
+    /// #676: scoped single-tag `usage_count` refresh. Keyed by `tag_id`
+    /// (not a global sentinel) so failures of different tags' refreshes
+    /// dedup independently and reconstruct the right scoped task.
+    RefreshTagUsageCount,
     // --- Global (PEND-03) ---
     /// Mirror of [`MaterializeTask::RebuildTagsCache`].
     RebuildTagsCache,
@@ -137,6 +141,7 @@ impl RetryKind {
             Self::UpdateFtsBlock => Cow::Borrowed("UpdateFtsBlock"),
             Self::ReindexBlockLinks => Cow::Borrowed("ReindexBlockLinks"),
             Self::ReindexBlockTagRefs => Cow::Borrowed("ReindexBlockTagRefs"),
+            Self::RefreshTagUsageCount => Cow::Borrowed("RefreshTagUsageCount"),
             Self::RebuildTagsCache => Cow::Borrowed("RebuildTagsCache"),
             Self::RebuildPagesCache => Cow::Borrowed("RebuildPagesCache"),
             Self::RebuildPagesCacheCounts => Cow::Borrowed("RebuildPagesCacheCounts"),
@@ -157,6 +162,7 @@ impl RetryKind {
             "UpdateFtsBlock" => return Some(Self::UpdateFtsBlock),
             "ReindexBlockLinks" => return Some(Self::ReindexBlockLinks),
             "ReindexBlockTagRefs" => return Some(Self::ReindexBlockTagRefs),
+            "RefreshTagUsageCount" => return Some(Self::RefreshTagUsageCount),
             "RebuildTagsCache" => return Some(Self::RebuildTagsCache),
             "RebuildPagesCache" => return Some(Self::RebuildPagesCache),
             "RebuildPagesCacheCounts" => return Some(Self::RebuildPagesCacheCounts),
@@ -224,6 +230,11 @@ impl RetryKind {
             Self::ReindexBlockTagRefs => Some(MaterializeTask::ReindexBlockTagRefs {
                 block_id: Arc::from(block_id),
             }),
+            // #676: the persisted `block_id` column holds the tag id for
+            // this scoped task (it is NOT global).
+            Self::RefreshTagUsageCount => Some(MaterializeTask::RefreshTagUsageCount {
+                tag_id: Arc::from(block_id),
+            }),
             // Global rebuilds carry no block id; the row's sentinel is
             // discarded on reconstruction.
             Self::RebuildTagsCache => Some(MaterializeTask::RebuildTagsCache),
@@ -274,6 +285,11 @@ impl RetryKind {
             }
             MaterializeTask::ReindexBlockTagRefs { block_id } => {
                 Some((Self::ReindexBlockTagRefs, block_id.to_string()))
+            }
+            // #676: persist keyed by `tag_id` (the composite PK
+            // `(block_id, task_kind)` dedups per-tag, not globally).
+            MaterializeTask::RefreshTagUsageCount { tag_id } => {
+                Some((Self::RefreshTagUsageCount, tag_id.to_string()))
             }
             MaterializeTask::RebuildTagsCache => {
                 Some((Self::RebuildTagsCache, GLOBAL_TASK_SENTINEL.to_string()))

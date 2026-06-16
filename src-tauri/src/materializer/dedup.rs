@@ -23,6 +23,7 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
     let mut seen_fu: FxHashSet<u64> = FxHashSet::default();
     let mut seen_fr: FxHashSet<u64> = FxHashSet::default();
     let mut seen_frr: FxHashSet<u64> = FxHashSet::default();
+    let mut seen_tu: FxHashSet<u64> = FxHashSet::default();
     let mut result = Vec::with_capacity(tasks.len());
     for task in tasks {
         match &task {
@@ -48,6 +49,16 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
             }
             MaterializeTask::RemoveFtsBlock { block_id } => {
                 if seen_fr.insert(hash_id(block_id)) {
+                    result.push(task);
+                }
+            }
+            // #676: keyed by `tag_id`, NOT discriminant — two
+            // `RefreshTagUsageCount` for DIFFERENT tags in the same drain
+            // must both survive (collapsing them by discriminant would drop
+            // one tag's usage_count refresh). Same per-key dedup shape as the
+            // per-block tasks above; only exact-`tag_id` duplicates collapse.
+            MaterializeTask::RefreshTagUsageCount { tag_id } => {
+                if seen_tu.insert(hash_id(tag_id)) {
                     result.push(task);
                 }
             }

@@ -1,7 +1,7 @@
 //! Dispatch methods for routing ops to the appropriate materializer queues.
 
 use super::coordinator::Materializer;
-use super::{CreateBlockHint, MaterializeTask};
+use super::{CreateBlockHint, MaterializeTask, TagOpHint};
 use crate::error::AppError;
 use crate::op::OpType;
 use crate::op_log::OpRecord;
@@ -548,7 +548,38 @@ fn invalidations_for_op(
             }
         }
         OpType::AddTag | OpType::RemoveTag => {
-            tasks.push(MaterializeTask::RebuildTagsCache);
+            // #676: `add_tag` / `remove_tag` mutate exactly one
+            // `(block_id, tag_id)` edge, so the only `tags_cache` change
+            // they can cause is the affected tag's `usage_count`. Replace
+            // the former full O(vault) `RebuildTagsCache` (which streamed
+            // every tag block + the whole `block_tags`/`block_tag_refs`
+            // union to sort-merge-diff the entire cache, on every tag
+            // click) with a scoped `RefreshTagUsageCount { tag_id }` that
+            // recomputes just that one row — provably identical to the
+            // full rebuild's effect for this op (the tag's name and the
+            // set of cached tags are invariant under tag-edge mutations).
+            //
+            // The `tag_id` is read from the op payload. Both `add_tag` and
+            // `remove_tag` carry `{ block_id, tag_id }` (op.rs
+            // `AddTagPayload` / `RemoveTagPayload`). If the payload fails to
+            // parse (corrupt row) we fall back to the full `RebuildTagsCache`
+            // so the cache cannot silently go stale.
+            match serde_json::from_str::<TagOpHint>(&record.payload) {
+                Ok(hint) if !hint.tag_id.is_empty() => {
+                    tasks.push(MaterializeTask::RefreshTagUsageCount {
+                        tag_id: Arc::from(hint.tag_id.as_str()),
+                    });
+                }
+                _ => {
+                    tracing::warn!(
+                        op_type = %record.op_type,
+                        device_id = %record.device_id,
+                        seq = record.seq,
+                        "add_tag/remove_tag payload missing tag_id — falling back to full RebuildTagsCache"
+                    );
+                    tasks.push(MaterializeTask::RebuildTagsCache);
+                }
+            }
             tasks.push(MaterializeTask::RebuildAgendaCache);
             tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
             tasks.push(MaterializeTask::RebuildTagInheritanceCache);
@@ -639,6 +670,9 @@ mod tests {
             MaterializeTask::ApplyOp(_) => "ApplyOp".into(),
             MaterializeTask::BatchApplyOps(_) => "BatchApplyOps".into(),
             MaterializeTask::RebuildTagsCache => "RebuildTagsCache".into(),
+            MaterializeTask::RefreshTagUsageCount { tag_id } => {
+                format!("RefreshTagUsageCount({tag_id})")
+            }
             MaterializeTask::RebuildPagesCache => "RebuildPagesCache".into(),
             MaterializeTask::RebuildPagesCacheCounts => "RebuildPagesCacheCounts".into(),
             MaterializeTask::RebuildAgendaCache => "RebuildAgendaCache".into(),
@@ -952,8 +986,11 @@ mod tests {
 
     // ── tag mutations ────────────────────────────────────────────────
 
+    /// #676: `add_tag` enqueues a SCOPED `RefreshTagUsageCount(tag_id)`
+    /// instead of the former full O(vault) `RebuildTagsCache`. The agenda
+    /// family + inheritance rebuild are unchanged.
     #[test]
-    fn invalidations_for_op_add_tag_includes_tags_and_agenda_caches() {
+    fn invalidations_for_op_add_tag_uses_scoped_tag_refresh() {
         let r = make_record(
             "add_tag",
             r#"{"block_id":"BLK1","tag_id":"TAG1"}"#,
@@ -963,26 +1000,54 @@ mod tests {
         assert_eq!(
             labels(&tasks),
             vec![
-                "RebuildTagsCache",
+                "RefreshTagUsageCount(TAG1)",
                 "RebuildAgendaCache",
                 "RebuildProjectedAgendaCache",
                 "RebuildTagInheritanceCache",
             ],
         );
+        // #676 regression sentinel: the full O(vault) rebuild MUST NOT be
+        // enqueued for a well-formed tag op.
+        assert!(
+            !contains_kind(&tasks, &MaterializeTask::RebuildTagsCache),
+            "add_tag must not enqueue the full O(vault) RebuildTagsCache; got {:?}",
+            labels(&tasks),
+        );
     }
 
+    /// #676: `remove_tag` shares the arm — same scoped refresh of the
+    /// affected tag, no full rebuild.
     #[test]
-    fn invalidations_for_op_remove_tag_matches_add_tag() {
+    fn invalidations_for_op_remove_tag_uses_scoped_tag_refresh() {
         let r = make_record(
             "remove_tag",
             r#"{"block_id":"BLK1","tag_id":"TAG1"}"#,
             Some("BLK1"),
         );
         let tasks = invalidations_for_op(&r, None).unwrap();
-        // remove_tag shares the add_tag arm — tags cache + agenda
-        // family. This is the "every op that mutates a tag relationship
-        // invalidates the tags cache" pinning test.
-        assert!(contains_kind(&tasks, &MaterializeTask::RebuildTagsCache));
+        assert_eq!(
+            labels(&tasks),
+            vec![
+                "RefreshTagUsageCount(TAG1)",
+                "RebuildAgendaCache",
+                "RebuildProjectedAgendaCache",
+                "RebuildTagInheritanceCache",
+            ],
+        );
+        assert!(
+            !contains_kind(&tasks, &MaterializeTask::RebuildTagsCache),
+            "remove_tag must not enqueue the full O(vault) RebuildTagsCache; got {:?}",
+            labels(&tasks),
+        );
+    }
+
+    /// #676: a corrupt tag-op payload (no parseable `tag_id`) falls back to
+    /// the full `RebuildTagsCache` rather than silently skipping the tags
+    /// cache — correctness over the perf win when the scope is unknown.
+    #[test]
+    fn invalidations_for_op_add_tag_missing_tag_id_falls_back_to_full_rebuild() {
+        let r = make_record("add_tag", r#"{"block_id":"BLK1"}"#, Some("BLK1"));
+        let tasks = invalidations_for_op(&r, None).unwrap();
         assert_eq!(
             labels(&tasks),
             vec![
@@ -991,6 +1056,16 @@ mod tests {
                 "RebuildProjectedAgendaCache",
                 "RebuildTagInheritanceCache",
             ],
+        );
+        assert!(
+            !contains_kind(
+                &tasks,
+                &MaterializeTask::RefreshTagUsageCount {
+                    tag_id: Arc::from("x")
+                }
+            ),
+            "missing tag_id must NOT enqueue a scoped (empty-id) refresh; got {:?}",
+            labels(&tasks),
         );
     }
 

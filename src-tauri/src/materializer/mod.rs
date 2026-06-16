@@ -42,6 +42,16 @@ pub enum MaterializeTask {
     /// no-retry path.
     BatchApplyOps(Arc<Vec<OpRecord>>),
     RebuildTagsCache,
+    /// #676: incremental, single-tag refresh of `tags_cache.usage_count`
+    /// after an `add_tag` / `remove_tag` op. Those ops mutate exactly one
+    /// `(block_id, tag_id)` edge, so only the affected tag's `usage_count`
+    /// can change — neither its name nor the set of cached tags can move.
+    /// Recomputing just this one row (via
+    /// [`crate::cache::refresh_tag_usage_count`]) replaces the former full
+    /// O(vault) `RebuildTagsCache` enqueue on every tag click.
+    RefreshTagUsageCount {
+        tag_id: Arc<str>,
+    },
     RebuildPagesCache,
     /// #417: full-table recompute of `pages_cache.{inbound_link_count,
     /// child_block_count}`. Enqueued ONLY on the snapshot/sync RESET path
@@ -107,6 +117,17 @@ struct CreateBlockHint {
     block_id: String,
     #[serde(default)]
     block_type: String,
+}
+
+/// #676: minimal projection of an `add_tag` / `remove_tag` payload —
+/// just the `tag_id` needed to scope the incremental
+/// [`MaterializeTask::RefreshTagUsageCount`] enqueue. Both
+/// `AddTagPayload` and `RemoveTagPayload` (op.rs) carry
+/// `{ block_id, tag_id }`; only `tag_id` is read here.
+#[derive(Deserialize)]
+pub(super) struct TagOpHint {
+    #[serde(default)]
+    pub(super) tag_id: String,
 }
 
 // L-13 (2026-04): the former `BlockIdHint` type was used by
