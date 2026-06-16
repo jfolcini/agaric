@@ -1,12 +1,11 @@
-//! Issue #157 sub-item B — `MaintenanceDaemon` skeleton.
+//! Issue #157 — `MaintenanceDaemon`.
 //!
 //! A general-purpose maintenance loop for periodic cleanups that do not
 //! belong inside the materializer's hot path. Modelled on
 //! [`crate::draft::spawn_orphan_drafts_sweeper`] (single `tokio::spawn` +
 //! `tokio::time::interval` ticker) but generalised over a vector of
-//! [`MaintenanceJob`] entries so subsequent sub-items
-//! (`op_log_compact`, `tombstone_purge`, `pragma_optimize_tick`, …) can
-//! land as additional jobs without re-wiring the daemon.
+//! [`MaintenanceJob`] entries, so new jobs are added simply by extending
+//! the vector at the spawn site (see `lib.rs`) without re-wiring the daemon.
 //!
 //! Cadence: a fixed [`TICK_INTERVAL`] (60 s). On each tick the daemon
 //! walks the job vector; jobs whose individual `interval` has elapsed
@@ -28,13 +27,22 @@
 //! "only when the writer pool is idle", etc.) — see `wal_checkpoint_truncate`
 //! below for the canonical pattern.
 //!
-//! Initial job set (this sub-item, B):
+//! Registered jobs (wired at the `lib.rs` spawn site; bodies live in
+//! this file):
 //!   - [`wal_checkpoint_truncate`] — runs `PRAGMA wal_checkpoint(TRUNCATE)`
 //!     against the write pool on a 1 h cadence to keep the SQLite WAL
 //!     file from growing unbounded (field-observed at 19.8 MB on a 3-month
 //!     dev install). Bounded with a TRUNCATE checkpoint rather than the
 //!     PASSIVE autocheckpoint that runs at 5000 frames; PASSIVE never
 //!     shrinks the WAL file even when it could.
+//!   - [`op_log_compact`] — prunes the op log (24 h cadence, idle
+//!     predicate, 90-day retention).
+//!   - [`pragma_optimize`] — periodic `PRAGMA optimize` (4 h cadence).
+//!   - [`tombstone_purge`] — purges expired tombstones (24 h cadence,
+//!     idle predicate, 90-day retention).
+//!   - `enqueue_cleanup_orphaned_attachments`, `enqueue_fts_idle_optimize`,
+//!     [`loro_snapshot_if_dirty`], and `projected_agenda_midnight_tick` —
+//!     the remaining materializer-enqueue / snapshot / agenda jobs.
 
 use crate::error::AppError;
 use chrono::Datelike;

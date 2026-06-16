@@ -129,8 +129,10 @@ pub fn verify_op_record(record: &crate::op_log::OpRecord) -> Result<(), String> 
 
 /// Verify that a stored hash matches the recomputed hash of the given fields.
 ///
-/// Uses constant-time comparison to prevent timing side-channel leaks,
-/// even though the inputs are not secret — defence in depth.
+/// This is a data-integrity equality check on a 64-char blake3 hex hash, not
+/// a security boundary: the threat model is single-user/local-first with no
+/// adversarial peer (see AGENTS.md), the op hash is not a secret, and there is
+/// no timing attacker to defend against.
 #[inline]
 #[must_use]
 pub fn verify_op_hash(
@@ -145,12 +147,15 @@ pub fn verify_op_hash(
     constant_time_eq(stored_hash.as_bytes(), computed.as_bytes())
 }
 
-/// Constant-time byte-slice comparison (avoids early-exit on first diff).
+/// Byte-slice equality used for hash comparison.
 ///
-/// **Note:** The `a.len() != b.len()` early return means this is only truly
-/// constant-time for equal-length inputs.  This is safe for our use case
-/// (blake3 hex hashes are always exactly 64 bytes) but callers should not
-/// assume constant-time behavior for variable-length inputs.
+/// The body XOR-accumulates over the whole slice rather than early-exiting on
+/// the first differing byte. That is an implementation detail, **not** a
+/// security guarantee: this codebase has a single-user/local-first threat
+/// model with no timing attacker (see AGENTS.md), so the comparison is not
+/// relied upon to be constant-time. (It is, in any case, not constant-time
+/// across unequal lengths because of the early length check below.) Inputs
+/// here are always fixed-length 64-byte blake3 hex hashes.
 #[inline]
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {

@@ -1093,10 +1093,15 @@ fn spawn_background_tasks(
         orphan_drafts_shutdown,
     );
 
-    // Issue #157 sub-item B — MaintenanceDaemon skeleton seeded
-    // with the wal_checkpoint_truncate job (1 h cadence, idle
-    // predicate). Subsequent sub-items C/E/F/G/H/I/J extend the
-    // job vector without re-wiring the daemon.
+    // Issue #157 — MaintenanceDaemon, wired with its full job
+    // vector (wal_checkpoint_truncate, op_log_compact,
+    // pragma_optimize_tick, cleanup_orphaned_attachments_tick,
+    // fts_idle_optimize, tombstone_purge, loro_snapshot_if_dirty,
+    // projected_agenda_midnight). New jobs are added by extending
+    // this vector without re-wiring the daemon.
+    //
+    // The wal_checkpoint_truncate job below illustrates the
+    // canonical predicate pattern.
     //
     // The predicate gates on the lifecycle.is_foreground flag —
     // the TRUNCATE checkpoint may briefly block other writers
