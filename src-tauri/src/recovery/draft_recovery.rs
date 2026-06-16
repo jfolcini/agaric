@@ -167,27 +167,38 @@ pub(super) async fn recover_single_draft(
             .await?;
         tx.commit().await?;
 
-        // #620: dispatch the synthetic record to the materializer as a
-        // foreground ApplyOp so the Loro engine applies the recovered
-        // content and the apply cursor advances over the synthetic seq.
-        // The apply is idempotent over the direct SQL write above (the
-        // EditBlock projection writes the same content). On enqueue
-        // failure the op stays in op_log with `seq > cursor`; the next
-        // boot's replay walk re-covers it as long as no later apply has
-        // leapt the cursor past it — hence the loud warn.
+        // #620 / #1322: dispatch the synthetic record to the materializer as a
+        // foreground ApplyOp so the Loro engine applies the recovered content
+        // and the apply cursor advances over the synthetic seq. The apply is
+        // idempotent over the direct SQL write above (the EditBlock projection
+        // writes the same content).
+        //
+        // #1322: if the enqueue fails, the op is committed to op_log but the
+        // engine never observes it — it sits with `seq > cursor`, unapplied.
+        // Returning `Ok(true)` here would let the caller push this block into
+        // `drafts_recovered` and report a phantom success while the engine is
+        // silently stale. Instead we escalate to `error!` and return `Err`, so
+        // the caller funnels it into `draft_errors` (an honest failure report).
+        // The committed op_log row is NOT rolled back — the SQL recovery is
+        // intact and a later boot replay can still apply it; only the
+        // success-claim is withheld.
         if let Err(e) = materializer
             .enqueue_foreground(crate::materializer::MaterializeTask::ApplyOp(
                 std::sync::Arc::new(record),
             ))
             .await
         {
-            tracing::warn!(
+            tracing::error!(
                 block_id = %draft.block_id,
                 error = %e,
                 "draft recovery: failed to enqueue synthetic edit op for engine \
-                 apply — the Loro engine may miss the recovered content until \
-                 the next boot replay (#620)"
+                 apply — the Loro engine has not observed the recovered content; \
+                 reporting recovery as failed rather than a phantom success (#1322)"
             );
+            return Err(AppError::Channel(format!(
+                "draft recovery: failed to enqueue synthetic edit op for block {}: {e}",
+                draft.block_id
+            )));
         }
 
         tracing::info!(block_id = %draft.block_id, "recovered unflushed draft");
