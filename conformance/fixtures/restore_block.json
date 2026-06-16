@@ -1,0 +1,82 @@
+{
+  "description": "Soft-delete then restore a content block. delete_block tombstones (deleted_at sentinel), restore_block clears it. The Rust runner sources the restore op's deleted_at_ref from the live tombstone's deleted_at (mirroring restore_block_inner); the mock clears deleted_at unconditionally. Drives both ops through the foreground engine pipeline; asserts the SETTLED block is live again (deleted_at null), exercising the soft-delete/restore cascade.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "survivor",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 2,
+      "ops": [
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "restore_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "name": "restore_block",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "restore_block"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "survivor",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

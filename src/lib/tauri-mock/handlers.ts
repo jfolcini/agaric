@@ -1152,6 +1152,7 @@ export const HANDLERS: Record<string, Handler> = {
   purge_block: (args) => {
     const a = args as Record<string, unknown>
     blocks.delete(a['blockId'] as string)
+    pushOp('purge_block', { block_id: a['blockId'] })
     return { block_id: a['blockId'], purged_count: 1 }
   },
 

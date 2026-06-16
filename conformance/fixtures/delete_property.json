@@ -1,0 +1,109 @@
+{
+  "description": "Delete one property by key while a second survives. Sets two freeform (undefined-key) typed properties via set_property, then delete_property removes one — which drops the block_properties ROW entirely (key absent), distinct from set_property(value=null) which would leave an explicit-null row. Drives set/delete through the foreground engine pipeline; asserts the SETTLED block_properties projection retains only the surviving key.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 3,
+      "ops": [
+        {
+          "key": "note",
+          "op_type": "set_property"
+        },
+        {
+          "key": "estimate",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "estimate",
+        "value": 3.0,
+        "value_type": "Num"
+      }
+    ]
+  },
+  "name": "delete_property",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "note",
+        "value": {
+          "value_text": "draft"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "estimate",
+        "value": {
+          "value_num": 3
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "note"
+      },
+      "command": "delete_property"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

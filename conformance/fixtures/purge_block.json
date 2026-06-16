@@ -1,0 +1,89 @@
+{
+  "description": "Soft-delete then PURGE a content block. delete_block tombstones; purge_block physically removes the block (and its dependent rows) so it disappears from the blocks projection entirely — distinct from the DELETED sentinel a soft-delete leaves. Purges a SEED block (not an op-created one) so the engine-path create-guard does not assert on a block purge intentionally removed from the engine tree. Drives both ops through the foreground engine pipeline; asserts the SETTLED state has the block gone and its live sibling untouched.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "survivor",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 2,
+      "ops": [
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "purge_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "name": "purge_block",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "purge_block"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "doomed",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "survivor",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
