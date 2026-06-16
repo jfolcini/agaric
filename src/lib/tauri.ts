@@ -33,6 +33,7 @@ export type {
   PartitionedSearchResponse,
   PropertyDefinition,
   PurgeResponse,
+  RecoveryStatus,
   RestoreResponse,
   SearchBlockRow,
   SearchFilter,
@@ -83,6 +84,7 @@ import type {
   PartitionedSearchResponse,
   PropertyDefinition,
   PurgeResponse,
+  RecoveryStatus,
   RestoreResponse,
   SearchBlockRow,
   SpaceRow,
@@ -2108,6 +2110,19 @@ export async function flushDraft(blockId: string): Promise<void> {
  */
 export async function flushAllDrafts(): Promise<FlushAllDraftsResult> {
   return unwrap(await commands.flushAllDrafts())
+}
+
+/**
+ * #1255: read the boot-recovery status. Used by `useRecoveryStatus` to
+ * backfill the degraded-boot signal on mount — boot runs (and emits
+ * `recovery:degraded`) before the webview registers its listener, so the
+ * live event can be missed. `degraded === true` means the C-2b op-log
+ * replay failed and the materialized view may be incomplete/stale (the op
+ * log is canonical — nothing is lost). Mirrors the `useDeepLinkRouter` +
+ * `getCurrentDeepLink()` "emit + query-on-mount backfill" shape.
+ */
+export async function getRecoveryStatus(): Promise<RecoveryStatus> {
+  return unwrap(await commands.getRecoveryStatus())
 }
 
 /** Delete a draft for a block (e.g. after a successful normal save). */

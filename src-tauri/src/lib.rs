@@ -112,6 +112,10 @@ macro_rules! agaric_commands {
             $crate::commands::queries::get_backlinks,
             $crate::commands::get_block_history,
             $crate::commands::queries::get_status,
+            // #1255 — boot-recovery degraded-state backfill for late-mount
+            // frontend (its `recovery:degraded` listener may register after
+            // boot already emitted).
+            $crate::commands::recovery::get_recovery_status,
             $crate::commands::queries::search_blocks,
             // PEND-61 Phase 1 — partitioned palette search. One FTS scan
             // returns `{ pages, blocks }` instead of the palette firing
@@ -786,10 +790,23 @@ fn recover_and_bootstrap(
             "recovered unflushed drafts"
         );
     }
-    if report.ops_replayed > 0 || !report.replay_errors.is_empty() {
-        tracing::info!(
+    if report.replay_failed() {
+        // #1255: a wholesale replay failure (corrupted op_log / stuck
+        // foreground queue / #412 multi-device abort) means an unbounded
+        // set of unmaterialized ops was skipped — the materialized view is
+        // stale. This is NOT a routine info: log at error so the degraded
+        // boot is greppable, and `surface_recovery_status` (in setup) emits
+        // the user-visible signal.
+        tracing::error!(
             ops_replayed = report.ops_replayed,
             replay_errors = report.replay_errors.len(),
+            errors = ?report.replay_errors,
+            "C-2b: boot op-log replay FAILED — materialized view may be \
+             incomplete/stale; user signalled via recovery:degraded (#1255)"
+        );
+    } else if report.ops_replayed > 0 {
+        tracing::info!(
+            ops_replayed = report.ops_replayed,
             "C-2b: replayed unmaterialized ops at boot"
         );
     }
@@ -817,6 +834,48 @@ fn recover_and_bootstrap(
     }
 
     Ok(report)
+}
+
+/// #1255 — surface a degraded boot to the user.
+///
+/// Computes the [`RecoveryStatus`](recovery::RecoveryStatus) from the boot
+/// report, stores it in managed state (so the `get_recovery_status` command
+/// can backfill a frontend that mounts after boot), and — when the C-2b
+/// op-log replay failed wholesale — emits the durable
+/// [`EVENT_RECOVERY_DEGRADED`](recovery::EVENT_RECOVERY_DEGRADED) event so
+/// the frontend can show a persistent "data may be incomplete" banner.
+///
+/// This replaces the old silent `tracing::warn!`-and-continue: the app
+/// still boots (the `op_log` is canonical, nothing is lost), but the
+/// degraded materialized state is now observable instead of invisible.
+fn surface_recovery_status<R: tauri::Runtime>(
+    app: &tauri::App<R>,
+    report: &recovery::RecoveryReport,
+) {
+    use recovery::{EVENT_RECOVERY_DEGRADED, RecoveryStatusState};
+    use tauri::{Emitter, Manager};
+
+    let status = report.to_status();
+
+    // Always register the status so `get_recovery_status` resolves managed
+    // state even on a healthy boot (returns `degraded = false`).
+    app.manage(RecoveryStatusState(std::sync::Mutex::new(status.clone())));
+
+    if !status.degraded {
+        return;
+    }
+
+    // Emit the durable signal. A late-registering frontend listener that
+    // misses this event backfills the same status via `get_recovery_status`
+    // on mount (the `useDeepLinkRouter`-style emit + query-on-mount shape).
+    if let Err(e) = app.emit(EVENT_RECOVERY_DEGRADED, status.clone()) {
+        tracing::error!(
+            error = %e,
+            event = EVENT_RECOVERY_DEGRADED,
+            "failed to emit recovery-degraded event — frontend will still \
+             backfill via get_recovery_status on mount (#1255)"
+        );
+    }
 }
 
 /// Boot-phase 6 — best-effort boot maintenance moved off the synchronous
@@ -1763,6 +1822,17 @@ pub fn run() {
             // Loro init + rehydrate, crash recovery, and per-space bootstrap
             // (bootstrap_spaces is boot-fatal).
             let report = recover_and_bootstrap(&pools, &device_id, &materializer)?;
+
+            // #1255: surface a degraded boot to the user. When the C-2b
+            // op-log replay failed wholesale (`replay_errors` non-empty),
+            // the materialized view is behind the canonical `op_log` —
+            // previously this was downgraded to a `warn` and the user
+            // edited a stale view with zero signal. Store the status in
+            // managed state (so a late-mounting frontend can backfill it
+            // via `get_recovery_status`), emit a durable `recovery:degraded`
+            // event, and log at `error` (not `info`). Boot still continues —
+            // the app is usable and the op_log is canonical.
+            surface_recovery_status(app, &report);
 
             // Best-effort boot maintenance (off-critical-path spawn + the
             // remaining synchronous enqueues + post-draft-recovery refresh).

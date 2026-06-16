@@ -15,6 +15,12 @@ export const common: Record<string, string> = {
   'boot.hideDetailsButton': 'Hide details',
   'boot.copyDiagnosticsLabel': 'Copy diagnostics',
   'boot.copiedLabel': 'Copied!',
+  // #1255: boot op-log replay failure — the materialized view may be
+  // stale/incomplete. Surfaced as a persistent warning so the user knows
+  // before layering more edits on top (nothing is lost — the op log is
+  // canonical — but a restart usually re-runs recovery cleanly).
+  'boot.recoveryDegradedBody':
+    'A startup recovery step did not finish, so recent edits may not appear yet. Your data is safe — restarting Agaric usually fixes this. Avoid making large edits until it is resolved.',
   'sidebar.pages': 'Pages',
   'sidebar.journal': 'Journal',
   'sidebar.newPage': 'New Page',

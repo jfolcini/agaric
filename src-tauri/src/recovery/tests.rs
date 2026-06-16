@@ -2665,3 +2665,104 @@ async fn boot_replay_preserves_new_scheme_sibling_order_603() {
         "SQL ORDER BY position must match the engine order after replay",
     );
 }
+
+// === #1255: degraded-boot signal ===
+//
+// When the C-2b op-log replay fails wholesale, `recover_at_boot` must no
+// longer swallow it into a `warn`-and-continue with no signal. It records
+// the abort in `RecoveryReport::replay_errors`, and `replay_failed()` /
+// `to_status()` expose a durable, user-visible signal (the
+// `recovery:degraded` event payload). These tests assert the SIGNAL is
+// produced — not merely a log line — by driving the #412 multi-device
+// abort (`replay.rs:336-349`, the loudest replay failure) and checking the
+// returned report rather than scraping `tracing` output.
+
+/// Insert a raw `op_log` row for `device_id` at `seq` (bypasses
+/// `append_local_op` — we only need the row to exist so the replay's
+/// `COUNT(DISTINCT device_id)` guard fires; the payload is irrelevant).
+async fn insert_raw_op(pool: &SqlitePool, device_id: &str, seq: i64) {
+    sqlx::query(
+        "INSERT INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+         VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+    )
+    .bind(device_id)
+    .bind(seq)
+    .bind(format!("{device_id}-hash-{seq}"))
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn wholesale_replay_failure_surfaces_degraded_signal() {
+    let (pool, _dir) = test_pool().await;
+
+    // Two distinct devices in op_log with seq > cursor(0) → the #412
+    // multi-device guard in `replay_unmaterialized_ops` returns Err, which
+    // `recover_at_boot` captures into `replay_errors` (rather than aborting
+    // boot). This is the exact path that used to be a silent `warn`.
+    insert_raw_op(&pool, "dev-A", 1).await;
+    insert_raw_op(&pool, "dev-B", 2).await;
+
+    let report = recover_at_boot_test(&pool, "dev-A").await.unwrap();
+
+    // Boot still succeeded (the Result is Ok) — the app remains bootable.
+    // But the failure is now OBSERVABLE, not silent:
+    assert!(
+        report.replay_failed(),
+        "a wholesale replay abort must set replay_failed() (the user signal), \
+         got replay_errors = {:?}",
+        report.replay_errors,
+    );
+    assert!(
+        !report.replay_errors.is_empty(),
+        "replay_errors must carry the abort message for diagnostics",
+    );
+    assert!(
+        report
+            .replay_errors
+            .iter()
+            .any(|e| e.contains("replay aborted")),
+        "the captured error should be the synthesised 'replay aborted: …' \
+         message, got {:?}",
+        report.replay_errors,
+    );
+    assert_eq!(
+        report.ops_replayed, 0,
+        "no ops were applied on a failed replay"
+    );
+
+    // The durable, frontend-facing status mirrors the failure.
+    let status = report.to_status();
+    assert!(
+        status.degraded,
+        "to_status() must report degraded on a failed replay"
+    );
+    assert_eq!(
+        status.replay_errors, report.replay_errors,
+        "the status carries the replay errors for the bug-report bundle",
+    );
+}
+
+#[tokio::test]
+async fn healthy_boot_is_not_degraded() {
+    let (pool, _dir) = test_pool().await;
+
+    // Single device (or empty op_log) → replay is a clean no-op.
+    insert_raw_op(&pool, "dev-only", 1).await;
+
+    let report = recover_at_boot_test(&pool, "dev-only").await.unwrap();
+
+    assert!(
+        !report.replay_failed(),
+        "a single-device boot must NOT be flagged degraded, got {:?}",
+        report.replay_errors,
+    );
+    let status = report.to_status();
+    assert!(
+        !status.degraded,
+        "to_status() must report healthy on a clean boot"
+    );
+    assert!(status.replay_errors.is_empty());
+}
