@@ -25,7 +25,7 @@ How the system is built. Companion to:
 | ↳ Converging the `sql_only` apply fallback with the projection helpers | [`architecture/sql-only-convergence.md`](architecture/sql-only-convergence.md) |
 | Sync transport + protocol + Android constraints | [`architecture/sync-and-network.md`](architecture/sync-and-network.md) |
 | ↳ Sync protocol specification (message framing, handshake) | [`architecture/sync-protocol-spec.md`](architecture/sync-protocol-spec.md) |
-| Integrations (Google Calendar, MCP / agent access) | [`architecture/integrations.md`](architecture/integrations.md) |
+| Integrations (MCP / agent access) | [`architecture/integrations.md`](architecture/integrations.md) |
 | Search + query system | [`architecture/queries.md`](architecture/queries.md) |
 | ↳ Full-text search engine (FTS5, trigram, ranking) | [`architecture/search.md`](architecture/search.md) |
 | Bindings + dev tooling + security boundary | [`architecture/tooling.md`](architecture/tooling.md) |
@@ -55,7 +55,7 @@ How the system is built. Companion to:
 ## What lives where
 
 - **Schema / migrations**: `src-tauri/migrations/*.sql` (auto-run; `sqlx` compile-time validated; offline cache in `.sqlx/`).
-- **Backend code**: `src-tauri/src/` (commands, materializer, sync, Loro engine, recurrence, FTS, snapshot, GCal, MCP).
+- **Backend code**: `src-tauri/src/` (commands, materializer, sync, Loro engine, recurrence, FTS, snapshot, MCP).
 - **Frontend code**: `src/` (components, editor, hooks, stores, lib).
 - **Bindings**: `src/lib/bindings.ts` (specta-generated; checked in; CI fails on drift).
 - **Tests**: `src-tauri/src/` (Rust unit + integration, colocated as `#[cfg(test)] mod tests`, `*/tests.rs`, and `integration_tests.rs` / `command_integration_tests/` — see `src-tauri/tests/AGENTS.md` for the layering), `src/**/__tests__/` (frontend), `e2e/` (Playwright).

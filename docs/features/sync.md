@@ -34,7 +34,6 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 - **Tooltip** on the Sync button: state plus *"Last synced N ago"*.
 - **Per-peer progress** while a sync is running (operations sent / received, then attachment-file transfer with byte progress).
 - **Retry toast** per peer on failure — partial failures don't blow up the whole batch.
-- **Re-auth banner** (**GcalReauthBanner**) at the top of the page editor when a connected Google Calendar OAuth token has expired (sync to GCal pauses until you re-auth).
 
 ## How sync runs
 

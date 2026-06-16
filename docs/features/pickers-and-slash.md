@@ -44,7 +44,11 @@ The repeat-rule mode semantics (`+` vs `.+` vs `++`) are explained in [journal-a
 
 ## How to add a slash command
 
-Add an entry to the matching category file under `src/hooks/useBlockSlashCommands/`, an i18n key under `slash.*`, and (if it does a novel operation) the handler.
+The command catalog (visibility + category metadata) lives in `src/lib/slash-commands.ts`; the `useBlockSlashCommands` hook just re-exports and drives it. To add a command:
+
+1. Add a `PickerItem` to the right array in `src/lib/slash-commands.ts` — the top-level `SLASH_COMMANDS` array, or a category sub-array (e.g. `HEADING_COMMANDS`, `CALLOUT_COMMANDS`) for sub-menu entries. Set its `category` to the matching `slashCommand.categories.*` i18n key.
+2. Make sure it is reachable from `searchSlashCommands` (`src/lib/slash-commands.ts`), which is what the picker queries — top-level entries are searched directly; sub-menu arrays are surfaced via their parent command.
+3. If the command performs a novel operation (not just a turn-into / property set already handled), add its handler in `useBlockSlashCommands`.
 
 ## Pitfalls to know
 

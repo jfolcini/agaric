@@ -40,7 +40,6 @@ No router. Navigation is store-driven. `useTabsStore` owns the per-tab page stac
 ```text
 BootGate
   SpaceTopStripe          (3 px accent bar)
-  GcalReauthBanner        (conditional)
   SidebarProvider
     AppSidebar            (collapsible left rail)
     SidebarInset
@@ -77,13 +76,12 @@ Page membership lives in the native, indexed `blocks.space_id` column (migration
 ### Data model
 
 - **Seeded spaces** — Personal and Work are seeded on first boot. Both use deterministic ULIDs (`SPACE_PERSONAL_ULID` / `SPACE_WORK_ULID` constants) so peer devices converge without a name match.
-- **Per-space keychain accounts** — GCal stores OAuth tokens under per-space keychain entries (`oauth_tokens_<SPACE_ULID>`).
 - **Legacy migration** — pre-spaces pages are routed to Personal or Work by a time-gated boot migration (one-shot, idempotent).
 - **Bootstrap re-runs every boot** — `pages_without_space` backfill is defensive: any page lacking a `space_id` gets one via `UPDATE blocks SET space_id = ?` (`bootstrap.rs`, handles peer-synced or future-bypass cases).
 
 ### Scoping rules
 
-- **Tauri commands.** Every list / search / agenda / backlink / history command takes a `SpaceScope` argument: `Active(SpaceId)` (filter) or `Global` (unscoped — used by MCP, GCal connector).
+- **Tauri commands.** Every list / search / agenda / backlink / history command takes a `SpaceScope` argument: `Active(SpaceId)` (filter) or `Global` (unscoped — used by MCP).
 - **SQL.** The canonical space-filter clause is pinned by `SPACE_FILTER_CANONICAL` constant + a parity test (`space_filter_canonical.rs`) that ensures the same predicate appears at every read site.
 - **Cross-space links.** Three enforcement points: `edit_block`'s content scan, `set_property`'s ref-type validation, `add_tag`'s space check. A `[[ULID]]` to a foreign-space target is rejected at write time AND rendered as a broken-link chip at render time.
 - **`create_block` IPC tightening.** Pages without a `space_id` are rejected at the IPC boundary. The four legacy FE bypass call sites (JournalPage daily / TemplatesView / WelcomeModal / `useBlockDatePicker`) all route through `createPageInSpace`.
@@ -108,7 +106,7 @@ There is exactly one subscriber pattern, not four — adding a fifth per-space s
 
 ### What's per-space (full list)
 
-Tabs, recent pages, active view, journal date, journal mode, journal template, GCal connector configuration (foundation in place; per-space connector is the active in-progress slice), search results, agenda projections, backlinks, history view default filter (with opt-in "All spaces" toggle).
+Tabs, recent pages, active view, journal date, journal mode, journal template, search results, agenda projections, backlinks, history view default filter (with opt-in "All spaces" toggle).
 
 ### What's not per-space
 

@@ -43,7 +43,6 @@ Names below are how we refer to each surface in conversation. They mostly match 
 App
 ├── BootGate                     (loading / error gate)
 ├── SpaceTopStripe               (3px accent bar)
-├── GcalReauthBanner             (only when GCal token expired)
 ├── SidebarProvider
 │   ├── AppSidebar               (collapsible left rail)
 │   └── SidebarInset
