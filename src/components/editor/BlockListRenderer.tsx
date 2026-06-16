@@ -15,10 +15,11 @@ import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { FileText } from 'lucide-react'
 import type React from 'react'
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
+import { DragStateContext, DragStateStore } from '@/components/editor/drag-state-store'
 import { SortableBlockWrapper } from '@/components/editor/SortableBlockWrapper'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
@@ -86,6 +87,29 @@ export function BlockListRenderer({
   blockProperties,
 }: BlockListRendererProps): React.ReactElement {
   const { t } = useTranslation()
+
+  // #1267 — publish the per-move DnD state to a ref-backed external store with
+  // per-id subscription instead of threading `projected`/`overId`/`dropAfter`
+  // as props to every row. `projected` is a fresh reference on every pointer
+  // move, so forwarding it defeated the `React.memo` on ALL N visible
+  // `SortableBlockWrapper`s. Now each row subscribes (via `useRowDragState`) to
+  // a tiny derived snapshot for its OWN id; a move that changes only the
+  // over-row notifies just the affected rows (old over-row, new over-row,
+  // active row) and leaves the rest memoized. Mirrors the #1067 viewport store.
+  const dragStoreRef = useRef<DragStateStore | undefined>(undefined)
+  if (!dragStoreRef.current) dragStoreRef.current = new DragStateStore()
+  const dragStore = dragStoreRef.current
+
+  // Apply the new drag state DURING render so rows rendering in this same pass
+  // (newly mounted, or any already re-rendering) read the fresh snapshot, then
+  // notify the changed-but-memoized rows in a layout effect. Splitting it this
+  // way avoids a mount-time idle→drag race: a single layout-effect publish can
+  // fire before `useSyncExternalStore`'s subscription is registered, losing the
+  // first notify. `applyState` is idempotent for unchanged inputs.
+  dragStore.applyState({ projected, activeId, overId, dropAfter })
+  useLayoutEffect(() => {
+    dragStore.notifyPending()
+  })
 
   const anyBlockHasChildren = hasChildrenSet.size > 0
 
@@ -183,68 +207,66 @@ export function BlockListRenderer({
   )
 
   return (
-    <SortableContext items={sortableItems} strategy={verticalListSortingStrategy}>
-      {blocks.length === 0 && !loading ? (
-        rootParentId ? (
-          <EmptyState message={t('blockTree.emptyPage')} />
+    <DragStateContext.Provider value={dragStore}>
+      <SortableContext items={sortableItems} strategy={verticalListSortingStrategy}>
+        {blocks.length === 0 && !loading ? (
+          rootParentId ? (
+            <EmptyState message={t('blockTree.emptyPage')} />
+          ) : (
+            <EmptyState
+              icon={FileText}
+              message={t('blockTree.noBlocks')}
+              description={t('blockTree.emptyPageHint')}
+            />
+          )
         ) : (
-          <EmptyState
-            icon={FileText}
-            message={t('blockTree.noBlocks')}
-            description={t('blockTree.emptyPageHint')}
-          />
-        )
-      ) : (
-        <div className="relative">
-          {/* B4 (#290): faint indent-boundary guides during a drag so the
+          <div className="relative">
+            {/* B4 (#290): faint indent-boundary guides during a drag so the
               20px DEAD_ZONE_PX reads as deliberate snap-to-grid and the indent
               width is legible. Behind the rows (z-0) and pointer-events-none. */}
-          {activeId !== null && (
-            <DragIndentGuides levels={maxDepth + 1} activeDepth={projected?.depth ?? null} />
-          )}
-          <ul
-            // #992 — vertical rhythm comes from the single-source-of-truth
-            // `--block-row-gap` CSS var (defined in index.css alongside
-            // `--indent-width`): 4px desktop, 6px touch (one scale step up).
-            // Replaces the divergent `space-y-0.5` / `space-y-1.5` literals so
-            // every BlockTree mount (page + journal day/week/month) shares it.
-            className="block-tree relative z-10 list-none m-0 p-0 space-y-[var(--block-row-gap)]"
-            data-testid="block-tree"
-            aria-label={t('blockTree.treeLabel')}
-            onPointerDown={onContainerPointerDown}
-          >
-            {visibleItems.map((block) => {
-              const aria = siblingAriaProps.get(block.id)
-              return (
-                <SortableBlockWrapper
-                  key={block.id}
-                  block={block}
-                  focusedBlockId={focusedBlockId}
-                  isSelected={selectedSet.has(block.id)}
-                  projected={projected}
-                  activeId={activeId}
-                  overId={overId}
-                  dropAfter={dropAfter}
-                  viewport={viewport}
-                  rovingEditor={rovingEditor}
-                  hasChildren={hasChildrenSet.has(block.id)}
-                  anyBlockHasChildren={anyBlockHasChildren}
-                  isCollapsed={collapsedIds.has(block.id)}
-                  isAnimating={animatingBlockIds.has(block.id)}
-                  siblingSetsize={aria?.setsize}
-                  siblingPosinset={aria?.posinset}
-                  properties={blockProperties[block.id]}
-                />
-              )
-            })}
-            {/* Sentinel droppable zone for dropping after last block */}
-            {!loading && visibleItems.length > 0 && (
-              <SentinelDropZone activeId={activeId} overId={overId} projected={projected} />
+            {activeId !== null && (
+              <DragIndentGuides levels={maxDepth + 1} activeDepth={projected?.depth ?? null} />
             )}
-          </ul>
-        </div>
-      )}
-    </SortableContext>
+            <ul
+              // #992 — vertical rhythm comes from the single-source-of-truth
+              // `--block-row-gap` CSS var (defined in index.css alongside
+              // `--indent-width`): 4px desktop, 6px touch (one scale step up).
+              // Replaces the divergent `space-y-0.5` / `space-y-1.5` literals so
+              // every BlockTree mount (page + journal day/week/month) shares it.
+              className="block-tree relative z-10 list-none m-0 p-0 space-y-[var(--block-row-gap)]"
+              data-testid="block-tree"
+              aria-label={t('blockTree.treeLabel')}
+              onPointerDown={onContainerPointerDown}
+            >
+              {visibleItems.map((block) => {
+                const aria = siblingAriaProps.get(block.id)
+                return (
+                  <SortableBlockWrapper
+                    key={block.id}
+                    block={block}
+                    focusedBlockId={focusedBlockId}
+                    isSelected={selectedSet.has(block.id)}
+                    viewport={viewport}
+                    rovingEditor={rovingEditor}
+                    hasChildren={hasChildrenSet.has(block.id)}
+                    anyBlockHasChildren={anyBlockHasChildren}
+                    isCollapsed={collapsedIds.has(block.id)}
+                    isAnimating={animatingBlockIds.has(block.id)}
+                    siblingSetsize={aria?.setsize}
+                    siblingPosinset={aria?.posinset}
+                    properties={blockProperties[block.id]}
+                  />
+                )
+              })}
+              {/* Sentinel droppable zone for dropping after last block */}
+              {!loading && visibleItems.length > 0 && (
+                <SentinelDropZone activeId={activeId} overId={overId} projected={projected} />
+              )}
+            </ul>
+          </div>
+        )}
+      </SortableContext>
+    </DragStateContext.Provider>
   )
 }
 
