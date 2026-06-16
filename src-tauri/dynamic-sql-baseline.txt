@@ -15,7 +15,7 @@
 3 src-tauri/src/cache/page_id.rs
 2 src-tauri/src/cache/page_links.rs
 1 src-tauri/src/cache/projected_agenda.rs
-4 src-tauri/src/cache/tags.rs
+6 src-tauri/src/cache/tags.rs
 1 src-tauri/src/commands/agenda.rs
 2 src-tauri/src/commands/attachments.rs
 2 src-tauri/src/commands/block_cleanup.rs
@@ -40,7 +40,6 @@
 1 src-tauri/src/fts/search.rs
 2 src-tauri/src/fts/strip.rs
 2 src-tauri/src/fts/toggle_filter.rs
-1 src-tauri/src/gcal_push/models.rs
 4 src-tauri/src/lib.rs
 3 src-tauri/src/link_metadata/mod.rs
 2 src-tauri/src/loro/peer_epoch.rs

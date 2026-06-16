@@ -213,6 +213,14 @@ pub(crate) async fn handle_background_task(
             )
             .await
         }
+        MaterializeTask::RefreshTagUsageCount { tag_id } => {
+            // #676: scoped single-tag usage_count refresh. Single-pool only —
+            // it reads `blocks`/`block_tags`/`block_tag_refs` and writes the
+            // one `tags_cache` row on the same write tx, so the split-pool
+            // reader-snapshot dance buys nothing here (the read is one indexed
+            // row, not a full-table stream).
+            cache::refresh_tag_usage_count(pool, tag_id).await
+        }
         MaterializeTask::RebuildBlockTagRefsCache => {
             dispatch_split_or_single(
                 pool,

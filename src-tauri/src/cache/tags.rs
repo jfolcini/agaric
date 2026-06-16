@@ -83,6 +83,110 @@ const DESIRED_TAGS_SQL: &str = "SELECT id, content, cnt FROM (
 const CURRENT_TAGS_SQL: &str =
     "SELECT tag_id, name, usage_count FROM tags_cache ORDER BY tag_id ASC";
 
+/// Scoped desired-state SQL for a SINGLE tag (#676).
+///
+/// Computes the `(name, usage_count)` a full [`DESIRED_TAGS_SQL`] rebuild
+/// would emit for exactly one `tag_id`, reusing the **identical** usage
+/// subquery (`block_tags` ∪ `block_tag_refs`, both filtered to live source
+/// blocks) and the **identical** name de-duplication rule. The single bind
+/// parameter `?` is the candidate tag's id.
+///
+/// The de-dup guard is the load-bearing difference from a naive
+/// `WHERE b.id = ?`: in a full rebuild, among all live tags sharing a name
+/// (compared case-insensitively, matching the `tags_cache.name COLLATE
+/// NOCASE` UNIQUE index) only the smallest-id tag occupies the cache slot;
+/// the rest are omitted. So this query emits a row **only if** the candidate
+/// is that smallest-id winner — i.e. `NOT EXISTS` any live tag with the same
+/// name (NOCASE) and a smaller id. If the candidate is a name *loser*, was
+/// deleted, or isn't a tag block, the query returns **zero rows** and the
+/// caller leaves the cache untouched (exactly what a full rebuild does for
+/// that tag — it has no UNIQUE slot to occupy).
+///
+/// Because `add_tag`/`remove_tag` mutate only `block_tags` (never
+/// `blocks.content`, never which tag blocks exist), the *winner* for any
+/// name and the *set* of cached tag rows are invariant under these ops — only
+/// the winner's `usage_count` can move. Recomputing just this one row is
+/// therefore provably identical to the full rebuild's effect for the op.
+const DESIRED_TAG_USAGE_SQL: &str = "SELECT b.content AS name, COALESCE(t.cnt, 0) AS cnt
+         FROM blocks b
+         LEFT JOIN (
+             SELECT COUNT(*) AS cnt FROM (
+                 SELECT bt.block_id
+                 FROM block_tags bt
+                 JOIN blocks blk ON blk.id = bt.block_id
+                 WHERE blk.deleted_at IS NULL AND bt.tag_id = ?1
+                 UNION
+                 SELECT btr.source_id AS block_id
+                 FROM block_tag_refs btr
+                 JOIN blocks blk ON blk.id = btr.source_id
+                 WHERE blk.deleted_at IS NULL AND btr.tag_id = ?1
+             )
+         ) t
+         WHERE b.id = ?1
+           AND b.block_type = 'tag'
+           AND b.deleted_at IS NULL
+           AND b.content IS NOT NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM blocks o
+               WHERE o.block_type = 'tag'
+                 AND o.deleted_at IS NULL
+                 AND o.content IS NOT NULL
+                 AND o.content = b.content COLLATE NOCASE
+                 AND o.id < b.id
+           )";
+
+/// Incremental, single-tag refresh of `tags_cache.usage_count` (#676).
+///
+/// `add_tag` / `remove_tag` mutate exactly one `(block_id, tag_id)` edge in
+/// `block_tags`. The only `tags_cache` column that can change as a result is
+/// the affected tag's `usage_count`; neither the tag's `name` nor the *set*
+/// of cached tags can move (see [`DESIRED_TAG_USAGE_SQL`]). So instead of the
+/// former full O(vault) [`rebuild_tags_cache`] (which streams every tag block
+/// and the whole `block_tags`/`block_tag_refs` union to sort-merge-diff the
+/// entire cache), this recomputes the desired row for just `tag_id` and:
+///   - if the tag is the name-winner → `INSERT OR REPLACE` its row with the
+///     freshly computed `usage_count` (UPSERT — robust if the row hasn't been
+///     materialized yet under eventual consistency);
+///   - if the tag is a name-loser / deleted / not a tag → the desired query
+///     returns no row, so the cache is left untouched (identical to a full
+///     rebuild's treatment of that tag).
+///
+/// `INSERT OR REPLACE` is safe here for the same reason as in the full
+/// rebuild ([`apply_tags_diff`]): the candidate is, by the de-dup guard, the
+/// sole owner of its `UNIQUE(name)` slot among live tags, so no unchanged tag
+/// can collide on the name.
+pub async fn refresh_tag_usage_count(pool: &SqlitePool, tag_id: &str) -> Result<(), AppError> {
+    super::rebuild_with_timing("tags", || refresh_tag_usage_count_impl(pool, tag_id)).await
+}
+
+async fn refresh_tag_usage_count_impl(pool: &SqlitePool, tag_id: &str) -> Result<u64, AppError> {
+    let now = crate::now_rfc3339();
+    let desired: Option<(String, i64)> = sqlx::query_as::<_, (String, i64)>(DESIRED_TAG_USAGE_SQL)
+        .bind(tag_id)
+        .fetch_optional(pool)
+        .await?;
+
+    let Some((name, cnt)) = desired else {
+        // Loser / deleted / non-tag: a full rebuild would not place this id
+        // in the cache, so leave it untouched.
+        return Ok(0);
+    };
+
+    let mut tx = crate::db::begin_immediate_logged(pool, "cache_tags_refresh_one").await?;
+    let res = sqlx::query(
+        "INSERT OR REPLACE INTO tags_cache (tag_id, name, usage_count, updated_at) \
+         VALUES (?1, ?2, ?3, ?4)",
+    )
+    .bind(tag_id)
+    .bind(&name)
+    .bind(cnt)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(res.rows_affected())
+}
+
 // ---------------------------------------------------------------------------
 // Apply diff (M-2)
 // ---------------------------------------------------------------------------
@@ -592,6 +696,280 @@ mod tests {
         assert_eq!(
             changes[2], 0,
             "third rebuild must converge to changed == 0 (no perpetual flip-flop); changes = {changes:?}"
+        );
+    }
+
+    async fn remove_tag_edge(pool: &SqlitePool, block_id: &str, tag_id: &str) {
+        sqlx::query!(
+            "DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?",
+            block_id,
+            tag_id,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Build a FRESH cache from scratch via the full rebuild, into a
+    /// throwaway clone of the live state, so we can compare the scoped
+    /// refresh's result against the authoritative full rebuild. Here we
+    /// simply run the full rebuild on the same pool AFTER capturing the
+    /// scoped-refresh snapshot, since the full rebuild is idempotent and
+    /// converges to the canonical desired state.
+    async fn full_rebuild_snapshot(pool: &SqlitePool) -> Vec<(String, String, i64)> {
+        rebuild_tags_cache_impl(pool).await.unwrap();
+        snapshot(pool).await
+    }
+
+    /// #676 — the scoped single-tag refresh must produce the SAME
+    /// `tags_cache` as a full rebuild for add / remove / re-add (dedupe) /
+    /// remove-missing, AND must not touch unrelated tags' rows.
+    #[tokio::test]
+    async fn refresh_tag_usage_count_matches_full_rebuild_all_cases() {
+        let (pool, _dir) = test_pool().await;
+
+        // Three tags; two content blocks.
+        insert_tag(&pool, "TAGA0000000000000000000000", "alpha").await;
+        insert_tag(&pool, "TAGB0000000000000000000000", "beta").await;
+        insert_tag(&pool, "TAGC0000000000000000000000", "gamma").await;
+        insert_content(&pool, "BLK10000000000000000000000", "n1").await;
+        insert_content(&pool, "BLK20000000000000000000000", "n2").await;
+
+        // Baseline: full rebuild seeds all three tags at usage 0.
+        assert_eq!(rebuild_tags_cache_impl(&pool).await.unwrap(), 3);
+        // Give beta a stable usage of 1 (unrelated to the tag we refresh)
+        // and capture its row so we can prove it is never disturbed.
+        add_tag(
+            &pool,
+            "BLK10000000000000000000000",
+            "TAGB0000000000000000000000",
+        )
+        .await;
+        rebuild_tags_cache_impl(&pool).await.unwrap();
+        let beta_before = snapshot(&pool)
+            .await
+            .into_iter()
+            .find(|(id, _, _)| id == "TAGB0000000000000000000000")
+            .unwrap();
+        assert_eq!(beta_before.2, 1);
+
+        // ── ADD: add alpha to BLK1, refresh just alpha ───────────────────
+        add_tag(
+            &pool,
+            "BLK10000000000000000000000",
+            "TAGA0000000000000000000000",
+        )
+        .await;
+        refresh_tag_usage_count_impl(&pool, "TAGA0000000000000000000000")
+            .await
+            .unwrap();
+        let after_add = snapshot(&pool).await;
+        // Unrelated tag beta untouched.
+        let beta_after = after_add
+            .iter()
+            .find(|(id, _, _)| id == "TAGB0000000000000000000000")
+            .unwrap()
+            .clone();
+        assert_eq!(beta_after, beta_before, "ADD must not touch unrelated beta");
+        // Identical to a full rebuild.
+        assert_eq!(
+            after_add,
+            full_rebuild_snapshot(&pool).await,
+            "ADD: scoped refresh must equal full rebuild"
+        );
+
+        // ── RE-ADD (dedupe): adding alpha to BLK2 → usage 2; re-adding the
+        //    SAME (BLK2, alpha) edge is a PK-dup no-op at the op layer, so
+        //    the count stays 2. Prove the scoped refresh agrees with a full
+        //    rebuild after the second (deduped) add. ─────────────────────
+        add_tag(
+            &pool,
+            "BLK20000000000000000000000",
+            "TAGA0000000000000000000000",
+        )
+        .await;
+        refresh_tag_usage_count_impl(&pool, "TAGA0000000000000000000000")
+            .await
+            .unwrap();
+        // Second add of the identical edge is suppressed by the (block_id,
+        // tag_id) PK — simulate the op layer's idempotence by attempting it
+        // and ignoring the unique violation.
+        let _ = sqlx::query!(
+            "INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)",
+            "BLK20000000000000000000000",
+            "TAGA0000000000000000000000",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        refresh_tag_usage_count_impl(&pool, "TAGA0000000000000000000000")
+            .await
+            .unwrap();
+        let after_readd = snapshot(&pool).await;
+        let alpha_readd = after_readd
+            .iter()
+            .find(|(id, _, _)| id == "TAGA0000000000000000000000")
+            .unwrap();
+        assert_eq!(alpha_readd.2, 2, "RE-ADD must dedupe to usage 2, not 3");
+        assert_eq!(
+            after_readd,
+            full_rebuild_snapshot(&pool).await,
+            "RE-ADD: scoped refresh must equal full rebuild"
+        );
+
+        // ── REMOVE: drop alpha from BLK1 → usage back to 1 ──────────────
+        remove_tag_edge(
+            &pool,
+            "BLK10000000000000000000000",
+            "TAGA0000000000000000000000",
+        )
+        .await;
+        refresh_tag_usage_count_impl(&pool, "TAGA0000000000000000000000")
+            .await
+            .unwrap();
+        let after_remove = snapshot(&pool).await;
+        let alpha_remove = after_remove
+            .iter()
+            .find(|(id, _, _)| id == "TAGA0000000000000000000000")
+            .unwrap();
+        assert_eq!(alpha_remove.2, 1, "REMOVE must drop alpha usage to 1");
+        assert_eq!(
+            after_remove
+                .iter()
+                .find(|(id, _, _)| id == "TAGB0000000000000000000000")
+                .unwrap()
+                .clone(),
+            beta_before,
+            "REMOVE must not touch unrelated beta"
+        );
+        assert_eq!(
+            after_remove,
+            full_rebuild_snapshot(&pool).await,
+            "REMOVE: scoped refresh must equal full rebuild"
+        );
+
+        // ── REMOVE-MISSING: remove a (block, tag) edge that does not exist
+        //    (gamma was never added). The refresh must be a no-op that
+        //    still equals a full rebuild (gamma stays at usage 0). ────────
+        remove_tag_edge(
+            &pool,
+            "BLK10000000000000000000000",
+            "TAGC0000000000000000000000",
+        )
+        .await;
+        refresh_tag_usage_count_impl(&pool, "TAGC0000000000000000000000")
+            .await
+            .unwrap();
+        let after_missing = snapshot(&pool).await;
+        let gamma = after_missing
+            .iter()
+            .find(|(id, _, _)| id == "TAGC0000000000000000000000")
+            .unwrap();
+        assert_eq!(gamma.2, 0, "REMOVE-MISSING: gamma stays at usage 0");
+        assert_eq!(
+            after_missing,
+            full_rebuild_snapshot(&pool).await,
+            "REMOVE-MISSING: scoped refresh must equal full rebuild"
+        );
+    }
+
+    /// #676 — the scoped refresh must respect the same name-deduplication
+    /// rule as the full rebuild: a name *loser* (a larger-id tag sharing a
+    /// name with a smaller-id tag) has NO cache slot, so refreshing it must
+    /// be a no-op that does not resurrect a row a full rebuild would omit.
+    #[tokio::test]
+    async fn refresh_tag_usage_count_respects_name_dedup_loser() {
+        let (pool, _dir) = test_pool().await;
+        // A (smaller id) and B (larger id) share the name "project".
+        insert_tag(&pool, "TAGDUPA0000000000000000000", "project").await;
+        insert_tag(&pool, "TAGDUPB0000000000000000000", "project").await;
+        insert_content(&pool, "BLKZ0000000000000000000000", "note").await;
+
+        // Full rebuild: only the winner A holds the "project" slot.
+        rebuild_tags_cache_impl(&pool).await.unwrap();
+        let cache = snapshot(&pool).await;
+        assert!(
+            cache
+                .iter()
+                .any(|(id, _, _)| id == "TAGDUPA0000000000000000000")
+        );
+        assert!(
+            !cache
+                .iter()
+                .any(|(id, _, _)| id == "TAGDUPB0000000000000000000"),
+            "loser B must not be in the cache"
+        );
+
+        // Add an edge to the LOSER B and refresh it. The scoped refresh must
+        // NOT insert B (it has no UNIQUE(name) slot) — identical to a full
+        // rebuild, which still omits B.
+        add_tag(
+            &pool,
+            "BLKZ0000000000000000000000",
+            "TAGDUPB0000000000000000000",
+        )
+        .await;
+        let touched = refresh_tag_usage_count_impl(&pool, "TAGDUPB0000000000000000000")
+            .await
+            .unwrap();
+        assert_eq!(touched, 0, "refreshing a name-loser must be a no-op");
+        assert!(
+            !snapshot(&pool)
+                .await
+                .iter()
+                .any(|(id, _, _)| id == "TAGDUPB0000000000000000000"),
+            "loser B must still be absent after a scoped refresh"
+        );
+        assert_eq!(
+            snapshot(&pool).await,
+            full_rebuild_snapshot(&pool).await,
+            "loser refresh must equal full rebuild"
+        );
+    }
+
+    /// #676 — the scoped refresh counts inline `#[ULID]` tag refs
+    /// (`block_tag_refs`) in `usage_count`, exactly as the full rebuild's
+    /// UNION does. Proves the two usage subqueries stay in lockstep.
+    #[tokio::test]
+    async fn refresh_tag_usage_count_includes_inline_refs_like_full_rebuild() {
+        let (pool, _dir) = test_pool().await;
+        insert_tag(&pool, "TAGREF00000000000000000000", "ref").await;
+        insert_content(&pool, "SRC10000000000000000000000", "a").await;
+        insert_content(&pool, "SRC20000000000000000000000", "b").await;
+        rebuild_tags_cache_impl(&pool).await.unwrap();
+
+        // One explicit edge + one inline ref → usage 2.
+        add_tag(
+            &pool,
+            "SRC10000000000000000000000",
+            "TAGREF00000000000000000000",
+        )
+        .await;
+        sqlx::query!(
+            "INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)",
+            "SRC20000000000000000000000",
+            "TAGREF00000000000000000000",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        refresh_tag_usage_count_impl(&pool, "TAGREF00000000000000000000")
+            .await
+            .unwrap();
+        let scoped = snapshot(&pool).await;
+        assert_eq!(
+            scoped
+                .iter()
+                .find(|(id, _, _)| id == "TAGREF00000000000000000000")
+                .unwrap()
+                .2,
+            2,
+            "usage must count explicit edge + inline ref"
+        );
+        assert_eq!(
+            scoped,
+            full_rebuild_snapshot(&pool).await,
+            "inline-ref usage must equal full rebuild"
         );
     }
 
