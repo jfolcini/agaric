@@ -169,6 +169,22 @@ describe('AttachmentList', () => {
     })
   })
 
+  it('rename input uses the design-system focus-ring-visible utility (#1349)', async () => {
+    const user = userEvent.setup()
+
+    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'old-name.txt')])
+
+    renderWithProvider(<AttachmentList blockId="block-1" />)
+    expect(await screen.findByText('old-name.txt')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /rename attachment old-name\.txt/i }))
+    const input = screen.getByRole('textbox', { name: /rename attachment old-name\.txt/i })
+
+    // Canonical focus treatment, not the ad-hoc `focus:outline-none focus:ring-1`.
+    expect(input.className).toContain('focus-ring-visible')
+    expect(input.className).not.toContain('focus:ring-1')
+  })
+
   it('rename input cancels on Escape without calling IPC', async () => {
     const user = userEvent.setup()
 

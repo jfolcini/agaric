@@ -135,7 +135,7 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
                         }
                       }}
                       aria-label={t('attachments.rename', { name: attachment.filename })}
-                      className="flex-1 text-sm font-medium border rounded px-1 py-0.5 focus:outline-none focus:ring-1"
+                      className="flex-1 text-sm font-medium border rounded px-1 py-0.5 focus-ring-visible"
                       value={editValue}
                       onChange={(e) => setEditValue(e.target.value)}
                       onKeyDown={(e) => {

@@ -104,6 +104,8 @@ function SortableBlockInner({
   const {
     onNavigate,
     onDelete,
+    onIndent,
+    onDedent,
     onToggleCollapse,
     onToggleTodo,
     onTogglePriority,
@@ -205,9 +207,20 @@ function SortableBlockInner({
     thresholdCrossed: swipeThresholdCrossed,
     handlers: swipeHandlers,
     reset: swipeReset,
-  } = useBlockSwipeActions(handleSwipeDelete)
+  } = useBlockSwipeActions(handleSwipeDelete, {
+    // #1346: wire the swipe-to-indent / swipe-to-outdent gestures that
+    // `useBlockSwipeActions` implements but were never connected (the call
+    // site passed no options, so `onIndent`/`onOutdent` were always
+    // undefined → dead gestures). The structural block actions come from the
+    // same BlockActions context as delete; gate on their presence so the
+    // gesture stays disabled wherever the action isn't wired.
+    onIndent: onIndent ? () => onIndent(blockId) : undefined,
+    onOutdent: onDedent ? () => onDedent(blockId) : undefined,
+  })
 
   const isTouchDevice = useIsTouch()
+  // #1349: stable id for the sr-only swipe-gesture description (per block).
+  const swipeRowDescId = `swipe-row-desc-${blockId}`
 
   useEffect(() => {
     isDraggingRef.current = isDragging
@@ -238,7 +251,10 @@ function SortableBlockInner({
       // B (#216): describe the swipe-to-delete gesture for assistive tech.
       // The swipe handlers only do anything on coarse pointers and only
       // when a delete handler is wired up, so scope the description the same way.
-      {...(isTouchDevice && onDelete ? { 'aria-description': t('block.swipeRowDescription') } : {})}
+      // #1349: reference an sr-only span via `aria-describedby` (the codebase's
+      // standard) rather than the raw `aria-description` attribute, whose
+      // screen-reader support is limited/inconsistent.
+      {...(isTouchDevice && onDelete ? { 'aria-describedby': swipeRowDescId } : {})}
       className={cn(
         'sortable-block group relative flex items-center gap-1 max-sm:items-start min-w-0',
         // BUG-37: suppress the iOS/Android long-press text-selection
@@ -270,6 +286,13 @@ function SortableBlockInner({
       }}
       onContextMenu={handleContextMenu}
     >
+      {/* #1349: sr-only description target for the swipe gesture, referenced
+            by the row's `aria-describedby` above. */}
+      {isTouchDevice && onDelete && (
+        <span id={swipeRowDescId} className="sr-only">
+          {t('block.swipeRowDescription')}
+        </span>
+      )}
       {/* ── Swipe-to-delete backdrop (mobile only) ──────────────── */}
       {/* UX-304: progressive cue — the backdrop is a muted destructive
             tint while the gesture only reveals the action, then flips to
@@ -313,12 +336,15 @@ function SortableBlockInner({
 
       {/* ── Sliding content wrapper (swipe-to-delete) ───────────── */}
       <div
-        className="flex items-stretch gap-1 w-full max-sm:items-start max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5 min-w-0"
+        className={cn(
+          'flex items-stretch gap-1 w-full max-sm:items-start max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5 min-w-0',
+          // #1347: token-driven transition (respects prefers-reduced-motion).
+          isTouchDevice && swipeTranslateX !== 0 && 'swipe-content-sliding',
+        )}
         data-testid="swipe-content"
         style={{
           transform:
             isTouchDevice && swipeTranslateX !== 0 ? `translateX(${swipeTranslateX}px)` : undefined,
-          transition: isTouchDevice && swipeTranslateX !== 0 ? 'transform 0.2s ease' : undefined,
         }}
       >
         {/* Indent guide line for nested blocks */}
