@@ -4021,6 +4021,29 @@ async fn list_all_pages_in_space_tag_filter_or_mode() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_all_pages_in_space_rejects_oversized_tag_filter() {
+    // #1325: a `tag_ids` array longer than MAX_FILTER_TAG_IDS must be
+    // rejected up-front with AppError::Validation("tag_ids.too_many")
+    // BEFORE any SQL placeholder / bind is built — otherwise the dynamic
+    // `IN (?, ?, …)` clause scales 1:1 with caller input and trips SQLite's
+    // parameter limit (a cheap DoS). The empty space here means a DB-reaching
+    // query would succeed with empty rows, so an `Err` proves the guard fired
+    // before the query.
+    let (pool, _dir) = test_pool().await;
+
+    let over_cap: Vec<String> = (0..(crate::commands::tags::MAX_FILTER_TAG_IDS + 1))
+        .map(|i| format!("TAG_{i:05}"))
+        .collect();
+    let err = list_all_pages_in_space_inner(&pool, TEST_SPACE_ID, Some(&over_cap))
+        .await
+        .expect_err("oversized tag_ids filter must be rejected");
+    assert!(
+        matches!(&err, AppError::Validation(msg) if msg == "tag_ids.too_many"),
+        "expected AppError::Validation(\"tag_ids.too_many\"), got {err:?}"
+    );
+}
+
 // ======================================================================
 // list_template_page_ids_in_space — graph view template flagging
 // ======================================================================
