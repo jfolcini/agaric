@@ -230,43 +230,28 @@ pub(crate) async fn create_block_in_tx(
         }
     }
 
-    // Provisional 1-based `position` for the optimistic SQL INSERT below. When a
-    // slot is given it's `index + 1`; otherwise append after the last sibling.
-    // The materializer reprojects the authoritative dense rank from the engine's
-    // fractional order shortly after (eventual consistency).
-    let effective_position = match index {
-        // #400/#383: a 0-based slot maps to a 1-based provisional rank, capped
-        // overflow-safe below the reserved keyset tail marker; the materializer
-        // reprojects the dense rank regardless. (Supersedes #383's outright
-        // sentinel rejection: under #400 the caller supplies a slot, not a
-        // verbatim position.)
-        Some(i) => crate::pagination::index_to_provisional_position(i),
-        None => {
-            let row = sqlx::query!(
-                "SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM blocks \
-                 WHERE parent_id IS ? AND deleted_at IS NULL AND position < 9223372036854775807",
-                parent_id
-            )
-            .fetch_optional(&mut **tx)
-            .await?;
-            row.map(|r| r.next_pos).unwrap_or(1)
-        }
-    };
-
-    // 3b. Build OpPayload (#400: carries the 0-based `index`; `None` index ⇒ a
-    // bare append, which the engine resolves to the end of the sibling list).
+    // 3b. Build CreateBlockPayload (#400: carries the 0-based `index`; `None`
+    // index ⇒ a bare append, which the engine resolves to the end of the
+    // sibling list). The engine derives the authoritative DENSE 1-based
+    // `position` from the fractional sibling order, so this payload no longer
+    // carries a provisional SQL position.
     let parent_block_id = parent_id.as_ref().map(|s| BlockId::from_trusted(s));
-    let payload = OpPayload::CreateBlock(CreateBlockPayload {
+    let create_payload = CreateBlockPayload {
         block_id: block_id.clone(),
         block_type: block_type.clone(),
         parent_id: parent_block_id,
         position: None,
         index,
         content: content.clone(),
-    });
+    };
 
-    let op_record =
-        op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms()).await?;
+    let op_record = op_log::append_local_op_in_tx(
+        tx,
+        device_id,
+        OpPayload::CreateBlock(create_payload.clone()),
+        crate::db::now_ms(),
+    )
+    .await?;
 
     // Compute page_id: if this block IS a page, page_id = self.
     // Otherwise, inherit from parent's page_id (or parent itself if parent is a page).
@@ -286,27 +271,89 @@ pub(crate) async fn create_block_in_tx(
         None
     };
 
-    // 5. Insert into blocks table within same transaction
+    // #1257 PR-2: route the create through the SAME engine-apply + dense-rank
+    // projection the boot-replay / sync `ApplyOp` path uses, IN this CommandTx,
+    // INSTEAD of an inline provisional INSERT. `apply_create_block_via_loro`:
+    //   1. resolves the block's space (parent for content, self for pages),
+    //   2. applies the create to the per-space Loro engine (sync guard, dropped
+    //      before any `.await`), reads back the engine `BlockSnapshot`,
+    //   3. `project_create_block_to_sql` INSERTs the row (engine's dense rank),
+    //   4. `reproject_dense_positions` re-ranks the WHOLE sibling group so the
+    //      SQL `position` matches the engine's fractional tree order, and
+    //   5. runs `inherit_parent_tags` for the new block.
+    // The op-log append above is unchanged. We deliberately do NOT call the
+    // full `apply_op_tx` wrapper / `advance_apply_cursor`: the apply cursor
+    // (`materialized_through_seq`) must stay put on the LOCAL path so boot
+    // replay re-applies these ops idempotently (`project_create_block_to_sql`
+    // is `INSERT OR IGNORE`; engine apply is idempotent) — the intended safety
+    // net while local engine-apply hardens (#1248 / #1257). If the engine can't
+    // be resolved (space unresolvable / engine uninitialised — e.g. a brand-new
+    // top-level page before its `SetProperty(space)`, or a test without
+    // `install_for_test`), the helper internally FALLS BACK to the SQL-only
+    // projection, which writes the provisional rank — so the row is never
+    // skipped and we never crash. This mirrors the engine-absent handling the
+    // sync `ApplyOp` path already relies on.
+    crate::materializer::apply_create_block_via_loro(&mut *tx, device_id, &create_payload).await?;
+
+    // #533 / #1324: `project_create_block_to_sql` INSERTs `space_id = NULL` and
+    // only stamps `page_id` for PAGE blocks (a deferred `SetBlockPageId` task
+    // fills non-page `page_id` later). The LOCAL command path historically
+    // stamped both synchronously so a committed block is never transiently
+    // space-less / page-less and the post-INSERT cross-space validator (below)
+    // can resolve the new block's space. Re-stamp them here for parity:
+    //   - `page_id` ← the inherited owning page (no-op for a page, already self),
+    //   - `space_id` ← the owning page's space (NULL for a brand-new top-level
+    //     page with no `page_id` row yet — set immediately after by the
+    //     `set_property(space)` op in `create_page_in_space_inner`, exactly as
+    //     the old inline subquery resolved).
     let block_id_str = block_id.as_str();
     sqlx::query!(
-        // #533: stamp `space_id` synchronously from the owning page so a
-        // committed block is never transiently space-less (the background
-        // SetBlockPageId task remains belt-and-suspenders). A child inherits
-        // its page's space via `page_id`; a brand-new top-level page has no
-        // `page_id` row yet → resolves NULL, then set immediately after by
-        // the `set_property(space)` op in `create_page_in_space_inner`.
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
-         VALUES (?, ?, ?, ?, ?, ?, (SELECT space_id FROM blocks WHERE id = ?))",
+        "UPDATE blocks \
+            SET page_id = ?, \
+                space_id = (SELECT space_id FROM blocks WHERE id = ?) \
+         WHERE id = ?",
+        page_id,
+        page_id,
         block_id_str,
-        block_type,
-        content,
-        parent_id,
-        effective_position,
-        page_id,
-        page_id,
     )
     .execute(&mut **tx)
     .await?;
+
+    // #1257 PR-2 — ENGINE-ABSENT bare-append position parity. When the engine
+    // path engages, `reproject_dense_positions` gives every sibling a concrete
+    // dense 1-based rank (never the sentinel). But when the create falls back to
+    // the SQL-only path (engine uninitialised / space unresolved) AND it's a
+    // bare append (`index: None`, `position: None` — the payload this command
+    // path always builds), `apply_create_block_sql_only` writes the append
+    // sentinel `i64::MAX` (its documented both-`None` corner). The pre-PR-2
+    // command path instead computed a concrete `MAX(position)+1` rank inline for
+    // that case, and existing tests pin `1, 2, 3` for successive bare appends.
+    // Restore that concrete rank here, scoped to exactly the fallback-append
+    // case (position == sentinel), so the engine-absent fallback is observably
+    // identical to before. A no-op when the engine ran (dense rank ≠ sentinel)
+    // or when an explicit `index` was given (the fallback used the provisional
+    // `index+1`, never the sentinel). We do NOT touch the op-log payload
+    // (`position: None`) — only the projected SQL column — so sync/replay
+    // semantics are unchanged.
+    if index.is_none() {
+        let next_pos = sqlx::query_scalar!(
+            "SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM blocks \
+             WHERE parent_id IS ? AND deleted_at IS NULL \
+               AND position < 9223372036854775807 AND id <> ?",
+            parent_id,
+            block_id_str,
+        )
+        .fetch_one(&mut **tx)
+        .await?;
+        sqlx::query!(
+            "UPDATE blocks SET position = ? \
+             WHERE id = ? AND position = 9223372036854775807",
+            next_pos,
+            block_id_str,
+        )
+        .execute(&mut **tx)
+        .await?;
+    }
 
     // PEND-76 F5 — referential cross-space integrity: reject creating a
     // block whose content references a block in a different space. Runs
@@ -317,10 +364,6 @@ pub(crate) async fn create_block_in_tx(
         tx, &block_id, &content,
     )
     .await?;
-
-    // P-4: Inherit parent tags for the new block
-    crate::tag_inheritance::inherit_parent_tags(tx, block_id.as_str(), parent_id.as_deref())
-        .await?;
 
     // #417/#432: keep the owning page's `pages_cache.child_block_count`
     // correct on the LOCAL command path. Unlike the sync `ApplyOp` path —
@@ -343,6 +386,17 @@ pub(crate) async fn create_block_in_tx(
             .await?;
     }
 
+    // #1257 PR-2: the engine projected the authoritative DENSE position; read
+    // it back so the returned `BlockRow` reflects the persisted rank rather
+    // than the old provisional value. (The engine-absent fallback wrote the
+    // provisional rank here instead — either way this is the committed row.)
+    let position = sqlx::query_scalar!(
+        r#"SELECT position as "position: i64" FROM blocks WHERE id = ?"#,
+        block_id_str,
+    )
+    .fetch_one(&mut **tx)
+    .await?;
+
     // Return block + op record; caller is responsible for commit + dispatch.
     Ok((
         BlockRow {
@@ -350,7 +404,7 @@ pub(crate) async fn create_block_in_tx(
             block_type,
             content: Some(content),
             parent_id: parent_id.map(|s| BlockId::from_trusted(&s)),
-            position: Some(effective_position),
+            position,
             deleted_at: None,
             todo_state: None,
             priority: None,

@@ -810,3 +810,175 @@ async fn move_same_parent_tail_clamp_matches_fe_new_index() {
         drop(guard);
     }
 }
+
+/// #1257 PR-2 — LOCAL `create_block` is engine-fresh and densely positioned
+/// IN-TRANSACTION, with the apply cursor PINNED.
+///
+/// Before PR-2 the LOCAL command path (`create_block_inner` →
+/// `create_block_in_tx`) wrote a PROVISIONAL `index + 1` SQL position and NEVER
+/// touched the Loro engine: positions were reconciled to dense ranks only on the
+/// next boot replay (the #1245 / #1249 bug). PR-2 routes the create through
+/// `apply_create_block_via_loro` inside the same `CommandTx` — engine apply +
+/// `project_create_block_to_sql` + `reproject_dense_positions` — but
+/// deliberately does NOT advance `materializer_apply_cursor` (so boot replay
+/// re-applies idempotently; #1248).
+///
+/// This test drives the REAL command path (`create_block_inner` + `settle()`)
+/// for an insert at index 0 BETWEEN two existing siblings and asserts, WITHOUT
+/// any boot replay:
+///   (a) the engine `read_block` / `children_ordered_block_ids(S1)` reflects the
+///       new block at the head of the sibling list;
+///   (b) the SQL `blocks.position` equals the engine's DENSE rank — new block at
+///       rank 1, the two pre-existing siblings reprojected to ranks 2 and 3.
+///       Under the OLD provisional path the index-0 insert would have written
+///       position `index_to_provisional_position(0)` and left the siblings at
+///       their seeded 1/2, so this dense-rank assertion would FAIL — exactly the
+///       drift PR-2 closes; and
+///   (c) the apply cursor (`materialized_through_seq`) did NOT advance.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_create_is_engine_fresh_and_dense_1257() {
+    // 26-char ids so `seed_label_to_id` treats them as literal ids.
+    let s1 = seed_label_to_id("S1");
+    let a = seed_label_to_id("BA");
+    let b = seed_label_to_id("BB");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Install the process-global engine so the LOCAL create routes through the
+    // production `apply_create_block_via_loro` ENGINE path (dense reproject), not
+    // the SQL-only fallback. `registry.clear()` gives this test a fresh tree.
+    let state = crate::loro::shared::install_for_test();
+    state.registry.clear();
+
+    // Seed S1 > {A, B} into BOTH SQL and the engine tree (parent-first), then
+    // scope every seed block to one space so `resolve_block_space` succeeds and
+    // the LOCAL create engages the engine path for the child insert.
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+        json!({"id": "BB", "block_type": "content", "content": "B",    "parent_id": "S1", "position": 2}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    // Cursor + op_log baselines BEFORE the local create.
+    async fn apply_cursor(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+    async fn max_seq(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM op_log")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    let cursor_before = apply_cursor(&pool).await;
+    let seq_before = max_seq(&pool).await;
+
+    // Drive the REAL local command path: insert a new content block at index 0
+    // (BEFORE A and B) under S1.
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "inserted-at-head".into(),
+        Some(BlockId::from(s1.as_str())),
+        Some(0),
+    )
+    .await
+    .expect("create_block_inner");
+    let new_id = created.id.clone().into_string();
+
+    // The dense rank is projected synchronously in the CommandTx — even before
+    // settling background work. Drain background tasks anyway to prove they
+    // don't perturb the dense ranks (and to mirror the production lifecycle).
+    settle(&mat).await;
+
+    // (a) ENGINE freshness — WITHOUT any boot replay, the engine already has the
+    //     new block and orders it at the HEAD of S1's children.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        let snap = guard
+            .engine_mut()
+            .read_block(&new_id)
+            .expect("read_block")
+            .expect("engine has the freshly-created block (no boot replay)");
+        assert_eq!(snap.content, "inserted-at-head");
+        assert_eq!(snap.parent_id.as_deref(), Some(s1.as_str()));
+        let order = guard
+            .engine_mut()
+            .children_ordered_block_ids(Some(s1.as_str()))
+            .expect("children_ordered_block_ids");
+        drop(guard);
+        assert_eq!(
+            order,
+            vec![new_id.clone(), a.clone(), b.clone()],
+            "engine sibling order must place the index-0 insert at the head: \
+             [new, A, B]; got {order:?}",
+        );
+    }
+
+    // (b) SQL `blocks.position` must equal the engine's DENSE rank for EVERY
+    //     sibling — new=1, A=2, B=3. Under the OLD provisional path the new
+    //     block would carry `index_to_provisional_position(0)` and A/B would
+    //     keep their seeded 1/2, so this block would FAIL.
+    async fn pos(pool: &SqlitePool, id: &str) -> Option<i64> {
+        sqlx::query_scalar::<_, Option<i64>>("SELECT position FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    assert_eq!(
+        pos(&pool, &new_id).await,
+        Some(1),
+        "new block must be densely ranked 1 (head of S1)",
+    );
+    assert_eq!(
+        pos(&pool, &a).await,
+        Some(2),
+        "A must reproject to dense rank 2 after the head insert (was seeded 1)",
+    );
+    assert_eq!(
+        pos(&pool, &b).await,
+        Some(3),
+        "B must reproject to dense rank 3 after the head insert (was seeded 2)",
+    );
+    // The returned BlockRow must also carry the persisted dense rank, not a
+    // provisional value.
+    assert_eq!(
+        created.position,
+        Some(1),
+        "create_block_inner must return the persisted dense rank",
+    );
+
+    // (c) Apply cursor must NOT advance: the LOCAL path engine-applies but boot
+    //     replay still owns cursor progress (#1248 / #1257). The op DID land in
+    //     the op_log.
+    let cursor_after = apply_cursor(&pool).await;
+    let seq_after = max_seq(&pool).await;
+    assert!(
+        seq_after > seq_before,
+        "local create_block must append to op_log: {seq_before} -> {seq_after}",
+    );
+    assert_eq!(
+        cursor_after, cursor_before,
+        "local command path must NOT advance the apply cursor even though it now \
+         engine-applies in-tx (#1248 / #1257); cursor moved {cursor_before} -> {cursor_after}",
+    );
+
+    mat.shutdown();
+}

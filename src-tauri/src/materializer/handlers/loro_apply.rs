@@ -48,7 +48,7 @@ use super::*;
 /// fallback exists so that materializer / recovery / sync_daemon
 /// tests can thread synthetic bare-block ops through `apply_op`
 /// without a registered space.
-pub(super) async fn apply_create_block_via_loro(
+pub(crate) async fn apply_create_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
     p: &CreateBlockPayload,

@@ -18,6 +18,11 @@ pub use coordinator::Materializer;
 // rather than duplicating the correlated-subquery SQL.
 #[cfg(test)]
 use dedup::dedup_tasks;
+// #1257 PR-2: re-export the engine-apply-+-dense-projection helper so the
+// LOCAL create_block command core (`domain::block_ops::create_block_in_tx`)
+// can route a create through the engine IN-TRANSACTION without advancing the
+// apply cursor.
+pub(crate) use handlers::apply_create_block_via_loro;
 pub(crate) use handlers::recompute_pages_cache_counts_for_pages;
 #[cfg(test)]
 use handlers::{handle_background_task, handle_foreground_task};
