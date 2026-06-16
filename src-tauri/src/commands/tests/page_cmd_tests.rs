@@ -3922,10 +3922,10 @@ async fn load_page_subtree_returns_active_descendants_excluding_root() {
     // hand for the test fixture so the WHERE page_id = ? filter hits.
     crate::cache::rebuild_page_ids(&pool).await.unwrap();
 
-    let rows = load_page_subtree_inner(&pool, "01HZPAGE000000000000000PGE", TEST_SPACE_ID)
+    let subtree = load_page_subtree_inner(&pool, "01HZPAGE000000000000000PGE", TEST_SPACE_ID)
         .await
         .unwrap();
-    let mut ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+    let mut ids: Vec<&str> = subtree.blocks.iter().map(|r| r.id.as_str()).collect();
     ids.sort();
     assert_eq!(
         ids,
@@ -3935,7 +3935,91 @@ async fn load_page_subtree_returns_active_descendants_excluding_root() {
             "01HZSCH2000000000000000002",
         ],
         "must return every active descendant (children + grandchild), \
-         excluding the page root and the soft-deleted block; got {rows:?}",
+         excluding the page root and the soft-deleted block; got {subtree:?}",
+    );
+    // #1258 — a well-under-cap page reports the true descendant count and
+    // is NOT flagged truncated.
+    assert!(
+        !subtree.truncated,
+        "a 3-block page is nowhere near the {} cap; must not be truncated",
+        crate::commands::pages::listing::PAGE_SUBTREE_MAX_BLOCKS,
+    );
+    assert_eq!(
+        subtree.total, 3,
+        "total must count exactly the 3 active descendants (excluding root + deleted)",
+    );
+}
+
+/// #1258 — when a page exceeds `PAGE_SUBTREE_MAX_BLOCKS`, the loader caps
+/// `blocks` at the limit but reports `truncated = true` and the TRUE total
+/// descendant count, so the FE can surface a non-blocking "showing the
+/// first N of M" notice instead of silently dropping blocks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn load_page_subtree_reports_truncation_over_cap() {
+    use crate::commands::pages::listing::PAGE_SUBTREE_MAX_BLOCKS;
+
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    insert_block(
+        &pool,
+        "01HZPAGEB1G00000000000PGE0",
+        "page",
+        "Big Page",
+        None,
+        Some(1),
+    )
+    .await;
+    assign_to_space(&pool, "01HZPAGEB1G00000000000PGE0", TEST_SPACE_ID).await;
+
+    // Insert cap + 5 active descendants directly (bulk; insert_block per-row
+    // would be far too slow for 10k rows). All are direct children of the
+    // page root. ULIDs are sortable so positions don't matter here.
+    //
+    // We set `page_id` directly in the INSERT rather than calling
+    // `rebuild_page_ids` afterwards: every row is a direct child of the page
+    // root, so its `page_id` is exactly that root — identical to what the
+    // materializer's ancestor-walk CTE would compute, but without the
+    // O(N²) correlated-subquery UPDATE that would push a 10k-row rebuild
+    // past the nextest timeout. `load_page_subtree` keys on `page_id`, so
+    // this exercises the exact column the loader reads.
+    let extra: i64 = 5;
+    let count = PAGE_SUBTREE_MAX_BLOCKS + extra;
+    let mut tx = pool.begin().await.unwrap();
+    for i in 0..count {
+        // 26-char Crockford-base32-ish ULID-shaped id, zero-padded index.
+        let id = format!("01HZB1G{i:019}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, space_id, page_id)
+             VALUES (?1, 'content', ?2, '01HZPAGEB1G00000000000PGE0', ?3, ?4, '01HZPAGEB1G00000000000PGE0')",
+        )
+        .bind(&id)
+        .bind(format!("child {i}"))
+        .bind(i)
+        .bind(TEST_SPACE_ID)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+
+    let subtree = load_page_subtree_inner(&pool, "01HZPAGEB1G00000000000PGE0", TEST_SPACE_ID)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        i64::try_from(subtree.blocks.len()).unwrap(),
+        PAGE_SUBTREE_MAX_BLOCKS,
+        "blocks must be capped at PAGE_SUBTREE_MAX_BLOCKS",
+    );
+    assert!(
+        subtree.truncated,
+        "a page with {count} descendants exceeds the {PAGE_SUBTREE_MAX_BLOCKS} cap; \
+         must be flagged truncated",
+    );
+    assert_eq!(
+        subtree.total, count,
+        "total must report the TRUE descendant count, independent of the cap",
     );
 }
 

@@ -23,6 +23,16 @@ const mockedInvoke = vi.mocked(invoke)
 
 const TEST_SPACE_ID = 'SPACE_TEST'
 
+// #1258 — `load_page_subtree` now returns `{ blocks, truncated, total }`
+// (the `PageSubtree` wrapper) instead of a bare `BlockRow[]`. `load()` reads
+// `.blocks` and surfaces `.truncated`/`.total`. This helper wraps a row array
+// in the un-truncated shape so the many `load()` mocks below keep their
+// intent (a full, non-truncated page load) without each spelling out the
+// wrapper. See the dedicated truncation test for the `truncated: true` path.
+function subtreeResp<T>(blocks: T[]): { blocks: T[]; truncated: boolean; total: number } {
+  return { blocks, truncated: false, total: blocks.length }
+}
+
 // --- Mock for undo store (used by notifyUndoNewAction in page-blocks.ts) ---
 const mockOnNewAction = vi.fn()
 const mockClearPage = vi.fn()
@@ -87,7 +97,7 @@ describe('PageBlockStore', () => {
         makeBlock({ id: 'A', parent_id: 'PAGE_1' }),
         makeBlock({ id: 'B', parent_id: 'PAGE_1' }),
       ]
-      mockedInvoke.mockResolvedValueOnce(blocks)
+      mockedInvoke.mockResolvedValueOnce(subtreeResp(blocks))
 
       await store.getState().load()
 
@@ -97,6 +107,32 @@ describe('PageBlockStore', () => {
       expect(result[0]?.depth).toBe(0)
       expect(result[1]?.id).toBe('B')
       expect(store.getState().loading).toBe(false)
+    })
+
+    // #1258 — when the backend caps the page at PAGE_SUBTREE_MAX_BLOCKS it
+    // returns `truncated: true` + the true `total`. The store surfaces this as
+    // `truncatedTotal` (the true total) so BlockTree can render a non-blocking
+    // "showing the first N of M" notice. A non-truncated load clears it.
+    it('surfaces truncatedTotal when the backend caps the page (#1258)', async () => {
+      const blocks = [makeBlock({ id: 'A', parent_id: 'PAGE_1' })]
+      // total > blocks.length — the cap fired, descendants were dropped.
+      mockedInvoke.mockResolvedValueOnce({ blocks, truncated: true, total: 10_005 })
+
+      await store.getState().load()
+
+      expect(store.getState().truncatedTotal).toBe(10_005)
+      expect(store.getState().blocks).toHaveLength(1)
+    })
+
+    it('clears truncatedTotal on a subsequent non-truncated load (#1258)', async () => {
+      const blocks = [makeBlock({ id: 'A', parent_id: 'PAGE_1' })]
+      mockedInvoke.mockResolvedValueOnce({ blocks, truncated: true, total: 10_005 })
+      await store.getState().load()
+      expect(store.getState().truncatedTotal).toBe(10_005)
+
+      mockedInvoke.mockResolvedValueOnce(subtreeResp(blocks))
+      await store.getState().load()
+      expect(store.getState().truncatedTotal).toBeNull()
     })
 
     it('sets loading=true while the request is in flight', async () => {
@@ -126,7 +162,7 @@ describe('PageBlockStore', () => {
 
     it('passes rootBlockId through to load_page_subtree', async () => {
       const s = createPageBlockStore('PARENT_42')
-      mockedInvoke.mockResolvedValue([])
+      mockedInvoke.mockResolvedValue(subtreeResp([]))
 
       await s.getState().load()
 
@@ -149,14 +185,14 @@ describe('PageBlockStore', () => {
       await vi.waitFor(() => expect(resolvers).toHaveLength(2))
 
       // The NEWER load's snapshot arrives first and commits.
-      resolvers[1]?.([makeBlock({ id: 'FRESH', parent_id: 'PAGE_1' })])
+      resolvers[1]?.(subtreeResp([makeBlock({ id: 'FRESH', parent_id: 'PAGE_1' })]))
       await load2
       expect(store.getState().blocks.map((b) => b.id)).toEqual(['FRESH'])
       expect(store.getState().loading).toBe(false)
 
       // The STALE snapshot resolves last — last-resolve-wins would
       // clobber FRESH with STALE here. The generation guard discards it.
-      resolvers[0]?.([makeBlock({ id: 'STALE', parent_id: 'PAGE_1' })])
+      resolvers[0]?.(subtreeResp([makeBlock({ id: 'STALE', parent_id: 'PAGE_1' })]))
       await load1
       expect(store.getState().blocks.map((b) => b.id)).toEqual(['FRESH'])
       expect(store.getState().blocksById.has('STALE')).toBe(false)
@@ -189,7 +225,7 @@ describe('PageBlockStore', () => {
       expect(store.getState().loading).toBe(true)
       expect(toast.error).not.toHaveBeenCalled()
 
-      resolvers[0]?.([])
+      resolvers[0]?.(subtreeResp([]))
       await load2
       expect(store.getState().loading).toBe(false)
     })
@@ -208,7 +244,7 @@ describe('PageBlockStore', () => {
         makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'old backend content' }),
         makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'updated B from backend' }),
       ]
-      mockedInvoke.mockResolvedValueOnce(backendBlocks)
+      mockedInvoke.mockResolvedValueOnce(subtreeResp(backendBlocks))
 
       await store.getState().load()
 
@@ -233,7 +269,7 @@ describe('PageBlockStore', () => {
         makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'new B from backend' }),
         makeBlock({ id: 'C', parent_id: 'PAGE_1', content: 'new C from backend' }),
       ]
-      mockedInvoke.mockResolvedValueOnce(backendBlocks)
+      mockedInvoke.mockResolvedValueOnce(subtreeResp(backendBlocks))
 
       await store.getState().load()
 
@@ -257,7 +293,7 @@ describe('PageBlockStore', () => {
         makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'new A from backend' }),
         makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'new B from backend' }),
       ]
-      mockedInvoke.mockResolvedValueOnce(backendBlocks)
+      mockedInvoke.mockResolvedValueOnce(subtreeResp(backendBlocks))
 
       await store.getState().load()
 
@@ -299,7 +335,7 @@ describe('PageBlockStore', () => {
       // Registry-wide reload — exactly what useSyncEvents' sync:complete
       // handler does (now via `forEachPageStore`). The fresh backend snapshot
       // no longer contains A (a remote peer deleted it).
-      mockedInvoke.mockResolvedValueOnce([makeBlock({ id: 'B', parent_id: 'PAGE_1' })])
+      mockedInvoke.mockResolvedValueOnce(subtreeResp([makeBlock({ id: 'B', parent_id: 'PAGE_1' })]))
       await store.getState().load()
 
       expect(mockSetFocused).toHaveBeenCalledWith(null)
@@ -316,10 +352,12 @@ describe('PageBlockStore', () => {
       })
       mockGlobalBlockState = { focusedBlockId: 'A', selectedBlockIds: [] }
 
-      mockedInvoke.mockResolvedValueOnce([
-        makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'from backend' }),
-        makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'from backend' }),
-      ])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'from backend' }),
+          makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'from backend' }),
+        ]),
+      )
       await store.getState().load()
 
       expect(mockSetFocused).not.toHaveBeenCalled()
@@ -336,7 +374,7 @@ describe('PageBlockStore', () => {
       pageB.setState({ blocks: [makeBlock({ id: 'X', parent_id: 'PAGE_B' })] })
       mockGlobalBlockState = { focusedBlockId: 'BLOCK_ON_PAGE_A', selectedBlockIds: [] }
 
-      mockedInvoke.mockResolvedValueOnce([makeBlock({ id: 'X', parent_id: 'PAGE_B' })])
+      mockedInvoke.mockResolvedValueOnce(subtreeResp([makeBlock({ id: 'X', parent_id: 'PAGE_B' })]))
       await pageB.getState().load()
 
       expect(mockSetFocused).not.toHaveBeenCalled()
@@ -372,7 +410,7 @@ describe('PageBlockStore', () => {
       mockGlobalBlockState = { focusedBlockId: 'N', selectedBlockIds: [] }
 
       // Stale snapshot: predates N's insert.
-      resolveLoad([makeBlock({ id: 'A', parent_id: 'PAGE_1' })])
+      resolveLoad(subtreeResp([makeBlock({ id: 'A', parent_id: 'PAGE_1' })]))
       await loadPromise
 
       expect(mockSetFocused).not.toHaveBeenCalled()
@@ -387,7 +425,9 @@ describe('PageBlockStore', () => {
       const fresh = createPageBlockStore('PAGE_NAV')
       mockGlobalBlockState = { focusedBlockId: 'STALE_FOCUS', selectedBlockIds: [] }
 
-      mockedInvoke.mockResolvedValueOnce([makeBlock({ id: 'Y', parent_id: 'PAGE_NAV' })])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([makeBlock({ id: 'Y', parent_id: 'PAGE_NAV' })]),
+      )
       await fresh.getState().load()
 
       expect(mockSetFocused).not.toHaveBeenCalled()
@@ -406,7 +446,7 @@ describe('PageBlockStore', () => {
       mockGlobalBlockState = { focusedBlockId: null, selectedBlockIds: ['A', 'B'] }
 
       // Fresh backend snapshot lost B (a remote peer deleted it).
-      mockedInvoke.mockResolvedValueOnce([makeBlock({ id: 'A', parent_id: 'PAGE_1' })])
+      mockedInvoke.mockResolvedValueOnce(subtreeResp([makeBlock({ id: 'A', parent_id: 'PAGE_1' })]))
       await store.getState().load()
 
       // B is pruned; the surviving id A stays selected.
@@ -423,10 +463,12 @@ describe('PageBlockStore', () => {
       })
       mockGlobalBlockState = { focusedBlockId: null, selectedBlockIds: ['A', 'B'] }
 
-      mockedInvoke.mockResolvedValueOnce([
-        makeBlock({ id: 'A', parent_id: 'PAGE_1' }),
-        makeBlock({ id: 'B', parent_id: 'PAGE_1' }),
-      ])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'A', parent_id: 'PAGE_1' }),
+          makeBlock({ id: 'B', parent_id: 'PAGE_1' }),
+        ]),
+      )
       await store.getState().load()
 
       // No change → no setSelected call (avoids a needless selection churn).
@@ -441,7 +483,7 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: [makeBlock({ id: 'A', parent_id: 'PAGE_1' })] })
       mockGlobalBlockState = { focusedBlockId: null, selectedBlockIds: ['A', 'OTHER_PAGE_BLK'] }
 
-      mockedInvoke.mockResolvedValueOnce([makeBlock({ id: 'A', parent_id: 'PAGE_1' })])
+      mockedInvoke.mockResolvedValueOnce(subtreeResp([makeBlock({ id: 'A', parent_id: 'PAGE_1' })]))
       await store.getState().load()
 
       // A survives (still present); OTHER_PAGE_BLK survives (never owned).
@@ -474,7 +516,7 @@ describe('PageBlockStore', () => {
       mockGlobalBlockState = { focusedBlockId: null, selectedBlockIds: ['A', 'N'] }
 
       // Snapshot predates N.
-      resolveLoad([makeBlock({ id: 'A', parent_id: 'PAGE_1' })])
+      resolveLoad(subtreeResp([makeBlock({ id: 'A', parent_id: 'PAGE_1' })]))
       await loadPromise
 
       // N must NOT be pruned (load-START guard); A survives → no change.
@@ -1408,10 +1450,12 @@ describe('PageBlockStore', () => {
         new_position: 0,
       })
       // The reload load_page_subtree returns the authoritative tree.
-      mockedInvoke.mockResolvedValueOnce([
-        makeBlock({ id: 'A', parent_id: 'PAGE_1', depth: 0 }),
-        makeBlock({ id: 'B', parent_id: 'UNEXPECTED', depth: 0 }),
-      ])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'A', parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', parent_id: 'UNEXPECTED', depth: 0 }),
+        ]),
+      )
 
       const ok = await store.getState().indent('B')
 
@@ -1635,10 +1679,12 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: [makeBlock({ id: 'B', position: 0, parent_id: null, depth: 0 })] })
 
       // The fallback load() will hit load_page_subtree — give it the backend truth.
-      mockedInvoke.mockResolvedValueOnce([
-        makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 0 }),
-        makeBlock({ id: 'NEW', parent_id: 'PAGE_1', position: 1, content: 'x' }),
-      ])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 0 }),
+          makeBlock({ id: 'NEW', parent_id: 'PAGE_1', position: 1, content: 'x' }),
+        ]),
+      )
 
       resolveCreate({
         id: 'NEW',
@@ -1824,11 +1870,13 @@ describe('PageBlockStore', () => {
           makeBlock({ id: 'A', position: 0, parent_id: 'B', depth: 1 }),
         ],
       })
-      mockedInvoke.mockResolvedValueOnce([
-        makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 0 }),
-        makeBlock({ id: 'A', parent_id: 'B', position: 0 }),
-        makeBlock({ id: 'NEW', parent_id: 'PAGE_1', position: 1, content: 'x' }),
-      ])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 0 }),
+          makeBlock({ id: 'A', parent_id: 'B', position: 0 }),
+          makeBlock({ id: 'NEW', parent_id: 'PAGE_1', position: 1, content: 'x' }),
+        ]),
+      )
 
       resolveCreate({
         id: 'NEW',
@@ -1871,12 +1919,14 @@ describe('PageBlockStore', () => {
           makeBlock({ id: 'C', position: 3, parent_id: null, depth: 0 }),
         ],
       })
-      mockedInvoke.mockResolvedValueOnce([
-        makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 }),
-        makeBlock({ id: 'C', parent_id: 'PAGE_1', position: 1 }),
-        makeBlock({ id: 'X', parent_id: 'PAGE_1', position: 2 }),
-        makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 3 }),
-      ])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 }),
+          makeBlock({ id: 'C', parent_id: 'PAGE_1', position: 1 }),
+          makeBlock({ id: 'X', parent_id: 'PAGE_1', position: 2 }),
+          makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 3 }),
+        ]),
+      )
 
       resolveMove({ block_id: 'C', new_parent_id: null, new_position: 1 })
       await expect(movePromise).resolves.toBe(true)
@@ -1935,11 +1985,13 @@ describe('PageBlockStore', () => {
           makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
         ],
       })
-      mockedInvoke.mockResolvedValueOnce([
-        makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 }),
-        makeBlock({ id: 'B', parent_id: 'A', position: 0 }),
-        makeBlock({ id: 'K', parent_id: 'A', position: 1 }),
-      ])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 }),
+          makeBlock({ id: 'B', parent_id: 'A', position: 0 }),
+          makeBlock({ id: 'K', parent_id: 'A', position: 1 }),
+        ]),
+      )
 
       resolveMove(undefined)
       await expect(indentPromise).resolves.toBe(true)
@@ -2000,11 +2052,13 @@ describe('PageBlockStore', () => {
           makeBlock({ id: 'C', position: 0, parent_id: 'P', depth: 1 }),
         ],
       })
-      mockedInvoke.mockResolvedValueOnce([
-        makeBlock({ id: 'X', parent_id: 'PAGE_1', position: 0 }),
-        makeBlock({ id: 'C', parent_id: 'PAGE_1', position: 1 }),
-        makeBlock({ id: 'P', parent_id: 'PAGE_1', position: 2 }),
-      ])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'X', parent_id: 'PAGE_1', position: 0 }),
+          makeBlock({ id: 'C', parent_id: 'PAGE_1', position: 1 }),
+          makeBlock({ id: 'P', parent_id: 'PAGE_1', position: 2 }),
+        ]),
+      )
 
       resolveMove({ block_id: 'C', new_parent_id: null, new_position: 1 })
       await expect(dedentPromise).resolves.toBe(true)
@@ -2149,11 +2203,13 @@ describe('PageBlockStore', () => {
         new_parent_id: 'UNEXPECTED',
         new_position: 0,
       })
-      mockedInvoke.mockResolvedValueOnce([
-        makeBlock({ id: 'GP', parent_id: 'PAGE_1', depth: 0 }),
-        makeBlock({ id: 'P', parent_id: 'GP', depth: 1 }),
-        makeBlock({ id: 'C', parent_id: 'UNEXPECTED', depth: 1 }),
-      ])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'GP', parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'P', parent_id: 'GP', depth: 1 }),
+          makeBlock({ id: 'C', parent_id: 'UNEXPECTED', depth: 1 }),
+        ]),
+      )
 
       const ok = await store.getState().dedent('C')
 
@@ -2464,13 +2520,15 @@ describe('PageBlockStore', () => {
         new_position: 1,
       })
       // load() reload after the structural move.
-      mockedInvoke.mockResolvedValueOnce([
-        makeBlock({ id: 'GRAND', parent_id: 'PAGE_1', depth: 0 }),
-        makeBlock({ id: 'S', parent_id: 'GRAND', depth: 1 }),
-        makeBlock({ id: 'C1', parent_id: 'GRAND', depth: 1 }),
-        makeBlock({ id: 'P', parent_id: 'GRAND', depth: 1 }),
-        makeBlock({ id: 'C2', parent_id: 'P', depth: 2 }),
-      ])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'GRAND', parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'S', parent_id: 'GRAND', depth: 1 }),
+          makeBlock({ id: 'C1', parent_id: 'GRAND', depth: 1 }),
+          makeBlock({ id: 'P', parent_id: 'GRAND', depth: 1 }),
+          makeBlock({ id: 'C2', parent_id: 'P', depth: 2 }),
+        ]),
+      )
 
       const ok = await store.getState().moveUp('C1')
 
@@ -2501,11 +2559,13 @@ describe('PageBlockStore', () => {
         new_parent_id: null,
         new_position: 0,
       })
-      mockedInvoke.mockResolvedValueOnce([
-        makeBlock({ id: 'C1', parent_id: 'PAGE_1', depth: 0 }),
-        makeBlock({ id: 'P', parent_id: 'PAGE_1', depth: 0 }),
-        makeBlock({ id: 'C2', parent_id: 'P', depth: 1 }),
-      ])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'C1', parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'P', parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'C2', parent_id: 'P', depth: 1 }),
+        ]),
+      )
 
       const ok = await store.getState().moveUp('C1')
 
@@ -2649,13 +2709,15 @@ describe('PageBlockStore', () => {
         new_parent_id: 'GRAND',
         new_position: 1,
       })
-      mockedInvoke.mockResolvedValueOnce([
-        makeBlock({ id: 'GRAND', parent_id: 'PAGE_1', depth: 0 }),
-        makeBlock({ id: 'P', parent_id: 'GRAND', depth: 1 }),
-        makeBlock({ id: 'C1', parent_id: 'P', depth: 2 }),
-        makeBlock({ id: 'C2', parent_id: 'GRAND', depth: 1 }),
-        makeBlock({ id: 'S', parent_id: 'GRAND', depth: 1 }),
-      ])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'GRAND', parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'P', parent_id: 'GRAND', depth: 1 }),
+          makeBlock({ id: 'C1', parent_id: 'P', depth: 2 }),
+          makeBlock({ id: 'C2', parent_id: 'GRAND', depth: 1 }),
+          makeBlock({ id: 'S', parent_id: 'GRAND', depth: 1 }),
+        ]),
+      )
 
       const ok = await store.getState().moveDown('C2')
 
@@ -2685,10 +2747,12 @@ describe('PageBlockStore', () => {
         new_parent_id: null,
         new_position: 1,
       })
-      mockedInvoke.mockResolvedValueOnce([
-        makeBlock({ id: 'P', parent_id: 'PAGE_1', depth: 0 }),
-        makeBlock({ id: 'C1', parent_id: 'PAGE_1', depth: 0 }),
-      ])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'P', parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'C1', parent_id: 'PAGE_1', depth: 0 }),
+        ]),
+      )
 
       const ok = await store.getState().moveDown('C1')
 
@@ -3090,7 +3154,7 @@ describe('PageBlockStore', () => {
         makeBlock({ id: 'A', parent_id: 'PAGE_1' }),
         makeBlock({ id: 'B', parent_id: 'PAGE_1' }),
       ]
-      mockedInvoke.mockResolvedValueOnce(items)
+      mockedInvoke.mockResolvedValueOnce(subtreeResp(items))
 
       await store.getState().load()
 
@@ -3429,12 +3493,14 @@ describe('PageBlockStore', () => {
       // Two moves echo their committed slot, then the reload returns the tree.
       mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 2 })
       mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: null, new_position: 3 })
-      mockedInvoke.mockResolvedValueOnce([
-        makeBlock({ id: 'C', parent_id: 'PAGE_1', position: 0 }),
-        makeBlock({ id: 'D', parent_id: 'PAGE_1', position: 1 }),
-        makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 2 }),
-        makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 3 }),
-      ])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'C', parent_id: 'PAGE_1', position: 0 }),
+          makeBlock({ id: 'D', parent_id: 'PAGE_1', position: 1 }),
+          makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 2 }),
+          makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 3 }),
+        ]),
+      )
 
       await store.getState().moveBlocks(['A', 'B'], null, 2)
 
@@ -3459,7 +3525,7 @@ describe('PageBlockStore', () => {
 
       mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 1 })
       mockedInvoke.mockResolvedValueOnce({ block_id: 'C', new_parent_id: null, new_position: 2 })
-      mockedInvoke.mockResolvedValueOnce([])
+      mockedInvoke.mockResolvedValueOnce(subtreeResp([]))
 
       // Caller passes ['C', 'A'] — but A precedes C in the document, so A moves first.
       await store.getState().moveBlocks(['C', 'A'], null, 1)
@@ -3481,11 +3547,13 @@ describe('PageBlockStore', () => {
 
       mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: 'P', new_position: 0 })
       mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: 'P', new_position: 1 })
-      mockedInvoke.mockResolvedValueOnce([
-        makeBlock({ id: 'P', parent_id: 'PAGE_1', position: 0 }),
-        makeBlock({ id: 'A', parent_id: 'P', position: 0 }),
-        makeBlock({ id: 'B', parent_id: 'P', position: 1 }),
-      ])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'P', parent_id: 'PAGE_1', position: 0 }),
+          makeBlock({ id: 'A', parent_id: 'P', position: 0 }),
+          makeBlock({ id: 'B', parent_id: 'P', position: 1 }),
+        ]),
+      )
 
       await store.getState().moveBlocks(['A', 'B'], 'P', 0)
 
@@ -3510,7 +3578,7 @@ describe('PageBlockStore', () => {
 
       mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: null, new_position: 0 })
       mockedInvoke.mockResolvedValueOnce({ block_id: 'C', new_parent_id: null, new_position: 1 })
-      mockedInvoke.mockResolvedValueOnce([])
+      mockedInvoke.mockResolvedValueOnce(subtreeResp([]))
 
       await store.getState().moveBlocks(['B', 'C'], null, 0)
 
@@ -3538,7 +3606,7 @@ describe('PageBlockStore', () => {
       })
 
       mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 1 })
-      mockedInvoke.mockResolvedValueOnce([])
+      mockedInvoke.mockResolvedValueOnce(subtreeResp([]))
 
       // 'GHOST' is not in the tree — only 'A' should move.
       await store.getState().moveBlocks(['A', 'GHOST'], null, 1)
@@ -3557,10 +3625,12 @@ describe('PageBlockStore', () => {
       // First move succeeds, second rejects → catch reloads, no undo.
       mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 1 })
       mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
-      mockedInvoke.mockResolvedValueOnce([
-        makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 }),
-        makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 1 }),
-      ])
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 }),
+          makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 1 }),
+        ]),
+      )
 
       await store.getState().moveBlocks(['A', 'B'], null, 1)
 
@@ -3595,7 +3665,7 @@ describe('PageBlockStore', () => {
 
       mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 2 })
       mockedInvoke.mockResolvedValueOnce({ block_id: 'A1', new_parent_id: null, new_position: 3 })
-      mockedInvoke.mockResolvedValueOnce([])
+      mockedInvoke.mockResolvedValueOnce(subtreeResp([]))
 
       // Pass BOTH the parent (A) and its child (A1) — violating the contract.
       await store.getState().moveBlocks(['A', 'A1'], null, 2)
@@ -3663,7 +3733,7 @@ describe('PageBlockStore', () => {
             deleted_at: null,
           }))
         }
-        if (cmd === 'load_page_subtree') return reloadRows
+        if (cmd === 'load_page_subtree') return subtreeResp(reloadRows)
         return []
       })
       return { batches }
@@ -3735,7 +3805,7 @@ describe('PageBlockStore', () => {
 
     it('reloads and returns [] when the anchor vanished before paste', async () => {
       store.setState({ blocks: [] })
-      mockedInvoke.mockResolvedValueOnce([])
+      mockedInvoke.mockResolvedValueOnce(subtreeResp([]))
 
       const ids = await store.getState().pasteBlocks('GONE', 'x')
 
@@ -3753,7 +3823,7 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: [anchor] })
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'create_blocks_batch') throw new Error('batch failed')
-        if (cmd === 'load_page_subtree') return [anchor]
+        if (cmd === 'load_page_subtree') return subtreeResp([anchor])
         return []
       })
 

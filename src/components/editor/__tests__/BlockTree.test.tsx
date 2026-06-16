@@ -18,6 +18,7 @@ import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
 
 import type { PickerItem } from '@/editor/SuggestionList'
+import { t } from '@/lib/i18n'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
@@ -374,7 +375,7 @@ beforeEach(() => {
 describe('BlockTree picker wiring', () => {
   it('passes searchTags to useRovingEditor', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -388,7 +389,7 @@ describe('BlockTree picker wiring', () => {
 
   it('passes searchPages to useRovingEditor', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -402,7 +403,7 @@ describe('BlockTree picker wiring', () => {
 
   it('searchTags calls list_tags_by_prefix with the query as prefix', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -433,7 +434,7 @@ describe('BlockTree picker wiring', () => {
 
   it('searchTags returns "Create new tag" option when no tags match', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -452,7 +453,7 @@ describe('BlockTree picker wiring', () => {
 
   it('searchPages uses FTS5 for longer queries and filters to pages', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -512,7 +513,7 @@ describe('BlockTree picker wiring', () => {
 
   it('searchPages filters case-insensitively', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -566,7 +567,7 @@ describe('BlockTree picker wiring', () => {
 
   it('searchPages shows Untitled for pages with null content', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       if (cmd === 'list_all_pages_in_space') return []
       return emptyPage
     })
@@ -598,7 +599,7 @@ describe('BlockTree picker wiring', () => {
 
   it('searchPages returns create-new item when no pages match query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -618,7 +619,7 @@ describe('BlockTree picker wiring', () => {
 
   it('searchPages appends create-new item when query partially matches but no exact match', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -659,7 +660,7 @@ describe('BlockTree picker wiring', () => {
 
   it('searchPages does NOT append create-new when exact match exists (case-insensitive)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -697,7 +698,7 @@ describe('BlockTree picker wiring', () => {
 
   it('searchPages does NOT append create-new for empty query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       if (cmd === 'list_all_pages_in_space') return []
       return emptyPage
     })
@@ -728,7 +729,7 @@ describe('BlockTree picker wiring', () => {
 
   it('searchPages does NOT append create-new for whitespace-only query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       if (cmd === 'list_all_pages_in_space') return []
       return emptyPage
     })
@@ -751,7 +752,7 @@ describe('BlockTree picker wiring', () => {
 
   it('passes onCreatePage to useRovingEditor', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -765,7 +766,7 @@ describe('BlockTree picker wiring', () => {
 
   it('onCreatePage calls create_page_in_space with content and current space id', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -806,7 +807,7 @@ describe('BlockTree picker wiring', () => {
 
   it('renders empty state when no blocks', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -821,7 +822,7 @@ describe('BlockTree picker wiring', () => {
 
   it('has no a11y violations in empty state', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -842,7 +843,7 @@ describe('BlockTree rendering edge cases', () => {
   it('renders deeply nested blocks (3+ levels)', async () => {
     // Default fallback for preload + load effects
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -902,7 +903,8 @@ describe('BlockTree rendering edge cases', () => {
     ]
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return deepBlocks
+      if (cmd === 'load_page_subtree')
+        return { blocks: deepBlocks, truncated: false, total: deepBlocks.length }
       return emptyPage
     })
 
@@ -922,7 +924,7 @@ describe('BlockTree rendering edge cases', () => {
 
   it('renders empty state when children array is empty', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -941,7 +943,7 @@ describe('BlockTree rendering edge cases', () => {
   it('renders single root block with no children', async () => {
     // Default fallback for preload + load effects
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -962,7 +964,8 @@ describe('BlockTree rendering edge cases', () => {
     ]
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return singleBlock
+      if (cmd === 'load_page_subtree')
+        return { blocks: singleBlock, truncated: false, total: singleBlock.length }
       return emptyPage
     })
 
@@ -1441,7 +1444,7 @@ describe('processCheckboxSyntax', () => {
 describe('BlockTree slash command wiring', () => {
   it('passes searchSlashCommands to useRovingEditor', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1455,7 +1458,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('passes onSlashCommand to useRovingEditor', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1469,7 +1472,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('searchSlashCommands returns all commands for empty query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1520,7 +1523,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('searchSlashCommands filters commands by query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1538,7 +1541,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('searchSlashCommands returns empty array when nothing matches', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1555,7 +1558,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('searchSlashCommands is case-insensitive', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1573,7 +1576,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('searchSlashCommands returns /link command when query matches "link"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1590,7 +1593,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('searchSlashCommands returns /tag command when query matches "tag"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1607,7 +1610,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('searchSlashCommands returns /code command when query matches "code"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1624,7 +1627,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('searchSlashCommands returns /effort command when query matches "effort"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1641,7 +1644,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('searchSlashCommands returns /assignee command when query matches "assignee"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1658,7 +1661,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('searchSlashCommands returns /location command when query matches "location"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1675,7 +1678,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('searchSlashCommands returns /repeat command when query matches "repeat"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1692,7 +1695,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('searchSlashCommands returns /query command when query matches "query"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1709,7 +1712,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('searchSlashCommands returns parameterized table item for "table 4x6" query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1731,7 +1734,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('searchSlashCommands returns default table for "table" query without dimensions', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1750,7 +1753,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('searchSlashCommands handles "table 2x2" with small dimensions', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -1767,7 +1770,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('onSlashCommand for /table with no dimensions inserts 3x3 table', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
     useMockEditor = true
@@ -1789,7 +1792,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('onSlashCommand for /table 4x6 inserts 4x6 table', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
     useMockEditor = true
@@ -1811,7 +1814,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('onSlashCommand for /table 10x2 inserts 10x2 table', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
     useMockEditor = true
@@ -1836,7 +1839,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('slash command dialog uses standard max-sm breakpoint', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
     useMockEditor = true
@@ -1904,7 +1907,7 @@ describe('BlockTree slash command wiring', () => {
 
   it('slash command dialog has responsive max-width', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
     useMockEditor = true
@@ -2066,7 +2069,7 @@ describe('BlockTree query builder save (#1016)', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'load_page_subtree') {
         loadCalls += 1
-        return []
+        return { blocks: [], truncated: false, total: 0 }
       }
       if (cmd === 'list_all_pages_in_space') return []
       if (cmd === 'edit_block') return { id: 'BLOCK_A', content: '{{query status = "done"}}' }
@@ -2096,7 +2099,7 @@ describe('BlockTree query builder save (#1016)', () => {
 describe('BlockTree cross-page navigation', () => {
   it('accepts onNavigateToPage prop without error', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
     const onNav = vi.fn()
@@ -2118,7 +2121,7 @@ describe('BlockTree cross-page navigation', () => {
 describe('BlockTree resolve cache preload', () => {
   it('does NOT fetch pages or tags on mount (App.tsx preloads those)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -2171,8 +2174,9 @@ describe('BlockTree resolve cache preload', () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'load_page_subtree') {
         const a = args as Record<string, unknown> | undefined
-        if (a?.['rootBlockId'] === 'PAGE_1') return [blockWithLink]
-        return []
+        if (a?.['rootBlockId'] === 'PAGE_1')
+          return { blocks: [blockWithLink], truncated: false, total: 1 }
+        return { blocks: [], truncated: false, total: 0 }
       }
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'batch_resolve') return handleBatchResolve(args)
@@ -2359,7 +2363,7 @@ describe('BlockTree handleNavigate', () => {
 describe('BlockTree searchPages caching', () => {
   it('searchPages short-query fallback caches results for subsequent calls', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       if (cmd === 'list_all_pages_in_space') return []
       return emptyPage
     })
@@ -2417,7 +2421,7 @@ describe('BlockTree searchPages caching', () => {
 
   it('onCreatePage adds new page to search results', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -2447,7 +2451,7 @@ describe('BlockTree searchPages caching', () => {
 describe('BlockTree priority slash commands', () => {
   it('searchSlashCommands returns priority commands when query matches "priority"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -2468,7 +2472,7 @@ describe('BlockTree priority slash commands', () => {
 
   it('priority commands have "PRIORITY 1/2/3" labels', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -2488,7 +2492,7 @@ describe('BlockTree priority slash commands', () => {
 
   it('priority commands are not shown for empty query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -2670,7 +2674,7 @@ describe('BlockTree priority slash commands', () => {
 describe('BlockTree repeat slash commands', () => {
   it('searchSlashCommands returns repeat preset commands when query matches "repeat"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -2692,7 +2696,7 @@ describe('BlockTree repeat slash commands', () => {
 
   it('repeat preset commands have correct labels', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -2713,7 +2717,7 @@ describe('BlockTree repeat slash commands', () => {
 
   it('repeat preset commands are not shown for empty query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -2888,7 +2892,7 @@ describe('BlockTree repeat slash commands', () => {
 describe('BlockTree repeat mode variants', () => {
   it('searchSlashCommands returns .+ and ++ mode variants for repeat query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -3027,7 +3031,7 @@ describe('BlockTree repeat mode variants', () => {
 describe('BlockTree repeat end-condition commands', () => {
   it('searchSlashCommands returns end-condition commands for repeat query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -3213,7 +3217,7 @@ describe('BlockTree repeat end-condition commands', () => {
 describe('BlockTree effort slash commands', () => {
   it('searchSlashCommands returns effort presets when query matches "effort"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -3280,7 +3284,7 @@ describe('BlockTree effort slash commands', () => {
 describe('BlockTree due slash command', () => {
   it('searchSlashCommands returns due command when query matches "due"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -3299,7 +3303,7 @@ describe('BlockTree due slash command', () => {
 
   it('due command has correct label', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -3318,7 +3322,7 @@ describe('BlockTree due slash command', () => {
 
   it('due command is not returned for non-matching query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -3341,7 +3345,7 @@ describe('BlockTree due slash command', () => {
 describe('BlockTree schedule slash command', () => {
   it('searchSlashCommands returns schedule command when query matches "schedule"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -3360,7 +3364,7 @@ describe('BlockTree schedule slash command', () => {
 
   it('schedule command has correct label', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -3379,7 +3383,7 @@ describe('BlockTree schedule slash command', () => {
 
   it('schedule command is not returned for non-matching query', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -3581,7 +3585,7 @@ describe('BlockTree heading slash command execution', () => {
 
   it('heading commands appear in searchSlashCommands when query matches', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -4733,7 +4737,7 @@ describe('BlockTree /attach slash command', () => {
 
   it('/attach appears in the slash command list', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -5545,7 +5549,7 @@ describe('BlockTree zoom-in', () => {
 describe('BlockTree /template slash command', () => {
   it('searchSlashCommands returns /template command when query matches "template"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -5562,7 +5566,7 @@ describe('BlockTree /template slash command', () => {
 
   it('searchSlashCommands includes template in full command list', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -5585,7 +5589,7 @@ describe('BlockTree /template slash command', () => {
 describe('BlockTree Ctrl+Shift+P keyboard shortcut', () => {
   it('passes onShowProperties to useBlockKeyboard', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -5606,7 +5610,7 @@ describe('BlockTree Ctrl+Shift+P keyboard shortcut', () => {
 describe('BlockTree assignee slash command presets', () => {
   it('searchSlashCommands returns assignee presets when query matches "assignee"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -5710,7 +5714,7 @@ describe('BlockTree assignee slash command presets', () => {
 describe('BlockTree location slash command presets', () => {
   it('searchSlashCommands returns location presets when query matches "location"', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -6477,7 +6481,7 @@ describe('H-9: auto-create first block on empty page', () => {
 
   it('does not auto-create when autoCreateFirstBlock is false', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'load_page_subtree') return []
+      if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
       return emptyPage
     })
 
@@ -6703,5 +6707,49 @@ describe('B-14: zoom clears focus on invisible block', () => {
     await waitFor(() => {
       expect(useBlockStore.getState().focusedBlockId).toBe('B')
     })
+  })
+})
+
+// #1258 — page-subtree truncation notice. The backend caps a page at
+// PAGE_SUBTREE_MAX_BLOCKS and (before this) dropped the excess silently.
+// `load()` records the true total in `truncatedTotal` (null when not
+// truncated); BlockTree renders a non-blocking notice keyed off it.
+describe('#1258: page truncation notice', () => {
+  it('shows a non-blocking notice when the page was truncated', async () => {
+    const tree = [makeBlock({ id: 'A', content: 'Block A' })]
+    // truncatedTotal != null => the backend reported the page hit the cap;
+    // `blocks` is the capped (displayed) set, `truncatedTotal` the true total.
+    pageStore.setState({ blocks: tree, loading: false, truncatedTotal: 12_345 })
+
+    renderBlockTree()
+
+    const notice = await screen.findByTestId('page-truncated-notice')
+    expect(notice).toBeInTheDocument()
+    // Live-region role so the partial-display state is announced.
+    expect(notice).toHaveAttribute('role', 'status')
+    expect(notice).toHaveTextContent(
+      t('blockTree.truncatedNotice', { shown: tree.length, total: 12_345 }),
+    )
+  })
+
+  it('does not show the notice when the page was fully loaded', async () => {
+    const tree = [makeBlock({ id: 'A', content: 'Block A' })]
+    pageStore.setState({ blocks: tree, loading: false, truncatedTotal: null })
+
+    renderBlockTree()
+
+    await screen.findByTestId('sortable-block-A')
+    expect(screen.queryByTestId('page-truncated-notice')).not.toBeInTheDocument()
+  })
+
+  it('has no a11y violations with the notice present', async () => {
+    const tree = [makeBlock({ id: 'A', content: 'Block A' })]
+    pageStore.setState({ blocks: tree, loading: false, truncatedTotal: 12_345 })
+
+    const { container } = renderBlockTree()
+    await screen.findByTestId('page-truncated-notice')
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 })

@@ -42,6 +42,7 @@ function createTestStore(blocks: FlatBlock[]): StoreApi<PageBlockState> {
     blocksById,
     rootParentId: 'PAGE_1',
     loading: false,
+    truncatedTotal: null,
     getBlockById: (id: string) => blocksById.get(id),
     load: vi.fn(),
     createBelow: vi.fn(),

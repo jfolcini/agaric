@@ -70,6 +70,17 @@ export interface PageBlockState {
   /** Loading state. */
   loading: boolean
 
+  /**
+   * #1258 — total active descendant count when the backend truncated the
+   * page at its `PAGE_SUBTREE_MAX_BLOCKS` safety cap; `null` when the full
+   * page was returned. `blocks.length` is the truncated (capped) count, so
+   * the UI can show "showing the first {blocks.length} of {truncatedTotal}".
+   * The backend orders the cap by a flat (position, id) key, so a deeply
+   * nested child whose parent row was cut is dropped from `blocks` by
+   * `buildFlatTree`; this signal is the only honest indication of that loss.
+   */
+  truncatedTotal: number | null
+
   /** O(1) helper — `state.blocksById.get(id)`. */
   getBlockById: (id: string) => FlatBlock | undefined
 
@@ -429,6 +440,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     blocksById: new Map(),
     rootParentId: pageId,
     loading: true,
+    truncatedTotal: null,
 
     getBlockById: (id: string) => get().blocksById.get(id),
 
@@ -463,7 +475,8 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // Single-SELECT descendant load via the materializer-maintained
         // `page_id` index — replaces the recursive per-parent
         // `listBlocks` walk that silently clamped each level to 100.
-        const allBlocks = await loadPageSubtree(rootParentId, spaceId)
+        const subtree = await loadPageSubtree(rootParentId, spaceId)
+        const allBlocks = subtree.blocks
         // Defensive: discard if rootParentId changed (shouldn't happen with per-page stores)
         if (get().rootParentId !== rootParentId) return
         // #753 — a newer load() started while this snapshot was in
@@ -524,7 +537,17 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           if (pruned.length !== selectedBlockIds.length) setSelected(pruned)
         }
 
-        set({ blocks: newBlocks, blocksById: buildBlocksById(newBlocks), loading: false })
+        // #1258 — surface the backend truncation signal. `truncated` means
+        // the page exceeded PAGE_SUBTREE_MAX_BLOCKS and `subtree.total` is the
+        // true descendant count; store it so BlockTree can render a
+        // non-blocking notice. `null` clears any prior page's signal.
+        const truncatedTotal = subtree.truncated ? subtree.total : null
+        set({
+          blocks: newBlocks,
+          blocksById: buildBlocksById(newBlocks),
+          loading: false,
+          truncatedTotal,
+        })
         logger.debug('page-blocks', 'page loaded', {
           pageId: rootParentId ?? '',
           blockCount: newBlocks.length,

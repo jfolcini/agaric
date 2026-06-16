@@ -100,6 +100,7 @@ describe('useCheckboxSyntax', () => {
       blocksById: new Map(initialBlocks.map((b) => [b.id, b])),
       rootParentId: 'R1',
       loading: false,
+      truncatedTotal: null,
       getBlockById: (id: string) => initialBlocks.find((b) => b.id === id),
       load: vi.fn(),
       createBelow: vi.fn(),

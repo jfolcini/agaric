@@ -55,10 +55,11 @@ function seedPage(childIds: string[]): void {
 
 /** The reloaded top-level child order (what the store rebuilds after undo). */
 function loadedRootOrder(): string[] {
-  const rows = dispatch('load_page_subtree', {
+  // #1258 — `load_page_subtree` now returns `{ blocks, truncated, total }`.
+  const { blocks: rows } = dispatch('load_page_subtree', {
     rootBlockId: PAGE,
     spaceId: SPACE,
-  }) as Array<Record<string, unknown>>
+  }) as { blocks: Array<Record<string, unknown>> }
   return rows
     .filter((r) => (r['parent_id'] as string | null) === PAGE)
     .map((r) => r['id'] as string)
@@ -123,10 +124,10 @@ describe('#958 — reorder/reparent undo reverts in place', () => {
     // Root now holds only GS1, GS2; GS3 is GS2's child.
     expect(loadedRootOrder()).toEqual([GS1, GS2])
     const gs2Children = (
-      dispatch('load_page_subtree', { rootBlockId: PAGE, spaceId: SPACE }) as Array<
-        Record<string, unknown>
-      >
-    ).filter((r) => (r['parent_id'] as string | null) === GS2)
+      dispatch('load_page_subtree', { rootBlockId: PAGE, spaceId: SPACE }) as {
+        blocks: Array<Record<string, unknown>>
+      }
+    ).blocks.filter((r) => (r['parent_id'] as string | null) === GS2)
     expect(gs2Children.map((r) => r['id'])).toEqual([GS3])
   })
 

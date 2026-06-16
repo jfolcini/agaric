@@ -767,7 +767,7 @@ export const commands = {
 	 *  Tauri command: load every active descendant under `root_block_id`
 	 *  in `space_id`.  Delegates to [`load_page_subtree_inner`].
 	 */
-	loadPageSubtree: (rootBlockId: BlockId, spaceId: string) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("load_page_subtree", { rootBlockId, spaceId })),
+	loadPageSubtree: (rootBlockId: BlockId, spaceId: string) => typedError<PageSubtree, AppError>(__TAURI_INVOKE("load_page_subtree", { rootBlockId, spaceId })),
 	/**
 	 *  Tauri command: paginated page list with per-page metadata columns
 	 *  (last-modified timestamp, inbound link count, descendant count,
@@ -1824,6 +1824,38 @@ export type PageSort =
  *  sorts that re-sort client-side.
  */
 "default";
+
+/**
+ *  Result of [`load_page_subtree_inner`] — the (possibly capped) block
+ *  set plus an honest truncation signal so the FE can surface a
+ *  non-blocking notice instead of silently dropping descendants.
+ *
+ *  #1258 — the loader caps its returned set at [`PAGE_SUBTREE_MAX_BLOCKS`]
+ *  by flat `(position, id)` order, which is NOT structure-preserving: a
+ *  surviving deeply-nested child whose parent row was cut becomes an
+ *  orphan that `buildFlatTree`'s DFS can never reach. Before, the only
+ *  response was a backend `tracing::warn`; the user saw a page missing
+ *  arbitrary blocks with no signal. We now carry `total` (the true active
+ *  descendant count, computed independently of the cap) and `truncated`
+ *  (`total > returned`) so the FE can tell the user "showing the first
+ *  N of M".
+ */
+export type PageSubtree = {
+	/**  The (possibly capped) active descendant rows, excluding the root. */
+	blocks: BlockRow[],
+	/**
+	 *  True when the page has more active descendants than were returned —
+	 *  i.e. the [`PAGE_SUBTREE_MAX_BLOCKS`] cap fired and some blocks were
+	 *  dropped from `blocks`.
+	 */
+	truncated: boolean,
+	/**
+	 *  The true count of active descendants under the root (excluding the
+	 *  root and soft-deleted blocks), computed independently of the cap.
+	 *  `blocks.len()` is `min(total, PAGE_SUBTREE_MAX_BLOCKS)`.
+	 */
+	total: number,
+};
 
 /**
  *  Row returned by [`list_pages_with_metadata_inner`].

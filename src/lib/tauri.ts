@@ -28,6 +28,7 @@ export type {
   PageHeading,
   PageResponse,
   PageSort,
+  PageSubtree,
   PageWithMetadataRow,
   PartitionedSearchResponse,
   PropertyDefinition,
@@ -77,6 +78,7 @@ import type {
   PageHeading,
   PageResponse,
   PageSort,
+  PageSubtree,
   PageWithMetadataRow,
   PartitionedSearchResponse,
   PropertyDefinition,
@@ -1931,8 +1933,14 @@ export async function listAllTagsInSpace(spaceId: string): Promise<TagCacheRow[]
  *
  * Excludes the root block and soft-deleted descendants.  Result order
  * is not load-bearing — `buildFlatTree` regroups by `parent_id`.
+ *
+ * #1258 — returns the full {@link PageSubtree} (not a bare array) so the
+ * caller can read `truncated` / `total`: when a page exceeds the backend
+ * `PAGE_SUBTREE_MAX_BLOCKS` cap, `blocks` is capped but `total` carries
+ * the true descendant count, letting the UI surface a non-blocking
+ * "showing the first N of M" notice instead of silently dropping blocks.
  */
-export async function loadPageSubtree(rootBlockId: string, spaceId: string): Promise<BlockRow[]> {
+export async function loadPageSubtree(rootBlockId: string, spaceId: string): Promise<PageSubtree> {
   return unwrap(await commands.loadPageSubtree(rootBlockId, spaceId))
 }
 
