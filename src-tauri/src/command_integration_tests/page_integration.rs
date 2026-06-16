@@ -459,9 +459,11 @@ async fn restore_page_to_op_reverts_edits_after_target() {
         .await
         .unwrap();
     let target_seq = ops.last().unwrap().seq;
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
-    // Edit block: B → C (this should be reverted)
+    // Edit block: B → C (this should be reverted).
+    // No sleep needed: the restore query orders by (created_at, seq, device_id)
+    // and `seq` is strictly monotonic per device, so this op sorts strictly
+    // after `target_seq` even at an identical ms timestamp (see undo_redo TEST-24).
     edit_block_inner(&pool, DEV, &mat, child.id.clone(), "content-C".into())
         .await
         .unwrap();
@@ -567,9 +569,11 @@ async fn restore_page_to_op_with_all_pages_target() {
         .await
         .unwrap();
     let target_seq = ops.last().unwrap().seq;
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
-    // Edit blocks on both pages
+    // Edit blocks on both pages.
+    // No sleep needed: the restore query orders by (created_at, seq, device_id)
+    // and `seq` is strictly monotonic per device, so these ops sort strictly
+    // after `target_seq` even at identical ms timestamps (see undo_redo TEST-24).
     edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "changed-1".into())
         .await
         .unwrap();
@@ -759,14 +763,15 @@ async fn restore_page_to_op_op_log_chain_valid_after_restore() {
         .await
         .unwrap();
     let target_seq = ops_snapshot.last().unwrap().seq;
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
-    // Make edits that will be reverted
+    // Make edits that will be reverted.
+    // No sleeps needed: the restore query orders by (created_at, seq, device_id)
+    // and `seq` is strictly monotonic per device, so both edits sort strictly
+    // after `target_seq` even at identical ms timestamps (see undo_redo TEST-24).
     edit_block_inner(&pool, DEV, &mat, child.id.clone(), "edited-1".into())
         .await
         .unwrap();
     settle(&mat).await;
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
     edit_block_inner(&pool, DEV, &mat, child.id.clone(), "edited-2".into())
         .await
         .unwrap();
