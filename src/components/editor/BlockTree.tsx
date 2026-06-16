@@ -657,10 +657,37 @@ export function BlockTree({
   } = useBlockKeyboardHandlers({
     focusedBlockId,
     collapsedVisible,
+    blocks,
     rovingEditor,
     setFocused,
     handleFlush,
     remove,
+    // #1342 — the merge handlers reparent a merged-away block's children onto
+    // the merge target BEFORE removing the source, so the backend delete
+    // cascade can't soft-delete the subtree. But `moveBlocks` swallows its own
+    // errors (it logs + reloads, never rejects), so a partial/total move
+    // failure would resolve "ok" and let `remove` cascade-delete the children
+    // that DIDN'T move — re-introducing the very data loss this fixes. Wrap it
+    // to verify against the freshly-reloaded tree that every requested child
+    // now sits under the new parent, and THROW if not — so the hook's
+    // reparent-failure path (revert edit, skip remove) actually fires.
+    moveBlocks: useCallback(
+      async (ids: string[], newParentId: string | null, newIndex: number) => {
+        await moveBlocks(ids, newParentId, newIndex)
+        const fresh = pageStore.getState().blocks
+        const byId = new Map(fresh.map((b) => [b.id, b]))
+        const stranded = ids.filter((id) => {
+          const b = byId.get(id)
+          // A child that vanished or whose parent is still NOT the target was
+          // not (fully) reparented — treat as a failed move so the merge aborts.
+          return !b || (b.parent_id ?? null) !== newParentId
+        })
+        if (stranded.length > 0) {
+          throw new Error(`reparent incomplete: ${stranded.length} block(s) not under new parent`)
+        }
+      },
+      [moveBlocks, pageStore],
+    ),
     edit,
     indent,
     dedent,

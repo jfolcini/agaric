@@ -98,9 +98,44 @@ function joinMergedContent(prevContent: string, currentContent: string): string 
   return prevContent + stripLeadingBlockMarker(currentContent)
 }
 
+/**
+ * #1342 — plan the reparent of a merged-away block's children onto the merge
+ * target. Reads the FULL flat tree (`blocks`) — `collapsedVisible` hides a
+ * collapsed source's children, so this must not use the visible projection.
+ *
+ * Returns the source block's DIRECT children, in document order, and the
+ * target slot (`newIndex`) at which to land them: the merge target's current
+ * direct-child count, so the children are appended AFTER any children the
+ * target already has — matching the Logseq/Workflowy backspace-merge where the
+ * absorbed block's children become the tail of the survivor's children.
+ *
+ * Returns `null` when the source has no children (the merge is a plain
+ * childless join — no reparent needed). Each direct child is a "selection
+ * root" (none is a descendant of another), so `moveBlocks` carries each one's
+ * own subtree along, preserving the full nested structure.
+ */
+function planChildReparent(
+  blocks: FlatBlock[],
+  sourceId: string,
+  targetId: string,
+): { childIds: string[]; newIndex: number } | null {
+  const childIds = blocks.filter((b) => (b.parent_id ?? null) === sourceId).map((b) => b.id)
+  if (childIds.length === 0) return null
+  const newIndex = blocks.filter((b) => (b.parent_id ?? null) === targetId).length
+  return { childIds, newIndex }
+}
+
 export interface UseBlockKeyboardHandlersParams {
   focusedBlockId: string | null
   collapsedVisible: FlatBlock[]
+  /**
+   * #1342 — the FULL flat tree (not the collapsed/visible projection). The
+   * merge handlers need it to find the merged-away block's DIRECT children
+   * (which `collapsedVisible` hides when the source is collapsed) so they can
+   * be reparented onto the merge target instead of soft-deleted by the
+   * backend's `delete_block` cascade.
+   */
+  blocks: FlatBlock[]
   rovingEditor: Pick<
     RovingEditorHandle,
     'editor' | 'activeBlockId' | 'mount' | 'unmount' | 'getMarkdown' | 'splitAtCaret'
@@ -108,6 +143,14 @@ export interface UseBlockKeyboardHandlersParams {
   setFocused: (id: string | null) => void
   handleFlush: () => string | null
   remove: (id: string) => Promise<void>
+  /**
+   * #1342 — reparent a contiguous run of blocks (in document order) under a
+   * new parent, landing at the given 0-based sibling slot. Used by the merge
+   * handlers to move the merged-away block's children onto the merge target
+   * before the source block is removed. Same action the multi-select drag
+   * uses; it issues one `move_block` per block and reloads the tree.
+   */
+  moveBlocks: (ids: string[], newParentId: string | null, newIndex: number) => Promise<void>
   edit: (id: string, content: string) => Promise<boolean>
   indent: (id: string) => Promise<boolean>
   dedent: (id: string) => Promise<boolean>
@@ -139,10 +182,12 @@ export interface UseBlockKeyboardHandlersReturn {
 export function useBlockKeyboardHandlers({
   focusedBlockId,
   collapsedVisible,
+  blocks,
   rovingEditor,
   setFocused,
   handleFlush,
   remove,
+  moveBlocks,
   edit,
   indent,
   dedent,
@@ -332,6 +377,16 @@ export function useBlockKeyboardHandlers({
       removeLogBlockId: string
       onEditFailureCleanup: () => void
       onRemoveFailureCleanup: () => void
+      /**
+       * #1342 — reparent the merged-away block's children onto the merge
+       * target. Runs AFTER the content edit commits but BEFORE the source
+       * block is removed, so the children are no longer descendants of the
+       * removed block when the backend's `delete_block` cascade fires (it
+       * would otherwise soft-delete the whole subtree). A no-op when the
+       * source has no children. Failures are treated like a remove failure
+       * (the edit is reverted) so the merge does not commit a half-state.
+       */
+      reparentChildren?: () => Promise<void>
     }): Promise<boolean> => {
       try {
         await edit(params.prevBlockId, params.mergedContent)
@@ -347,6 +402,37 @@ export function useBlockKeyboardHandlers({
         params.onEditFailureCleanup()
         notify.error(t('blockTree.mergeBlocksFailed'))
         return false
+      }
+      // #1342 — reparent the source block's children onto the merge target
+      // BEFORE removing the source, so the backend's delete cascade does not
+      // soft-delete the subtree. Treated as a remove-step failure on error:
+      // the edit is reverted and the merge does not commit a partial state.
+      if (params.reparentChildren) {
+        try {
+          await params.reparentChildren()
+        } catch (err) {
+          logger.error(
+            'useBlockKeyboardHandlers',
+            params.removeLogMessage,
+            {
+              blockId: params.removeLogBlockId,
+            },
+            err,
+          )
+          await edit(params.prevBlockId, params.prevContent).catch((revertErr: unknown) => {
+            logger.warn(
+              'useBlockKeyboardHandlers',
+              'Failed to revert edit after merge failure',
+              {
+                blockId: params.prevBlockId,
+              },
+              revertErr,
+            )
+          })
+          params.onRemoveFailureCleanup()
+          notify.error(t('blockTree.mergeBlocksFailed'))
+          return false
+        }
       }
       try {
         await remove(params.removeBlockId)
@@ -395,6 +481,12 @@ export function useBlockKeyboardHandlers({
     const prevDoc = parse(prevContent)
     const joinPoint = pmEndOfFirstBlock(prevDoc)
 
+    // #1342 — if the merged-away block has children, reparent them onto the
+    // merge target before it is removed (otherwise the backend cascade soft-
+    // deletes the whole subtree). Plan from the FULL flat tree, not the
+    // collapsed/visible projection.
+    const reparent = planChildReparent(blocks, focusedBlockId, prevBlock.id)
+
     const remount = () => rovingEditorRef.current.mount(focusedBlockId, currentContent)
     const ok = await mergeBlocksAndHandle({
       prevBlockId: prevBlock.id,
@@ -407,6 +499,9 @@ export function useBlockKeyboardHandlers({
       removeLogBlockId: focusedBlockId,
       onEditFailureCleanup: remount,
       onRemoveFailureCleanup: remount,
+      ...(reparent && {
+        reparentChildren: () => moveBlocks(reparent.childIds, prevBlock.id, reparent.newIndex),
+      }),
     })
     if (!ok) return
 
@@ -432,7 +527,7 @@ export function useBlockKeyboardHandlers({
         editor.commands.setTextSelection(pmPos)
       }
     }, 0)
-  }, [focusedBlockId, collapsedVisible, mergeBlocksAndHandle, setFocused])
+  }, [focusedBlockId, collapsedVisible, blocks, moveBlocks, mergeBlocksAndHandle, setFocused])
 
   const handleMergeById = useCallback(
     async (blockId: string) => {
@@ -455,6 +550,10 @@ export function useBlockKeyboardHandlers({
         }
       }
 
+      // #1342 — reparent the merged-away block's children onto the merge
+      // target before removal (see handleMergeWithPrev).
+      const reparent = planChildReparent(blocks, blockId, prevBlock.id)
+
       const ok = await mergeBlocksAndHandle({
         prevBlockId: prevBlock.id,
         removeBlockId: blockId,
@@ -466,13 +565,16 @@ export function useBlockKeyboardHandlers({
         removeLogBlockId: blockId,
         onEditFailureCleanup: remountIfNeeded,
         onRemoveFailureCleanup: remountIfNeeded,
+        ...(reparent && {
+          reparentChildren: () => moveBlocks(reparent.childIds, prevBlock.id, reparent.newIndex),
+        }),
       })
       if (!ok) return
 
       setFocused(prevBlock.id)
       rovingEditorRef.current.mount(prevBlock.id, mergedContent)
     },
-    [collapsedVisible, focusedBlockId, mergeBlocksAndHandle, setFocused],
+    [collapsedVisible, blocks, moveBlocks, focusedBlockId, mergeBlocksAndHandle, setFocused],
   )
 
   // Re-entrancy guard: prevents rapid Backspace presses from duplicating deletes.

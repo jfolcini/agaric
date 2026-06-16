@@ -37,6 +37,13 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockKeyboar
       makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
       makeBlock({ id: 'C', depth: 0, content: 'Charlie' }),
     ],
+    // #1342 — full flat tree (default mirrors collapsedVisible; merge tests
+    // that exercise reparenting override this with a tree that has children).
+    blocks: [
+      makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+      makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
+      makeBlock({ id: 'C', depth: 0, content: 'Charlie' }),
+    ],
     rovingEditor: {
       editor: null as null,
       // #976 f22 — `mount` updates `activeBlockId` to mirror the real roving
@@ -53,6 +60,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockKeyboar
     setFocused: vi.fn(),
     handleFlush: vi.fn(() => null as string | null),
     remove: vi.fn(async () => {}),
+    moveBlocks: vi.fn(async () => {}),
     edit: vi.fn(async () => true),
     indent: vi.fn(async () => true),
     dedent: vi.fn(async () => true),
@@ -647,6 +655,170 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
 
     expect(params.edit).toHaveBeenCalledTimes(1)
     expect(params.remove).not.toHaveBeenCalled()
+  })
+
+  // ------------------------------------------------------------------------
+  // #1342 — Backspace-merge of a block that HAS CHILDREN must reparent the
+  // children onto the merge target before the source is removed, instead of
+  // letting the backend's delete cascade soft-delete the whole subtree.
+  // ------------------------------------------------------------------------
+  describe('reparents children on merge (#1342)', () => {
+    it('reparents an expanded parent’s children onto the merge target before remove', async () => {
+      const params = makeDefaultParams()
+      // Source B (focused, expanded) has two children B1, B2; merge target A
+      // (the previous VISIBLE block) already has one child A1, which is the
+      // last visible row before B — so the children append AFTER it (slot 1).
+      params.blocks = [
+        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+        makeBlock({ id: 'A1', depth: 1, content: 'A-one', parent_id: 'A' }),
+        makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
+        makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
+        makeBlock({ id: 'B2', depth: 1, content: 'B-two', parent_id: 'B' }),
+      ]
+      params.collapsedVisible = params.blocks
+      // Focus the source B (flat index 2), not the A1 row above it.
+      params.focusedBlockId = 'B'
+      params.rovingEditor.unmount = vi.fn(() => 'Beta')
+
+      const callOrder: string[] = []
+      params.moveBlocks = vi.fn(async () => {
+        callOrder.push('moveBlocks')
+      })
+      params.remove = vi.fn(async () => {
+        callOrder.push('remove')
+      })
+
+      const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+      await act(async () => {
+        await result.current.handleMergeWithPrev()
+      })
+
+      // The previous VISIBLE block before B is A1, so the text merges there
+      // and B's children reparent onto A1 (which has no children yet → slot 0).
+      expect(params.edit).toHaveBeenCalledWith('A1', 'A-oneBeta')
+      expect(params.moveBlocks).toHaveBeenCalledWith(['B1', 'B2'], 'A1', 0)
+      // Reparent happens BEFORE the source block is removed (so the cascade
+      // cannot soft-delete the now-moved subtree).
+      expect(callOrder).toEqual(['moveBlocks', 'remove'])
+      expect(params.remove).toHaveBeenCalledWith('B')
+      expect(params.setFocused).toHaveBeenCalledWith('A1')
+    })
+
+    it('appends after the merge target’s existing children (slot = child count)', async () => {
+      const params = makeDefaultParams()
+      // Merge target A already has one direct child A1 (collapsed away), so B's
+      // children land at slot 1 — after A1 — preserving the survivor's tail.
+      params.blocks = [
+        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+        makeBlock({ id: 'A1', depth: 1, content: 'A-one', parent_id: 'A' }),
+        makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
+        makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
+      ]
+      params.collapsedVisible = [
+        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+        makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
+      ]
+      params.focusedBlockId = 'B'
+      params.rovingEditor.unmount = vi.fn(() => 'Beta')
+
+      const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+      await act(async () => {
+        await result.current.handleMergeWithPrev()
+      })
+
+      expect(params.edit).toHaveBeenCalledWith('A', 'AlphaBeta')
+      expect(params.moveBlocks).toHaveBeenCalledWith(['B1'], 'A', 1)
+    })
+
+    it('reparents the children of a COLLAPSED parent (hidden from the visible projection)', async () => {
+      const params = makeDefaultParams()
+      // B is collapsed: its children are absent from collapsedVisible but
+      // present in the full flat tree. The reparent must still find them.
+      params.blocks = [
+        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+        makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
+        makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
+        makeBlock({ id: 'B2', depth: 1, content: 'B-two', parent_id: 'B' }),
+      ]
+      params.collapsedVisible = [
+        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+        makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
+      ]
+      params.rovingEditor.unmount = vi.fn(() => 'Beta')
+
+      const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+      await act(async () => {
+        await result.current.handleMergeWithPrev()
+      })
+
+      // A has no children, so the run lands at slot 0.
+      expect(params.moveBlocks).toHaveBeenCalledWith(['B1', 'B2'], 'A', 0)
+      expect(params.remove).toHaveBeenCalledWith('B')
+    })
+
+    it('does NOT reparent when the merged-away block is childless', async () => {
+      const params = makeDefaultParams()
+      params.rovingEditor.unmount = vi.fn(() => 'Beta')
+      const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+      await act(async () => {
+        await result.current.handleMergeWithPrev()
+      })
+
+      expect(params.moveBlocks).not.toHaveBeenCalled()
+      expect(params.remove).toHaveBeenCalledWith('B')
+    })
+
+    it('aborts the merge (reverts edit, does not remove) when the reparent fails', async () => {
+      const params = makeDefaultParams()
+      params.blocks = [
+        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+        makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
+        makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
+      ]
+      params.collapsedVisible = [
+        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+        makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
+      ]
+      params.rovingEditor.unmount = vi.fn(() => 'Beta')
+      params.moveBlocks = vi.fn(async () => {
+        throw new Error('reparent failed')
+      })
+
+      const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+      await act(async () => {
+        await result.current.handleMergeWithPrev()
+      })
+
+      // Edit committed then reverted; the source is NOT removed (children safe).
+      expect(params.edit).toHaveBeenNthCalledWith(1, 'A', 'AlphaBeta')
+      expect(params.edit).toHaveBeenNthCalledWith(2, 'A', 'Alpha')
+      expect(params.remove).not.toHaveBeenCalled()
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.mergeBlocksFailed')
+    })
+
+    it('handleMergeById reparents the merged-away block’s children too', async () => {
+      const params = makeDefaultParams({ focusedBlockId: null })
+      params.blocks = [
+        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+        makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
+        makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
+        makeBlock({ id: 'B2', depth: 1, content: 'B-two', parent_id: 'B' }),
+      ]
+      params.collapsedVisible = [
+        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+        makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
+      ]
+
+      const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+      await act(async () => {
+        await result.current.handleMergeById('B')
+      })
+
+      expect(params.edit).toHaveBeenCalledWith('A', 'AlphaBeta')
+      expect(params.moveBlocks).toHaveBeenCalledWith(['B1', 'B2'], 'A', 0)
+      expect(params.remove).toHaveBeenCalledWith('B')
+    })
   })
 
   // ------------------------------------------------------------------------
