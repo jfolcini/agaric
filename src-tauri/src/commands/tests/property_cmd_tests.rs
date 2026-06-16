@@ -6010,7 +6010,7 @@ async fn set_todo_state_batch_rejects_oversize_list() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+    let oversize: Vec<String> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
         .map(|i| format!("ID{i}"))
         .collect();
     let result = set_todo_state_batch_inner(

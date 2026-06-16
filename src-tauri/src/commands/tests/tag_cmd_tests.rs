@@ -800,7 +800,7 @@ async fn add_tags_by_ids_rejects_oversize_list() {
     let mat = Materializer::new(pool.clone());
     insert_block(&pool, "ABI5_TAG", "tag", "urgent", None, None).await;
 
-    let oversize: Vec<BlockId> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+    let oversize: Vec<BlockId> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
         .map(|i| BlockId::from(format!("ABI5_{i:026}")))
         .collect();
     let result = add_tags_by_ids_inner(&pool, DEV, &mat, oversize, "ABI5_TAG".into()).await;

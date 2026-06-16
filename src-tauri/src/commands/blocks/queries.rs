@@ -581,7 +581,7 @@ pub async fn first_child_for_blocks(
 ///      that intentionally wants to surface tombstoned rows.
 ///
 /// Empty input rejects with [`AppError::Validation`] (mirrors
-/// [`batch_resolve_inner`]). Above [`crate::commands::properties::MAX_BATCH_BLOCK_IDS`]
+/// [`batch_resolve_inner`]). Above [`crate::commands::MAX_BATCH_BLOCK_IDS`]
 /// entries rejects with [`AppError::Validation`] (mirrors every other
 /// batch boundary in this surface).
 ///
@@ -594,7 +594,7 @@ pub async fn first_child_for_blocks(
 ///
 /// - [`AppError::Validation`] — `ids` is empty
 /// - [`AppError::Validation`] — `ids.len()` >
-///   [`crate::commands::properties::MAX_BATCH_BLOCK_IDS`]
+///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
 #[instrument(skip(pool, ids), err)]
 pub async fn get_blocks_inner(
     pool: &SqlitePool,
@@ -603,13 +603,7 @@ pub async fn get_blocks_inner(
     if ids.is_empty() {
         return Err(AppError::Validation("ids list cannot be empty".into()));
     }
-    if ids.len() > crate::commands::properties::MAX_BATCH_BLOCK_IDS {
-        return Err(AppError::Validation(format!(
-            "ids length {} exceeds maximum {}",
-            ids.len(),
-            crate::commands::properties::MAX_BATCH_BLOCK_IDS,
-        )));
-    }
+    crate::commands::ensure_batch_within_cap("ids", ids.len())?;
     // #107: re-derive owned String form for the JSON membership probe below.
     let ids: Vec<String> = ids.into_iter().map(BlockId::into_string).collect();
     let ids_json = serde_json::to_string(&ids)?;

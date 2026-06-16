@@ -600,13 +600,7 @@ pub async fn delete_blocks_by_ids_inner(
             "block_ids list cannot be empty".into(),
         ));
     }
-    if block_ids.len() > crate::commands::properties::MAX_BATCH_BLOCK_IDS {
-        return Err(AppError::Validation(format!(
-            "block_ids length {} exceeds maximum {}",
-            block_ids.len(),
-            crate::commands::properties::MAX_BATCH_BLOCK_IDS,
-        )));
-    }
+    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
 
     // #107: BlockId already normalises to uppercase on construction; re-derive
     // owned String form for the SQL membership probe below.
@@ -807,7 +801,7 @@ pub async fn delete_blocks_by_ids(
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — empty input list, > [`MAX_BATCH_BLOCK_IDS`](crate::commands::properties::MAX_BATCH_BLOCK_IDS) entries, or `space_id` is not a live space block
+/// - [`AppError::Validation`] — empty input list, > [`MAX_BATCH_BLOCK_IDS`](crate::commands::MAX_BATCH_BLOCK_IDS) entries, or `space_id` is not a live space block
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
 pub async fn move_blocks_to_space_inner(
     pool: &SqlitePool,
@@ -816,19 +810,12 @@ pub async fn move_blocks_to_space_inner(
     block_ids: Vec<BlockId>,
     space_id: String,
 ) -> Result<i64, AppError> {
-    use crate::commands::properties::MAX_BATCH_BLOCK_IDS;
-
     if block_ids.is_empty() {
         return Err(AppError::Validation(
             "block_ids list cannot be empty".into(),
         ));
     }
-    if block_ids.len() > MAX_BATCH_BLOCK_IDS {
-        return Err(AppError::Validation(format!(
-            "block_ids length {} exceeds maximum {MAX_BATCH_BLOCK_IDS}",
-            block_ids.len()
-        )));
-    }
+    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
 
     // #107: BlockId normalises to uppercase on construction; re-derive owned
     // String form. `space_id` (SpaceId, separate type) is still a String arg
@@ -1503,7 +1490,7 @@ pub async fn purge_all_deleted_inner(
 /// to 32766 so we'd be nowhere near it at 1000, but the cap exists to
 /// protect against a runaway frontend selecting 100k rows and stalling a
 /// writer transaction.
-use crate::commands::properties::MAX_BATCH_BLOCK_IDS;
+use crate::commands::MAX_BATCH_BLOCK_IDS;
 
 /// PEND-35 Tier 2.2 — restore N soft-deleted blocks (and their cascaded
 /// descendants) in a single IMMEDIATE transaction.
@@ -2170,12 +2157,7 @@ pub async fn create_blocks_batch_inner(
     if specs.is_empty() {
         return Err(AppError::Validation("specs list cannot be empty".into()));
     }
-    if specs.len() > MAX_BATCH_BLOCK_IDS {
-        return Err(AppError::Validation(format!(
-            "specs length {} exceeds maximum {MAX_BATCH_BLOCK_IDS}",
-            specs.len(),
-        )));
-    }
+    crate::commands::ensure_batch_within_cap("specs", specs.len())?;
 
     let mut tx = CommandTx::begin_immediate(pool, "create_blocks_batch").await?;
 

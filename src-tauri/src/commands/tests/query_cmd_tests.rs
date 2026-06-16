@@ -4073,7 +4073,7 @@ async fn get_blocks_rejects_empty_oversize() {
         "empty input must reject with Validation"
     );
 
-    let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+    let oversize: Vec<String> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
         .map(|i| format!("ID{i}"))
         .collect();
     let big = get_blocks_inner(
