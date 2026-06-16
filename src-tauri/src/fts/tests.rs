@@ -1,4 +1,3 @@
-use super::strip::strip_for_fts_with_maps;
 use super::*;
 use crate::db::init_pool;
 use crate::error::AppError;
@@ -6,6 +5,20 @@ use crate::pagination::{Cursor, PageRequest};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use tempfile::TempDir;
+
+/// #1321 — test shim. `strip_for_fts_with_maps` now takes a `block_id` first
+/// argument (threaded so the FTS truncation warning can name the offending
+/// block). The dozens of strip-semantics tests below don't care about the
+/// block id, so this wrapper injects a fixed placeholder and keeps their call
+/// sites unchanged. Tests that exercise the truncation warning itself call the
+/// real `super::strip::strip_for_fts_with_maps` directly with a meaningful id.
+fn strip_for_fts_with_maps(
+    content: &str,
+    tag_names: &HashMap<String, String>,
+    page_titles: &HashMap<String, String>,
+) -> String {
+    super::strip::strip_for_fts_with_maps("test-block", content, tag_names, page_titles)
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -262,13 +275,22 @@ fn strip_caps_pathological_block_indexed_length() {
     let tag_names = HashMap::new();
     let page_titles = HashMap::new();
 
-    // A small block is untouched.
-    let small = strip_for_fts_with_maps("just a normal note", &tag_names, &page_titles);
+    // A small (sub-cap) block is returned unchanged. Call the real function
+    // directly with a named block_id so we exercise the #1321 signature.
+    let small = super::strip::strip_for_fts_with_maps(
+        "blk-small",
+        "just a normal note",
+        &tag_names,
+        &page_titles,
+    );
     assert_eq!(small, "just a normal note");
 
-    // A 1 MB multibyte block (`é` = 2 bytes) is capped at a char boundary.
+    // A 1 MB multibyte block (`é` = 2 bytes) is capped at a char boundary. The
+    // #1321 truncation warning fires here (naming `blk-big`, original vs indexed
+    // bytes) — we assert on the truncation length behaviour rather than the log
+    // line, as `tracing-test` is not a dev-dependency.
     let big = "é".repeat(512 * 1024); // 1 MiB of valid UTF-8
-    let capped = strip_for_fts_with_maps(&big, &tag_names, &page_titles);
+    let capped = super::strip::strip_for_fts_with_maps("blk-big", &big, &tag_names, &page_titles);
     assert!(
         capped.len() <= 128 * 1024,
         "indexed text must be capped at 128 KiB; got {}",
@@ -4005,7 +4027,6 @@ async fn update_fts_for_block_with_maps_removes_deleted_block() {
 
 #[test]
 fn strip_inline_markup_combined_matches_chain_semantics() {
-    use super::strip::strip_for_fts_with_maps;
     let tag_names: HashMap<String, String> = HashMap::new();
     let page_titles: HashMap<String, String> = HashMap::new();
 

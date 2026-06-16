@@ -171,7 +171,7 @@ pub async fn update_fts_for_block_with_maps(
         Some(r) => {
             // Active block with content — strip via pre-loaded maps and index.
             let content = r.content.unwrap();
-            let stripped = strip_for_fts_with_maps(&content, tag_names, page_titles);
+            let stripped = strip_for_fts_with_maps(block_id, &content, tag_names, page_titles);
 
             // Delete existing entry
             sqlx::query!("DELETE FROM fts_blocks WHERE block_id = ?", block_id)
@@ -249,7 +249,7 @@ pub async fn update_fts_for_block_split_with_maps(
 
     // Phase 1b: Strip content using pre-loaded maps (no read pool round-trip).
     let content = row.unwrap().content.unwrap();
-    let stripped = strip_for_fts_with_maps(&content, tag_names, page_titles);
+    let stripped = strip_for_fts_with_maps(block_id, &content, tag_names, page_titles);
 
     // Phase 2b: Write — minimal transaction
     let mut tx = crate::db::begin_immediate_logged(write_pool, "fts_update_block_write").await?;
@@ -379,7 +379,7 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
             if row.deleted_at.is_none()
                 && let Some(content) = row.content.as_deref()
             {
-                let stripped = strip_for_fts_with_maps(content, &tag_names, &page_titles);
+                let stripped = strip_for_fts_with_maps(&row.id, content, &tag_names, &page_titles);
                 to_insert.push((row.id.to_owned(), stripped));
             }
         }
@@ -470,7 +470,7 @@ async fn rebuild_fts_index_impl(pool: &SqlitePool) -> Result<u64, AppError> {
         let mut to_insert: Vec<(String, String)> = Vec::with_capacity(chunk.len());
         for row in chunk {
             let content = row.content.as_deref().unwrap_or("");
-            let stripped = strip_for_fts_with_maps(content, &tag_names, &page_titles);
+            let stripped = strip_for_fts_with_maps(&row.id, content, &tag_names, &page_titles);
             to_insert.push((row.id.clone(), stripped));
         }
         let mut tx = crate::db::begin_immediate_logged(pool, "fts_rebuild_index_chunk").await?;
@@ -541,7 +541,7 @@ async fn rebuild_fts_index_split_impl(
         let mut to_insert: Vec<(String, String)> = Vec::with_capacity(chunk.len());
         for row in chunk {
             let content = row.content.as_deref().unwrap_or("");
-            let stripped = strip_for_fts_with_maps(content, &tag_names, &page_titles);
+            let stripped = strip_for_fts_with_maps(&row.id, content, &tag_names, &page_titles);
             to_insert.push((row.id.clone(), stripped));
         }
         let mut tx =
