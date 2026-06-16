@@ -40,6 +40,20 @@ The hooks shell out to a handful of host-installed binaries (lychee, typos-cli, 
 
 Opening the repo in VS Code prompts you to install the workspace-recommended extensions (declared in the tracked [`.vscode/extensions.json`](.vscode/extensions.json)): the OXC extension (`oxc.oxc-vscode`) for oxlint/oxfmt, rust-analyzer (`rust-lang.rust-analyzer`), and Even Better TOML (`tamasfe.even-better-toml`) for taplo. These match the project's toolchain — installing the default Prettier/ESLint extensions instead will fight the repo's formatters. Per-user `.vscode/settings.json` stays local (gitignored).
 
+### Optional: code-review-graph MCP
+
+[AGENTS.md](AGENTS.md) asks AI agents working in this repo to prefer the **code-review-graph** MCP tools (graph queries, impact radius, review context) over raw Grep/Glob/Read. That MCP is **optional** — it is only needed if you drive the repo with an MCP-aware agent, and human contributors can skip it entirely.
+
+It is wired in the tracked [`.mcp.json`](.mcp.json), which launches the server via [`uvx`](https://docs.astral.sh/uv/) (part of the `uv` Python tool runner):
+
+```bash
+# Prerequisite: install uv (which provides uvx). See https://docs.astral.sh/uv/.
+# .mcp.json then starts the server on demand with:
+uvx code-review-graph serve
+```
+
+`uvx` fetches and runs `code-review-graph` without a separate global install, so once `uv` is on your `PATH` no extra setup is required. The server must be **running** for the AGENTS.md "use the graph first" workflow to apply; if it is not available, agents simply fall back to Grep/Glob/Read.
+
 ## Development workflow
 
 ```bash
