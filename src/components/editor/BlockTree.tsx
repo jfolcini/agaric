@@ -75,6 +75,7 @@ import { useBlockTreeKeyboardShortcuts } from '@/hooks/useBlockTreeKeyboardShort
 import { useBlockZoom } from '@/hooks/useBlockZoom'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
+import { useViewportWindow } from '@/hooks/useViewportWindow'
 import { serializeBlockSubtree } from '@/lib/block-clipboard'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
@@ -326,6 +327,17 @@ export function BlockTree({
 
   const viewport = useViewportObserver()
 
+  // #1268 — the page's block list is rendered windowed (off-screen rows become
+  // placeholders), but the per-page batch metadata IPCs (properties, links,
+  // attachments) historically fetched for EVERY block, so a single edit on a
+  // large page re-issued an O(N) IPC + O(N) reconciliation for the whole page.
+  // Scope those fetches to the rows actually inside the viewport window (plus
+  // the observer's rootMargin) by reusing the SAME viewport source the renderer
+  // uses — no parallel windowing mechanism. A block scrolled into view re-enters
+  // this set and gets its metadata resolved lazily; the downstream hooks keep
+  // their signature/contentSignature guards and reference-stable maps intact.
+  const windowedBlocks = useViewportWindow(viewport, blocks)
+
   // ── Date picker hook ───────────────────────────────────────────────
   const {
     datePickerOpen,
@@ -496,12 +508,16 @@ export function BlockTree({
 
   // Scan loaded blocks for [[ULID]] tokens not yet in the resolve cache
   // and batch-fetch them. See `useBlockLinkResolve` for the cache-scope
-  // and FEAT-3p7 rationale.
-  useBlockLinkResolve(blocks)
+  // and FEAT-3p7 rationale. #1268 — scoped to the viewport window so a
+  // single edit on a large page no longer re-scans + re-resolves the whole
+  // page; a row scrolled into view enters `windowedBlocks` and resolves then.
+  useBlockLinkResolve(windowedBlocks)
 
   // Per-block "extra" properties (everything except the four built-in
-  // todo/priority/due/scheduled fields) for the row-rendering UI.
-  const blockProperties = useBlockPropertiesBatch(blocks)
+  // todo/priority/due/scheduled fields) for the row-rendering UI. #1268 —
+  // windowed to the viewport so a single edit no longer re-issues a
+  // batch-properties IPC for every block on the page.
+  const blockProperties = useBlockPropertiesBatch(windowedBlocks)
 
   // ── Editor flush callback (split + checkbox/todo persistence) ──────
   const handleFlush = useBlockFlush({
@@ -863,10 +879,13 @@ export function BlockTree({
   })
 
   // ── Batch attachment counts (MAINT-131) ─────────────────────────────
-  // Single IPC for the whole page that publishes block_id → count to all
-  // SortableBlock descendants, replacing N per-row `listAttachments` IPCs
-  // for the badge count.
-  const allBlockIds = useMemo(() => blocks.map((b) => b.id), [blocks])
+  // Single IPC that publishes block_id → count to all SortableBlock
+  // descendants, replacing N per-row `listAttachments` IPCs for the badge
+  // count. #1268 — scoped to the viewport window (`windowedBlocks`) rather
+  // than the whole page; a row scrolled into view enters the window and its
+  // attachment counts/list resolve then, instead of fetching for all N rows
+  // up front on a large page.
+  const windowedBlockIds = useMemo(() => windowedBlocks.map((b) => b.id), [windowedBlocks])
 
   if (loading) {
     return (
@@ -889,7 +908,7 @@ export function BlockTree({
   const measuring = DND_MEASURING
 
   return (
-    <BatchAttachmentsProvider blockIds={allBlockIds}>
+    <BatchAttachmentsProvider blockIds={windowedBlockIds}>
       <BlockZoomBar
         breadcrumbs={zoomBreadcrumb}
         onNavigate={handleZoomIn}

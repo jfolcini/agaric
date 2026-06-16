@@ -56,6 +56,27 @@ export interface ViewportObserver {
    * off-screen state and on unmount-driven clears for that id.
    */
   subscribe: (id: string, callback: () => void) => () => void
+  /**
+   * Subscribe to *any* off-screen membership change across all blocks
+   * (#1268). Unlike `subscribe(id, …)`, this fires once — coalesced into a
+   * microtask — after a batch of flips settles, regardless of which ids
+   * flipped. Pairs with `getWindowVersion()` as a `useSyncExternalStore`
+   * source for a single BlockTree-level consumer (the metadata windowing
+   * hook) that needs to recompute the visible id set when scrolling reveals
+   * or hides rows. Coalescing keeps a single scroll tick (which flips many
+   * ids) from firing the global subscriber N times — it fires at most once
+   * per microtask. Returns an unsubscribe function. Per-id `subscribe`
+   * remains the path for per-row re-renders; this does NOT replace it.
+   */
+  subscribeWindow: (callback: () => void) => () => void
+  /**
+   * Monotonic counter that increments whenever off-screen membership
+   * changes (#1268). Use as the `getSnapshot` for `subscribeWindow` in
+   * `useSyncExternalStore`: a stable primitive that changes iff the window
+   * moved, so the consumer recomputes only on real viewport movement, not
+   * on every render.
+   */
+  getWindowVersion: () => number
 }
 
 export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver {
@@ -76,13 +97,47 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
   const pendingPruneRef = useRef<Set<string>>(new Set())
   /** id → per-id `useSyncExternalStore` subscribers to notify on a membership flip. */
   const subscribersRef = useRef<Map<string, Set<() => void>>>(new Map())
+  /**
+   * #1268 — BlockTree-level subscribers fired (coalesced) on *any* membership
+   * flip, so the metadata windowing hook can recompute the visible id set when
+   * scrolling reveals/hides rows. Kept separate from the per-id `subscribers`
+   * so a single block's flip still re-renders only that row (#1067).
+   */
+  const windowSubscribersRef = useRef<Set<() => void>>(new Set())
+  /** Monotonic window-version; bumped on every membership flip (#1268). */
+  const windowVersionRef = useRef(0)
+  /** True while a coalesced window-notification microtask is already queued. */
+  const windowNotifyScheduledRef = useRef(false)
+
+  /**
+   * Bump the window version and schedule a single coalesced notification of
+   * the global window subscribers (#1268). A scroll tick flips many ids at
+   * once; we want the windowing hook to recompute the visible set ONCE after
+   * the batch settles, not once per flipped id. The version bumps
+   * synchronously (so a `getSnapshot` read after the flip is fresh), but the
+   * subscriber callbacks fire on a microtask, deduped via the scheduled flag.
+   */
+  const notifyWindow = useCallback((): void => {
+    windowVersionRef.current += 1
+    if (windowNotifyScheduledRef.current) return
+    windowNotifyScheduledRef.current = true
+    queueMicrotask(() => {
+      windowNotifyScheduledRef.current = false
+      for (const cb of windowSubscribersRef.current) cb()
+    })
+  }, [])
 
   /** Notify only the subscribers registered for `id` (a single flipped block). */
-  const notify = useCallback((id: string): void => {
-    const subs = subscribersRef.current.get(id)
-    if (!subs) return
-    for (const cb of subs) cb()
-  }, [])
+  const notify = useCallback(
+    (id: string): void => {
+      // Every per-id flip is also a window movement (#1268).
+      notifyWindow()
+      const subs = subscribersRef.current.get(id)
+      if (!subs) return
+      for (const cb of subs) cb()
+    },
+    [notifyWindow],
+  )
 
   useEffect(() => {
     // Capture the (stable) pending-prune set for the cleanup closure — the ref
@@ -204,6 +259,15 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
     }
   }, [])
 
+  const subscribeWindow = useCallback((callback: () => void) => {
+    windowSubscribersRef.current.add(callback)
+    return () => {
+      windowSubscribersRef.current.delete(callback)
+    }
+  }, [])
+
+  const getWindowVersion = useCallback(() => windowVersionRef.current, [])
+
   // Memoize the returned observer object so its identity is PERMANENTLY stable
   // across renders (#1067). All four members are `[]`/`[notify]`-keyed and
   // `notify` itself is `[]`-keyed, so nothing here ever changes after the first
@@ -213,7 +277,14 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
   // churning this object's identity and invalidating ALL N `React.memo`'d
   // wrappers every scroll tick (design-system-perf-review-2026-05-09.md item 5).
   return useMemo<ViewportObserver>(
-    () => ({ createObserveRef, isOffscreen, getHeight, subscribe }),
-    [createObserveRef, isOffscreen, getHeight, subscribe],
+    () => ({
+      createObserveRef,
+      isOffscreen,
+      getHeight,
+      subscribe,
+      subscribeWindow,
+      getWindowVersion,
+    }),
+    [createObserveRef, isOffscreen, getHeight, subscribe, subscribeWindow, getWindowVersion],
   )
 }
