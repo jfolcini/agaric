@@ -593,6 +593,40 @@ pass_filenames = false
 always_run = true
 stages = ["pre-commit", "pre-push"]
 
+# Rust: tauri-specta 10-argument ceiling guard (#1317). The tauri-specta IPC
+# bridge codegen has a HARD 10-argument limit per `#[tauri::command]`, and a
+# `State<'_, T>` param counts toward it (it costs a Rust signature slot even
+# though it doesn't appear in bindings.ts). This ceiling is documented in
+# src-tauri/src/commands/AGENTS.md § "tauri-specta 10-argument ceiling" with
+# the WriteCtx bundling solution (#1056) — but until #1317 NOTHING enforced
+# it: an 11-param command compiled cleanly and failed only later, at specta-
+# export / IPC time. This hook scans `src-tauri/src/commands/**/*.rs` for
+# every `#[tauri::command]` fn, counts ALL declared params (conservatively
+# including State, parsed across multiline sigs with bracket-depth counting),
+# and fails any command over 10. Comment-stripping is shared with
+# check-raw-tx.py. Rules live in scripts/check-command-arity.py.
+[[repos.hooks]]
+id = "check-command-arity"
+name = "tauri-specta 10-arg ceiling guard (#1317)"
+entry = "python3 scripts/check-command-arity.py"
+language = "system"
+files = '^src-tauri/src/commands/.*\.rs$'
+stages = ["pre-commit", "pre-push"]
+
+# #1317: the arity parser must survive multiline signatures, nested generics /
+# tuples / closures (which must NOT inflate the param count), attribute args,
+# and commented-out attributes. This companion hook runs the guard's own
+# fixture suite (`--self-test`) so the 10-vs-11 boundary and the bracket-depth
+# param counter cannot silently regress. No file args.
+[[repos.hooks]]
+id = "check-command-arity-self-test"
+name = "tauri-specta arity guard self-test (#1317 fixtures)"
+entry = "python3 scripts/check-command-arity.py --self-test"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit", "pre-push"]
+
 # Rust: space-filter drift guard (#139). Space membership is a first-class
 # `blocks.space_id` column (#533, migration 0086), so the active-space read
 # filter is the canonical guard fragment `(?N IS NULL OR b.space_id = ?N)`

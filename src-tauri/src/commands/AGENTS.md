@@ -33,6 +33,8 @@ Tests call `*_inner` directly with a `test_pool() + TempDir` fixture. The wrappe
 
 The IPC bridge codegen has a hard 10-argument limit per Tauri command. **Tauri `State<'_, T>` params are injected by the runtime, not part of the specta IPC arg list** — so they cost a Rust signature slot but do NOT appear in `bindings.ts` / the TS wrapper. They still count toward the 10-arg Rust ceiling, though.
 
+This ceiling is now mechanically enforced by `scripts/check-command-arity.py` (the `check-command-arity` prek hook): it scans every `#[tauri::command]` under `src-tauri/src/commands/` and fails if any declares more than 10 params (counting `State<'_, T>` conservatively). An over-ceiling command no longer compiles-clean-then-fails-at-export — the guard catches it at commit/push time and points back here.
+
 **#1056 — write commands take ONE `ctx: State<'_, WriteCtx>` (not the old `pool` + `device_id` + `materializer` triple).** `WriteCtx` (`db/pool.rs`) bundles the write pool, device id, and materializer behind cheap `Arc`-backed accessors `ctx.pool()` / `ctx.device_id()` / `ctx.materializer()`, which return exactly the `&SqlitePool` / `&str` / `&Materializer` an `*_inner` core expects. This collapses the 3 base slots to 1, leaving ~9 for user args (and removes the `#[allow(clippy::too_many_arguments)]` the triple used to force on real commands). It is `app.manage()`'d once in `lib.rs::register_managed_state` alongside the standalone `WritePool` / `DeviceId` / `Materializer` states, which are kept for the read-only and partial-triple consumers (`get_device_id`, `sync_cmds`, `link_metadata`/`aliases`/`links`).
 
 When you still need more, bundle args into a request struct with `#[serde(default)]` on every optional field:
