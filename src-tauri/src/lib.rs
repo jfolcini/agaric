@@ -288,12 +288,14 @@ macro_rules! agaric_commands {
 /// Return the current UTC time as an RFC 3339 string with millisecond
 /// precision and a `Z` suffix (e.g. `2025-01-15T12:34:56.789Z`).
 ///
-/// This helper is retained only for non-database log/display use
-/// (per AGENTS.md "Timestamp encoding for new tables"). Database
-/// timestamps are **not** stored as RFC 3339 strings: `op_log.created_at`
-/// is `INTEGER NOT NULL CHECK (created_at >= 0)` epoch-ms (migration
-/// `0079_op_log_created_at_ms.sql`), sourced from `crate::db::now_ms()`
-/// and compared numerically. The reverse-op "find prior op" queries
+/// This helper is retained only for legacy TEXT timestamp columns not yet
+/// migrated to INTEGER epoch-ms (e.g. `property_definitions.created_at`,
+/// written at `commands/properties.rs`) and for non-database log/display
+/// use (per AGENTS.md "Timestamp encoding for new tables"). Timestamp
+/// columns that have been migrated are **not** stored as RFC 3339 strings:
+/// `op_log.created_at` is `INTEGER NOT NULL CHECK (created_at >= 0)`
+/// epoch-ms (migration `0079_op_log_created_at_ms.sql`), sourced from
+/// `crate::db::now_ms()` and compared numerically. The reverse-op "find prior op" queries
 /// (`reverse::block_ops::find_prior_text` / `find_prior_position`,
 /// `reverse::property_ops::find_prior_property`,
 /// `reverse::attachment_ops::reverse_delete_attachment`) rely on that
