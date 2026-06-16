@@ -1732,6 +1732,15 @@
   }
 }
 
+/* #1347: swipe-row slide transition. Driven by the `--duration-fast` token
+   (not a hardcoded duration) so the prefers-reduced-motion block below — which
+   zeroes the token at `:root` — disables the animation for reduced-motion
+   users. An inline `transition` shorthand outranks that block's non-`!important`
+   `*` override, so the transition must live in a class to be overridable. */
+.swipe-content-sliding {
+  transition: transform var(--duration-fast) ease;
+}
+
 /* ── Accessibility: prefers-reduced-motion ─────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   :root {

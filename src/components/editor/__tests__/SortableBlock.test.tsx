@@ -4993,3 +4993,150 @@ describe('SortableBlock selection re-render isolation (#1018)', () => {
     expect(screen.getByTestId('editable-block-ROW_A')).toBeInTheDocument()
   })
 })
+
+// ── #1346 / #1347 / #1349: swipe-row gesture wiring + a11y ──────────────────
+//
+// #1346 — useBlockSwipeActions implements swipe-to-indent/outdent but the call
+//   site passed no options, so the gestures were dead. Assert the options are
+//   now wired to the BlockActions onIndent/onDedent.
+// #1347 — the swipe-slide transition was a hardcoded inline `transform 0.2s`
+//   that outranked the prefers-reduced-motion `*` override. Assert it now
+//   rides a token-driven CSS class with no inline transition.
+// #1349 — the row used the raw `aria-description` attribute; assert it now
+//   references an sr-only span via `aria-describedby`.
+describe('SortableBlock swipe-row gestures & a11y (#1346/#1347/#1349)', () => {
+  const originalMatchMedia = window.matchMedia
+
+  function forceTouch() {
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(pointer: coarse)',
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+    Object.defineProperty(navigator, 'maxTouchPoints', {
+      value: 5,
+      writable: true,
+      configurable: true,
+    })
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+    mockUseBlockSwipeActions.mockImplementation((..._args: unknown[]) => ({
+      translateX: 0,
+      isRevealed: false,
+      thresholdCrossed: false,
+      handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
+      reset: vi.fn(),
+    }))
+  })
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia
+    Object.defineProperty(navigator, 'maxTouchPoints', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+  })
+
+  /** The options object SortableBlock passes as the hook's 2nd argument. */
+  function lastSwipeOptions(): { onIndent?: () => void; onOutdent?: () => void } | undefined {
+    return mockUseBlockSwipeActions.mock.calls.at(-1)?.[1] as
+      | { onIndent?: () => void; onOutdent?: () => void }
+      | undefined
+  }
+
+  it('wires onIndent/onOutdent into useBlockSwipeActions, dispatching to the block actions (#1346)', () => {
+    const onIndent = vi.fn()
+    const onDedent = vi.fn()
+    render(
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn(), onIndent, onDedent }}>
+        <SortableBlock
+          blockId="BLOCK_GEST"
+          content="x"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
+    )
+    const opts = lastSwipeOptions()
+    expect(typeof opts?.onIndent).toBe('function')
+    expect(typeof opts?.onOutdent).toBe('function')
+
+    opts?.onIndent?.()
+    expect(onIndent).toHaveBeenCalledWith('BLOCK_GEST')
+    opts?.onOutdent?.()
+    expect(onDedent).toHaveBeenCalledWith('BLOCK_GEST')
+  })
+
+  it('leaves the swipe gestures disabled when the structural block actions are absent (#1346)', () => {
+    render(
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_NOGEST"
+          content="x"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
+    )
+    const opts = lastSwipeOptions()
+    expect(opts?.onIndent).toBeUndefined()
+    expect(opts?.onOutdent).toBeUndefined()
+  })
+
+  it('drives the swipe-slide transition from a token CSS class, not an inline duration (#1347)', () => {
+    forceTouch()
+    mockUseBlockSwipeActions.mockImplementation((..._args: unknown[]) => ({
+      translateX: -50,
+      isRevealed: false,
+      thresholdCrossed: false,
+      handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
+      reset: vi.fn(),
+    }))
+    render(
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_RM"
+          content="x"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
+    )
+    const content = screen.getByTestId('swipe-content')
+    expect(content.classList.contains('swipe-content-sliding')).toBe(true)
+    // The transform is still inline (dynamic px) but the transition must NOT be:
+    // an inline transition shorthand outranks the reduced-motion `*` override.
+    expect(content.style.transition).toBe('')
+  })
+
+  it('describes the swipe row via aria-describedby + an sr-only span, not raw aria-description (#1349)', () => {
+    forceTouch()
+    render(
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_DESC"
+          content="x"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
+    )
+    const row = screen.getByTestId('sortable-block')
+    expect(row.getAttribute('aria-description')).toBeNull()
+    const descId = row.getAttribute('aria-describedby')
+    expect(descId).toBeTruthy()
+    const desc = document.getElementById(descId as string)
+    expect(desc).not.toBeNull()
+    expect(desc?.className).toContain('sr-only')
+    expect(desc?.textContent?.length).toBeGreaterThan(0)
+  })
+})
