@@ -8,15 +8,12 @@
  */
 
 import type { VirtualItem } from '@tanstack/react-virtual'
-import { FileText, Star, Trash2 } from 'lucide-react'
+import { FileText, Star } from 'lucide-react'
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { HighlightMatch } from '@/components/common/HighlightMatch'
 import { PageTreeItem } from '@/components/pages/PageTreeItem'
-import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { cn } from '@/lib/utils'
 
@@ -51,15 +48,7 @@ export interface PageBrowserRowRendererProps {
   selectedIds: ReadonlySet<string>
   onToggleMultiSelect: (pageId: string, e: React.MouseEvent) => void
   /**
-   * PEND-56 Phase 3 — when `true`, the leaf `page` row is rendered via
-   * `<DensityRow>` (metadata-aware, density-aware). When `false`, the
-   * legacy `PageRow` is rendered unchanged — this is the default until
-   * the `pageBrowser.densityV1` localStorage flag flips.
-   */
-  flagOn: boolean
-  /**
    * PEND-56 Phase 3 — active density mode for the `<DensityRow>` body.
-   * Always passed down; `PageRow` ignores it when `flagOn === false`.
    */
   density: DensityMode
 }
@@ -78,13 +67,11 @@ export function PageBrowserRowRenderer(
   const { row } = props
   if (row.kind === 'header') return <HeaderRow {...props} row={row} />
   if (row.kind === 'tree-page') return <TreePageRow {...props} row={row} />
-  // PEND-56 Phase 3 — gate the new `<DensityRow>` leaf body behind the
-  // `pageBrowser.densityV1` flag (carried as `flagOn`). When the flag
-  // is off the existing `PageRow` renders unchanged; when on, the
-  // density-aware row reads its metadata via a cast through
-  // `PageWithMetadataRow` (the IPC payload is a structural superset).
-  if (props.flagOn) return <DensityPageRow {...props} row={row} />
-  return <PageRow {...props} row={row} />
+  // PEND-56 Phase 3 — leaf `page` rows render via `<DensityRow>`
+  // (metadata-aware, density-aware). The density-aware row reads its
+  // metadata via a cast through `PageWithMetadataRow` (the IPC payload
+  // is a structural superset).
+  return <DensityPageRow {...props} row={row} />
 }
 
 interface HeaderRowProps extends PageBrowserRowRendererProps {
@@ -211,9 +198,9 @@ function TreePageRow({
  * props that `<DensityRow>` expects.
  *
  * The `page` field is typed as `BlockRow` (the grouping hook normalises
- * to it) but, when the `pageBrowser.densityV1` flag is on, the
- * underlying payload is actually a `PageWithMetadataRow`. The two share
- * the `id` / `content` columns by structural overlap, and the metadata
+ * to it) but the underlying payload is actually a `PageWithMetadataRow`
+ * (from `listPagesWithMetadata`). The two share the `id` / `content`
+ * columns by structural overlap, and the metadata
  * fields (`lastModifiedAt`, `inboundLinkCount`, `childBlockCount`,
  * `flags`) live alongside on the same row object — we read them through
  * a typed cast and fall back to safe zero defaults when the cast misses
@@ -246,10 +233,10 @@ function DensityPageRow({
     trimmedFilter !== '' &&
     !matchesSearchFolded(page.content ?? '', trimmedFilter)
 
-  // The grouping hook normalises the payload to `BlockRow`; when the
-  // flag is on, the row object is actually a `PageWithMetadataRow` with
-  // the metadata columns set. Optimistic inserts from the create form
-  // are still raw `BlockRow`s — `?? 0` / `?? false` keeps them safe.
+  // The grouping hook normalises the payload to `BlockRow`; the row
+  // object is actually a `PageWithMetadataRow` with the metadata columns
+  // set. Optimistic inserts from the create form are still raw
+  // `BlockRow`s — `?? 0` / `?? false` keeps them safe.
   const meta = page as unknown as Partial<PageWithMetadataRow>
   const lastModifiedAt = meta.lastModifiedAt ?? null
   const inboundLinkCount = meta.inboundLinkCount ?? 0
@@ -299,125 +286,5 @@ function DensityPageRow({
       onToggleStar={toggleStar}
       onDeleteRequest={onDeleteRequest}
     />
-  )
-}
-
-interface PageRowProps extends PageBrowserRowRendererProps {
-  row: Extract<PageBrowserRow, { kind: 'page' }>
-}
-
-function PageRow({
-  virtualRow,
-  row,
-  measureElement,
-  focusedIndex,
-  filterText,
-  aliasMatchId,
-  deletingId,
-  isStarred,
-  toggleStar,
-  onPageSelect,
-  onDeleteRequest,
-  selectedIds,
-  onToggleMultiSelect,
-}: PageRowProps): React.ReactElement {
-  const { t } = useTranslation()
-  const { page, pageIndex } = row
-  const pageStarred = isStarred(page.id)
-  const multiSelected = selectedIds.has(page.id)
-  const title = page.content ?? t('pageBrowser.untitled')
-  const trimmedFilter = filterText.trim()
-  const showAliasBadge =
-    aliasMatchId === page.id &&
-    trimmedFilter !== '' &&
-    !matchesSearchFolded(page.content ?? '', trimmedFilter)
-  return (
-    <div
-      key={virtualRow.key}
-      // UX-331 — stable id so the grid container's `aria-activedescendant`
-      // can point at this row when keyboard nav lands on it.
-      id={`page-row-${page.id}`}
-      data-index={virtualRow.index}
-      ref={measureElement}
-      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- CSS-grid row inside role="grid"; a real <tr> needs a <table> and breaks the flex layout
-      role="row"
-      aria-selected={focusedIndex === pageIndex}
-      data-page-item
-      data-starred={pageStarred}
-      data-selected={multiSelected}
-      tabIndex={-1}
-      className={cn(
-        'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50',
-        // Row-highlight (background) only — the inner button paints its own
-        // `focus-ring-visible` ring for the actual focus affordance.
-        // Painting a ring here as well stacked two rings on the focused row.
-        focusedIndex === pageIndex && 'bg-accent/30',
-      )}
-      style={rowStyle(virtualRow.start)}
-    >
-      {/* #81 / PEND-57 — batch-selection checkbox (additive to the
-          single-row star/delete flow). */}
-      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to the inner checkbox; CSS-grid cell would break as a <td> without a <table> */}
-      <div role="gridcell" className="shrink-0">
-        <Checkbox
-          checked={multiSelected}
-          onClick={(e) => {
-            e.stopPropagation()
-            onToggleMultiSelect(page.id, e)
-          }}
-          aria-label={t('pageBrowser.select.toggle')}
-          data-testid={`page-select-${page.id}`}
-          className={cn(
-            'shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:opacity-100 transition-opacity',
-            multiSelected && 'opacity-100',
-          )}
-        />
-      </div>
-      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner controls; CSS-grid cell would break as a <td> without a <table> */}
-      <div role="gridcell" className="flex flex-1 items-center gap-3 min-w-0">
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={pageStarred ? t('pageBrowser.unstarPage') : t('pageBrowser.starPage')}
-          className="star-toggle shrink-0 h-6 w-6 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
-          data-starred={pageStarred}
-          onClick={(e) => {
-            e.stopPropagation()
-            toggleStar(page.id)
-          }}
-        >
-          <Star className="h-3.5 w-3.5" fill={pageStarred ? 'currentColor' : 'none'} />
-        </Button>
-        <button
-          type="button"
-          className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-ring-visible focus-visible:ring-inset"
-          onClick={() => onPageSelect?.(page.id, title)}
-        >
-          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="page-browser-item-title truncate" title={title}>
-            <HighlightMatch text={title} filterText={trimmedFilter} />
-            {showAliasBadge && (
-              <span className="alias-badge text-xs text-muted-foreground">(alias)</span>
-            )}
-          </span>
-        </button>
-      </div>
-      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner action buttons; CSS-grid cell would break as a <td> without a <table> */}
-      <div role="gridcell" className="shrink-0">
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label={t('pageBrowser.deleteButton')}
-          className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
-          disabled={deletingId === page.id}
-          onClick={(e) => {
-            e.stopPropagation()
-            onDeleteRequest({ id: page.id, name: title })
-          }}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-    </div>
   )
 }

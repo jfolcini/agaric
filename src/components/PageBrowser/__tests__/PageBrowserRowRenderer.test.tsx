@@ -6,11 +6,9 @@
  *
  *   - `header`    → `HeaderRow`     (section header: Starred / Pages)
  *   - `tree-page` → `TreePageRow`   (recursive `PageTreeItem` wrapper)
- *   - `page`      → `DensityPageRow` when `flagOn`, else legacy `PageRow`
+ *   - `page`      → `DensityPageRow` (metadata-aware, density-aware leaf)
  *
- * These tests drive each branch and the `flagOn` (= `pageBrowser.densityV1`)
- * leaf split. The flag is delivered as a plain prop, so both branches are
- * exercised by toggling `flagOn` directly.
+ * These tests drive each branch.
  *
  * Rows are never rendered standalone in the app — the real viewport is a
  * `role="grid"`. We wrap every render in a `role="grid"` scaffold so the
@@ -85,7 +83,6 @@ function baseProps(
     onPageSelect: vi.fn(),
     onCreateUnder: vi.fn(),
     onDeleteRequest: vi.fn(),
-    flagOn: false,
     density: 'regular',
     selectedIds: new Set<string>(),
     onToggleMultiSelect: vi.fn(),
@@ -102,15 +99,15 @@ function renderRow(props: PageBrowserRowRendererProps) {
   )
 }
 
-describe('PageBrowserRowRenderer — leaf dispatch (pageBrowser.densityV1 flag)', () => {
+describe('PageBrowserRowRenderer — page leaf (DensityRow)', () => {
   const pageRow: Extract<PageBrowserRow, { kind: 'page' }> = {
     kind: 'page',
     page: blockRow({ id: 'leaf-1', content: 'Project Alpha' }),
     pageIndex: 0,
   }
 
-  it('flag-on renders the DensityRow leaf variant (data-density present)', () => {
-    const { container } = renderRow(baseProps(pageRow, { flagOn: true, density: 'regular' }))
+  it('renders the DensityRow leaf variant (data-density present)', () => {
+    const { container } = renderRow(baseProps(pageRow, { density: 'regular' }))
     const densityLeaf = container.querySelector('[data-page-item][data-density="regular"]')
     expect(densityLeaf).not.toBeNull()
     // The DensityRow uses a stable id derived from the page id.
@@ -118,32 +115,10 @@ describe('PageBrowserRowRenderer — leaf dispatch (pageBrowser.densityV1 flag)'
     expect(screen.getByText('Project Alpha')).toBeInTheDocument()
   })
 
-  it('flag-on threads the active density through to the DensityRow body', () => {
-    const { container } = renderRow(baseProps(pageRow, { flagOn: true, density: 'compact' }))
+  it('threads the active density through to the DensityRow body', () => {
+    const { container } = renderRow(baseProps(pageRow, { density: 'compact' }))
     expect(container.querySelector('[data-page-item][data-density="compact"]')).not.toBeNull()
     expect(container.querySelector('[data-page-item][data-density="regular"]')).toBeNull()
-  })
-
-  it('flag-off renders the legacy PageRow leaf variant (no data-density)', () => {
-    const { container } = renderRow(baseProps(pageRow, { flagOn: false }))
-    const legacyLeaf = container.querySelector('[data-page-item]')
-    expect(legacyLeaf).not.toBeNull()
-    // Legacy row never carries the density marker.
-    expect(legacyLeaf?.getAttribute('data-density')).toBeNull()
-    // Legacy row exposes its own star + delete affordances directly.
-    expect(screen.getByRole('button', { name: /star page/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument()
-    expect(screen.getByText('Project Alpha')).toBeInTheDocument()
-  })
-
-  it('legacy PageRow falls back to "Untitled" when content is null', () => {
-    const nullTitleRow: Extract<PageBrowserRow, { kind: 'page' }> = {
-      kind: 'page',
-      page: blockRow({ id: 'leaf-2', content: null }),
-      pageIndex: 0,
-    }
-    renderRow(baseProps(nullTitleRow, { flagOn: false }))
-    expect(screen.getByText('Untitled')).toBeInTheDocument()
   })
 })
 
@@ -241,13 +216,13 @@ describe('PageBrowserRowRenderer — tree-page rows', () => {
 })
 
 describe('PageBrowserRowRenderer — a11y', () => {
-  it('has no a11y violations for a flag-on density leaf row', async () => {
+  it('has no a11y violations for a density leaf row', async () => {
     const pageRow: PageBrowserRow = {
       kind: 'page',
       page: blockRow({ id: 'leaf-axe', content: 'Roadmap' }),
       pageIndex: 0,
     }
-    const { container } = renderRow(baseProps(pageRow, { flagOn: true, density: 'regular' }))
+    const { container } = renderRow(baseProps(pageRow, { density: 'regular' }))
     await waitFor(async () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()

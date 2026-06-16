@@ -3,11 +3,9 @@ import { activePopover, expect, openAddFilter, test, waitForBoot } from './helpe
 /**
  * E2E coverage for PEND-58 — Pages-view compound-filter chip-row.
  *
- * The chip-row is the default Pages experience (the `pageBrowser.densityV1`
- * localStorage flag is now an OPT-OUT: only the literal string `'false'`
- * falls back to the legacy `listBlocks` path). The app reads the flag once at
- * mount, so flag-setting tests register an init script BEFORE `waitForBoot`'s
- * `page.goto('/')`.
+ * The chip-row is the Pages experience: every page row renders via the
+ * metadata-rich `list_pages_with_metadata` path with the compound-filter
+ * chip-row above it.
  *
  * The tauri-mock (`src/lib/tauri-mock/handlers.ts`) derives `block_links`
  * edges from `[[ULID]]` tokens in seed content, so the link facets are
@@ -48,23 +46,16 @@ async function addBooleanFacet(
 }
 
 interface BootOpts {
-  /** `'off'` exercises the legacy `listBlocks` path (no chip row). */
-  flag?: 'default' | 'off'
   /** Seed N extra "Bulk Page NNN" pages for pagination / virtualization. */
   extraPages?: number
 }
 
-/** Set localStorage flags before boot, then open the Pages view. */
+/** Set localStorage state before boot, then open the Pages view. */
 async function bootPages(
   page: import('@playwright/test').Page,
   opts: BootOpts = {},
 ): Promise<void> {
-  const { flag = 'default', extraPages = 0 } = opts
-  if (flag === 'off') {
-    await page.addInitScript(() => {
-      window.localStorage.setItem('pageBrowser.densityV1', 'false')
-    })
-  }
+  const { extraPages = 0 } = opts
   if (extraPages > 0) {
     await page.addInitScript((n) => {
       window.localStorage.setItem('__mockExtraPages', String(n))
@@ -82,17 +73,10 @@ async function scrollGridToBottom(page: import('@playwright/test').Page): Promis
 }
 
 test.describe('PEND-58 — Pages compound-filter chip-row', () => {
-  test('renders the chip row by default (densityV1 is opt-out)', async ({ page }) => {
-    // No flag set — the default-on flip means the chip row must appear.
+  test('renders the chip row', async ({ page }) => {
     await bootPages(page)
     await expect(page.getByRole('button', { name: 'Add filter' })).toBeVisible()
     await expect(page.getByTestId('page-browser-filter-row')).toBeVisible()
-  })
-
-  test('hides the chip row on the legacy path (densityV1 = false)', async ({ page }) => {
-    await bootPages(page, { flag: 'off' })
-    await expect(page.getByRole('button', { name: 'Add filter' })).toHaveCount(0)
-    await expect(page.getByTestId('page-browser-filter-row')).toHaveCount(0)
   })
 
   test('Add-Filter popover offers the shared and Pages-only facets', async ({ page }) => {
