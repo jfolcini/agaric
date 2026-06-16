@@ -50,7 +50,10 @@ const arbText: fc.Arbitrary<string> = fc
   .array(
     fc.oneof(
       { weight: 6, arbitrary: fc.constantFrom(...INTERESTING_CHARS.split('')) },
-      { weight: 1, arbitrary: fc.constantFrom(...INTERESTING_TOKENS) },
+      // #1333: raised from 1→3 so adversarial multi-char delimiter runs
+      // (`~~`, `==`, `<u>`, `\` chains) are spliced in far more often — the
+      // longest-delimiter-run collision cases were previously under-generated.
+      { weight: 3, arbitrary: fc.constantFrom(...INTERESTING_TOKENS) },
     ),
     { minLength: 1, maxLength: 8 },
   )
@@ -64,14 +67,40 @@ const arbUlid: fc.Arbitrary<string> = fc
   })
   .map((chars) => chars.join(''))
 
+/**
+ * Candidate hrefs for the link mark. #1333: previously a single fixed
+ * `https://example.com` left link-mark serialization shallowly tested. Vary the
+ * href — empty string, delimiter-bearing and paren/space-bearing URLs — so the
+ * `[text](href)` wrapping logic is fuzzed against URLs that themselves collide
+ * with the link syntax (`)`, `(`, spaces) or are degenerate (empty).
+ */
+const LINK_HREFS: readonly string[] = [
+  'https://example.com',
+  '',
+  'https://a.com/path?q=1&x=2',
+  'https://ex.com/page(1)',
+  'https://ex.com/a b',
+  'https://ex.com/~~==',
+  'mailto:user@example.com',
+  '#anchor',
+]
+
+const arbHref: fc.Arbitrary<string> = fc.constantFrom(...LINK_HREFS)
+
 /** A valid mark combination (no duplicates). */
 const arbMarks: fc.Arbitrary<PMMark[]> = fc
-  .subarray([
-    { type: 'bold' } as PMMark,
-    { type: 'italic' } as PMMark,
-    { type: 'code' } as PMMark,
-    { type: 'link', attrs: { href: 'https://example.com' } } as PMMark,
-  ])
+  .tuple(
+    fc.subarray([
+      { type: 'bold' } as PMMark,
+      { type: 'italic' } as PMMark,
+      { type: 'code' } as PMMark,
+      { type: 'link' } as PMMark,
+    ]),
+    arbHref,
+  )
+  .map(([marks, href]) =>
+    marks.map((m) => (m.type === 'link' ? ({ type: 'link', attrs: { href } } as PMMark) : m)),
+  )
   .filter((marks) => {
     // Code mark is exclusive — if present, drop bold/italic (serializer does this)
     if (marks.some((m) => m.type === 'code')) {
@@ -693,6 +722,110 @@ describe('property: code block round-trip handles backtick content (BUG-1)', () 
         for (const r of runs) {
           expect(r.length).toBeLessThan(fenceLen)
         }
+      }),
+      { numRuns: NUM_RUNS },
+    )
+  })
+})
+
+// -- delimiter-collision extremes (#1333) -------------------------------------
+
+/**
+ * #1333: a generator targeting the *adversarial extreme* of mark-delimiter
+ * collisions — a long run of a single delimiter family, then text, then another
+ * long run. These tight `~~~~...text...~~~~` / all-backtick / all-tilde /
+ * all-underscore / long-`\` patterns are the worst case for the longest-run
+ * logic (escape doubling, fence sizing, degenerate-pair collapse). The plain
+ * single-char alphabet almost never assembles runs this long, so we build them
+ * explicitly with N/M repetition counts up to 8.
+ */
+const arbDelimiterExtreme: fc.Arbitrary<string> = fc
+  .tuple(
+    fc.constantFrom('~~', '==', '`', '_', '<u>', '\\'),
+    fc.integer({ min: 1, max: 8 }),
+    fc.integer({ min: 0, max: 8 }),
+    fc
+      .array(fc.constantFrom(...'abcXY 012'.split('')), { minLength: 0, maxLength: 6 })
+      .map((chars) => chars.join('')),
+  )
+  .map(([delim, n, m, text]) => `${delim.repeat(n)}${text}${delim.repeat(m)}`)
+
+describe('property: delimiter-collision extremes round-trip (#1333)', () => {
+  it('serialize(parse(s)) is a stable fixed point for long single-family delimiter runs', () => {
+    fc.assert(
+      fc.property(arbDelimiterExtreme, (s) => {
+        // Reuse the canonical-fixed-point pattern from the text→doc→text suite:
+        // anchor at md1 (the form written back to storage) and assert the next
+        // parse→serialize→parse is structurally identical (no silent rewrite).
+        const md1 = serialize(parse(s))
+        const docCanonical = parse(md1)
+        const docReparsed = parse(serialize(docCanonical))
+        expect(normalizeDoc(docReparsed)).toEqual(normalizeDoc(docCanonical))
+      }),
+      { numRuns: NUM_RUNS },
+    )
+  })
+
+  it('text content is preserved across parse→serialize for delimiter extremes (no data loss)', () => {
+    fc.assert(
+      fc.property(
+        // Escaped #/``` can legitimately produce heading/code-fence syntax on a
+        // round-trip; the bare delimiter families here never do, but we keep the
+        // same exclusion the text-preservation property uses for parity.
+        arbDelimiterExtreme.filter((s) => !s.includes('\\#') && !s.includes('\\`')),
+        (s) => {
+          const doc1 = parse(s)
+          const md1 = serialize(doc1)
+          const textFromDoc = extractText(doc1)
+          const textFromReserialized = extractText(parse(md1))
+          expect(textFromReserialized).toBe(textFromDoc)
+        },
+      ),
+      { numRuns: NUM_RUNS },
+    )
+  })
+})
+
+// -- hardBreak full-doc integration (#1333) -----------------------------------
+
+/**
+ * #1333: hardBreak was omitted from arbInlineNode (a `\`+newline token splits a
+ * paragraph for naive structural comparison), so it was never fuzzed inside a
+ * full document. This generator builds a paragraph that interleaves clean,
+ * unambiguous text nodes with hardBreak atoms — the canonical Shift+Enter shape
+ * — keeping each text run free of delimiter/escape characters so the only
+ * structural variable under test is the hardBreak itself.
+ */
+const arbCleanText: fc.Arbitrary<string> = fc
+  .array(fc.constantFrom(...'abcXY 012'.split('')), { minLength: 1, maxLength: 6 })
+  .map((chars) => chars.join(''))
+
+const arbHardBreakParagraph: fc.Arbitrary<ParagraphNode> = fc
+  .array(arbCleanText, { minLength: 2, maxLength: 4 })
+  .map((segments) => {
+    const content: InlineNode[] = []
+    segments.forEach((text, idx) => {
+      if (idx > 0) content.push({ type: 'hardBreak' })
+      content.push({ type: 'text', text })
+    })
+    return { type: 'paragraph' as const, content }
+  })
+
+const arbHardBreakDoc: fc.Arbitrary<DocNode> = fc
+  .array(arbHardBreakParagraph, { minLength: 1, maxLength: 3 })
+  .map((content) => ({ type: 'doc' as const, content }))
+
+describe('property: hardBreak full-doc round-trip (#1333)', () => {
+  it('parse(serialize(doc)) preserves doc shape for docs containing hardBreaks', () => {
+    fc.assert(
+      fc.property(arbHardBreakDoc, (doc) => {
+        // Reuse the file's doc→text→doc shape assertion: serialize then parse
+        // and compare against the normalized original (adjacent same-mark text
+        // nodes merge in the parser; hardBreak atoms keep the runs distinct).
+        const normalized = normalizeDoc(doc)
+        const md = serialize(normalized)
+        const reparsed = parse(md)
+        expect(reparsed).toEqual(normalized)
       }),
       { numRuns: NUM_RUNS },
     )
