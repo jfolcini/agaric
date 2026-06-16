@@ -59,7 +59,7 @@ Soft-pointer columns (`block_properties.value_ref`) `CASCADE` on hard delete to 
 
 Non-built-in properties live in `block_properties`, one row per (block, key), with the value held in exactly one of `value_text` / `value_num` / `value_date` / `value_ref` / `value_bool` (the `exactly_one_value` CHECK enforces precisely one non-NULL arm). Built-in keys (`todo_state`, `due_date`, …) are denormalised to dedicated `blocks` columns instead and never hit this table.
 
-**All numeric properties are stored as `REAL` (`value_num`), by design.** The numeric pipeline is `f64` end-to-end: SQL `value_num REAL` ↔ `PropertyValue::Num(f64)` (`src-tauri/src/loro/engine.rs`) ↔ `LoroValue::Double` in the CRDT. There is deliberately **no `value_int` arm**. The consequence is that an integer-valued property (count, ordinal, priority) round-trips as `3.0` rather than `3`, and an integer above 2⁵³ would lose precision in the IEEE-754 double.
+**All numeric properties are stored as `REAL` (`value_num`), by design.** The numeric pipeline is `f64` end-to-end: SQL `value_num REAL` ↔ `PropertyValue::Num(f64)` (`src-tauri/src/loro/engine/mod.rs`) ↔ `LoroValue::Double` in the CRDT. There is deliberately **no `value_int` arm**. The consequence is that an integer-valued property (count, ordinal, priority) round-trips as `3.0` rather than `3`, and an integer above 2⁵³ would lose precision in the IEEE-754 double.
 
 This is an accepted, *documented* tradeoff (#587), not an oversight:
 
