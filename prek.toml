@@ -347,6 +347,19 @@ pass_filenames = false
 files = "^src/components/.*\\.tsx$"
 stages = ["pre-commit"]
 
+# #1270 — self-test the IPC error-path guard's own exit behavior
+# (no-test IPC component FAILS, covered/allowlisted PASSES, stale
+# allowlist FAILS) whenever the guard script itself changes, so a
+# regression that re-vacuums the guard can't land unnoticed.
+[[repos.hooks]]
+id = "ipc-error-path-coverage-selftest"
+name = "IPC error-path coverage self-test"
+entry = "node scripts/check-ipc-error-path.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-ipc-error-path\\.mjs$"
+stages = ["pre-commit"]
+
 # snapshot-redaction: scan every `*.snap` file under `src/` and
 # `src-tauri/` for unredacted ULIDs (26-char Crockford base32),
 # blake3 hashes (64-char lowercase hex), ISO-8601 timestamps with a

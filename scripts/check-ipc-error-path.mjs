@@ -25,12 +25,21 @@
 // Test-file resolution for a component at `src/components/<sub>/Foo.tsx`:
 //   1. `src/components/<sub>/__tests__/Foo.test.tsx`  (sibling test dir)
 //   2. `src/components/__tests__/Foo.test.tsx`        (top-level fallback)
-//   3. If neither exists, the file is recorded under `skippedNoTest`
-//      (visibility-only, does not fail the hook). This handles the
-//      historical pattern where subdirectory components are covered
-//      by a parent component's test file (e.g. `ActivityFeed.tsx`
-//      tested via `AgentAccessSettingsTab.test.tsx`) — neither test
-//      lookup hits, so we don't false-flag it.
+//   3. If neither exists, the component is a VIOLATION (#1270) — an
+//      IPC-calling component with no test file at all is exactly the
+//      most-at-risk case (a brand-new component that swallows IPC
+//      failures with zero coverage). Previously this case landed in a
+//      silent `skippedNoTest` bucket that did NOT fail the hook and was
+//      hidden unless `CHECK_IPC_VERBOSE=1` was set, inverting the
+//      guard's intent: the severe case sailed through while only the
+//      milder "test exists but is incomplete" case was caught.
+//
+//      The legitimate "covered by a parent component's test file"
+//      pattern (e.g. a subdirectory component exercised through its
+//      parent's test, different basename → neither lookup hits) is
+//      still supported, but ONLY via an explicit `NO_TEST_ALLOWLIST`
+//      entry with a justification (see below). A bare missing test
+//      file is no longer silently excused.
 //
 // Hooks/stores are still out of scope — this hook only catches direct
 // IPC callers in the component layer (the most-trafficked surface for
@@ -77,16 +86,43 @@
 // 6 components were already green via existing rejection coverage.
 //
 // Usage: node scripts/check-ipc-error-path.mjs
-// Exit:  0 = clean, 1 = at least one violation.
+//        node scripts/check-ipc-error-path.mjs --self-test
+// Exit:  0 = clean, 1 = at least one violation, 2 = repo layout / self-test
+//        failure.
 // ─────────────────────────────────────────────────────────────────────
 
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const COMPONENTS_DIR = path.join(ROOT, 'src/components')
 const TESTS_DIR = path.join(ROOT, 'src/components/__tests__')
+
+// ─── No-test allowlist (#1270) ──────────────────────────────────────
+//
+// An IPC-calling component with NO resolvable test file is a violation
+// (see the header). The ONLY sanctioned exception is a component whose
+// IPC error path is genuinely exercised through a DIFFERENT test file
+// (a parent component's test, a different basename → neither sibling
+// nor top-level lookup hits). Each such case must be listed here with
+// a justification so the gap is explicit and reviewable rather than
+// silently swallowed.
+//
+// Keys are paths relative to the repo root (POSIX separators). The
+// value is a human justification — keep it specific (which test file
+// covers the rejection, which IPC call). An entry whose component no
+// longer calls IPC, or no longer exists, is itself flagged as stale so
+// the allowlist can't rot into a permanent free pass.
+//
+// This is INTENTIONALLY empty: the five components that previously sat
+// in the silent skip bucket (ActivityFeed, HistoryRestoreDialog,
+// HistoryRevertDialog, TagsModeBody, AutostartRow) were given real
+// error-path tests in the #1270 PR rather than allowlisted.
+const NO_TEST_ALLOWLIST = Object.freeze({
+  // 'src/components/<sub>/Foo.tsx': 'Rejection of bar() exercised via Baz.test.tsx',
+})
 
 if (!fs.existsSync(COMPONENTS_DIR) || !fs.existsSync(TESTS_DIR)) {
   console.error(`ERROR: expected directory not found (repo layout changed?)`)
@@ -105,7 +141,7 @@ if (!fs.existsSync(COMPONENTS_DIR) || !fs.existsSync(TESTS_DIR)) {
  * scope (they don't render UI and their IPC calls are tested at the
  * consumer level).
  */
-function listAllComponents() {
+function listAllComponents(componentsDir = COMPONENTS_DIR) {
   const out = []
   const visit = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -122,7 +158,7 @@ function listAllComponents() {
       }
     }
   }
-  visit(COMPONENTS_DIR)
+  visit(componentsDir)
   return out
 }
 
@@ -132,12 +168,12 @@ function listAllComponents() {
  * back to the top-level `src/components/__tests__/`. Returns `null`
  * if neither exists.
  */
-function resolveTestPath(componentPath) {
+function resolveTestPath(componentPath, testsDir = TESTS_DIR) {
   const baseName = path.basename(componentPath, '.tsx')
   const siblingDir = path.join(path.dirname(componentPath), '__tests__')
   const siblingTest = path.join(siblingDir, `${baseName}.test.tsx`)
   if (fs.existsSync(siblingTest)) return siblingTest
-  const topLevelTest = path.join(TESTS_DIR, `${baseName}.test.tsx`)
+  const topLevelTest = path.join(testsDir, `${baseName}.test.tsx`)
   if (fs.existsSync(topLevelTest)) return topLevelTest
   return null
 }
@@ -182,67 +218,216 @@ function hasRejectionCoverage(testSrc) {
   return false
 }
 
+// ─── analysis ───────────────────────────────────────────────────────
+
+/**
+ * Analyze IPC-calling components under `componentsDir` against the
+ * given test dirs/allowlist. Pure(-ish) over the filesystem so the
+ * self-test can drive it against a synthetic fixture tree without
+ * touching the real repo. Returns `{ violations, missingTest,
+ * staleAllowlist, checked }`.
+ *
+ * - `violations`    — test file exists but lacks a rejection pattern.
+ * - `missingTest`   — IPC component with NO test file and NOT
+ *                     allowlisted (#1270: the case that used to pass
+ *                     silently; now a hard failure).
+ * - `staleAllowlist` — allowlist entry whose component no longer calls
+ *                     IPC (or no longer exists) — a dead free pass.
+ * - `checked`       — components with valid rejection coverage.
+ */
+function analyze({ root, componentsDir, testsDir, allowlist }) {
+  const violations = []
+  const missingTest = []
+  const checked = []
+  const seenAllowlistKeys = new Set()
+
+  for (const componentPath of listAllComponents(componentsDir)) {
+    const src = fs.readFileSync(componentPath, 'utf8')
+    if (!callsIpc(src)) continue
+
+    const rel = toPosix(path.relative(root, componentPath))
+    const testPath = resolveTestPath(componentPath, testsDir)
+
+    if (testPath === null) {
+      if (Object.hasOwn(allowlist, rel)) {
+        // Explicitly excused: covered through a different test file.
+        seenAllowlistKeys.add(rel)
+        continue
+      }
+      // #1270: IPC-calling component with no test file at all and no
+      // allowlist entry — the most-at-risk case. Hard failure.
+      missingTest.push(rel)
+      continue
+    }
+
+    const testSrc = fs.readFileSync(testPath, 'utf8')
+    if (!hasRejectionCoverage(testSrc)) {
+      violations.push({ component: rel, test: toPosix(path.relative(root, testPath)) })
+    } else {
+      checked.push(toPosix(path.relative(componentsDir, componentPath)))
+    }
+  }
+
+  // Any allowlist key we never matched (component gone or no longer
+  // calls IPC) is a stale free pass — flag it so the list self-prunes.
+  const staleAllowlist = Object.keys(allowlist).filter((k) => !seenAllowlistKeys.has(k))
+
+  return { violations, missingTest, staleAllowlist, checked }
+}
+
+function toPosix(p) {
+  return p.split(path.sep).join('/')
+}
+
 // ─── main ───────────────────────────────────────────────────────────
 
-const violations = []
-const checked = []
-const skippedNoTest = []
+if (process.argv.includes('--self-test')) {
+  runSelfTest()
+} else {
+  runGuard()
+}
 
-for (const componentPath of listAllComponents()) {
-  const src = fs.readFileSync(componentPath, 'utf8')
-  if (!callsIpc(src)) continue
+function runGuard() {
+  const { violations, missingTest, staleAllowlist, checked } = analyze({
+    root: ROOT,
+    componentsDir: COMPONENTS_DIR,
+    testsDir: TESTS_DIR,
+    allowlist: NO_TEST_ALLOWLIST,
+  })
 
-  const testPath = resolveTestPath(componentPath)
+  let failed = false
 
-  if (testPath === null) {
-    // IPC-calling component with no sibling/top-level test file.
-    // Subdirectory components are often covered by a parent's test
-    // file (different basename) — that case lands here and is recorded
-    // for visibility without failing the hook. Top-level components
-    // genuinely missing tests also land here.
-    skippedNoTest.push(path.relative(ROOT, componentPath))
-    continue
+  if (violations.length > 0) {
+    failed = true
+    console.error('ERROR: components calling Tauri invoke lack error-path test coverage:')
+    for (const v of violations) {
+      console.error(`  ${v.component}`)
+      console.error(`    → ${v.test} has no mockRejected*/Promise.reject/throw-new-Error pattern`)
+    }
   }
 
-  const testSrc = fs.readFileSync(testPath, 'utf8')
-  if (!hasRejectionCoverage(testSrc)) {
-    violations.push({
-      component: path.relative(ROOT, componentPath),
-      test: path.relative(ROOT, testPath),
+  if (missingTest.length > 0) {
+    failed = true
+    console.error('ERROR: components calling Tauri invoke have NO error-path test file (#1270):')
+    for (const c of missingTest) console.error(`  ${c}`)
+    console.error('')
+    console.error('A brand-new IPC-calling component with zero tests is the highest-risk case:')
+    console.error('it can swallow IPC failures (silent .catch, missing toast) entirely unseen.')
+    console.error('Add a sibling/top-level test that mocks the IPC call to reject and asserts the')
+    console.error('error path fires. If the rejection is genuinely covered through a DIFFERENT')
+    console.error('test file (a parent component), add an explicit NO_TEST_ALLOWLIST entry with a')
+    console.error('justification in scripts/check-ipc-error-path.mjs — do not leave it untested.')
+  }
+
+  if (staleAllowlist.length > 0) {
+    failed = true
+    console.error('ERROR: stale NO_TEST_ALLOWLIST entries (component gone / no longer calls IPC):')
+    for (const k of staleAllowlist) console.error(`  ${k}`)
+    console.error('Remove these entries from scripts/check-ipc-error-path.mjs.')
+  }
+
+  if (violations.length > 0) {
+    console.error('')
+    console.error('Per AGENTS.md:198, every component that calls Tauri invoke must have at')
+    console.error('least one error-path test. Add a test that mocks the relevant IPC call to')
+    console.error('reject, renders the component, and asserts the error path fires (toast,')
+    console.error('banner, aria-live region — whatever the component does on failure). Use')
+    console.error('one of these patterns:')
+    console.error('  - vi.mocked(invoke).mockRejectedValueOnce(new Error(...))')
+    console.error('  - mockedWrapper.mockRejectedValueOnce(new Error(...))')
+    console.error('  - mockedInvoke.mockImplementation(async (cmd) => { throw ... })')
+  }
+
+  if (failed) process.exit(1)
+
+  const allowlisted = Object.keys(NO_TEST_ALLOWLIST).length
+  console.log(
+    `OK: ${checked.length} component(s) with IPC use have rejection coverage` +
+      (allowlisted > 0 ? ` (${allowlisted} covered via allowlisted parent test)` : ''),
+  )
+}
+
+// ─── self-test ──────────────────────────────────────────────────────
+//
+// Drives analyze() against a synthetic component tree in a temp dir so
+// we can assert the exit behavior #1270 demands: a no-test IPC
+// component FAILS; a covered one PASSES; an allowlisted one PASSES; a
+// stale allowlist entry FAILS.
+function runSelfTest() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-guard-selftest-'))
+  const failures = []
+  const ok = (name) => console.log(`  ok   - ${name}`)
+  const fail = (name, detail) => {
+    failures.push(name)
+    console.error(`  FAIL - ${name}: ${detail}`)
+  }
+
+  try {
+    const componentsDir = path.join(tmp, 'src/components')
+    const testsDir = path.join(componentsDir, '__tests__')
+    fs.mkdirSync(testsDir, { recursive: true })
+    fs.mkdirSync(path.join(componentsDir, 'sub'), { recursive: true })
+    fs.mkdirSync(path.join(componentsDir, 'sub', '__tests__'), { recursive: true })
+
+    const IPC_SRC = "import { foo } from '@/lib/tauri'\nexport const C = () => foo()\n"
+    const NO_IPC_SRC = 'export const C = () => null\n'
+    const COVERED_TEST = "it('rejects', () => { foo.mockRejectedValueOnce(new Error('x')) })\n"
+    const NO_REJECT_TEST = "it('renders', () => { render(<C />) })\n"
+
+    // 1. IPC component, no test file, not allowlisted → missingTest.
+    fs.writeFileSync(path.join(componentsDir, 'NoTest.tsx'), IPC_SRC)
+    // 2. IPC component with a covered top-level test → checked.
+    fs.writeFileSync(path.join(componentsDir, 'Covered.tsx'), IPC_SRC)
+    fs.writeFileSync(path.join(testsDir, 'Covered.test.tsx'), COVERED_TEST)
+    // 3. IPC component with a test lacking a rejection → violation.
+    fs.writeFileSync(path.join(componentsDir, 'Incomplete.tsx'), IPC_SRC)
+    fs.writeFileSync(path.join(testsDir, 'Incomplete.test.tsx'), NO_REJECT_TEST)
+    // 4. Non-IPC component, no test → ignored entirely.
+    fs.writeFileSync(path.join(componentsDir, 'Plain.tsx'), NO_IPC_SRC)
+    // 5. IPC component, no test, but allowlisted → excused.
+    fs.writeFileSync(path.join(componentsDir, 'sub', 'Allowed.tsx'), IPC_SRC)
+
+    const allowlist = { 'src/components/sub/Allowed.tsx': 'covered via Parent.test.tsx' }
+
+    const r = analyze({ root: tmp, componentsDir, testsDir, allowlist })
+
+    if (r.missingTest.includes('src/components/NoTest.tsx')) ok('no-test IPC component is flagged')
+    else fail('no-test IPC component is flagged', `missingTest=${JSON.stringify(r.missingTest)}`)
+
+    if (r.checked.includes('Covered.tsx')) ok('covered IPC component passes')
+    else fail('covered IPC component passes', `checked=${JSON.stringify(r.checked)}`)
+
+    if (r.violations.some((v) => v.component === 'src/components/Incomplete.tsx'))
+      ok('incomplete test is a violation')
+    else fail('incomplete test is a violation', `violations=${JSON.stringify(r.violations)}`)
+
+    if (!r.missingTest.includes('src/components/Plain.tsx')) ok('non-IPC component is ignored')
+    else fail('non-IPC component is ignored', 'Plain.tsx was flagged')
+
+    if (!r.missingTest.includes('src/components/sub/Allowed.tsx'))
+      ok('allowlisted component passes')
+    else fail('allowlisted component passes', 'Allowed.tsx was flagged despite allowlist')
+
+    if (r.staleAllowlist.length === 0) ok('matched allowlist entry is not stale')
+    else fail('matched allowlist entry is not stale', JSON.stringify(r.staleAllowlist))
+
+    // 6. Stale allowlist entry (component absent) → flagged.
+    const r2 = analyze({
+      root: tmp,
+      componentsDir,
+      testsDir,
+      allowlist: { 'src/components/Ghost.tsx': 'no longer exists' },
     })
-  } else {
-    checked.push(path.relative(COMPONENTS_DIR, componentPath))
+    if (r2.staleAllowlist.includes('src/components/Ghost.tsx'))
+      ok('stale allowlist entry is flagged')
+    else fail('stale allowlist entry is flagged', JSON.stringify(r2.staleAllowlist))
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
   }
-}
 
-// ─── report ─────────────────────────────────────────────────────────
-
-if (violations.length > 0) {
-  console.error('ERROR: components calling Tauri invoke lack error-path test coverage:')
-  for (const v of violations) {
-    console.error(`  ${v.component}`)
-    console.error(`    → ${v.test} has no mockRejected*/Promise.reject/throw-new-Error pattern`)
+  if (failures.length > 0) {
+    console.error(`\nself-test: ${failures.length} assertion(s) failed`)
+    process.exit(2)
   }
-  console.error('')
-  console.error('Per AGENTS.md:198, every component that calls Tauri invoke must have at')
-  console.error('least one error-path test. Add a test that mocks the relevant IPC call to')
-  console.error('reject, renders the component, and asserts the error path fires (toast,')
-  console.error('banner, aria-live region — whatever the component does on failure). Use')
-  console.error('one of these patterns:')
-  console.error('  - vi.mocked(invoke).mockRejectedValueOnce(new Error(...))')
-  console.error('  - mockedWrapper.mockRejectedValueOnce(new Error(...))')
-  console.error('  - mockedInvoke.mockImplementation(async (cmd) => { throw ... })')
-  process.exit(1)
+  console.log('self-test: all assertions passed')
 }
-
-if (skippedNoTest.length > 0 && process.env.CHECK_IPC_VERBOSE === '1') {
-  console.error('WARN: components with IPC use but no sibling test file (out of scope):')
-  for (const c of skippedNoTest) console.error(`  ${c}`)
-}
-
-console.log(
-  `OK: ${checked.length} component(s) with IPC use have rejection coverage` +
-    (skippedNoTest.length > 0
-      ? ` (${skippedNoTest.length} missing tests, see verbose output)`
-      : ''),
-)
