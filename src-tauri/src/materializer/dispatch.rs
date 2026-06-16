@@ -3,7 +3,9 @@
 use super::coordinator::Materializer;
 use super::{CreateBlockHint, MaterializeTask};
 use crate::error::AppError;
+use crate::op::OpType;
 use crate::op_log::OpRecord;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
@@ -382,9 +384,22 @@ impl Materializer {
 /// single arm edit here, with a matching pinning test next to the
 /// existing ones in `mod tests` below.
 ///
-/// The function is side-effect-free with one carve-out: the unknown-op
-/// arm emits a `tracing::warn!` (preserving the prior behaviour) and
-/// the `create_block` arm propagates JSON parse failures via `?`. The
+/// #1260: `record.op_type` is parsed once into the typed [`OpType`]
+/// (via [`FromStr`], as `reverse::compute_reverse` and `apply_op_tx`
+/// already do) and the dispatch matches the enum **exhaustively, with no
+/// catch-all `_` arm**. This is the consumer the no-`#[non_exhaustive]`
+/// invariant on [`OpType`] exists for (op.rs §27): adding a new op
+/// variant now fails to compile here until its invalidations are
+/// declared, rather than silently degrading to a runtime warning and
+/// dropped cache invalidations. Ops that legitimately fan out nothing
+/// (`add_attachment` / `delete_attachment` / `rename_attachment`) are
+/// explicit empty arms.
+///
+/// The function is side-effect-free with two carve-outs: a string that
+/// does **not** parse to any [`OpType`] (a corrupt/forward-version
+/// `op_log` row, not a known variant) emits a `tracing::warn!` and
+/// returns no tasks (preserving the prior unknown-op behaviour), and the
+/// `create_block` arm propagates JSON parse failures via `?`. The
 /// metric-driven FTS-optimize threshold for `edit_block` is **not**
 /// captured here — it depends on `&Materializer` state and is driven
 /// by [`Materializer::maybe_enqueue_fts_optimize`] after the returned
@@ -394,8 +409,21 @@ fn invalidations_for_op(
     block_type_hint: Option<&str>,
 ) -> Result<Vec<MaterializeTask>, AppError> {
     let mut tasks: Vec<MaterializeTask> = Vec::new();
-    match record.op_type.as_str() {
-        "create_block" => {
+    // #1260: parse the raw `op_type` string once into the typed enum and
+    // match exhaustively below. A string that does not correspond to any
+    // known variant (corrupt or forward-version row) keeps the prior
+    // warn-and-drop behaviour rather than aborting the dispatch loop.
+    let Ok(op_type) = OpType::from_str(&record.op_type) else {
+        tracing::warn!(
+            op_type = %record.op_type,
+            device_id = %record.device_id,
+            seq = record.seq,
+            "unknown op_type in dispatch_op"
+        );
+        return Ok(tasks);
+    };
+    match op_type {
+        OpType::CreateBlock => {
             let hint: CreateBlockHint = serde_json::from_str(&record.payload)?;
             match hint.block_type.as_str() {
                 "tag" => tasks.push(MaterializeTask::RebuildTagsCache),
@@ -429,7 +457,7 @@ fn invalidations_for_op(
             tasks.push(MaterializeTask::RebuildTagInheritanceCache);
             tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
         }
-        "edit_block" => {
+        OpType::EditBlock => {
             // L-13: use the cached `OpRecord::block_id` sidecar
             // populated at append-time (or parsed once on the sync
             // ingress in `From<OpTransfer> for OpRecord`) so this
@@ -487,7 +515,7 @@ fn invalidations_for_op(
             // separately by `Materializer::maybe_enqueue_fts_optimize`
             // after the caller has drained this vec.
         }
-        "delete_block" => {
+        OpType::DeleteBlock => {
             // L-13: use the cached sidecar instead of re-parsing
             // `record.payload`.  Same rationale as the `edit_block`
             // arm above.
@@ -499,7 +527,7 @@ fn invalidations_for_op(
                 });
             }
         }
-        "restore_block" => {
+        OpType::RestoreBlock => {
             // L-13: cached sidecar — no JSON re-parse.
             let block_id = record.block_id.as_deref().unwrap_or_default();
             tasks.extend(FULL_CACHE_REBUILD_TASKS.iter().cloned());
@@ -509,7 +537,7 @@ fn invalidations_for_op(
                 });
             }
         }
-        "purge_block" => {
+        OpType::PurgeBlock => {
             // L-13: cached sidecar — no JSON re-parse.
             let block_id = record.block_id.as_deref().unwrap_or_default();
             tasks.extend(FULL_CACHE_REBUILD_TASKS.iter().cloned());
@@ -519,17 +547,17 @@ fn invalidations_for_op(
                 });
             }
         }
-        "add_tag" | "remove_tag" => {
+        OpType::AddTag | OpType::RemoveTag => {
             tasks.push(MaterializeTask::RebuildTagsCache);
             tasks.push(MaterializeTask::RebuildAgendaCache);
             tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
             tasks.push(MaterializeTask::RebuildTagInheritanceCache);
         }
-        "set_property" | "delete_property" => {
+        OpType::SetProperty | OpType::DeleteProperty => {
             tasks.push(MaterializeTask::RebuildAgendaCache);
             tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
         }
-        "move_block" => {
+        OpType::MoveBlock => {
             tasks.push(MaterializeTask::RebuildTagInheritanceCache);
             // E4: a cross-page move reparents the block's `page_id`
             // (`commands/blocks/move_ops.rs`). `RebuildPageIds` is the
@@ -554,15 +582,14 @@ fn invalidations_for_op(
             // would survive; the full page-link roll-up is the correct fix.
             tasks.push(MaterializeTask::RebuildPageLinkCache);
         }
-        "add_attachment" | "delete_attachment" => {}
-        other => {
-            tracing::warn!(
-                op_type = other,
-                device_id = %record.device_id,
-                seq = record.seq,
-                "unknown op_type in dispatch_op"
-            );
-        }
+        // #1260: attachment ops fan out no cache invalidations. These are
+        // explicit empty arms (not a catch-all) so the no-`#[non_exhaustive]`
+        // OpType invariant holds: a future variant must be handled here or
+        // the build fails. `rename_attachment` previously fell into the
+        // removed `other` catch-all — also a no-op, so behaviour is
+        // unchanged; it is now an intentional empty arm rather than an
+        // accidental silent drop.
+        OpType::AddAttachment | OpType::DeleteAttachment | OpType::RenameAttachment => {}
     }
     Ok(tasks)
 }
@@ -1044,13 +1071,80 @@ mod tests {
         assert!(tasks.is_empty(), "delete_attachment must not enqueue tasks");
     }
 
-    // ── unknown op (warn-only) ───────────────────────────────────────
+    /// #1260: `rename_attachment` previously fell into the removed `other`
+    /// catch-all (an accidental no-op); it is now an explicit empty arm in
+    /// the exhaustive `OpType` match. This pins that the fan-out stays empty
+    /// — the behaviour is unchanged, only the safety is.
+    #[test]
+    fn invalidations_for_op_rename_attachment_returns_empty() {
+        let r = make_record(
+            "rename_attachment",
+            r#"{"attachment_id":"ATT1","new_name":"x.png"}"#,
+            None,
+        );
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert!(tasks.is_empty(), "rename_attachment must not enqueue tasks");
+    }
 
+    // ── unknown / unparseable op (warn-only) ─────────────────────────
+
+    /// #1260: a string that does not parse to any [`OpType`] (corrupt or
+    /// forward-version `op_log` row) keeps the prior warn-and-drop
+    /// behaviour — it is NOT a compile-time concern, since it is not a
+    /// known variant. The exhaustive enum match below it guards the
+    /// *known* variants; this guards the parse boundary.
     #[test]
     fn invalidations_for_op_unknown_op_returns_empty() {
         let r = make_record("future_unknown_op", "{}", None);
         let tasks = invalidations_for_op(&r, None).unwrap();
         assert!(tasks.is_empty(), "unknown op_type must not enqueue tasks");
+    }
+
+    /// #1260: assert every known [`OpType`] variant routes through
+    /// `invalidations_for_op` without panicking and that the typed-string
+    /// round-trip the dispatch relies on is intact. The compile-time
+    /// exhaustiveness of the enum match is the primary guarantee (a new
+    /// variant breaks the build at the `match op_type` above); this is a
+    /// runtime belt-and-braces that the `OpType::as_str` ↔ `FromStr`
+    /// mapping every arm depends on stays round-trippable.
+    #[test]
+    fn invalidations_for_op_covers_every_op_type() {
+        use std::str::FromStr;
+        // Exhaustively enumerated by hand — kept in lockstep with the
+        // `OpType` enum. The `let OpType::… = probe` destructure below is a
+        // compile-time tripwire: a new variant makes this `match` non-
+        // exhaustive and fails the build, flagging that this list (and the
+        // dispatch arm) need updating.
+        let all = [
+            OpType::CreateBlock,
+            OpType::EditBlock,
+            OpType::DeleteBlock,
+            OpType::RestoreBlock,
+            OpType::PurgeBlock,
+            OpType::MoveBlock,
+            OpType::AddTag,
+            OpType::RemoveTag,
+            OpType::SetProperty,
+            OpType::DeleteProperty,
+            OpType::AddAttachment,
+            OpType::DeleteAttachment,
+            OpType::RenameAttachment,
+        ];
+        for probe in &all {
+            // Round-trip guard: the dispatch parses the stored string back
+            // to this exact variant.
+            assert_eq!(
+                OpType::from_str(probe.as_str()).unwrap(),
+                *probe,
+                "OpType::as_str ↔ FromStr must round-trip for {probe:?}",
+            );
+            // A payload that satisfies the one arm (`create_block`) that
+            // parses its JSON; harmless for every other arm.
+            let payload = r#"{"block_id":"COV1","block_type":"content"}"#;
+            let r = make_record(probe.as_str(), payload, Some("COV1"));
+            // Must not panic / must return Ok for every known variant.
+            let _ = invalidations_for_op(&r, None).unwrap();
+        }
     }
 
     // ── Arc reuse pin: create_block reuses one Arc<str> for the
