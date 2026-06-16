@@ -939,7 +939,16 @@ async fn fts_fetch_rows(
     // dynamic-SQL shape of this query (varying param indices for parent /
     // tag / space filters) prevents the compile-time sqlx macro from being
     // applied.
-    fb.add_space(PREFIX, space_id);
+    //
+    // #1320 PR-0 — the space-id fragment is now compiled through
+    // `SearchProjection` (the cross-surface filter compiler) rather than
+    // inline. `compile_space` emits the identical `b.space_id = ?` shape
+    // with one text bind, so the net SQL + binds are byte-identical to the
+    // former `fb.add_space(...)` call (proved by the `projection_space_parity`
+    // test). This is the projection's first production call site. Only
+    // `Space` is routed — Tag (`COUNT(DISTINCT)` ALL-semantics) and property
+    // (`prop:` four-column OR) diverge from the projection and stay legacy.
+    fb.add_space_via_projection(PREFIX, space_id);
 
     // PEND-54 — page-name glob include / exclude filters. Each entry
     // has already been brace-expanded, lowercased and substring-

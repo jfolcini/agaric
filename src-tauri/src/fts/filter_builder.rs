@@ -28,6 +28,8 @@
 //! (13-space indent).
 
 use super::metadata_filter::{MetaBind, MetadataPredicates, append_metadata_sql};
+use crate::domain::search_types::SearchFilter;
+use crate::filters::primitive::{Bind, FilterPrimitive, Projection, SearchProjection};
 
 /// One bound value, tagged with its SQLite affinity. Recorded in
 /// declaration order alongside the SQL fragment that references it, so
@@ -141,6 +143,75 @@ impl StructuralFilterBuilder {
         }
     }
 
+    /// #1320 PR-0 — append a pre-compiled [`crate::filters::primitive::WhereClause`]
+    /// fragment (bare `?` placeholders, ordered [`Bind`]s) into this builder,
+    /// renumbering each `?` to the running `?N` index in left-to-right order
+    /// and recording the matching scalar binds in declaration order.
+    ///
+    /// This is the single splice point through which the
+    /// [`SearchProjection`]-routed subset (currently `Space` only — see
+    /// [`search_filter_to_primitives`] / `fts_fetch_rows`) enters the
+    /// dynamic FTS WHERE clause. The projection emits bare `?`; this method
+    /// is the only place that maps them onto the builder's `?N` slots, so
+    /// the placeholder/bind invariant the builder guarantees still holds.
+    ///
+    /// Pre-condition: the fragment's `?` count MUST equal its `binds.len()`
+    /// (every primitive `SearchProjection` compiles satisfies this). The
+    /// renumber is a straight left-to-right substitution; the fragment must
+    /// not contain a literal `?` outside a placeholder (none of the routed
+    /// primitives do).
+    fn add_projection_clause(&mut self, prefix: &str, sql: &str, binds: &[Bind]) {
+        // Renumber bare `?` → `?{next}` left-to-right.
+        let mut renumbered = String::with_capacity(sql.len() + binds.len() * 2);
+        for ch in sql.chars() {
+            if ch == '?' {
+                let i = self.next_param;
+                self.next_param += 1;
+                renumbered.push('?');
+                renumbered.push_str(&i.to_string());
+            } else {
+                renumbered.push(ch);
+            }
+        }
+        debug_assert_eq!(
+            renumbered.matches('?').count(),
+            binds.len(),
+            "projection fragment `?` count must equal bind count"
+        );
+        self.sql.push_str(prefix);
+        self.sql.push_str(&renumbered);
+        for b in binds {
+            self.binds.push(match b {
+                Bind::Text(s) => ScalarBind::Str(s.clone()),
+                Bind::Int(n) => ScalarBind::I64(*n),
+            });
+        }
+    }
+
+    /// #1320 PR-0 — space-id filter routed through [`SearchProjection`]
+    /// instead of the inline [`add_space`](Self::add_space) fragment. The
+    /// projection's `compile_space` emits `b.space_id = ?` with one text
+    /// bind — byte-identical (modulo placeholder numbering) to the legacy
+    /// `add_space` fragment, so this is a zero-behaviour-change cutover and
+    /// gives `SearchProjection` its first production call site. No-op when
+    /// `space_id` is `None` (mirrors `add_space`).
+    ///
+    /// Only `Space` is routed here: the legacy Tag (`COUNT(DISTINCT)`
+    /// ALL-semantics) and property (`prop:` four-column OR) fragments are
+    /// NOT byte-identical to their `SearchProjection` counterparts and stay
+    /// on the legacy path — see `search_filter_to_primitives` and the
+    /// `projection_space_parity` test for the proof.
+    pub(super) fn add_space_via_projection(&mut self, prefix: &str, space_id: Option<&str>) {
+        let Some(sid) = space_id else { return };
+        let prims = vec![FilterPrimitive::Space {
+            space_id: sid.to_string(),
+        }];
+        for prim in &prims {
+            let wc = SearchProjection.compile(prim);
+            self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+        }
+    }
+
     /// `AND b.page_id [NOT ]IN (SELECT pc.page_id FROM pages_cache pc
     ///   WHERE LOWER(pc.title) GLOB ?N OR …)` — delegates the fragment
     /// to the shared [`super::glob_filter::append_page_glob_subselect`]
@@ -218,6 +289,75 @@ impl StructuralFilterBuilder {
     }
 }
 
+/// #1320 PR-0 — lift the genuinely-shared filter subset (`Tag`,
+/// `HasProperty`, `Space`) from the flat [`SearchFilter`] into
+/// [`FilterPrimitive`]s, so they can be compiled through
+/// [`SearchProjection`] (the cross-surface filter compiler) instead of the
+/// bespoke inline FTS fragments.
+///
+/// **Scope (zero-behaviour-change contract):** this lifts ONLY the shared
+/// subset. Path globs, metadata (state / priority / due / scheduled),
+/// `block_type`, the toggle filters, and the FTS `MATCH` query itself are
+/// left entirely on the legacy path — they diverge from the projection and
+/// are out of scope for PR-0.
+///
+/// **Mapping:**
+/// - `tag_ids` → one [`FilterPrimitive::Tag`] per tag (ALL/AND semantics:
+///   the caller AND-joins, so every tag must be present).
+/// - `property_filters` (includes) with a non-empty `value` →
+///   [`FilterPrimitive::HasProperty`] with `Eq { Text }`; with an empty
+///   `value` → `Exists` (key-presence-only).
+/// - `space_id` (non-empty) → [`FilterPrimitive::Space`].
+///
+/// **Production routing note:** only the `Space` primitive is actually
+/// routed through `SearchProjection` in `fts_fetch_rows` today (see
+/// [`StructuralFilterBuilder::add_space_via_projection`]). The `Tag` and
+/// `HasProperty` primitives this adapter produces are NOT yet routed: their
+/// `SearchProjection` SQL is not byte-identical to the legacy fragments
+/// (Tag = `COUNT(DISTINCT)` ALL-semantics; property = `prop:` four-column
+/// OR with a `bp.` alias), so cutting them over would change behaviour. The
+/// adapter emits them anyway so the full shared lift is available for the
+/// follow-up PR and so the parity test can assert the divergence explicitly.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) fn search_filter_to_primitives(filter: &SearchFilter) -> Vec<FilterPrimitive> {
+    use crate::filters::primitive::{PropertyPredicate, PropertyValue};
+
+    let mut out = Vec::new();
+
+    // Tags — one primitive per tag (ALL / AND semantics on AND-join).
+    for tag in &filter.tag_ids {
+        out.push(FilterPrimitive::Tag { tag: tag.clone() });
+    }
+
+    // Property includes — text-eq, or key-presence (Exists) when empty.
+    for pf in &filter.property_filters {
+        let predicate = if pf.value.is_empty() {
+            PropertyPredicate::Exists
+        } else {
+            PropertyPredicate::Eq {
+                value: PropertyValue::Text {
+                    value: pf.value.clone(),
+                },
+            }
+        };
+        out.push(FilterPrimitive::HasProperty {
+            key: pf.key.clone(),
+            predicate,
+        });
+    }
+
+    // Space — only when a non-empty space id is present.
+    if let Some(sid) = filter.space_id.as_deref()
+        && !sid.is_empty()
+    {
+        out.push(FilterPrimitive::Space {
+            space_id: sid.to_string(),
+        });
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,6 +411,255 @@ mod tests {
         fb.add_space(FTS_PREFIX, Some("space1"));
         assert_eq!(fb.sql(), "\n           AND b.space_id = ?6");
         assert_eq!(fb.next_param(), 7);
+    }
+
+    // ── #1320 PR-0 — SearchProjection cutover parity ──────────────────
+    //
+    // The zero-behaviour-change contract: routing the shared subset through
+    // `SearchProjection` must emit byte-identical SQL + binds to the legacy
+    // inline fragment, OR the predicate stays on the legacy path. These
+    // tests prove which predicates are byte-identical (cut over) and which
+    // are NOT (excluded, kept legacy). Modeled on `backlink/tests::parity_p1`.
+
+    /// Space IS byte-identical between the legacy `add_space` fragment and
+    /// the `SearchProjection`-routed `add_space_via_projection` — so it is
+    /// the predicate we cut over in `fts_fetch_rows`. SQL string + bind
+    /// sequence (and the consumed placeholder index) must match exactly.
+    #[test]
+    fn projection_space_parity() {
+        // Legacy path.
+        let mut legacy = StructuralFilterBuilder::new(6);
+        legacy.add_space(FTS_PREFIX, Some("01SPACE0001"));
+
+        // Projection-routed path (the production cutover).
+        let mut routed = StructuralFilterBuilder::new(6);
+        routed.add_space_via_projection(FTS_PREFIX, Some("01SPACE0001"));
+
+        assert_eq!(
+            routed.sql(),
+            legacy.sql(),
+            "Space fragment must be byte-identical via SearchProjection"
+        );
+        assert_eq!(
+            routed.sql(),
+            "\n           AND b.space_id = ?6",
+            "Space fragment snapshot"
+        );
+        assert_eq!(
+            routed.next_param(),
+            legacy.next_param(),
+            "Space must consume the same number of placeholders"
+        );
+        assert_eq!(routed.next_param(), 7);
+        assert_eq!(
+            routed.bind_count(),
+            legacy.bind_count(),
+            "Space must record the same bind count"
+        );
+        assert_eq!(routed.bind_count(), 1);
+        // Bind value parity.
+        assert!(matches!(
+            routed.binds.first(),
+            Some(ScalarBind::Str(s)) if s == "01SPACE0001"
+        ));
+    }
+
+    /// `add_space_via_projection(None)` is a no-op, mirroring `add_space`.
+    #[test]
+    fn projection_space_none_is_noop() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_space_via_projection(FTS_PREFIX, None);
+        assert_eq!(fb.sql(), "");
+        assert_eq!(fb.next_param(), 6);
+        assert_eq!(fb.bind_count(), 0);
+    }
+
+    /// Tag does NOT compile byte-identically: the legacy fragment is a
+    /// single `COUNT(DISTINCT)` ALL-semantics sub-select; `SearchProjection`
+    /// emits a per-tag `b.id IN (SELECT block_id FROM block_tags ...)`. This
+    /// divergence is WHY Tag is excluded from the PR-0 cutover (kept legacy).
+    /// The test pins the divergence so a future "wire Tag" PR is forced to
+    /// reconcile it deliberately.
+    #[test]
+    fn projection_tag_diverges_from_legacy_kept_legacy() {
+        use crate::filters::primitive::FilterPrimitive;
+
+        let mut legacy = StructuralFilterBuilder::new(6);
+        legacy.add_tags_all(FTS_PREFIX, &["01TAG0000000000000000000A".to_string()]);
+
+        let projected = SearchProjection.compile(&FilterPrimitive::Tag {
+            tag: "01TAG0000000000000000000A".to_string(),
+        });
+
+        assert!(
+            legacy.sql().contains("COUNT(DISTINCT bt.tag_id)"),
+            "legacy Tag uses COUNT(DISTINCT) ALL-semantics"
+        );
+        assert!(
+            projected
+                .sql
+                .contains("b.id IN (SELECT block_id FROM block_tags"),
+            "projection Tag uses a per-tag IN sub-select"
+        );
+        assert_ne!(
+            legacy.sql().trim_start(),
+            projected.sql,
+            "Tag fragments diverge — Tag MUST stay on the legacy path"
+        );
+    }
+
+    /// HasProperty (both Exists and Eq-text) does NOT compile
+    /// byte-identically: the legacy `prop:` fragment uses a `bp.`-aliased
+    /// sub-select and (for a value) a four-column OR across
+    /// `value_text` / `value_num` / `value_date` / `value_ref`;
+    /// `SearchProjection` emits an un-aliased `value_text`-only sub-select.
+    /// This is WHY HasProperty is excluded from the PR-0 cutover.
+    #[test]
+    fn projection_has_property_diverges_from_legacy_kept_legacy() {
+        use crate::domain::search_types::SearchPropertyFilter;
+        use crate::filters::primitive::{FilterPrimitive, PropertyPredicate, PropertyValue};
+        use crate::fts::metadata_filter::{MetadataPredicates, append_metadata_sql};
+
+        // --- Exists (key-presence only) ---
+        let mut legacy_exists = String::new();
+        let mut np = 6;
+        let meta_exists = MetadataPredicates {
+            property_includes: vec![SearchPropertyFilter {
+                key: "kind".into(),
+                value: String::new(),
+            }],
+            ..Default::default()
+        };
+        append_metadata_sql(&mut legacy_exists, &mut np, &meta_exists, "b");
+        let proj_exists = SearchProjection.compile(&FilterPrimitive::HasProperty {
+            key: "kind".into(),
+            predicate: PropertyPredicate::Exists,
+        });
+        assert!(
+            legacy_exists.contains("block_properties bp") && legacy_exists.contains("bp.key = ?"),
+            "legacy property uses a `bp.`-aliased sub-select"
+        );
+        assert!(
+            !proj_exists.sql.contains("bp."),
+            "projection property is un-aliased"
+        );
+        assert_ne!(
+            legacy_exists.trim_start().trim_start_matches("AND "),
+            proj_exists.sql,
+            "Exists fragments diverge — HasProperty MUST stay legacy"
+        );
+
+        // --- Eq { Text } ---
+        let mut legacy_eq = String::new();
+        let mut np2 = 6;
+        let meta_eq = MetadataPredicates {
+            property_includes: vec![SearchPropertyFilter {
+                key: "kind".into(),
+                value: "note".into(),
+            }],
+            ..Default::default()
+        };
+        append_metadata_sql(&mut legacy_eq, &mut np2, &meta_eq, "b");
+        let proj_eq = SearchProjection.compile(&FilterPrimitive::HasProperty {
+            key: "kind".into(),
+            predicate: PropertyPredicate::Eq {
+                value: PropertyValue::Text {
+                    value: "note".into(),
+                },
+            },
+        });
+        assert!(
+            legacy_eq.contains("value_num") && legacy_eq.contains("value_ref"),
+            "legacy `prop:KEY=VALUE` is a four-column OR"
+        );
+        assert!(
+            !proj_eq.sql.contains("value_num"),
+            "projection Eq-text compares value_text only"
+        );
+        assert_ne!(
+            legacy_eq.trim_start().trim_start_matches("AND "),
+            proj_eq.sql,
+            "Eq-text fragments diverge — HasProperty MUST stay legacy"
+        );
+    }
+
+    /// The adapter lifts ONLY the shared subset (Tag / HasProperty / Space)
+    /// and nothing else (globs, metadata, toggles, block_type, the MATCH
+    /// query). Order: tags, then property includes, then space.
+    #[test]
+    fn adapter_lifts_only_shared_subset() {
+        use crate::domain::search_types::{SearchFilter, SearchPropertyFilter};
+        use crate::filters::primitive::{FilterPrimitive, PropertyPredicate, PropertyValue};
+
+        let filter = SearchFilter {
+            tag_ids: vec!["TAGA".into(), "TAGB".into()],
+            space_id: Some("01SPACE0001".into()),
+            property_filters: vec![
+                SearchPropertyFilter {
+                    key: "kind".into(),
+                    value: "note".into(),
+                },
+                SearchPropertyFilter {
+                    key: "archived".into(),
+                    value: String::new(),
+                },
+            ],
+            // Everything below must be IGNORED by the adapter.
+            include_page_globs: vec!["Proj/*".into()],
+            exclude_page_globs: vec!["Trash/*".into()],
+            state_filter: vec!["DONE".into()],
+            priority_filter: vec!["A".into()],
+            block_type_filter: Some("page".into()),
+            is_regex: true,
+            case_sensitive: true,
+            whole_word: true,
+            parent_id: Some("blk".into()),
+            ..Default::default()
+        };
+
+        let prims = search_filter_to_primitives(&filter);
+        assert_eq!(
+            prims,
+            vec![
+                FilterPrimitive::Tag { tag: "TAGA".into() },
+                FilterPrimitive::Tag { tag: "TAGB".into() },
+                FilterPrimitive::HasProperty {
+                    key: "kind".into(),
+                    predicate: PropertyPredicate::Eq {
+                        value: PropertyValue::Text {
+                            value: "note".into()
+                        },
+                    },
+                },
+                FilterPrimitive::HasProperty {
+                    key: "archived".into(),
+                    predicate: PropertyPredicate::Exists,
+                },
+                FilterPrimitive::Space {
+                    space_id: "01SPACE0001".into(),
+                },
+            ],
+            "adapter must lift exactly the shared subset, in order, and nothing else"
+        );
+    }
+
+    /// An empty / `None` space id produces no `Space` primitive (matches the
+    /// SQL path's "empty string ⇒ no space primitive" treatment).
+    #[test]
+    fn adapter_skips_empty_space() {
+        use crate::domain::search_types::SearchFilter;
+
+        let none = SearchFilter::default();
+        assert!(search_filter_to_primitives(&none).is_empty());
+
+        let empty = SearchFilter {
+            space_id: Some(String::new()),
+            ..Default::default()
+        };
+        assert!(
+            search_filter_to_primitives(&empty).is_empty(),
+            "empty space id must not yield a Space primitive"
+        );
     }
 
     #[test]
