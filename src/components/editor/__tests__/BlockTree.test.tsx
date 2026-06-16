@@ -18,6 +18,7 @@ import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
 
 import type { PickerItem } from '@/editor/SuggestionList'
+import { dispatchBlockEvent } from '@/lib/block-events'
 import { t } from '@/lib/i18n'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
@@ -4305,7 +4306,8 @@ describe('BlockTree priority keyboard shortcuts', () => {
     })
 
     act(() => {
-      document.dispatchEvent(new Event('set-priority-1'))
+      // #1250 — route through the producer path (focus-keyed command bus).
+      dispatchBlockEvent('SET_PRIORITY_1')
     })
 
     await waitFor(() => {
@@ -4335,7 +4337,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
     })
 
     act(() => {
-      document.dispatchEvent(new Event('set-priority-2'))
+      dispatchBlockEvent('SET_PRIORITY_2')
     })
 
     await waitFor(() => {
@@ -4364,7 +4366,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
     })
 
     act(() => {
-      document.dispatchEvent(new Event('set-priority-3'))
+      dispatchBlockEvent('SET_PRIORITY_3')
     })
 
     await waitFor(() => {
@@ -4394,11 +4396,11 @@ describe('BlockTree priority keyboard shortcuts', () => {
       expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
     })
 
-    // The set-priority listener short-circuits sync when no block is
+    // #1250 — the focus-keyed command bus is a no-op when no block is
     // focused. Wrap in act(async) so any chained microtask settles before
     // asserting set_priority was not invoked (TEST-FE-1).
     await act(async () => {
-      document.dispatchEvent(new Event('set-priority-1'))
+      dispatchBlockEvent('SET_PRIORITY_1')
     })
 
     expect(mockedInvoke).not.toHaveBeenCalledWith('set_priority', expect.anything())
