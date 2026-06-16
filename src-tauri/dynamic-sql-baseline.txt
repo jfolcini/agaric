@@ -19,7 +19,7 @@
 1 src-tauri/src/commands/agenda.rs
 2 src-tauri/src/commands/attachments.rs
 2 src-tauri/src/commands/block_cleanup.rs
-10 src-tauri/src/commands/blocks/crud.rs
+11 src-tauri/src/commands/blocks/crud.rs
 3 src-tauri/src/commands/blocks/move_ops.rs
 2 src-tauri/src/commands/blocks/queries.rs
 2 src-tauri/src/commands/drafts.rs

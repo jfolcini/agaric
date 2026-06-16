@@ -32,9 +32,24 @@ pub(crate) use handlers::apply_create_block_via_loro;
 // the source and target sibling groups) without advancing the apply cursor.
 pub(crate) use handlers::apply_move_block_via_loro;
 pub(crate) use handlers::recompute_pages_cache_counts_for_pages;
+// #1257 PR-5: re-export the cohort collectors + the post-commit descendant
+// fan-out so the LOCAL delete / restore command paths (`commands::blocks::crud`)
+// PRE-CAPTURE each root's subtree cohort + space BEFORE the SQL soft-delete (a
+// post-delete `resolve_block_space` returns None — the #1257 phantom) and then
+// drive the captured cohort onto the per-space Loro engine post-commit, using
+// the SAME engine apply the boot-replay / sync `ApplyOp` path uses. The apply
+// cursor is never advanced (boot-replay / `dispatch_op` concern). The
+// `apply_*_via_loro` CASCADE helpers' visibility is also raised to `pub(crate)`
+// (re-exported via `handlers::mod`) to complete the engine-apply surface PR-2
+// established and which `merge::engine_apply` mirrors; the multi-root command
+// path drives the engine through the fan-out + `engine_apply` rather than the
+// per-seed in-tx helper (the helper's single-root SQL projection would
+// double-count the multi-root cascade, and a post-cascade call hits dead space
+// resolution — the pre-captured space sidesteps both).
 pub(crate) use handlers::{
     apply_add_tag_via_loro, apply_delete_property_via_loro, apply_edit_block_via_loro,
-    apply_remove_tag_via_loro, apply_set_property_via_loro,
+    apply_remove_tag_via_loro, apply_set_property_via_loro, collect_delete_cohort,
+    collect_restore_cohort, dispatch_delete_descendants, dispatch_restore_descendants,
 };
 #[cfg(test)]
 use handlers::{handle_background_task, handle_foreground_task};

@@ -1508,3 +1508,208 @@ async fn local_move_is_engine_fresh_and_dense_1257() {
 
     mat.shutdown();
 }
+
+/// #1257 PR-5 — LOCAL `delete_blocks_by_ids` tombstones the WHOLE subtree
+/// cohort on the engine IN the CommandTx, with NO #1257 phantom and the apply
+/// cursor PINNED; then `restore_blocks_by_ids` restores the cohort on both
+/// sides.
+///
+/// Before PR-5 the LOCAL batch-delete command path ran ONLY the multi-root SQL
+/// soft-delete cascade and never told the per-space Loro engine — so the engine
+/// kept the deleted subtree LIVE while SQL reported it gone. That is exactly the
+/// engine-live-but-SQL-deleted divergence the PR-1 freshness gate
+/// (`prepare_outgoing` / `live_block_ids` ∩ SQL-deleted) refuses to ship: a
+/// "phantom". PR-5 PRE-CAPTURES each root's active subtree cohort + space BELOW
+/// the SQL UPDATE (a post-delete `resolve_block_space` would return None for
+/// every now-deleted row) and fans the captured cohort onto the engine
+/// post-commit (`dispatch_delete_descendants`).
+///
+/// Drives the REAL `delete_blocks_by_ids_inner` on a 3-level subtree
+/// (parent→child→grandchild) and asserts, WITHOUT any boot replay:
+///   (a) the engine tombstones the WHOLE cohort (`read_deleted` true for parent,
+///       child AND grandchild — not just the parent root);
+///   (b) SQL `deleted_at` is set on the whole cohort;
+///   (c) the apply cursor (`materialized_through_seq`) did NOT advance while
+///       `op_log.seq` did;
+///   (d) the #1257 PR-1 gate sees NO phantom — `live_block_ids()` ∩
+///       SQL-deleted is empty (no block is engine-live yet SQL-deleted).
+/// Then drives `restore_blocks_by_ids_inner` on the root and asserts the cohort
+/// is restored in BOTH the engine (`read_deleted` false) and SQL (`deleted_at`
+/// NULL).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_delete_restore_tombstones_cohort_no_phantom_1257() {
+    // 26-char ids so `seed_label_to_id` treats them as literal ids.
+    let _s1 = seed_label_to_id("S1");
+    let p = seed_label_to_id("PP"); // parent (delete root)
+    let c = seed_label_to_id("CC"); // child
+    let g = seed_label_to_id("GG"); // grandchild
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Install the process-global engine so the LOCAL delete/restore route
+    // through the ENGINE path (not the SQL-only fallback). `registry.clear()`
+    // gives this test a fresh tree.
+    let state = crate::loro::shared::install_for_test();
+    state.registry.clear();
+
+    // Seed S1 > P > C > G into BOTH SQL and the engine tree (parent-first), then
+    // scope every seed block to one space so `resolve_block_space` succeeds and
+    // the cohort/space pre-capture engages the engine path.
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "PP", "block_type": "content", "content": "P",    "parent_id": "S1", "position": 1}),
+        json!({"id": "CC", "block_type": "content", "content": "C",    "parent_id": "PP", "position": 1}),
+        json!({"id": "GG", "block_type": "content", "content": "G",    "parent_id": "CC", "position": 1}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    async fn apply_cursor(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+    async fn max_seq(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM op_log")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    async fn sql_deleted(pool: &SqlitePool, id: &str) -> bool {
+        sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .is_some()
+    }
+
+    let cursor_before = apply_cursor(&pool).await;
+    let seq_before = max_seq(&pool).await;
+
+    // --- DELETE: drive the REAL batch-delete command path on the parent root.
+    let deleted = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![BlockId::from(p.as_str())])
+        .await
+        .expect("delete_blocks_by_ids_inner");
+    // Engine fan-out runs post-commit (after `commit_and_dispatch`); the
+    // command returns once it has fired. Drain background tasks for parity with
+    // the production lifecycle.
+    settle(&mat).await;
+
+    assert_eq!(
+        deleted, 3,
+        "the cascade must soft-delete the whole subtree P+C+G (got {deleted})",
+    );
+
+    // (a) ENGINE — WITHOUT any boot replay, the engine tombstones the WHOLE
+    //     cohort: parent, child AND grandchild. Pre-PR-5 only SQL was deleted
+    //     and the engine kept all three LIVE, so this would FAIL on C and G.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        for id in [&p, &c, &g] {
+            let deleted = guard.engine_mut().read_deleted(id).expect("read_deleted");
+            assert!(
+                deleted,
+                "engine must tombstone the whole delete cohort (id {id} not deleted) \
+                 — the #1257 cascade must reach the engine, not just SQL",
+            );
+        }
+        drop(guard);
+    }
+
+    // (b) SQL — the whole cohort carries `deleted_at`.
+    for id in [&p, &c, &g] {
+        assert!(
+            sql_deleted(&pool, id).await,
+            "SQL must soft-delete the whole cohort (id {id} not deleted)",
+        );
+    }
+
+    // (c) Apply cursor must NOT advance while op_log.seq did. The LOCAL path
+    //     engine-applies but boot replay still owns cursor progress.
+    let cursor_after = apply_cursor(&pool).await;
+    let seq_after = max_seq(&pool).await;
+    assert!(
+        seq_after > seq_before,
+        "local delete must append to op_log: {seq_before} -> {seq_after}",
+    );
+    assert_eq!(
+        cursor_after, cursor_before,
+        "local command path must NOT advance the apply cursor (#1248 / #1257); \
+         cursor moved {cursor_before} -> {cursor_after}",
+    );
+
+    // (d) #1257 PR-1 GATE — NO phantom. The set of blocks the engine still
+    //     holds LIVE must contain NONE that SQL has soft-deleted. This is the
+    //     whole point: an eager local delete that did NOT reach the engine
+    //     would leave P/C/G engine-live-but-SQL-deleted, and `prepare_outgoing`
+    //     would refuse to export this space.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let live: Vec<String> = {
+            let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+            guard.engine_mut().live_block_ids().expect("live_block_ids")
+        };
+        let sql_deleted_set: std::collections::HashSet<String> =
+            sqlx::query_scalar::<_, String>("SELECT id FROM blocks WHERE deleted_at IS NOT NULL")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+                .into_iter()
+                .collect();
+        let phantom: Vec<&String> = live
+            .iter()
+            .filter(|id| sql_deleted_set.contains(*id))
+            .collect();
+        assert!(
+            phantom.is_empty(),
+            "#1257 phantom: engine holds blocks SQL has soft-deleted (engine-live ∩ \
+             SQL-deleted = {phantom:?}); the eager local delete must reach the engine",
+        );
+    }
+
+    // --- RESTORE: drive the REAL batch-restore command path on the root.
+    let restored = restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![BlockId::from(p.as_str())])
+        .await
+        .expect("restore_blocks_by_ids_inner");
+    settle(&mat).await;
+    assert_eq!(
+        restored.affected_count, 3,
+        "restore must clear the whole cohort P+C+G (got {})",
+        restored.affected_count,
+    );
+
+    // ENGINE — the whole cohort is restored (read_deleted false).
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        for id in [&p, &c, &g] {
+            let deleted = guard.engine_mut().read_deleted(id).expect("read_deleted");
+            assert!(
+                !deleted,
+                "engine must restore the whole cohort (id {id} still deleted)",
+            );
+        }
+        drop(guard);
+    }
+    // SQL — the whole cohort is alive again.
+    for id in [&p, &c, &g] {
+        assert!(
+            !sql_deleted(&pool, id).await,
+            "SQL must restore the whole cohort (id {id} still deleted)",
+        );
+    }
+
+    mat.shutdown();
+}

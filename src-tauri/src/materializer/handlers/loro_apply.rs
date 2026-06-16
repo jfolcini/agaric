@@ -254,7 +254,7 @@ pub(crate) async fn apply_set_property_via_loro(
 /// block's apply, with the post-commit
 /// `dispatch_delete_descendants` fanning out the cohort to the
 /// engine. An unresolvable space falls back to the SQL-only path.
-pub(super) async fn apply_delete_block_via_loro(
+pub(crate) async fn apply_delete_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
     p: &DeleteBlockPayload,
@@ -398,7 +398,7 @@ pub(crate) async fn apply_move_block_via_loro(
 /// soft-deleted child by the per-space-tree invariant. When the block
 /// has no parent (orphan / page-level restore), the path falls back to
 /// the SQL-only restore.
-pub(super) async fn apply_restore_block_via_loro(
+pub(crate) async fn apply_restore_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
     p: &RestoreBlockPayload,
@@ -457,7 +457,7 @@ pub(super) async fn apply_restore_block_via_loro(
 /// cascade is the source of truth users observe. SQL-only fallback
 /// shape mirrors the other helpers; in production both arms are
 /// unreachable.
-pub(super) async fn apply_purge_block_via_loro(
+pub(crate) async fn apply_purge_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
     p: &PurgeBlockPayload,
