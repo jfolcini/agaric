@@ -87,6 +87,7 @@ vi.mock('@/components/ui/button', async (importOriginal) => {
 
 import { makeBlock as _makeBlock } from '@/__tests__/fixtures'
 import { AgendaResults, type AgendaResultsProps } from '@/components/agenda/AgendaResults'
+import { t } from '@/lib/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
@@ -263,6 +264,49 @@ describe('AgendaResults', () => {
 
     await user.click(clearBtn)
     expect(onClearFilters).toHaveBeenCalledOnce()
+  })
+
+  // 6b. #1345 — error state renders a distinct error card (NOT the benign
+  // "No tasks found" empty state) so a backend failure is distinguishable
+  // from a genuinely empty agenda; Retry re-invokes onRetry.
+  it('#1345: renders error card (not empty state) and Retry re-runs the query', async () => {
+    const user = userEvent.setup()
+    const onRetry = vi.fn()
+
+    render(<AgendaResults {...defaultProps({ blocks: [], error: true, onRetry })} />)
+
+    // The distinct error card is shown.
+    const errorCard = screen.getByTestId('agenda-error-state')
+    expect(errorCard).toBeInTheDocument()
+    expect(errorCard).toHaveAttribute('role', 'alert')
+    expect(errorCard).toHaveTextContent(t('agenda.loadFailed'))
+
+    // The benign empty-state copy must NOT be shown.
+    expect(screen.queryByText(t('agenda.noTasks'))).not.toBeInTheDocument()
+
+    // Retry re-runs the query.
+    const retryBtn = screen.getByTestId('agenda-error-retry')
+    await user.click(retryBtn)
+    expect(onRetry).toHaveBeenCalledOnce()
+  })
+
+  // 6c. #1345 — error card takes precedence over the active-filter empty
+  // state too (a failed filtered query is still a failure, not "no match").
+  it('#1345: error card overrides the active-filter empty state', () => {
+    render(<AgendaResults {...defaultProps({ blocks: [], error: true, hasActiveFilters: true })} />)
+
+    expect(screen.getByTestId('agenda-error-state')).toBeInTheDocument()
+    expect(screen.queryByText(t('agenda.noMatch'))).not.toBeInTheDocument()
+  })
+
+  // 6d. #1345 — a11y audit on the error card render.
+  it('#1345: a11y: no violations on the error card', async () => {
+    const { container } = render(
+      <AgendaResults {...defaultProps({ blocks: [], error: true, onRetry: vi.fn() })} />,
+    )
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 
   // 7. Load more button appears when hasMore=true

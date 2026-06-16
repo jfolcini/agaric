@@ -12,7 +12,9 @@ import {
 } from '@/components/agenda/AgendaFilterBuilder'
 import { AgendaResults } from '@/components/agenda/AgendaResults'
 import { ViewHeader } from '@/components/layout/ViewHeader'
+import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 
 import { useAgendaPreferences } from '../../hooks/useAgendaPreferences'
 import {
@@ -40,6 +42,11 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   ])
   const [filteredBlocks, setFilteredBlocks] = useState<BlockRow[]>([])
   const [agendaLoading, setAgendaLoading] = useState(false)
+  // #1345 — the initial-query failure used to be swallowed (logged + empty
+  // results), so a backend failure looked identical to a genuinely empty
+  // agenda. Track the error so AgendaResults can render a distinct,
+  // retryable error card instead of the benign "No tasks found" state.
+  const [agendaError, setAgendaError] = useState(false)
   const [agendaHasMore, setAgendaHasMore] = useState(false)
   const [agendaCursor, setAgendaCursor] = useState<string | null>(null)
   // #720 — the `today` page 1's date-preset translation used. Threaded
@@ -63,6 +70,9 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   useEffect(() => {
     let cancelled = false
     setAgendaLoading(true)
+    // Clear any prior failure at the start of a fresh run so a successful
+    // retry drops the error card.
+    setAgendaError(false)
 
     async function runFilters() {
       try {
@@ -90,6 +100,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
         )
         if (cancelled) return
         setFilteredBlocks([])
+        setAgendaError(true)
         setAgendaLoading(false)
       }
     }
@@ -126,9 +137,21 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
       setAgendaCursor(result.cursor)
     } catch (err) {
       logger.warn('AgendaView', 'Failed to load more agenda items', undefined, err)
+      // #1345 — a load-more failure used to silently return the button to
+      // idle with no feedback or retry path. Surface a retryable toast so
+      // the user can re-attempt the same page fetch.
+      notify.retry(t('agenda.loadMoreFailed'), loadMoreAgenda)
     }
     setAgendaLoading(false)
   }, [agendaCursor, agendaFilters, currentSpaceId, agendaToday])
+
+  // #1345 — re-run the initial filter query after a failure. Reuses the
+  // `refreshKey` bump (which also re-triggers the fetch effect) so the
+  // error card's Retry action and inline date-edit refreshes share one
+  // path.
+  const retryFilters = useCallback(() => {
+    setRefreshKey((k) => k + 1)
+  }, [])
 
   return (
     <div className="agenda-view space-y-4" data-testid="agenda-view">
@@ -147,6 +170,8 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
       <AgendaResults
         blocks={filteredBlocks}
         loading={agendaLoading}
+        error={agendaError}
+        onRetry={retryFilters}
         hasMore={agendaHasMore}
         onLoadMore={loadMoreAgenda}
         onNavigateToPage={onNavigateToPage}

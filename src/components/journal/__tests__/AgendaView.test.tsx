@@ -81,15 +81,18 @@ vi.mock('@/components/agenda/AgendaFilterBuilder', () => ({
 }))
 
 // ── Capture props from AgendaResults ────────────────────────────────
-const { clearFiltersRef, loadMoreRef } = vi.hoisted(() => ({
+const { clearFiltersRef, loadMoreRef, retryRef } = vi.hoisted(() => ({
   clearFiltersRef: { current: null as (() => void) | null },
   loadMoreRef: { current: null as (() => void) | null },
+  retryRef: { current: null as (() => void) | null },
 }))
 
 vi.mock('@/components/agenda/AgendaResults', () => ({
   AgendaResults: (props: {
     blocks: unknown[]
     loading: boolean
+    error?: boolean
+    onRetry?: () => void
     hasMore: boolean
     hasActiveFilters: boolean
     onClearFilters: () => void
@@ -101,11 +104,13 @@ vi.mock('@/components/agenda/AgendaResults', () => ({
   }) => {
     clearFiltersRef.current = props.onClearFilters
     loadMoreRef.current = props.onLoadMore
+    retryRef.current = props.onRetry ?? null
     return (
       <div
         data-testid="agenda-results"
         data-block-count={Array.isArray(props.blocks) ? props.blocks.length : 0}
         data-loading={String(props.loading)}
+        data-error={String(!!props.error)}
         data-has-more={String(props.hasMore)}
         data-has-active-filters={String(props.hasActiveFilters)}
         data-has-navigate={String(!!props.onNavigateToPage)}
@@ -119,6 +124,15 @@ vi.mock('@/components/agenda/AgendaResults', () => ({
   },
 }))
 
+// ── Mock notify (load-more retry surface, #1345) ────────────────────
+vi.mock('@/lib/notify', () => ({
+  notify: {
+    retry: vi.fn(),
+  },
+}))
+
+import { notify } from '@/lib/notify'
+
 import { makeBlock as _makeBlock } from '../../../__tests__/fixtures'
 import {
   executeAgendaFilters,
@@ -128,6 +142,7 @@ import {
 import { batchResolve, queryByProperty } from '../../../lib/tauri'
 import { AgendaView } from '../AgendaView'
 
+const mockedNotifyRetry = vi.mocked(notify.retry)
 const mockedExecuteAgendaFilters = vi.mocked(executeAgendaFilters)
 const mockedLoadMoreAgendaFilters = vi.mocked(loadMoreAgendaFilters)
 const mockedLoadMoreUnfilteredAgenda = vi.mocked(loadMoreUnfilteredAgenda)
@@ -151,6 +166,7 @@ beforeEach(() => {
   filterChangeRef.current = null
   clearFiltersRef.current = null
   loadMoreRef.current = null
+  retryRef.current = null
   // Default: no blocks, no errors
   mockedExecuteAgendaFilters.mockResolvedValue({
     blocks: [],
@@ -267,6 +283,66 @@ describe('AgendaView', () => {
       expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-block-count', '0')
       expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-loading', 'false')
     })
+  })
+
+  // 5b. #1345 — initial query failure surfaces the error state (not the
+  // benign empty state) and Retry re-runs the filters.
+  it('#1345: surfaces error state on query failure and Retry re-runs filters', async () => {
+    mockedExecuteAgendaFilters.mockRejectedValueOnce(new Error('backend down'))
+
+    render(<AgendaView />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-error', 'true')
+    })
+    // Failure must NOT masquerade as a loading or empty-success state.
+    expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-loading', 'false')
+    expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-block-count', '0')
+
+    // Retry re-invokes the query; a now-successful run drops the error and
+    // shows the fetched block.
+    mockedExecuteAgendaFilters.mockResolvedValueOnce({
+      blocks: [makeBlock({ id: 'B_AFTER_RETRY' })],
+      hasMore: false,
+      cursor: null,
+    })
+
+    expect(retryRef.current).not.toBeNull()
+    retryRef.current?.()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-error', 'false')
+      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-block-count', '1')
+    })
+    expect(mockedExecuteAgendaFilters).toHaveBeenCalledTimes(2)
+  })
+
+  // 5c. #1345 — a load-more failure surfaces a retryable notification wired
+  // to the load-more callback (not swallowed silently).
+  it('#1345: load-more failure calls notify.retry with the load-more callback', async () => {
+    mockedExecuteAgendaFilters.mockResolvedValue({
+      blocks: [makeBlock({ id: 'B1' })],
+      hasMore: true,
+      cursor: 'cursor_page2',
+    })
+
+    render(<AgendaView />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-has-more', 'true')
+    })
+
+    mockedLoadMoreAgendaFilters.mockRejectedValueOnce(new Error('load more failed'))
+
+    loadMoreRef.current?.()
+
+    await waitFor(() => {
+      expect(mockedNotifyRetry).toHaveBeenCalledTimes(1)
+    })
+    // The retry callback handed to notify.retry is the same load-more
+    // function exposed to AgendaResults, so invoking it re-attempts the page.
+    const retryArg = mockedNotifyRetry.mock.calls[0]?.[1]
+    expect(retryArg).toBe(loadMoreRef.current)
   })
 
   // 6. Resolves page titles via batchResolve

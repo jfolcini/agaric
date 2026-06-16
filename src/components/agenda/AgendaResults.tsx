@@ -42,6 +42,14 @@ export interface AgendaResultsProps {
   blocks: BlockRow[]
   /** Whether blocks are still loading */
   loading: boolean
+  /**
+   * Whether the initial agenda query failed (#1345). When true a distinct
+   * error card with a Retry action is rendered instead of the benign
+   * "No tasks found" / "No blocks match" empty state.
+   */
+  error?: boolean | undefined
+  /** Re-run the agenda query (wired to the error card's Retry button). */
+  onRetry?: (() => void) | undefined
   /** Whether more blocks can be loaded */
   hasMore: boolean
   /** Load more callback */
@@ -67,6 +75,8 @@ export interface AgendaResultsProps {
 export function AgendaResults({
   blocks,
   loading,
+  error = false,
+  onRetry,
   hasMore,
   onLoadMore,
   onNavigateToPage,
@@ -266,6 +276,37 @@ export function AgendaResults({
     if (idx == null) return
     virtualizer.scrollToIndex(idx, { align: 'auto' })
   }, [focusedIndex, virtualizer, flatToVirtualIndex])
+
+  // ── Error state (#1345) ────────────────────────────────────────────
+  // The initial agenda query failed. Render a distinct, retryable error
+  // card instead of the benign empty state so a backend failure is not
+  // mistaken for an empty agenda. Mirrors the SearchPanel error card
+  // (role="alert" + destructive-tinted card) and adds a Retry action.
+  // Takes precedence over loading/empty so the failure isn't masked by a
+  // stale skeleton.
+  if (error && !loading) {
+    return (
+      <div
+        role="alert"
+        data-testid="agenda-error-state"
+        className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+      >
+        <p className="font-medium">{t('agenda.loadFailed')}</p>
+        <p className="text-destructive/90">{t('agenda.loadFailedBody')}</p>
+        {onRetry && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onRetry}
+            className="mt-3"
+            data-testid="agenda-error-retry"
+          >
+            {t('action.retry')}
+          </Button>
+        )}
+      </div>
+    )
+  }
 
   // ── Loading state (initial load, no blocks yet) ────────────────────
   if (loading && blocks.length === 0) {
