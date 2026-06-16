@@ -326,7 +326,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
           <button
             type="button"
             className={cn(
-              'block-bullet group/bullet flex-shrink-0 flex items-center justify-center w-5 h-5 p-0 text-muted-foreground transition-colors focus-ring-visible active:scale-95 touch-target',
+              'block-bullet group/bullet flex-shrink-0 flex items-center justify-center w-5 h-5 p-0 text-muted-foreground transition-opacity focus-ring-visible active:scale-95 touch-target',
               'hover:text-foreground',
               // FINE pointers (desktop): hidden at rest, revealed only on this
               // block's hover / focus-within / active (selection), matching
@@ -385,7 +385,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
             <button
               type="button"
               className={cn(
-                'task-marker flex-shrink-0 p-0.5 transition-colors focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center',
+                'task-marker flex-shrink-0 p-0.5 transition-opacity focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center',
                 // Fix 5: a block with NO todo_state renders the EMPTY checkbox,
                 // which is a pure affordance ("set a task here"), not meaningful
                 // state. Showing it on every row at rest clutters the whole tree,
