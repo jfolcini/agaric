@@ -1337,6 +1337,22 @@ export type Draft = {
 	content: string,
 	/**  Epoch-ms (block_drafts.updated_at is INTEGER since migration 0082). */
 	updated_at: number,
+	/**
+	 *  #1256: MONOTONIC supersession anchor. The local device's op-log
+	 *  high-water (`MAX(seq)`) at the moment this draft was saved — "every op
+	 *  up to this seq is already reflected in the draft's view." Recovery
+	 *  treats the draft as superseded iff a block-scoped op exists with
+	 *  `seq > draft_anchor_seq` on the same device (migration 0092).
+	 *  `0` (the backfill default) means "no local op preceded this draft", so
+	 *  any existing op supersedes it.
+	 */
+	draft_anchor_seq: number,
+	/**
+	 *  #1256: which device's per-device `seq` space `draft_anchor_seq` lives
+	 *  in. `None` (legacy/backfill) is treated by the recovery query as
+	 *  "matches the recovering device".
+	 */
+	draft_anchor_device: string | null,
 };
 
 /**

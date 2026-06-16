@@ -4627,7 +4627,7 @@ async fn save_and_flush_draft() {
     .unwrap();
 
     // Save a draft
-    draft::save_draft(&pool, "01HZ000000000000000000DRF01", "draft content")
+    draft::save_draft(&pool, DEV, "01HZ000000000000000000DRF01", "draft content")
         .await
         .unwrap();
 
@@ -4684,7 +4684,7 @@ async fn delete_draft_removes_entry() {
     .unwrap();
 
     // Save a draft
-    draft::save_draft(&pool, "01HZ000000000000000000DRF02", "to be deleted")
+    draft::save_draft(&pool, DEV, "01HZ000000000000000000DRF02", "to be deleted")
         .await
         .unwrap();
 
@@ -4735,10 +4735,10 @@ async fn list_drafts_returns_all_drafts() {
     }
 
     // Save two drafts
-    draft::save_draft(&pool, "01HZ000000000000000000DRF03", "content one")
+    draft::save_draft(&pool, DEV, "01HZ000000000000000000DRF03", "content one")
         .await
         .unwrap();
-    draft::save_draft(&pool, "01HZ000000000000000000DRF04", "content two")
+    draft::save_draft(&pool, DEV, "01HZ000000000000000000DRF04", "content two")
         .await
         .unwrap();
 
@@ -4803,7 +4803,7 @@ async fn flush_all_drafts_writes_one_op_log_row_per_draft() {
 
     // Seed three drafts.
     for (i, id) in block_ids.iter().enumerate() {
-        draft::save_draft(&pool, id, &format!("flushed-content-{i}"))
+        draft::save_draft(&pool, DEV, id, &format!("flushed-content-{i}"))
             .await
             .unwrap();
     }
@@ -4884,10 +4884,10 @@ async fn flush_all_drafts_atomic_rollback_on_inner_failure() {
     }
 
     // Two healthy drafts via the public API.
-    draft::save_draft(&pool, valid_a, "valid content A")
+    draft::save_draft(&pool, DEV, valid_a, "valid content A")
         .await
         .unwrap();
-    draft::save_draft(&pool, valid_b, "valid content B")
+    draft::save_draft(&pool, DEV, valid_b, "valid content B")
         .await
         .unwrap();
 

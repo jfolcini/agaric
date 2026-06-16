@@ -52,7 +52,9 @@ async fn seed_block(pool: &SqlitePool, block_id: &str) {
 async fn save_draft_creates_row() {
     let (pool, _dir) = test_pool().await;
 
-    save_draft(&pool, BLOCK_A, CONTENT_V1).await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, CONTENT_V1)
+        .await
+        .unwrap();
 
     let draft = get_draft(&pool, BLOCK_A)
         .await
@@ -66,8 +68,12 @@ async fn save_draft_creates_row() {
 async fn save_draft_upserts_existing_row() {
     let (pool, _dir) = test_pool().await;
 
-    save_draft(&pool, BLOCK_A, CONTENT_V1).await.unwrap();
-    save_draft(&pool, BLOCK_A, CONTENT_V2).await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, CONTENT_V1)
+        .await
+        .unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, CONTENT_V2)
+        .await
+        .unwrap();
 
     let drafts = get_all_drafts(&pool).await.unwrap();
     assert_eq!(drafts.len(), 1, "INSERT OR REPLACE must not duplicate rows");
@@ -81,7 +87,7 @@ async fn save_draft_upserts_existing_row() {
 async fn save_draft_preserves_empty_content() {
     let (pool, _dir) = test_pool().await;
 
-    save_draft(&pool, BLOCK_A, "").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "").await.unwrap();
 
     let d = get_draft(&pool, BLOCK_A).await.unwrap().unwrap();
     assert_eq!(d.content, "", "empty string must round-trip");
@@ -102,7 +108,7 @@ async fn save_draft_preserves_unicode_content() {
 
     for &(block_id, content) in cases {
         seed_block(&pool, block_id).await;
-        save_draft(&pool, block_id, content).await.unwrap();
+        save_draft(&pool, DEVICE, block_id, content).await.unwrap();
         let d = get_draft(&pool, block_id).await.unwrap().unwrap();
         assert_eq!(
             d.content, content,
@@ -116,7 +122,7 @@ async fn save_draft_handles_large_content() {
     let (pool, _dir) = test_pool().await;
 
     let large = "A".repeat(100 * 1024);
-    save_draft(&pool, BLOCK_A, &large).await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, &large).await.unwrap();
 
     let d = get_draft(&pool, BLOCK_A).await.unwrap().unwrap();
     assert_eq!(
@@ -130,10 +136,14 @@ async fn save_draft_handles_large_content() {
 async fn save_draft_updated_at_does_not_regress_on_resave() {
     let (pool, _dir) = test_pool().await;
 
-    save_draft(&pool, BLOCK_A, CONTENT_V1).await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, CONTENT_V1)
+        .await
+        .unwrap();
     let ts1 = get_draft(&pool, BLOCK_A).await.unwrap().unwrap().updated_at;
 
-    save_draft(&pool, BLOCK_A, CONTENT_V2).await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, CONTENT_V2)
+        .await
+        .unwrap();
     let ts2 = get_draft(&pool, BLOCK_A).await.unwrap().unwrap().updated_at;
 
     assert!(ts2 >= ts1, "updated_at must not regress: got {ts2} < {ts1}");
@@ -145,7 +155,7 @@ async fn save_draft_updated_at_does_not_regress_on_resave() {
 async fn save_draft_if_changed_writes_when_no_prior_draft() {
     let (pool, _dir) = test_pool().await;
 
-    let wrote = save_draft_if_changed(&pool, BLOCK_A, "hello")
+    let wrote = save_draft_if_changed(&pool, DEVICE, BLOCK_A, "hello")
         .await
         .unwrap();
 
@@ -160,12 +170,12 @@ async fn save_draft_if_changed_writes_when_no_prior_draft() {
 async fn save_draft_if_changed_skips_identical_content() {
     let (pool, _dir) = test_pool().await;
 
-    save_draft_if_changed(&pool, BLOCK_A, "hello")
+    save_draft_if_changed(&pool, DEVICE, BLOCK_A, "hello")
         .await
         .unwrap();
     let ts_before = get_draft(&pool, BLOCK_A).await.unwrap().unwrap().updated_at;
 
-    let wrote = save_draft_if_changed(&pool, BLOCK_A, "hello")
+    let wrote = save_draft_if_changed(&pool, DEVICE, BLOCK_A, "hello")
         .await
         .unwrap();
 
@@ -181,11 +191,11 @@ async fn save_draft_if_changed_skips_identical_content() {
 async fn save_draft_if_changed_writes_when_content_differs() {
     let (pool, _dir) = test_pool().await;
 
-    save_draft_if_changed(&pool, BLOCK_A, "hello")
+    save_draft_if_changed(&pool, DEVICE, BLOCK_A, "hello")
         .await
         .unwrap();
 
-    let wrote = save_draft_if_changed(&pool, BLOCK_A, "world")
+    let wrote = save_draft_if_changed(&pool, DEVICE, BLOCK_A, "world")
         .await
         .unwrap();
 
@@ -200,7 +210,7 @@ async fn save_draft_if_changed_writes_when_content_differs() {
 async fn delete_draft_removes_existing_row() {
     let (pool, _dir) = test_pool().await;
 
-    save_draft(&pool, BLOCK_A, "content").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "content").await.unwrap();
     delete_draft(&pool, BLOCK_A).await.unwrap();
 
     assert!(
@@ -230,7 +240,7 @@ async fn get_draft_returns_none_for_missing_block() {
 async fn get_draft_returns_draft_when_present() {
     let (pool, _dir) = test_pool().await;
 
-    save_draft(&pool, BLOCK_A, "hello").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "hello").await.unwrap();
 
     let d = get_draft(&pool, BLOCK_A).await.unwrap().unwrap();
     assert_eq!(d.block_id, BLOCK_A);
@@ -251,8 +261,8 @@ async fn get_all_drafts_returns_empty_vec_when_no_drafts() {
 async fn get_all_drafts_ordered_by_updated_at_ascending() {
     let (pool, _dir) = test_pool().await;
 
-    save_draft(&pool, BLOCK_A, "first").await.unwrap();
-    save_draft(&pool, BLOCK_B, "second").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "first").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_B, "second").await.unwrap();
 
     let drafts = get_all_drafts(&pool).await.unwrap();
     assert_eq!(drafts.len(), 2, "should return both drafts");
@@ -272,13 +282,13 @@ async fn draft_count_tracks_inserts_upserts_and_deletes() {
 
     assert_eq!(draft_count(&pool).await.unwrap(), 0, "initially zero");
 
-    save_draft(&pool, BLOCK_A, "a").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "a").await.unwrap();
     assert_eq!(draft_count(&pool).await.unwrap(), 1, "after first insert");
 
-    save_draft(&pool, BLOCK_B, "b").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_B, "b").await.unwrap();
     assert_eq!(draft_count(&pool).await.unwrap(), 2, "after second insert");
 
-    save_draft(&pool, BLOCK_A, "a2").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "a2").await.unwrap();
     assert_eq!(
         draft_count(&pool).await.unwrap(),
         2,
@@ -295,7 +305,9 @@ async fn draft_count_tracks_inserts_upserts_and_deletes() {
 async fn flush_draft_writes_op_and_removes_draft() {
     let (pool, _dir) = test_pool().await;
 
-    save_draft(&pool, BLOCK_A, "final content").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "final content")
+        .await
+        .unwrap();
 
     let record = flush_draft(&pool, DEVICE, BLOCK_A, "final content", None)
         .await
@@ -320,7 +332,7 @@ async fn flush_draft_writes_op_and_removes_draft() {
 async fn flush_draft_includes_prev_edit_in_payload() {
     let (pool, _dir) = test_pool().await;
 
-    save_draft(&pool, BLOCK_A, "updated").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "updated").await.unwrap();
 
     let prev = Some((DEVICE.to_owned(), 3));
     let record = flush_draft(&pool, DEVICE, BLOCK_A, "updated", prev)
@@ -353,8 +365,12 @@ async fn flush_draft_succeeds_without_existing_draft_row() {
 async fn flush_draft_only_deletes_target_block_draft() {
     let (pool, _dir) = test_pool().await;
 
-    save_draft(&pool, BLOCK_A, "content A").await.unwrap();
-    save_draft(&pool, BLOCK_B, "content B").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "content A")
+        .await
+        .unwrap();
+    save_draft(&pool, DEVICE, BLOCK_B, "content B")
+        .await
+        .unwrap();
 
     flush_draft(&pool, DEVICE, BLOCK_A, "content A", None)
         .await
@@ -376,7 +392,7 @@ async fn flush_draft_only_deletes_target_block_draft() {
 async fn delete_draft_in_tx_removes_row_on_commit() {
     let (pool, _dir) = test_pool().await;
 
-    save_draft(&pool, BLOCK_A, "content").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "content").await.unwrap();
 
     let mut tx = pool.begin().await.unwrap();
     delete_draft_in_tx(&mut tx, BLOCK_A).await.unwrap();
@@ -392,7 +408,7 @@ async fn delete_draft_in_tx_removes_row_on_commit() {
 async fn delete_draft_in_tx_rollback_preserves_row() {
     let (pool, _dir) = test_pool().await;
 
-    save_draft(&pool, BLOCK_A, "content").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "content").await.unwrap();
 
     let mut tx = pool.begin().await.unwrap();
     delete_draft_in_tx(&mut tx, BLOCK_A).await.unwrap();
@@ -410,7 +426,9 @@ async fn delete_draft_in_tx_rollback_preserves_row() {
 async fn flush_draft_is_atomic_op_and_draft_delete_share_transaction() {
     let (pool, _dir) = test_pool().await;
 
-    save_draft(&pool, BLOCK_A, "atomic content").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "atomic content")
+        .await
+        .unwrap();
 
     let record = flush_draft(&pool, DEVICE, BLOCK_A, "atomic content", None)
         .await
@@ -436,7 +454,9 @@ async fn flush_draft_rollback_neither_op_nor_draft_deleted() {
 
     let (pool, _dir) = test_pool().await;
 
-    save_draft(&pool, BLOCK_A, "rollback test").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "rollback test")
+        .await
+        .unwrap();
 
     let seq_before = get_latest_seq(&ReadPool(pool.clone()), DEVICE)
         .await
@@ -484,13 +504,13 @@ async fn flush_draft_rollback_neither_op_nor_draft_deleted() {
 async fn flush_draft_sequential_flushes_produce_chained_ops() {
     let (pool, _dir) = test_pool().await;
 
-    save_draft(&pool, BLOCK_A, "v1").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "v1").await.unwrap();
     let r1 = flush_draft(&pool, DEVICE, BLOCK_A, "v1", None)
         .await
         .unwrap();
     assert_eq!(r1.seq, 1);
 
-    save_draft(&pool, BLOCK_A, "v2").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "v2").await.unwrap();
     let r2 = flush_draft(&pool, DEVICE, BLOCK_A, "v2", None)
         .await
         .unwrap();
@@ -517,7 +537,9 @@ async fn flush_draft_when_delete_draft_fails_after_op_commit() {
     let (pool, _dir) = test_pool().await;
 
     // Create and flush a draft for BLOCK_A — normal path.
-    save_draft(&pool, BLOCK_A, "content A").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "content A")
+        .await
+        .unwrap();
     let r1 = flush_draft(&pool, DEVICE, BLOCK_A, "content A", None)
         .await
         .unwrap();
@@ -570,7 +592,9 @@ async fn sweep_orphan_drafts_deletes_drafts_for_missing_blocks() {
 
     // 1. Live block — draft should survive (BLOCK_A is auto-seeded by
     //    `test_pool`).
-    save_draft(&pool, BLOCK_A, "live draft").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "live draft")
+        .await
+        .unwrap();
 
     // 2. Soft-deleted block — draft should be swept.
     let soft_deleted = "01HZ0000000000000000SOFTDEL";
@@ -583,7 +607,7 @@ async fn sweep_orphan_drafts_deletes_drafts_for_missing_blocks() {
     .execute(&pool)
     .await
     .unwrap();
-    save_draft(&pool, soft_deleted, "draft for trashed block")
+    save_draft(&pool, DEVICE, soft_deleted, "draft for trashed block")
         .await
         .unwrap();
 
@@ -613,7 +637,9 @@ async fn sweep_orphan_drafts_returns_zero_when_all_drafts_are_live() {
     let (pool, _dir) = test_pool().await;
 
     // BLOCK_A is auto-seeded by `test_pool` (M-93 FK).
-    save_draft(&pool, BLOCK_A, "live draft").await.unwrap();
+    save_draft(&pool, DEVICE, BLOCK_A, "live draft")
+        .await
+        .unwrap();
 
     let removed = sweep_orphan_drafts(&pool).await.unwrap();
 
@@ -654,7 +680,7 @@ async fn spawn_orphan_drafts_sweeper_runs_boot_one_shot() {
     .execute(&pool)
     .await
     .unwrap();
-    save_draft(&pool, soft_deleted, "draft for trashed block")
+    save_draft(&pool, DEVICE, soft_deleted, "draft for trashed block")
         .await
         .unwrap();
     assert_eq!(draft_count(&pool).await.unwrap(), 1, "orphan seeded");
@@ -703,7 +729,7 @@ async fn block_id_with_like_wildcards() {
 
     for &bid in &ids_with_wildcards {
         seed_block(&pool, bid).await;
-        save_draft(&pool, bid, &format!("content for {bid}"))
+        save_draft(&pool, DEVICE, bid, &format!("content for {bid}"))
             .await
             .unwrap();
     }
@@ -764,7 +790,7 @@ async fn content_containing_json_like_strings() {
     for (i, content) in json_like_contents.iter().enumerate() {
         let bid = format!("01HZ000000000000000000JSON{i:02}");
         seed_block(&pool, &bid).await;
-        save_draft(&pool, &bid, content).await.unwrap();
+        save_draft(&pool, DEVICE, &bid, content).await.unwrap();
 
         let d = get_draft(&pool, &bid)
             .await

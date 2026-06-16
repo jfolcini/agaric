@@ -49,7 +49,7 @@ async fn seed_drafts(pool: &SqlitePool, mat: &Materializer, n: usize) -> Vec<Str
     let mut ids = Vec::with_capacity(n);
     for _ in 0..n {
         let id = create_block(pool, mat).await;
-        save_draft(pool, &id, "draft content for background noise")
+        save_draft(pool, "dev-bench", &id, "draft content for background noise")
             .await
             .unwrap();
         ids.push(id);
@@ -76,7 +76,9 @@ fn bench_save_draft(c: &mut Criterion) {
             let block_id = block_id.clone();
             let content = content.clone();
             async move {
-                save_draft(&pool, &block_id, &content).await.unwrap();
+                save_draft(&pool, "dev-bench", &block_id, &content)
+                    .await
+                    .unwrap();
             }
         })
     });
@@ -104,7 +106,7 @@ fn bench_save_draft_if_changed_write(c: &mut Criterion) {
             let block_id = block_id.clone();
             let content = format!("version {counter} with some padding text here");
             async move {
-                save_draft_if_changed(&pool, &block_id, &content)
+                save_draft_if_changed(&pool, "dev-bench", &block_id, &content)
                     .await
                     .unwrap();
             }
@@ -122,14 +124,15 @@ fn bench_save_draft_if_changed_skip(c: &mut Criterion) {
     let block_id = rt.block_on(create_block(&pool, &mat));
 
     let content = "identical content on every call";
-    rt.block_on(save_draft(&pool, &block_id, content)).unwrap();
+    rt.block_on(save_draft(&pool, "dev-bench", &block_id, content))
+        .unwrap();
 
     c.bench_function("save_draft_if_changed_skip", |b| {
         b.to_async(&rt).iter(|| {
             let pool = pool.clone();
             let block_id = block_id.clone();
             async move {
-                save_draft_if_changed(&pool, &block_id, content)
+                save_draft_if_changed(&pool, "dev-bench", &block_id, content)
                     .await
                     .unwrap();
             }
@@ -162,7 +165,9 @@ fn bench_flush_draft(c: &mut Criterion) {
             let block_id = block_id.clone();
             let content = content.clone();
             async move {
-                save_draft(&pool, &block_id, &content).await.unwrap();
+                save_draft(&pool, "dev-bench", &block_id, &content)
+                    .await
+                    .unwrap();
                 flush_draft(&pool, "dev-bench", &block_id, &content, None)
                     .await
                     .unwrap();
@@ -205,7 +210,9 @@ fn bench_save_draft_with_background_drafts(c: &mut Criterion) {
                     let pool = pool.clone();
                     let target_id = target_id.clone();
                     async move {
-                        save_draft(&pool, &target_id, content).await.unwrap();
+                        save_draft(&pool, "dev-bench", &target_id, content)
+                            .await
+                            .unwrap();
                     }
                 })
             },
@@ -247,7 +254,9 @@ fn bench_flush_draft_with_background_drafts(c: &mut Criterion) {
                     let pool = pool.clone();
                     let target_id = target_id.clone();
                     async move {
-                        save_draft(&pool, &target_id, content).await.unwrap();
+                        save_draft(&pool, "dev-bench", &target_id, content)
+                            .await
+                            .unwrap();
                         flush_draft(&pool, "dev-bench", &target_id, content, None)
                             .await
                             .unwrap();
@@ -294,7 +303,7 @@ fn bench_delete_draft(c: &mut Criterion) {
                         let start = std::time::Instant::now();
                         for _ in 0..iters {
                             // Re-insert so there is something to delete
-                            save_draft(&pool, &target_id, "draft to delete")
+                            save_draft(&pool, "dev-bench", &target_id, "draft to delete")
                                 .await
                                 .unwrap();
                             delete_draft(&pool, &target_id).await.unwrap();
