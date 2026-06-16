@@ -13,6 +13,10 @@ pub mod loro_sync_types;
 // the wire types.
 pub mod loro_sync;
 
+// #1319 cross-session aggregate of snapshot-fallback occurrences,
+// surfaced through `StatusInfo`.
+pub mod snapshot_fallback_metrics;
+
 mod operations;
 mod orchestrator;
 pub mod types;

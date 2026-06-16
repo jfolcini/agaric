@@ -115,6 +115,14 @@ async fn snapshot_status_info_response() {
         // across runs. Redact it to keep the snapshot stable; its live wiring
         // is asserted by the delta test in `materializer::tests::fifo_status`.
         ".sql_only_fallback_count" => "[FALLBACK_COUNT]",
+        // #1319: same process-global, cross-session non-determinism as
+        // `sql_only_fallback_count` — other tests in this binary may have
+        // recorded a snapshot-fallback before this snapshot samples it.
+        // Redact both the count and the last-occurrence struct; the live
+        // wiring is asserted by the delta test in
+        // `sync_protocol::snapshot_fallback_metrics`.
+        ".snapshot_fallback_count" => "[SNAPSHOT_FALLBACK_COUNT]",
+        ".snapshot_fallback_last" => "[SNAPSHOT_FALLBACK_LAST]",
     });
 }
 

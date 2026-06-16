@@ -2384,6 +2384,28 @@ export type SetPropertyArgs = {
 };
 
 /**
+ *  Snapshot of the most recent sync snapshot-fallback occurrence. Surfaced
+ *  (cloned) through `StatusInfo::snapshot_fallback_last`.
+ */
+export type SnapshotFallbackLast = {
+	/**
+	 *  Monotonic ordinal of this occurrence within the process — equal to
+	 *  [`count`] at the moment it was recorded. Lets an operator tell apart
+	 *  "the count moved" from "the same stale `reason` is being re-read".
+	 */
+	occurrence: number,
+	/**  Remote device / peer id whose `from_vv` could not be reached. */
+	peer_id: string,
+	/**  Per-space scope of the rejected update. */
+	space_id: string,
+	/**
+	 *  Human-readable diagnostic from `classify_from_vv_reachability`
+	 *  (carries the offending `peer={peer_id} counter>=…` detail).
+	 */
+	reason: string,
+};
+
+/**
  *  Snippet-rendering parameters threaded through to the FTS5 `snippet()`
  *  builtin. The SQL composition lives in `fts::search`.
  */
@@ -2588,6 +2610,26 @@ export type StatusInfo = {
 	 *  [`super::handlers::sql_only_fallback::count`].
 	 */
 	sql_only_fallback_count: number,
+	/**
+	 *  #1319: process-global, cross-session count of sync snapshot-fallbacks
+	 *  taken because a peer advertised a `from_vv` unreachable from our local
+	 *  `oplog_vv()` (MAINT-228). Monotonic, never reset. A steadily rising
+	 *  value means sync keeps falling back to snapshot catch-up instead of
+	 *  applying incremental updates — pair with `snapshot_fallback_last` (and
+	 *  the `target=sync_protocol::snapshot_fallback` debug lines) to see the
+	 *  offending peer / reason. Sourced from
+	 *  [`crate::sync_protocol::snapshot_fallback_metrics::count`].
+	 */
+	snapshot_fallback_count: number,
+	/**
+	 *  #1319: the most recent sync snapshot-fallback occurrence (peer id,
+	 *  space id, diagnostic reason, monotonic occurrence ordinal), or `None`
+	 *  if none has happened in this process. Lets an operator correlate a
+	 *  recurring fallback pattern without scraping per-session log lines.
+	 *  Sourced from
+	 *  [`crate::sync_protocol::snapshot_fallback_metrics::last`].
+	 */
+	snapshot_fallback_last: SnapshotFallbackLast | null,
 };
 
 /**

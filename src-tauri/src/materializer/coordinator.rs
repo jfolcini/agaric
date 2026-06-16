@@ -957,6 +957,11 @@ impl Materializer {
             // #1326: surface the SQL-only fallback observability counter
             // (process-global, monotonic) through the status endpoint.
             sql_only_fallback_count: super::handlers::sql_only_fallback::count(),
+            // #1319: surface the cross-session sync snapshot-fallback
+            // aggregate (process-global, monotonic count + last occurrence)
+            // through the status endpoint.
+            snapshot_fallback_count: crate::sync_protocol::snapshot_fallback_metrics::count(),
+            snapshot_fallback_last: crate::sync_protocol::snapshot_fallback_metrics::last(),
         }
     }
 }
