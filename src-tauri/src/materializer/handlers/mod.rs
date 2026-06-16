@@ -56,6 +56,12 @@ use sql_only::*;
 // External re-exports — preserve the pre-split paths so callers outside
 // this module (materializer/mod.rs, consumer.rs, tests.rs) do not change.
 pub(crate) use attachments::cleanup_orphaned_attachments;
+// #1257 PR-2: the LOCAL create_block command path drives the engine-apply +
+// dense-position projection through this helper IN-TRANSACTION (without
+// advancing the apply cursor — that stays a boot-replay / dispatch_op concern),
+// so a fresh local create is engine-fresh and densely-positioned immediately
+// instead of waiting for the next boot replay (#1245 / #1249).
+pub(crate) use loro_apply::apply_create_block_via_loro;
 pub(crate) use pages_cache::recompute_pages_cache_counts_for_pages;
 pub(crate) use task_handlers::{handle_background_task, handle_foreground_task};
 
