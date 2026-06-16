@@ -242,8 +242,13 @@ pub async fn move_block_inner(
     // `crate::commands::block_cleanup`.
     crate::commands::block_cleanup::rederive_page_and_space_ids(&mut tx, &block_id).await?;
 
-    // P-4: Recompute inherited tags for moved subtree
-    crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &block_id).await?;
+    // #1392: tag-inheritance recompute for the moved subtree is now owned by
+    // `apply_move_block_via_loro` (step 5 above) — and by its engine-absent
+    // `apply_move_block_sql_only` fallback — so BOTH arms already recompute
+    // `block_tag_inherited`. The former explicit call here (left over from the
+    // pre-#1257-route-through inline path) was a redundant second subtree walk
+    // on every move; dropped. `local_move_inheritance_both_arms_1392` pins that
+    // both arms keep the inheritance correct without it.
 
     // #417: refresh `pages_cache` counts for the affected pages WITHOUT the
     // full-table pass. Set = old owning page ∪ new owning page ∪ outbound
