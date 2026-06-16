@@ -540,12 +540,11 @@ async fn recovery_unflushed_draft_with_prior_edit_includes_prev_edit() {
         .expect("edit_block op must exist after edit_block_inner")
         .seq;
 
-    // Simulate crash: insert draft with newer content
-    sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
-        .bind(&block.id)
-        .bind("version 3 from draft")
-        .bind(FAR_FUTURE_TS)
-        .execute(&pool)
+    // Simulate crash: save a draft with newer content. #1256: the draft is
+    // typed AFTER the create+edit history, so `save_draft` captures the
+    // post-edit op-log high-water as the anchor; both prior ops are the
+    // draft's baseline (seq <= anchor) and neither supersedes it.
+    draft::save_draft(&pool, DEV, block.id.as_str(), "version 3 from draft")
         .await
         .unwrap();
 

@@ -271,11 +271,13 @@ pub async fn flush_all_drafts_inner(
 #[tauri::command]
 #[specta::specta]
 pub async fn save_draft(
-    pool: State<'_, WritePool>,
+    ctx: State<'_, WriteCtx>,
     block_id: BlockId,
     content: String,
 ) -> Result<(), AppError> {
-    draft::save_draft(&pool.0, block_id.as_str(), &content)
+    // #1256: pass `device_id` so `save_draft` can capture the local op-log
+    // high-water as the draft's monotonic supersession anchor (migration 0092).
+    draft::save_draft(ctx.pool(), ctx.device_id(), block_id.as_str(), &content)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -411,7 +413,7 @@ mod tests_h12 {
         let mat = crate::materializer::Materializer::new(pool.clone());
         insert_soft_deleted_block(&pool, DEAD_BLOCK).await;
 
-        draft::save_draft(&pool, DEAD_BLOCK, "stale content")
+        draft::save_draft(&pool, DEVICE, DEAD_BLOCK, "stale content")
             .await
             .unwrap();
         assert!(draft_exists(&pool, DEAD_BLOCK).await);
@@ -496,7 +498,7 @@ mod tests_h12 {
     async fn hard_delete_block_cascades_to_block_drafts_m93() {
         let (pool, _dir) = test_pool().await;
         insert_live_block(&pool, LIVE_BLOCK).await;
-        draft::save_draft(&pool, LIVE_BLOCK, "draft body")
+        draft::save_draft(&pool, DEVICE, LIVE_BLOCK, "draft body")
             .await
             .unwrap();
         assert!(draft_exists(&pool, LIVE_BLOCK).await, "draft seeded");
@@ -557,7 +559,7 @@ mod tests_h12 {
         let mat = crate::materializer::Materializer::new(pool.clone());
         insert_live_block(&pool, LIVE_BLOCK).await;
 
-        draft::save_draft(&pool, LIVE_BLOCK, "final content")
+        draft::save_draft(&pool, DEVICE, LIVE_BLOCK, "final content")
             .await
             .unwrap();
 

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT block_id AS \"block_id: crate::ulid::BlockId\", content, updated_at FROM block_drafts ORDER BY updated_at ASC",
+  "query": "SELECT block_id AS \"block_id: crate::ulid::BlockId\", content, updated_at, draft_anchor_seq, draft_anchor_device FROM block_drafts WHERE block_id = ?",
   "describe": {
     "columns": [
       {
@@ -35,16 +35,40 @@
             "name": "updated_at"
           }
         }
+      },
+      {
+        "name": "draft_anchor_seq",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "block_drafts",
+            "name": "draft_anchor_seq"
+          }
+        }
+      },
+      {
+        "name": "draft_anchor_device",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_drafts",
+            "name": "draft_anchor_device"
+          }
+        }
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
       false,
       false,
-      false
+      false,
+      false,
+      true
     ]
   },
-  "hash": "4ecaf8425d4ed04d84bb13e3fb712ce93e5a4a9579e88ea4f90a21fa9185f9c3"
+  "hash": "eaeb8c453d280be2fc2836fb17c689357a510213acc468309310682affecf760"
 }

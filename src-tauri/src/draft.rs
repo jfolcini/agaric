@@ -26,6 +26,18 @@ pub struct Draft {
     pub content: String,
     /// Epoch-ms (block_drafts.updated_at is INTEGER since migration 0082).
     pub updated_at: i64,
+    /// #1256: MONOTONIC supersession anchor. The local device's op-log
+    /// high-water (`MAX(seq)`) at the moment this draft was saved — "every op
+    /// up to this seq is already reflected in the draft's view." Recovery
+    /// treats the draft as superseded iff a block-scoped op exists with
+    /// `seq > draft_anchor_seq` on the same device (migration 0092).
+    /// `0` (the backfill default) means "no local op preceded this draft", so
+    /// any existing op supersedes it.
+    pub draft_anchor_seq: i64,
+    /// #1256: which device's per-device `seq` space `draft_anchor_seq` lives
+    /// in. `None` (legacy/backfill) is treated by the recovery query as
+    /// "matches the recovering device".
+    pub draft_anchor_device: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -35,14 +47,39 @@ pub struct Draft {
 /// Insert or replace a draft for the given block.
 ///
 /// Called by the frontend every ~2 s during active typing.
-pub async fn save_draft(pool: &SqlitePool, block_id: &str, content: &str) -> Result<(), AppError> {
+///
+/// #1256: alongside `content`/`updated_at`, this records the MONOTONIC
+/// supersession anchor — the local device's op-log high-water (`MAX(seq)`) at
+/// save time (migration 0092). `updated_at` (a `now_ms()` wall-clock) is kept
+/// for display/ordering, but recovery's supersession check now keys on the
+/// clock-independent `(draft_anchor_device, draft_anchor_seq)` pair so a
+/// backward clock step can no longer resurrect a stale draft.
+pub async fn save_draft(
+    pool: &SqlitePool,
+    device_id: &str,
+    block_id: &str,
+    content: &str,
+) -> Result<(), AppError> {
     let updated_at = now_ms();
+    // Op-log high-water for THIS device: every op with seq <= this value is
+    // already reflected in the editor view this draft was typed against, so
+    // only an op with a strictly greater seq is a genuine superseding flush.
+    let anchor_seq = sqlx::query_scalar!(
+        r#"SELECT COALESCE(MAX(seq), 0) as "seq!: i64" FROM op_log WHERE device_id = ?"#,
+        device_id,
+    )
+    .fetch_one(pool)
+    .await?;
     sqlx::query(
-        "INSERT OR REPLACE INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)",
+        "INSERT OR REPLACE INTO block_drafts \
+         (block_id, content, updated_at, draft_anchor_seq, draft_anchor_device) \
+         VALUES (?, ?, ?, ?, ?)",
     )
     .bind(block_id)
     .bind(content)
     .bind(updated_at)
+    .bind(anchor_seq)
+    .bind(device_id)
     .execute(pool)
     .await?;
     Ok(())
@@ -55,6 +92,7 @@ pub async fn save_draft(pool: &SqlitePool, block_id: &str, content: &str) -> Res
 /// since the last autosave tick.
 pub async fn save_draft_if_changed(
     pool: &SqlitePool,
+    device_id: &str,
     block_id: &str,
     content: &str,
 ) -> Result<bool, AppError> {
@@ -63,7 +101,7 @@ pub async fn save_draft_if_changed(
     {
         return Ok(false);
     }
-    save_draft(pool, block_id, content).await?;
+    save_draft(pool, device_id, block_id, content).await?;
     Ok(true)
 }
 
@@ -95,7 +133,7 @@ pub async fn delete_draft_in_tx(
 pub async fn get_draft(pool: &SqlitePool, block_id: &str) -> Result<Option<Draft>, AppError> {
     let draft = sqlx::query_as!(
         Draft,
-        r#"SELECT block_id AS "block_id: crate::ulid::BlockId", content, updated_at FROM block_drafts WHERE block_id = ?"#,
+        r#"SELECT block_id AS "block_id: crate::ulid::BlockId", content, updated_at, draft_anchor_seq, draft_anchor_device FROM block_drafts WHERE block_id = ?"#,
         block_id,
     )
     .fetch_optional(pool)
@@ -107,7 +145,7 @@ pub async fn get_draft(pool: &SqlitePool, block_id: &str) -> Result<Option<Draft
 pub async fn get_all_drafts(pool: &SqlitePool) -> Result<Vec<Draft>, AppError> {
     let drafts = sqlx::query_as!(
         Draft,
-        r#"SELECT block_id AS "block_id: crate::ulid::BlockId", content, updated_at FROM block_drafts ORDER BY updated_at ASC"#,
+        r#"SELECT block_id AS "block_id: crate::ulid::BlockId", content, updated_at, draft_anchor_seq, draft_anchor_device FROM block_drafts ORDER BY updated_at ASC"#,
     )
     .fetch_all(pool)
     .await?;

@@ -77,33 +77,38 @@ pub(super) async fn recover_single_draft(
     // Check if an edit_block or create_block op exists for this block_id
     // that supersedes the draft.
     //
-    // #384 — same-ms disambiguation by op provenance. `op_log.created_at`
-    // and `block_drafts.updated_at` are both INTEGER epoch-ms from
-    // `now_ms()`, so a real edit and a draft autosave can land in the SAME
-    // millisecond. The previous strict `created_at > draft.updated_at`
-    // missed a same-ms edit entirely, so recovery would re-apply the (older)
-    // draft content over the newer edit — a silent clobber.
+    // #1256 — MONOTONIC supersession anchor (replaces the #384 wall-clock
+    // comparison). `op_log.created_at` and `block_drafts.updated_at` are both
+    // INTEGER epoch-ms from `now_ms()`, which `db/pool.rs` documents as
+    // NON-monotonic: it steps BACKWARD on an NTP correction or a manual clock
+    // change. The old check counted ops with `created_at > draft.updated_at`
+    // (plus a same-ms content tie-breaker). A backward step > 1 ms between the
+    // last `save_draft` and the superseding flush op made the flush op's
+    // `created_at < draft.updated_at` → 0 matching ops → recovery re-applied
+    // the OLDER draft as a fresh `edit_block`, clobbering the newer edit.
     //
-    // The draft row carries no seq/device anchor (block_drafts is just
-    // block_id/content/updated_at), so we disambiguate same-ms collisions
-    // by *content provenance* instead of timestamp alone:
+    // The fix: each draft now carries `(draft_anchor_device, draft_anchor_seq)`
+    // — the local device's op-log high-water `MAX(seq)` captured at save time
+    // (migration 0092, written by `draft::save_draft`). `seq` is a per-device
+    // strictly-increasing counter (`op_log` PRIMARY KEY `(device_id, seq)`,
+    // assigned via `COALESCE(MAX(seq),0)+1`), so it is immune to wall-clock
+    // motion. A draft is SUPERSEDED iff a block-scoped op exists with
     //
-    //   * Any op with created_at STRICTLY AFTER the draft supersedes it.
-    //   * An op at the EXACT same ms supersedes the draft only when its
-    //     resulting content DIFFERS from the draft content — that signals a
-    //     genuine concurrent/newer edit which must not be clobbered. A
-    //     same-ms op whose content EQUALS the draft is this draft's own
-    //     flush (harmless), and an equal-content same-ms op does not need to
-    //     block recovery (re-applying identical content is a no-op).
+    //     device_id = <anchor device>  AND  seq > draft_anchor_seq
     //
-    // A bare `>=` is deliberately avoided: it would treat the draft's own
-    // same-ms flush (identical content) as "newer" purely on the timestamp,
-    // conflating a no-op flush with a real superseding edit. Keying the
-    // same-ms case on content difference is the precise signal.
+    // — i.e. an op the draft's view had not yet seen. This is a pure integer
+    // comparison within a single per-device seq space; no timestamps, no
+    // content tie-breaker, clock-independent.
     //
-    // The resulting content lives in `$.to_text` for edit_block and
-    // `$.content` for create_block, so COALESCE across both reads the right
-    // field for either op_type.
+    // Multi-device note: `seq` is only comparable WITHIN one device's space
+    // (device A's seq 5 and device B's seq 5 are causally unrelated). Drafts
+    // are device-local and never synced, so the anchor device IS the local
+    // device that typed the draft; the superseding flush comes from that same
+    // device. We therefore scope the comparison to `draft_anchor_device`. A
+    // NULL anchor device (a draft that survived the 0092 upgrade with the
+    // backfill default) falls back to the recovering `device_id`, and the
+    // anchor seq backfills to 0, so ANY existing op on the local device has
+    // `seq > 0` and supersedes it — the safe bias that defers to existing ops.
     //
     // PERF-26: uses the indexed op_log.block_id column (migration 0030)
     // for O(log N) block-scoped lookups instead of json_extract across the
@@ -122,23 +127,18 @@ pub(super) async fn recover_single_draft(
     // Normalize to uppercase — BlockId serializes uppercase, but the draft
     // table stores the raw string that may differ in case.
     let bid_upper = draft.block_id.as_str().to_ascii_uppercase();
+    // A NULL anchor device (legacy/backfilled draft) is treated as the
+    // recovering device's seq space.
+    let anchor_device = draft.draft_anchor_device.as_deref().unwrap_or(device_id);
     let row: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log \
          WHERE block_id = ?1 \
          AND op_type IN ('edit_block', 'create_block') \
-         AND ( \
-             created_at > ?2 \
-             OR ( \
-                 created_at = ?2 \
-                 AND COALESCE( \
-                     json_extract(payload, '$.to_text'), \
-                     json_extract(payload, '$.content') \
-                 ) IS NOT ?3 \
-             ) \
-         )",
+         AND device_id = ?2 \
+         AND seq > ?3",
         bid_upper,
-        draft.updated_at,
-        draft.content
+        anchor_device,
+        draft.draft_anchor_seq
     )
     .fetch_one(pool)
     .await?;

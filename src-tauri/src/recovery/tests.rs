@@ -170,7 +170,7 @@ async fn unflushed_draft_gets_recovered_as_synthetic_edit_block() {
     insert_test_block(&pool, block_id, "old content").await;
 
     // Create a draft with no corresponding op in op_log
-    save_draft(&pool, block_id, "unflushed content")
+    save_draft(&pool, device_id, block_id, "unflushed content")
         .await
         .unwrap();
 
@@ -212,7 +212,7 @@ async fn recovered_draft_is_dispatched_as_foreground_apply_op_620() {
     let block_id = "block-620";
 
     insert_test_block(&pool, block_id, "old content").await;
-    save_draft(&pool, block_id, "recovered content")
+    save_draft(&pool, device_id, block_id, "recovered content")
         .await
         .unwrap();
 
@@ -454,6 +454,143 @@ async fn same_ms_real_edit_is_not_clobbered_by_recovery() {
     );
 }
 
+/// #1256 regression: a BACKWARD wall-clock step must not resurrect a stale
+/// draft over a newer flushed edit.
+///
+/// Reproduces the bug: the user saved a draft, then a superseding flush op was
+/// appended — but between the two, the system clock stepped BACKWARD (NTP /
+/// manual correction), so the flush op's `created_at` is LESS than the draft's
+/// `updated_at`. The old wall-clock comparator (`op.created_at > draft.updated_at`)
+/// then counted 0 superseding ops and re-applied the OLDER draft, clobbering
+/// the newer edit. The monotonic anchor (`op.seq > draft_anchor_seq`) is
+/// immune: the flush op's `seq` is strictly greater than the draft's anchor
+/// seq regardless of the clock, so the draft is correctly classified as
+/// already-flushed and the newer edit survives.
+#[tokio::test]
+async fn backward_clock_step_does_not_resurrect_stale_draft_1256() {
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-1256";
+    let block_id = "block-1256";
+
+    insert_test_block(&pool, block_id, "old content").await;
+
+    // 1. The user saved a draft. Its anchor captures the op-log high-water at
+    //    save time (MAX(seq) on this device == 0, since op_log is empty).
+    save_draft(&pool, device_id, block_id, "stale draft content")
+        .await
+        .unwrap();
+    let draft = crate::draft::get_draft(&pool, block_id)
+        .await
+        .unwrap()
+        .expect("draft exists");
+    assert_eq!(
+        draft.draft_anchor_seq, 0,
+        "anchor must capture the empty-op-log high-water"
+    );
+    assert_eq!(draft.draft_anchor_device.as_deref(), Some(device_id));
+
+    // 2. A superseding flush/edit op lands AFTER the draft (seq 1 > anchor 0),
+    //    but the clock stepped BACKWARD: the op's created_at is LESS than the
+    //    draft's updated_at. This is the exact window the old comparator missed.
+    let backward_ts = draft.updated_at - 100_000; // 100s in the past
+    let op = OpPayload::EditBlock(EditBlockPayload {
+        block_id: BlockId::test_id(block_id),
+        to_text: "newer flushed edit".to_owned(),
+        prev_edit: None,
+    });
+    let record = append_local_op_at(&pool, device_id, op, backward_ts)
+        .await
+        .unwrap();
+    assert!(
+        record.seq > draft.draft_anchor_seq,
+        "the flush op's seq ({}) must exceed the draft anchor ({})",
+        record.seq,
+        draft.draft_anchor_seq
+    );
+    assert!(
+        record.created_at < draft.updated_at,
+        "test setup: flush op's created_at ({}) must be BEFORE the draft's \
+         updated_at ({}) to model the backward clock step",
+        record.created_at,
+        draft.updated_at
+    );
+
+    let before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
+
+    // The draft must be classified as already-flushed — NOT recovered.
+    assert!(
+        report.drafts_recovered.is_empty(),
+        "monotonic anchor must treat the seq>anchor flush as superseding even \
+         under a backward clock step; report={report:?}"
+    );
+    assert_eq!(report.drafts_already_flushed, 1);
+
+    // No synthetic clobbering op was appended.
+    let after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        before, after,
+        "no synthetic op should clobber the newer edit"
+    );
+}
+
+/// #1256 control: a genuinely-unflushed draft (NO op with seq > anchor) is
+/// still recovered. Proves the monotonic comparator did not become a blanket
+/// "always skip" — it only suppresses recovery when a strictly-newer op exists.
+#[tokio::test]
+async fn unflushed_draft_with_no_newer_seq_is_still_recovered_1256() {
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-1256c";
+    let block_id = "block-1256c";
+
+    insert_test_block(&pool, block_id, "old content").await;
+
+    // Seed a PRIOR op so the anchor is non-zero (anchor == 1). The draft is
+    // typed against that op's view; nothing newer follows.
+    let prior = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: BlockId::test_id(block_id),
+        block_type: "content".into(),
+        parent_id: None,
+        position: Some(0),
+        index: None,
+        content: "created".into(),
+    });
+    let prior_rec = append_local_op(&pool, device_id, prior).await.unwrap();
+
+    save_draft(&pool, device_id, block_id, "genuinely unflushed content")
+        .await
+        .unwrap();
+    let draft = crate::draft::get_draft(&pool, block_id)
+        .await
+        .unwrap()
+        .expect("draft exists");
+    assert_eq!(
+        draft.draft_anchor_seq, prior_rec.seq,
+        "anchor must capture the prior op's seq"
+    );
+
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
+
+    // No op with seq > anchor exists → the draft is recovered.
+    assert_eq!(report.drafts_recovered, vec![block_id.to_owned()]);
+    assert_eq!(report.drafts_already_flushed, 0);
+
+    // The recovered content is now reflected in blocks.content.
+    let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(content.as_deref(), Some("genuinely unflushed content"));
+}
+
 // === 3. Empty / no-op cases ===
 
 #[tokio::test]
@@ -500,17 +637,13 @@ async fn recovered_draft_uses_prev_edit_from_existing_op() {
     let create_record = append_local_op(&pool, device_id, create_op).await.unwrap();
 
     // Now save a draft (simulating that the user edited but the app crashed
-    // before flushing). We need the draft's updated_at to be strictly AFTER
-    // the create op's created_at, otherwise the recovery check
-    // `created_at > updated_at` would match the create_block and
-    // mis-classify the draft as "already flushed".
-    //
-    // Use a far-future timestamp to eliminate any clock-resolution flakiness.
-    sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
-        .bind(block_id)
-        .bind("edited content")
-        .bind(FAR_FUTURE)
-        .execute(&pool)
+    // before flushing). #1256: the draft is typed AFTER the create op, so
+    // `save_draft` captures the post-create op-log high-water as the anchor —
+    // the create op is the draft's BASELINE (seq <= anchor), not a superseding
+    // flush. The monotonic comparator therefore finds no op with seq > anchor
+    // and recovers the draft. (Previously this used a direct FAR_FUTURE INSERT
+    // to beat the wall-clock comparator; the anchor makes that unnecessary.)
+    save_draft(&pool, device_id, block_id, "edited content")
         .await
         .unwrap();
 
@@ -567,12 +700,10 @@ async fn prev_edit_uses_latest_op_when_both_create_and_edit_exist() {
     });
     let edit_record = append_local_op(&pool, device_id, edit_op).await.unwrap();
 
-    // 3. Draft with far-future timestamp (unflushed)
-    sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
-        .bind(block_id)
-        .bind("v3 unflushed")
-        .bind(FAR_FUTURE)
-        .execute(&pool)
+    // 3. Draft (unflushed). #1256: saved AFTER create(seq 1) + edit(seq 2), so
+    // the anchor captures high-water 2 — both prior ops are the draft's
+    // baseline (seq <= anchor) and neither supersedes it; the draft recovers.
+    save_draft(&pool, device_id, block_id, "v3 unflushed")
         .await
         .unwrap();
 
@@ -610,7 +741,7 @@ async fn recovery_with_multiple_unflushed_drafts() {
     for i in 1..=3 {
         let bid = format!("block-{i}");
         insert_test_block(&pool, &bid, &format!("old-{i}")).await;
-        save_draft(&pool, &bid, &format!("content-{i}"))
+        save_draft(&pool, device_id, &bid, &format!("content-{i}"))
             .await
             .unwrap();
     }
@@ -644,7 +775,7 @@ async fn recovery_with_mixed_flushed_and_unflushed_drafts() {
     insert_test_block(&pool, "block-flushed", "flushed content").await;
 
     // Draft 1: unflushed (current timestamp — will be after any ops)
-    save_draft(&pool, "block-unflushed", "unflushed content")
+    save_draft(&pool, device_id, "block-unflushed", "unflushed content")
         .await
         .unwrap();
 
@@ -696,7 +827,9 @@ async fn recovery_idempotency_second_run_is_noop() {
     .unwrap();
 
     insert_test_block(&pool, "block-X", "old X").await;
-    save_draft(&pool, "block-X", "unflushed").await.unwrap();
+    save_draft(&pool, device_id, "block-X", "unflushed")
+        .await
+        .unwrap();
 
     // First recovery
     let r1 = recover_at_boot_test(&pool, device_id).await.unwrap();
@@ -778,7 +911,9 @@ async fn recovery_report_counts_are_accurate() {
     for i in 0..3 {
         let bid = format!("unfl-{i}");
         insert_test_block(&pool, &bid, &format!("old-{i}")).await;
-        save_draft(&pool, &bid, &format!("c-{i}")).await.unwrap();
+        save_draft(&pool, device_id, &bid, &format!("c-{i}"))
+            .await
+            .unwrap();
     }
 
     // 2 already-flushed drafts (with block rows)
@@ -876,7 +1011,7 @@ async fn recover_at_boot_records_errors_when_draft_processing_fails() {
 
     // Insert a block + draft so the recovery loop has something to iterate.
     insert_test_block(&pool, "BLOCK000000000000000000001", "content").await;
-    save_draft(&pool, "BLOCK000000000000000000001", "content")
+    save_draft(&pool, device_id, "BLOCK000000000000000000001", "content")
         .await
         .unwrap();
 
@@ -1485,7 +1620,7 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
 
     // User typed a draft that never flushed (distinctive marker word the
     // post-recovery FTS must contain and the pre-recovery index must not).
-    save_draft(&pool, block_id, "draft pineapple content")
+    save_draft(&pool, device_id, block_id, "draft pineapple content")
         .await
         .unwrap();
 
@@ -1635,7 +1770,9 @@ async fn cache_refresh_skips_rebuilds_for_content_only_recovery_i_lifecycle_5() 
 
     // A content-only block with an unflushed draft.
     insert_typed_test_block(&pool, block_id, "content", "old content").await;
-    save_draft(&pool, block_id, "draft content").await.unwrap();
+    save_draft(&pool, "dev-1", block_id, "draft content")
+        .await
+        .unwrap();
 
     let report = recover_at_boot_test(&pool, "dev-1").await.unwrap();
     assert_eq!(report.drafts_recovered, vec![block_id.to_owned()]);
@@ -1672,7 +1809,7 @@ async fn cache_refresh_enqueues_rebuilds_when_tag_block_recovered_i_lifecycle_5(
     // A tag block with an unflushed draft (e.g. user renamed the tag and
     // the app crashed before the edit_block flushed).
     insert_typed_test_block(&pool, tag_block_id, "tag", "old-tag-name").await;
-    save_draft(&pool, tag_block_id, "renamed-tag")
+    save_draft(&pool, "dev-1", tag_block_id, "renamed-tag")
         .await
         .unwrap();
 
@@ -1709,7 +1846,7 @@ async fn cache_refresh_enqueues_rebuilds_when_page_block_recovered_i_lifecycle_5
     // A page block with an unflushed draft (e.g. user renamed the page
     // and the app crashed before the edit_block flushed).
     insert_typed_test_block(&pool, page_block_id, "page", "Old Page Title").await;
-    save_draft(&pool, page_block_id, "Renamed Page Title")
+    save_draft(&pool, "dev-1", page_block_id, "Renamed Page Title")
         .await
         .unwrap();
 
@@ -1879,14 +2016,13 @@ async fn perf26_draft_recovery_filters_to_target_block_only() {
         .await
         .unwrap();
 
-    // Create a draft for the TARGET block with updated_at between FAR_PAST
-    // and FAR_FUTURE — so if filtering were broken we'd see other_a's
-    // FAR_FUTURE edit and wrongly consider target's draft already flushed.
-    sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
-        .bind(target.as_str())
-        .bind("recovered text")
-        .bind(1_704_067_200_000_i64)
-        .execute(&pool)
+    // Create a draft for the TARGET block. #1256: saved AFTER every op above,
+    // so the anchor captures the full high-water — the target's own
+    // create_block op is its baseline (seq <= anchor), and other_a's recent
+    // edit (also <= anchor, AND a different block_id) cannot supersede it. If
+    // the block_id filter were broken, other_a's edit would still be filtered
+    // out by the `seq > anchor` clause being empty for the target.
+    save_draft(&pool, device_id, target.as_str(), "recovered text")
         .await
         .unwrap();
 
@@ -2050,7 +2186,7 @@ async fn recover_at_boot_handles_more_than_999_drafts() {
         // chunk depending on MAX_SQL_PARAMS - 1) don't collide.
         let bid = format!("blk-{i:05}");
         insert_test_block(&pool, &bid, "x").await;
-        save_draft(&pool, &bid, "x").await.unwrap();
+        save_draft(&pool, "dev-1", &bid, "x").await.unwrap();
     }
 
     // Sanity: all rows landed.
@@ -2460,7 +2596,7 @@ async fn recover_at_boot_includes_replay_step_c2b() {
     // The id must be alphanumeric per the draft-recovery debug_assert.
     let draft_block_id = "BOOTDRAFTBLK";
     insert_test_block(&pool, draft_block_id, "old draft target").await;
-    save_draft(&pool, draft_block_id, "draft content")
+    save_draft(&pool, device_id, draft_block_id, "draft content")
         .await
         .unwrap();
 
