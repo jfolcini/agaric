@@ -11,9 +11,9 @@ Two paths are known to exceed budget today (`list_page_links`, `list_projected_a
 
 ## Architectural decisions that buy responsiveness
 
-### Materializer apply-cursor atomicity (C-2b)
+### Materializer apply-cursor semantics (C-2b)
 
-Op-log append + materialized-view apply + cursor advance run in a single transaction. Boot recovery walks from the cursor; one transaction means crash never leaves a half-applied state. Removes the entire "what if we re-applied this op twice" headache.
+The apply cursor (`materializer_apply_cursor.materialized_through_seq`) tracks **engine-apply progress, not SQL-materialization progress** (#1248). It advances only inside the foreground engine-apply path (`apply_op` / `BatchApplyOps`), in the same transaction as the engine apply — so engine-apply + cursor advance are atomic and a crash never leaves the cursor ahead of engine state. The live local command path materializes the SQL `blocks` row synchronously in its own `CommandTx` and fires only background cache rebuilds; it does **not** advance this cursor. Boot recovery therefore re-applies the prior session's ops into the engine from the cursor — idempotent, so re-applying an op twice is a no-op (`INSERT OR IGNORE` + per-op-type guard). Making the cursor reflect SQL materialization would require routing local ops through engine-apply, tracked in **#1257**. See `docs/architecture/data-and-events.md` for the full discussion.
 
 ### Cache streaming on rebuilds
 

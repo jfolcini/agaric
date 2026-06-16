@@ -175,6 +175,12 @@ Followed by an explicit cache rebuild for any blocks resurrected by step 3.
 
 Per-draft errors are captured in a `RecoveryReport`; a single corrupt draft does not block boot.
 
-## Apply-cursor atomicity
+## Apply-cursor semantics
 
-The boot-replay correctness rule. `materializer_apply_cursor` tracks `materialized_through_seq`. Apply + advance are one transaction → if the process crashes between op log append and the cursor advance, the next boot's replay covers exactly the seq that wasn't materialised. Idempotent (re-application uses `INSERT OR IGNORE` and a per-op-type idempotency guard).
+`materializer_apply_cursor.materialized_through_seq` tracks **engine-apply progress, not SQL-materialization progress** (#1248). It advances *only* inside `apply_op` / the `BatchApplyOps` arm (`advance_apply_cursor`, in the same tx as the engine apply, so engine-apply + cursor are atomic). That path is reached by **boot replay**, the test-only `dispatch_op` helper, and remote apply — **not** by the live local command path.
+
+The live LOCAL command path (`CommandTx::commit_and_dispatch`) writes the SQL `blocks` row synchronously inside its own transaction and then fires only background cache-rebuild tasks; it never enqueues an `ApplyOp`, never touches the per-space `LoroEngine`, and **never advances this cursor**. Consequently, during a live session `op_log.seq` climbs while `materialized_through_seq` stays pinned at the prior-boot replay watermark.
+
+This means a clean boot is **not** a crash-only tail replay. `replay_unmaterialized_ops` re-applies the *whole prior session's* ops **into the engine** (`WHERE seq > cursor`), which is expected and safe because re-apply is idempotent (`INSERT OR IGNORE` + per-op-type idempotency guard). The `heal_orphaned_apply_cursor` path therefore evaluates routinely (not only after a crash), and is likewise safe for the same idempotency reason.
+
+Advancing the cursor to reflect SQL materialization would require routing local ops through engine-apply — tracked separately in **#1257**. Until then this is a documentation/semantics distinction, not a correctness bug (boot replay re-converges the engine regardless).

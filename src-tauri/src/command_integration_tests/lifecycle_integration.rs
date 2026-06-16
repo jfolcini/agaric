@@ -1011,3 +1011,107 @@ async fn create_block_with_none_position_appends_after_siblings() {
         "third child with position: None should get position 3"
     );
 }
+
+// ======================================================================
+// #1248 — apply-cursor semantics: the LOCAL command path does NOT advance
+// the materializer apply cursor.
+//
+// `materializer_apply_cursor.materialized_through_seq` tracks ENGINE-apply
+// progress, not SQL-materialization progress. It advances ONLY inside
+// `apply_op` / the `BatchApplyOps` arm (`advance_apply_cursor`), reached by
+// boot replay / the test-only `dispatch_op` helper / remote apply. The live
+// LOCAL command path (`create_block_inner` → `CommandTx::commit_and_dispatch`)
+// writes the SQL `blocks` row synchronously and fires only background
+// cache-rebuild tasks — it never enqueues an `ApplyOp` and never advances
+// the cursor. This test pins that documented semantics: after a local
+// create-block command (and a full background `settle()`), `op_log.seq`
+// has advanced but `materialized_through_seq` is UNCHANGED.
+//
+// (Making the local path advance the cursor would require routing local
+// ops through engine-apply — tracked separately in #1257; this test must
+// be updated when that lands.)
+// ======================================================================
+
+/// Read `materializer_apply_cursor.materialized_through_seq`.
+async fn read_apply_cursor(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Highest `op_log.seq` (0 if the log is empty).
+async fn max_op_log_seq(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM op_log")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_command_path_does_not_advance_apply_cursor_1248() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let cursor_before = read_apply_cursor(&pool).await;
+    let seq_before = max_op_log_seq(&pool).await;
+    assert_eq!(cursor_before, 0, "fresh DB: cursor seeded at 0");
+    assert_eq!(seq_before, 0, "fresh DB: op_log empty");
+
+    // Drive an op through the REAL local command path:
+    // `create_block_inner` → `CommandTx::commit_and_dispatch`, which writes
+    // the SQL `blocks` row synchronously and fires only background
+    // cache-rebuild tasks (NO `ApplyOp`, NO engine apply).
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "cursor-semantics-1248".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Fully drain background materializer work — the local path's only
+    // post-commit dispatches are background cache rebuilds, and none of
+    // them advance the cursor either.
+    settle(&mat).await;
+
+    let cursor_after = read_apply_cursor(&pool).await;
+    let seq_after = max_op_log_seq(&pool).await;
+
+    // The op DID land in the op_log (the command path appended it)...
+    assert!(
+        seq_after > seq_before,
+        "local create_block must append to op_log: {seq_before} -> {seq_after}",
+    );
+
+    // ...the SQL `blocks` row WAS materialized synchronously in the CommandTx
+    // (the row exists), proving SQL materialization happened without the
+    // cursor moving.
+    let block_exists: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM blocks WHERE id = ? AND deleted_at IS NULL",
+    )
+    .bind(created.id.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(block_exists, 1, "SQL blocks row materialized synchronously");
+
+    // ...but the apply cursor is UNCHANGED: the local command path tracks no
+    // engine-apply progress, so `materialized_through_seq` stays pinned even
+    // though `op_log.seq` advanced. This is the #1248 semantics this test pins.
+    assert_eq!(
+        cursor_after, cursor_before,
+        "local command path must NOT advance the apply cursor \
+         (it tracks engine-apply, not SQL materialization — #1248); \
+         cursor moved {cursor_before} -> {cursor_after} while op_log seq \
+         moved {seq_before} -> {seq_after}",
+    );
+
+    mat.shutdown();
+}
