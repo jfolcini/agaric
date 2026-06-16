@@ -71,3 +71,5 @@ mod restore_cascade_tests;
 mod sibling_order_full_apply_603_tests;
 #[cfg(test)]
 mod static_source_checks;
+#[cfg(test)]
+mod tag_convergence_tests;
