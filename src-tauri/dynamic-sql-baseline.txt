@@ -8,7 +8,7 @@
 5 src-tauri/src/backlink/grouped.rs
 8 src-tauri/src/backlink/query.rs
 1 src-tauri/src/backlink/sort.rs
-1 src-tauri/src/block_descendants.rs
+2 src-tauri/src/block_descendants.rs
 4 src-tauri/src/cache/agenda.rs
 4 src-tauri/src/cache/block_links.rs
 2 src-tauri/src/cache/block_tag_refs.rs
@@ -20,7 +20,7 @@
 2 src-tauri/src/commands/attachments.rs
 2 src-tauri/src/commands/block_cleanup.rs
 10 src-tauri/src/commands/blocks/crud.rs
-4 src-tauri/src/commands/blocks/move_ops.rs
+3 src-tauri/src/commands/blocks/move_ops.rs
 2 src-tauri/src/commands/blocks/queries.rs
 2 src-tauri/src/commands/drafts.rs
 4 src-tauri/src/commands/history.rs
@@ -50,7 +50,6 @@
 2 src-tauri/src/materializer/handlers/apply.rs
 18 src-tauri/src/materializer/handlers/loro_apply.rs
 2 src-tauri/src/materializer/handlers/pages_cache.rs
-3 src-tauri/src/materializer/handlers/sql_only.rs
 2 src-tauri/src/materializer/retry_queue.rs
 1 src-tauri/src/mcp/handler_utils.rs
 2 src-tauri/src/op_log/bypass.rs

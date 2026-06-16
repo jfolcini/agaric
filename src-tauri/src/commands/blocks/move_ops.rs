@@ -108,29 +108,17 @@ pub async fn move_block_inner(
             return Err(AppError::NotFound(format!("parent block '{pid}'")));
         }
 
-        // Cycle detection: walk all ancestors of the new parent using the
-        // shared `ancestors_cte_standard!()` macro. If block_id appears
-        // among the ancestors, reparenting would create a cycle (e.g.
-        // moving A under its own grandchild C in a chain A→B→C).
-        //
-        // The macro pins AGENTS.md invariant #9 (`a.depth < 100` recursion
-        // bound). Without it, a corrupted parent_id chain could run unbounded
-        // recursion.
-        //
-        // The macro seeds the CTE at `pid` itself (depth 0) rather than at
-        // `pid`'s parent_id; including `pid` in the ancestor set is harmless
-        // here because the `pid == block_id` case is rejected upfront with
-        // `AppError::InvalidOperation` (above), so the `WHERE id = ?` row
-        // match against `block_id` cannot mask that error.
-        let cycle = sqlx::query(concat!(
-            crate::ancestors_cte_standard!(),
-            "SELECT 1 FROM ancestors WHERE id = ?",
-        ))
-        .bind(pid)
-        .bind(&block_id)
-        .fetch_optional(&mut **tx)
-        .await?;
-        if cycle.is_some() {
+        // Cycle detection (#1323 Step 4): the SHARED
+        // `block_descendants::move_would_cycle` probe — the SAME helper the
+        // SQL-only fallback (`apply_move_block_sql_only`) uses, so the two
+        // SQL-side paths cannot drift. It walks the new parent's ancestors via
+        // `ancestors_cte_standard!()` (depth-100 bound, AGENTS.md invariant #9)
+        // and reports whether reparenting `block_id` under `pid` would form a
+        // cycle (e.g. moving A under its own grandchild C in a chain A→B→C).
+        // The helper returns the boolean only; the rejection is the command
+        // path's own (a user-driven move must surface the error, whereas the
+        // sync-replay fallback no-op-warns — see the helper docstring).
+        if crate::block_descendants::move_would_cycle(&mut **tx, &block_id, pid).await? {
             return Err(AppError::Validation("cycle detected".into()));
         }
 
