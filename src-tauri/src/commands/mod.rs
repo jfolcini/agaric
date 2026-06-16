@@ -43,6 +43,7 @@ pub(crate) mod notifier;
 pub(crate) mod pages;
 pub(crate) mod properties;
 pub(crate) mod queries;
+pub(crate) mod recovery;
 pub(crate) mod spaces;
 pub(crate) mod sync_cmds;
 pub(crate) mod tags;
@@ -145,6 +146,7 @@ pub use queries::{
     list_unlinked_references_inner, query_backlinks_filtered, query_backlinks_filtered_inner,
     query_by_property, query_by_property_inner, search_blocks, search_blocks_inner,
 };
+pub use recovery::get_recovery_status;
 pub use spaces::{
     McpSpaceRow, SpaceRow, create_page_in_space, create_page_in_space_inner, create_space,
     create_space_inner, list_spaces, list_spaces_inner, list_spaces_registry_inner,
@@ -246,6 +248,8 @@ pub use queries::{
     __specta__fn__search_blocks,
 };
 #[doc(hidden)]
+pub use recovery::__specta__fn__get_recovery_status;
+#[doc(hidden)]
 pub use spaces::{
     __specta__fn__create_page_in_space, __specta__fn__create_space, __specta__fn__list_spaces,
 };
@@ -334,6 +338,8 @@ pub use queries::{
     __cmd__list_unlinked_references, __cmd__query_backlinks_filtered, __cmd__query_by_property,
     __cmd__search_blocks,
 };
+#[doc(hidden)]
+pub use recovery::__cmd__get_recovery_status;
 #[doc(hidden)]
 pub use spaces::{__cmd__create_page_in_space, __cmd__create_space, __cmd__list_spaces};
 #[doc(hidden)]

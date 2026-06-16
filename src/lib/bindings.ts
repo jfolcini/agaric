@@ -120,6 +120,13 @@ export const commands = {
 	/**  Tauri command: get materializer queue status. Delegates to [`get_status_inner`]. */
 	getStatus: () => typedError<StatusInfo, AppError>(__TAURI_INVOKE("get_status")),
 	/**
+	 *  Tauri command: return the boot-recovery status.
+	 *
+	 *  Used by the frontend to backfill the degraded-boot signal on mount, in
+	 *  case its `recovery:degraded` listener registered after boot emitted.
+	 */
+	getRecoveryStatus: () => typedError<RecoveryStatus, AppError>(__TAURI_INVOKE("get_recovery_status")),
+	/**
 	 *  Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
 	 *
 	 *  PEND-50 Phase 0 — `parent_id` / `tag_ids` / `space_id` are bundled
@@ -2083,6 +2090,27 @@ export type PropertyValue = { type: "Text"; value: string } |
 export type PurgeResponse = {
 	block_id: string,
 	purged_count: number,
+};
+
+/**
+ *  #1255: durable, user-visible boot-recovery status.
+ *
+ *  Emitted as the [`EVENT_RECOVERY_DEGRADED`] payload AND returned by the
+ *  `get_recovery_status` command so a frontend that mounts after boot can
+ *  still discover the degraded state. `degraded = true` means the boot
+ *  op-log replay failed and the materialized view may be incomplete/stale
+ *  — the app is still usable (the `op_log` is canonical) but the user
+ *  should be warned before layering more writes on top.
+ */
+export type RecoveryStatus = {
+	/**  `true` when the boot op-log replay failed wholesale. */
+	degraded: boolean,
+	/**
+	 *  The replay error messages (the same as
+	 *  [`RecoveryReport::replay_errors`]) for diagnostics / the bug-report
+	 *  bundle. Empty when `degraded` is false.
+	 */
+	replay_errors: string[],
 };
 
 /**  Lightweight metadata returned by [`batch_resolve_inner`]. */

@@ -30,6 +30,7 @@ import { useIsMobile } from './hooks/useIsMobile'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
 import { usePrimaryFocusRegistry } from './hooks/usePrimaryFocus'
 import { useQuickCaptureShortcut } from './hooks/useQuickCaptureShortcut'
+import { useRecoveryStatus } from './hooks/useRecoveryStatus'
 import { useScrollRestore } from './hooks/useScrollRestore'
 import { useShouldShowMobileChrome } from './hooks/useShouldShowMobileChrome'
 import { useSyncEvents } from './hooks/useSyncEvents'
@@ -197,6 +198,14 @@ function App() {
   // hydrate the global state from Tauri once at app start. Both are
   // empty-deps effects with no React state coupling.
   useAppBootRecovery()
+
+  // ── Degraded-boot signal (#1255) ──────────────────────────────────
+  // When the backend's boot op-log replay failed wholesale, the
+  // materialized view may be stale. Listen for the `recovery:degraded`
+  // event (and backfill via `getRecoveryStatus` on mount, since boot
+  // emits before this listener registers) and show a persistent warning
+  // banner. No-op outside Tauri / on a healthy boot.
+  useRecoveryStatus()
 
   // ── Desktop auto-update check (FEAT: updater wire-up) ─────────────
   // Fires at most once per 24 h to ask the Tauri updater plugin whether

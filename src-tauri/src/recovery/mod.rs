@@ -30,6 +30,7 @@
 //! sequence.
 
 use serde::{Deserialize, Serialize};
+use specta::Type;
 
 mod boot;
 mod cache_refresh;
@@ -84,3 +85,70 @@ pub struct RecoveryReport {
     /// prior crash interrupted the apply-remote durability window.
     pub sync_inbox_replayed: u64,
 }
+
+impl RecoveryReport {
+    /// #1255: did the C-2b op-log replay fail wholesale?
+    ///
+    /// `replay_errors` is non-empty only when [`replay_unmaterialized_ops`]
+    /// returned an `Err` (a corrupted `op_log`, a stuck foreground queue,
+    /// or the #412 multi-device hard-abort) — `boot::recover_at_boot`
+    /// catches that error and synthesises a `ReplayReport` whose sole
+    /// entry is `"replay aborted: …"`. When this is true an UNBOUNDED set
+    /// of unmaterialized ops was skipped: the materialized view (blocks /
+    /// properties / caches) is behind the canonical `op_log`, so the user
+    /// is editing/querying a stale state. (Per-draft failures land in
+    /// `draft_errors`, NOT here — those are the deliberate "a single
+    /// corrupt draft does not block boot" design and stay non-signalling.)
+    ///
+    /// The `op_log` remains canonical so nothing is permanently lost, but
+    /// writes layered on top of an un-replayed state compound the
+    /// divergence — hence this is surfaced to the user, not just logged.
+    #[must_use]
+    pub fn replay_failed(&self) -> bool {
+        !self.replay_errors.is_empty()
+    }
+
+    /// Build the durable, user-visible [`RecoveryStatus`] signal from this
+    /// report. Returns `degraded = true` exactly when [`Self::replay_failed`]
+    /// is true.
+    #[must_use]
+    pub fn to_status(&self) -> RecoveryStatus {
+        RecoveryStatus {
+            degraded: self.replay_failed(),
+            replay_errors: self.replay_errors.clone(),
+        }
+    }
+}
+
+/// #1255: name of the Tauri event emitted once at boot when the C-2b
+/// op-log replay failed wholesale. The frontend listens for this and
+/// shows a persistent "data may be incomplete" banner; it also backfills
+/// the state via the `get_recovery_status` command for the late-mount
+/// case (the listener registers after boot has already emitted).
+pub const EVENT_RECOVERY_DEGRADED: &str = "recovery:degraded";
+
+/// #1255: durable, user-visible boot-recovery status.
+///
+/// Emitted as the [`EVENT_RECOVERY_DEGRADED`] payload AND returned by the
+/// `get_recovery_status` command so a frontend that mounts after boot can
+/// still discover the degraded state. `degraded = true` means the boot
+/// op-log replay failed and the materialized view may be incomplete/stale
+/// — the app is still usable (the `op_log` is canonical) but the user
+/// should be warned before layering more writes on top.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Type)]
+pub struct RecoveryStatus {
+    /// `true` when the boot op-log replay failed wholesale.
+    pub degraded: bool,
+    /// The replay error messages (the same as
+    /// [`RecoveryReport::replay_errors`]) for diagnostics / the bug-report
+    /// bundle. Empty when `degraded` is false.
+    pub replay_errors: Vec<String>,
+}
+
+/// #1255: managed-state holder for the boot [`RecoveryStatus`].
+///
+/// Populated exactly once during `setup` (after `recover_at_boot`) and
+/// read by the `get_recovery_status` command. Wrapped in a `Mutex` only
+/// to satisfy `Send + Sync` for Tauri managed state; it is written once
+/// and read-only thereafter.
+pub struct RecoveryStatusState(pub std::sync::Mutex<RecoveryStatus>);
