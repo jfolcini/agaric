@@ -49,7 +49,8 @@
 
 use super::common::*;
 use crate::op::{
-    CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
+    AddTagPayload, CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload,
+    MoveBlockPayload, OpPayload, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload,
     SetPropertyPayload,
 };
 use crate::ulid::BlockId;
@@ -252,6 +253,43 @@ async fn apply_op(pool: &SqlitePool, mat: &Materializer, op: &Value) {
         "set_priority" => reserved("priority", arg_str("level"), false),
         "set_due_date" => reserved("due_date", arg_str("date"), true),
         "set_scheduled_date" => reserved("scheduled_date", arg_str("date"), true),
+        "add_tag" => OpPayload::AddTag(AddTagPayload {
+            block_id: label_block_id("blockId"),
+            tag_id: label_block_id("tagId"),
+        }),
+        "remove_tag" => OpPayload::RemoveTag(RemoveTagPayload {
+            block_id: label_block_id("blockId"),
+            tag_id: label_block_id("tagId"),
+        }),
+        "restore_block" => {
+            // The restore op's `deleted_at_ref` is the originating delete op's
+            // `created_at` — the epoch-ms guard the projection matches against
+            // `blocks.deleted_at` to scope the un-delete to that delete's
+            // cohort. The mock's `restore_block` carries no such guard (it
+            // clears `deleted_at` unconditionally), so the fixture op args have
+            // none; the runner sources it the way `restore_block_inner` does —
+            // by reading the live tombstone's `deleted_at` from the DB now.
+            let id = arg_label_id("blockId").expect("restore_block.blockId");
+            let deleted_at_ref: i64 =
+                sqlx::query_as::<_, (Option<i64>,)>("SELECT deleted_at FROM blocks WHERE id = ?")
+                    .bind(&id)
+                    .fetch_one(pool)
+                    .await
+                    .expect("restore_block: fetch deleted_at")
+                    .0
+                    .expect("restore_block: target block must be tombstoned");
+            OpPayload::RestoreBlock(RestoreBlockPayload {
+                block_id: BlockId::from(id.as_str()),
+                deleted_at_ref,
+            })
+        }
+        "purge_block" => OpPayload::PurgeBlock(PurgeBlockPayload {
+            block_id: label_block_id("blockId"),
+        }),
+        "delete_property" => OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: label_block_id("blockId"),
+            key: arg_str("key").expect("delete_property.key"),
+        }),
         other => panic!("conformance op '{other}' is not wired in the Rust runner"),
     };
 
