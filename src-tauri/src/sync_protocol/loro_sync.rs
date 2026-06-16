@@ -279,6 +279,14 @@ pub async fn apply_remote(
                     // Reachable — fall through to the import.
                 }
                 Some(reason) => {
+                    // #1319: feed the process-global cross-session
+                    // aggregate (count + last reason/peer/space) BEFORE
+                    // returning. Observability only — the control flow
+                    // below (returning SnapshotFallbackRequested →
+                    // snapshot catch-up) is unchanged. The per-session
+                    // surfacing stays the orchestrator's `SyncEvent::Error`
+                    // / `ResetRequired` line.
+                    super::snapshot_fallback_metrics::record(device_id, space_id.as_str(), &reason);
                     return Ok(ApplyOutcome::SnapshotFallbackRequested { space_id, reason });
                 }
             }

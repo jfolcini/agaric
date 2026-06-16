@@ -273,4 +273,21 @@ pub struct StatusInfo {
     /// `op` + `reason`) for triage. Sourced from
     /// [`super::handlers::sql_only_fallback::count`].
     pub sql_only_fallback_count: u64,
+    /// #1319: process-global, cross-session count of sync snapshot-fallbacks
+    /// taken because a peer advertised a `from_vv` unreachable from our local
+    /// `oplog_vv()` (MAINT-228). Monotonic, never reset. A steadily rising
+    /// value means sync keeps falling back to snapshot catch-up instead of
+    /// applying incremental updates — pair with `snapshot_fallback_last` (and
+    /// the `target=sync_protocol::snapshot_fallback` debug lines) to see the
+    /// offending peer / reason. Sourced from
+    /// [`crate::sync_protocol::snapshot_fallback_metrics::count`].
+    pub snapshot_fallback_count: u64,
+    /// #1319: the most recent sync snapshot-fallback occurrence (peer id,
+    /// space id, diagnostic reason, monotonic occurrence ordinal), or `None`
+    /// if none has happened in this process. Lets an operator correlate a
+    /// recurring fallback pattern without scraping per-session log lines.
+    /// Sourced from
+    /// [`crate::sync_protocol::snapshot_fallback_metrics::last`].
+    pub snapshot_fallback_last:
+        Option<crate::sync_protocol::snapshot_fallback_metrics::SnapshotFallbackLast>,
 }
