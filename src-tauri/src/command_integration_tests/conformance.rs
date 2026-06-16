@@ -1713,3 +1713,191 @@ async fn local_delete_restore_tombstones_cohort_no_phantom_1257() {
 
     mat.shutdown();
 }
+
+// ---------------------------------------------------------------------------
+// #1392 — move tag-inheritance recompute is owned by the engine helper on BOTH
+// arms.
+//
+// `move_block_inner` USED to call `recompute_subtree_inheritance` explicitly
+// AFTER routing the move through `apply_move_block_via_loro` — but that helper
+// (and its engine-absent `apply_move_block_sql_only` fallback) ALREADY
+// recompute the moved subtree's inheritance, so the explicit call was a
+// redundant second subtree walk on every move. #1392 dropped it. These two
+// tests pin that `block_tag_inherited` stays correct after a move WITHOUT the
+// explicit call, on EACH arm:
+//   * `local_move_inheritance_engine_arm_1392`  — engine installed → the move
+//     routes through `apply_move_block_via_loro`'s engine path;
+//   * `local_move_inheritance_sql_fallback_arm_1392` — engine NOT installed →
+//     the move falls back to `apply_move_block_sql_only`.
+// Each forks its own process (nextest), so the fallback test genuinely runs
+// with the process-global engine uninitialised.
+//
+// Fixture (both arms): S1 > {PA > XX, PB}; PB carries a direct tag TG. Moving
+// XX from PA into PB must make XX inherit TG from PB (the move's recompute
+// walks XX's NEW ancestor chain). Inheritance recompute is pure SQL (reads the
+// `block_tags` of ancestors + walks `blocks.parent_id`), so the assertion is
+// identical on both arms — only the move's apply path differs.
+// ---------------------------------------------------------------------------
+
+/// Seed the shared #1392 fixture into SQL and assign every block to the test
+/// space. Returns `(pa, pb, xx, tg)` literal ids. Does NOT touch the engine —
+/// callers seed the engine themselves on the engine arm only.
+async fn seed_move_inheritance_fixture_1392(pool: &SqlitePool) -> (String, String, String, String) {
+    let pa = seed_label_to_id("PA");
+    let pb = seed_label_to_id("PB");
+    let xx = seed_label_to_id("XX");
+    let tg = seed_label_to_id("TG");
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "PA", "block_type": "content", "content": "PA",   "parent_id": "S1", "position": 1}),
+        json!({"id": "PB", "block_type": "content", "content": "PB",   "parent_id": "S1", "position": 2}),
+        json!({"id": "XX", "block_type": "content", "content": "X",    "parent_id": "PA", "position": 1}),
+        json!({"id": "TG", "block_type": "tag",     "content": "todo", "parent_id": null, "position": 3}),
+    ];
+    for blk in &seed {
+        insert_seed_block(pool, blk).await;
+    }
+    assign_all_to_test_space(pool).await;
+    // PB carries TG directly. The move's `recompute_subtree_inheritance` reads
+    // ancestor `block_tags`, so a direct SQL row is exactly the source it walks.
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(&pb)
+        .bind(&tg)
+        .execute(pool)
+        .await
+        .unwrap();
+    (pa, pb, xx, tg)
+}
+
+/// Read whether `block_id` inherits `tag_id` from `inherited_from`.
+async fn xx_inherits_from(pool: &SqlitePool, block_id: &str, tag_id: &str, from: &str) -> bool {
+    sqlx::query_scalar::<_, i32>(
+        "SELECT 1 FROM block_tag_inherited \
+         WHERE block_id = ? AND tag_id = ? AND inherited_from = ?",
+    )
+    .bind(block_id)
+    .bind(tag_id)
+    .bind(from)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+    .is_some()
+}
+
+/// #1392 ENGINE ARM — with the engine installed, moving XX under the tagged PB
+/// routes through `apply_move_block_via_loro`, whose own
+/// `recompute_subtree_inheritance` makes XX inherit TG from PB — WITHOUT the
+/// dropped explicit call in `move_block_inner`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_move_inheritance_engine_arm_1392() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let state = crate::loro::shared::install_for_test();
+    state.registry.clear();
+
+    let (pa, pb, xx, tg) = seed_move_inheritance_fixture_1392(&pool).await;
+    // Engine seed (parent-first) so the move routes through the engine arm.
+    for blk in [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "PA", "block_type": "content", "content": "PA",   "parent_id": "S1", "position": 1}),
+        json!({"id": "PB", "block_type": "content", "content": "PB",   "parent_id": "S1", "position": 2}),
+        json!({"id": "XX", "block_type": "content", "content": "X",    "parent_id": "PA", "position": 1}),
+    ] {
+        seed_block_into_engine(state, &blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    // Pre-move: XX under PA (untagged) must NOT inherit TG.
+    assert!(
+        !xx_inherits_from(&pool, &xx, &tg, &pb).await,
+        "precondition: XX must not inherit TG before the move",
+    );
+
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        BlockId::from(xx.as_str()),
+        Some(BlockId::from(pb.as_str())),
+        0,
+    )
+    .await
+    .expect("move_block_inner");
+    settle(&mat).await;
+
+    // The move re-parented XX under PB ...
+    let parent: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(&xx)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        parent.as_deref(),
+        Some(pb.as_str()),
+        "XX must be re-parented to PB"
+    );
+    // ... and the engine-arm recompute made XX inherit TG from PB — proving the
+    // dropped explicit `recompute_subtree_inheritance` is unnecessary on this arm.
+    assert!(
+        xx_inherits_from(&pool, &xx, &tg, &pb).await,
+        "engine arm: XX must inherit TG from PB after the move (#1392)",
+    );
+    // PA is unused beyond the seed; reference it to keep the binding meaningful.
+    let _ = pa;
+
+    mat.shutdown();
+}
+
+/// #1392 SQL-FALLBACK ARM — with the engine NOT installed (process-global
+/// engine uninitialised), the same move falls back to
+/// `apply_move_block_sql_only`, whose own `recompute_subtree_inheritance`
+/// likewise makes XX inherit TG from PB — confirming the dropped explicit call
+/// is unnecessary on the fallback arm too (the regression #1392 guards).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_move_inheritance_sql_fallback_arm_1392() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Deliberately DO NOT `install_for_test()` — `crate::loro::shared::get()`
+    // returns None, so `apply_move_block_via_loro` records an EngineUninit
+    // fallback and routes the move through `apply_move_block_sql_only`.
+    let (pa, pb, xx, tg) = seed_move_inheritance_fixture_1392(&pool).await;
+
+    assert!(
+        !xx_inherits_from(&pool, &xx, &tg, &pb).await,
+        "precondition: XX must not inherit TG before the move",
+    );
+
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        BlockId::from(xx.as_str()),
+        Some(BlockId::from(pb.as_str())),
+        0,
+    )
+    .await
+    .expect("move_block_inner");
+    settle(&mat).await;
+
+    let parent: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(&xx)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        parent.as_deref(),
+        Some(pb.as_str()),
+        "XX must be re-parented to PB"
+    );
+    assert!(
+        xx_inherits_from(&pool, &xx, &tg, &pb).await,
+        "fallback arm: XX must inherit TG from PB after the move (#1392)",
+    );
+    let _ = pa;
+
+    mat.shutdown();
+}
