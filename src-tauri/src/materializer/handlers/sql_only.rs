@@ -61,47 +61,46 @@ pub(super) async fn apply_edit_block_sql_only(
 
 /// SQL-only DeleteBlock fallback (formerly `apply_delete_block_tx`).
 ///
-/// Cascade soft-delete: mark the target and every not-yet-deleted
-/// descendant.  Mirror of the cascade in
-/// `commands/blocks/crud.rs::delete_block_inner`, applied by the
-/// materializer when the engine path can't resolve a space.
+/// #1323 (Step 2): delegates the cascade soft-delete to
+/// [`crate::loro::projection::project_delete_block_to_sql`] — the exact
+/// projection the via-loro engine arm runs after its engine apply — so
+/// the two arms can never drift on the cohort CTE (`descendants_cte_active!`)
+/// or the `deleted_at` value. The `now` timestamp is the same value the
+/// engine arm stamps (`record.created_at`, epoch-ms), threaded straight
+/// through from the dispatcher. The inherited-tag sweep lives OUTSIDE the
+/// projection (kept pure), so this fallback invokes the SAME
+/// `tag_inheritance::remove_subtree_inherited` helper AFTER the
+/// projection, mirroring `apply_delete_block_via_loro` exactly.
 pub(super) async fn apply_delete_block_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: DeleteBlockPayload,
     now: i64,
 ) -> Result<(), AppError> {
-    sqlx::query(concat!(
-        crate::descendants_cte_active!(),
-        "UPDATE blocks SET deleted_at = ? \
-         WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
-    ))
-    .bind(p.block_id.as_str())
-    .bind(now)
-    .execute(&mut *conn)
-    .await?;
+    crate::loro::projection::project_delete_block_to_sql(conn, p.block_id.as_str(), now).await?;
     tag_inheritance::remove_subtree_inherited(&mut *conn, p.block_id.as_str()).await?;
     Ok(())
 }
 
 /// SQL-only RestoreBlock fallback (formerly `apply_restore_block_tx`).
+///
+/// #1323 (Step 2): delegates the cohort-contiguous restore to
+/// [`crate::loro::projection::project_restore_block_to_sql`] — the exact
+/// projection the via-loro engine arm runs after its engine apply — so
+/// the two arms can never drift on the cohort CTE (`descendants_cte_cohort!`,
+/// the #1055 connected-cohort walk) or the `deleted_at_ref` filter. The
+/// recompute-subtree-inheritance fan-out lives OUTSIDE the projection
+/// (kept pure), so this fallback invokes the SAME
+/// `tag_inheritance::recompute_subtree_inheritance` helper AFTER the
+/// projection, mirroring `apply_restore_block_via_loro` exactly.
 pub(super) async fn apply_restore_block_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: RestoreBlockPayload,
 ) -> Result<(), AppError> {
-    // #1055: cohort-contiguous walk (mirror `project_restore_block_to_sql`)
-    // so the SQL-only fallback restores exactly the seed's connected
-    // same-cohort subtree, not every block under the seed that merely
-    // shares the `deleted_at` value (which collides across independent
-    // deletes — `now_ms` is non-monotonic).
-    sqlx::query(concat!(
-        crate::descendants_cte_cohort!(),
-        "UPDATE blocks SET deleted_at = NULL \
-         WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
-    ))
-    .bind(p.block_id.as_str())
-    .bind(p.deleted_at_ref)
-    .bind(p.deleted_at_ref)
-    .execute(&mut *conn)
+    crate::loro::projection::project_restore_block_to_sql(
+        conn,
+        p.block_id.as_str(),
+        p.deleted_at_ref,
+    )
     .await?;
     tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
     Ok(())
