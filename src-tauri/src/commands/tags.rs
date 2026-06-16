@@ -246,15 +246,29 @@ async fn apply_tag_to_block_in_tx(
     let op_record =
         op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms()).await?;
 
-    // Insert into block_tags within the same transaction.
-    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
-        .bind(block_id)
-        .bind(tag_id)
-        .execute(&mut ***tx)
-        .await?;
-
-    // P-4: Propagate inherited tag to descendants.
-    crate::tag_inheritance::propagate_tag_to_descendants(tx, block_id, tag_id).await?;
+    // #1257 PR-3: route the `block_tags` write + inheritance fan-out through the
+    // SAME engine-apply + projection the boot-replay / sync `ApplyOp` path uses,
+    // IN this CommandTx, INSTEAD of the inline `INSERT INTO block_tags` +
+    // `propagate_tag_to_descendants`. `apply_add_tag_via_loro` resolves the
+    // block's space, pushes the tag onto the per-space Loro engine's `block_tags`
+    // list (sync guard, dropped before any `.await`), then
+    // `project_add_tag_to_sql` runs `INSERT OR IGNORE INTO block_tags` and
+    // `propagate_tag_to_descendants` runs the IDENTICAL `block_tag_inherited`
+    // fan-out — so BOTH `block_tags` AND `block_tag_inherited` end up identical to
+    // before (#1323 convergence). The plain `INSERT` → `INSERT OR IGNORE` swap is
+    // inert: the dup-check above already returned `Ok(None)` if the row existed,
+    // so the row is always absent here. We do NOT call `apply_op_tx` /
+    // `advance_apply_cursor`: the apply cursor stays put on the LOCAL path so boot
+    // replay re-applies idempotently (the safety net — #1257). If the engine
+    // can't be resolved (source block has no space / engine uninitialised — e.g.
+    // a test without `install_for_test`), the helper FALLS BACK to
+    // `apply_add_tag_sql_only`, which runs the SAME projection + inheritance — so
+    // the association is never skipped and we never crash.
+    let add_payload = AddTagPayload {
+        block_id: BlockId::from_trusted(block_id),
+        tag_id: BlockId::from_trusted(tag_id),
+    };
+    crate::materializer::apply_add_tag_via_loro(tx, device_id, &add_payload).await?;
 
     Ok(Some(op_record))
 }
@@ -285,10 +299,11 @@ pub async fn remove_tag_inner(
     let tag_id_str = tag_id.as_str();
 
     // 1. Build OpPayload
-    let payload = OpPayload::RemoveTag(RemoveTagPayload {
+    let remove_payload = RemoveTagPayload {
         block_id: block_id.clone(),
         tag_id: tag_id.clone(),
-    });
+    };
+    let payload = OpPayload::RemoveTag(remove_payload.clone());
 
     // 2. Single IMMEDIATE transaction: validation + op_log + block_tags write.
     //    BEGIN IMMEDIATE eagerly acquires the write lock, preventing
@@ -326,15 +341,24 @@ pub async fn remove_tag_inner(
     let op_record =
         op_log::append_local_op_in_tx(&mut tx, device_id, payload, crate::db::now_ms()).await?;
 
-    // 4. Delete from block_tags within same transaction
-    sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
-        .bind(block_id_str)
-        .bind(tag_id_str)
-        .execute(&mut **tx)
-        .await?;
-
-    // P-4: Clean up inherited tag entries
-    crate::tag_inheritance::remove_inherited_tag(&mut tx, block_id_str, tag_id_str).await?;
+    // 4. #1257 PR-3: route the `block_tags` delete + inherited-tag cleanup
+    // through the SAME engine-apply + projection the boot-replay / sync `ApplyOp`
+    // path uses, IN this CommandTx, INSTEAD of the inline
+    // `DELETE FROM block_tags` + `remove_inherited_tag`. `apply_remove_tag_via_loro`
+    // resolves the block's space, removes the tag from the per-space Loro engine's
+    // `block_tags` list (sync guard, dropped before any `.await`), then
+    // `project_remove_tag_to_sql` runs the IDENTICAL
+    // `DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?` and
+    // `remove_inherited_tag` runs the IDENTICAL `block_tag_inherited` cleanup — so
+    // BOTH `block_tags` AND `block_tag_inherited` end up identical to before
+    // (#1323 convergence). We do NOT call `apply_op_tx` / `advance_apply_cursor`:
+    // the apply cursor stays put on the LOCAL path so boot replay re-applies
+    // idempotently (the safety net — #1257). If the engine can't be resolved
+    // (block has no space / engine uninitialised — e.g. a test without
+    // `install_for_test`), the helper FALLS BACK to `apply_remove_tag_sql_only`,
+    // which runs the SAME projection + cleanup — so the removal is never skipped
+    // and we never crash.
+    crate::materializer::apply_remove_tag_via_loro(&mut tx, device_id, &remove_payload).await?;
 
     // 5. Commit + dispatch background cache tasks (fire-and-forget).
     tx.enqueue_background(op_record);

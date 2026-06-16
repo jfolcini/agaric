@@ -62,6 +62,15 @@ pub(crate) use attachments::cleanup_orphaned_attachments;
 // so a fresh local create is engine-fresh and densely-positioned immediately
 // instead of waiting for the next boot replay (#1245 / #1249).
 pub(crate) use loro_apply::apply_create_block_via_loro;
+// #1257 PR-3: the LOCAL edit_block / set_property / delete_property / add_tag /
+// remove_tag command paths drive their engine-apply + projection (and tag
+// inheritance fan-out for add/remove_tag) through these helpers IN-TRANSACTION,
+// without advancing the apply cursor (boot-replay re-applies idempotently — the
+// safety net). None touch `position`, so there is no dense-reprojection step.
+pub(crate) use loro_apply::{
+    apply_add_tag_via_loro, apply_delete_property_via_loro, apply_edit_block_via_loro,
+    apply_remove_tag_via_loro, apply_set_property_via_loro,
+};
 pub(crate) use pages_cache::recompute_pages_cache_counts_for_pages;
 pub(crate) use task_handlers::{handle_background_task, handle_foreground_task};
 

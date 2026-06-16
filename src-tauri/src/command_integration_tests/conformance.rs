@@ -982,3 +982,311 @@ async fn local_create_is_engine_fresh_and_dense_1257() {
 
     mat.shutdown();
 }
+
+// ---------------------------------------------------------------------------
+// #1257 PR-3 — local simple-op engine-freshness conformance.
+//
+// PR-3 routes the LOCAL edit_block / set_property / delete_property /
+// add_tag / remove_tag command paths through their `apply_*_via_loro` engine
+// helpers IN-TRANSACTION (instead of writing SQL directly and never touching
+// the Loro engine). None of these ops touch `position`, so there is NO
+// dense-reprojection subtlety (unlike create / move). Each test below drives
+// the REAL local command (`edit_block_inner` / `set_property_inner` /
+// `add_tag_inner`) + `settle()` with the engine installed, then asserts —
+// WITHOUT any boot replay — that:
+//   (a) the ENGINE reflects the change (read_block content / read_property_typed
+//       / read_tags membership),
+//   (b) the SQL matches the engine, AND
+//   (c) the apply cursor (`materialized_through_seq`) did NOT advance while
+//       `op_log.seq` DID — proving boot replay still owns cursor progress and
+//       the local path is the engine-apply-without-cursor-advance shape (#1248
+//       / #1257).
+//
+// Each test is its OWN `#[tokio::test]` fn so `cargo nextest` forks one process
+// per test — REQUIRED by this module's process-global-engine isolation contract
+// (see the module docstring); two tests sharing a process would `clear()` each
+// other's engine.
+// ---------------------------------------------------------------------------
+
+/// Read the apply cursor (`materialized_through_seq`).
+async fn pr3_apply_cursor(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Read the max op_log seq.
+async fn pr3_max_seq(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM op_log")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// PR-3: a LOCAL `edit_block_inner` routes the content write through
+/// `apply_edit_block_via_loro` IN-TX, so the engine's `read_block` reflects the
+/// new content (no boot replay) AND the SQL `content` matches, AND the apply
+/// cursor stays put while op_log advances.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_edit_block_is_engine_fresh_1257() {
+    let target = seed_label_to_id("BA");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let state = crate::loro::shared::install_for_test();
+    state.registry.clear();
+
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "before","parent_id": "S1", "position": 1}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    let cursor_before = pr3_apply_cursor(&pool).await;
+    let seq_before = pr3_max_seq(&pool).await;
+
+    let edited = edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        BlockId::from(target.as_str()),
+        "after-edit".into(),
+    )
+    .await
+    .expect("edit_block_inner");
+    assert_eq!(edited.content.as_deref(), Some("after-edit"));
+    settle(&mat).await;
+
+    // (a) ENGINE freshness — WITHOUT boot replay the engine already has the edit.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        let snap = guard
+            .engine_mut()
+            .read_block(&target)
+            .expect("read_block")
+            .expect("engine has the edited block (no boot replay)");
+        drop(guard);
+        assert_eq!(
+            snap.content, "after-edit",
+            "engine read_block must reflect the local edit in-tx, no boot replay",
+        );
+    }
+
+    // (b) SQL matches the engine.
+    let sql_content: String =
+        sqlx::query_scalar::<_, String>("SELECT content FROM blocks WHERE id = ?")
+            .bind(&target)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        sql_content, "after-edit",
+        "SQL content must match the engine"
+    );
+
+    // (c) cursor unmoved, op_log advanced.
+    assert!(
+        pr3_max_seq(&pool).await > seq_before,
+        "local edit_block must append to op_log",
+    );
+    assert_eq!(
+        pr3_apply_cursor(&pool).await,
+        cursor_before,
+        "local edit_block must NOT advance the apply cursor (#1248 / #1257)",
+    );
+
+    mat.shutdown();
+}
+
+/// PR-3: a LOCAL `set_property_inner` routes the property write through
+/// `apply_set_property_via_loro` IN-TX, so the engine's `read_property_typed`
+/// reflects the value (no boot replay) AND the SQL `block_properties` row
+/// matches, AND the apply cursor stays put while op_log advances.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_set_property_is_engine_fresh_1257() {
+    use crate::loro::engine::PropertyValue;
+
+    let target = seed_label_to_id("BA");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let state = crate::loro::shared::install_for_test();
+    state.registry.clear();
+
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    let cursor_before = pr3_apply_cursor(&pool).await;
+    let seq_before = pr3_max_seq(&pool).await;
+
+    // Non-reserved text property → `block_properties` row.
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        target.as_str().into(),
+        "status".into(),
+        Some("active".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("set_property_inner");
+    settle(&mat).await;
+
+    // (a) ENGINE freshness — WITHOUT boot replay the engine has the property.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        let v = guard
+            .engine_mut()
+            .read_property_typed(&target, "status")
+            .expect("read_property_typed")
+            .expect("engine has the freshly-set property (no boot replay)");
+        drop(guard);
+        assert_eq!(
+            v,
+            PropertyValue::Str("active".into()),
+            "engine read_property_typed must reflect the local set_property in-tx",
+        );
+    }
+
+    // (b) SQL `block_properties` matches the engine.
+    let sql_val: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT value_text FROM block_properties WHERE block_id = ? AND key = ?",
+    )
+    .bind(&target)
+    .bind("status")
+    .fetch_optional(&pool)
+    .await
+    .unwrap()
+    .flatten();
+    assert_eq!(
+        sql_val.as_deref(),
+        Some("active"),
+        "SQL block_properties.value_text must match the engine",
+    );
+
+    // (c) cursor unmoved, op_log advanced.
+    assert!(
+        pr3_max_seq(&pool).await > seq_before,
+        "local set_property must append to op_log",
+    );
+    assert_eq!(
+        pr3_apply_cursor(&pool).await,
+        cursor_before,
+        "local set_property must NOT advance the apply cursor (#1248 / #1257)",
+    );
+
+    mat.shutdown();
+}
+
+/// PR-3: a LOCAL `add_tag_inner` routes the `block_tags` write + inheritance
+/// fan-out through `apply_add_tag_via_loro` IN-TX, so the engine's `read_tags`
+/// reflects the membership (no boot replay) AND the SQL `block_tags` row
+/// matches, AND the apply cursor stays put while op_log advances.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_add_tag_is_engine_fresh_1257() {
+    let target = seed_label_to_id("BA");
+    let tag = seed_label_to_id("TG");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let state = crate::loro::shared::install_for_test();
+    state.registry.clear();
+
+    // S1 > {BA}; TG is a top-level tag block. All scoped to one space so
+    // `resolve_block_space` succeeds and add_tag engages the engine path.
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+        json!({"id": "TG", "block_type": "tag",     "content": "todo", "parent_id": null, "position": 2}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    let cursor_before = pr3_apply_cursor(&pool).await;
+    let seq_before = pr3_max_seq(&pool).await;
+
+    add_tag_inner(
+        &pool,
+        DEV,
+        &mat,
+        BlockId::from(target.as_str()),
+        BlockId::from(tag.as_str()),
+    )
+    .await
+    .expect("add_tag_inner");
+    settle(&mat).await;
+
+    // (a) ENGINE freshness — WITHOUT boot replay the engine has the tag.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        let tags = guard.engine_mut().read_tags(&target).expect("read_tags");
+        drop(guard);
+        assert!(
+            tags.contains(&tag),
+            "engine read_tags must reflect the local add_tag in-tx (no boot replay); got {tags:?}",
+        );
+    }
+
+    // (b) SQL `block_tags` matches the engine.
+    let sql_present: Option<i32> =
+        sqlx::query_scalar::<_, i32>("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
+            .bind(&target)
+            .bind(&tag)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert!(
+        sql_present.is_some(),
+        "SQL block_tags row must match the engine tag membership",
+    );
+
+    // (c) cursor unmoved, op_log advanced.
+    assert!(
+        pr3_max_seq(&pool).await > seq_before,
+        "local add_tag must append to op_log",
+    );
+    assert_eq!(
+        pr3_apply_cursor(&pool).await,
+        cursor_before,
+        "local add_tag must NOT advance the apply cursor (#1248 / #1257)",
+    );
+
+    mat.shutdown();
+}

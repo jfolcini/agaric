@@ -18,9 +18,7 @@ use tauri::State;
 use crate::db::{CommandTx, ReadPool};
 use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::op::{
-    DeletePropertyPayload, OpPayload, SPACE_PROPERTY_KEY, UndoResult, is_reserved_property_key,
-};
+use crate::op::{DeletePropertyPayload, OpPayload, UndoResult, is_reserved_property_key};
 use crate::op_log;
 use crate::pagination::{self, BlockRow, HistoryEntry, PageResponse};
 use crate::pairing::PairingSession;
@@ -736,74 +734,33 @@ async fn delete_property_core(
     }
 
     // 3. Append DeleteProperty op
-    let payload = OpPayload::DeleteProperty(DeletePropertyPayload {
+    let del_payload = DeletePropertyPayload {
         block_id: BlockId::from_trusted(&block_id),
         key: key.clone(),
-    });
-    let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, crate::db::now_ms()).await?;
+    };
+    let op_record = op_log::append_local_op_in_tx(
+        &mut tx,
+        device_id,
+        OpPayload::DeleteProperty(del_payload.clone()),
+        crate::db::now_ms(),
+    )
+    .await?;
 
-    // 4. Materialize: delete/clear the property
-    if is_reserved_property_key(&key) {
-        // Match-arms with explicit `sqlx::query!` per column — preserves
-        // compile-time SQL validation. Reserved keys are a closed set
-        // (see `is_reserved_property_key`) so the match is exhaustive.
-        match key.as_str() {
-            "todo_state" => {
-                sqlx::query!("UPDATE blocks SET todo_state = NULL WHERE id = ?", block_id)
-                    .execute(&mut **tx)
-                    .await?;
-            }
-            "priority" => {
-                sqlx::query!("UPDATE blocks SET priority = NULL WHERE id = ?", block_id)
-                    .execute(&mut **tx)
-                    .await?;
-            }
-            "due_date" => {
-                sqlx::query!("UPDATE blocks SET due_date = NULL WHERE id = ?", block_id)
-                    .execute(&mut **tx)
-                    .await?;
-            }
-            "scheduled_date" => {
-                sqlx::query!(
-                    "UPDATE blocks SET scheduled_date = NULL WHERE id = ?",
-                    block_id
-                )
-                .execute(&mut **tx)
-                .await?;
-            }
-            // L-57: defensive error path for the case where a future
-            // reserved key is added to `is_reserved_property_key`
-            // without a matching column-routing arm here. Today this
-            // is unreachable (the gate is locked at exactly the four
-            // matched keys), but converting the panic to a structured
-            // `AppError::InvalidOperation` means a forgotten lockstep
-            // update produces a clean command error rather than
-            // crashing the worker. `InvalidOperation` is in
-            // `sanitize_internal_error`'s pass-through set so the
-            // diagnostic survives to the frontend.
-            _ => {
-                return Err(AppError::InvalidOperation(format!(
-                    "unknown reserved property: {key}"
-                )));
-            }
-        }
-    } else if key == SPACE_PROPERTY_KEY {
-        // #533 Phase 2: `space` is column-backed only — clear the
-        // denormalized `blocks.space_id` for the whole owning-page group;
-        // no block_properties row to delete. Parity with the replay path.
-        sqlx::query("UPDATE blocks SET space_id = NULL WHERE id = ? OR page_id = ?")
-            .bind(&block_id)
-            .bind(&block_id)
-            .execute(&mut **tx)
-            .await?;
-    } else {
-        sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
-            .bind(&block_id)
-            .bind(&key)
-            .execute(&mut **tx)
-            .await?;
-    }
+    // 4. #1257 PR-3: route the clear/delete through the SAME engine-apply +
+    // projection the boot-replay / sync `ApplyOp` path uses, IN this CommandTx,
+    // INSTEAD of the inline reserved-column / `space` fan-out / `block_properties`
+    // DELETE branches. `apply_delete_property_via_loro` resolves the block's
+    // space, removes the key from the per-space Loro engine (sync guard, dropped
+    // before any `.await`), then `project_delete_property_to_sql` runs the
+    // IDENTICAL per-key SQL (reserved → column NULL; `space` → the `space_id`
+    // page-group clear; non-reserved → `DELETE FROM block_properties`). We do NOT
+    // call `apply_op_tx` / `advance_apply_cursor`: the apply cursor stays put on
+    // the LOCAL path so boot replay re-applies idempotently (the safety net —
+    // #1257). If the engine can't be resolved (space unresolvable / engine
+    // uninitialised — e.g. a test without `install_for_test`), the helper FALLS
+    // BACK to `apply_delete_property_sql_only`, which runs the SAME projection —
+    // so the clear is never skipped and we never crash.
+    crate::materializer::apply_delete_property_via_loro(&mut tx, device_id, &del_payload).await?;
 
     // 5. Dispatch background cache tasks after commit (fire-and-forget).
     tx.enqueue_background(Arc::new(op_record));
