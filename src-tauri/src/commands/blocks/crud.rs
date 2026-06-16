@@ -683,12 +683,49 @@ pub async fn delete_blocks_by_ids_inner(
     // the materialised state) so revert / undo replay against the same
     // rows behaves identically regardless of whether they were deleted
     // via the single or batch path.
+    // #1257 PR-5 — CASCADE engine routing. We must capture each root's
+    // active subtree COHORT and resolve its SPACE *before* the SQL
+    // soft-delete UPDATE runs below: `resolve_block_space` filters
+    // `deleted_at IS NULL`, so a post-UPDATE resolve returns `None` for
+    // every (now-deleted) cohort row → the engine would never see the
+    // cascade and the #1257 phantom (engine-live-but-SQL-deleted) appears.
+    // This mirrors `apply_op_tx`'s DeleteBlock arm exactly: capture cohort +
+    // space per root here, then drive the WHOLE captured cohort onto the
+    // engine via the post-commit fan-out (`dispatch_delete_descendants`,
+    // run after `commit_and_dispatch` below). The fan-out is the right
+    // mechanism for this MULTI-ROOT path (rather than the per-seed in-tx
+    // `apply_delete_block_via_loro`): the helper's own SQL projection would
+    // either double-count the cascade if run before the batch UPDATE, or
+    // hit the same dead-space-resolution wall if run after it — the
+    // pre-captured space sidesteps both. The op-log shape (one op per root)
+    // and the apply cursor are untouched (cursor advance stays a
+    // boot-replay / `dispatch_op` concern, #1248 / #1257).
+    let mut delete_fanout: Vec<(
+        Arc<op_log::OpRecord>,
+        Vec<String>,
+        Option<crate::space::SpaceId>,
+    )> = Vec::with_capacity(live_roots.len());
     for root in &live_roots {
-        let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
+        let payload = DeleteBlockPayload {
             block_id: BlockId::from_trusted(root),
-        });
-        let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
-        tx.enqueue_background(Arc::new(op_record));
+        };
+        let op_record = op_log::append_local_op_in_tx(
+            &mut tx,
+            device_id,
+            OpPayload::DeleteBlock(payload.clone()),
+            now,
+        )
+        .await?;
+        let op_record = Arc::new(op_record);
+        tx.enqueue_background(Arc::clone(&op_record));
+
+        // PRE-UPDATE capture (load-bearing — see comment above): the active
+        // subtree cohort (seed + active descendants) and the seed's space,
+        // both resolved while the rows are still `deleted_at IS NULL`.
+        let cohort = crate::materializer::collect_delete_cohort(&mut tx, &payload).await?;
+        let delete_space_id =
+            crate::space::resolve_block_space(&mut **tx, &payload.block_id).await?;
+        delete_fanout.push((op_record, cohort, delete_space_id));
     }
 
     // One recursive CTE seeded from every root in `live_roots` (via
@@ -755,6 +792,27 @@ pub async fn delete_blocks_by_ids_inner(
     }
 
     tx.commit_and_dispatch(materializer).await?;
+
+    // #1257 PR-5 — POST-COMMIT engine fan-out. Drive each root's
+    // pre-captured cohort (seed + active descendants) onto the per-space
+    // Loro engine using the PRE-UPDATE-captured space id. Mirrors
+    // `apply_op`'s `dispatch_delete_descendants` call: the engine's
+    // `apply_delete_block` is per-block-id and idempotent, so re-applying
+    // the seed is harmless, and the captured space sidesteps the
+    // dead-space-resolution problem (post-delete `resolve_block_space`
+    // returns None for every cohort row). Without this the engine would
+    // keep the cohort alive while SQL reports it deleted — the #1257
+    // phantom the PR-1 freshness gate refuses to ship. Engine-absent
+    // (no `install_for_test` / production-uninit) is a no-op inside the
+    // helper; the SQL cascade above stands as the durable outcome.
+    for (op_record, cohort, delete_space_id) in &delete_fanout {
+        crate::materializer::dispatch_delete_descendants(
+            op_record,
+            cohort,
+            delete_space_id.as_ref(),
+        )
+        .await;
+    }
 
     // Return the number of blocks the cascade soft-deleted (roots +
     // descendants combined). Callers can compare against
@@ -1582,6 +1640,21 @@ pub async fn restore_blocks_by_ids_inner(
 
     // One RestoreBlock op per root for sync compatibility (mirrors
     // `restore_all_deleted_inner`).
+    //
+    // #1257 PR-5 — CASCADE engine routing. Capture each root's connected
+    // delete cohort (the #1055 `deleted_at_ref`-scoped subtree) BEFORE the
+    // UPDATE clears `deleted_at` — once the rows are alive again the
+    // `deleted_at = deleted_at_ref` filter no longer identifies the cohort.
+    // We drive the captured cohort onto the engine via the post-commit
+    // `dispatch_restore_descendants` fan-out (run after `commit_and_dispatch`
+    // below), mirroring `apply_op`. The restore fan-out resolves the space
+    // inline post-commit (the cohort is alive by then, so
+    // `resolve_block_space` succeeds — the asymmetry with delete noted in
+    // `ApplyEffects`). Engine `apply_restore_block` is idempotent, so the
+    // seed re-apply is harmless. The op-log shape (one op per root) and the
+    // apply cursor are untouched.
+    let mut restore_fanout: Vec<(Arc<op_log::OpRecord>, Vec<String>)> =
+        Vec::with_capacity(roots.len());
     for root in &roots {
         // The selecting query filters `WHERE deleted_at IS NOT NULL`, so this
         // is a structural invariant. Return a graceful AppError instead of
@@ -1592,12 +1665,23 @@ pub async fn restore_blocks_by_ids_inner(
                 root.id
             ))
         })?;
-        let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
+        let inner_payload = RestoreBlockPayload {
             block_id: BlockId::from_trusted(&root.id),
             deleted_at_ref,
-        });
-        let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
-        tx.enqueue_background(Arc::new(op_record));
+        };
+        let op_record = op_log::append_local_op_in_tx(
+            &mut tx,
+            device_id,
+            OpPayload::RestoreBlock(inner_payload.clone()),
+            now,
+        )
+        .await?;
+        let op_record = Arc::new(op_record);
+        tx.enqueue_background(Arc::clone(&op_record));
+
+        // PRE-UPDATE capture of the connected cohort (#1055 contiguous walk).
+        let cohort = crate::materializer::collect_restore_cohort(&mut tx, &inner_payload).await?;
+        restore_fanout.push((op_record, cohort));
     }
 
     // C3 (#345): restore each root's EXACT delete cohort, not "any
@@ -1655,6 +1739,15 @@ pub async fn restore_blocks_by_ids_inner(
 
     // Commit + drain enqueued background dispatches.
     tx.commit_and_dispatch(materializer).await?;
+
+    // #1257 PR-5 — POST-COMMIT engine fan-out. Restore each root's captured
+    // cohort on the per-space Loro engine (mirrors `apply_op`'s
+    // `dispatch_restore_descendants`). The fan-out resolves the space inline
+    // from the pool — valid because the cohort is alive again post-commit.
+    // Engine `apply_restore_block` is idempotent. Engine-absent is a no-op.
+    for (op_record, cohort) in &restore_fanout {
+        crate::materializer::dispatch_restore_descendants(pool, op_record, cohort).await;
+    }
 
     Ok(BulkTrashResponse {
         affected_count: count,
@@ -1772,13 +1865,67 @@ pub async fn purge_blocks_by_ids_inner(
     }
 
     // Emit one PurgeBlock op per root.
+    //
+    // #1257 PR-5 — CASCADE engine routing. Capture each root's full purge
+    // subtree COHORT and its SPACE BEFORE the SQL cascade physically
+    // removes the rows below: once the rows are gone we cannot reconstruct
+    // the cohort or resolve its space. A purged block is SQL-ABSENT (not
+    // soft-deleted), so it does not itself create the #1257
+    // engine-live-but-SQL-deleted phantom the PR-1 gate refuses; but the
+    // engine must still drop the purged subtree from its LoroDoc to stay in
+    // lockstep. We drive the captured cohort onto the engine via a
+    // post-commit `engine_apply(PurgeBlock)` fan-out (run after
+    // `commit_and_dispatch`), mirroring the delete/restore fan-out and the
+    // boot-replay path. The roots are soft-deleted, so the canonical
+    // `resolve_block_space` (which filters `deleted_at IS NULL`) returns
+    // None — we read the denormalized `blocks.space_id` column directly
+    // (it survives a soft-delete) at this pre-cascade moment. Engine-absent
+    // / no-space is a no-op; the SQL cascade stands. The op-log shape (one
+    // op per root) and the apply cursor are untouched.
     let now = crate::db::now_ms();
+    let mut purge_fanout: Vec<(
+        Arc<op_log::OpRecord>,
+        Vec<String>,
+        Option<crate::space::SpaceId>,
+    )> = Vec::with_capacity(roots.len());
     for root in &roots {
-        let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
+        let payload = PurgeBlockPayload {
             block_id: BlockId::from_trusted(&root.id),
-        });
-        let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
-        tx.enqueue_background(op_record);
+        };
+        let op_record = op_log::append_local_op_in_tx(
+            &mut tx,
+            device_id,
+            OpPayload::PurgeBlock(payload.clone()),
+            now,
+        )
+        .await?;
+        let op_record = Arc::new(op_record);
+        tx.enqueue_background(Arc::clone(&op_record));
+
+        // PRE-CASCADE capture: the full subtree (purge ignores `deleted_at`,
+        // invariant #9 exception — mirror the same shape the cascade walks)
+        // and the seed's denormalized space (read directly; the canonical
+        // resolver filters out this soft-deleted row).
+        let cohort = sqlx::query_scalar::<_, String>(
+            "WITH RECURSIVE descendants(id, depth) AS ( \
+                 SELECT id, 0 FROM blocks WHERE id = ? \
+                 UNION ALL \
+                 SELECT b.id, d.depth + 1 FROM blocks b \
+                 INNER JOIN descendants d ON b.parent_id = d.id \
+                 WHERE d.depth < 100 \
+             ) \
+             SELECT id FROM descendants",
+        )
+        .bind(&root.id)
+        .fetch_all(&mut **tx)
+        .await?;
+        let purge_space_id =
+            sqlx::query_scalar!("SELECT space_id FROM blocks WHERE id = ?", root.id,)
+                .fetch_optional(&mut **tx)
+                .await?
+                .flatten()
+                .map(|s| crate::space::SpaceId::from_trusted(&s));
+        purge_fanout.push((op_record, cohort, purge_space_id));
     }
 
     // #461 — collect affected pages BEFORE the cascade deletes so the
@@ -1821,6 +1968,39 @@ pub async fn purge_blocks_by_ids_inner(
 
     // Commit + drain enqueued background dispatches.
     tx.commit_and_dispatch(materializer).await?;
+
+    // #1257 PR-5 — POST-COMMIT engine fan-out. Drop each purged subtree
+    // from the per-space Loro engine using the PRE-CASCADE-captured cohort +
+    // space (the SQL rows are physically gone now, so neither could be
+    // recovered here). `engine_apply(PurgeBlock)` removes a block's
+    // `blocks`/`block_properties`/`block_tags` entries from the LoroDoc; it
+    // is per-block-id, so we drive the whole captured cohort. Mirrors the
+    // delete/restore fan-out. Engine-absent / no-space is a no-op inside
+    // `engine_apply`; the SQL cascade above stands as the durable outcome.
+    if let Some(state) = crate::loro::shared::get() {
+        for (op_record, cohort, purge_space_id) in &purge_fanout {
+            let Some(space_id) = purge_space_id else {
+                continue;
+            };
+            for cohort_id in cohort {
+                let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
+                    block_id: BlockId::from_trusted(cohort_id),
+                });
+                let op_id = format!(
+                    "{}/{}#cohort/{}",
+                    op_record.device_id, op_record.seq, cohort_id,
+                );
+                crate::merge::engine_apply(
+                    &op_id,
+                    &payload,
+                    &op_record.device_id,
+                    space_id,
+                    &op_record.created_at.to_string(),
+                    state,
+                );
+            }
+        }
+    }
 
     // L-36 + #85 F2: post-commit attachment-file unlink (mirrors
     // `purge_all_deleted_inner`), resolved against the materializer's

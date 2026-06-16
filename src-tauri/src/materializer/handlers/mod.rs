@@ -78,6 +78,24 @@ pub(crate) use loro_apply::{
 // engine-fresh and densely-positioned in both parents immediately instead of
 // waiting for the next boot replay (#1245 / #1249).
 pub(crate) use loro_apply::apply_move_block_via_loro;
+// #1257 PR-5: the LOCAL delete / restore / purge command paths PRE-CAPTURE each
+// root's subtree COHORT + SPACE below the SQL soft-delete (these collectors)
+// and then drive the captured cohort onto the per-space Loro engine via the
+// post-commit fan-out (`dispatch_*_descendants`) — mirroring `apply_op_tx` +
+// `apply_op`. The cohort + space MUST be captured before the SQL UPDATE (else a
+// post-delete `resolve_block_space` returns None → the engine misses the
+// cascade → the #1257 phantom). The apply cursor stays put (boot-replay /
+// `dispatch_op` concern only). The `apply_*_via_loro` CASCADE helpers are also
+// raised to `pub(crate)` at their definitions (consumed crate-internally via
+// the `use loro_apply::*` glob below) so they sit on the same engine-apply
+// surface PR-2 established; the multi-root command path itself routes the
+// engine through the fan-out + `merge::engine_apply` rather than the per-seed
+// helper (the helper's single-root SQL projection would double-count the
+// multi-root cascade; a post-cascade call hits dead space resolution).
+pub(crate) use apply::{
+    collect_delete_cohort, collect_restore_cohort, dispatch_delete_descendants,
+    dispatch_restore_descendants,
+};
 pub(crate) use pages_cache::recompute_pages_cache_counts_for_pages;
 pub(crate) use task_handlers::{handle_background_task, handle_foreground_task};
 

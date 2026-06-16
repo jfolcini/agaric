@@ -131,7 +131,7 @@ pub(super) async fn apply_op(pool: &SqlitePool, record: &Arc<OpRecord>) -> Resul
 /// helper has nothing to propagate.  Every per-block call reuses the
 /// root op's metadata (`device_id`, `seq`, `space_id`) so log lines
 /// stay anchored to the user-visible op.
-pub(super) async fn dispatch_restore_descendants(
+pub(crate) async fn dispatch_restore_descendants(
     pool: &SqlitePool,
     root_record: &OpRecord,
     cohort: &[String],
@@ -241,7 +241,7 @@ pub(super) async fn dispatch_restore_descendants(
 /// are absorbed (warn + skip) so this helper has nothing to propagate.
 /// Per-call cost is bounded by the registry lock + the engine's
 /// per-block-id mutation (single-digit microseconds).
-pub(super) async fn dispatch_delete_descendants(
+pub(crate) async fn dispatch_delete_descendants(
     root_record: &OpRecord,
     cohort: &[String],
     space_id: Option<&crate::space::SpaceId>,
@@ -597,7 +597,7 @@ pub(super) async fn collect_purge_affected_pages(
 /// filter; the caller is responsible for excluding the seed when
 /// constructing the per-descendant fan-out (the seed's engine
 /// dispatch already happens once for the root op record).
-pub(super) async fn collect_restore_cohort(
+pub(crate) async fn collect_restore_cohort(
     conn: &mut sqlx::SqliteConnection,
     p: &RestoreBlockPayload,
 ) -> Result<Vec<String>, AppError> {
@@ -639,7 +639,7 @@ pub(super) async fn collect_restore_cohort(
 /// The captured cohort feeds the post-commit
 /// `dispatch_delete_descendants` fanout; the SELECT itself is
 /// cheap (single CTE walk; ~µs on small subtrees).
-pub(super) async fn collect_delete_cohort(
+pub(crate) async fn collect_delete_cohort(
     conn: &mut sqlx::SqliteConnection,
     p: &DeleteBlockPayload,
 ) -> Result<Vec<String>, AppError> {
