@@ -4970,9 +4970,10 @@ async fn apply_snapshot_reset_then_new_ops_reach_peer_792() {
             .expect("pre 2");
     }
     let registry_b = LoroEngineRegistry::new();
-    let seed = prepare_outgoing(&registry_a, &space, DEVICE_A, None)
+    let seed = prepare_outgoing(&pool_a, &registry_a, &space, DEVICE_A, None)
         .await
-        .expect("seed message");
+        .expect("seed message")
+        .expect("#1257 freshness gate must not refuse a consistent engine");
     let outcome = apply_remote(&pool_b, &registry_b, DEVICE_B, seed)
         .await
         .expect("seed apply");
@@ -5025,9 +5026,10 @@ async fn apply_snapshot_reset_then_new_ops_reach_peer_792() {
         let mut g = registry_b.for_space(&space, DEVICE_B).expect("b");
         g.engine_mut().version_vector()
     };
-    let update = prepare_outgoing(&registry_a, &space, DEVICE_A, Some(&b_vv))
+    let update = prepare_outgoing(&pool_a, &registry_a, &space, DEVICE_A, Some(&b_vv))
         .await
-        .expect("update message");
+        .expect("update message")
+        .expect("#1257 freshness gate must not refuse a consistent engine");
     let outcome = apply_remote(&pool_b, &registry_b, DEVICE_B, update)
         .await
         .expect("update apply");

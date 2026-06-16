@@ -922,11 +922,54 @@ impl SyncOrchestrator {
                 .iter()
                 .find(|v| &v.space_id == sid)
                 .map(|v| v.vv.as_slice());
-            let m =
-                loro_sync::prepare_outgoing(&loro_state.registry, sid, &self.device_id, peer_vv)
-                    .await?;
-            messages.push_back(m);
+            // #1257 freshness gate: `prepare_outgoing` returns `None` when the
+            // engine is stale vs SQL for this space (it would export a block SQL
+            // has soft-deleted). On refusal, skip the space — emit no payload for
+            // it this round; the gate already logged + signalled a
+            // rebuild-from-op-log is needed. Do NOT repair inline.
+            match loro_sync::prepare_outgoing(
+                &self.pool,
+                &loro_state.registry,
+                sid,
+                &self.device_id,
+                peer_vv,
+            )
+            .await?
+            {
+                Some(m) => messages.push_back(m),
+                None => {
+                    tracing::warn!(
+                        device_id = %self.device_id,
+                        space_id = %sid.as_str(),
+                        "loro: #1257 freshness gate refused export for space; \
+                         skipping it in this push (rebuild-from-op-log required)"
+                    );
+                }
+            }
         }
+        // #1257: every registered space's export was refused by the freshness
+        // gate (engine stale vs SQL). There is nothing safe to ship, so take
+        // the same empty-stream short-circuit as the no-spaces case — reply
+        // `SyncComplete` directly rather than panicking on an empty queue
+        // below. The per-space gate already logged + signalled rebuild.
+        if messages.is_empty() {
+            let last_hash = get_local_heads(&self.pool)
+                .await?
+                .into_iter()
+                .find(|h| h.device_id == self.device_id)
+                .map(|h| h.hash)
+                .unwrap_or_default();
+            self.state = SyncState::Complete;
+            self.session.state = SyncState::Complete;
+            self.emit(crate::sync_events::SyncEvent::Complete {
+                remote_device_id: self.session.remote_device_id.clone(),
+                ops_received: self.session.ops_received,
+                ops_sent: self.session.ops_sent,
+                changed_page_ids: self.session.changed_page_ids.clone(),
+            });
+            return Ok(Some(SyncMessage::SyncComplete { last_hash }));
+        }
+
         // #705: this counts outbound LoroSync *messages* (one per
         // registered space, each a full CRDT snapshot/update), not
         // individual CRDT operations. Surfaced in the UI as "Ops Sent";
@@ -949,12 +992,12 @@ impl SyncOrchestrator {
         });
 
         // Pop the first; the rest go into the pending queue and are
-        // drained by `next_message`.  `messages` is non-empty here:
-        // the `space_ids.is_empty()` short-circuit above returned
-        // before we built it.
+        // drained by `next_message`.  `messages` is non-empty here: the
+        // `space_ids.is_empty()` short-circuit AND the #1257 all-refused
+        // short-circuit above both returned before reaching this point.
         let first = messages
             .pop_front()
-            .expect("messages was just built from a non-empty space_ids list");
+            .expect("messages is non-empty: empty-stream + all-refused short-circuits returned");
         let is_last = messages.is_empty();
         self.pending_loro_messages = messages;
         Ok(Some(SyncMessage::LoroSync {
