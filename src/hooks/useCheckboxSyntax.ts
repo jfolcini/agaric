@@ -9,7 +9,7 @@
  */
 
 import type { TFunction } from 'i18next'
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import type { StoreApi } from 'zustand'
 
 import { notify } from '@/lib/notify'
@@ -34,9 +34,16 @@ export function useCheckboxSyntax({
   pageStore,
   t,
 }: UseCheckboxSyntaxParams): CheckboxSyntaxHandler {
+  // Re-entrancy guard: prevents a rapid double-invocation on the same block
+  // from queueing two in-flight `setTodoStateCmd` calls, whose error-path
+  // rollbacks would both restore the (now stale) `priorTodoState` snapshot.
+  const inProgress = useRef(false)
+
   return useCallback(
     (state: 'TODO' | 'DONE') => {
       if (!focusedBlockId) return
+      if (inProgress.current) return
+      inProgress.current = true
       // FE-H-7: snapshot prior todo_state so the optimistic mutation can be
       // reverted if `setTodoStateCmd` rejects.
       const priorTodoState = pageStore.getState().blocksById.get(focusedBlockId)?.todo_state ?? null
@@ -69,6 +76,11 @@ export function useCheckboxSyntax({
               b.id === focusedBlockId ? { ...b, todo_state: priorTodoState } : b,
             ),
           }))
+        })
+        .finally(() => {
+          // Reset the re-entrancy guard once the in-flight call settles so a
+          // subsequent checkbox toggle on the same block is allowed.
+          inProgress.current = false
         })
       pageStore.setState((s) => ({
         blocks: s.blocks.map((b) => (b.id === focusedBlockId ? { ...b, todo_state: state } : b)),
