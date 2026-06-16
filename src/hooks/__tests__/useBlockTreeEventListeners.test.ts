@@ -1,25 +1,31 @@
 /**
  * Tests for useBlockTreeEventListeners hook.
  *
- * Validates that each custom DOM block event dispatches to the correct
- * callback and that listeners are cleaned up on unmount.
+ * #1250 — the hook no longer installs document listeners; it registers this
+ * tree's handlers with the focus-keyed block command bus. A producer's
+ * `dispatchBlockEvent` routes through the bus to the single tree whose page
+ * store owns the GLOBAL `focusedBlockId` (`useBlockStore`). These tests set
+ * that global focus and assert each command reaches the correct callback, fires
+ * exactly once (in the owning tree only), and is torn down on unmount.
  */
 
 import { renderHook } from '@testing-library/react'
 import { createElement } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '../../__tests__/fixtures'
 import type { RovingEditorHandle } from '../../editor/use-roving-editor'
+import { __resetBlockCommandBus } from '../../lib/block-command-bus'
 import { dispatchBlockEvent } from '../../lib/block-events'
+import { useBlockStore } from '../../stores/blocks'
 import { createPageBlockStore, PageBlockContext } from '../../stores/page-blocks'
 import { useBlockProperties } from '../useBlockProperties'
 import type { UseBlockTreeEventListenersOptions } from '../useBlockTreeEventListeners'
 import { useBlockTreeEventListeners } from '../useBlockTreeEventListeners'
 
 /**
- * #713 — minimal page-store stub that "owns" the given block ids: the
- * ownership gate calls `getState().blocksById.has(id)` via `storeOwnsBlock`.
+ * #713 — minimal page-store stub that "owns" the given block ids: the bus
+ * calls `getState().blocksById.has(id)` via `storeOwnsBlock`.
  */
 function makePageStore(
   ownedBlocks: Array<{ id: string; content?: string }>,
@@ -58,8 +64,20 @@ function makeOptions(
   }
 }
 
+/** Set the GLOBAL focused block id the bus routes on. */
+function setGlobalFocus(id: string | null): void {
+  useBlockStore.setState({ focusedBlockId: id })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
+  __resetBlockCommandBus()
+  setGlobalFocus('BLOCK_1')
+})
+
+afterEach(() => {
+  __resetBlockCommandBus()
+  setGlobalFocus(null)
 })
 
 describe('useBlockTreeEventListeners', () => {
@@ -74,6 +92,7 @@ describe('useBlockTreeEventListeners', () => {
     })
 
     it('does not call handleEscapeCancel when no block is focused', () => {
+      setGlobalFocus(null)
       const opts = makeOptions({ focusedBlockId: null })
       renderHook(() => useBlockTreeEventListeners(opts))
 
@@ -94,6 +113,7 @@ describe('useBlockTreeEventListeners', () => {
     })
 
     it('does not call handleTogglePriority when no block is focused', () => {
+      setGlobalFocus(null)
       const opts = makeOptions({ focusedBlockId: null })
       renderHook(() => useBlockTreeEventListeners(opts))
 
@@ -128,16 +148,15 @@ describe('useBlockTreeEventListeners', () => {
       const mockedInvoke = vi.mocked(invoke)
       mockedInvoke.mockClear()
 
+      setGlobalFocus(null)
       const opts = makeOptions({ focusedBlockId: null })
       renderHook(() => useBlockTreeEventListeners(opts))
 
       dispatchBlockEvent('SET_PRIORITY_1')
 
-      // The async handler returns a resolved promise via the synchronous
-      // `if (!focusedBlockId) return` guard before reaching any `await`,
-      // so no microtask chain is scheduled. Flush one microtask for
-      // defensive determinism, then assert absence of the negative side
-      // effect (TEST-FE-1).
+      // The bus is a no-op when nothing is focused, so the async handler never
+      // runs. Flush one microtask for defensive determinism, then assert
+      // absence of the side effect (TEST-FE-1).
       await Promise.resolve()
 
       const callsForSetPriority = mockedInvoke.mock.calls.filter(
@@ -159,6 +178,7 @@ describe('useBlockTreeEventListeners', () => {
     })
 
     it('does not open when no block is focused', () => {
+      setGlobalFocus(null)
       const opts = makeOptions({ focusedBlockId: null })
       renderHook(() => useBlockTreeEventListeners(opts))
 
@@ -167,33 +187,18 @@ describe('useBlockTreeEventListeners', () => {
       expect(opts.setDatePickerOpen).not.toHaveBeenCalled()
     })
 
-    it('does not re-register the listener when rovingEditor reference changes', () => {
+    it('does not install document listeners (no per-tree fan-out)', () => {
       const addSpy = vi.spyOn(document, 'addEventListener')
 
-      const baseOpts = makeOptions()
-      const { rerender, unmount } = renderHook(
-        ({ opts }: { opts: UseBlockTreeEventListenersOptions }) => useBlockTreeEventListeners(opts),
-        { initialProps: { opts: baseOpts } },
+      const opts = makeOptions()
+      const { unmount } = renderHook(() => useBlockTreeEventListeners(opts))
+
+      // #1250 — the hook registers with the command bus, not `document`; no
+      // block-event keydown/custom listeners are attached at the document level.
+      const blockEventListenerAdds = addSpy.mock.calls.filter(([name]) =>
+        typeof name === 'string' ? name.includes('-') || name === 'keydown' : false,
       )
-
-      const initialCount = addSpy.mock.calls.filter(([name]) => name === 'open-date-picker').length
-
-      // Re-render with a new rovingEditor object reference; all other props
-      // (callbacks, refs, state) keep their identity so deps are stable.
-      rerender({
-        opts: {
-          ...baseOpts,
-          rovingEditor: {
-            editor: null,
-            mount: vi.fn(),
-            unmount: vi.fn(),
-          } as unknown as RovingEditorHandle,
-        },
-      })
-
-      const finalCount = addSpy.mock.calls.filter(([name]) => name === 'open-date-picker').length
-
-      expect(finalCount).toBe(initialCount)
+      expect(blockEventListenerAdds).toHaveLength(0)
 
       unmount()
       addSpy.mockRestore()
@@ -235,6 +240,7 @@ describe('useBlockTreeEventListeners', () => {
     })
 
     it('does not call handleToggleTodo when no block is focused', () => {
+      setGlobalFocus(null)
       const opts = makeOptions({ focusedBlockId: null })
       renderHook(() => useBlockTreeEventListeners(opts))
 
@@ -255,6 +261,7 @@ describe('useBlockTreeEventListeners', () => {
     })
 
     it('does not call handleShowProperties when no block is focused', () => {
+      setGlobalFocus(null)
       const opts = makeOptions({ focusedBlockId: null })
       renderHook(() => useBlockTreeEventListeners(opts))
 
@@ -265,13 +272,13 @@ describe('useBlockTreeEventListeners', () => {
   })
 
   describe('Cleanup', () => {
-    it('removes all event listeners on unmount', () => {
+    it('unregisters all command handlers on unmount', () => {
       const opts = makeOptions()
       const { unmount } = renderHook(() => useBlockTreeEventListeners(opts))
 
       unmount()
 
-      // After unmount, events should not trigger callbacks
+      // After unmount, commands should not trigger callbacks
       dispatchBlockEvent('DISCARD_BLOCK_EDIT')
       dispatchBlockEvent('CYCLE_PRIORITY')
       dispatchBlockEvent('TOGGLE_TODO_STATE')
@@ -343,6 +350,7 @@ describe('useBlockTreeEventListeners', () => {
       const { invoke } = await import('@tauri-apps/api/core')
       const mockedInvoke = vi.mocked(invoke)
       mockedInvoke.mockClear()
+      setGlobalFocus(null)
       const { opts } = structuralOpts('hello')
       renderHook(() => useBlockTreeEventListeners({ ...opts, focusedBlockId: null }))
 
@@ -351,7 +359,7 @@ describe('useBlockTreeEventListeners', () => {
       expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
     })
 
-    it('removes the structural listeners on unmount', async () => {
+    it('removes the structural handlers on unmount', async () => {
       const { invoke } = await import('@tauri-apps/api/core')
       const mockedInvoke = vi.mocked(invoke)
       const { opts } = structuralOpts('hello')
@@ -365,13 +373,14 @@ describe('useBlockTreeEventListeners', () => {
     })
   })
 
-  // #713 — journal week/month mount one BlockTree (one copy of every
-  // listener here) per day, all sharing the global focusedBlockId. Only the
-  // tree whose page store owns the focused block may act; a non-owning tree
-  // must perform ZERO side effects.
+  // #713 — journal week/month mount one BlockTree (one registration here) per
+  // day, all sharing the global focusedBlockId. Only the tree whose page store
+  // owns the focused block may act; a non-owning tree must perform ZERO side
+  // effects. The focus-keyed bus enforces this by construction (#1250).
   describe('#713 — multi-tree ownership gating', () => {
     /** Two trees with distinct page stores; the global focus is in tree A. */
     function renderTwoTrees() {
+      setGlobalFocus('BLOCK_A')
       const treeA = makeOptions({
         focusedBlockId: 'BLOCK_A',
         pageStore: makePageStore([{ id: 'BLOCK_A', content: 'hello' }]),
@@ -458,6 +467,7 @@ describe('useBlockTreeEventListeners', () => {
       mockedInvoke.mockClear()
 
       // The global focus points at a block that does NOT live in this store.
+      setGlobalFocus('BLOCK_A')
       const opts = makeOptions({
         focusedBlockId: 'BLOCK_A',
         pageStore: makePageStore([{ id: 'BLOCK_B' }]),
@@ -474,7 +484,7 @@ describe('useBlockTreeEventListeners', () => {
       dispatchBlockEvent('OPEN_BLOCK_PROPERTIES')
       dispatchBlockEvent('INSERT_DIVIDER')
 
-      // Flush the (synchronously-rejected) async handlers.
+      // Flush any async microtasks.
       await Promise.resolve()
 
       expect(opts.handleEscapeCancel).not.toHaveBeenCalled()
@@ -497,6 +507,7 @@ describe('useBlockTreeEventListeners', () => {
       // Tree A owns BLOCK_A in state DOING → next is DONE. Tree B's store
       // doesn't contain BLOCK_A; pre-#713 its handler computed
       // `current = null` → 'TODO' and raced a conflicting IPC.
+      setGlobalFocus('BLOCK_A')
       const storeA = createPageBlockStore('PAGE_A')
       storeA.setState({ blocks: [makeBlock({ id: 'BLOCK_A', todo_state: 'DOING' })] })
       const storeB = createPageBlockStore('PAGE_B')
