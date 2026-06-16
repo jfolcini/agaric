@@ -27,7 +27,7 @@ use super::*;
 /// cap of 1000 is generous for any legitimate UI gesture while keeping the
 /// dynamic SQL placeholder + bind count — which scales 1:1 with this array —
 /// safely under SQLite's default parameter limit (999 / 32 766 depending on
-/// build). Mirrors the [`MAX_BATCH_BLOCK_IDS`](crate::commands::properties::MAX_BATCH_BLOCK_IDS)
+/// build). Mirrors the [`MAX_BATCH_BLOCK_IDS`](crate::commands::MAX_BATCH_BLOCK_IDS)
 /// cap on the `*_by_ids` write family.
 pub(crate) const MAX_FILTER_TAG_IDS: usize = 1000;
 
@@ -565,7 +565,7 @@ pub async fn add_tag(
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](crate::commands::properties::MAX_BATCH_BLOCK_IDS) entries, or a cross-space pairing
+/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](crate::commands::MAX_BATCH_BLOCK_IDS) entries, or a cross-space pairing
 /// - [`AppError::NotFound`] — `tag_id` does not resolve to a live block
 /// - [`AppError::InvalidOperation`] — `tag_id` is not a `block_type = 'tag'` block
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
@@ -576,19 +576,12 @@ pub async fn add_tags_by_ids_inner(
     block_ids: Vec<BlockId>,
     tag_id: BlockId,
 ) -> Result<i64, AppError> {
-    use crate::commands::properties::MAX_BATCH_BLOCK_IDS;
-
     if block_ids.is_empty() {
         return Err(AppError::Validation(
             "block_ids list cannot be empty".into(),
         ));
     }
-    if block_ids.len() > MAX_BATCH_BLOCK_IDS {
-        return Err(AppError::Validation(format!(
-            "block_ids length {} exceeds maximum {MAX_BATCH_BLOCK_IDS}",
-            block_ids.len()
-        )));
-    }
+    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
 
     // I-CommandsCRUD-2 / AGENTS.md invariant #8 — every id (block ids + tag
     // id) is a `BlockId`, already normalised to canonical uppercase on

@@ -2053,7 +2053,7 @@ async fn restore_blocks_by_ids_rejects_oversize_list() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+    let oversize: Vec<String> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
         .map(|i| format!("ID{i}"))
         .collect();
     let result = restore_blocks_by_ids_inner(
@@ -5430,7 +5430,7 @@ async fn delete_blocks_by_ids_rejects_oversize_list() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+    let oversize: Vec<String> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
         .map(|i| format!("ID{i}"))
         .collect();
     let result = delete_blocks_by_ids_inner(
@@ -5828,7 +5828,7 @@ async fn move_blocks_to_space_rejects_oversize_list() {
     let mat = Materializer::new(pool.clone());
     seed_space(&pool, "MBS6_SPACE").await;
 
-    let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+    let oversize: Vec<String> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
         .map(|i| format!("MBS6_{i:026}"))
         .collect();
     let result = move_blocks_to_space_inner(
@@ -6052,7 +6052,7 @@ async fn create_blocks_batch_rejects_empty_oversize() {
     );
 
     let oversize: Vec<crate::commands::CreateBlockSpec> = (0
-        ..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+        ..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
         .map(|i| crate::commands::CreateBlockSpec {
             block_type: "content".into(),
             content: format!("c{i}"),

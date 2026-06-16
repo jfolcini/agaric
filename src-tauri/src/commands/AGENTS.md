@@ -73,7 +73,7 @@ tx.commit_and_dispatch(&materializer).await?;
 Bulk commands operating on a list of block IDs (`restore_blocks_by_ids_inner`, `set_todo_state_batch_inner`, etc.) MUST:
 
 1. Reject empty `Vec` with `AppError::Validation`.
-2. Reject `len() > MAX_BATCH_BLOCK_IDS` (`MAX_BATCH_BLOCK_IDS = 1000`; defined in `commands/properties.rs`).
+2. Reject `len() > MAX_BATCH_BLOCK_IDS` (`MAX_BATCH_BLOCK_IDS = 1000`). The constant and its shared guard helper `ensure_batch_within_cap(subject, len)` are the single source of truth in the `crate::commands` module root (`commands/mod.rs`); prefer the helper for the canonical `"{subject} length {len} exceeds maximum {MAX_BATCH_BLOCK_IDS}"` message. (`restore_blocks_by_ids` / `purge_blocks_by_ids` keep their own `"... list too large"` wording inline.)
 3. Normalise ULIDs to uppercase via `BlockId::from_trusted` or the appropriate parser.
 4. Resolve in **one query** via `json_each(?1)` — never N+1 loops.
 5. Open exactly **one** `CommandTx::begin_immediate` per logical bulk op. Never chunk; one logical user action = one tx = one op-log seq range = one activity-feed entry.

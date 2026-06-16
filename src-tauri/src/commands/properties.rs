@@ -333,22 +333,6 @@ pub async fn set_todo_state_inner(
     Ok(ActiveBlockRow::from_block_row_unchecked(result))
 }
 
-/// PEND-35 Tier 2.1 — maximum number of block ids accepted by a single
-/// `*_batch` / `*_by_ids` command in one transaction.
-///
-/// The cap exists to bound the blast radius of one IMMEDIATE transaction:
-/// a runaway caller (or a malicious MCP tool) could otherwise hold the
-/// writer lock for an unbounded interval while writing thousands of
-/// op_log rows. 1000 covers every realistic UI multi-select gesture
-/// (TrashView caps its own table to a few hundred rows; the page editor's
-/// multi-select fans the same way). Callers exceeding the cap should
-/// chunk client-side — the FE wrappers in `src/lib/tauri.ts` deliberately
-/// pass the input through unchanged so the backend's cap is the single
-/// authority. The same constant is reused in `set_todo_state_batch_inner`
-/// and `delete_blocks_by_ids_inner` (and any future `*_by_ids` siblings)
-/// so the limit is not silently inconsistent across the family.
-pub(crate) const MAX_BATCH_BLOCK_IDS: usize = 1000;
-
 /// PEND-35 Tier 2.1 — batch variant of [`set_todo_state_inner`].
 ///
 /// Replaces the per-row IMMEDIATE-tx loop the FE used to drive on
@@ -393,12 +377,7 @@ pub async fn set_todo_state_batch_inner(
             "block_ids list cannot be empty".into(),
         ));
     }
-    if block_ids.len() > MAX_BATCH_BLOCK_IDS {
-        return Err(AppError::Validation(format!(
-            "block_ids length {} exceeds maximum {MAX_BATCH_BLOCK_IDS}",
-            block_ids.len()
-        )));
-    }
+    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
     if let Some(ref s) = state
         && (s.is_empty() || s.len() > 50)
     {
