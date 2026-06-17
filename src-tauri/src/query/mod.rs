@@ -10,22 +10,23 @@
 //! SQL is byte-shape-identical to the Pages surface), and runs a keyset-
 //! paginated `SELECT … FROM blocks b`.
 //!
-//! ## Scope (structural-only)
+//! ## Scope (structural + full-text)
 //!
-//! This module is deliberately STRUCTURAL-ONLY. Full-text ranking,
-//! `GROUP BY` grouping, and aggregation are FAST-FOLLOWS, NOT implemented
-//! here. The wire shapes reserve forward-compat slots so adding them later
-//! is non-breaking:
+//! The C1 engine was structural-only; this fast-follow adds **full-text
+//! composition**. `GROUP BY` grouping and aggregation remain FAST-FOLLOWS,
+//! NOT implemented here. The wire shapes reserve forward-compat slots so
+//! adding them later is non-breaking:
 //!
-//! * [`QueryResultRow::score`] — the ranking channel. Always `None` in this
-//!   PR; a future full-text / vector pass fills it. Kept so the wire shape
-//!   is stable.
-//! * [`SortSource`] — a tagged enum with a single `Column` variant today.
-//!   `Relevance` / `Aggregate` / `VectorScore` are reserved for the
-//!   full-text / aggregate PRs and are intentionally NOT added yet (there is
-//!   no relevance or aggregate to sort on).
-//! * [`AdvancedQueryRequest`] carries NO `fulltext` / `group_by` /
-//!   `aggregates` fields — those land with their respective fast-follows.
+//! * [`QueryResultRow::score`] — the ranking channel. `Some(bm25)` when the
+//!   request carried a `fulltext` term; `None` for purely structural
+//!   queries. A future vector pass may also fill it.
+//! * [`SortSource`] — a tagged enum with `Column` and `Relevance` variants.
+//!   `Aggregate` / `VectorScore` are reserved for the aggregate / vector
+//!   PRs and are intentionally NOT added yet (there is no aggregate or
+//!   vector channel to sort on).
+//! * [`AdvancedQueryRequest`] carries `fulltext` (this fast-follow) but NO
+//!   `group_by` / `aggregates` fields — those land with their respective
+//!   fast-follows.
 
 pub mod engine;
 pub mod projection;
@@ -72,6 +73,15 @@ pub struct AdvancedQueryRequest {
     /// [`engine::MAX_LIMIT`].
     #[serde(default)]
     pub limit: Option<i64>,
+    /// Optional full-text term. When `Some(q)`, the query composes an FTS5
+    /// `MATCH` over `fts_blocks` (sanitised via the shared FTS sanitiser)
+    /// INTERSECTED with the structural `filter`, exposes the per-row `bm25`
+    /// relevance via [`QueryResultRow::score`], and defaults the sort to
+    /// [`SortSource::Relevance`] (best-first) when no explicit `sort` is
+    /// given. When `None`, the query is purely structural (full backward
+    /// compat with the C1 engine) and [`SortSource::Relevance`] is rejected.
+    #[serde(default)]
+    pub fulltext: Option<String>,
 }
 
 /// The default `filter` — `And { children: [] }` is the TRUE expression
@@ -97,11 +107,12 @@ pub struct SortKey {
 
 /// The thing a [`SortKey`] orders by.
 ///
-/// Internally-tagged on `"type"`. Only `Column` exists in this
-/// structural-only PR. `Relevance` (full-text rank), `Aggregate`
-/// (group-by aggregate), and `VectorScore` (vector similarity) are RESERVED
-/// for the fast-follow PRs — they are NOT added here because there is no
-/// relevance / aggregate / vector channel to sort on yet.
+/// Internally-tagged on `"type"`. `Column` sorts on a fixed block column.
+/// `Relevance` sorts on the full-text `bm25` rank and is ONLY valid when the
+/// request carries a `fulltext` term — the engine rejects it otherwise
+/// (there is no rank channel to sort on). `Aggregate` (group-by aggregate)
+/// and `VectorScore` (vector similarity) remain RESERVED for later
+/// fast-follows.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "type")]
 pub enum SortSource {
@@ -110,6 +121,10 @@ pub enum SortSource {
     /// a literal SQL column, so SQL injection through a sort key is
     /// impossible by construction.
     Column { name: SortColumn },
+    /// Sort by full-text relevance (`fts.rank`, a `bm25` score — lower is
+    /// better). Only valid when the request carries a `fulltext` term;
+    /// otherwise the engine rejects it with a validation error.
+    Relevance,
 }
 
 /// The closed set of columns an advanced query may sort on. Closed (rather
@@ -144,9 +159,9 @@ pub struct QueryResultRow {
     /// The matched block.
     #[serde(flatten)]
     pub block: ActiveBlockRow,
-    /// The ranking channel. ALWAYS `None` in this structural-only PR; a
-    /// future full-text / vector pass fills it. Kept so the wire shape is
-    /// stable across the fast-follows.
+    /// The ranking channel. `Some(bm25)` when the request carried a
+    /// `fulltext` term (lower is a better match); `None` for purely
+    /// structural queries. A future vector pass may also fill it.
     #[serde(default)]
     pub score: Option<f64>,
 }
