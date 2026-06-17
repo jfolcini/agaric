@@ -660,7 +660,15 @@ jobs:
     # hit the old 15-min cap (run 27705633920). Re-sharded 2 → 3 (per-shard
     # back to ~8-9 min) and raised the cap 15 → 20 min for headroom against
     # runner variance (matches the cargo-tests / vitest jobs).
-    timeout-minutes: 20
+    #
+    # 20 → 30 (#1458): the cap is a JOB cap covering setup + tests, and apt
+    # `install-deps` is slow-mirror-bound — it ran 760s (12.7 min) on a slow
+    # Ubuntu mirror in run 27718957382 even after the prepare-apt lock fix,
+    # leaving an ~9-min shard only ~7 min before the cap cancelled it mid-run.
+    # `prepare-apt` removes the lock stall but cannot speed a genuinely slow
+    # download; 30 min absorbs a pathological setup + a full shard. (The deb
+    # re-download cost itself is tracked separately as an apt-cache optimization.)
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
