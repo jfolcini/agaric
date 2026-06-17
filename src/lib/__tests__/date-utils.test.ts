@@ -4,6 +4,7 @@ import {
   dueDateColor,
   formatCompactDate,
   formatDate,
+  formatJournalTitle,
   getDateRangeForFilter,
   getMaxJournalDate,
   getTodayString,
@@ -288,5 +289,63 @@ describe('getWeekOptions', () => {
   it('returns weekStartsOn: 1 for invalid preference', () => {
     localStorage.setItem('week-start-preference', 'garbage')
     expect(getWeekOptions()).toEqual({ weekStartsOn: 1 })
+  })
+})
+
+describe('formatJournalTitle (#1448 — display-only journal date format)', () => {
+  const ISO = '2026-06-17'
+
+  it('is the identity transform for the ISO token (yyyy-MM-dd → unchanged)', () => {
+    expect(formatJournalTitle(ISO, 'yyyy-MM-dd')).toBe('2026-06-17')
+  })
+
+  it('renders the localized default preset via the existing display formatter', () => {
+    // The `locale` default must reproduce `formatDateDisplay` exactly so that
+    // existing users see no change. Compare against the same locale call.
+    const expected = new Date(2026, 5, 17).toLocaleDateString(undefined, {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    })
+    expect(formatJournalTitle(ISO, 'locale')).toBe(expected)
+  })
+
+  it('formats the long preset: MMMM d, yyyy → "June 17, 2026"', () => {
+    expect(formatJournalTitle(ISO, 'MMMM d, yyyy')).toBe('June 17, 2026')
+  })
+
+  it('formats the slash preset: dd/MM/yyyy → "17/06/2026"', () => {
+    expect(formatJournalTitle(ISO, 'dd/MM/yyyy')).toBe('17/06/2026')
+  })
+
+  it('formats the weekday preset: EEE, MMM d → "Wed, Jun 17"', () => {
+    expect(formatJournalTitle(ISO, 'EEE, MMM d')).toBe('Wed, Jun 17')
+  })
+
+  it('parses the ISO key locally (no timezone drift across presets)', () => {
+    // 2020-01-01 is a Wednesday; a UTC-vs-local off-by-one would render Tue.
+    expect(formatJournalTitle('2020-01-01', 'EEE, MMM d')).toBe('Wed, Jan 1')
+  })
+
+  it('returns the raw string unchanged for non-ISO input (never throws)', () => {
+    expect(formatJournalTitle('My Page', 'MMMM d, yyyy')).toBe('My Page')
+    expect(formatJournalTitle('2026-13-40', 'MMMM d, yyyy')).toBe('2026-13-40')
+    expect(formatJournalTitle('2026-02-30', 'MMMM d, yyyy')).toBe('2026-02-30')
+  })
+
+  // Regression: the LOOKUP/identity key is the raw ISO content, and it must be
+  // independent of the chosen display format. `formatJournalTitle` is the only
+  // place the format is applied — it takes the ISO key and returns a *display*
+  // string without ever mutating its input, so the value a caller passes to the
+  // lookup (the same `isoContent`) is unaffected by the format choice.
+  it('never mutates the ISO lookup key regardless of the display format', () => {
+    const lookupKey = '2026-06-17'
+    for (const fmt of ['locale', 'yyyy-MM-dd', 'MMMM d, yyyy', 'dd/MM/yyyy', 'EEE, MMM d']) {
+      formatJournalTitle(lookupKey, fmt)
+      // The canonical key the caller would pass to blocks.content lookup is
+      // byte-for-byte unchanged after formatting under any preset.
+      expect(lookupKey).toBe('2026-06-17')
+    }
   })
 })

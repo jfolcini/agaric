@@ -106,6 +106,7 @@ beforeEach(() => {
   localStorage.removeItem('theme-preference')
   localStorage.removeItem('agaric-font-size')
   localStorage.removeItem('agaric-settings-active-tab')
+  localStorage.removeItem('journal-date-format')
   for (const cls of ALL_THEME_CLASSES) document.documentElement.classList.remove(cls)
   document.documentElement.style.removeProperty('--agaric-font-size')
   // UX-276: ensure URL state from a previous test doesn't leak in via the
@@ -656,6 +657,70 @@ describe('SettingsView', () => {
           t('settings.weekStartUpdated', { day: t('settings.weekStartMonday') }),
         )
       })
+    })
+  })
+
+  // #1448 — DISPLAY-ONLY journal date format picker.
+  describe('journal date format (#1448)', () => {
+    beforeEach(() => {
+      localStorage.removeItem('journal-date-format')
+    })
+
+    async function openAppearance() {
+      const user = userEvent.setup()
+      render(<SettingsView />)
+      const appearanceTab = screen.getByRole('tab', { name: t('settings.tabAppearance') })
+      await user.click(appearanceTab)
+      return user
+    }
+
+    it('renders a journal-date-format Select defaulting to the localized preset', async () => {
+      await openAppearance()
+      const select = screen.getByLabelText(t('settings.journalDateFormatLabel'))
+      expect(select).toBeInTheDocument()
+      // Default is the existing localized rendering — the no-change baseline.
+      expect(select).toHaveValue('locale')
+    })
+
+    it('changing the value persists the chosen format token to localStorage', async () => {
+      const user = await openAppearance()
+      const select = screen.getByLabelText(t('settings.journalDateFormatLabel'))
+
+      await user.selectOptions(select, 'MMMM d, yyyy')
+
+      await waitFor(() => {
+        expect(localStorage.getItem('journal-date-format')).toBe('MMMM d, yyyy')
+      })
+      expect(select).toHaveValue('MMMM d, yyyy')
+    })
+
+    it('initialises the select value from a persisted preference', async () => {
+      localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
+      await openAppearance()
+      expect(screen.getByLabelText(t('settings.journalDateFormatLabel'))).toHaveValue('dd/MM/yyyy')
+    })
+
+    it('shows a success toast with a worked example on change', async () => {
+      const user = await openAppearance()
+      const select = screen.getByLabelText(t('settings.journalDateFormatLabel'))
+
+      await user.selectOptions(select, 'MMMM d, yyyy')
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith(
+          t('settings.journalDateFormatUpdated', { example: 'June 17, 2026' }),
+        )
+      })
+    })
+
+    it('the journal-date-format control is accessibly labelled (no a11y violations)', async () => {
+      const user = userEvent.setup()
+      const { container } = render(<SettingsView />)
+      const appearanceTab = screen.getByRole('tab', { name: t('settings.tabAppearance') })
+      await user.click(appearanceTab)
+      // The control must be reachable by its accessible name.
+      expect(screen.getByLabelText(t('settings.journalDateFormatLabel'))).toBeInTheDocument()
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
   })
 
