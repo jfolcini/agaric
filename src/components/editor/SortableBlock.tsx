@@ -42,6 +42,7 @@ import { detectBlockType } from '@/lib/block-type-convert'
 import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
+import { usePageBlockStoreOptional } from '@/stores/page-blocks'
 
 /** Pixels of left padding per depth level. */
 export const INDENT_WIDTH = 24
@@ -147,6 +148,19 @@ function SortableBlockInner({
   const { selectOptions, isRefProp, refPages, refSearch, setRefSearch } =
     usePropertyDefForEdit(editingProp)
   const blockRef = useRef<HTMLDivElement>(null)
+
+  // #1445 — id for the context menu's "Copy page reference" (`[[ULID]]`). When
+  // this block IS a page use its own id; otherwise the containing page id (the
+  // block's `page_id`, falling back to the per-page store's root). Read from the
+  // per-page store already in scope — no extra IPC. `undefined` (e.g. block not
+  // yet loaded) hides the action.
+  const pageRefId = usePageBlockStoreOptional((s) => {
+    const block = s.blocksById.get(blockId)
+    if (block?.block_type === 'page') return blockId
+    // `|| undefined` coerces a null/empty root (incl. the no-provider fallback
+    // store's empty `rootParentId`) to undefined so the menu hides the action.
+    return block?.page_id || s.rootParentId || undefined
+  })
 
   // ── Attachment state ─────────────────────────────────────────────
   // MAINT-131 / PEND-35 Tier 2.7a: read counts from the BatchAttachments
@@ -489,6 +503,8 @@ function SortableBlockInner({
           priority={priority}
           dueDate={dueDate}
           linkUrl={contextMenu.linkUrl}
+          // #1445 — resolved page-reference id for "Copy page reference".
+          pageRefId={pageRefId}
         />
       )}
     </div>
