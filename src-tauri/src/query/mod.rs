@@ -13,9 +13,10 @@
 //! ## Scope (structural + full-text)
 //!
 //! The C1 engine was structural-only; later fast-follows added **full-text
-//! composition** and now **grouping**. Per-group aggregation remains a
-//! FAST-FOLLOW (C4), NOT implemented here. The wire shapes reserve
-//! forward-compat slots so adding it later is non-breaking:
+//! composition**, **grouping**, and now **aggregation** (C4) — global
+//! `count` / `sum` / `avg` / `min` / `max` over the full match set and, when
+//! `group_by` is set, per-group. The wire shapes reserve forward-compat slots
+//! so further extensions stay non-breaking:
 //!
 //! * [`QueryResultRow::score`] — the ranking channel. `Some(bm25)` when the
 //!   request carried a `fulltext` term; `None` for purely structural
@@ -24,11 +25,14 @@
 //!   `Aggregate` / `VectorScore` are reserved for the aggregate / vector
 //!   PRs and are intentionally NOT added yet (there is no aggregate or
 //!   vector channel to sort on).
-//! * [`AdvancedQueryRequest`] carries `fulltext` AND now `group_by` (this
-//!   fast-follow). When `group_by` is `Some`, the response's `groups` field
+//! * [`AdvancedQueryRequest`] carries `fulltext`, `group_by`, AND now
+//!   `aggregates`. When `group_by` is `Some`, the response's `groups` field
 //!   carries per-bucket counts + a bounded member preview and `rows` is
 //!   empty; when `None`, the engine is byte-for-byte the flat C1+FTS engine
-//!   (`groups` empty). Per-group `aggregates` land with C4.
+//!   (`groups` empty). Requested `aggregates` are computed GLOBALLY (over the
+//!   full match set, on the first page only) into
+//!   [`AdvancedQueryResponse::aggregates`] and — when grouping — PER-GROUP into
+//!   each [`QueryGroup::aggregates`].
 //!
 //! ## Grouping (this fast-follow)
 //!
@@ -109,6 +113,15 @@ pub struct AdvancedQueryRequest {
     /// engine runs the FLAT path exactly as before (full backward compat).
     #[serde(default)]
     pub group_by: Option<GroupSpec>,
+    /// Optional aggregates (`count` / `sum` / `avg` / `min` / `max`). Computed
+    /// GLOBALLY over the full match set into [`AdvancedQueryResponse::aggregates`]
+    /// and, when `group_by` is set, PER-GROUP into each [`QueryGroup::aggregates`]
+    /// (same order as this list). Non-numeric property/column values are SKIPPED
+    /// by the numeric-skip guard (see [`engine`]), so e.g. `avg` divides by the
+    /// numeric count, not the row count. Empty (the default) → no aggregates and
+    /// the response's `aggregates` slots stay empty (full backward compat).
+    #[serde(default)]
+    pub aggregates: Vec<AggregateSpec>,
 }
 
 /// The default `filter` — `And { children: [] }` is the TRUE expression
@@ -202,6 +215,103 @@ pub enum DateBucketUnit {
     Week,
     /// One bucket per calendar month, rendered `YYYY-MM`.
     Month,
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Aggregation (#1280 C4)
+// ───────────────────────────────────────────────────────────────────────────
+
+/// One requested aggregate: an operator over an optional target.
+///
+/// `Count` with no `target` is `COUNT(*)` (every matched row); `Count` WITH a
+/// target counts the rows whose target value is numeric (non-NULL after the
+/// numeric-skip coercion). `Sum` / `Avg` / `Min` / `Max` REQUIRE a numeric
+/// target — without one the aggregate yields `None` (there is nothing to fold).
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregateSpec {
+    /// The aggregate operator.
+    pub op: AggOp,
+    /// What to aggregate over. `None` is only meaningful for [`AggOp::Count`]
+    /// (→ `COUNT(*)`); the fold operators with no target yield `None`.
+    #[serde(default)]
+    pub target: Option<AggregateTarget>,
+}
+
+/// The closed set of aggregate operators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum AggOp {
+    /// Row count (`COUNT(*)` with no target, else `COUNT(<numeric expr>)`).
+    /// Result lands in [`AggregateResult::count`] (an `i64`).
+    Count,
+    /// Numeric sum. Result lands in [`AggregateResult::value`] (an `f64`).
+    Sum,
+    /// Numeric average over the NUMERIC rows (the non-numeric rows are skipped,
+    /// so the denominator is the numeric count, not the row count).
+    Avg,
+    /// Numeric minimum.
+    Min,
+    /// Numeric maximum.
+    Max,
+}
+
+/// What an [`AggregateSpec`] aggregates over. Internally-tagged on `"type"`.
+///
+/// `Column` is a closed set of numeric-ish block columns (never a
+/// user-supplied identifier). `Property` aggregates the per-block NUMERIC
+/// value of a typed property; its `key` is BOUND as a `?` parameter, never
+/// interpolated. So aggregation cannot inject SQL.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(tag = "type")]
+pub enum AggregateTarget {
+    /// Aggregate a fixed numeric-ish block column (closed [`AggregateColumn`]).
+    Column {
+        /// Which column to aggregate.
+        name: AggregateColumn,
+    },
+    /// Aggregate the numeric value of a typed property (`block_properties`),
+    /// keyed by `key`. Non-numeric values are SKIPPED by the numeric guard.
+    Property {
+        /// The property key whose `value_text` is read + numeric-coerced.
+        key: String,
+    },
+}
+
+/// The closed set of block columns an aggregate may fold. Closed (rather than a
+/// free `String`) so an aggregate column can NEVER be a user-controlled string
+/// spliced into SQL.
+///
+/// Both columns are numeric-coerced through the same numeric-skip guard as a
+/// property: `priority` is a TEXT column (it stores `select` values like
+/// `"1"`/`"2"`/`"3"` — or non-numeric labels, which are skipped), and
+/// `position` is INTEGER.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum AggregateColumn {
+    /// `b.priority` (TEXT; numeric-coerced, non-numeric labels skipped).
+    Priority,
+    /// `b.position` (INTEGER).
+    Position,
+}
+
+/// One aggregate's computed result, in request order.
+///
+/// [`AggOp::Count`] fills `count` (the integer row/numeric count); the fold
+/// operators ([`AggOp::Sum`] / `Avg` / `Min` / `Max`) fill `value` (the `f64`
+/// result), which is `None` when the set is empty or every contributing value
+/// was non-numeric (so SQLite's aggregate saw only NULLs).
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregateResult {
+    /// The operator this result is for (echoes the request, same order).
+    pub op: AggOp,
+    /// The `f64` result of a fold operator (`Sum` / `Avg` / `Min` / `Max`);
+    /// `None` for `Count` and for a fold over an empty / all-non-numeric set.
+    pub value: Option<f64>,
+    /// The integer result of [`AggOp::Count`]; `None` for the fold operators.
+    #[serde(default)]
+    pub count: Option<i64>,
 }
 
 /// One sort key: a source plus a direction. Keys are applied
@@ -298,6 +408,11 @@ pub struct QueryGroup {
     /// A bounded preview of this bucket's member rows (at most
     /// [`engine::GROUP_MEMBER_PREVIEW`]).
     pub members: Vec<QueryResultRow>,
+    /// Per-group aggregate results, in the SAME order as the request's
+    /// `aggregates`. Computed over THIS bucket's rows (the numeric-skip guard
+    /// applies). Empty when no aggregates were requested.
+    #[serde(default)]
+    pub aggregates: Vec<AggregateResult>,
 }
 
 /// The paginated result of an advanced query.
@@ -324,4 +439,11 @@ pub struct AdvancedQueryResponse {
     /// page only; `None` on cursor pages. In grouped mode this is the total
     /// number of GROUPS over the same predicate.
     pub total_count: Option<i64>,
+    /// GLOBAL aggregate results (over the full match set, ignoring the
+    /// cursor/limit), in the SAME order as the request's `aggregates`. Like
+    /// `total_count`, computed on the FIRST page only (aggregates over the full
+    /// set are invariant across cursor pages) and empty on cursor pages. Also
+    /// empty when no aggregates were requested.
+    #[serde(default)]
+    pub aggregates: Vec<AggregateResult>,
 }

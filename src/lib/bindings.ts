@@ -1096,6 +1096,16 @@ export type AdvancedQueryRequest = {
 	 *  engine runs the FLAT path exactly as before (full backward compat).
 	 */
 	groupBy?: GroupSpec | null,
+	/**
+	 *  Optional aggregates (`count` / `sum` / `avg` / `min` / `max`). Computed
+	 *  GLOBALLY over the full match set into [`AdvancedQueryResponse::aggregates`]
+	 *  and, when `group_by` is set, PER-GROUP into each [`QueryGroup::aggregates`]
+	 *  (same order as this list). Non-numeric property/column values are SKIPPED
+	 *  by the numeric-skip guard (see [`engine`]), so e.g. `avg` divides by the
+	 *  numeric count, not the row count. Empty (the default) → no aggregates and
+	 *  the response's `aggregates` slots stay empty (full backward compat).
+	 */
+	aggregates?: AggregateSpec[],
 };
 
 /**
@@ -1125,6 +1135,14 @@ export type AdvancedQueryResponse = {
 	 *  number of GROUPS over the same predicate.
 	 */
 	totalCount: number | null,
+	/**
+	 *  GLOBAL aggregate results (over the full match set, ignoring the
+	 *  cursor/limit), in the SAME order as the request's `aggregates`. Like
+	 *  `total_count`, computed on the FIRST page only (aggregates over the full
+	 *  set are invariant across cursor pages) and empty on cursor pages. Also
+	 *  empty when no aggregates were requested.
+	 */
+	aggregates?: AggregateResult[],
 };
 
 /**
@@ -1152,6 +1170,100 @@ export type AgendaQuery = {
 	/**  Optional source filter (`due_date` / `scheduled_date`). */
 	source: string | null,
 };
+
+/**  The closed set of aggregate operators. */
+export type AggOp =
+/**
+ *  Row count (`COUNT(*)` with no target, else `COUNT(<numeric expr>)`).
+ *  Result lands in [`AggregateResult::count`] (an `i64`).
+ */
+"count" |
+/**  Numeric sum. Result lands in [`AggregateResult::value`] (an `f64`). */
+"sum" |
+/**
+ *  Numeric average over the NUMERIC rows (the non-numeric rows are skipped,
+ *  so the denominator is the numeric count, not the row count).
+ */
+"avg" |
+/**  Numeric minimum. */
+"min" |
+/**  Numeric maximum. */
+"max";
+
+/**
+ *  The closed set of block columns an aggregate may fold. Closed (rather than a
+ *  free `String`) so an aggregate column can NEVER be a user-controlled string
+ *  spliced into SQL.
+ *
+ *  Both columns are numeric-coerced through the same numeric-skip guard as a
+ *  property: `priority` is a TEXT column (it stores `select` values like
+ *  `"1"`/`"2"`/`"3"` — or non-numeric labels, which are skipped), and
+ *  `position` is INTEGER.
+ */
+export type AggregateColumn =
+/**  `b.priority` (TEXT; numeric-coerced, non-numeric labels skipped). */
+"priority" |
+/**  `b.position` (INTEGER). */
+"position";
+
+/**
+ *  One aggregate's computed result, in request order.
+ *
+ *  [`AggOp::Count`] fills `count` (the integer row/numeric count); the fold
+ *  operators ([`AggOp::Sum`] / `Avg` / `Min` / `Max`) fill `value` (the `f64`
+ *  result), which is `None` when the set is empty or every contributing value
+ *  was non-numeric (so SQLite's aggregate saw only NULLs).
+ */
+export type AggregateResult = {
+	/**  The operator this result is for (echoes the request, same order). */
+	op: AggOp,
+	/**
+	 *  The `f64` result of a fold operator (`Sum` / `Avg` / `Min` / `Max`);
+	 *  `None` for `Count` and for a fold over an empty / all-non-numeric set.
+	 */
+	value: number | null,
+	/**  The integer result of [`AggOp::Count`]; `None` for the fold operators. */
+	count?: number | null,
+};
+
+/**
+ *  One requested aggregate: an operator over an optional target.
+ *
+ *  `Count` with no `target` is `COUNT(*)` (every matched row); `Count` WITH a
+ *  target counts the rows whose target value is numeric (non-NULL after the
+ *  numeric-skip coercion). `Sum` / `Avg` / `Min` / `Max` REQUIRE a numeric
+ *  target — without one the aggregate yields `None` (there is nothing to fold).
+ */
+export type AggregateSpec = {
+	/**  The aggregate operator. */
+	op: AggOp,
+	/**
+	 *  What to aggregate over. `None` is only meaningful for [`AggOp::Count`]
+	 *  (→ `COUNT(*)`); the fold operators with no target yield `None`.
+	 */
+	target?: AggregateTarget | null,
+};
+
+/**
+ *  What an [`AggregateSpec`] aggregates over. Internally-tagged on `"type"`.
+ *
+ *  `Column` is a closed set of numeric-ish block columns (never a
+ *  user-supplied identifier). `Property` aggregates the per-block NUMERIC
+ *  value of a typed property; its `key` is BOUND as a `?` parameter, never
+ *  interpolated. So aggregation cannot inject SQL.
+ */
+export type AggregateTarget =
+/**  Aggregate a fixed numeric-ish block column (closed [`AggregateColumn`]). */
+{ type: "Column";
+/**  Which column to aggregate. */
+name: AggregateColumn } |
+/**
+ *  Aggregate the numeric value of a typed property (`block_properties`),
+ *  keyed by `key`. Non-numeric values are SKIPPED by the numeric guard.
+ */
+{ type: "Property";
+/**  The property key whose `value_text` is read + numeric-coerced. */
+key: string };
 
 /**
  *  Helper struct matching the `{ kind, message }` JSON shape that [`AppError`]
@@ -2431,6 +2543,12 @@ export type QueryGroup = {
 	 *  [`engine::GROUP_MEMBER_PREVIEW`]).
 	 */
 	members: QueryResultRow[],
+	/**
+	 *  Per-group aggregate results, in the SAME order as the request's
+	 *  `aggregates`. Computed over THIS bucket's rows (the numeric-skip guard
+	 *  applies). Empty when no aggregates were requested.
+	 */
+	aggregates?: AggregateResult[],
 };
 
 /**

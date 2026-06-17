@@ -41,8 +41,9 @@ use crate::pagination::ActiveBlockRow;
 
 use super::projection::{QUERY_ALLOWED_KEYS, QueryProjection};
 use super::{
-    AdvancedQueryRequest, AdvancedQueryResponse, DateBucketUnit, DateField, GroupKey, GroupSpec,
-    QueryGroup, QueryResultRow, SortColumn, SortKey, SortSource,
+    AdvancedQueryRequest, AdvancedQueryResponse, AggOp, AggregateColumn, AggregateResult,
+    AggregateSpec, AggregateTarget, DateBucketUnit, DateField, GroupKey, GroupSpec, QueryGroup,
+    QueryResultRow, SortColumn, SortKey, SortSource,
 };
 
 /// Default page size when the request leaves `limit` unset.
@@ -656,6 +657,33 @@ pub async fn compile_and_run(
         None
     };
 
+    // 5b. GLOBAL aggregates on the FIRST page only — over the SAME predicate +
+    //     binds as the count, un-limited. Aggregates over the full match set are
+    //     invariant across cursor pages, so they reuse the `total_count`
+    //     first-page guard. The aggregate query is a SEPARATE statement with its
+    //     OWN bind numbering, so its property-key binds start in the slot right
+    //     after the space + filter binds; resolve them against a LOCAL position
+    //     counter so the flat fetch's keyset numbering (which shares `next_pos`)
+    //     is untouched.
+    let aggregates: Vec<AggregateResult> = if cursor.is_none() && !request.aggregates.is_empty() {
+        let mut agg_pos = next_pos;
+        let (agg_terms, agg_binds) = resolve_aggregates(&request.aggregates, &mut agg_pos);
+        run_aggregate_query(
+            pool,
+            from_clause,
+            &predicate,
+            &request.space_id,
+            match_sanitized.as_deref(),
+            has_fulltext,
+            &filter_binds,
+            &agg_terms,
+            &agg_binds,
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
+
     // 6. Keyset predicate (if resuming) + ORDER BY + LIMIT.
     let keyset_sql;
     let keyset_binds: Vec<Bind>;
@@ -766,7 +794,228 @@ pub async fn compile_and_run(
         next_cursor,
         has_more,
         total_count,
+        aggregates,
     })
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Aggregation (#1280 C4)
+// ───────────────────────────────────────────────────────────────────────────
+
+/// The numeric-skip GLOB guard. A `value_text` / TEXT column is treated as
+/// NUMERIC iff it contains at least one digit AND contains no character
+/// outside the digit / `.` / `-` class:
+///
+/// * `<v> GLOB '*[0-9]*'` — has at least one digit (rejects `""`, `"."`,
+///   `"-"`).
+/// * `<v> NOT GLOB '*[^0-9.-]*'` — has NO character outside `[0-9.-]`
+///   (rejects `"big"`, `"A"`, `"12px"`, `"1,2"`).
+///
+/// Together they accept integers (`"3"`), decimals (`"3.5"`), and a leading
+/// minus (`"-2"`, `"-2.5"`), and SKIP non-numeric labels. A pathological value
+/// like `"1.2.3"` or `"1-2"` would slip through the class check and SQLite's
+/// `CAST(... AS REAL)` would then take its leading numeric prefix — an
+/// accepted, documented limitation (real property/priority values are clean
+/// numbers or clean labels). When the guard fails the `CASE` yields NULL,
+/// which SQLite's `SUM`/`AVG`/`MIN`/`MAX` SKIP and `COUNT(expr)` does not
+/// count — so a fold over an all-non-numeric set is NULL → `value: None`, and
+/// `AVG` divides by the numeric count, not the row count.
+///
+/// `{v}` is substituted with a STATIC SQL sub-expression (a literal column
+/// reference or a correlated `block_properties` lookup whose only user input is
+/// a bound `?N`), never a user string — so the guard cannot inject SQL.
+fn numeric_coerce(v: &str) -> String {
+    format!("CASE WHEN {v} GLOB '*[0-9]*' AND {v} NOT GLOB '*[^0-9.-]*' THEN CAST({v} AS REAL) END")
+}
+
+/// A resolved aggregate: the SQL expression to place in a SELECT list and the
+/// operator it computes (drives result decoding). The property-key bind (if
+/// any) is threaded separately by the caller.
+struct AggTerm {
+    /// The literal SQL aggregate expression (e.g. `COUNT(*)`, `SUM(<coerced>)`).
+    expr: String,
+    /// The operator (so the decoded scalar lands in `value` vs `count`).
+    op: AggOp,
+}
+
+/// The numeric sub-expression an [`AggregateTarget`] folds over, plus the
+/// optional property-key bind it needs.
+///
+/// * [`AggregateColumn::Priority`] → `b.priority` (TEXT) numeric-coerced.
+/// * [`AggregateColumn::Position`] → `b.position` (INTEGER) numeric-coerced
+///   (harmless for an already-numeric column; keeps one code path).
+/// * [`AggregateTarget::Property`] → the correlated `value_text` lookup keyed
+///   by the BOUND `?{pos}`, numeric-coerced.
+fn agg_target_expr(target: &AggregateTarget, pos: usize) -> (String, Option<Bind>) {
+    match target {
+        AggregateTarget::Column { name } => {
+            let col = match name {
+                AggregateColumn::Priority => "b.priority",
+                AggregateColumn::Position => "b.position",
+            };
+            (numeric_coerce(col), None)
+        }
+        AggregateTarget::Property { key } => {
+            let lookup = format!(
+                "(SELECT value_text FROM block_properties WHERE block_id = b.id AND key = ?{pos})"
+            );
+            (numeric_coerce(&lookup), Some(Bind::Text(key.clone())))
+        }
+    }
+}
+
+/// Resolve the request's [`AggregateSpec`]s into ordered SQL [`AggTerm`]s plus
+/// the property-key binds (in expression order), starting bind numbering at
+/// `next_pos` (advanced past each property bind consumed).
+///
+/// SQL shapes:
+/// * `Count` no target → `COUNT(*)`.
+/// * `Count` w/ target → `COUNT(<numeric-coerced>)` — counts the rows whose
+///   target is numeric (the coercion NULLs the rest).
+/// * `Sum`/`Avg`/`Min`/`Max` w/ target → `SUM(<coerced>)` etc.
+/// * `Sum`/`Avg`/`Min`/`Max` with NO target → `NULL` (nothing to fold) → the
+///   decoded `value` is `None`.
+fn resolve_aggregates(specs: &[AggregateSpec], next_pos: &mut usize) -> (Vec<AggTerm>, Vec<Bind>) {
+    let mut terms: Vec<AggTerm> = Vec::with_capacity(specs.len());
+    let mut binds: Vec<Bind> = Vec::new();
+    for spec in specs {
+        let expr = match (&spec.op, spec.target.as_ref()) {
+            (AggOp::Count, None) => "COUNT(*)".to_string(),
+            (AggOp::Count, Some(t)) => {
+                let (e, b) = agg_target_expr(t, *next_pos);
+                if let Some(b) = b {
+                    *next_pos += 1;
+                    binds.push(b);
+                }
+                format!("COUNT({e})")
+            }
+            (op, Some(t)) => {
+                let (e, b) = agg_target_expr(t, *next_pos);
+                if let Some(b) = b {
+                    *next_pos += 1;
+                    binds.push(b);
+                }
+                let f = match op {
+                    AggOp::Sum => "SUM",
+                    AggOp::Avg => "AVG",
+                    AggOp::Min => "MIN",
+                    AggOp::Max => "MAX",
+                    AggOp::Count => unreachable!("Count handled above"),
+                };
+                format!("{f}({e})")
+            }
+            // A fold operator with no target has nothing to fold → NULL → None.
+            (_, None) => "NULL".to_string(),
+        };
+        terms.push(AggTerm { expr, op: spec.op });
+    }
+    (terms, binds)
+}
+
+/// One row of decoded aggregate scalars — a flat list of nullable text cells,
+/// one per [`AggTerm`], read positionally (the column count is dynamic, so we
+/// decode each as a nullable string and parse per the term's operator). Each
+/// aggregate column is aliased `a0`, `a1`, … in SELECT order.
+fn agg_alias(i: usize) -> String {
+    format!("a{i}")
+}
+
+/// Bind a single [`Bind`] onto an untyped `query` chain (the aggregate query
+/// reads a dynamic column count, so it uses the untyped `sqlx::query`).
+fn bind_raw<'q>(
+    q: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments>,
+    bind: &Bind,
+) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments> {
+    match bind {
+        Bind::Text(s) => q.bind(s.clone()),
+        Bind::Int(i) => q.bind(*i),
+        Bind::Real(r) => q.bind(*r),
+    }
+}
+
+/// Run the GLOBAL aggregate query over the SAME predicate + binds as the flat
+/// fetch (un-limited, no keyset / ORDER BY / LIMIT): `SELECT <agg exprs…> FROM
+/// <from> WHERE <predicate>`. The aggregate property-key binds (`agg_binds`)
+/// follow the space + filter binds, exactly as their `?N` slots were numbered
+/// in [`resolve_aggregates`]. Returns the decoded results in request order.
+///
+/// Empty `terms` → an empty result (the SELECT would be invalid), short-circuited
+/// by the caller; this fn assumes `terms` is non-empty.
+#[allow(clippy::too_many_arguments)]
+async fn run_aggregate_query(
+    pool: &SqlitePool,
+    from_clause: &str,
+    predicate: &str,
+    space_id: &str,
+    match_sanitized: Option<&str>,
+    has_fulltext: bool,
+    filter_binds: &[Bind],
+    terms: &[AggTerm],
+    agg_binds: &[Bind],
+) -> Result<Vec<AggregateResult>, AppError> {
+    use sqlx::Row as _;
+    // `CAST(… AS REAL)` so EVERY aggregate column decodes uniformly as a
+    // nullable f64 — `COUNT(*)` is otherwise an INTEGER column and sqlx's
+    // strict decoder refuses to read it as `Option<f64>`. `CAST(NULL AS REAL)`
+    // stays NULL, so the all-non-numeric / empty-set folds keep their `None`.
+    let select_list = terms
+        .iter()
+        .enumerate()
+        .map(|(i, t)| format!("CAST({} AS REAL) AS {}", t.expr, agg_alias(i)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let agg_sql = format!("SELECT {select_list} FROM {from_clause} WHERE {predicate}");
+    // dynamic-sql: aggregate SELECT list is the runtime AggregateSpec set over the compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(agg_sql.as_str()));
+    if let Some(m) = match_sanitized {
+        q = q.bind(m.to_string()); // ?1 = MATCH
+    }
+    q = q.bind(space_id.to_string()); // ?space_pos
+    for b in filter_binds {
+        q = bind_raw(q, b);
+    }
+    for b in agg_binds {
+        q = bind_raw(q, b);
+    }
+    let row = if has_fulltext {
+        q.fetch_one(pool).await.map_err(map_fts_error)?
+    } else {
+        q.fetch_one(pool).await?
+    };
+    let cells: Vec<Option<f64>> = (0..terms.len())
+        .map(|i| row.try_get::<Option<f64>, _>(i))
+        .collect::<Result<_, _>>()?;
+    Ok(decode_aggregates(terms, &cells))
+}
+
+/// Decode one fetched aggregate row (the dynamic `a0…aN` columns, each pulled
+/// as `Option<f64>`) into [`AggregateResult`]s, mapping `Count` → `count`
+/// (rounded to `i64`) and the fold operators → `value`.
+fn decode_aggregates(terms: &[AggTerm], cells: &[Option<f64>]) -> Vec<AggregateResult> {
+    terms
+        .iter()
+        .zip(cells)
+        .map(|(t, cell)| match t.op {
+            AggOp::Count => AggregateResult {
+                op: t.op,
+                value: None,
+                // COUNT is a non-negative integer; SQLite returns it as such,
+                // decoded here through f64 then rounded back (always exact for
+                // counts well under 2^53). The explicit clamp keeps the cast
+                // total (clippy `cast_possible_truncation`); real counts never
+                // approach the bound.
+                #[allow(clippy::cast_possible_truncation)]
+                count: Some(cell.map_or(0, |v| {
+                    v.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64
+                })),
+            },
+            _ => AggregateResult {
+                op: t.op,
+                value: *cell,
+                count: None,
+            },
+        })
+        .collect()
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -894,12 +1143,13 @@ impl GroupCursor {
     }
 }
 
-/// One group bucket fetched from the GROUP BY query: the rendered key + its
-/// full count.
-#[derive(sqlx::FromRow)]
+/// One group bucket fetched from the GROUP BY query: the rendered key, its
+/// full count, and its per-group aggregate results (decoded from the dynamic
+/// `a0…aN` columns; empty when no aggregates were requested).
 struct GroupBucketRow {
     gkey: String,
     gcount: i64,
+    aggregates: Vec<AggregateResult>,
 }
 
 /// One previewed member row: an [`EngineRow`] plus the rendered group key it
@@ -937,6 +1187,21 @@ async fn run_grouped(
     };
     let _ = ctx.space_pos; // documented in `predicate`; bound positionally.
 
+    // ── per-group aggregate exprs ─────────────────────────────────────────
+    // Resolved against the group-page query's bind numbering: their
+    // property-key binds occupy the slots RIGHT AFTER the group-key bind
+    // (advancing `next_pos`), so the HAVING / LIMIT slots that follow are
+    // numbered past them. The aggregate exprs are added to the GROUP BY
+    // SELECT (computed PER bucket) aliased `a0…aN`. Empty → no extra columns.
+    let (agg_terms, agg_binds) = resolve_aggregates(&request.aggregates, &mut next_pos);
+    // `CAST(… AS REAL)` so each per-group aggregate column decodes uniformly as
+    // a nullable f64 (see the global query for the COUNT-is-INTEGER rationale).
+    let agg_select: String = agg_terms
+        .iter()
+        .enumerate()
+        .map(|(i, t)| format!(", CAST({} AS REAL) AS {}", t.expr, agg_alias(i)))
+        .collect();
+
     // ── total_count = total #groups, FIRST page only ──────────────────────
     let total_count: Option<i64> = if group_cursor.is_none() {
         let count_sql = format!(
@@ -967,6 +1232,33 @@ async fn run_grouped(
         None
     };
 
+    // ── GLOBAL aggregates (grouped mode), FIRST page only ─────────────────
+    // Computed over the SAME match set as the flat path — the un-grouped
+    // predicate / FROM (NO group-key join), so a multi-valued tag key does not
+    // double-count the global fold. A SEPARATE statement with its OWN bind
+    // numbering, so the property-key binds start right after the space +
+    // filter binds (a LOCAL position counter; the group-page numbering above
+    // is untouched).
+    let global_aggregates: Vec<AggregateResult> =
+        if group_cursor.is_none() && !request.aggregates.is_empty() {
+            let mut agg_pos = ctx.next_pos;
+            let (gterms, gbinds) = resolve_aggregates(&request.aggregates, &mut agg_pos);
+            run_aggregate_query(
+                pool,
+                ctx.from_clause,
+                ctx.predicate,
+                ctx.space_id,
+                ctx.match_sanitized,
+                ctx.has_fulltext,
+                ctx.filter_binds,
+                &gterms,
+                &gbinds,
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
+
     // ── group page: keyset over `gcount DESC, gkey ASC` ───────────────────
     // Resume predicate (HAVING, since it filters the GROUPED rows): a group is
     // strictly AFTER the cursor iff its count is smaller, or equal-count with a
@@ -984,33 +1276,55 @@ async fn run_grouped(
     let limit_plus_one = limit + 1;
 
     let group_sql = format!(
-        "SELECT {gkey_expr} AS gkey, COUNT(*) AS gcount FROM {from}{join} \
+        "SELECT {gkey_expr} AS gkey, COUNT(*) AS gcount{agg_select} FROM {from}{join} \
          WHERE {pred} GROUP BY gkey{having} \
          ORDER BY gcount DESC, gkey ASC LIMIT ?{limit_pos}",
         from = ctx.from_clause,
         pred = ctx.predicate,
     );
-    // dynamic-sql: GROUP-BY key + WHERE + keyset HAVING are the runtime GroupKey + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
-    let mut q = sqlx::query_as::<_, GroupBucketRow>(sqlx::AssertSqlSafe(group_sql.as_str()));
+    // dynamic-sql: GROUP-BY key + per-group aggregate SELECT + WHERE + keyset HAVING are the runtime GroupKey + AggregateSpec set + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(group_sql.as_str()));
     if let Some(m) = ctx.match_sanitized {
         q = q.bind(m.to_string()); // ?1 = MATCH
     }
     q = q.bind(ctx.space_id.to_string()); // ?space_pos
     for b in ctx.filter_binds {
-        q = bind_as(q, b);
+        q = bind_raw(q, b);
     }
     if let Some(b) = key_bind.as_ref() {
-        q = bind_as(q, b);
+        q = bind_raw(q, b);
+    }
+    // Per-group aggregate property-key binds follow the group-key bind, in the
+    // slots `resolve_aggregates` numbered (before the HAVING / LIMIT binds).
+    for b in &agg_binds {
+        q = bind_raw(q, b);
     }
     if let Some(c) = group_cursor.as_ref() {
         q = q.bind(c.count).bind(c.count).bind(c.key.clone());
     }
     q = q.bind(limit_plus_one);
-    let mut buckets: Vec<GroupBucketRow> = if ctx.has_fulltext {
+    let bucket_rows: Vec<sqlx::sqlite::SqliteRow> = if ctx.has_fulltext {
         q.fetch_all(pool).await.map_err(map_fts_error)?
     } else {
         q.fetch_all(pool).await?
     };
+    // Decode each bucket: `gkey`, `gcount`, then the dynamic `a0…aN` aggregate
+    // columns parsed into per-group [`AggregateResult`]s (empty when no
+    // aggregates were requested).
+    use sqlx::Row as _;
+    let mut buckets: Vec<GroupBucketRow> = Vec::with_capacity(bucket_rows.len());
+    for row in &bucket_rows {
+        let gkey: String = row.try_get("gkey")?;
+        let gcount: i64 = row.try_get("gcount")?;
+        let cells: Vec<Option<f64>> = (0..agg_terms.len())
+            .map(|i| row.try_get::<Option<f64>, _>(agg_alias(i).as_str()))
+            .collect::<Result<_, _>>()?;
+        buckets.push(GroupBucketRow {
+            gkey,
+            gcount,
+            aggregates: decode_aggregates(&agg_terms, &cells),
+        });
+    }
 
     let limit_usize = usize::try_from(limit).unwrap_or(usize::MAX);
     let has_more = buckets.len() > limit_usize;
@@ -1025,6 +1339,7 @@ async fn run_grouped(
             next_cursor: None,
             has_more: false,
             total_count,
+            aggregates: global_aggregates,
         });
     }
 
@@ -1117,6 +1432,7 @@ async fn run_grouped(
             key: b.gkey.clone(),
             count: b.gcount,
             members: by_key.remove(&b.gkey).unwrap_or_default(),
+            aggregates: b.aggregates.clone(),
         })
         .collect();
 
@@ -1140,5 +1456,6 @@ async fn run_grouped(
         next_cursor,
         has_more,
         total_count,
+        aggregates: global_aggregates,
     })
 }
