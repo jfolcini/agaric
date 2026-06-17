@@ -8,18 +8,30 @@
  *
  *   { type: 'And', children: prims.map((p) => ({ type: 'Leaf', primitive: p })) }
  *
- * v1 uses the engine's default sort and limit (sort/group/aggregate controls and
- * nested And/Or/Not are D2/D3 follow-ups). It owns the keyset cursor, load-more,
- * loading/error state, and resolves parent-page titles for the results — modelled
- * on `useQueryExecution`, including the monotonic request-id guard so a slow
- * in-flight fetch can't clobber a faster newer one when the filters or space
+ * D2 wires the full engine surface: an optional `fulltext` term (FTS5 intersect),
+ * multi-key `sort`, `groupBy`, and `aggregates`. In GROUPED mode the engine
+ * returns `groups` (and leaves `rows` empty), paginating over groups via the
+ * same cursor; in FLAT mode it returns `rows` plus an optional global aggregate
+ * summary. It owns the keyset cursor, load-more, loading/error state, and
+ * resolves parent-page titles for the results (flat rows + grouped members) —
+ * modelled on `useQueryExecution`, including the monotonic request-id guard so a
+ * slow in-flight fetch can't clobber a faster newer one when the inputs or space
  * change.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { logger } from '@/lib/logger'
-import type { BlockRow, FilterExpr, FilterPrimitive } from '@/lib/tauri'
+import type {
+  AggregateResult,
+  AggregateSpec,
+  BlockRow,
+  FilterExpr,
+  FilterPrimitive,
+  GroupSpec,
+  QueryGroup,
+  SortKey,
+} from '@/lib/tauri'
 import { batchResolve, runAdvancedQuery } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
@@ -29,16 +41,42 @@ const PAGE_SIZE = 50
 interface UseAdvancedQueryOptions {
   /** The flat conjunction of filter chips to run (the working set). */
   filters: FilterPrimitive[]
+  /**
+   * Optional full-text term. Empty/whitespace ⇒ omitted (purely structural).
+   * When present, the engine intersects an FTS5 `MATCH` and exposes per-row
+   * relevance; `SortSource::Relevance` becomes valid.
+   */
+  fulltext?: string
+  /** Ordered sort keys. Empty ⇒ the engine's default keyset. */
+  sort?: SortKey[]
+  /** Optional grouping directive. `null`/omitted ⇒ the FLAT path. */
+  groupBy?: GroupSpec | null
+  /** Optional global (and per-group, when grouped) aggregates. */
+  aggregates?: AggregateSpec[]
 }
 
 interface UseAdvancedQueryResult {
-  /** The matched block rows accumulated across pages (flat, `BlockRow`-shaped). */
+  /** The matched block rows accumulated across pages (flat mode, `BlockRow`-shaped). */
   results: BlockRow[]
+  /**
+   * The group buckets accumulated across pages (grouped mode), or `null` in
+   * flat mode. In grouped mode `results` is empty and pagination runs over
+   * groups via the same cursor.
+   */
+  groups: QueryGroup[] | null
+  /**
+   * Global aggregate results (request order), or `null` when no aggregates were
+   * requested. Computed over the full match set on the first page only.
+   */
+  aggregates: AggregateResult[] | null
   loading: boolean
   error: string | null
   hasMore: boolean
   loadingMore: boolean
-  /** Total matching rows ignoring cursor/limit; `null` until the first page settles. */
+  /**
+   * Total matching rows ignoring cursor/limit (flat mode), or total GROUP count
+   * (grouped mode); `null` until the first page settles.
+   */
   totalCount: number | null
   /** Map of parent page IDs to their resolved titles. */
   pageTitles: Map<string, string>
@@ -69,9 +107,11 @@ async function resolvePageTitles(items: BlockRow[]): Promise<Map<string, string>
 }
 
 export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQueryResult {
-  const { filters } = options
+  const { filters, fulltext, sort, groupBy, aggregates } = options
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [results, setResults] = useState<BlockRow[]>([])
+  const [groups, setGroups] = useState<QueryGroup[] | null>(null)
+  const [aggregateResults, setAggregateResults] = useState<AggregateResult[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [cursor, setCursor] = useState<string | null>(null)
@@ -80,9 +120,17 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
   const [totalCount, setTotalCount] = useState<number | null>(null)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
 
-  // Serialise the chips so the fetch effect re-runs on a structural change
-  // (the `filters` array identity churns every render in the parent).
+  // Serialise every structural input so the fetch effect re-runs on any change
+  // (the arrays/objects churn identity every render in the parent). A single
+  // serialised key keeps the `fetchResults` callback deps minimal.
   const filtersKey = JSON.stringify(filters)
+  // Normalise the full-text term once: trim, and treat empty as absent so we
+  // omit `fulltext` rather than sending `''` (the engine treats `Some("")` as a
+  // full-text query with no terms).
+  const trimmedFulltext = (fulltext ?? '').trim()
+  const sortKey = JSON.stringify(sort ?? [])
+  const groupByKey = JSON.stringify(groupBy ?? null)
+  const aggregatesKey = JSON.stringify(aggregates ?? [])
 
   // Monotonic request-id guard (mirrors useQueryExecution): a stale fetch that
   // resolves after a newer one started bails out without touching state.
@@ -100,17 +148,75 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
         setHasMore(false)
       }
       setError(null)
+      // Resolve the parent-page titles for a batch of member/result rows and
+      // merge them into `pageTitles` (append on load-more, replace on a fresh
+      // fetch). Returns `false` if a newer request superseded this one.
+      const applyTitles = async (rows: BlockRow[]): Promise<boolean> => {
+        const titles = await resolvePageTitles(rows)
+        if (myReqId !== reqIdRef.current) return false
+        if (titles.size > 0) {
+          setPageTitles((prev) => (isLoadMore ? new Map([...prev, ...titles]) : titles))
+        } else if (!isLoadMore) {
+          setPageTitles(new Map())
+        }
+        return true
+      }
       try {
+        const parsedSortRaw = JSON.parse(sortKey) as SortKey[]
+        const parsedGroupBy = JSON.parse(groupByKey) as GroupSpec | null
+        const parsedAggregates = JSON.parse(aggregatesKey) as AggregateSpec[]
+        // Sanitise the sort: `SortSource::Relevance` is ONLY valid when a
+        // full-text term is present (the engine REJECTS it otherwise with a
+        // `InvalidSort` validation error). The controls picker only OFFERS
+        // Relevance while a term is set, but a stale Relevance key survives the
+        // user clearing the term afterwards — drop it here so the wire request
+        // is always engine-valid rather than erroring out.
+        const parsedSort =
+          trimmedFulltext !== ''
+            ? parsedSortRaw
+            : parsedSortRaw.filter((k) => k.source.type !== 'Relevance')
         // FEAT-3 Phase 4 parity: the engine requires a space. The `?? ''`
         // fallback is intentional pre-bootstrap behaviour — an empty string
         // forces a no-match SQL filter rather than a runtime null deref.
+        // Optional engine inputs are omitted (not sent as empty) when unset so
+        // the request stays the minimal wire shape and the engine applies its
+        // documented defaults.
         const response = await runAdvancedQuery({
           spaceId: currentSpaceId ?? '',
           filter: primitivesToFilterExpr(JSON.parse(filtersKey) as FilterPrimitive[]),
           limit: PAGE_SIZE,
+          ...(trimmedFulltext !== '' ? { fulltext: trimmedFulltext } : {}),
+          ...(parsedSort.length > 0 ? { sort: parsedSort } : {}),
+          ...(parsedGroupBy != null ? { groupBy: parsedGroupBy } : {}),
+          ...(parsedAggregates.length > 0 ? { aggregates: parsedAggregates } : {}),
           ...(pageCursor != null ? { cursor: pageCursor } : {}),
         })
         if (myReqId !== reqIdRef.current) return
+
+        const isGrouped = parsedGroupBy != null
+
+        // GROUPED mode: the engine returns `groups` (and leaves `rows` empty),
+        // paginating over groups via the same cursor. Resolve the parent-page
+        // titles of every previewed member so the member rows render links.
+        if (isGrouped) {
+          const pageGroups = response.groups ?? []
+          setResults([])
+          if (isLoadMore) {
+            setGroups((prev) => [...(prev ?? []), ...pageGroups])
+          } else {
+            setGroups(pageGroups)
+            setTotalCount(response.totalCount)
+            setAggregateResults(response.aggregates ?? null)
+          }
+          setCursor(response.nextCursor)
+          setHasMore(response.hasMore)
+          const memberRows = pageGroups.flatMap((g) => g.members as unknown as BlockRow[])
+          await applyTitles(memberRows)
+          return
+        }
+
+        // FLAT mode.
+        setGroups(null)
         // `QueryResultRow` is `{ score } & ActiveBlockRow` — wire-compatible
         // with `BlockRow` (identical 12 columns), so render the rows directly.
         const items = response.rows as unknown as BlockRow[]
@@ -118,20 +224,14 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
           setResults((prev) => [...prev, ...items])
         } else {
           setResults(items)
-          // totalCount is only computed on the FIRST page (it doesn't change
-          // as the same filter is paged), so only set it on the initial fetch.
+          // totalCount + global aggregates are only computed on the FIRST page
+          // (invariant across cursor pages), so only set them on the initial fetch.
           setTotalCount(response.totalCount)
+          setAggregateResults(response.aggregates ?? null)
         }
         setCursor(response.nextCursor)
         setHasMore(response.hasMore)
-        const titles = await resolvePageTitles(items)
-        if (myReqId !== reqIdRef.current) return
-        if (titles.size > 0) {
-          // Spread fresh data LAST so new titles overwrite stale entries.
-          setPageTitles((prev) => (isLoadMore ? new Map([...prev, ...titles]) : titles))
-        } else if (!isLoadMore) {
-          setPageTitles(new Map())
-        }
+        await applyTitles(items)
       } catch (e) {
         if (myReqId !== reqIdRef.current) return
         logger.warn('useAdvancedQuery', 'advanced query failed', { filtersKey }, e)
@@ -148,7 +248,7 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
         }
       }
     },
-    [currentSpaceId, filtersKey],
+    [currentSpaceId, filtersKey, trimmedFulltext, sortKey, groupByKey, aggregatesKey],
   )
 
   useEffect(() => {
@@ -163,6 +263,8 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
 
   return {
     results,
+    groups,
+    aggregates: aggregateResults,
     loading,
     error,
     hasMore,

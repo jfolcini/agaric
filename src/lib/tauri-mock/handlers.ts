@@ -686,16 +686,65 @@ export const HANDLERS: Record<string, Handler> = {
 
   // #1280 — advanced-query engine. The mock cannot compile a `FilterExpr`
   // tree to SQL, so it returns an empty page in the backend's wire shape
-  // ({ rows, nextCursor, hasMore, totalCount }). There is no advanced-query
-  // UI yet (backend + IPC only), so no Playwright flow exercises it; this
-  // handler exists for command-parity and to avoid the unhandled-command
-  // `null`. Replace with a seed-filtering mock when the query surface lands.
-  run_advanced_query: () => ({
-    rows: [],
-    nextCursor: null,
-    hasMore: false,
-    totalCount: 0,
-  }),
+  // ({ rows, nextCursor, hasMore, totalCount }) by default. D2 added the
+  // advanced-query UI controls (fulltext/sort/group-by/aggregates); to let the
+  // component/hook tests exercise the GROUPED + AGGREGATE response paths, the
+  // handler now SYNTHESISES `groups`/`aggregates` from the request shape rather
+  // than compiling SQL:
+  //   - `aggregates` requested → echo one `AggregateResult` per spec, with a
+  //     deterministic stub value (`count` ⇒ `count`, fold ops ⇒ `value`).
+  //   - `groupBy` requested → return a single synthetic group bucket keyed by a
+  //     rendered label, carrying the per-group aggregates (same shape) and an
+  //     empty `rows` page (the GROUPED contract).
+  // The default (no groupBy / no aggregates) stays the empty flat page so
+  // existing command-parity callers are unaffected.
+  run_advanced_query: (args) => {
+    const request = ((args as Record<string, unknown>)['request'] ?? {}) as Record<string, unknown>
+    const aggSpecs = (request['aggregates'] as Array<Record<string, unknown>> | undefined) ?? []
+    const groupBy = request['groupBy'] as Record<string, unknown> | null | undefined
+    const cursor = request['cursor'] as string | null | undefined
+
+    // Echo one AggregateResult per requested spec. `count` lands in `count`;
+    // every fold operator (sum/avg/min/max) lands a stub `value`.
+    const aggregateResults = aggSpecs.map((spec, i) => {
+      const op = spec['op'] as string
+      if (op === 'count') return { op, value: null, count: i + 1 }
+      return { op, value: (i + 1) * 10, count: null }
+    })
+
+    if (groupBy != null) {
+      // First page only: synthesise one bucket. Cursor pages return an empty
+      // tail so load-more terminates deterministically.
+      if (cursor != null) {
+        return { rows: [], groups: [], nextCursor: null, hasMore: false, totalCount: null }
+      }
+      const key = (groupBy['key'] as Record<string, unknown> | undefined) ?? {}
+      const renderedKey = (key['type'] as string | undefined) ?? 'group'
+      return {
+        rows: [],
+        groups: [
+          {
+            key: renderedKey,
+            count: 1,
+            members: [],
+            ...(aggregateResults.length > 0 ? { aggregates: aggregateResults } : {}),
+          },
+        ],
+        nextCursor: null,
+        hasMore: false,
+        totalCount: 1,
+        ...(aggregateResults.length > 0 ? { aggregates: aggregateResults } : {}),
+      }
+    }
+
+    return {
+      rows: [],
+      nextCursor: null,
+      hasMore: false,
+      totalCount: 0,
+      ...(aggregateResults.length > 0 ? { aggregates: aggregateResults } : {}),
+    }
+  },
 
   // PEND-56 — paginated page list with per-page metadata columns.
   // Mock parity with `list_pages_with_metadata_inner`: returns the same
