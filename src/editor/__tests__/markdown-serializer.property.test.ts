@@ -639,11 +639,21 @@ describe('property: structural invariants', () => {
         const result = parse(s)
         if (result.content) {
           for (const child of result.content) {
-            // `table` / `orderedList` joined with the #710 alphabet
-            // extension (`|`, `1. ` tokens now appear in inputs).
-            expect(['paragraph', 'heading', 'codeBlock', 'table', 'orderedList']).toContain(
-              child.type,
-            )
+            // The full set of block-level nodes `parse` can emit at the doc
+            // top level. The list previously omitted `bulletList`, `blockquote`,
+            // and `horizontalRule`, so a fast-check input containing `* a`,
+            // `> q`, or `---` flaked this assertion (counterexample `["* a"]`,
+            // seed -1171359990). All are legitimate block-level children.
+            expect([
+              'paragraph',
+              'heading',
+              'codeBlock',
+              'table',
+              'orderedList',
+              'bulletList',
+              'blockquote',
+              'horizontalRule',
+            ]).toContain(child.type)
           }
         }
       }),
