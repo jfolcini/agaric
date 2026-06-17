@@ -17,7 +17,7 @@
  * this file.
  */
 
-import { underscoreRunFlank } from './markdown-common'
+import { isAutolinkableUrl, scanBareUrl, underscoreRunFlank, WORD_CHAR_RE } from './markdown-common'
 import type {
   BlockquoteNode,
   BulletListNode,
@@ -40,6 +40,22 @@ function escapeText(s: string): string {
   let out = ''
   for (let i = 0; i < s.length; i++) {
     const ch = s[i]
+    // Defuse a bare `http(s)://…` URL inside PLAIN (unlinked) text so it does
+    // not re-autolink on the next parse (#1441). A linked URL never reaches
+    // here — link spans are serialized via `serializeParagraph`. We escape the
+    // scheme colon (`https\://…`): `\:` round-trips to `:`, but `https\:/` no
+    // longer matches the `://` autolink trigger. Only fire at a left boundary
+    // (start of node or non-word char before), mirroring the parser's
+    // autolink left-flank rule, so we never touch an intraword `http`.
+    if ((ch === 'h' || ch === 'H') && scanBareUrl(s, i) !== -1) {
+      const before = i > 0 ? (s[i - 1] as string) : null
+      if (before === null || !WORD_CHAR_RE.test(before)) {
+        const colon = s.indexOf(':', i)
+        out += `${s.slice(i, colon)}\\:`
+        i = colon
+        continue
+      }
+    }
     if (ch === '\\') {
       out += '\\\\'
       continue
@@ -149,6 +165,22 @@ function stripLinkMark(node: InlineNode): InlineNode {
     return { type: 'text', text: node.text } as TextNode
   }
   return { ...node, marks } as TextNode
+}
+
+/**
+ * Raw concatenated text of a link span (link mark already stripped) when it is
+ * made up entirely of plain text nodes carrying NO other marks — else `null`.
+ * Used to decide whether a `text === href` link can be emitted as a bare URL
+ * (#1441), comparing against the unescaped href.
+ */
+function linkSpanPlainText(nodes: readonly InlineNode[]): string | null {
+  let out = ''
+  for (const node of nodes) {
+    if (node.type !== 'text') return null
+    if (node.marks && node.marks.length > 0) return null
+    out += node.text
+  }
+  return out
 }
 
 /** Group consecutive inline nodes by their link mark href. */
@@ -363,8 +395,19 @@ function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) 
     if (group.href !== null) {
       // Serialize inner content with link marks stripped, then wrap
       const stripped = group.nodes.map(stripLinkMark)
-      const inner = serializeInlineNodes(stripped, onUnknownNode)
-      result += `[${inner}](${escapeUrl(group.href)})`
+      // Lossless round-trip for autolinks (#1441): a link whose RAW visible
+      // text is exactly its href and which the importer would re-autolink in
+      // full is emitted as the bare URL, so an imported `https://x.com`
+      // survives round-tripping instead of bloating to `[url](url)`. We compare
+      // the raw text (not the escaped `inner`, which defuses the URL) and
+      // require the span to be a single plain text node (no other marks).
+      const rawText = linkSpanPlainText(stripped)
+      if (rawText !== null && rawText === group.href && isAutolinkableUrl(group.href)) {
+        result += group.href
+      } else {
+        const inner = serializeInlineNodes(stripped, onUnknownNode)
+        result += `[${inner}](${escapeUrl(group.href)})`
+      }
     } else {
       result += serializeInlineNodes(group.nodes, onUnknownNode)
     }

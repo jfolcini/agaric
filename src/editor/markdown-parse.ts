@@ -11,7 +11,7 @@
  */
 
 import { logger } from '../lib/logger'
-import { underscoreRunFlank } from './markdown-common'
+import { scanBareUrl, underscoreRunFlank, WORD_CHAR_RE } from './markdown-common'
 import type {
   BlockLevelNode,
   BlockLinkNode,
@@ -223,10 +223,13 @@ function consumeExternalLink(
     return [{ type: 'text', text: match.displayText, marks }]
   }
 
-  // Apply outer marks + link mark to all text nodes
+  // Apply outer marks + link mark to all text nodes. Strip any link mark the
+  // inner parse produced (a bare URL in the display text autolinks during the
+  // recursive parse) — a link cannot nest a link in the schema, so the OUTER
+  // link wins and the autolink is discarded (#1441).
   return innerContent.map((node: InlineNode): InlineNode => {
     if (node.type === 'text') {
-      const existing = (node.marks ?? []) as PMMark[]
+      const existing = (node.marks ?? []).filter((m) => m.type !== 'link') as PMMark[]
       const marks = [...outerMarks, ...existing, linkMark]
       return { ...node, marks }
     }
@@ -771,7 +774,14 @@ function isEscapableChar(ch: string): boolean {
     ch === '-' ||
     // `<` is escapable so a literal `<u>`/`</u>` in text (serialized as `\<u>`)
     // round-trips as text instead of opening an underline mark (#211 P2-5).
-    ch === '<'
+    ch === '<' ||
+    // `:` is escapable so the serializer can defuse a bare `http(s)://…` URL
+    // that lives in PLAIN (unlinked) text — emitting the scheme colon as `\:`
+    // breaks the `://` autolink trigger on reparse while `\:` round-trips back
+    // to `:`. Without this, a URL substring inside escaped literal text (e.g.
+    // `\](https://x.com)`) would re-autolink on the next parse, breaking
+    // serialize∘parse idempotence (#1441).
+    ch === ':'
   )
 }
 
@@ -792,6 +802,54 @@ export function scanExternalLinkToken(st: InlineState): boolean {
   flushBuf(st, currentMarks(st))
   const linkNodes = consumeExternalLink(st.scanner, match, currentMarks(st), st.depth)
   st.nodes.push(...linkNodes)
+  return true
+}
+
+/** Push a `[url](url)` link node (text === href) at the current cursor. */
+function pushAutolink(st: InlineState, url: string): void {
+  flushBuf(st, currentMarks(st))
+  const linkMark: PMMark = { type: 'link' as const, attrs: { href: url } }
+  st.nodes.push({ type: 'text', text: url, marks: [...currentMarks(st), linkMark] })
+}
+
+/**
+ * Autolink bare `http(s)://…` URLs and `<scheme://…>` angle-bracket autolinks
+ * in text runs into link marks (text === href), so importing/pasting Markdown
+ * that contains a raw URL produces the SAME link mark as `[text](url)` (#1441).
+ *
+ * `[text](url)` and escaped brackets are handled by earlier scanners, so a URL
+ * already inside link syntax is consumed before this scanner ever sees it — it
+ * never double-links.
+ */
+export function scanAutolink(st: InlineState): boolean {
+  const s = st.scanner
+  const ch = peek(s)
+
+  // `<scheme://…>` angle-bracket autolink: text and href are the inner URL.
+  if (ch === '<') {
+    const close = s.src.indexOf('>', s.pos + 1)
+    if (close !== -1) {
+      const inner = s.src.slice(s.pos + 1, close)
+      // Must be a whole bare URL with no inner whitespace/`<` (scanBareUrl
+      // stops at those, so requiring it consume all of `inner` enforces it).
+      if (scanBareUrl(inner, 0) === inner.length && inner.length > 0) {
+        pushAutolink(st, inner)
+        s.pos = close + 1
+        return true
+      }
+    }
+    return false
+  }
+
+  // Bare URL. Only at a left boundary: the char before must not be a Unicode
+  // word char (so `ahttps://x` / `foohttps://x` stay literal, matching GFM).
+  if (ch !== 'h' && ch !== 'H') return false
+  const before = s.pos > 0 ? (s.src[s.pos - 1] as string) : null
+  if (before !== null && WORD_CHAR_RE.test(before)) return false
+  const end = scanBareUrl(s.src, s.pos)
+  if (end === -1) return false
+  pushAutolink(st, s.src.slice(s.pos, end))
+  s.pos = end
   return true
 }
 
@@ -1015,6 +1073,7 @@ function parseLine(line: string, depth = 0): InlineNode[] {
     if (scanEscape(st)) continue
     if (scanTokenRef(st)) continue
     if (scanExternalLinkToken(st)) continue
+    if (scanAutolink(st)) continue
     if (scanBold(st)) continue
     if (scanStrike(st)) continue
     if (scanHighlight(st)) continue
