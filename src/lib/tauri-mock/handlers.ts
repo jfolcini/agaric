@@ -684,6 +684,19 @@ export const HANDLERS: Record<string, Handler> = {
     return { blocks: items, truncated: false, total: items.length }
   },
 
+  // #1280 — advanced-query engine. The mock cannot compile a `FilterExpr`
+  // tree to SQL, so it returns an empty page in the backend's wire shape
+  // ({ rows, nextCursor, hasMore, totalCount }). There is no advanced-query
+  // UI yet (backend + IPC only), so no Playwright flow exercises it; this
+  // handler exists for command-parity and to avoid the unhandled-command
+  // `null`. Replace with a seed-filtering mock when the query surface lands.
+  run_advanced_query: () => ({
+    rows: [],
+    nextCursor: null,
+    hasMore: false,
+    totalCount: 0,
+  }),
+
   // PEND-56 — paginated page list with per-page metadata columns.
   // Mock parity with `list_pages_with_metadata_inner`: returns the same
   // shape as the backend (BlockRow columns + last_modified_at +
