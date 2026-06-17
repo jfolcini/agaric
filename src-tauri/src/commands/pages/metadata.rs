@@ -14,7 +14,7 @@ use tauri::State;
 use crate::db::ReadPool;
 use crate::error::AppError;
 use crate::error::validation_code::{INVALID_DATE_FILTER, prefixed};
-use crate::filters::{FilterPrimitive, PagesProjection, Projection};
+use crate::filters::{FilterPrimitive, PagesProjection, Projection, WhereClause};
 use crate::pagination::{Cursor, PageRequest, PageResponse};
 use crate::ulid::{BlockId, PageId};
 
@@ -557,7 +557,13 @@ fn validate_last_edited_date(label: &str, value: &str) -> Result<(), AppError> {
 ///    set with the cheap clause's index first.
 /// 4. **Compile + AND-join** — each clause is `PagesProjection.compile`d
 ///    into a `WhereClause`; the SQL fragments are AND-joined and the binds
-///    concatenated in the same order.
+///    concatenated in the same order. `PathGlob` is special-cased
+///    (#1320-A): its raw pattern is run through `prepare_globs` (brace
+///    expansion / substring wrap / ASCII-lowercase, the SAME preprocessing
+///    Search does) and the resulting patterns are OR-joined (include) /
+///    AND-joined (exclude) into ONE multi-`?` fragment built from
+///    per-pattern `PagesProjection::compile_path_glob` sub-selects, so the
+///    Pages surface now shares Search's `LOWER(title) GLOB ?` dialect.
 fn compile_pages_filters(
     filters: &[FilterPrimitive],
 ) -> Result<(String, Vec<SqlBind<'static>>), AppError> {
@@ -607,7 +613,45 @@ fn compile_pages_filters(
     // the placeholder numbers are unambiguous regardless of compose order.
     let mut next_pos = 2; // ?1 is space_id
     for prim in ordered {
-        let wc = proj.compile(prim);
+        // #1320-A — `PathGlob` no longer compiles via `proj.compile`: the
+        // Pages surface now uses the SAME `LOWER(title) GLOB ?` dialect as
+        // Search (`GLOB` + brace + `[class]`), so the raw user pattern must
+        // first be run through `prepare_globs` (brace-expanded,
+        // substring-wrapped, ASCII-lowercased — the SAME preprocessing the
+        // Search path does upstream). One raw pattern can expand into MANY
+        // prepared patterns (`{a,b}/*` → two), so we build ONE fragment that
+        // OR-joins (include) / AND-joins (exclude) a per-pattern
+        // `PagesProjection::compile_path_glob` sub-select. The SELECT body is
+        // single-sourced through that method so the two surfaces stay in
+        // lockstep on everything but the `b.id` vs `b.page_id` alias.
+        let wc = if let FilterPrimitive::PathGlob { pattern, exclude } = prim {
+            let prepared = crate::fts::glob_filter::prepare_globs(std::slice::from_ref(pattern))?;
+            if prepared.is_empty() {
+                // Whitespace-only / fully-stripped pattern → no rows to
+                // constrain; emit NO clause for this primitive (skip).
+                continue;
+            }
+            // Join op between per-pattern fragments: include = OR (set
+            // union — a page matches if its title matches ANY pattern);
+            // exclude = AND (set difference — the page must fall outside
+            // EVERY per-pattern set, i.e. match NONE).
+            let joiner = if *exclude { " AND " } else { " OR " };
+            let mut frag = String::new();
+            let mut frag_binds: Vec<crate::filters::primitive::Bind> = Vec::new();
+            frag.push('(');
+            for (i, pat) in prepared.iter().enumerate() {
+                if i > 0 {
+                    frag.push_str(joiner);
+                }
+                let inner = proj.compile_path_glob(pat, *exclude);
+                frag.push_str(&inner.sql);
+                frag_binds.extend(inner.binds);
+            }
+            frag.push(')');
+            WhereClause::new(frag, frag_binds)
+        } else {
+            proj.compile(prim)
+        };
         // The allowed-keys gate above admits only Pages-surface tokens, but
         // a primitive could still compile to `unsupported()` via the
         // cross-surface default trait methods if a future variant lands on
@@ -645,6 +689,14 @@ fn compile_pages_filters(
         }
     }
 
+    // Every primitive may legitimately emit NO clause (a `PathGlob` whose
+    // pattern reduces to zero prepared globs is `continue`d above, #1320-A).
+    // If that leaves `clauses` empty while `filters` was non-empty, joining
+    // would yield a dangling ` AND ` and SQLite would reject the spliced
+    // statement ("incomplete input"). Emit an empty fragment instead.
+    if clauses.is_empty() {
+        return Ok((String::new(), Vec::new()));
+    }
     let fragment = format!(" AND {}", clauses.join(" AND "));
     Ok((fragment, binds))
 }
