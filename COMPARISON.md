@@ -1,6 +1,6 @@
 # Agaric vs Logseq: Feature Comparison
 
-> **Last updated 2026-04-25.** Version-specific numbers (Logseq release versions and star counts, Agaric/competitor binary sizes) reflect what was observed on that date and drift over time — treat them as illustrative, not current.
+> **Last updated 2026-06-17** (advanced query mode #1280 + filter-compiler unification #1320). Version-specific numbers (Logseq release versions and star counts, Agaric/competitor binary sizes) reflect what was observed on that date and drift over time — treat them as illustrative, not current.
 >
 > Goal: Agaric is meant to fully replace Logseq for the author's personal workflow.
 > This document maps every Logseq capability to what we have, what's planned, and what's missing.
@@ -129,11 +129,12 @@
 | --- | --- | --- | --- |
 | Simple queries | `{{query (and [[page]] (task TODO))}}` — embedded live results | `{{query type:tag expr:...}}` syntax with live results in static view. Supports tag, property, and backlink queries | Done |
 | Query operators | `and`, `or`, `not` — boolean composition around any filter | `TagExpr` supports AND/OR/NOT for tag queries. Backlink filter expressions with full And/Or/Not composition | Done |
-| Query filters | `between`, `page`, `property`, `task`, `priority`, `page-property`, `page-tags`, `all-page-tags`, `sort-by` | Tag, property key/value, backlink filter (17 types), agenda date presets | Partial |
+| Query filters | `between`, `page`, `property`, `task`, `priority`, `page-property`, `page-tags`, `all-page-tags`, `sort-by` | Tag, property key/value, backlink filter (17 types), agenda date presets. **Advanced query mode (#1280):** boolean AND/OR/NOT over tags + typed properties (eq/ne/lt/gt/lte/gte/contains/starts-with) + state/priority/block-type + due/scheduled/created dates + path/space | Partial |
+| Composable structured query | `(and …)` / `(or …)` Datascript clauses over any attribute | **Advanced query mode (#1280):** a dedicated query surface compiling a `FilterExpr` boolean tree (AND/OR/NOT) over the shared filter vocabulary — tags, typed properties (Text/Num/Date/Ref with ordered + substring comparators), task state, block type, due/scheduled/created dates, path glob, space — composable with full-text (bm25-ranked) and keyset-paginated. Built on the closed op-log/SQLite core, not raw Datalog. v1 builder UI exposes a flat conjunction; nested And/Or/Not, grouping, and saved views are in progress | Partial |
 | Date-based queries | `(between -7d +7d)`, relative dates with symbols (today, yesterday, tomorrow), `+/-` with units (y/m/w/d/h/min) | Agenda filter presets: Today, This week, This month, Overdue, Next 7/14/30 days. `parse-date.ts` for natural language | Partial |
 | Task queries | `(task TODO DOING)`, `(priority A B C)` | Agenda mode: TODO/DOING/DONE sections with priority sorting. DonePanel: completed tasks by date | Done |
-| Property queries | `(property type book)` — matches page refs in values | `query_by_property` with cursor pagination. Single key+value filter | Partial |
-| Advanced Datalog queries | Full Datascript query language: complex graph traversal, aggregations, custom transformations, rule definitions. Steep learning curve | Not applicable — backend uses SQL. Simpler but less expressive | Gap |
+| Property queries | `(property type book)` — matches page refs in values | `query_by_property` with cursor pagination (single key+value). **Advanced query mode (#1280)** adds typed property predicates — Text/Num/Date/Ref values with `exists`/`not-exists`/`eq`/`ne`/`lt`/`gt`/`lte`/`gte`/`contains`/`starts-with`, composable via AND/OR/NOT | Partial |
+| Advanced Datalog queries | Full Datascript query language: complex graph traversal, aggregations, custom transformations, rule definitions. Steep learning curve | No raw query language by design — the closed op-log/SQLite core is not a Datalog store. The **advanced query mode (#1280)** closes much of the *structured-query* gap (composable boolean filters over tags + typed properties + state/priority/block-type + dates + path/space, intersected with full-text), but graph traversal, aggregations, custom transforms, and rule definitions remain out of scope | Gap |
 | Query result as table | `query-table:: true` renders results as sortable table with column selection | QueryResultTable component: sortable columns, column definitions, click-to-navigate. Used by inline query blocks | Done |
 | Live-updating results | Queries re-evaluate on data change | FTS search, agenda, and inline query blocks are live-updating | Done |
 | Query sort/transform | `:result-transform` (custom fn), `:sort-by` (property-based), `:query-sort-by`/`:query-sort-desc` built-in properties | Fixed sort orders in agenda/backlinks. AgendaSortGroupControls for agenda (date/priority/state). No user-customizable sort on queries | Partial |
@@ -177,7 +178,8 @@
 | --- | --- | --- | --- |
 | Full-text search | `Ctrl+K` global search. Desktop only for full-text queries | SearchPanel with FTS5 backend (trigram tokenizer), debounced, cursor-paginated | Done |
 | Search scope | Pages + blocks, filterable by type | All blocks, no scope filtering | Partial |
-| Search ranking | BM25-based | FTS5 rank (BM25) with cursor pagination | Done |
+| Search ranking | BM25-based | FTS5 rank (BM25) with cursor pagination. The **advanced query mode (#1280)** also exposes the per-row BM25 score as a ranking channel and a relevance sort source when a full-text term is present | Done |
+| Full-text + structured filters | Combine `Ctrl+K` text search with filters informally | **Advanced query mode (#1280):** a full-text term is intersected with the structural boolean filter (FTS5 `MATCH` ∩ the `FilterExpr` tree), returning BM25-ranked, keyset-paginated results. #1320 unified the structural side of FTS search onto the same shared filter compiler (`SearchProjection`) | Better |
 | Search in backlinks | Via filter bar | Server-side filter expressions with Contains (FTS5 within backlinks) + 16 other filter types with And/Or/Not | Better |
 | CJK/substring search | unicode61 tokenizer — no substring matching, limited CJK | Trigram tokenizer (case_sensitive=0) — full substring and CJK support | Better |
 | Unlinked references | Plain-text mentions | UnlinkedReferences component with "Link it" button, grouped by source page | Done |
@@ -299,7 +301,7 @@ This section is important for honesty. These are areas where Logseq has capabili
 | Area | Logseq Advantage | Agaric Limitation |
 | --- | --- | --- |
 | **Block references & embeds** | `((uuid))` inline content rendering (live-updating). `{{embed}}` for blocks and pages. Fundamental to Zettelkasten workflow | Block references: `((` FTS picker, violet chips with hover tooltip. No inline content embedding (`{{embed}}`), no ref counter, no inline editing of referenced content |
-| **Advanced queries (Datalog)** | Full Datascript query language: graph traversal, aggregations, custom transforms, rule definitions. Extremely powerful for power users | SQL-based queries. Simpler but less expressive. No user-facing query language |
+| **Advanced queries (Datalog)** | Full Datascript query language: graph traversal, aggregations, custom transforms, rule definitions. Extremely powerful for power users | No raw/user-facing query language by design. The **advanced query mode (#1280)** narrows the gap for *structured* queries — composable boolean filters over tags, typed properties, state/priority/block-type, dates, and path/space, intersected with full-text — but graph traversal, aggregations, and rule definitions are still out of scope (grouping/aggregation is in progress) |
 | **Human-readable format** | Plain .md/.org files on disk. Readable in any text editor. Version-controllable with git. True data ownership | Binary SQLite file. Readable only through app or SQL tools. Export available but not the primary format |
 | **Plugin ecosystem** | 200+ community plugins covering themes, tools, integrations (Zotero, web clipper, kanban, etc.). Marketplace with one-click install | No plugin system. All features must be built-in |
 | **Graph visualization** | Global + local graph view. Visual discovery of connections between pages/blocks | Not implemented (out of scope) |
@@ -441,7 +443,7 @@ Scoring: 1-10 per category based on shipped, stable functionality. Not promises 
 | Linking system | 10 | 8 | Logseq: block refs + embeds + graph view. Agaric: block refs (FTS picker, violet chips, hover tooltip) + backlink filtering. No embeds or graph |
 | Properties | 7 | 8 | Logseq: inline syntax, autocomplete. Agaric: typed from start, PropertyChip, schema registry, `::` autocomplete |
 | Tags | 8 | 8 | Logseq: tags=pages (more connected). Agaric: boolean tag queries + materialized tag inheritance |
-| Query system | 9 | 7 | Logseq: Datalog + simple queries + table view. Agaric: inline query blocks (3 types) with table/list rendering + agenda |
+| Query system | 9 | 7 | Logseq: Datalog + simple queries + table view. Agaric: inline query blocks (3 types) + agenda + advanced query mode (#1280: composable boolean filters over tags/typed-properties/state/dates/path, intersected with full-text). Grouping/aggregation/saved-views in progress; no raw query language |
 | Task management | 7 | 10 | Agaric: agenda dashboard + recurrence end conditions + future projection + sort/group |
 | Daily journal | 7 | 9 | Agaric: 4 modes + calendar picker. Logseq: infinite scroll + configurable format |
 | Search | 7 | 8 | Agaric: trigram tokenizer + CJK + advanced backlink filters. Logseq: desktop-only full-text |
