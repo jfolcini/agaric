@@ -264,6 +264,90 @@ impl StructuralFilterBuilder {
         }
     }
 
+    /// #1320 PR-2 — page-name-glob filter routed through [`SearchProjection`]
+    /// instead of the inline [`add_page_globs`](Self::add_page_globs)
+    /// `append_page_glob_subselect` fragment, preserving the LEGACY
+    /// `LOWER(title) GLOB ?` dialect byte-for-byte at the result level
+    /// (zero behaviour change — search users keep `GLOB` + brace +
+    /// `[class]` semantics).
+    ///
+    /// `prepared_globs` are the patterns the caller already ran through
+    /// [`super::glob_filter::prepare_globs`] (brace-expanded,
+    /// substring-wrapped, ASCII-lowercased) — IDENTICAL input contract to
+    /// the legacy `add_page_globs`, so the `fts_fetch_rows` swap is a pure
+    /// drop-in (the prepare happens once upstream in
+    /// `commands::queries::prepare_search_filter`; re-preprocessing here
+    /// would double-wrap). Each pattern compiles to one
+    /// `SearchProjection::compile_path_glob` fragment:
+    ///   `b.page_id [NOT ]IN (SELECT page_id FROM pages_cache
+    ///                        WHERE LOWER(title) GLOB ?)`.
+    ///
+    /// ## Multiplicity (the load-bearing join semantics)
+    ///
+    /// The legacy helper folds ALL patterns into ONE sub-select whose
+    /// inner `GLOB` terms are OR-joined, so a page matches if its title
+    /// matches ANY pattern:
+    ///   `b.page_id IN  (… GLOB ?a OR GLOB ?b)`  (include = set union)
+    ///   `b.page_id NOT IN (… GLOB ?a OR GLOB ?b)` (exclude = set diff)
+    ///
+    /// Routed per-pattern, that becomes:
+    /// - INCLUDE (`negate == false`): the per-pattern `IN`-fragments are
+    ///   **OR-joined** and wrapped in parens —
+    ///   `(b.page_id IN (?a) OR b.page_id IN (?b))` ≡ `IN (… ?a OR ?b)`.
+    ///   The parens keep the OR-group atomic against the surrounding
+    ///   AND-joined builder clauses.
+    /// - EXCLUDE (`negate == true`): the per-pattern `NOT IN`-fragments are
+    ///   **AND-joined** (each via [`add_projection_clause`] under `prefix`)
+    ///   — `b.page_id NOT IN (?a) AND b.page_id NOT IN (?b)` ≡ NONE match ≡
+    ///   `NOT IN (… ?a OR ?b)`.
+    ///
+    /// No-op on an empty slice (mirrors `add_page_globs`). Each compiled
+    /// fragment carries one `?` placeholder; `add_projection_clause`
+    /// advances `next_param` by one per call, so the running index stays
+    /// consistent regardless of the OR/AND branch.
+    pub(super) fn add_page_globs_via_projection(
+        &mut self,
+        prefix: &str,
+        negate: bool,
+        prepared_globs: &[String],
+    ) {
+        if prepared_globs.is_empty() {
+            return;
+        }
+        if negate {
+            // EXCLUDE: AND-join each `NOT IN` fragment under `prefix`, so a
+            // page must fall outside EVERY per-pattern set.
+            for pat in prepared_globs {
+                let wc = SearchProjection.compile(&FilterPrimitive::PathGlob {
+                    pattern: pat.clone(),
+                    exclude: true,
+                });
+                self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+            }
+        } else {
+            // INCLUDE: OR-join the per-pattern `IN` fragments inside one
+            // paren-wrapped group spliced under a single `prefix`, so a page
+            // matches if its title matches ANY pattern (set union).
+            self.sql.push_str(prefix);
+            self.sql.push('(');
+            for (i, pat) in prepared_globs.iter().enumerate() {
+                if i > 0 {
+                    self.sql.push_str(" OR ");
+                }
+                let wc = SearchProjection.compile(&FilterPrimitive::PathGlob {
+                    pattern: pat.clone(),
+                    exclude: false,
+                });
+                // Renumber the fragment's single bare `?` to the running
+                // `?N` slot and record its bind (same contract as
+                // `add_projection_clause`, but with empty glue so the OR is
+                // the only separator and the paren group stays intact).
+                self.add_projection_clause("", &wc.sql, &wc.binds);
+            }
+            self.sql.push(')');
+        }
+    }
+
     /// `AND b.block_type = ?N` when `Some`.
     pub(super) fn add_block_type(&mut self, prefix: &str, block_type: Option<&str>) {
         if let Some(bt) = block_type {

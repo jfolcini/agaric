@@ -9050,3 +9050,183 @@ async fn tags_via_projection_matches_legacy_count_distinct_equivalence() {
         );
     }
 }
+
+// ── #1320 PR-2: page-glob projection ↔ legacy GLOB sub-select equivalence ──
+//
+// `fts_fetch_rows` now routes the page-name-glob filter through
+// `SearchProjection` (`add_page_globs_via_projection`: per-pattern
+// `LOWER(title) GLOB ?` IN-subselects, OR-joined for include / AND-joined for
+// exclude) instead of the legacy single `append_page_glob_subselect` fragment
+// (`add_page_globs`: one IN-subselect whose inner GLOB terms are OR-joined).
+// The two emit DIFFERENT SQL shapes but, because the projection keeps the
+// LEGACY `LOWER(title) GLOB ?` dialect (NOT the Pages `COLLATE NOCASE LIKE`
+// form), they MUST return the IDENTICAL row set. This DB-level test proves
+// that zero-behaviour-change equivalence end-to-end: it seeds blocks +
+// pages_cache with varied titles, runs RAW glob inputs through the SAME
+// `prepare_globs` preprocessing both paths consume, builds both WHERE clauses,
+// executes `SELECT id FROM blocks b WHERE …`, and asserts the row sets match.
+
+/// Build + execute a `SELECT id FROM blocks b WHERE 1=1 <fragment>` for the
+/// given builder-population closure, returning the matched ids as a sorted
+/// set (same shape as `tag_filter_ids`).
+async fn page_glob_filter_ids<F>(
+    pool: &SqlitePool,
+    populate: F,
+) -> std::collections::BTreeSet<String>
+where
+    F: FnOnce(&mut crate::fts::filter_builder::StructuralFilterBuilder),
+{
+    let mut fb = crate::fts::filter_builder::StructuralFilterBuilder::new(1);
+    populate(&mut fb);
+    let sql = format!("SELECT b.id FROM blocks b WHERE 1=1{}", fb.sql());
+    let query = sqlx::query_as::<_, (String,)>(sqlx::AssertSqlSafe(sql.as_str()));
+    let query = fb.apply(query);
+    let rows = query.fetch_all(pool).await.unwrap();
+    rows.into_iter().map(|(id,)| id).collect()
+}
+
+/// Seed pages with varied titles (one content block per page sharing the
+/// page's `page_id`, so `b.page_id` joins to `pages_cache`), returning the
+/// `(block_id, title)` fixture for hand-computed expectations.
+async fn seed_page_glob_equivalence_fixture(
+    pool: &SqlitePool,
+) -> Vec<(&'static str, &'static str)> {
+    // (page_id == content-block page_id, title) — titles chosen to exercise
+    // substring, brace alternation, and `[class]` bracket matching.
+    let pages: &[(&str, &str)] = &[
+        ("01HQPGFOO00000000000000PG01", "Foo Notes"),
+        ("01HQPGBAR00000000000000PG02", "Bar Tasks"),
+        ("01HQPGBAZ00000000000000PG03", "Baz Ideas"),
+        ("01HQPGQUX00000000000000PG04", "Qux Log"),
+        ("01HQPGAFOO0000000000000PG05", "afoo bracket"),
+        ("01HQPGBFOO0000000000000PG06", "bfoo bracket"),
+        ("01HQPGCFOO0000000000000PG07", "cfoo bracket"),
+    ];
+    // Content blocks live UNDER each page (page_id = page id) so the
+    // `b.page_id IN (SELECT page_id FROM pages_cache …)` predicate selects
+    // them. We return the BLOCK ids (what the SELECT yields).
+    let mut block_ids: Vec<(&'static str, &'static str)> = Vec::new();
+    for (i, (page_id, title)) in pages.iter().enumerate() {
+        // The page block itself (page_id == id per the §5.3 invariant).
+        insert_block(
+            pool,
+            page_id,
+            "page",
+            title,
+            None,
+            Some(i64::try_from(i).unwrap()),
+        )
+        .await;
+        sqlx::query("INSERT INTO pages_cache (page_id, title, updated_at) VALUES (?, ?, ?)")
+            .bind(page_id)
+            .bind(title)
+            .bind(0_i64)
+            .execute(pool)
+            .await
+            .unwrap();
+        block_ids.push((page_id, title));
+    }
+    block_ids
+}
+
+/// For each raw-glob scenario, the projection-routed path and the legacy
+/// `append_page_glob_subselect` path MUST return identical row sets, AND that
+/// row set MUST equal the hand-computed expectation. Cases cover: plain
+/// substring, brace alternation, `[class]` bracket (which LIKE could NOT
+/// express — proves the GLOB dialect is preserved), an exclude pattern, and a
+/// multi-pattern include (OR-join / set-union semantics).
+#[tokio::test]
+async fn page_globs_via_projection_matches_legacy_glob_equivalence() {
+    let (pool, _dir) = test_pool().await;
+    let fixture = seed_page_glob_equivalence_fixture(&pool).await;
+    let title_of =
+        |id: &str| -> &'static str { fixture.iter().find(|(pid, _)| *pid == id).unwrap().1 };
+
+    const FOO: &str = "01HQPGFOO00000000000000PG01"; // "Foo Notes"
+    const BAR: &str = "01HQPGBAR00000000000000PG02"; // "Bar Tasks"
+    const BAZ: &str = "01HQPGBAZ00000000000000PG03"; // "Baz Ideas"
+    const QUX: &str = "01HQPGQUX00000000000000PG04"; // "Qux Log"
+    const AFOO: &str = "01HQPGAFOO0000000000000PG05"; // "afoo bracket"
+    const BFOO: &str = "01HQPGBFOO0000000000000PG06"; // "bfoo bracket"
+    const CFOO: &str = "01HQPGCFOO0000000000000PG07"; // "cfoo bracket"
+
+    let set = |ids: &[&str]| -> std::collections::BTreeSet<String> {
+        ids.iter().map(ToString::to_string).collect()
+    };
+
+    // (label, raw glob inputs, negate, expected matching block ids)
+    let cases: &[(&str, Vec<String>, bool, std::collections::BTreeSet<String>)] = &[
+        (
+            "plain substring foo (INCLUDE)",
+            vec!["foo".to_string()],
+            false,
+            // bare word → substring `*foo*`; matches "Foo Notes" + the three
+            // "?foo bracket" pages (case-insensitive ASCII fold).
+            set(&[FOO, AFOO, BFOO, CFOO]),
+        ),
+        (
+            "brace {bar,baz} (INCLUDE — either)",
+            vec!["{bar,baz}".to_string()],
+            false,
+            // brace-expands to *bar* / *baz* → "Bar Tasks" + "Baz Ideas".
+            set(&[BAR, BAZ]),
+        ),
+        (
+            "bracket *[ab]foo* (INCLUDE — GLOB class)",
+            // A `[class]` token is NOT bare, so `prepare_globs` does NOT
+            // substring-wrap it — the user supplies the wildcards. `[ab]foo`
+            // matches "afoo"/"bfoo" but NOT "cfoo": a `[class]` GLOB the
+            // Pages `COLLATE NOCASE LIKE` form could never express, proving
+            // the legacy GLOB dialect is preserved.
+            vec!["*[ab]foo*".to_string()],
+            false,
+            set(&[AFOO, BFOO]),
+        ),
+        (
+            "exclude foo (EXCLUDE — set difference)",
+            vec!["foo".to_string()],
+            true,
+            // NOT-IN(*foo*): everything except the four *foo* titles.
+            set(&[BAR, BAZ, QUX]),
+        ),
+        (
+            "multi-pattern include foo + bar (OR / union)",
+            vec!["foo".to_string(), "bar".to_string()],
+            false,
+            // OR-join: *foo* ∪ *bar* = the four foo pages + "Bar Tasks".
+            set(&[FOO, AFOO, BFOO, CFOO, BAR]),
+        ),
+    ];
+
+    const PREFIX: &str = " AND ";
+    for (label, raw, negate, expected) in cases {
+        // Both paths consume the SAME prepared patterns — the single
+        // `prepare_globs` preprocessing the production pipeline runs upstream.
+        let prepared = crate::fts::glob_filter::prepare_globs(raw).unwrap();
+
+        let projected = page_glob_filter_ids(&pool, |fb| {
+            fb.add_page_globs_via_projection(PREFIX, *negate, &prepared);
+        })
+        .await;
+        let legacy = page_glob_filter_ids(&pool, |fb| {
+            fb.add_page_globs(PREFIX, *negate, &prepared);
+        })
+        .await;
+
+        assert_eq!(
+            projected,
+            legacy,
+            "[{label}] projection-routed and legacy GLOB sub-select row sets must be identical \
+             (projected={:?} legacy={:?})",
+            projected.iter().map(|id| title_of(id)).collect::<Vec<_>>(),
+            legacy.iter().map(|id| title_of(id)).collect::<Vec<_>>(),
+        );
+        assert_eq!(
+            &projected,
+            expected,
+            "[{label}] routed row set must equal the hand-computed expectation \
+             (got titles {:?})",
+            projected.iter().map(|id| title_of(id)).collect::<Vec<_>>(),
+        );
+    }
+}

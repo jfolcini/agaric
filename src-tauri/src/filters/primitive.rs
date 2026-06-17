@@ -782,18 +782,29 @@ impl Projection for SearchProjection {
         )
     }
     fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause {
-        // Search: same case-insensitive LIKE on pages_cache.title as the
-        // Pages surface (a scan — see the Pages `compile_path_glob` note on
-        // why the NOCASE index isn't used), but keyed by `b.page_id` (block
-        // rows). Anchored patterns and bare-word substrings per
-        // `glob_to_like`.
+        // #1320 PR-2 — Search keeps the LEGACY `LOWER(title) GLOB ?`
+        // dialect verbatim (NOT the Pages `COLLATE NOCASE LIKE` form), so
+        // routing the FTS path-glob filter through `SearchProjection` is a
+        // ZERO-behaviour-change cutover: search users keep their current
+        // `GLOB` + brace + `[class]` semantics. This emits the single-
+        // pattern fragment matching one term of the legacy
+        // `append_page_glob_subselect` OR-chain:
+        //   `b.page_id [NOT ]IN (SELECT page_id FROM pages_cache
+        //                        WHERE LOWER(title) GLOB ?)`
+        // The `pattern` is ALREADY brace-expanded, substring-wrapped and
+        // ASCII-lowercased by `prepare_globs` (the column-side `LOWER()`
+        // folds ASCII only, so both sides agree per #381) — this method
+        // does NOT itself preprocess. The caller
+        // (`add_page_globs_via_projection`) OR-joins the include fragments
+        // and AND-joins the exclude fragments to reproduce the legacy
+        // set-union / set-difference semantics.
+        //
+        // Pages (`PagesProjection::compile_path_glob`) is INTENTIONALLY
+        // different (`COLLATE NOCASE LIKE`) and is NOT touched here.
         let op = if exclude { "NOT IN" } else { "IN" };
         WhereClause::new(
-            format!(
-                "b.page_id {op} (SELECT page_id FROM pages_cache \
-                 WHERE title COLLATE NOCASE LIKE ? ESCAPE '\\')"
-            ),
-            vec![Bind::Text(glob_to_like(pattern))],
+            format!("b.page_id {op} (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?)"),
+            vec![Bind::Text(pattern.to_string())],
         )
     }
     fn compile_has_property(&self, key: &str, predicate: &PropertyPredicate) -> WhereClause {
@@ -1696,5 +1707,43 @@ mod explain_query_plan_tests {
             plan.to_lowercase().contains("pages_cache"),
             "PathGlob plan must reference pages_cache; got:\n{plan}"
         );
+    }
+
+    /// #1320 PR-2 — `SearchProjection::compile_path_glob` pins the LEGACY
+    /// `LOWER(title) GLOB ?` dialect (NOT the Pages `COLLATE NOCASE LIKE`
+    /// form), proving the FTS path-glob cutover is byte-for-byte the same
+    /// SQL the legacy `append_page_glob_subselect` emits for one pattern.
+    /// The pattern is bound verbatim as `Bind::Text` (already prepared by
+    /// `prepare_globs` — this compile site does NOT preprocess). The Pages
+    /// `path_glob_compiles_to_collate_nocase_like_not_glob` test above
+    /// continues to assert the LIKE shape, so the two surfaces stay
+    /// independent.
+    #[test]
+    fn search_path_glob_compiles_to_glob() {
+        // INCLUDE → `IN`, exact legacy fragment + verbatim text bind.
+        let inc = SearchProjection.compile(&FilterPrimitive::PathGlob {
+            pattern: "*foo*".into(),
+            exclude: false,
+        });
+        assert_eq!(
+            inc.sql,
+            "b.page_id IN (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?)",
+        );
+        assert_eq!(inc.binds, vec![Bind::Text("*foo*".to_string())]);
+
+        // EXCLUDE → `NOT IN`, same sub-select.
+        let exc = SearchProjection.compile(&FilterPrimitive::PathGlob {
+            pattern: "*bar*".into(),
+            exclude: true,
+        });
+        assert_eq!(
+            exc.sql,
+            "b.page_id NOT IN (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?)",
+        );
+        assert_eq!(exc.binds, vec![Bind::Text("*bar*".to_string())]);
+
+        // It must be the GLOB dialect, never the Pages LIKE form.
+        assert!(inc.sql.contains("LOWER(title) GLOB"));
+        assert!(!inc.sql.contains("COLLATE NOCASE LIKE"));
     }
 }
