@@ -2973,3 +2973,177 @@ async fn every_sort_mode_cursor_round_trips_and_rejects_cross_mode() {
         }
     }
 }
+
+// ── #1320-A — Pages PathGlob now uses the GLOB dialect ────────────────────
+//
+// BEHAVIOUR CHANGE (maintainer-authorised, user-visible): the Pages
+// path-glob filter switched from the `title COLLATE NOCASE LIKE ?` dialect
+// (LIKE `%`/`_` substring semantics) to the SAME `LOWER(title) GLOB ?`
+// dialect Search uses (after #1320 PR-2): `GLOB` wildcards (`*`/`?`),
+// `{a,b}` brace expansion, and `[class]` character classes. These tests
+// pin the new behaviour end-to-end through `list_pages_with_metadata_inner`
+// (seeding `pages_cache` rows and asserting the page set the GLOB filter
+// returns).
+
+/// Run a single PathGlob filter and return the matched page titles, sorted
+/// alphabetically for stable assertions.
+async fn glob_titles(pool: &SqlitePool, pattern: &str, exclude: bool) -> Vec<String> {
+    let resp = list_pages_with_metadata_inner(
+        pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::PathGlob {
+                pattern: pattern.to_string(),
+                exclude,
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("PathGlob `{pattern}` (exclude={exclude}) must compile: {e:?}"));
+    let mut titles: Vec<String> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.clone())
+        .collect();
+    titles.sort();
+    titles
+}
+
+#[tokio::test]
+async fn pages_path_glob_brace_expansion_returns_union() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE0000000000000000GLB01", "alpha/one").await;
+    seed_page(&pool, "01PAGE0000000000000000GLB02", "beta/two").await;
+    seed_page(&pool, "01PAGE0000000000000000GLB03", "gamma/three").await;
+
+    // `{alpha,beta}/*` must return the UNION of both branches — a feature
+    // the old LIKE dialect could not express (no brace expansion).
+    let titles = glob_titles(&pool, "{alpha,beta}/*", false).await;
+    assert_eq!(
+        titles,
+        vec!["alpha/one".to_string(), "beta/two".to_string()],
+        "brace `{{alpha,beta}}/*` must return the union of both branches"
+    );
+}
+
+#[tokio::test]
+async fn pages_path_glob_character_class_matches_both_cases() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE0000000000000000CLS01", "Projects").await;
+    seed_page(&pool, "01PAGE0000000000000000CLS02", "projects").await;
+    seed_page(&pool, "01PAGE0000000000000000CLS03", "Tasks").await;
+
+    // `[Pp]roj*` is a GLOB character class — it matches BOTH `Projects`
+    // and `projects`. The old LIKE dialect treated `[` as a literal and
+    // could NOT express a class, so this is new behaviour.
+    let titles = glob_titles(&pool, "[Pp]roj*", false).await;
+    assert_eq!(
+        titles,
+        vec!["Projects".to_string(), "projects".to_string()],
+        "`[Pp]roj*` GLOB class must match both Projects and projects"
+    );
+}
+
+#[tokio::test]
+async fn pages_path_glob_literal_bracket_is_now_a_class_regression() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    // BEHAVIOUR CHANGE: under the OLD LIKE dialect, `[draft]` was a literal
+    // substring and matched only a title literally containing `[draft]`.
+    // Under the NEW GLOB dialect, `[draft]` is a CHARACTER CLASS matching
+    // exactly ONE of the chars d/r/a/f/t. `prepare_globs` substring-wraps a
+    // pattern only when it has no `*`/`?`/`[`; `[draft]` HAS a `[`, so it is
+    // NOT wrapped and stays anchored — it matches a single-char title that
+    // is one of d/r/a/f/t. We document the regression by asserting the new
+    // GLOB semantics.
+    seed_page(&pool, "01PAGE0000000000000000BRK01", "d").await;
+    seed_page(&pool, "01PAGE0000000000000000BRK02", "z").await;
+    seed_page(&pool, "01PAGE0000000000000000BRK03", "[draft]").await;
+
+    let titles = glob_titles(&pool, "[draft]", false).await;
+    // `d` is in the class d/r/a/f/t → matches. `z` is not → no match. The
+    // literal `[draft]` title no longer matches (it would have under LIKE).
+    assert_eq!(
+        titles,
+        vec!["d".to_string()],
+        "`[draft]` is now a GLOB class (matches one of d/r/a/f/t), \
+         NOT a literal substring — behaviour change vs the old LIKE dialect"
+    );
+}
+
+#[tokio::test]
+async fn pages_path_glob_exclude_inverts_match() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE0000000000000000EXC01", "Projects/web").await;
+    seed_page(&pool, "01PAGE0000000000000000EXC02", "Projects/api").await;
+    seed_page(&pool, "01PAGE0000000000000000EXC03", "Inbox").await;
+
+    // Exclude `projects/*` (ASCII-lowercased by prepare_globs, matched
+    // case-insensitively) must return only the page NOT under Projects/.
+    let titles = glob_titles(&pool, "Projects/*", true).await;
+    assert_eq!(
+        titles,
+        vec!["Inbox".to_string()],
+        "exclude `Projects/*` must drop both Projects/ pages, keeping Inbox"
+    );
+}
+
+#[tokio::test]
+async fn pages_path_glob_invalid_glob_returns_validation_error() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE0000000000000000INV01", "Anything").await;
+
+    // An unbalanced bracket is rejected by `prepare_globs` with
+    // `AppError::Validation` (propagated out of `compile_pages_filters`),
+    // instead of silently compiling to a degenerate clause.
+    let bad = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::PathGlob {
+                pattern: "proj[ects".to_string(),
+                exclude: false,
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect_err("an unbalanced-bracket glob must be rejected");
+    assert!(
+        matches!(bad, crate::error::AppError::Validation(_)),
+        "invalid glob must be AppError::Validation; got: {bad:?}"
+    );
+}
+
+#[tokio::test]
+async fn pages_path_glob_whitespace_only_is_not_malformed_sql() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE0000000000000000WSP01", "Anything").await;
+
+    // A whitespace-only PathGlob reduces to ZERO prepared patterns, so the
+    // PathGlob primitive emits no clause. If it is the SOLE filter, the
+    // clause list is empty -> must NOT emit a dangling ` AND `.
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::PathGlob {
+                pattern: "   ".to_string(),
+                exclude: false,
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("whitespace-only PathGlob must not produce malformed SQL");
+    assert_eq!(resp.items.len(), 1);
+}
