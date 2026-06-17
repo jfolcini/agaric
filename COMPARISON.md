@@ -1,6 +1,6 @@
 # Agaric vs Logseq: Feature Comparison
 
-> **Last updated 2026-06-17** (advanced query mode #1280 + filter-compiler unification #1320). Version-specific numbers (Logseq release versions and star counts, Agaric/competitor binary sizes) reflect what was observed on that date and drift over time — treat them as illustrative, not current.
+> **Last updated 2026-06-17** (full codebase re-audit of the Agaric column). Changes since the previous revision: the conflict-resolution story was corrected to the shipped Loro-CRDT merge engine (the old diffy three-way-merge + conflict-copy path was removed in PEND-09, migrations 0055–0060); the stale Google-Calendar-push row was retired (no such code ships — only native OS task notifications, FEAT-11, partial); the formatting-toolbar rows were corrected to the actual two-surface split (always-visible `FormattingToolbar` + selection `SelectionBubbleMenu`); the advanced-query rows now reflect the shipped #1280 mode (a composable boolean `FilterExpr` intersected with full-text + bm25 relevance, multi-key sort, `GROUP BY` grouping, and count/sum/avg/min/max aggregation in the engine — the builder UI offers the filter chips incl. state/date/block-type editors, with the nested-boolean builder, group/sort/aggregate controls, and saved views as the remaining UI follow-ups); and several understated capabilities were upgraded (recent-pages quick access, attachment rendering, the underline mark, the grown filter vocabulary). Version-specific numbers (Logseq release versions and star counts, Agaric/competitor binary sizes) reflect what was observed on that date and drift over time — treat them as illustrative, not current.
 >
 > Goal: Agaric is meant to fully replace Logseq for the author's personal workflow.
 > This document maps every Logseq capability to what we have, what's planned, and what's missing.
@@ -67,6 +67,7 @@
 | **Bold** | `**bold**` | `**bold**` | Done |
 | *Italic* | `*italic*` | `*italic*` | Done |
 | ~~Strikethrough~~ | `~~text~~` | `~~text~~` with `Ctrl+Shift+S` toggle | Done |
+| Underline | No dedicated underline mark | Underline mark with `Ctrl+U` toggle (TipTap Underline extension) | Better |
 | ==Highlight== | `^^text^^` (Logseq-specific syntax) | `==text==` with `Ctrl+Shift+H` toggle | Done |
 | `Inline code` | `` `code` `` | `` `code` `` | Done |
 | Headings | `# H1` ... `###### H6` inside blocks | `/h1`-`/h6` slash commands + TipTap Heading extension (levels 1-6) | Done |
@@ -74,13 +75,13 @@
 | Math/LaTeX | `$$E=mc^2$$` inline and block — native rendering | Not implemented | Gap |
 | Tables | Markdown tables | Pipe-delimited markdown tables, TipTap extensions, `/table` slash command | Done |
 | Blockquotes | `> quote` | TipTap Blockquote extension, markdown `>` syntax | Done |
-| Slash commands `/` | ~20+ commands (task markers, dates, links, templates, etc.) | 17 base + progressive disclosure: TODO, DOING, DONE, DATE, DUE, SCHEDULED, LINK, TAG, CODE, EFFORT, ASSIGNEE, LOCATION, REPEAT, TEMPLATE, QUOTE, TABLE, QUERY + PRIORITY 1/2/3 + H1-H6 + repeat variants | Done |
+| Slash commands `/` | ~20+ commands (task markers, dates, links, templates, etc.) | ~30 base entries + progressive disclosure (84 total command ids). Base: TODO, DOING, CANCELLED, DONE, DATE, DUE, SCHEDULE, LINK, BLOCK-REF, TAG, mark twins (bold/italic/code/strike/highlight), CODE block, EFFORT, ASSIGNEE, LOCATION, REPEAT, TEMPLATE, QUOTE, CALLOUT, TABLE / TABLE-NO-HEADER, NUMBERED-LIST, DIVIDER, TURN (convert block type), DUPLICATE, QUERY, ATTACH, EMOJI. Expansions: PRIORITY 1/2/3, H1-H6, repeat cadence + end conditions, effort/assignee/location/callout/turn variants. Source: `src/lib/slash-commands.ts` | Done |
 | Autocomplete `[[` | Search all pages, create new | block-link-picker extension, page search, "Create new" option | Done |
 | Autocomplete `@` | N/A (Logseq uses `#` for tags) | at-tag-picker extension, tag search, "Create new" option | Done |
 | Autocomplete `((` | Search all blocks for reference, inline preview | `((` trigger opens block reference picker with FTS search. Renders as violet chip with first-line preview + hover tooltip | Done |
 | Property autocomplete `::` | Suggests property names and values from usage history | `::` triggers property name autocomplete picker (suggests existing property keys). No value autocomplete | Partial |
 | Multi-line blocks | `Shift+Enter` for line break | `Shift+Enter` for hard break, `Enter` creates sibling | Done |
-| Formatting toolbar | No visible toolbar — keyboard-only formatting | FormattingToolbar: 20 buttons (bold, italic, code, strikethrough, highlight, link, page-link, tag, code-block, quote, heading, priority, date, due-date, scheduled-date, todo, properties, undo, redo, discard) + Radix tooltips with shortcut hints | Better |
+| Formatting toolbar | No visible toolbar — keyboard-only formatting | Two surfaces. Always-visible `FormattingToolbar` (structure + metadata): internal-link, block-ref, tag, blockquote, code-block (with language popover), heading (level popover 1-6), ordered-list, divider, callout, insert-date, due-date, scheduled-date, todo, cycle-priority, properties, undo, redo, discard, plus contextual table ops — width-aware overflow into a "more" popover. Selection-only `SelectionBubbleMenu`: 6 mark toggles (bold, italic, code, strike, highlight, underline) + external link. Radix tooltips with shortcut hints throughout. No text-color button | Better |
 
 ### 4. Linking System
 
@@ -94,7 +95,7 @@
 | External links | `[text](url)` | `[text](url)` with browser open from static view. Ctrl+K shortcut, autolink on paste | Done |
 | Linked references | Grouped by source page. Simple filter bar | LinkedReferences component: grouped by source page, collapsible groups, cursor pagination | Done |
 | Unlinked references | Plain-text mentions of page name | UnlinkedReferences component: "Link it" button to convert mentions, grouped by source page, cursor pagination | Done |
-| Backlink filtering | Simple filter bar with basic matching | Server-side expression tree: 17 filter types (PropertyText/Num/Date, PropertyIsSet/Empty, HasTag, HasTagPrefix, Contains, CreatedInRange, BlockType, TodoState, Priority, DueDate, ScheduledDate, SourcePage) + And/Or/Not composition | Better |
+| Backlink filtering | Simple filter bar with basic matching | Server-side `FilterExpr` boolean tree (recursive And/Or/Not/Leaf) over a shared `FilterPrimitive` vocabulary — tags + tag-prefix, typed properties (text/num/date/ref with exists/eq/ne/comparators), task state, priority, due/scheduled/created dates, last-edited window, block type, path glob, full-text contains, source page, and structural predicates (orphan, stub, no-inbound-links). Cited in `src-tauri/src/filters/expr.rs` + `primitive.rs` | Better |
 | Page graph (local + global) | Visual graph of connections (local per-page + global). Can be slow with large graphs | Not implemented | Out of scope |
 | Custom link labels | `[display text]([[page]])` | Not implemented | Gap |
 
@@ -129,15 +130,15 @@
 | --- | --- | --- | --- |
 | Simple queries | `{{query (and [[page]] (task TODO))}}` — embedded live results | `{{query type:tag expr:...}}` syntax with live results in static view. Supports tag, property, and backlink queries | Done |
 | Query operators | `and`, `or`, `not` — boolean composition around any filter | `TagExpr` supports AND/OR/NOT for tag queries. Backlink filter expressions with full And/Or/Not composition | Done |
-| Query filters | `between`, `page`, `property`, `task`, `priority`, `page-property`, `page-tags`, `all-page-tags`, `sort-by` | Tag, property key/value, backlink filter (17 types), agenda date presets. **Advanced query mode (#1280):** boolean AND/OR/NOT over tags + typed properties (eq/ne/lt/gt/lte/gte/contains/starts-with) + state/priority/block-type + due/scheduled/created dates + path/space | Partial |
-| Composable structured query | `(and …)` / `(or …)` Datascript clauses over any attribute | **Advanced query mode (#1280):** a dedicated query surface compiling a `FilterExpr` boolean tree (AND/OR/NOT) over the shared filter vocabulary — tags, typed properties (Text/Num/Date/Ref with ordered + substring comparators), task state, block type, due/scheduled/created dates, path glob, space — composable with full-text (bm25-ranked) and keyset-paginated. Built on the closed op-log/SQLite core, not raw Datalog. v1 builder UI exposes a flat conjunction; nested And/Or/Not, grouping, and saved views are in progress | Partial |
+| Query filters | `between`, `page`, `property`, `task`, `priority`, `page-property`, `page-tags`, `all-page-tags`, `sort-by` | Tag, property key/value, the shared `FilterPrimitive` backlink vocabulary, agenda date presets. **Advanced query mode (#1280):** boolean AND/OR/NOT over tags + typed properties (eq/ne/lt/gt/lte/gte/contains/starts-with) + state/priority/block-type + due/scheduled/created dates + path/space | Partial |
+| Composable structured query | `(and …)` / `(or …)` Datascript clauses over any attribute | **Advanced query mode (#1280):** the `run_advanced_query` command (`src-tauri/src/commands/advanced_query.rs`) compiles a `FilterExpr` boolean tree (recursive AND/OR/NOT) over the shared filter vocabulary — tags, typed properties (Text/Num/Date/Ref with ordered + substring comparators), task state, block type, due/scheduled/created dates, path glob, space — intersected with full-text (bm25-ranked), with configurable multi-key sort, `GROUP BY` grouping (by tag/property/state/block-type/priority/page/date-bucket, with per-group counts + bounded member previews), count/sum/avg/min/max aggregation (global + per-group, non-numeric values skipped), and keyset pagination. Built on the closed op-log/SQLite core, not raw Datalog. The builder UI (`src/components/AdvancedQuery/`) offers the filter chips incl. state/block-type/due/scheduled/created editors; the nested And/Or/Not builder, the sort/group/aggregate controls, and saved views are UI follow-ups | Partial |
 | Date-based queries | `(between -7d +7d)`, relative dates with symbols (today, yesterday, tomorrow), `+/-` with units (y/m/w/d/h/min) | Agenda filter presets: Today, This week, This month, Overdue, Next 7/14/30 days. `parse-date.ts` for natural language | Partial |
 | Task queries | `(task TODO DOING)`, `(priority A B C)` | Agenda mode: TODO/DOING/DONE sections with priority sorting. DonePanel: completed tasks by date | Done |
 | Property queries | `(property type book)` — matches page refs in values | `query_by_property` with cursor pagination (single key+value). **Advanced query mode (#1280)** adds typed property predicates — Text/Num/Date/Ref values with `exists`/`not-exists`/`eq`/`ne`/`lt`/`gt`/`lte`/`gte`/`contains`/`starts-with`, composable via AND/OR/NOT | Partial |
-| Advanced Datalog queries | Full Datascript query language: complex graph traversal, aggregations, custom transformations, rule definitions. Steep learning curve | No raw query language by design — the closed op-log/SQLite core is not a Datalog store. The **advanced query mode (#1280)** closes much of the *structured-query* gap (composable boolean filters over tags + typed properties + state/priority/block-type + dates + path/space, intersected with full-text), but graph traversal, aggregations, custom transforms, and rule definitions remain out of scope | Gap |
+| Advanced Datalog queries | Full Datascript query language: complex graph traversal, aggregations, custom transformations, rule definitions. Steep learning curve | No raw query language by design — the closed op-log/SQLite core is not a Datalog store. The **advanced query mode (#1280)** closes much of the *structured-query* gap (composable boolean filters over tags + typed properties + state/priority/block-type + dates + path/space, intersected with full-text, plus `GROUP BY` grouping and count/sum/avg/min/max aggregation), but graph traversal, custom transforms, and rule definitions remain out of scope | Gap |
 | Query result as table | `query-table:: true` renders results as sortable table with column selection | QueryResultTable component: sortable columns, column definitions, click-to-navigate. Used by inline query blocks | Done |
 | Live-updating results | Queries re-evaluate on data change | FTS search, agenda, and inline query blocks are live-updating | Done |
-| Query sort/transform | `:result-transform` (custom fn), `:sort-by` (property-based), `:query-sort-by`/`:query-sort-desc` built-in properties | Fixed sort orders in agenda/backlinks. AgendaSortGroupControls for agenda (date/priority/state). No user-customizable sort on queries | Partial |
+| Query sort/transform | `:result-transform` (custom fn), `:sort-by` (property-based), `:query-sort-by`/`:query-sort-desc` built-in properties | Agenda has user-facing sort controls (AgendaSortGroupControls: date/priority/state); inline query blocks and backlinks use fixed orders. The advanced-query backend engine accepts ordered multi-key sort (incl. bm25 relevance), but the v1 builder UI does not yet expose sort pickers. No custom result-transform functions | Partial |
 
 ### 8. Task Management
 
@@ -156,7 +157,8 @@
 | Overdue task accumulation | Via embedded queries on journal pages | DuePanel shows overdue tasks on today's view | Done |
 | Scheduled date hide-before | `SCHEDULED` blocks hidden until date. Configurable via `:scheduled/future-days` | localStorage toggle in DuePanel | Done |
 | Deadline warning period | Configurable future-days display | Configurable N days in PropertiesView | Done |
-| Google Calendar push | N/A natively (plugins exist) | Opt-in daily-digest push to a dedicated "Agaric Agenda" calendar. Per-space configuration foundation in place (FEAT-3p9 M1); per-space connector iteration is M2 remaining work | Better |
+| Google Calendar push | N/A natively (plugins exist) | Not implemented — no calendar-sync code ships (an earlier exploration was abandoned and its docs purged) | Gap |
+| Task / deadline notifications | N/A natively (plugins exist) | Native OS notifications (FEAT-11): enable/disable preference, permission request (Android 13+ `POST_NOTIFICATIONS`), test notification, and task/deadline reminders via `notifyTask`. A bounded slice of the larger notification feature (#138) | Partial |
 
 ### 9. Daily Journal
 
@@ -183,7 +185,7 @@
 | Search in backlinks | Via filter bar | Server-side filter expressions with Contains (FTS5 within backlinks) + 16 other filter types with And/Or/Not | Better |
 | CJK/substring search | unicode61 tokenizer — no substring matching, limited CJK | Trigram tokenizer (case_sensitive=0) — full substring and CJK support | Better |
 | Unlinked references | Plain-text mentions | UnlinkedReferences component with "Link it" button, grouped by source page | Done |
-| Recent pages quick access | Shown in search results and command palette | Not implemented | Gap |
+| Recent pages quick access | Shown in search results and command palette | SearchPanel shows a per-space "Recent" pages list when the query is empty (backed by the `recentPagesBySpace` MRU store) | Done |
 
 ### 11. Spaces (Workspaces)
 
@@ -195,7 +197,7 @@
 | Cross-space link policy | N/A | `[[ULID]]` chips whose target lives in a foreign space render as broken-link chips. No auto-navigation, no "show anyway" toggle | Better |
 | Quick switching | N/A | `Ctrl+1` … `Ctrl+9` (or `⌘+1` … `⌘+9`) jumps to the Nth space alphabetically; rebindable | Better |
 | Visual identity | N/A | Per-space accent color, status-bar chip, window-title prefix (Phase 10) | Better |
-| Manage-spaces UI | N/A | Inline rename, accent picker (7 swatches), safety-checked delete (Phase 6) | Better |
+| Manage-spaces UI | N/A | Inline rename, accent picker (6 swatches: emerald, blue, violet, amber, rose, slate), safety-checked delete (Phase 6) | Better |
 
 ### 12. AI / MCP Integration
 
@@ -211,7 +213,7 @@
 | Local-first | Flat .md/.org files on disk (file version). SQLite + Datascript (DB version) | SQLite (WAL mode) in app data dir | Both local-first |
 | File format | Human-readable Markdown/Org files (file version). Opaque DB (DB version) | Binary SQLite | Design choice |
 | Sync | **Logseq Sync** (BETA, paid $5-15/mo via Open Collective): encrypted, up to 10 graphs, AWS-hosted. Do not use with other sync services. DB version: RTC (Real Time Collaboration) in **alpha**. DIY: git, iCloud, Dropbox (fragile, conflict-prone) | SyncDaemon: mDNS discovery, mTLS WebSocket with TOFU cert pinning (ECDSA P-256), plaintext-JSON pairing handshake over the mTLS channel, exponential backoff (1s-60s), debounced change sync (3s), periodic resync (60s). Free, no account required, fully automated LAN sync | Better |
-| Conflict resolution | File-level for DIY sync (fragile). Logseq Sync: "Smart Merge" (0.9.14+). DB version RTC: still alpha, data loss reported (db-test #781, Mar 2026) | Three-way merge (diffy): edit divergence, property LWW, move LWW, delete-vs-edit resurrection. Type-specific UI rendering. Batch resolution (multi-select keep/discard). Source device info | Better |
+| Conflict resolution | File-level for DIY sync (fragile). Logseq Sync: "Smart Merge" (0.9.14+). DB version RTC: still alpha, data loss reported (db-test #781, Mar 2026) | CRDT merge engine (Loro): every op is applied through a per-space `LoroDoc`, so concurrent edits converge automatically — per-key property LWW, move-as-CRDT, and delete-vs-edit resurrection guards. No manual conflict-resolution UI: the older diffy three-way-merge + conflict-copy path was removed in the PEND-09 cutover (migrations 0055–0060 dropped the parity log and `is_conflict`/`conflict_type`/`conflict_source` columns) | Better |
 | Multi-device | Via Logseq Sync (paid) or DIY sync | LAN sync via SyncDaemon: mDNS continuous discovery, immediate sync on peer appearance, periodic resync, change-triggered debounce | Done |
 | Op log / history | No explicit op log. `created-at`/`updated-at` timestamps only | Full append-only op log with blake3 hash chain, per-device sequences, cursor-paginated history | Better |
 | Snapshots / compaction | N/A (file-based). DB version: SQLite DB file | zstd-compressed CBOR snapshots, 90-day compaction | Better |
@@ -236,7 +238,7 @@
 
 | Capability | Logseq | Agaric | Status |
 | --- | --- | --- | --- |
-| Markdown export | Full graph export to .md files | Per-page `export_page_markdown` + full graph export as ZIP (`export_all_pages_markdown`). Resolved `#[ULID]`/`[[ULID]]` + YAML frontmatter | Done |
+| Markdown export | Full graph export to .md files | Per-page `export_page_markdown` (Rust) + full per-space graph export as a ZIP of `.md` files via `exportGraphAsZip` (`src/lib/export-graph.ts`, JSZip, client-side). Resolved `#[ULID]`/`[[ULID]]` + YAML frontmatter | Done |
 | JSON/EDN export | Data export in multiple formats | Not implemented | Gap |
 | OPML export | Outline export | Not implemented | Gap |
 | Import from Roam | JSON import | Not implemented | Gap |
@@ -275,9 +277,9 @@
 | **Task dashboard** | Dedicated agenda mode with collapsible TODO/DOING/DONE sections, priority sorting, DonePanel, DuePanel with overdue accumulation, sort/group toolbar | SCHEDULED/DEADLINE blocks shown on journal; custom dashboards require Datalog |
 | **Recurrence** | Native backend recurrence with 3 modes, end conditions (repeat-until/repeat-count), agenda projection of virtual future occurrences, automatic sibling creation on DONE | Native repeater syntax (`.+`, `++`, `+`) but no end conditions, no future projection, no dedicated repeat UI |
 | **Backlink filtering** | Server-side expression tree: 17 filter types + And/Or/Not composition, keyset pagination | Simple filter bar with basic matching |
-| **Formatting toolbar** | BubbleMenu: 20 buttons (bold, italic, strikethrough, highlight, code, headings 1-4, link, blockquote, bullet/ordered/task lists, undo/redo, indent/dedent, text color, divider) with Radix tooltips + shortcut hints | No visible toolbar — keyboard-only |
-| **Sync architecture** | Free LAN sync: mDNS discovery + TLS WebSocket + cert pinning + three-way merge + exponential backoff. No account, no cloud, no subscription | Logseq Sync: paid BETA ($5-15/mo), AWS-hosted, 10 graph limit. DIY sync is fragile |
-| **Conflict resolution** | Three-way merge with type-specific rendering (property diffs, move diffs, text). Batch resolution UI with multi-select keep/discard. Source device info | File-level conflicts (DIY) or "Smart Merge" (Sync BETA). DB version RTC alpha has data loss reports |
+| **Formatting toolbar** | Two surfaces: an always-visible `FormattingToolbar` (links, block-ref, tag, blockquote, code-block + language popover, heading-level popover 1-6, ordered-list, divider, callout, date/due/scheduled pickers, todo toggle, cycle-priority, properties, undo/redo/discard, contextual table ops, width-aware overflow) and a selection `SelectionBubbleMenu` (6 mark toggles incl. underline + external link), all with Radix tooltips + shortcut hints | No visible toolbar — keyboard-only |
+| **Sync architecture** | Free LAN sync: mDNS discovery + mTLS WebSocket + TOFU cert pinning + Loro-CRDT merge + exponential backoff. No account, no cloud, no subscription | Logseq Sync: paid BETA ($5-15/mo), AWS-hosted, 10 graph limit. DIY sync is fragile |
+| **Conflict resolution** | CRDT merge engine (Loro): concurrent edits converge automatically via per-key property LWW, move-as-CRDT, and resurrection guards — no manual conflict UI to babysit | File-level conflicts (DIY) or "Smart Merge" (Sync BETA). DB version RTC alpha has data loss reports |
 | **Data integrity** | Every op hash-verified (blake3 chain), crash recovery at boot, op-level undo/redo with HistoryView batch revert + word-level diff | No checksums or hash chains. `created-at`/`updated-at` timestamps only |
 | **Search** | FTS5 with trigram tokenizer (CJK/substring search), BM25 ranking, cursor pagination | unicode61 tokenizer, no substring matching, limited CJK support |
 | **Performance architecture** | CQRS materializer (fg+bg queues), cursor-based keyset pagination everywhere, depth limits, Tauri 2 (Rust + WebView, ~24 MB Android APK) | Electron (~190 MB desktop). Datascript in-memory DB can be slow for large graphs. Forum: "Android app very slow" (Mar 2026) |
@@ -288,7 +290,7 @@
 | **Undo/redo history** | Op-level undo/redo + HistoryView with multi-select batch revert, op-type filter, word-level diff display | Session-level undo only. No explicit undo history UI |
 | **Tag inheritance** | Materialized `block_tag_inherited` table: blocks automatically inherit ancestor tags, O(1) lookups, incrementally maintained on 7 op types | File version: no tag inheritance. DB version: `Extends` relationship (still beta) |
 | **Inline queries** | 3 query types (tag, property, backlinks) as live-updating embedded blocks with table/list rendering, click-to-navigate | `{{query}}` blocks with simple or Datalog syntax. More flexible but steeper learning curve |
-| **Accessibility** | ARIA coverage on core components, keyboard navigation, semantic HTML, axe a11y tests on 100+ components (~12,000+ total tests: ~3,400 Rust + ~8,700 frontend) | Basic keyboard shortcuts, limited ARIA coverage |
+| **Accessibility** | ARIA coverage on core components, keyboard navigation, semantic HTML, axe a11y tests on 100+ components (~15,000+ total tests: ~3,000 Rust + ~12,000 frontend across ~550 test files) | Basic keyboard shortcuts, limited ARIA coverage |
 | **AI agent integration** | Native MCP support via `agaric-mcp` stdio sidecar — Claude Desktop, Cursor, Continue, Claude Code talk directly to the running app. Read-only socket gated by Settings → Agent access toggle. No network hop | No native MCP support; relies on third-party plugins |
 | **Spaces (workspaces)** | Multiple spaces in one DB partition pages into independent contexts (Personal, Work, custom). Per-space journal, tabs, recents, sync-scope; cross-space links render as broken-link chips. Quick switch via `Ctrl+1`…`Ctrl+9` | One graph per app instance; multi-graph requires switching graphs |
 
@@ -301,7 +303,7 @@ This section is important for honesty. These are areas where Logseq has capabili
 | Area | Logseq Advantage | Agaric Limitation |
 | --- | --- | --- |
 | **Block references & embeds** | `((uuid))` inline content rendering (live-updating). `{{embed}}` for blocks and pages. Fundamental to Zettelkasten workflow | Block references: `((` FTS picker, violet chips with hover tooltip. No inline content embedding (`{{embed}}`), no ref counter, no inline editing of referenced content |
-| **Advanced queries (Datalog)** | Full Datascript query language: graph traversal, aggregations, custom transforms, rule definitions. Extremely powerful for power users | No raw/user-facing query language by design. The **advanced query mode (#1280)** narrows the gap for *structured* queries — composable boolean filters over tags, typed properties, state/priority/block-type, dates, and path/space, intersected with full-text — but graph traversal, aggregations, and rule definitions are still out of scope (grouping/aggregation is in progress) |
+| **Advanced queries (Datalog)** | Full Datascript query language: graph traversal, aggregations, custom transforms, rule definitions. Extremely powerful for power users | No raw/user-facing query language by design. The **advanced query mode (#1280)** narrows the gap for *structured* queries — composable boolean filters over tags, typed properties, state/priority/block-type, dates, and path/space, intersected with full-text, plus `GROUP BY` grouping and count/sum/avg/min/max aggregation — but graph traversal, custom transforms, and rule definitions are out of scope |
 | **Human-readable format** | Plain .md/.org files on disk. Readable in any text editor. Version-controllable with git. True data ownership | Binary SQLite file. Readable only through app or SQL tools. Export available but not the primary format |
 | **Plugin ecosystem** | 200+ community plugins covering themes, tools, integrations (Zotero, web clipper, kanban, etc.). Marketplace with one-click install | No plugin system. All features must be built-in |
 | **Graph visualization** | Global + local graph view. Visual discovery of connections between pages/blocks | Not implemented (out of scope) |
@@ -419,11 +421,11 @@ Logseq is undergoing a fundamental architectural shift from file-based storage t
 
 **Logseq:** Built-in PDF reader with highlight-to-block -> Zotero integration -> web clipper (plugin) -> progressive summarization with `^^highlight^^` syntax -> block embeds for literature note templates -> graph view for topic exploration.
 
-**Agaric:** Pages and blocks for notes with external URL links -> typed properties for metadata -> `/template` for literature note templates -> attachments tracked in backend.
+**Agaric:** Pages and blocks for notes with external URL links -> typed properties for metadata -> `/template` for literature note templates -> file attachments (`/attach`) with inline image rendering (drag-to-resize, alignment) and MIME-typed file chips.
 
 **Logseq advantage:** PDF reader, Zotero integration, web clipper, and block embeds are purpose-built for research workflows. This is a strong Logseq use case.
 
-**Agaric limitation:** No PDF reader, no citation management, no attachment rendering in UI.
+**Agaric limitation:** No PDF reader, no citation management. Attachments render inline for images, but there's no PDF/document annotation surface.
 
 **Verdict: Logseq.** Research workflows need PDF annotation, citation tools, and block embeds. Agaric can take notes but lacks the specialized tooling.
 
@@ -431,7 +433,7 @@ Logseq is undergoing a fundamental architectural shift from file-based storage t
 
 ## Part 6: Summary Scorecard
 
-> **Last verified:** 2026-05-01. Scores reflect shipped, stable functionality on this date. Logseq DB version (beta) and Agaric FEAT-3p9 M2 (in progress) are not awarded points.
+> **Last verified:** 2026-06-17. Scores reflect shipped, stable functionality on this date. Logseq DB version (beta) and Agaric work-in-progress surfaces (the advanced-query nested-boolean builder UI, the group/sort/aggregate UI controls, and saved views) are not awarded points.
 
 Scoring: 1-10 per category based on shipped, stable functionality. Not promises or beta features.
 
@@ -443,7 +445,7 @@ Scoring: 1-10 per category based on shipped, stable functionality. Not promises 
 | Linking system | 10 | 8 | Logseq: block refs + embeds + graph view. Agaric: block refs (FTS picker, violet chips, hover tooltip) + backlink filtering. No embeds or graph |
 | Properties | 7 | 8 | Logseq: inline syntax, autocomplete. Agaric: typed from start, PropertyChip, schema registry, `::` autocomplete |
 | Tags | 8 | 8 | Logseq: tags=pages (more connected). Agaric: boolean tag queries + materialized tag inheritance |
-| Query system | 9 | 7 | Logseq: Datalog + simple queries + table view. Agaric: inline query blocks (3 types) + agenda + advanced query mode (#1280: composable boolean filters over tags/typed-properties/state/dates/path, intersected with full-text). Grouping/aggregation/saved-views in progress; no raw query language |
+| Query system | 9 | 7 | Logseq: Datalog + simple queries + table view. Agaric: inline query blocks (3 types) + agenda + advanced query mode (#1280: composable boolean filters over tags/typed-properties/state/dates/path, intersected with full-text, bm25-ranked). engine supports `GROUP BY` grouping + count/sum/avg/min/max aggregation; the builder UI offers the filter chips (flat conjunction) — the nested-boolean UI, group/sort/aggregate controls, and saved views are follow-ups; no raw query language |
 | Task management | 7 | 10 | Agaric: agenda dashboard + recurrence end conditions + future projection + sort/group |
 | Daily journal | 7 | 9 | Agaric: 4 modes + calendar picker. Logseq: infinite scroll + configurable format |
 | Search | 7 | 8 | Agaric: trigram tokenizer + CJK + advanced backlink filters. Logseq: desktop-only full-text |
