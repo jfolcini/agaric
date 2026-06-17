@@ -1684,6 +1684,27 @@ export function usePageBlockStore<T>(selector: (state: PageBlockState) => T): T 
 }
 
 /**
+ * #1445 — a no-provider fallback store. Some components that host per-page UI
+ * (e.g. `SortableBlock`) are also rendered in isolation by tests WITHOUT a
+ * `PageBlockStoreProvider`. `usePageBlockStoreOptional` subscribes to this
+ * empty store in that case so the hook stays unconditional (rules of hooks)
+ * and never throws — selectors simply see an empty page (no blocks, null root).
+ */
+const emptyPageBlockStore = createPageBlockStore('')
+
+/**
+ * Like {@link usePageBlockStore}, but tolerant of being called OUTSIDE a
+ * `PageBlockStoreProvider`: instead of throwing it falls back to a shared empty
+ * store. Use this for optional, non-critical reads (e.g. resolving the
+ * containing page id for a context-menu affordance) where the absence of a
+ * provider should degrade gracefully rather than crash.
+ */
+export function usePageBlockStoreOptional<T>(selector: (state: PageBlockState) => T): T {
+  const store = useContext(PageBlockContext)
+  return useStore(store ?? emptyPageBlockStore, selector)
+}
+
+/**
  * Hook to get the raw StoreApi for imperative access (getState/setState).
  *
  * Must be called inside a PageBlockStoreProvider.

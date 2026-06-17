@@ -204,6 +204,13 @@ export const common: Record<string, string> = {
   'contextMenu.copyUrl': 'Copy URL',
   'contextMenu.urlCopied': 'URL copied to clipboard',
   'contextMenu.copyUrlFailed': 'Failed to copy URL',
+  // #1445 — copy a Roam-style reference to this block (`((ULID))`) or its
+  // containing page (`[[ULID]]`) to the clipboard for pasting elsewhere.
+  'contextMenu.copyBlockRef': 'Copy block reference',
+  'contextMenu.copyPageRef': 'Copy page reference',
+  'contextMenu.blockRefCopied': 'Block reference copied to clipboard',
+  'contextMenu.pageRefCopied': 'Page reference copied to clipboard',
+  'contextMenu.copyRefFailed': 'Failed to copy reference',
   'contextMenu.actionFailed': 'Action failed',
   'contextMenu.turnInto': 'Turn into',
   'contextMenu.turnIntoType.paragraph': 'Text',

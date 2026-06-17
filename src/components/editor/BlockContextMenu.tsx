@@ -21,6 +21,7 @@ import {
   Copy,
   CopyPlus,
   ExternalLink,
+  Link2,
   Merge,
   MoveDown,
   MoveUp,
@@ -79,6 +80,15 @@ export interface BlockContextMenuProps {
   dueDate?: (string | null) | undefined
   /** URL of external link under cursor (for Copy URL action). */
   linkUrl?: string | undefined
+  /**
+   * #1445 — id used by the "Copy page reference" action (`[[ULID]]`). When the
+   * menu's block IS a page this is the block's own id; otherwise it is the id
+   * of the containing page. Resolved by `SortableBlock` from the per-page store
+   * (no extra IPC). Omitted when the containing page is unknown, in which case
+   * the "Copy page reference" item is hidden. "Copy block reference"
+   * (`((ULID))`) always uses `blockId` directly and needs no extra prop.
+   */
+  pageRefId?: string | undefined
   /** Current block type, used to indicate the active option in "Turn into". */
   activeBlockType?: BlockTypeToken | undefined
   /**
@@ -180,6 +190,7 @@ export function BlockContextMenu({
   priority,
   dueDate: _dueDate,
   linkUrl,
+  pageRefId,
   activeBlockType,
   selectedBlockIds: selectedBlockIdsProp,
 }: BlockContextMenuProps): React.ReactElement {
@@ -682,7 +693,50 @@ export function BlockContextMenu({
       }
     : null
 
-  const linkGroup = [openLinkItem, copyUrlItem].filter((item): item is MenuItem => item !== null)
+  // #1445 — "Copy block reference" copies a Roam-style block ref (`((ULID))`)
+  // for the right-clicked block, mirroring the palette's "Copy block link"
+  // shape. Always available (every block has an id); follows the `copyUrlItem`
+  // pattern (writeText + success/error toast + close).
+  const copyBlockRefItem: MenuItem = {
+    label: t('contextMenu.copyBlockRef'),
+    icon: <Copy className="h-3.5 w-3.5" />,
+    action: async () => {
+      try {
+        await writeText(`((${blockId}))`)
+        notify.success(t('contextMenu.blockRefCopied'))
+      } catch (err) {
+        logger.error('BlockContextMenu', 'Failed to copy block reference', { blockId }, err)
+        notify.error(t('contextMenu.copyRefFailed'))
+      }
+      onClose()
+    },
+  }
+
+  // #1445 — "Copy page reference" copies a page link (`[[ULID]]`) for the
+  // containing page (or the block's own id when the block IS a page). Hidden
+  // when `pageRefId` is unknown. NOTE: emits `[[ULID]]` (not a bare ULID) — the
+  // palette's page "Copy id" action wrongly copies a bare id; this does not
+  // replicate that bug.
+  const copyPageRefItem: MenuItem | null = pageRefId
+    ? {
+        label: t('contextMenu.copyPageRef'),
+        icon: <Link2 className="h-3.5 w-3.5" />,
+        action: async () => {
+          try {
+            await writeText(`[[${pageRefId}]]`)
+            notify.success(t('contextMenu.pageRefCopied'))
+          } catch (err) {
+            logger.error('BlockContextMenu', 'Failed to copy page reference', { pageRefId }, err)
+            notify.error(t('contextMenu.copyRefFailed'))
+          }
+          onClose()
+        },
+      }
+    : null
+
+  const linkGroup = [openLinkItem, copyUrlItem, copyBlockRefItem, copyPageRefItem].filter(
+    (item): item is MenuItem => item !== null,
+  )
 
   // #264 — "Turn into" group. A parent toggle row ("Turn into" + chevron) that
   // expands to the block-type options inline. Each option converts the block
