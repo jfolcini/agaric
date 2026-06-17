@@ -643,9 +643,108 @@ pub async fn import_markdown_with_progress(
 
     let mut blocks_created: i64 = 0;
     let mut properties_set: i64 = 0;
-    // Parse-time diagnostics (e.g. depth clamping). Per-row write
-    // failures are reported via `Err(AppError)` instead — see the doc note.
-    let warnings: Vec<String> = parse_output.warnings;
+    // Parse-time diagnostics (e.g. depth clamping, frontmatter array/invalid
+    // lines). Per-row write failures are reported via `Err(AppError)` instead
+    // — see the doc note. Made mutable so the frontmatter apply step below can
+    // append its own non-fatal diagnostics (e.g. a `ref` value whose target
+    // title couldn't be resolved).
+    let mut warnings: Vec<String> = parse_output.warnings;
+
+    // #1432 — apply the leading YAML frontmatter as PAGE-level properties,
+    // closing the export↔import asymmetry: `export_page_markdown_inner`
+    // already emits page properties as frontmatter, but the importer used to
+    // discard them. The parser (`import::parse_logseq_markdown`) has already
+    // filtered the exporter's internal/reserved keys and validated each key
+    // against the `^[A-Za-z0-9_-]{1,64}$` alphabet, so every pair here is a
+    // user-visible scalar safe to stamp onto the page. These properties are
+    // written into the FIRST chunk (alongside the page + space property),
+    // before the block loop opens any new chunk, so they share the page's
+    // atomic write.
+    for (key, value) in &parse_output.frontmatter {
+        // Registry-aware coercion: look up the declared `value_type` so a
+        // `number` / `boolean` / `date` value round-trips into the right
+        // typed column instead of always landing as text. `ref`-typed values
+        // are special-cased below (the exporter renders refs as the target
+        // page's *title*, not its ULID, so we reverse-resolve the title).
+        let value_type: Option<String> = sqlx::query_scalar!(
+            "SELECT value_type FROM property_definitions WHERE key = ?",
+            key,
+        )
+        .fetch_optional(&mut **tx)
+        .await?;
+
+        let (value_text, value_num, value_date, value_ref, value_bool) =
+            if value_type.as_deref() == Some("ref") {
+                // The exporter emits a ref as the resolved target *title*
+                // (`export_page_markdown_inner`). Reverse-resolve it back to a
+                // live page/tag block id so the round-trip preserves the
+                // reference. On no/ambiguous match, fall back to text so the
+                // human-readable value is never dropped (and warn).
+                //
+                // Resolution is SAME-SPACE-SCOPED (`AND space_id = ?`): a
+                // title that collides with a page/tag in a DIFFERENT space
+                // must NOT resolve here. Otherwise the foreign block id would
+                // flow into `set_property_in_tx` →
+                // `validate_ref_property_cross_space`, which hard-rejects with
+                // `AppError::Validation` and aborts/rolls back the entire
+                // import. Scoping to the import's own space means a cross-space
+                // title simply doesn't match and falls through to the text +
+                // warning branch below — the import never aborts on a
+                // collision. (Blocks carry `space_id` directly, Phase 2.)
+                let resolved: Option<String> = sqlx::query_scalar!(
+                    r#"SELECT id FROM blocks
+                       WHERE content = ?
+                         AND block_type IN ('page', 'tag')
+                         AND deleted_at IS NULL
+                         AND space_id = ?
+                       ORDER BY id ASC
+                       LIMIT 1"#,
+                    value,
+                    space_id,
+                )
+                .fetch_optional(&mut **tx)
+                .await?;
+                match resolved {
+                    Some(id) => (None, None, None, Some(id), None),
+                    None => {
+                        // No same-space page/tag carries this title (it may
+                        // live in another space, or not exist). The value type
+                        // is declared `ref`, so we cannot persist the raw title
+                        // as a `ref` (no live target) NOR as `text` (the typed
+                        // def would reject text). Skip this single property with
+                        // a warning rather than abort the whole import — the
+                        // human-readable title is surfaced in the warning so it
+                        // is never silently lost.
+                        warnings.push(format!(
+                            "frontmatter ref property '{key}' could not resolve target \
+                             '{value}' to a page in this space; skipped"
+                        ));
+                        continue;
+                    }
+                }
+            } else {
+                crate::domain::block_ops::typed_property_args_for_registry_value(
+                    key,
+                    value.clone(),
+                    value_type.as_deref(),
+                )
+            };
+
+        let (_page_block, prop_op) = set_property_in_tx(
+            &mut tx,
+            device_id,
+            page_id.clone(),
+            key,
+            value_text,
+            value_num,
+            value_date,
+            value_ref,
+            value_bool,
+        )
+        .await?;
+        properties_set += 1;
+        tx.enqueue_background(prop_op);
+    }
 
     // #662 — number of blocks written into the *current* chunk's
     // transaction. Reset to 0 each time a chunk is flushed. A new chunk is

@@ -1351,6 +1351,327 @@ async fn export_page_markdown_frontmatter_renders_bool_properties() {
     );
 }
 
+/// #1432 — frontmatter round-trip: `export_page_markdown_inner` emits page
+/// properties as YAML frontmatter, and re-importing that markdown via
+/// `import_markdown_inner` must restamp the SAME typed page properties on the
+/// new page (closing the export↔import asymmetry where import discarded the
+/// frontmatter). Exercises every typed shape the exporter can render: text,
+/// number, date, boolean, and ref (resolved to the target page title on
+/// export and reverse-resolved to a ULID on import). Internal/reserved keys
+/// (`is_space`, `template`, …) must NOT round-trip.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_frontmatter_round_trips_typed_page_properties_1432() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const SRC_PAGE: &str = "01AAAAAAAAAAAAAAAAAAAASRC1";
+    const REF_TARGET: &str = "01AAAAAAAAAAAAAAAAAAATARGT";
+
+    // Source page + a ref target (whose unique title the exporter renders and
+    // the importer reverse-resolves back to this ULID).
+    insert_block(&pool, SRC_PAGE, "page", "Source Page", None, Some(1)).await;
+    insert_block(&pool, REF_TARGET, "page", "Linked Target", None, Some(1)).await;
+    // The ref reverse-resolution is now SAME-SPACE-SCOPED (`AND space_id = ?`),
+    // so the target must live in the import's space (`TEST_SPACE_ID`) for the
+    // title→ULID resolution to succeed on re-import.
+    assign_to_space(&pool, REF_TARGET, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // Declare typed property definitions so the import path coerces each
+    // frontmatter scalar into the correct `block_properties` column.
+    // NOTE: keys must NOT collide with the migration-seeded built-in defs
+    // (status/priority/effort/due_date/…); `create_property_def_inner` is
+    // `INSERT OR IGNORE`, so a colliding key would silently keep the seeded
+    // (wrong) type. These five keys are unseeded.
+    for (key, ty) in [
+        ("category", "text"),
+        ("wordcount", "number"),
+        ("reviewed_on", "date"),
+        ("published", "boolean"),
+        ("parent_ref", "ref"),
+    ] {
+        let def = create_property_def_inner(&pool, key.into(), ty.into(), None)
+            .await
+            .unwrap();
+        assert_eq!(def.value_type, ty, "def '{key}' must have type '{ty}'");
+    }
+
+    // Seed the typed properties on the source page (one column per row, as the
+    // materializer would).
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'category', 'notes')",
+    )
+    .bind(SRC_PAGE)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_num) VALUES (?, 'wordcount', 5)",
+    )
+    .bind(SRC_PAGE)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, 'reviewed_on', '2026-03-04')")
+        .bind(SRC_PAGE).execute(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_bool) VALUES (?, 'published', 1)",
+    )
+    .bind(SRC_PAGE)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'parent_ref', ?)",
+    )
+    .bind(SRC_PAGE)
+    .bind(REF_TARGET)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // An internal/reserved key that must NOT round-trip.
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'template', 'weekly')",
+    )
+    .bind(SRC_PAGE)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Export → markdown with frontmatter.
+    let md = export_page_markdown_inner(&pool, SRC_PAGE).await.unwrap();
+    assert!(
+        md.contains("---\n"),
+        "export must emit a frontmatter fence, got:\n{md}"
+    );
+    assert!(
+        !md.contains("template:"),
+        "internal key must not be exported, got:\n{md}"
+    );
+
+    // Re-import the exported markdown as a NEW page.
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        md.clone(),
+        Some("Reimported.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.page_title, "Reimported");
+
+    // Locate the re-imported page block.
+    let new_page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Reimported'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Read back its page properties (excluding the import-stamped `space`).
+    #[derive(sqlx::FromRow, Debug)]
+    struct PropRow {
+        key: String,
+        value_text: Option<String>,
+        value_num: Option<f64>,
+        value_date: Option<String>,
+        value_ref: Option<String>,
+        value_bool: Option<i64>,
+    }
+    let props: Vec<PropRow> = sqlx::query_as(
+        "SELECT key, value_text, value_num, value_date, value_ref, value_bool \
+         FROM block_properties WHERE block_id = ? AND key != 'space' ORDER BY key",
+    )
+    .bind(&new_page_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    let by_key: std::collections::HashMap<&str, &PropRow> =
+        props.iter().map(|p| (p.key.as_str(), p)).collect();
+
+    // text
+    assert_eq!(
+        by_key.get("category").and_then(|p| p.value_text.as_deref()),
+        Some("notes"),
+        "text prop must round-trip into value_text; props={props:?}"
+    );
+    // number → value_num
+    assert_eq!(
+        by_key.get("wordcount").and_then(|p| p.value_num),
+        Some(5.0),
+        "number prop must round-trip into value_num; props={props:?}"
+    );
+    // date → value_date
+    assert_eq!(
+        by_key
+            .get("reviewed_on")
+            .and_then(|p| p.value_date.as_deref()),
+        Some("2026-03-04"),
+        "date prop must round-trip into value_date; props={props:?}"
+    );
+    // boolean → value_bool
+    assert_eq!(
+        by_key.get("published").and_then(|p| p.value_bool),
+        Some(1),
+        "boolean prop must round-trip into value_bool; props={props:?}"
+    );
+    // ref → value_ref reverse-resolved from the rendered title back to the ULID
+    assert_eq!(
+        by_key
+            .get("parent_ref")
+            .and_then(|p| p.value_ref.as_deref()),
+        Some(REF_TARGET),
+        "ref prop must reverse-resolve the target title to its ULID; props={props:?}"
+    );
+    // Internal key must NOT have round-tripped.
+    assert!(
+        !by_key.contains_key("template"),
+        "internal/reserved key must not re-import; props={props:?}"
+    );
+
+    mat.shutdown();
+}
+
+/// #1432 (review fix) — the frontmatter `ref` reverse-resolution must be
+/// SAME-SPACE-SCOPED. Before the fix the title→ULID lookup was app-wide:
+/// if the rendered ref title collided with a page in a DIFFERENT space,
+/// the lookup returned that foreign block id, which then flowed into
+/// `set_property_in_tx` → `validate_ref_property_cross_space`, which
+/// hard-rejected with `AppError::Validation` and ABORTED the whole import
+/// (rolling back every block). A title that merely collides across spaces
+/// must never be able to fail an otherwise-valid import.
+///
+/// This test imports a page whose frontmatter carries a `ref`-typed
+/// property whose title exists ONLY in space B (the import targets space
+/// A). It must:
+///   1. SUCCEED (no `Err`) — the foreign collision no longer aborts the
+///      import (the core review fix).
+///   2. NOT persist the cross-space title as a `value_ref` pointing at the
+///      foreign block (the bug). Because the def is `ref`-typed, an
+///      unresolvable title cannot be stored as text either (the type check
+///      rejects it), so the property is skipped with a warning rather than
+///      aborting — the human-readable title is surfaced in the warning.
+/// A sibling assertion confirms a ref title that DOES exist in the SAME
+/// space still reverse-resolves to that block's id.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_frontmatter_ref_is_space_scoped_1432() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    // Two live spaces in the same fixture; the import targets space A.
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    mark_block_as_space(&pool, TEST_SPACE_B_ID).await;
+
+    // A page in space B titled "Foreign Title". The same title does NOT
+    // exist in space A — so a same-space resolution must miss.
+    const FOREIGN_PAGE: &str = "01AAAAAAAAAAAAAAAAAAAFRGN1";
+    insert_block(&pool, FOREIGN_PAGE, "page", "Foreign Title", None, Some(1)).await;
+    assign_to_space(&pool, FOREIGN_PAGE, TEST_SPACE_B_ID).await;
+
+    // A page in space A titled "Local Title" — the same-space sibling case.
+    const LOCAL_PAGE: &str = "01AAAAAAAAAAAAAAAAAAALOCL1";
+    insert_block(&pool, LOCAL_PAGE, "page", "Local Title", None, Some(1)).await;
+    assign_to_space(&pool, LOCAL_PAGE, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // Declare two ref-typed property defs.
+    for key in ["cross_ref", "local_ref"] {
+        let def = create_property_def_inner(&pool, key.into(), "ref".into(), None)
+            .await
+            .unwrap();
+        assert_eq!(def.value_type, "ref");
+    }
+
+    // Hand-authored markdown whose frontmatter carries:
+    //   - cross_ref: a title that ONLY exists in space B (must NOT resolve)
+    //   - local_ref: a title that exists in space A (must resolve)
+    let md = "# Imported Page\n\n---\ncross_ref: Foreign Title\nlocal_ref: Local Title\n---\n\n- a block\n";
+
+    // The import targets space A. Pre-fix this would `Err(Validation)` on
+    // the cross-space collision; post-fix it must succeed.
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        md.into(),
+        Some("Imported Page.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .expect("cross-space title collision must NOT abort the import");
+    assert_eq!(result.page_title, "Imported Page");
+
+    // The unresolved cross-space ref must surface as a (non-fatal) warning,
+    // naming the title so it is never silently lost.
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("cross_ref") && w.contains("Foreign Title")),
+        "unresolved cross-space ref must warn (not abort); warnings={:?}",
+        result.warnings
+    );
+
+    let new_page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Imported Page'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    #[derive(sqlx::FromRow, Debug)]
+    struct PropRow {
+        key: String,
+        value_text: Option<String>,
+        value_ref: Option<String>,
+    }
+    let props: Vec<PropRow> = sqlx::query_as(
+        "SELECT key, value_text, value_ref FROM block_properties \
+         WHERE block_id = ? AND key IN ('cross_ref', 'local_ref') ORDER BY key",
+    )
+    .bind(&new_page_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let by_key: std::collections::HashMap<&str, &PropRow> =
+        props.iter().map(|p| (p.key.as_str(), p)).collect();
+
+    // cross_ref: the foreign title is NOT in space A → no same-space
+    // resolution. CRITICALLY it must NOT have resolved to the foreign
+    // block id (that is the bug that aborted the whole import). It is
+    // skipped (not persisted) with a warning — never the foreign ULID.
+    if let Some(cross) = by_key.get("cross_ref") {
+        assert!(
+            cross.value_ref.as_deref() != Some(FOREIGN_PAGE),
+            "cross-space ref title must NEVER resolve to the foreign block id; got {cross:?}"
+        );
+        assert!(
+            cross.value_ref.is_none(),
+            "cross-space ref must not carry any resolved ref; got {cross:?}"
+        );
+    }
+
+    // local_ref: the title IS in space A → reverse-resolves to its ULID.
+    let local = by_key.get("local_ref").expect("local_ref must be stored");
+    assert_eq!(
+        local.value_ref.as_deref(),
+        Some(LOCAL_PAGE),
+        "same-space ref title must reverse-resolve to the block id; got {local:?}"
+    );
+    assert!(
+        local.value_text.is_none(),
+        "a resolved same-space ref must not also carry text; got {local:?}"
+    );
+
+    mat.shutdown();
+}
+
 // ======================================================================
 // export_page_markdown — error paths (TEST-11)
 // ======================================================================

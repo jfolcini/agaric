@@ -38,8 +38,35 @@ pub struct ImportResult {
 #[derive(Debug, Clone)]
 pub struct ParseOutput {
     pub blocks: Vec<ParsedBlock>,
+    /// Page-level properties parsed from a leading YAML frontmatter block
+    /// (#1432). These are the scalar `key: value` pairs Agaric's own
+    /// markdown export emits between the leading `---` fences, ready to be
+    /// stamped onto the imported page block as page properties (mirroring
+    /// the export → import round-trip). Internal/reserved keys
+    /// (see [`FRONTMATTER_RESERVED_KEYS`]) are filtered out here so they are
+    /// never re-imported. Empty when the file has no frontmatter.
+    pub frontmatter: Vec<(String, String)>,
     pub warnings: Vec<String>,
 }
+
+/// Internal/system-managed property keys that the markdown exporter
+/// deliberately strips from the YAML frontmatter
+/// (`export_page_markdown_inner`, #384). The import path filters the same
+/// keys so a round-tripped file can never re-import a space-membership,
+/// template, or lifecycle marker as a user-visible page property. Kept in
+/// sync with the `NOT IN (...)` list in the exporter's frontmatter query.
+const FRONTMATTER_RESERVED_KEYS: &[&str] = &[
+    "space",
+    "is_space",
+    "created_at",
+    "completed_at",
+    "repeat",
+    "repeat-until",
+    "repeat-count",
+    "repeat-seq",
+    "repeat-origin",
+    "template",
+];
 
 /// Streaming progress payload for a single `import_markdown` call (#128,
 /// PEND-38 / PEND-06 Tier 3).
@@ -146,18 +173,29 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     // Normalize tabs to 2 spaces for consistent indentation parsing
     let normalized = normalized_eol.replace('\t', "  ");
 
-    // Skip YAML frontmatter (--- delimited block at start of file)
-    let body = if let Some(stripped) = normalized.strip_prefix("---") {
-        if let Some(end) = stripped.find("\n---") {
-            &stripped[end + 4..] // skip past closing ---
-        } else {
-            &normalized // no closing ---, treat as content
-        }
-    } else {
-        &normalized
-    };
+    // Capture + parse a leading YAML frontmatter block (#1432). The exporter
+    // (`export_page_markdown_inner`) emits page properties as scalar
+    // `key: value` lines between a `---` fence pair, but the importer
+    // historically *discarded* the whole block — an export↔import asymmetry.
+    // We now strip the block AND parse it into `(key, value)` pairs that the
+    // apply path stamps back onto the page block.
+    //
+    // The fence may appear in two positions:
+    //   1. At the very top of the file (the conventional Markdown / Logseq
+    //      frontmatter position), or
+    //   2. Immediately after a leading `# Heading` line — the exact shape
+    //      Agaric's own export emits (`# Title\n\n---\n…\n---\n\n`). Without
+    //      this case Agaric's export would NOT round-trip, defeating the
+    //      whole point of #1432.
+    // In case 2 the heading line is preserved in `body` (it becomes a
+    // depth-0 content block exactly as before); only the fenced block is
+    // excised. An unclosed `---` is treated as plain content (no
+    // frontmatter), matching the prior strip behaviour.
+    let mut frontmatter_warnings: Vec<String> = Vec::new();
+    let mut frontmatter: Vec<(String, String)> = Vec::new();
+    let normalized = strip_frontmatter(&normalized, &mut frontmatter, &mut frontmatter_warnings);
 
-    let lines: Vec<&str> = body.lines().collect();
+    let lines: Vec<&str> = normalized.lines().collect();
     let mut i = 0;
 
     while i < lines.len() {
@@ -252,7 +290,7 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         }
     }
 
-    let mut warnings = Vec::new();
+    let mut warnings = frontmatter_warnings;
     if clamped_count > 0 {
         warnings.push(format!(
             "{clamped_count} block(s) exceeded maximum depth of {MAX_IMPORT_DEPTH} and were flattened"
@@ -265,7 +303,191 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         ));
     }
 
-    ParseOutput { blocks, warnings }
+    ParseOutput {
+        blocks,
+        frontmatter,
+        warnings,
+    }
+}
+
+/// Excise a leading YAML frontmatter block from already-EOL-normalized
+/// markdown and parse it into page-property pairs (#1432).
+///
+/// Returns the markdown with the fenced block removed; `frontmatter` and
+/// `warnings` are appended in place. Two fence positions are accepted (see
+/// the call site): the very top of the file, or immediately after a single
+/// leading `# Heading` line (Agaric's own export shape). In the latter case
+/// the heading line is left in the returned body. An unterminated fence is
+/// treated as plain content (returns the input unchanged, no properties).
+fn strip_frontmatter(
+    normalized: &str,
+    frontmatter: &mut Vec<(String, String)>,
+    warnings: &mut Vec<String>,
+) -> String {
+    // Helper: given a slice that begins exactly at an opening `---` fence,
+    // parse the fenced block and return the byte length consumed (through the
+    // closing `\n---` and its line), or `None` if there is no closing fence.
+    let parse_fence = |slice: &str,
+                       frontmatter: &mut Vec<(String, String)>,
+                       warnings: &mut Vec<String>|
+     -> Option<usize> {
+        let after_open = slice.strip_prefix("---")?;
+        let end = after_open.find("\n---")?; // index within `after_open`
+        let yaml = &after_open[..end];
+        frontmatter.extend(parse_frontmatter(yaml, warnings));
+        // Consume through the closing fence line. `end + 4` skips the
+        // `\n---`; then advance past the rest of the closing line (to its
+        // newline, inclusive) so the heading/body that follows starts clean.
+        let consumed_in_after = end + 4;
+        let tail = &after_open[consumed_in_after..];
+        let line_end = tail.find('\n').map_or(tail.len(), |n| n + 1);
+        // 3 = len("---") opening fence we stripped.
+        Some(3 + consumed_in_after + line_end)
+    };
+
+    // Case 1: fence at the very top of the file.
+    if normalized.starts_with("---") {
+        if let Some(consumed) = parse_fence(normalized, frontmatter, warnings) {
+            return normalized[consumed..].to_string();
+        }
+        return normalized.to_string();
+    }
+
+    // Case 2: a single leading `# Heading` line, then (optionally blank
+    // lines) the fence — Agaric's export shape. Find the heading line, scan
+    // past blank lines, and if a fence opens there, excise it while keeping
+    // the heading line + any following body.
+    if normalized.starts_with("# ") {
+        let heading_end = normalized.find('\n').map_or(normalized.len(), |n| n + 1);
+        let (heading, rest) = normalized.split_at(heading_end);
+        // Skip blank lines between the heading and a possible fence. The
+        // blank lines between heading and fence (and any after the fence) are
+        // immaterial — the line-based parser skips blanks.
+        let trimmed_rest = rest.trim_start_matches('\n');
+        if trimmed_rest.starts_with("---")
+            && let Some(consumed) = parse_fence(trimmed_rest, frontmatter, warnings)
+        {
+            // Reassemble: heading line + the body after the fence.
+            let after_fence = &trimmed_rest[consumed..];
+            let mut out = String::with_capacity(heading.len() + after_fence.len());
+            out.push_str(heading);
+            out.push_str(after_fence);
+            return out;
+        }
+    }
+
+    normalized.to_string()
+}
+
+/// Parse the body of a leading YAML frontmatter block into scalar
+/// `(key, value)` page-property pairs (#1432).
+///
+/// Scope is deliberately aligned with what Agaric's own markdown export
+/// emits (`export_page_markdown_inner`): one `key: value` scalar per line.
+/// This is intentionally a minimal, line-based parser rather than a full
+/// YAML engine — no YAML crate is in `Cargo.toml`, and the exporter never
+/// emits nested maps, anchors, or multi-line scalars. Round-tripping
+/// Agaric's own export is the contract here.
+///
+/// Handling, line by line:
+/// - Blank lines and `# comment` lines are skipped.
+/// - A line is split on the FIRST `:` into `key` / `value`; the value is
+///   trimmed of surrounding whitespace and a single layer of matching
+///   quotes (`"…"` or `'…'`).
+/// - Keys are validated against the same alphabet the property layer
+///   enforces (`^[A-Za-z0-9_-]{1,64}$`, via [`is_property_key`]); a line
+///   whose key fails validation is skipped with a warning.
+/// - Internal/reserved keys ([`FRONTMATTER_RESERVED_KEYS`]) are dropped
+///   silently — they are exporter-managed and must never re-import.
+/// - Array / block syntax (`key: [a, b]`, `key:` followed by `- item`
+///   lines, #1433 `aliases:` / `tags:`) is out of scope: a bracketed
+///   `[...]` value or a bare `- item` continuation is parse-and-ignored
+///   with a warning rather than mis-imported as a text scalar.
+/// - A duplicate key keeps the FIRST occurrence (matches `INSERT OR IGNORE`
+///   semantics elsewhere) and warns on the rest.
+fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, String)> {
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut skipped_array = 0usize;
+    let mut skipped_invalid = 0usize;
+
+    for raw in yaml.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        // A bare `- item` line is a YAML sequence element belonging to a
+        // preceding `key:` with no inline value — block-style arrays are
+        // #1433 scope. Parse-and-ignore with a warning.
+        if line.starts_with("- ") || line == "-" {
+            skipped_array += 1;
+            continue;
+        }
+        let Some((key_raw, value_raw)) = line.split_once(':') else {
+            // No colon: not a `key: value` scalar (e.g. a stray scalar or
+            // malformed line). Surface it rather than silently swallow.
+            skipped_invalid += 1;
+            continue;
+        };
+        let key = key_raw.trim();
+        if !is_property_key(key) {
+            skipped_invalid += 1;
+            continue;
+        }
+        if FRONTMATTER_RESERVED_KEYS.contains(&key) {
+            // Exporter-managed key — silently filtered (it is never meant
+            // to round-trip as a user property).
+            continue;
+        }
+        let value = strip_yaml_quotes(value_raw.trim());
+        // Inline array/flow-collection syntax (`[a, b]` / `{a: b}`): out of
+        // scope (#1433). Parse-and-ignore with a warning rather than import
+        // the literal bracketed text as a scalar.
+        if (value.starts_with('[') && value.ends_with(']'))
+            || (value.starts_with('{') && value.ends_with('}'))
+        {
+            skipped_array += 1;
+            continue;
+        }
+        if !seen.insert(key.to_string()) {
+            warnings.push(format!(
+                "frontmatter key '{key}' appears more than once; keeping the first value"
+            ));
+            continue;
+        }
+        pairs.push((key.to_string(), value.to_string()));
+    }
+
+    if skipped_array > 0 {
+        warnings.push(format!(
+            "{skipped_array} frontmatter line(s) used array/collection syntax \
+             (not yet supported) and were ignored"
+        ));
+    }
+    if skipped_invalid > 0 {
+        warnings.push(format!(
+            "{skipped_invalid} frontmatter line(s) were not a valid `key: value` scalar \
+             and were ignored"
+        ));
+    }
+    pairs
+}
+
+/// Strip a single layer of matching surrounding quotes (`"…"` or `'…'`)
+/// from a frontmatter scalar value. YAML quoting is preserved on export
+/// only when a value needs it; Agaric's exporter currently emits bare
+/// scalars, but accepting quoted values keeps the importer tolerant of
+/// hand-edited / third-party frontmatter without pulling in a YAML crate.
+fn strip_yaml_quotes(value: &str) -> &str {
+    let bytes = value.as_bytes();
+    if bytes.len() >= 2
+        && ((bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')
+            || (bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\''))
+    {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    }
 }
 
 /// Matches `((uuid))` block references.
@@ -593,6 +815,123 @@ mod tests {
                 .any(|w| w.contains("property line(s) had no owning block")),
             "an orphan-property warning must be emitted; got {:?}",
             output.warnings,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // #1432 — direct unit tests for `parse_frontmatter` / `strip_frontmatter`
+    // (the line-based YAML scalar parser + the two-position fence excisor).
+    // These exercise the helpers directly rather than through the whole
+    // `parse_logseq_markdown` pipeline, pinning the edge cases the round-trip
+    // tests don't reach.
+    // ------------------------------------------------------------------
+
+    /// The fence may appear immediately after a leading `# Heading` line
+    /// (Agaric's own export shape). The heading must survive in the body and
+    /// the fenced scalars must be parsed out.
+    #[test]
+    fn strip_frontmatter_after_heading_excises_fence_keeps_heading_1432() {
+        let mut fm: Vec<(String, String)> = Vec::new();
+        let mut warns: Vec<String> = Vec::new();
+        let body = strip_frontmatter(
+            "# My Title\n\n---\ncategory: notes\n---\n\n- body\n",
+            &mut fm,
+            &mut warns,
+        );
+        assert_eq!(fm, vec![("category".to_string(), "notes".to_string())]);
+        assert!(
+            body.starts_with("# My Title"),
+            "heading line must be preserved in the body; got {body:?}"
+        );
+        assert!(
+            body.contains("- body"),
+            "post-fence body must survive; got {body:?}"
+        );
+        assert!(
+            !body.contains("category:"),
+            "the fenced frontmatter must be excised from the body; got {body:?}"
+        );
+    }
+
+    /// A value containing a colon (URL, `HH:MM` time, …) must split on the
+    /// FIRST `:` only — the rest of the value (further colons included) is
+    /// kept verbatim.
+    #[test]
+    fn parse_frontmatter_value_with_colon_splits_on_first_only_1432() {
+        let mut warns: Vec<String> = Vec::new();
+        let pairs = parse_frontmatter(
+            "homepage: https://example.com/path\nstart: 09:00",
+            &mut warns,
+        );
+        assert_eq!(
+            pairs,
+            vec![
+                (
+                    "homepage".to_string(),
+                    "https://example.com/path".to_string()
+                ),
+                ("start".to_string(), "09:00".to_string()),
+            ],
+            "value colons must be preserved (split on first `:` only); got {pairs:?}"
+        );
+        assert!(
+            warns.is_empty(),
+            "valid scalars must not warn; got {warns:?}"
+        );
+    }
+
+    /// A single layer of matching surrounding quotes is stripped from the
+    /// value (both `"…"` and `'…'`).
+    #[test]
+    fn parse_frontmatter_quoted_value_is_unquoted_1432() {
+        let mut warns: Vec<String> = Vec::new();
+        let pairs = parse_frontmatter(
+            "title: \"Quoted Value\"\nalias: 'single quoted'",
+            &mut warns,
+        );
+        assert_eq!(
+            pairs,
+            vec![
+                ("title".to_string(), "Quoted Value".to_string()),
+                ("alias".to_string(), "single quoted".to_string()),
+            ],
+            "a single layer of matching quotes must be stripped; got {pairs:?}"
+        );
+    }
+
+    /// An unclosed `---` fence is treated as plain content: no frontmatter is
+    /// parsed and the input body is returned unchanged.
+    #[test]
+    fn strip_frontmatter_unclosed_fence_is_content_1432() {
+        let mut fm: Vec<(String, String)> = Vec::new();
+        let mut warns: Vec<String> = Vec::new();
+        let input = "---\ncategory: notes\n- a bullet with no closing fence";
+        let body = strip_frontmatter(input, &mut fm, &mut warns);
+        assert!(
+            fm.is_empty(),
+            "an unclosed fence must yield no frontmatter; got {fm:?}"
+        );
+        assert_eq!(
+            body, input,
+            "an unclosed fence must return the input unchanged; got {body:?}"
+        );
+    }
+
+    /// An inline array value (`tags: [a, b]`) is parse-and-ignored (#1433
+    /// scope) with a warning — it must NOT be imported as a literal text
+    /// scalar, and must not crash.
+    #[test]
+    fn parse_frontmatter_array_value_is_ignored_with_warning_1432() {
+        let mut warns: Vec<String> = Vec::new();
+        let pairs = parse_frontmatter("tags: [a, b]\ncategory: notes", &mut warns);
+        assert_eq!(
+            pairs,
+            vec![("category".to_string(), "notes".to_string())],
+            "the array line must be ignored; only the scalar survives; got {pairs:?}"
+        );
+        assert!(
+            warns.iter().any(|w| w.contains("array/collection syntax")),
+            "an array-syntax warning must be emitted; got {warns:?}"
         );
     }
 
