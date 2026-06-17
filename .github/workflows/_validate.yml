@@ -691,15 +691,43 @@ jobs:
             playwright-${{ runner.os }}-
 
       - name: Install Playwright system deps (always)
-        # `install-deps` is apt-side state which the actions/cache above
-        # doesn't (and shouldn't) persist — fast (~10s) on a warm apt
-        # cache. Browser binaries are handled separately by the next step
-        # so a cache hit skips that ~30-60s download entirely.
-        run: npx playwright install-deps chromium
+        # `install-deps` apt-installs ~33 MB of system libs/fonts each run
+        # (not on the base image, not cacheable). The real flake source: a
+        # stalling Ubuntu/Azure mirror made apt crawl at ~6 min/package with
+        # no timeout, eating the whole 20-min job before tests even started
+        # (runs 27708752343 / 27711626771 — a random shard cascaded to the cap
+        # in *setup*, never reaching the suite). Harden apt: bound each
+        # download (fail a stalled mirror fast) + retry, then wrap the step in
+        # a bounded retry loop so a transient stall recovers instead of
+        # cascading.
+        run: |
+          sudo tee /etc/apt/apt.conf.d/99-ci-resilience >/dev/null <<'APT'
+          Acquire::Retries "5";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          APT
+          for attempt in 1 2 3; do
+            if timeout 360 npx playwright install-deps chromium; then
+              exit 0
+            fi
+            echo "::warning::playwright install-deps attempt ${attempt} stalled/failed; retrying"
+            sleep 15
+          done
+          echo "::error::playwright install-deps failed after 3 attempts"
+          exit 1
 
       - name: Install Playwright browser binaries (on cache miss)
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install chromium
+        run: |
+          for attempt in 1 2 3; do
+            if timeout 360 npx playwright install chromium; then
+              exit 0
+            fi
+            echo "::warning::playwright install chromium attempt ${attempt} stalled/failed; retrying"
+            sleep 15
+          done
+          echo "::error::playwright install chromium failed after 3 attempts"
+          exit 1
 
       - name: Playwright E2E tests (shard ${{ matrix.shard }}/3)
         id: playwright
