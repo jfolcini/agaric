@@ -50,6 +50,11 @@ pub(super) enum ScalarBind {
     /// An integer value (the `COUNT(DISTINCT)` ALL-tags target, or a
     /// `LIMIT` cap).
     I64(i64),
+    /// #1280 — a real (`f64`) value. Reachable-but-unused on the FTS side
+    /// for now (the routed search primitives emit only `Text`/`Int`); added
+    /// so the [`Bind`] → `ScalarBind` mapping stays exhaustive after the
+    /// `Bind::Real` variant landed for `BacklinkProjection`.
+    F64(f64),
     /// A metadata predicate bind produced by [`append_metadata_sql`];
     /// carries its own affinity dispatch via [`MetaBind::bind`].
     Meta(MetaBind),
@@ -162,6 +167,7 @@ impl StructuralFilterBuilder {
             self.binds.push(match b {
                 Bind::Text(s) => ScalarBind::Str(s.clone()),
                 Bind::Int(n) => ScalarBind::I64(*n),
+                Bind::Real(n) => ScalarBind::F64(*n),
             });
         }
     }
@@ -385,6 +391,7 @@ impl StructuralFilterBuilder {
             query = match bind {
                 ScalarBind::Str(s) => query.bind(s),
                 ScalarBind::I64(n) => query.bind(n),
+                ScalarBind::F64(n) => query.bind(n),
                 ScalarBind::Meta(mb) => mb.bind(query),
             };
         }

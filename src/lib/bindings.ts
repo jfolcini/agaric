@@ -1310,6 +1310,48 @@ export type DateFilter =
  */
 export type DateOp = "lt" | "lte" | "eq" | "gte" | "gt";
 
+/**
+ *  #1280 — a predicate over a TEXT-ISO date column (`blocks.due_date`,
+ *  `blocks.scheduled_date`, or any `YYYY-MM-DD[...]` column). Comparisons
+ *  are **lexical**: ISO-8601 dates sort the same byte-wise as
+ *  chronologically, so `'2026-01-02' > '2026-01-01'` holds as a string
+ *  compare.
+ *
+ *  Internally-tagged on `"type"` (PascalCase). The TS union reads
+ *  `{ type: "IsNull" } | { type: "Before", date } | { type: "After", date }
+ *  | { type: "OnOrBefore", date } | { type: "OnOrAfter", date }
+ *  | { type: "On", date } | { type: "Between", from, to }`.
+ *
+ *  **`On` and the calendar-day rule:** `On YYYY-MM-DD` means "the whole
+ *  calendar day". When the underlying column is *pure* `YYYY-MM-DD` (no
+ *  time component) a lexical `= ?` already matches the whole day — that is
+ *  the form [`BacklinkProjection::compile_due_date`] /
+ *  [`compile_scheduled`](Projection::compile_scheduled) emit, byte-identical
+ *  to the legacy backlink `DueDate{Eq}` leaf (the resolver oracle treats the
+ *  column as DATE-exact). For a column that carries a *time* component the
+ *  generic [`DatePredicate::to_lexical_sql`] expands `On` to the half-open
+ *  day range `>= 'd' AND < 'd+1day'` so daytime values on the named day are
+ *  included (mirroring `compile_last_edited`'s end-of-day handling).
+ */
+export type DatePredicate =
+/**  The column is NULL (unset). */
+{ type: "IsNull" } |
+/**  Strictly before the given date (`< 'date'`). */
+{ type: "Before"; date: string } |
+/**  Strictly after the given date (`> 'date'`). */
+{ type: "After"; date: string } |
+/**  On or before the given date (`<= 'date'`). */
+{ type: "OnOrBefore"; date: string } |
+/**  On or after the given date (`>= 'date'`). */
+{ type: "OnOrAfter"; date: string } |
+/**
+ *  Exactly on the given calendar day. See the type-level doc for the
+ *  day-expansion rule.
+ */
+{ type: "On"; date: string } |
+/**  Inclusive range `BETWEEN 'from' AND 'to'`. */
+{ type: "Between"; from: string; to: string };
+
 /**  A date range for agenda queries. Both fields must be in `YYYY-MM-DD` format. */
 export type DateRange = {
 	start: string,
@@ -1449,6 +1491,30 @@ export type FilterPrimitive =
 { type: "Space"; space_id: string } |
 /**  Shared — block's `priority` matches this value. */
 { type: "Priority"; priority: string } |
+/**
+ *  #1280 — block's `todo_state` is in `values` (or IS NULL when
+ *  `is_null`). `exclude=true` negates the membership test. Multi-value
+ *  to support the chip vocabulary; the single-value backlink `TodoState`
+ *  leaf routes to `{ values: [state], is_null: false, exclude: false }`.
+ */
+{ type: "State"; values: string[]; is_null?: boolean; exclude?: boolean } |
+/**
+ *  #1280 — block's `block_type` is in `values`. `exclude=true` negates.
+ *  The single-value backlink `BlockType` leaf routes to
+ *  `{ values: [block_type], exclude: false }`.
+ */
+{ type: "BlockType"; values: string[]; exclude: boolean } |
+/**  #1280 — block's `due_date` matches the date predicate. */
+{ type: "DueDate"; predicate: DatePredicate } |
+/**  #1280 — block's `scheduled_date` matches the date predicate. */
+{ type: "Scheduled"; predicate: DatePredicate } |
+/**
+ *  #1280 — block was created (by ULID-prefix range) at or after `after`
+ *  and before `before`. Bounds are ISO dates; the projection converts
+ *  each to a ULID prefix and compares `b.id`. Routes the backlink
+ *  `CreatedInRange` leaf.
+ */
+{ type: "Created"; after: string | null; before: string | null } |
 /**
  *  Pages-only — page has no inbound links AND no outbound links.
  *  (`HasNoInboundLinks` is the looser inbound-only sibling.)
@@ -2078,7 +2144,29 @@ export type PropertyPredicate =
  *  matching `(key, value)` row). `Text` compares `value_text`; `Ref`
  *  compares `value_ref`.
  */
-{ type: "Ne"; value: PropertyValue };
+{ type: "Ne"; value: PropertyValue } |
+/**
+ *  #1280 — property value is strictly less than the operand. The
+ *  compared column is chosen from the [`PropertyValue`] variant (see
+ *  [`property_value_column`]).
+ */
+{ type: "Lt"; value: PropertyValue } |
+/**  #1280 — property value is strictly greater than the operand. */
+{ type: "Gt"; value: PropertyValue } |
+/**  #1280 — property value is less than or equal to the operand. */
+{ type: "Lte"; value: PropertyValue } |
+/**  #1280 — property value is greater than or equal to the operand. */
+{ type: "Gte"; value: PropertyValue } |
+/**
+ *  #1280 — property value contains the operand as a substring
+ *  (`LIKE '%v%' ESCAPE '\'`). Meaningless on a `Num` value → `1=0`.
+ */
+{ type: "Contains"; value: PropertyValue } |
+/**
+ *  #1280 — property value starts with the operand (`LIKE 'v%' ESCAPE
+ *  '\'`). Meaningless on a `Num` value → `1=0`.
+ */
+{ type: "StartsWith"; value: PropertyValue };
 
 export type PropertyRow = {
 	key: string,
@@ -2101,7 +2189,19 @@ export type PropertyRow = {
  */
 export type PropertyValue = { type: "Text"; value: string } |
 /**  References another block via `block_properties.value_ref`. */
-{ type: "Ref"; value: string };
+{ type: "Ref"; value: string } |
+/**
+ *  #1280 — a numeric value compared against `block_properties.value_num`.
+ *  Bound as [`Bind::Real`] so it keeps its native SQLite REAL affinity.
+ */
+{ type: "Num"; value: number | null } |
+/**
+ *  #1280 — an ISO-TEXT date value compared against
+ *  `block_properties.value_date` (a TEXT column). Bound as
+ *  [`Bind::Text`] — lexical ISO comparison, same as the backlink
+ *  `PropertyDate` leaf.
+ */
+{ type: "Date"; value: string };
 
 export type PurgeResponse = {
 	block_id: string,

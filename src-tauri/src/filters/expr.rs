@@ -35,7 +35,10 @@ use crate::error::AppError;
 /// (`#[serde(tag = "type")]`) does not support newtype variants wrapping a
 /// non-struct, and named fields give the TS union self-describing shapes
 /// (`{ type: "Not", child }`).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+// NOTE: `Eq` is intentionally NOT derived — `FilterPrimitive` no longer
+// implements `Eq` (its `HasProperty` predicate carries an `f64` `Num` value,
+// #1280). `PartialEq` is sufficient for every use site.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(tag = "type")]
 pub enum FilterExpr {
     /// A single primitive leaf.
