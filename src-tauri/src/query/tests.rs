@@ -166,6 +166,7 @@ fn req(filter: FilterExpr) -> AdvancedQueryRequest {
         sort: Vec::new(),
         cursor: None,
         limit: None,
+        fulltext: None,
     }
 }
 
@@ -393,6 +394,7 @@ async fn sort_by_position_ascending_with_cursor_resume() {
         }],
         cursor,
         limit: Some(2),
+        fulltext: None,
     };
 
     let p1 = compile_and_run(&pool, make(None)).await.unwrap();
@@ -468,6 +470,7 @@ async fn sort_by_last_edited_desc() {
         }],
         cursor: None,
         limit: Some(50),
+        fulltext: None,
     };
     let resp = compile_and_run(&pool, request).await.unwrap();
     let order: Vec<String> = resp
@@ -589,6 +592,7 @@ async fn cursor_sort_mismatch_is_rejected() {
             }],
             cursor: None,
             limit: Some(2),
+            fulltext: None,
         },
     )
     .await
@@ -615,9 +619,240 @@ async fn cursor_sort_mismatch_is_rejected() {
         ],
         cursor: Some(cursor),
         limit: Some(2),
+        fulltext: None,
     };
     assert!(matches!(
         compile_and_run(&pool, resumed).await.unwrap_err(),
         AppError::Validation(_)
     ));
+}
+
+// ── Full-text composition (#1280 fulltext fast-follow) ───────────────────
+
+use crate::fts::rebuild_fts_index;
+
+/// Insert a content block with explicit FTS content + space.
+async fn insert_ft_block(pool: &SqlitePool, id: &str, space_id: &str, content: &str) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, space_id) VALUES (?, 'content', ?, ?)",
+    )
+    .bind(id)
+    .bind(content)
+    .bind(space_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+const F1: &str = "01F1000000000000000000000";
+const F2: &str = "01F2000000000000000000000";
+const F3: &str = "01F3000000000000000000000";
+const F4: &str = "01F4000000000000000000000";
+const FX: &str = "01FX000000000000000000000";
+
+/// Seed FTS content + structural attributes, then rebuild the FTS index.
+///   F1 — space A, "alpha beta gamma quick brown fox", tag RED
+///   F2 — space A, "alpha delta epsilon quick",        tag RED
+///   F3 — space A, "alpha zeta solo passage",          (no tag)
+///   F4 — space A, "unrelated content passage here",   tag RED
+///   FX — space B, "alpha beta other space",           tag RED
+async fn seed_ft(pool: &SqlitePool) {
+    for sp in [SPACE, OTHER_SPACE] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, page_id, space_id) VALUES (?, 'page', ?, NULL)",
+        )
+        .bind(sp)
+        .bind(sp)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+            .bind(sp)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    insert_ft_block(pool, F1, SPACE, "alpha beta gamma quick brown fox").await;
+    insert_ft_block(pool, F2, SPACE, "alpha delta epsilon quick").await;
+    insert_ft_block(pool, F3, SPACE, "alpha zeta solo passage").await;
+    insert_ft_block(pool, F4, SPACE, "unrelated content passage here").await;
+    insert_ft_block(pool, FX, OTHER_SPACE, "alpha beta other space").await;
+
+    insert_tag(pool, F1, TAG_RED).await;
+    insert_tag(pool, F2, TAG_RED).await;
+    insert_tag(pool, F4, TAG_RED).await;
+    insert_tag(pool, FX, TAG_RED).await;
+
+    rebuild_fts_index(pool).await.unwrap();
+}
+
+fn ft_req(fulltext: &str) -> AdvancedQueryRequest {
+    AdvancedQueryRequest {
+        space_id: SPACE.to_string(),
+        filter: default_filter(),
+        sort: Vec::new(),
+        cursor: None,
+        limit: None,
+        fulltext: Some(fulltext.to_string()),
+    }
+}
+
+#[tokio::test]
+async fn fulltext_only_returns_matching_set_in_space() {
+    let (pool, _d) = test_pool().await;
+    seed_ft(&pool).await;
+
+    // "alpha" matches F1, F2, F3 in SPACE; FX is in OTHER_SPACE (excluded);
+    // F4 has no "alpha".
+    let resp = compile_and_run(&pool, ft_req("alpha")).await.unwrap();
+    assert_eq!(ids(&resp), set(&[F1, F2, F3]));
+    assert_eq!(resp.total_count, Some(3));
+    // Every row carries a bm25 score on the full-text path.
+    assert!(
+        resp.rows.iter().all(|r| r.score.is_some()),
+        "fulltext rows must carry a score"
+    );
+}
+
+#[tokio::test]
+async fn fulltext_plus_structural_filter_intersects() {
+    let (pool, _d) = test_pool().await;
+    seed_ft(&pool).await;
+
+    // "alpha" ∩ tag RED → F1, F2 (F3 has no RED tag; F4 has no "alpha";
+    // FX is in OTHER_SPACE).
+    let mut request = ft_req("alpha");
+    request.filter = leaf(FilterPrimitive::Tag {
+        tag: TAG_RED.to_string(),
+    });
+    let resp = compile_and_run(&pool, request).await.unwrap();
+    assert_eq!(ids(&resp), set(&[F1, F2]));
+    assert_eq!(resp.total_count, Some(2));
+}
+
+#[tokio::test]
+async fn score_is_some_with_fulltext_and_none_without() {
+    let (pool, _d) = test_pool().await;
+    seed_ft(&pool).await;
+
+    let with = compile_and_run(&pool, ft_req("alpha")).await.unwrap();
+    assert!(with.rows.iter().all(|r| r.score.is_some()));
+
+    let without = compile_and_run(&pool, req(default_filter())).await.unwrap();
+    assert!(without.rows.iter().all(|r| r.score.is_none()));
+}
+
+#[tokio::test]
+async fn default_sort_is_relevance_when_fulltext() {
+    let (pool, _d) = test_pool().await;
+    seed_ft(&pool).await;
+
+    // No explicit sort → default relevance (lower bm25 = better → first).
+    let resp = compile_and_run(&pool, ft_req("alpha")).await.unwrap();
+    // Scores must be non-decreasing across the page (ASC by rank).
+    let scores: Vec<f64> = resp.rows.iter().map(|r| r.score.unwrap()).collect();
+    assert!(
+        scores.windows(2).all(|w| w[0] <= w[1]),
+        "default fulltext sort must be relevance-ascending, got {scores:?}"
+    );
+}
+
+#[tokio::test]
+async fn explicit_relevance_sort_accepted_with_fulltext() {
+    let (pool, _d) = test_pool().await;
+    seed_ft(&pool).await;
+
+    let mut request = ft_req("alpha");
+    request.sort = vec![SortKey {
+        source: SortSource::Relevance,
+        desc: false,
+    }];
+    let resp = compile_and_run(&pool, request).await.unwrap();
+    assert_eq!(ids(&resp), set(&[F1, F2, F3]));
+}
+
+#[tokio::test]
+async fn relevance_sort_rejected_without_fulltext() {
+    let (pool, _d) = test_pool().await;
+    seed_ft(&pool).await;
+
+    let request = AdvancedQueryRequest {
+        space_id: SPACE.to_string(),
+        filter: default_filter(),
+        sort: vec![SortKey {
+            source: SortSource::Relevance,
+            desc: false,
+        }],
+        cursor: None,
+        limit: None,
+        fulltext: None, // no rank channel to sort on.
+    };
+    assert!(matches!(
+        compile_and_run(&pool, request).await.unwrap_err(),
+        AppError::Validation(_)
+    ));
+}
+
+#[tokio::test]
+async fn fulltext_pagination_under_relevance_equals_one_big_page() {
+    let (pool, _d) = test_pool().await;
+    seed_ft(&pool).await;
+
+    // One big page over "alpha" (F1, F2, F3), relevance default.
+    let mut big = ft_req("alpha");
+    big.limit = Some(50);
+    let big_resp = compile_and_run(&pool, big).await.unwrap();
+    let all: Vec<String> = big_resp
+        .rows
+        .iter()
+        .map(|r| r.block.id.as_str().to_string())
+        .collect();
+    assert!(!big_resp.has_more);
+    assert_eq!(all.len(), 3);
+
+    // Page through with limit 1 under the relevance sort.
+    let mut collected: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut page = ft_req("alpha");
+        page.limit = Some(1);
+        page.cursor = cursor.clone();
+        let resp = compile_and_run(&pool, page).await.unwrap();
+        for r in &resp.rows {
+            collected.push(r.block.id.as_str().to_string());
+        }
+        if resp.has_more {
+            cursor = resp.next_cursor.clone();
+            assert!(cursor.is_some());
+        } else {
+            assert!(resp.next_cursor.is_none());
+            break;
+        }
+    }
+    assert_eq!(
+        collected, all,
+        "relevance page-through order/content must equal one big page"
+    );
+    let uniq: BTreeSet<&String> = collected.iter().collect();
+    assert_eq!(
+        uniq.len(),
+        collected.len(),
+        "no duplicate rows across pages"
+    );
+}
+
+#[tokio::test]
+async fn invalid_fts_query_is_validation_error() {
+    let (pool, _d) = test_pool().await;
+    seed_ft(&pool).await;
+
+    // A leading bare `NOT` is a valid sanitiser output but an FTS5 binary-op
+    // syntax error (`NOT` needs a left operand), surfaced as Validation.
+    let err = compile_and_run(&pool, ft_req("NOT alpha"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "an FTS5 parse error must map to Validation, got {err:?}"
+    );
 }

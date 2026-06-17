@@ -1077,6 +1077,16 @@ export type AdvancedQueryRequest = {
 	 *  [`engine::MAX_LIMIT`].
 	 */
 	limit?: number | null,
+	/**
+	 *  Optional full-text term. When `Some(q)`, the query composes an FTS5
+	 *  `MATCH` over `fts_blocks` (sanitised via the shared FTS sanitiser)
+	 *  INTERSECTED with the structural `filter`, exposes the per-row `bm25`
+	 *  relevance via [`QueryResultRow::score`], and defaults the sort to
+	 *  [`SortSource::Relevance`] (best-first) when no explicit `sort` is
+	 *  given. When `None`, the query is purely structural (full backward
+	 *  compat with the C1 engine) and [`SortSource::Relevance`] is rejected.
+	 */
+	fulltext?: string | null,
 };
 
 /**  The paginated result of an advanced query. */
@@ -2296,9 +2306,9 @@ export type PurgeResponse = {
  */
 export type QueryResultRow = {
 	/**
-	 *  The ranking channel. ALWAYS `None` in this structural-only PR; a
-	 *  future full-text / vector pass fills it. Kept so the wire shape is
-	 *  stable across the fast-follows.
+	 *  The ranking channel. `Some(bm25)` when the request carried a
+	 *  `fulltext` term (lower is a better match); `None` for purely
+	 *  structural queries. A future vector pass may also fill it.
 	 */
 	score?: number | null,
 } & ActiveBlockRow;
@@ -2681,11 +2691,12 @@ export type SortKey = {
 /**
  *  The thing a [`SortKey`] orders by.
  *
- *  Internally-tagged on `"type"`. Only `Column` exists in this
- *  structural-only PR. `Relevance` (full-text rank), `Aggregate`
- *  (group-by aggregate), and `VectorScore` (vector similarity) are RESERVED
- *  for the fast-follow PRs — they are NOT added here because there is no
- *  relevance / aggregate / vector channel to sort on yet.
+ *  Internally-tagged on `"type"`. `Column` sorts on a fixed block column.
+ *  `Relevance` sorts on the full-text `bm25` rank and is ONLY valid when the
+ *  request carries a `fulltext` term — the engine rejects it otherwise
+ *  (there is no rank channel to sort on). `Aggregate` (group-by aggregate)
+ *  and `VectorScore` (vector similarity) remain RESERVED for later
+ *  fast-follows.
  */
 export type SortSource =
 /**
@@ -2694,7 +2705,13 @@ export type SortSource =
  *  a literal SQL column, so SQL injection through a sort key is
  *  impossible by construction.
  */
-{ type: "Column"; name: SortColumn };
+{ type: "Column"; name: SortColumn } |
+/**
+ *  Sort by full-text relevance (`fts.rank`, a `bm25` score — lower is
+ *  better). Only valid when the request carries a `fulltext` term;
+ *  otherwise the engine rejects it with a validation error.
+ */
+{ type: "Relevance" };
 
 /**
  *  Newtype wrapper around a space ULID for type-safety + IPC bindings.
