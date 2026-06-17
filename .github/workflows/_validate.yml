@@ -189,6 +189,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        uses: ./.github/actions/prepare-apt
+
       - name: Install system dependencies
         # `mold` is added to speed up the linker step on the Rust builds
         # (clippy, cargo-deny, sqlx prepare's compile pass, etc).
@@ -690,30 +693,31 @@ jobs:
           restore-keys: |
             playwright-${{ runner.os }}-
 
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        uses: ./.github/actions/prepare-apt
+
       - name: Install Playwright system deps (always)
-        # `install-deps` apt-installs ~33 MB of system libs/fonts each run
-        # (not on the base image, not cacheable). The real flake source: a
-        # stalling Ubuntu/Azure mirror made apt crawl at ~6 min/package with
-        # no timeout, eating the whole 20-min job before tests even started
-        # (runs 27708752343 / 27711626771 — a random shard cascaded to the cap
-        # in *setup*, never reaching the suite). Harden apt: bound each
-        # download (fail a stalled mirror fast) + retry, then wrap the step in
-        # a bounded retry loop so a transient stall recovers instead of
-        # cascading.
+        # `install-deps` apt-installs ~33 MB of system libs/fonts each run (not
+        # on the base image, not cacheable). The real flake source was the
+        # runner's `unattended-upgrades`/`apt-daily` holding the dpkg lock at
+        # boot: this step queued behind a ~6-min background job and ran out the
+        # 20-min budget during SETUP, never reaching the suite (runs
+        # 27708752343 / 27711626771). `prepare-apt` above stops those jobs,
+        # waits for the lock, and bounds mirror stalls; here we just retry once
+        # more after re-clearing the lock, in case a straggler grabbed it.
         run: |
-          sudo tee /etc/apt/apt.conf.d/99-ci-resilience >/dev/null <<'APT'
-          Acquire::Retries "5";
-          Acquire::http::Timeout "30";
-          Acquire::https::Timeout "30";
-          APT
-          for attempt in 1 2 3; do
-            if timeout 360 npx playwright install-deps chromium; then
+          for attempt in 1 2; do
+            if npx playwright install-deps chromium; then
               exit 0
             fi
-            echo "::warning::playwright install-deps attempt ${attempt} stalled/failed; retrying"
-            sleep 15
+            echo "::warning::playwright install-deps attempt ${attempt} failed; waiting for apt lock before retry"
+            for _ in $(seq 1 60); do
+              sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || break
+              sleep 3
+            done
+            sudo dpkg --configure -a || true
           done
-          echo "::error::playwright install-deps failed after 3 attempts"
+          echo "::error::playwright install-deps failed after 2 attempts"
           exit 1
 
       - name: Install Playwright browser binaries (on cache miss)
@@ -802,6 +806,9 @@ jobs:
                       /usr/share/swift \
                       "$AGENT_TOOLSDIRECTORY"
           echo "After:" && df -h /
+
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        uses: ./.github/actions/prepare-apt
 
       - name: Install system dependencies
         # Same apt list as the `lint` sibling — both jobs compile Rust and
@@ -1023,6 +1030,9 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        uses: ./.github/actions/prepare-apt
 
       - name: Install system dependencies
         # Same apt list as cargo-tests / lint — the agaric-mcp crate

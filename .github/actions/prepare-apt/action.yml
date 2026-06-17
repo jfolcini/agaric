@@ -1,0 +1,48 @@
+name: Prepare apt
+description: >-
+  Make apt installs reliable on GitHub-hosted runners. The runner boots
+  `unattended-upgrades` plus the `apt-daily` timers, which grab the dpkg lock at
+  startup; an install that lands during that window queues behind a ~6-minute
+  background job and can run out the 20-minute job budget during SETUP (the real
+  root cause of the intermittent "Playwright timeout" — and the same stall that
+  cancels the lint/cargo/mcp `apt-get` steps). This action stops those background
+  jobs, waits for the lock to clear, and bounds download stalls so a slow mirror
+  fails fast and retries instead of hanging.
+runs:
+  using: composite
+  steps:
+    - name: Prepare apt (disable background upgrades, wait for dpkg lock)
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Bound apt download stalls: a hung mirror connection fails after 30s and
+        # retries, instead of crawling at ~6 min/package with no timeout.
+        sudo tee /etc/apt/apt.conf.d/99-ci-resilience >/dev/null <<'APT'
+        Acquire::Retries "5";
+        Acquire::http::Timeout "30";
+        Acquire::https::Timeout "30";
+        APT
+
+        # Stop the background apt jobs that hold the dpkg lock at boot. Each is
+        # best-effort (the unit may not exist on every image), hence `|| true`.
+        sudo systemctl stop unattended-upgrades.service apt-daily.service \
+          apt-daily-upgrade.service apt-daily.timer apt-daily-upgrade.timer \
+          2>/dev/null || true
+        sudo systemctl kill --kill-who=all apt-daily.service 2>/dev/null || true
+
+        # Wait (≤180s) for any in-flight apt/dpkg process to release the lock.
+        # `timeout` on the actual install only SIGTERMs its direct child, leaving
+        # a grandchild `apt-get` holding the lock — so a hard wait here is what
+        # actually lets a retry succeed.
+        for _ in $(seq 1 60); do
+          if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock \
+                 /var/lib/apt/lists/lock >/dev/null 2>&1; then
+            break
+          fi
+          echo "waiting for apt/dpkg lock to clear…"
+          sleep 3
+        done
+
+        # Repair any half-finished dpkg state a killed background job left behind.
+        sudo dpkg --configure -a || true
