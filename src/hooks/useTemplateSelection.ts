@@ -13,6 +13,7 @@ import { useCallback, useState } from 'react'
 import { notify } from '@/lib/notify'
 
 import { insertTemplateBlocks, loadTemplatePagesWithPreview } from '../lib/template-utils'
+import { useBlockStore } from '../stores/blocks'
 import { keyFor, useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
 
@@ -74,11 +75,18 @@ export function useTemplateSelection({
         const tplSpaceId = useSpaceStore.getState().currentSpaceId
         const pageTitle =
           useResolveStore.getState().cache.get(keyFor(tplSpaceId, rootParentId ?? ''))?.title ?? ''
+        // `{{cursor}}` marker — record the block that should receive the caret
+        // and focus it after the reload so the inserted tree is on screen.
+        let cursorBlockId: string | null = null
         const ids = await insertTemplateBlocks(templatePageId, parentId, tplSpaceId, {
           pageTitle,
+          onCursorBlock: (blockId) => {
+            cursorBlockId = blockId
+          },
         })
         if (ids.length > 0) {
           await load()
+          if (cursorBlockId) useBlockStore.getState().setFocused(cursorBlockId)
           notify.success(t('slash.templateInserted'))
         }
       } catch {
