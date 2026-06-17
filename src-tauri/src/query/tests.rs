@@ -167,6 +167,7 @@ fn req(filter: FilterExpr) -> AdvancedQueryRequest {
         cursor: None,
         limit: None,
         fulltext: None,
+        group_by: None,
     }
 }
 
@@ -395,6 +396,7 @@ async fn sort_by_position_ascending_with_cursor_resume() {
         cursor,
         limit: Some(2),
         fulltext: None,
+        group_by: None,
     };
 
     let p1 = compile_and_run(&pool, make(None)).await.unwrap();
@@ -471,6 +473,7 @@ async fn sort_by_last_edited_desc() {
         cursor: None,
         limit: Some(50),
         fulltext: None,
+        group_by: None,
     };
     let resp = compile_and_run(&pool, request).await.unwrap();
     let order: Vec<String> = resp
@@ -593,6 +596,7 @@ async fn cursor_sort_mismatch_is_rejected() {
             cursor: None,
             limit: Some(2),
             fulltext: None,
+            group_by: None,
         },
     )
     .await
@@ -620,6 +624,7 @@ async fn cursor_sort_mismatch_is_rejected() {
         cursor: Some(cursor),
         limit: Some(2),
         fulltext: None,
+        group_by: None,
     };
     assert!(matches!(
         compile_and_run(&pool, resumed).await.unwrap_err(),
@@ -694,6 +699,7 @@ fn ft_req(fulltext: &str) -> AdvancedQueryRequest {
         cursor: None,
         limit: None,
         fulltext: Some(fulltext.to_string()),
+        group_by: None,
     }
 }
 
@@ -786,6 +792,7 @@ async fn relevance_sort_rejected_without_fulltext() {
         cursor: None,
         limit: None,
         fulltext: None, // no rank channel to sort on.
+        group_by: None,
     };
     assert!(matches!(
         compile_and_run(&pool, request).await.unwrap_err(),
@@ -854,5 +861,349 @@ async fn invalid_fts_query_is_validation_error() {
     assert!(
         matches!(err, AppError::Validation(_)),
         "an FTS5 parse error must map to Validation, got {err:?}"
+    );
+}
+
+// ── Grouping (#1280 grouping fast-follow) ─────────────────────────────────
+
+use crate::query::{DateBucketUnit, DateField, GroupKey, GroupSpec, QueryGroup};
+
+/// Build a grouped request over SPACE with the given filter + group key.
+fn group_req(filter: FilterExpr, key: GroupKey) -> AdvancedQueryRequest {
+    AdvancedQueryRequest {
+        space_id: SPACE.to_string(),
+        filter,
+        sort: Vec::new(),
+        cursor: None,
+        limit: None,
+        fulltext: None,
+        group_by: Some(GroupSpec { key }),
+    }
+}
+
+/// Map `groups` to a `{key -> count}` lookup for count assertions.
+fn group_counts(resp: &AdvancedQueryResponse) -> std::collections::BTreeMap<String, i64> {
+    resp.groups
+        .iter()
+        .map(|g| (g.key.clone(), g.count))
+        .collect()
+}
+
+fn find_group<'a>(resp: &'a AdvancedQueryResponse, key: &str) -> &'a QueryGroup {
+    resp.groups
+        .iter()
+        .find(|g| g.key == key)
+        .unwrap_or_else(|| panic!("group `{key}` not found; got {:?}", group_counts(resp)))
+}
+
+#[tokio::test]
+async fn group_by_state_counts_with_none_bucket() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    let resp = compile_and_run(&pool, group_req(default_filter(), GroupKey::State))
+        .await
+        .unwrap();
+
+    // Flat rows are empty in grouped mode.
+    assert!(resp.rows.is_empty(), "grouped mode leaves rows empty");
+
+    let counts = group_counts(&resp);
+    // TODO: B1, B3. DONE: B2. none: B4 + RED tag block + BLUE tag block.
+    assert_eq!(counts.get("TODO"), Some(&2));
+    assert_eq!(counts.get("DONE"), Some(&1));
+    assert_eq!(
+        counts.get("none"),
+        Some(&3),
+        "NULL todo_state must bucket under `none`; got {counts:?}"
+    );
+    // total_count is the number of GROUPS on the first page.
+    assert_eq!(resp.total_count, Some(3));
+    assert!(!resp.has_more);
+
+    // Buckets are ordered by descending count.
+    let order: Vec<i64> = resp.groups.iter().map(|g| g.count).collect();
+    assert!(
+        order.windows(2).all(|w| w[0] >= w[1]),
+        "groups must be count-descending, got {order:?}"
+    );
+}
+
+#[tokio::test]
+async fn group_by_tag_counts_each_tag_with_multiplicity() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    let resp = compile_and_run(&pool, group_req(default_filter(), GroupKey::Tag))
+        .await
+        .unwrap();
+
+    let counts = group_counts(&resp);
+    // RED tags B1, B2 → 2. BLUE tags B2, B3 → 2. B2 is double-tagged so it
+    // counts in BOTH groups (documented multiplicity). BX is in OTHER_SPACE.
+    assert_eq!(counts.get(TAG_RED), Some(&2), "got {counts:?}");
+    assert_eq!(counts.get(TAG_BLUE), Some(&2), "got {counts:?}");
+    // No `none` bucket for tags — the JOIN drops untagged blocks.
+    assert!(!counts.contains_key("none"), "tags have no none bucket");
+
+    // B2 appears as a member in BOTH the RED and BLUE buckets.
+    let red = find_group(&resp, TAG_RED);
+    let blue = find_group(&resp, TAG_BLUE);
+    let red_ids: BTreeSet<&str> = red.members.iter().map(|m| m.block.id.as_str()).collect();
+    let blue_ids: BTreeSet<&str> = blue.members.iter().map(|m| m.block.id.as_str()).collect();
+    assert!(red_ids.contains("01B2000000000000000000000"));
+    assert!(blue_ids.contains("01B2000000000000000000000"));
+}
+
+#[tokio::test]
+async fn group_by_page_buckets_under_none_when_pageless() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    // The seeded content/tag blocks have NULL page_id → all under `none`.
+    let resp = compile_and_run(&pool, group_req(default_filter(), GroupKey::Page))
+        .await
+        .unwrap();
+    let counts = group_counts(&resp);
+    assert!(
+        counts.contains_key("none"),
+        "page-less blocks must bucket under `none`; got {counts:?}"
+    );
+}
+
+#[tokio::test]
+async fn group_by_block_type_buckets() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    let resp = compile_and_run(&pool, group_req(default_filter(), GroupKey::BlockType))
+        .await
+        .unwrap();
+    let counts = group_counts(&resp);
+    // 4 content blocks (B1..B4) + 2 tag blocks (RED, BLUE).
+    assert_eq!(counts.get("content"), Some(&4), "got {counts:?}");
+    assert_eq!(counts.get("tag"), Some(&2), "got {counts:?}");
+}
+
+#[tokio::test]
+async fn group_by_date_bucket_due_month_labels() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    let resp = compile_and_run(
+        &pool,
+        group_req(
+            default_filter(),
+            GroupKey::DateBucket {
+                source: DateField::Due,
+                unit: DateBucketUnit::Month,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let counts = group_counts(&resp);
+    // Due dates: B1 2026-03-01, B2 2026-03-05 → "2026-03" = 2. B4 2026-01-01 →
+    // "2026-01" = 1. B3 (NULL due) + tag blocks → "none".
+    assert_eq!(counts.get("2026-03"), Some(&2), "got {counts:?}");
+    assert_eq!(counts.get("2026-01"), Some(&1), "got {counts:?}");
+    assert!(
+        counts.contains_key("none"),
+        "NULL due → none; got {counts:?}"
+    );
+}
+
+#[tokio::test]
+async fn group_by_date_bucket_due_day_labels() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    let resp = compile_and_run(
+        &pool,
+        group_req(
+            default_filter(),
+            GroupKey::DateBucket {
+                source: DateField::Due,
+                unit: DateBucketUnit::Day,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let counts = group_counts(&resp);
+    // Day granularity → each distinct due date its own bucket.
+    assert_eq!(counts.get("2026-03-01"), Some(&1), "got {counts:?}");
+    assert_eq!(counts.get("2026-03-05"), Some(&1), "got {counts:?}");
+    assert_eq!(counts.get("2026-01-01"), Some(&1), "got {counts:?}");
+}
+
+#[tokio::test]
+async fn group_by_property_value_text() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    // Tag two blocks with the same property value and one with another.
+    let set_prop = |bid: &'static str, val: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'status', ?)",
+            )
+            .bind(bid)
+            .bind(val)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    set_prop("01B1000000000000000000000", "open").await;
+    set_prop("01B2000000000000000000000", "open").await;
+    set_prop("01B3000000000000000000000", "closed").await;
+
+    let resp = compile_and_run(
+        &pool,
+        group_req(
+            default_filter(),
+            GroupKey::Property {
+                key: "status".to_string(),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let counts = group_counts(&resp);
+    assert_eq!(counts.get("open"), Some(&2), "got {counts:?}");
+    assert_eq!(counts.get("closed"), Some(&1), "got {counts:?}");
+    // B4 + tag blocks lack the property → `none`.
+    assert!(counts.contains_key("none"), "got {counts:?}");
+}
+
+#[tokio::test]
+async fn group_member_preview_is_bounded() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    // Insert > GROUP_MEMBER_PREVIEW blocks all in one state bucket.
+    let n = crate::query::engine::GROUP_MEMBER_PREVIEW + 5;
+    for i in 0..n {
+        let id = format!("01BIG{i:020}");
+        insert_block(
+            &pool,
+            &id,
+            Some(SPACE),
+            "content",
+            Some("DOING"),
+            None,
+            None,
+        )
+        .await;
+    }
+
+    let resp = compile_and_run(&pool, group_req(default_filter(), GroupKey::State))
+        .await
+        .unwrap();
+    let doing = find_group(&resp, "DOING");
+    assert_eq!(doing.count, n, "full count is unbounded by the preview cap");
+    assert_eq!(
+        i64::try_from(doing.members.len()).unwrap(),
+        crate::query::engine::GROUP_MEMBER_PREVIEW,
+        "member preview must be capped at GROUP_MEMBER_PREVIEW"
+    );
+}
+
+#[tokio::test]
+async fn group_pagination_pages_through_all_groups_once() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    // One big page: all state groups (TODO, DONE, none).
+    let mut big = group_req(default_filter(), GroupKey::State);
+    big.limit = Some(50);
+    let big_resp = compile_and_run(&pool, big).await.unwrap();
+    let all_keys: Vec<String> = big_resp.groups.iter().map(|g| g.key.clone()).collect();
+    assert!(!big_resp.has_more);
+    assert_eq!(all_keys.len(), 3);
+
+    // Page through with limit 1.
+    let mut collected: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut first = true;
+    loop {
+        let mut page = group_req(default_filter(), GroupKey::State);
+        page.limit = Some(1);
+        page.cursor = cursor.clone();
+        let resp = compile_and_run(&pool, page).await.unwrap();
+        if first {
+            assert_eq!(resp.total_count, Some(3), "first-page total = #groups");
+            first = false;
+        } else {
+            assert_eq!(resp.total_count, None, "cursor pages skip total");
+        }
+        for g in &resp.groups {
+            collected.push(g.key.clone());
+        }
+        if resp.has_more {
+            cursor = resp.next_cursor.clone();
+            assert!(cursor.is_some());
+        } else {
+            assert!(resp.next_cursor.is_none());
+            break;
+        }
+    }
+    assert_eq!(
+        collected, all_keys,
+        "page-through order must equal one big page"
+    );
+    let uniq: BTreeSet<&String> = collected.iter().collect();
+    assert_eq!(
+        uniq.len(),
+        collected.len(),
+        "no duplicate groups across pages"
+    );
+}
+
+#[tokio::test]
+async fn group_by_state_respects_structural_filter() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    // Group by state, but only over tag-RED blocks (B1 TODO, B2 DONE).
+    let resp = compile_and_run(
+        &pool,
+        group_req(
+            leaf(FilterPrimitive::Tag {
+                tag: TAG_RED.to_string(),
+            }),
+            GroupKey::State,
+        ),
+    )
+    .await
+    .unwrap();
+    let counts = group_counts(&resp);
+    assert_eq!(counts.get("TODO"), Some(&1), "got {counts:?}");
+    assert_eq!(counts.get("DONE"), Some(&1), "got {counts:?}");
+    assert!(
+        !counts.contains_key("none"),
+        "filtered set has no NULL-state block; got {counts:?}"
+    );
+}
+
+#[tokio::test]
+async fn group_composes_with_fulltext() {
+    let (pool, _d) = test_pool().await;
+    seed_ft(&pool).await;
+
+    // Group the "alpha" FTS match set (F1, F2, F3 in SPACE) by tag.
+    // F1, F2 carry RED; F3 has no tag (dropped by the tag JOIN).
+    let mut request = group_req(default_filter(), GroupKey::Tag);
+    request.fulltext = Some("alpha".to_string());
+    let resp = compile_and_run(&pool, request).await.unwrap();
+    let counts = group_counts(&resp);
+    assert_eq!(counts.get(TAG_RED), Some(&2), "got {counts:?}");
+    // Members carry a bm25 score on the full-text path.
+    let red = find_group(&resp, TAG_RED);
+    assert!(
+        red.members.iter().all(|m| m.score.is_some()),
+        "grouped full-text members must carry a score"
     );
 }

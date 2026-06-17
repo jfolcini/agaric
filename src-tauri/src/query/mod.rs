@@ -12,10 +12,10 @@
 //!
 //! ## Scope (structural + full-text)
 //!
-//! The C1 engine was structural-only; this fast-follow adds **full-text
-//! composition**. `GROUP BY` grouping and aggregation remain FAST-FOLLOWS,
-//! NOT implemented here. The wire shapes reserve forward-compat slots so
-//! adding them later is non-breaking:
+//! The C1 engine was structural-only; later fast-follows added **full-text
+//! composition** and now **grouping**. Per-group aggregation remains a
+//! FAST-FOLLOW (C4), NOT implemented here. The wire shapes reserve
+//! forward-compat slots so adding it later is non-breaking:
 //!
 //! * [`QueryResultRow::score`] — the ranking channel. `Some(bm25)` when the
 //!   request carried a `fulltext` term; `None` for purely structural
@@ -24,9 +24,28 @@
 //!   `Aggregate` / `VectorScore` are reserved for the aggregate / vector
 //!   PRs and are intentionally NOT added yet (there is no aggregate or
 //!   vector channel to sort on).
-//! * [`AdvancedQueryRequest`] carries `fulltext` (this fast-follow) but NO
-//!   `group_by` / `aggregates` fields — those land with their respective
-//!   fast-follows.
+//! * [`AdvancedQueryRequest`] carries `fulltext` AND now `group_by` (this
+//!   fast-follow). When `group_by` is `Some`, the response's `groups` field
+//!   carries per-bucket counts + a bounded member preview and `rows` is
+//!   empty; when `None`, the engine is byte-for-byte the flat C1+FTS engine
+//!   (`groups` empty). Per-group `aggregates` land with C4.
+//!
+//! ## Grouping (this fast-follow)
+//!
+//! A [`GroupSpec`] picks ONE dimension ([`GroupKey`]) to bucket the matched
+//! rows by — tag, page, state, block-type, priority, a typed property, or a
+//! date bucket. The engine runs a `GROUP BY <key-expr>` over the SAME
+//! predicate as the flat path (structural + optional FTS `MATCH`), returns
+//! the buckets ordered by descending count (then key) with group-level
+//! keyset pagination, and attaches a bounded per-group member PREVIEW (the
+//! first N members in the default sort, via a `ROW_NUMBER()` window) so a
+//! huge bucket cannot blow the payload. The full member list of one bucket
+//! is a follow-up "expand group" flat query scoped to that key.
+//!
+//! **Tag multiplicity (documented):** grouping by [`GroupKey::Tag`] joins
+//! `block_tags`, so a block with K tags appears in K tag groups and is
+//! counted once per group. Every other key is single-valued (one bucket per
+//! block).
 
 pub mod engine;
 pub mod projection;
@@ -82,6 +101,14 @@ pub struct AdvancedQueryRequest {
     /// compat with the C1 engine) and [`SortSource::Relevance`] is rejected.
     #[serde(default)]
     pub fulltext: Option<String>,
+    /// Optional grouping. When `Some`, the engine runs the GROUPED path:
+    /// it buckets the matched rows by the [`GroupSpec`]'s dimension and
+    /// returns [`AdvancedQueryResponse::groups`] (per-bucket count + a
+    /// bounded member preview) with group-level keyset pagination, leaving
+    /// [`AdvancedQueryResponse::rows`] empty. When `None` (the default), the
+    /// engine runs the FLAT path exactly as before (full backward compat).
+    #[serde(default)]
+    pub group_by: Option<GroupSpec>,
 }
 
 /// The default `filter` — `And { children: [] }` is the TRUE expression
@@ -90,6 +117,91 @@ fn default_filter() -> FilterExpr {
     FilterExpr::And {
         children: Vec::new(),
     }
+}
+
+/// A grouping directive: bucket the matched rows by ONE dimension.
+///
+/// C4 will extend this with per-group aggregates; for now it carries only
+/// the [`GroupKey`].
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupSpec {
+    /// The dimension to bucket by.
+    pub key: GroupKey,
+}
+
+/// The dimension an advanced query groups by. Internally-tagged on `"type"`.
+///
+/// Every variant resolves to a fixed SQL group-key expression built from
+/// STATIC column literals; the only user-controlled inputs are bound as `?`
+/// parameters ([`GroupKey::Property`]'s `key`, [`GroupKey::DateBucket`]'s
+/// `source`/`unit` — and `unit` maps to a literal `strftime` format, never
+/// interpolated). No user string is ever spliced in as an identifier, so
+/// grouping cannot inject SQL.
+///
+/// **Multiplicity:** [`GroupKey::Tag`] is the only MULTI-valued key — a
+/// block with K tags lands in K groups. All others are single-valued.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(tag = "type")]
+pub enum GroupKey {
+    /// Group by tag (`block_tags.tag_id`). Joins `block_tags`, so a block
+    /// appears once per tag it carries (documented multiplicity).
+    Tag,
+    /// Group by owning page (`b.page_id`). Blocks with no page bucket under
+    /// the rendered key `"none"`.
+    Page,
+    /// Group by todo state (`b.todo_state`); NULL state → the `"none"`
+    /// bucket.
+    State,
+    /// Group by block type (`b.block_type`), always non-NULL.
+    BlockType,
+    /// Group by priority (`b.priority`); NULL → the `"none"` bucket.
+    Priority,
+    /// Group by a typed property's `value_text` (correlated lookup on
+    /// `block_properties` keyed by `key`); blocks lacking the property →
+    /// the `"none"` bucket. `key` is BOUND as a `?` parameter.
+    Property {
+        /// The property key to read `value_text` for.
+        key: String,
+    },
+    /// Group by a calendar bucket over a date column. `source` selects the
+    /// column / op-log timestamp; `unit` selects the `strftime` granularity.
+    /// Blocks with no date in the source → the `"none"` bucket.
+    DateBucket {
+        /// Which date the bucket is computed over.
+        source: DateField,
+        /// The calendar granularity (day / ISO-week / month).
+        unit: DateBucketUnit,
+    },
+}
+
+/// The date column / timestamp a [`GroupKey::DateBucket`] buckets over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum DateField {
+    /// `b.due_date` (TEXT ISO `YYYY-MM-DD`).
+    Due,
+    /// `b.scheduled_date` (TEXT ISO `YYYY-MM-DD`).
+    Scheduled,
+    /// Creation time. Derived from the EARLIEST `op_log.created_at`
+    /// (epoch-ms) for the block; blocks with no op-log row have no created
+    /// date → the `"none"` bucket.
+    Created,
+    /// Last-edited time. Derived from the LATEST `op_log.created_at`
+    /// (epoch-ms) for the block; same no-op-log rule as `Created`.
+    LastEdited,
+}
+
+/// The calendar granularity of a [`GroupKey::DateBucket`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum DateBucketUnit {
+    /// One bucket per calendar day, rendered `YYYY-MM-DD`.
+    Day,
+    /// One bucket per ISO-ish week, rendered `YYYY-Www` (`strftime('%Y-W%W')`).
+    Week,
+    /// One bucket per calendar month, rendered `YYYY-MM`.
+    Month,
 }
 
 /// One sort key: a source plus a direction. Keys are applied
@@ -166,18 +278,50 @@ pub struct QueryResultRow {
     pub score: Option<f64>,
 }
 
+/// One group bucket of a grouped advanced query.
+///
+/// `key` is the RENDERED group key — a tag id, page id, todo state /
+/// priority string, block type, date-bucket label (`YYYY-MM-DD` /
+/// `YYYY-Www` / `YYYY-MM`), or the literal `"none"` for the NULL/absent
+/// bucket. `count` is the FULL bucket size (every matched row in the group,
+/// not just the previewed members). `members` is a BOUNDED preview — the
+/// first N members in the engine's default sort — so a huge bucket cannot
+/// blow the payload; the full member list of one bucket is a follow-up
+/// "expand group" flat query scoped to that key.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryGroup {
+    /// The rendered group key (or `"none"` for the NULL/absent bucket).
+    pub key: String,
+    /// The full size of this bucket (independent of the member preview cap).
+    pub count: i64,
+    /// A bounded preview of this bucket's member rows (at most
+    /// [`engine::GROUP_MEMBER_PREVIEW`]).
+    pub members: Vec<QueryResultRow>,
+}
+
 /// The paginated result of an advanced query.
+///
+/// In FLAT mode (`group_by` absent) `rows` carries the page and `groups` is
+/// empty. In GROUPED mode (`group_by` present) `groups` carries the bucket
+/// page and `rows` is empty. `next_cursor` / `has_more` / `total_count`
+/// describe whichever axis is paged (rows in flat mode, groups in grouped
+/// mode — `total_count` is the total GROUP count in grouped mode).
 #[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AdvancedQueryResponse {
-    /// The page of matched rows.
+    /// The page of matched rows (FLAT mode). Empty in grouped mode.
     pub rows: Vec<QueryResultRow>,
-    /// Opaque cursor for the next page, or `None` at the end.
+    /// The page of group buckets (GROUPED mode). Empty in flat mode.
+    #[serde(default)]
+    pub groups: Vec<QueryGroup>,
+    /// Opaque cursor for the next page, or `None` at the end. In grouped
+    /// mode this is the GROUP-level keyset cursor.
     pub next_cursor: Option<String>,
     /// `true` when a further page exists.
     pub has_more: bool,
-    /// Total matching rows ignoring the cursor/limit. Computed on the FIRST
-    /// page only (a `COUNT(*)` over the same predicate); `None` on cursor
-    /// pages (the total does not change as the same filter is paged).
+    /// Total matching rows ignoring the cursor/limit, computed on the FIRST
+    /// page only; `None` on cursor pages. In grouped mode this is the total
+    /// number of GROUPS over the same predicate.
     pub total_count: Option<i64>,
 }

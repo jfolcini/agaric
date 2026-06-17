@@ -41,7 +41,8 @@ use crate::pagination::ActiveBlockRow;
 
 use super::projection::{QUERY_ALLOWED_KEYS, QueryProjection};
 use super::{
-    AdvancedQueryRequest, AdvancedQueryResponse, QueryResultRow, SortColumn, SortKey, SortSource,
+    AdvancedQueryRequest, AdvancedQueryResponse, DateBucketUnit, DateField, GroupKey, GroupSpec,
+    QueryGroup, QueryResultRow, SortColumn, SortKey, SortSource,
 };
 
 /// Default page size when the request leaves `limit` unset.
@@ -49,6 +50,13 @@ pub const DEFAULT_LIMIT: i64 = 50;
 
 /// Maximum page size a request may ask for.
 pub const MAX_LIMIT: i64 = 200;
+
+/// Per-group member-preview cap in the GROUPED path. Each bucket on the page
+/// carries at most this many member rows (the first N in the default sort,
+/// selected via a `ROW_NUMBER()` window) so a single huge bucket cannot blow
+/// the response payload. The full member list of one bucket is a follow-up
+/// "expand group" flat query scoped to that bucket's key.
+pub const GROUP_MEMBER_PREVIEW: i64 = 10;
 
 /// Cursor schema version. Bump when the encoded cursor's field layout or
 /// keyset semantics change so stale cursors are rejected on decode.
@@ -568,24 +576,11 @@ pub async fn compile_and_run(
     let filter_sql = renumber(&where_clause.sql, &mut next_pos);
     let filter_binds = where_clause.binds;
 
-    // Decode the cursor (if any) and resolve the sort terms.
-    let cursor = match request.cursor.as_deref() {
-        Some(s) => Some(QueryCursor::decode(s)?),
-        None => None,
-    };
-    let terms = resolve_sort(&request.sort, has_fulltext)?;
-    if let Some(c) = cursor.as_ref()
-        && c.values.len() != terms.len()
-    {
-        return Err(AppError::Validation(
-            "cursor: sort-key count does not match this request's sort".to_string(),
-        ));
-    }
-
     // FROM clause + structural predicate. On the full-text path the FROM
     // joins `fts_blocks` and the predicate is prefixed with the MATCH;
     // otherwise it is the plain `blocks b` scan. The `?N` of the space bind
-    // tracks `space_pos`.
+    // tracks `space_pos`. The same predicate + binds drive BOTH the flat and
+    // the grouped paths.
     let from_clause = if has_fulltext {
         "fts_blocks fts JOIN blocks b ON b.id = fts.block_id"
     } else {
@@ -599,6 +594,42 @@ pub async fn compile_and_run(
     let predicate = format!(
         "{match_prefix}b.space_id = ?{space_pos} AND b.deleted_at IS NULL AND ({filter_sql})"
     );
+
+    // 4b. GROUPED dispatch. When the request carries a `group_by`, the engine
+    //     buckets the matched rows by the spec's dimension and returns the
+    //     grouped page (group-level keyset pagination + a bounded per-group
+    //     member preview); `rows` stays empty. The grouped path reuses the
+    //     SAME predicate / binds / FROM / FTS MATCH, so grouping composes with
+    //     both structural filters and full-text. The flat path below is
+    //     UNCHANGED (full backward compat) when `group_by` is `None`.
+    if let Some(spec) = request.group_by.as_ref() {
+        let ctx = GroupCtx {
+            from_clause,
+            predicate: &predicate,
+            space_id: &request.space_id,
+            space_pos,
+            next_pos,
+            match_sanitized: match_sanitized.as_deref(),
+            has_fulltext,
+            filter_binds: &filter_binds,
+        };
+        return run_grouped(pool, spec, &request, ctx, limit).await;
+    }
+
+    // Decode the cursor (if any) and resolve the sort terms. (Flat path only;
+    // the grouped path above decodes its own group-level cursor.)
+    let cursor = match request.cursor.as_deref() {
+        Some(s) => Some(QueryCursor::decode(s)?),
+        None => None,
+    };
+    let terms = resolve_sort(&request.sort, has_fulltext)?;
+    if let Some(c) = cursor.as_ref()
+        && c.values.len() != terms.len()
+    {
+        return Err(AppError::Validation(
+            "cursor: sort-key count does not match this request's sort".to_string(),
+        ));
+    }
 
     // 5. total_count on the FIRST page only (no cursor). Same predicate +
     //    binds as the fetch, minus the keyset / ORDER BY / LIMIT.
@@ -731,6 +762,381 @@ pub async fn compile_and_run(
 
     Ok(AdvancedQueryResponse {
         rows: result_rows,
+        groups: Vec::new(), // flat mode — no group buckets.
+        next_cursor,
+        has_more,
+        total_count,
+    })
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Grouped path (#1280 grouping fast-follow)
+// ───────────────────────────────────────────────────────────────────────────
+
+/// The shared predicate/bind context threaded from [`compile_and_run`] into
+/// the grouped path so grouping reuses the EXACT same structural + FTS
+/// predicate as the flat path.
+struct GroupCtx<'a> {
+    /// `blocks b` or the `fts_blocks fts JOIN blocks b …` full-text FROM.
+    from_clause: &'a str,
+    /// The assembled `… WHERE` predicate (`?N` numbered, sans the group key
+    /// bind / keyset / LIMIT).
+    predicate: &'a str,
+    /// The space id (bound at `?space_pos`).
+    space_id: &'a str,
+    /// The `?N` slot the space id occupies.
+    space_pos: usize,
+    /// The first FREE `?N` slot after the space + filter binds — where the
+    /// group-key bind (property key) and the keyset/LIMIT binds begin.
+    next_pos: usize,
+    /// The sanitised FTS `MATCH` query (bound at `?1`) on the full-text path.
+    match_sanitized: Option<&'a str>,
+    /// Whether the full-text path is active (drives the `?1` MATCH bind + the
+    /// FTS5 error mapping).
+    has_fulltext: bool,
+    /// The compiled filter binds (bound in order after the space bind).
+    filter_binds: &'a [Bind],
+}
+
+/// The literal `strftime` format for a [`DateBucketUnit`]. A closed mapping
+/// to a STATIC format string — never an interpolated user value.
+fn date_bucket_format(unit: DateBucketUnit) -> &'static str {
+    match unit {
+        DateBucketUnit::Day => "%Y-%m-%d",
+        DateBucketUnit::Week => "%Y-W%W",
+        DateBucketUnit::Month => "%Y-%m",
+    }
+}
+
+/// Resolve a [`GroupKey`] into its SQL group-key expression, an optional
+/// `JOIN` clause, and an optional bound parameter.
+///
+/// The returned `key_expr` is the RAW key SQL (callers wrap it in
+/// `COALESCE(<expr>, 'none')` so a NULL/absent key renders as the `"none"`
+/// bucket). It is built ENTIRELY from static column literals + literal
+/// `strftime` formats; the ONLY user-controlled input ([`GroupKey::Property`]'s
+/// `key`) is returned as a [`Bind`] and placed at the explicit `?{pos}`
+/// slot — never interpolated as an identifier. So grouping cannot inject SQL.
+///
+/// `pos` is the `?N` slot the property-key bind (if any) occupies; it is the
+/// SAME slot every time the expression appears in one statement (SELECT /
+/// GROUP BY / PARTITION BY), so a single bind feeds all occurrences.
+fn group_key_expr(key: &GroupKey, pos: usize) -> (String, &'static str, Option<Bind>) {
+    match key {
+        GroupKey::Tag => (
+            "bt.tag_id".to_string(),
+            " JOIN block_tags bt ON bt.block_id = b.id",
+            None,
+        ),
+        GroupKey::Page => ("b.page_id".to_string(), "", None),
+        GroupKey::State => ("b.todo_state".to_string(), "", None),
+        GroupKey::BlockType => ("b.block_type".to_string(), "", None),
+        GroupKey::Priority => ("b.priority".to_string(), "", None),
+        GroupKey::Property { key } => (
+            // Correlated single-value lookup; the key is a BOUND `?{pos}`.
+            format!(
+                "(SELECT value_text FROM block_properties WHERE block_id = b.id AND key = ?{pos})"
+            ),
+            "",
+            Some(Bind::Text(key.clone())),
+        ),
+        GroupKey::DateBucket { source, unit } => {
+            let fmt = date_bucket_format(*unit);
+            let expr = match source {
+                DateField::Due => format!("strftime('{fmt}', b.due_date)"),
+                DateField::Scheduled => format!("strftime('{fmt}', b.scheduled_date)"),
+                // op_log.created_at is epoch-ms; bucket the earliest (Created)
+                // / latest (LastEdited) op as a calendar date.
+                DateField::Created => format!(
+                    "strftime('{fmt}', (SELECT MIN(created_at) FROM op_log WHERE block_id = b.id) / 1000, 'unixepoch')"
+                ),
+                DateField::LastEdited => format!(
+                    "strftime('{fmt}', (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id) / 1000, 'unixepoch')"
+                ),
+            };
+            (expr, "", None)
+        }
+    }
+}
+
+/// One decoded group-level keyset cursor: the `(count, key)` of the last
+/// group on the previous page, in the `gcount DESC, gkey ASC` order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GroupCursor {
+    version: u8,
+    /// The last group's full bucket count.
+    count: i64,
+    /// The last group's rendered key.
+    key: String,
+}
+
+impl GroupCursor {
+    fn encode(&self) -> Result<String, AppError> {
+        let json = serde_json::to_string(self)?;
+        Ok(URL_SAFE_NO_PAD.encode(json.as_bytes()))
+    }
+
+    fn decode(s: &str) -> Result<Self, AppError> {
+        let bytes = URL_SAFE_NO_PAD
+            .decode(s)
+            .map_err(|e| AppError::Validation(format!("invalid group cursor: {e}")))?;
+        let json = String::from_utf8(bytes)
+            .map_err(|e| AppError::Validation(format!("invalid group cursor UTF-8: {e}")))?;
+        let cursor: GroupCursor = serde_json::from_str(&json)
+            .map_err(|e| AppError::Validation(format!("invalid group cursor JSON: {e}")))?;
+        if cursor.version != CURSOR_VERSION {
+            return Err(AppError::Validation(format!(
+                "group cursor: unsupported version {} (expected {CURSOR_VERSION})",
+                cursor.version
+            )));
+        }
+        Ok(cursor)
+    }
+}
+
+/// One group bucket fetched from the GROUP BY query: the rendered key + its
+/// full count.
+#[derive(sqlx::FromRow)]
+struct GroupBucketRow {
+    gkey: String,
+    gcount: i64,
+}
+
+/// One previewed member row: an [`EngineRow`] plus the rendered group key it
+/// belongs to (so members distribute back into their buckets).
+#[derive(sqlx::FromRow)]
+struct GroupMemberRow {
+    #[sqlx(flatten)]
+    inner: EngineRow,
+    gkey: String,
+}
+
+/// Run the grouped path: bucket the matched rows by `spec`'s dimension,
+/// paginate over GROUPS (keyset on `gcount DESC, gkey ASC`), and attach a
+/// bounded per-group member preview.
+async fn run_grouped(
+    pool: &SqlitePool,
+    spec: &GroupSpec,
+    request: &AdvancedQueryRequest,
+    ctx: GroupCtx<'_>,
+    limit: i64,
+) -> Result<AdvancedQueryResponse, AppError> {
+    // The group-key property bind (if any) occupies the first free slot after
+    // the space + filter binds; every subsequent bind follows it.
+    let key_pos = ctx.next_pos;
+    let (raw_key_expr, join, key_bind) = group_key_expr(&spec.key, key_pos);
+    let mut next_pos = key_pos + usize::from(key_bind.is_some());
+    // The rendered key: NULL/absent → the `"none"` bucket. Reused verbatim in
+    // SELECT / GROUP BY / HAVING / PARTITION BY / IN so a single key bind (if
+    // any) feeds every occurrence.
+    let gkey_expr = format!("COALESCE({raw_key_expr}, 'none')");
+
+    let group_cursor = match request.cursor.as_deref() {
+        Some(s) => Some(GroupCursor::decode(s)?),
+        None => None,
+    };
+    let _ = ctx.space_pos; // documented in `predicate`; bound positionally.
+
+    // ── total_count = total #groups, FIRST page only ──────────────────────
+    let total_count: Option<i64> = if group_cursor.is_none() {
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM (SELECT {gkey_expr} AS gkey FROM {from}{join} \
+             WHERE {pred} GROUP BY gkey)",
+            from = ctx.from_clause,
+            pred = ctx.predicate,
+        );
+        // dynamic-sql: GROUP-BY key + WHERE are the runtime GroupKey + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
+        let mut q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str()));
+        if let Some(m) = ctx.match_sanitized {
+            q = q.bind(m.to_string()); // ?1 = MATCH
+        }
+        q = q.bind(ctx.space_id.to_string()); // ?space_pos
+        for b in ctx.filter_binds {
+            q = bind_scalar(q, b);
+        }
+        if let Some(b) = key_bind.as_ref() {
+            q = bind_scalar(q, b);
+        }
+        let c = if ctx.has_fulltext {
+            q.fetch_one(pool).await.map_err(map_fts_error)?
+        } else {
+            q.fetch_one(pool).await?
+        };
+        Some(c)
+    } else {
+        None
+    };
+
+    // ── group page: keyset over `gcount DESC, gkey ASC` ───────────────────
+    // Resume predicate (HAVING, since it filters the GROUPED rows): a group is
+    // strictly AFTER the cursor iff its count is smaller, or equal-count with a
+    // strictly-greater key. NULL never occurs (gkey is COALESCE'd).
+    let having = if group_cursor.is_some() {
+        let p_count = next_pos;
+        let p_count2 = next_pos + 1;
+        let p_key = next_pos + 2;
+        next_pos += 3;
+        format!(" HAVING (gcount < ?{p_count} OR (gcount = ?{p_count2} AND gkey > ?{p_key}))")
+    } else {
+        String::new()
+    };
+    let limit_pos = next_pos;
+    let limit_plus_one = limit + 1;
+
+    let group_sql = format!(
+        "SELECT {gkey_expr} AS gkey, COUNT(*) AS gcount FROM {from}{join} \
+         WHERE {pred} GROUP BY gkey{having} \
+         ORDER BY gcount DESC, gkey ASC LIMIT ?{limit_pos}",
+        from = ctx.from_clause,
+        pred = ctx.predicate,
+    );
+    // dynamic-sql: GROUP-BY key + WHERE + keyset HAVING are the runtime GroupKey + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
+    let mut q = sqlx::query_as::<_, GroupBucketRow>(sqlx::AssertSqlSafe(group_sql.as_str()));
+    if let Some(m) = ctx.match_sanitized {
+        q = q.bind(m.to_string()); // ?1 = MATCH
+    }
+    q = q.bind(ctx.space_id.to_string()); // ?space_pos
+    for b in ctx.filter_binds {
+        q = bind_as(q, b);
+    }
+    if let Some(b) = key_bind.as_ref() {
+        q = bind_as(q, b);
+    }
+    if let Some(c) = group_cursor.as_ref() {
+        q = q.bind(c.count).bind(c.count).bind(c.key.clone());
+    }
+    q = q.bind(limit_plus_one);
+    let mut buckets: Vec<GroupBucketRow> = if ctx.has_fulltext {
+        q.fetch_all(pool).await.map_err(map_fts_error)?
+    } else {
+        q.fetch_all(pool).await?
+    };
+
+    let limit_usize = usize::try_from(limit).unwrap_or(usize::MAX);
+    let has_more = buckets.len() > limit_usize;
+    if has_more {
+        buckets.truncate(limit_usize);
+    }
+
+    if buckets.is_empty() {
+        return Ok(AdvancedQueryResponse {
+            rows: Vec::new(),
+            groups: Vec::new(),
+            next_cursor: None,
+            has_more: false,
+            total_count,
+        });
+    }
+
+    // ── bounded member preview: the first N members per bucket on this page ─
+    // ONE windowed query scoped to the page's group keys, capped per group by
+    // a `ROW_NUMBER()` window so a huge bucket cannot blow the payload.
+    let page_keys: Vec<String> = buckets.iter().map(|b| b.gkey.clone()).collect();
+    // Default sort for the preview: relevance-first on the full-text path,
+    // else the recency keyset (`b.id DESC`). The window orders members by it.
+    let preview_terms = resolve_sort(&[], ctx.has_fulltext)?;
+    let preview_order = preview_terms
+        .iter()
+        .map(|t| {
+            format!(
+                "{} {} NULLS LAST",
+                t.expr,
+                if t.desc { "DESC" } else { "ASC" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    // `IN (?,?,…)` over the page's group keys; binds follow the per-statement
+    // prefix (+ key bind).
+    let in_start = ctx.next_pos + usize::from(key_bind.is_some());
+    let in_placeholders = (0..page_keys.len())
+        .map(|i| format!("?{}", in_start + i))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let rn_pos = in_start + page_keys.len();
+
+    let rank_select = if ctx.has_fulltext {
+        "fts.rank"
+    } else {
+        "CAST(NULL AS REAL)"
+    };
+    let member_sql = format!(
+        "SELECT * FROM ( \
+           SELECT {cols}, \
+             COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0) AS __last_edited, \
+             (SELECT title FROM pages_cache WHERE page_id = b.id) AS __title, \
+             {rank_select} AS __rank, \
+             {gkey_expr} AS gkey, \
+             ROW_NUMBER() OVER (PARTITION BY {gkey_expr} ORDER BY {preview_order}) AS __rn \
+           FROM {from}{join} \
+           WHERE {pred} AND {gkey_expr} IN ({in_placeholders}) \
+         ) WHERE __rn <= ?{rn_pos}",
+        cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS,
+        from = ctx.from_clause,
+        pred = ctx.predicate,
+    );
+    // dynamic-sql: windowed member preview over the runtime GroupKey + compiled FilterExpr tree + optional FTS5 MATCH (macro form cannot express it); all values are bound params.
+    let mut mq = sqlx::query_as::<_, GroupMemberRow>(sqlx::AssertSqlSafe(member_sql.as_str()));
+    if let Some(m) = ctx.match_sanitized {
+        mq = mq.bind(m.to_string()); // ?1 = MATCH
+    }
+    mq = mq.bind(ctx.space_id.to_string()); // ?space_pos
+    for b in ctx.filter_binds {
+        mq = bind_as(mq, b);
+    }
+    if let Some(b) = key_bind.as_ref() {
+        mq = bind_as(mq, b);
+    }
+    for k in &page_keys {
+        mq = mq.bind(k.clone());
+    }
+    mq = mq.bind(GROUP_MEMBER_PREVIEW);
+    let member_rows: Vec<GroupMemberRow> = if ctx.has_fulltext {
+        mq.fetch_all(pool).await.map_err(map_fts_error)?
+    } else {
+        mq.fetch_all(pool).await?
+    };
+
+    // Distribute members back into their buckets, preserving the group order
+    // (the `buckets` page order is the `gcount DESC, gkey ASC` order). The
+    // member query returns rows window-ordered within each partition, but the
+    // overall row order across partitions is unspecified, so bucket by key.
+    use std::collections::HashMap;
+    let mut by_key: HashMap<String, Vec<QueryResultRow>> = HashMap::new();
+    for m in member_rows {
+        by_key.entry(m.gkey).or_default().push(QueryResultRow {
+            score: m.inner.rank,
+            block: m.inner.block,
+        });
+    }
+
+    let groups: Vec<QueryGroup> = buckets
+        .iter()
+        .map(|b| QueryGroup {
+            key: b.gkey.clone(),
+            count: b.gcount,
+            members: by_key.remove(&b.gkey).unwrap_or_default(),
+        })
+        .collect();
+
+    let next_cursor = if has_more {
+        let last = buckets.last().expect("has_more implies non-empty");
+        Some(
+            GroupCursor {
+                version: CURSOR_VERSION,
+                count: last.gcount,
+                key: last.gkey.clone(),
+            }
+            .encode()?,
+        )
+    } else {
+        None
+    };
+
+    Ok(AdvancedQueryResponse {
+        rows: Vec::new(),
+        groups,
         next_cursor,
         has_more,
         total_count,
