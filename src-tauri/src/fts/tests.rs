@@ -8890,3 +8890,163 @@ async fn new3_partitioned_blocks_has_more_probe() {
     );
     assert!(!scan.pages_has_more);
 }
+
+// ── #1320 PR-1: Tag projection ↔ legacy COUNT(DISTINCT) equivalence ──────
+//
+// `fts_fetch_rows` now routes the ALL-tags filter through `SearchProjection`
+// (`add_tags_via_projection`, N AND-joined per-tag IN-subselects) instead of
+// the legacy single `COUNT(DISTINCT bt.tag_id) = N` fragment
+// (`add_tags_all`). The two emit DIFFERENT SQL shapes but MUST return the
+// IDENTICAL row set. These DB-level tests prove that equivalence end-to-end:
+// they seed real blocks/block_tags, build both WHERE clauses, execute the
+// resulting `SELECT id FROM blocks b WHERE …`, and assert the row sets match.
+
+/// Build + execute a `SELECT id FROM blocks b WHERE 1=1 <fragment>` for the
+/// given builder-population closure, returning the matched ids as a sorted
+/// set. The builder is seeded at `?1` (no fixed base params) and uses a plain
+/// `" AND "` glue prefix, so `1=1` swallows the leading AND of the first
+/// fragment.
+async fn tag_filter_ids<F>(pool: &SqlitePool, populate: F) -> std::collections::BTreeSet<String>
+where
+    F: FnOnce(&mut crate::fts::filter_builder::StructuralFilterBuilder),
+{
+    let mut fb = crate::fts::filter_builder::StructuralFilterBuilder::new(1);
+    populate(&mut fb);
+    let sql = format!("SELECT b.id FROM blocks b WHERE 1=1{}", fb.sql());
+    let query = sqlx::query_as::<_, (String,)>(sqlx::AssertSqlSafe(sql.as_str()));
+    let query = fb.apply(query);
+    let rows = query.fetch_all(pool).await.unwrap();
+    rows.into_iter().map(|(id,)| id).collect()
+}
+
+/// Seed a fixed fixture exercising single / both / superset / absent tag
+/// memberships, then return the pool for the equivalence assertions.
+///
+/// Memberships (blocks are `content`-typed; tags are arbitrary distinct ids):
+/// - `BLK_AB` carries TAG_X + TAG_Y      (matches "all of X,Y")
+/// - `BLK_A`  carries TAG_X only          (matches "X", not "X,Y")
+/// - `BLK_B`  carries TAG_Y only          (matches "Y", not "X,Y")
+/// - `BLK_ABZ` carries TAG_X + TAG_Y + TAG_Z (superset → matches "X,Y")
+/// - `BLK_NONE` carries no tags           (matches nothing tag-filtered)
+async fn seed_tag_equivalence_fixture(pool: &SqlitePool) {
+    // Distinct 26-char uppercase ULID-style ids.
+    const TAG_X: &str = "01HQTAGX0000000000000000X1";
+    const TAG_Y: &str = "01HQTAGY0000000000000000Y1";
+    const TAG_Z: &str = "01HQTAGZ0000000000000000Z1";
+    const BLK_AB: &str = "01HQBLKAB0000000000000AB01";
+    const BLK_A: &str = "01HQBLKA00000000000000A001";
+    const BLK_B: &str = "01HQBLKB00000000000000B001";
+    const BLK_ABZ: &str = "01HQBLKABZ00000000000ABZ01";
+    const BLK_NONE: &str = "01HQBLKNONE0000000000NON01";
+
+    // Tag ids FK to `blocks(id)` (migration 0061: block_tags.tag_id
+    // REFERENCES blocks(id)), so the tags must exist as `tag`-typed blocks
+    // before any block_tags row can reference them.
+    for (i, tag) in [TAG_X, TAG_Y, TAG_Z].iter().enumerate() {
+        insert_block(
+            pool,
+            tag,
+            "tag",
+            "tagname",
+            None,
+            Some(i64::try_from(i).unwrap()),
+        )
+        .await;
+    }
+
+    for (i, blk) in [BLK_AB, BLK_A, BLK_B, BLK_ABZ, BLK_NONE].iter().enumerate() {
+        insert_block(
+            pool,
+            blk,
+            "content",
+            "body",
+            None,
+            Some(i64::try_from(i).unwrap() + 10),
+        )
+        .await;
+    }
+
+    let memberships: &[(&str, &[&str])] = &[
+        (BLK_AB, &[TAG_X, TAG_Y]),
+        (BLK_A, &[TAG_X]),
+        (BLK_B, &[TAG_Y]),
+        (BLK_ABZ, &[TAG_X, TAG_Y, TAG_Z]),
+        (BLK_NONE, &[]),
+    ];
+    for (blk, tags) in memberships {
+        for tag in *tags {
+            sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+                .bind(*blk)
+                .bind(*tag)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+    }
+}
+
+/// For each scenario, the projection-routed path and the legacy
+/// `COUNT(DISTINCT)` path MUST return identical row sets, AND that row set
+/// MUST equal the hand-computed expectation.
+#[tokio::test]
+async fn tags_via_projection_matches_legacy_count_distinct_equivalence() {
+    let (pool, _dir) = test_pool().await;
+    seed_tag_equivalence_fixture(&pool).await;
+
+    const TAG_X: &str = "01HQTAGX0000000000000000X1";
+    const TAG_Y: &str = "01HQTAGY0000000000000000Y1";
+    const TAG_MISSING: &str = "01HQTAGM0000000000000MISS1";
+    const BLK_AB: &str = "01HQBLKAB0000000000000AB01";
+    const BLK_A: &str = "01HQBLKA00000000000000A001";
+    const BLK_ABZ: &str = "01HQBLKABZ00000000000ABZ01";
+
+    // (label, tag set, expected matching block ids)
+    let cases: &[(&str, Vec<String>, std::collections::BTreeSet<String>)] = &[
+        (
+            "single tag X",
+            vec![TAG_X.to_string()],
+            // Every block carrying X: AB, A, ABZ.
+            [BLK_AB, BLK_A, BLK_ABZ]
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+        ),
+        (
+            "two tags X+Y (ALL-semantics)",
+            vec![TAG_X.to_string(), TAG_Y.to_string()],
+            // Only blocks carrying BOTH X and Y: AB and the superset ABZ.
+            [BLK_AB, BLK_ABZ].iter().map(ToString::to_string).collect(),
+        ),
+        (
+            "tag no block has (empty result)",
+            vec![TAG_MISSING.to_string()],
+            std::collections::BTreeSet::new(),
+        ),
+        (
+            "missing tag AND-joined with a present tag (empty)",
+            vec![TAG_X.to_string(), TAG_MISSING.to_string()],
+            std::collections::BTreeSet::new(),
+        ),
+    ];
+
+    const PREFIX: &str = " AND ";
+    for (label, tags, expected) in cases {
+        let projected = tag_filter_ids(&pool, |fb| {
+            fb.add_tags_via_projection(PREFIX, tags);
+        })
+        .await;
+        let legacy = tag_filter_ids(&pool, |fb| {
+            fb.add_tags_all(PREFIX, tags);
+        })
+        .await;
+
+        assert_eq!(
+            projected, legacy,
+            "[{label}] projection-routed and legacy COUNT(DISTINCT) row sets must be identical"
+        );
+        assert_eq!(
+            &projected, expected,
+            "[{label}] routed row set must equal the hand-computed expectation"
+        );
+    }
+}
