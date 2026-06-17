@@ -20,6 +20,7 @@
 import { underscoreRunFlank } from './markdown-common'
 import type {
   BlockquoteNode,
+  BulletListNode,
   CodeBlockNode,
   DocNode,
   HeadingNode,
@@ -372,16 +373,21 @@ function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) 
   // A paragraph whose text begins with a leading BLOCK marker would re-parse
   // as that other block kind, breaking serialize→parse→serialize idempotence
   // (#711): the first serialize emits the marker verbatim, the reparse turns
-  // the paragraph into a heading / ordered list, and the second serialize then
-  // escapes the marker — a byte drift. Escape the marker on the way out so the
-  // text stays a paragraph. The parser accepts `\#` and `\.` as literal escapes
-  // (verified: `\>` / `\-` are NOT recognized escapes, but the parser only
-  // produces blockquote / HR from `> ` / `-{3,}`, and `escapeText` already
-  // escapes a leading `|` table gate, so heading + ordered-list are the
-  // remaining gaps). Only the START of the paragraph can trigger a block
-  // production (hard-break continuation lines are consumed by the paragraph
-  // parser before any block production sees them).
-  return result.replace(/^(\d+)\. /, '$1\\. ').replace(/^(#{1,6}) /, '\\$1 ')
+  // the paragraph into a heading / ordered list / bullet list, and the second
+  // serialize then escapes the marker — a byte drift. Escape the marker on the
+  // way out so the text stays a paragraph. The parser accepts `\#`, `\.` and
+  // `\-` as literal escapes (`-` was made escapable for #1436; `\>` is still
+  // NOT recognized, but the parser only produces a blockquote from `> `, and
+  // `escapeText` already escapes a leading `|` table gate plus every literal
+  // `*` (so a `* ` bullet marker can never lead a paragraph). Heading,
+  // ordered-list and bullet-list (`- `) are the remaining gaps closed here.
+  // Only the START of the paragraph can trigger a block production (hard-break
+  // continuation lines are consumed by the paragraph parser before any block
+  // production sees them).
+  return result
+    .replace(/^(\d+)\. /, '$1\\. ')
+    .replace(/^(#{1,6}) /, '\\$1 ')
+    .replace(/^- /, '\\- ')
 }
 
 function serializeHeading(node: HeadingNode, onUnknownNode?: (type: string) => void): string {
@@ -419,6 +425,7 @@ function serializeBlockquote(node: BlockquoteNode, onUnknownNode?: (type: string
       if (child.type === 'blockquote') return serializeBlockquote(child, onUnknownNode)
       if (child.type === 'table') return serializeTable(child, onUnknownNode)
       if (child.type === 'orderedList') return serializeOrderedList(child, onUnknownNode)
+      if (child.type === 'bulletList') return serializeBulletList(child, onUnknownNode)
       if (child.type === 'horizontalRule') return serializeHorizontalRule(child)
       return ''
     })
@@ -515,6 +522,19 @@ function serializeOrderedList(
     .join('\n')
 }
 
+function serializeBulletList(node: BulletListNode, onUnknownNode?: (type: string) => void): string {
+  if (!node.content || node.content.length === 0) return ''
+  return node.content
+    .map((item: ListItemNode) => {
+      const inner =
+        item.content && item.content.length > 0
+          ? item.content.map((p) => serializeParagraph(p, onUnknownNode)).join('\n')
+          : ''
+      return `- ${inner}`
+    })
+    .join('\n')
+}
+
 function serializeHorizontalRule(_node: HorizontalRuleNode): string {
   return '---'
 }
@@ -529,6 +549,7 @@ export function serialize(doc: DocNode, onUnknownNode?: (type: string) => void):
       if (node.type === 'blockquote') return serializeBlockquote(node, onUnknownNode)
       if (node.type === 'table') return serializeTable(node, onUnknownNode)
       if (node.type === 'orderedList') return serializeOrderedList(node, onUnknownNode)
+      if (node.type === 'bulletList') return serializeBulletList(node, onUnknownNode)
       if (node.type === 'horizontalRule') return serializeHorizontalRule(node)
       const unknownType = (node as { type: string }).type
       onUnknownNode?.(unknownType)

@@ -435,7 +435,24 @@ function paragraphStartsWithAmbiguousSyntax(block: ParagraphNode): boolean {
   if (lead.startsWith('>')) return true
   if (/^\d+\. /.test(lead)) return true
   if (lead.startsWith('|')) return true
+  // #1436: a paragraph whose SERIALIZED form begins with a bullet marker
+  // (`- ` / `* `) reparses as a bulletList. The marker can come either from
+  // literal text (`- foo`) OR from an emphasis DELIMITER landing at column 0
+  // followed by a space (`italic(' ')` → `* *`, `bold(' ')` → `** **`). The
+  // leading-text inspection above cannot see delimiter-induced markers, so
+  // serialize the paragraph and test the actual emitted prefix. (Literal `- `
+  // is escaped to `\- ` by the serializer, so a literal-dash paragraph is NOT
+  // flagged here — only the genuinely ambiguous delimiter-space case is.)
+  if (/^[-*] /.test(serializeParagraphForAmbiguity(block))) return true
   return false
+}
+
+/**
+ * Serialize a paragraph in isolation to inspect its emitted leading syntax.
+ * Wrapping it in a one-paragraph doc reuses the production serializer exactly.
+ */
+function serializeParagraphForAmbiguity(block: ParagraphNode): string {
+  return serialize({ type: 'doc', content: [block] })
 }
 
 /**
