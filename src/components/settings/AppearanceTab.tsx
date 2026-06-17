@@ -20,8 +20,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  JOURNAL_DATE_FORMATS,
+  type JournalDateFormat,
+  useJournalDateFormat,
+} from '@/hooks/useJournalDateFormat'
 import { type ThemePreference, useTheme } from '@/hooks/useTheme'
 import { useWeekStart } from '@/hooks/useWeekStart'
+import { formatJournalTitle } from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
 
 /**
@@ -36,6 +42,15 @@ type ThemeSelectValue =
   | 'solarized-dark'
   | 'dracula'
   | 'one-dark-pro'
+
+// #1448 — each journal date-format preset maps to an i18n label key.
+const JOURNAL_DATE_FORMAT_LABELS: Record<JournalDateFormat, string> = {
+  locale: 'settings.journalDateFormatLocale',
+  'yyyy-MM-dd': 'settings.journalDateFormatIso',
+  'MMMM d, yyyy': 'settings.journalDateFormatLong',
+  'dd/MM/yyyy': 'settings.journalDateFormatSlash',
+  'EEE, MMM d': 'settings.journalDateFormatWeekday',
+}
 
 const FONT_SIZE_KEY = 'agaric-font-size'
 type FontSize = 'small' | 'medium' | 'large'
@@ -79,6 +94,9 @@ export function AppearanceTab(): React.ReactElement {
   // returns `0 | 1` (Sunday | Monday); the Select primitive only deals
   // in strings so we coerce on read/write.
   const { weekStartsOn, setWeekStart } = useWeekStart()
+  // #1448 — DISPLAY-ONLY journal date format. The stored journal page content
+  // stays ISO `yyyy-MM-dd`; this only changes how titles are rendered.
+  const { journalDateFormat, setJournalDateFormat } = useJournalDateFormat()
 
   // Apply font size on mount and changes
   useEffect(() => {
@@ -108,6 +126,22 @@ export function AppearanceTab(): React.ReactElement {
   // can only emit values from the items we render).
   // UX-329 — surface a toast so the change is not silent; the only
   // other visible cue today is calendar grids re-laying out.
+  // #1448 — DISPLAY-ONLY journal date format picker. Persists the chosen
+  // date-fns token string; the stored journal page content is never touched.
+  const handleJournalDateFormatChange = useCallback(
+    (value: string) => {
+      const fmt = value as JournalDateFormat
+      setJournalDateFormat(fmt)
+      // Show a concrete worked example so the abstract token string is legible.
+      notify.success(
+        t('settings.journalDateFormatUpdated', {
+          example: formatJournalTitle('2026-06-17', fmt),
+        }),
+      )
+    },
+    [setJournalDateFormat, t],
+  )
+
   const handleWeekStartChange = useCallback(
     (value: string) => {
       if (value === '0') {
@@ -167,6 +201,31 @@ export function AppearanceTab(): React.ReactElement {
           <SelectContent>
             <SelectItem value="1">{t('settings.weekStartMonday')}</SelectItem>
             <SelectItem value="0">{t('settings.weekStartSunday')}</SelectItem>
+          </SelectContent>
+        </Select>
+      </FormField>
+
+      {/* Journal date format (#1448). DISPLAY-ONLY: the stored journal page
+          content stays ISO `yyyy-MM-dd`; this only governs how titles render,
+          so switching it can never orphan an existing journal. */}
+      <FormField
+        label={t('settings.journalDateFormatLabel')}
+        htmlFor="journal-date-format-select"
+        description={t('settings.journalDateFormatHelp')}
+      >
+        <Select value={journalDateFormat} onValueChange={handleJournalDateFormatChange}>
+          <SelectTrigger
+            id="journal-date-format-select"
+            aria-label={t('settings.journalDateFormatLabel')}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {JOURNAL_DATE_FORMATS.map((fmt) => (
+              <SelectItem key={fmt} value={fmt}>
+                {t(JOURNAL_DATE_FORMAT_LABELS[fmt])}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </FormField>

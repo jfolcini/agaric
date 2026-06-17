@@ -211,5 +211,14 @@ export const settings: Record<string, string> = {
   'settings.weekStartMonday': 'Monday',
   'settings.weekStartSunday': 'Sunday',
   'settings.weekStartUpdated': 'Week now starts on {{day}}',
+  'settings.journalDateFormatLabel': 'Journal date format',
+  'settings.journalDateFormatHelp':
+    'How journal page titles are displayed. The page is always stored as YYYY-MM-DD, so changing this is safe and never affects existing journals.',
+  'settings.journalDateFormatLocale': 'Localized (e.g. Wed, Jun 17 2026)',
+  'settings.journalDateFormatIso': 'YYYY-MM-DD (e.g. 2026-06-17)',
+  'settings.journalDateFormatLong': 'Month D, YYYY (e.g. June 17, 2026)',
+  'settings.journalDateFormatSlash': 'DD/MM/YYYY (e.g. 17/06/2026)',
+  'settings.journalDateFormatWeekday': 'Ddd, Mmm D (e.g. Wed, Jun 17)',
+  'settings.journalDateFormatUpdated': 'Journal dates now display as {{example}}',
   'settings.valueClamped': 'Value clamped to {{min}}–{{max}}',
 }

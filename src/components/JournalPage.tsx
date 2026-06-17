@@ -26,11 +26,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useCalendarPageDates } from '../hooks/useCalendarPageDates'
 import { useJournalAutoCreate } from '../hooks/useJournalAutoCreate'
 import { useJournalBlockCreation } from '../hooks/useJournalBlockCreation'
+import { useJournalDateFormat } from '../hooks/useJournalDateFormat'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import { useScrollToFocus } from '../hooks/useScrollToFocus'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { DayEntry } from '../lib/date-utils'
-import { formatDate, formatDateDisplay, getCalendarMonthRange } from '../lib/date-utils'
+import { formatDate, formatJournalTitle, getCalendarMonthRange } from '../lib/date-utils'
 import { useJournalStore } from '../stores/journal'
 import { useSpaceStore } from '../stores/space'
 import { useInPageFindStore } from '../stores/useInPageFindStore'
@@ -76,6 +77,10 @@ export function JournalPage({
   const calendarRange = useMemo(() => getCalendarMonthRange(currentDate), [currentDate])
   const { pageMap, loading, addPage } = useCalendarPageDates(calendarRange)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  // #1448 — DISPLAY-ONLY journal title format. The lookup/identity key stays
+  // the ISO `dateStr` (see makeDayEntry); only the rendered `displayDate` honors
+  // this preference.
+  const { journalDateFormat } = useJournalDateFormat()
   // UX-371 — surface the per-space journal-template configuration from the
   // Journal view itself; previously only reachable through Manage Spaces.
   // SpaceManageDialog has no scroll-to-section prop, so the dialog opens at
@@ -103,15 +108,20 @@ export function JournalPage({
   /** Build a DayEntry from a Date. */
   const makeDayEntry = useCallback(
     (d: Date): DayEntry => {
+      // `dateStr` is the canonical ISO identity/lookup key — it is what
+      // `pageMap`/`createdPages` are keyed on and what every range/index/parse
+      // path consumes. It MUST stay ISO regardless of the display preference.
       const dateStr = formatDate(d)
       return {
         date: d,
         dateStr,
-        displayDate: formatDateDisplay(d),
+        // DISPLAY-ONLY: format the ISO key for the user-facing title. Changing
+        // `journalDateFormat` never touches `dateStr`, so journals can't orphan.
+        displayDate: formatJournalTitle(dateStr, journalDateFormat),
         pageId: createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null,
       }
     },
-    [pageMap, createdPages],
+    [pageMap, createdPages, journalDateFormat],
   )
 
   // Auto-create the displayed day's page on mount / date change in daily mode

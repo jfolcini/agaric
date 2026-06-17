@@ -47,6 +47,59 @@ export function formatDateDisplay(d: Date): string {
   })
 }
 
+/**
+ * Format a canonical ISO journal page title (`yyyy-MM-dd`) for DISPLAY only,
+ * using the supplied date-fns format token string (#1448).
+ *
+ * DISPLAY-ONLY CONTRACT — the `isoContent` argument is the journal page's
+ * stored content, which is also its structural identity (exact-match lookup,
+ * lexical range/sort, the `____-__-__` partial index, `validate_date_format`,
+ * the ISO parsers, and "today" detection all key off it). This function does
+ * NOT mutate or re-key anything; it only produces a presentation string. The
+ * caller keeps passing the raw ISO content to every lookup/range/parse path.
+ *
+ * Supported `fmt` values:
+ * - `'locale'` — the app's pre-existing localized rendering (`formatDateDisplay`,
+ *   e.g. "Mon, Jun 17 2026"). This is the default, so the title is unchanged for
+ *   existing users.
+ * - any date-fns token string — e.g. `'yyyy-MM-dd'` (identity with the stored
+ *   ISO content), `'MMMM d, yyyy'`, `'dd/MM/yyyy'`, `'EEE, MMM d'`.
+ *
+ * Safety:
+ * - `'yyyy-MM-dd'` is an identity transform — output === input — so the
+ *   ISO round-trip is trivially preserved.
+ * - If `isoContent` is not a valid ISO date (e.g. a non-journal page title
+ *   slipped through), the raw string is returned unchanged rather than throwing.
+ *   Display never crashes the view.
+ */
+export function formatJournalTitle(isoContent: string, fmt: string): string {
+  // Identity fast-path: the canonical stored shape needs no reformatting.
+  if (fmt === 'yyyy-MM-dd') return isoContent
+
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoContent)
+  if (!m) return isoContent
+  const year = Number(m[1])
+  const month = Number(m[2])
+  const day = Number(m[3])
+  // Validate components BEFORE constructing the Date — `new Date(2026, 12, 45)`
+  // silently wraps, and a wrapped Date would render a wrong-but-plausible title.
+  if (year < 1000 || year > 9999 || month < 1 || month > 12 || day < 1 || day > 31) {
+    return isoContent
+  }
+  const date = new Date(year, month - 1, day)
+  if (date.getMonth() !== month - 1 || date.getDate() !== day) return isoContent
+
+  // The default preset preserves the existing localized rendering exactly.
+  if (fmt === 'locale') return formatDateDisplay(date)
+
+  try {
+    return format(date, fmt)
+  } catch {
+    // Unknown/invalid token string — degrade to the raw ISO content.
+    return isoContent
+  }
+}
+
 /** Get the week range for a given date (respects user week-start preference). */
 export function getWeekRange(d: Date): { start: Date; end: Date } {
   const opts = getWeekOptions()

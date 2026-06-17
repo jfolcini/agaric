@@ -42,7 +42,9 @@ import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverAnchor } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useJournalDateFormat } from '@/hooks/useJournalDateFormat'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
+import { formatJournalTitle, isDateFormattedPage } from '@/lib/date-utils'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { getPageDisplayName } from '@/lib/page-display'
 import { cn } from '@/lib/utils'
@@ -52,6 +54,14 @@ import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '
 
 export function TabBar(): React.ReactElement | null {
   const { t } = useTranslation()
+  // #1448 — DISPLAY-ONLY journal-tab title formatting. `fullPath`/`tab.label`
+  // remain the canonical ISO identity (used for the `title=` tooltip, switching,
+  // and close announcements); only the visible leaf label is reformatted.
+  const { journalDateFormat } = useJournalDateFormat()
+  const displayLabel = (fullPath: string): string => {
+    const leaf = getPageDisplayName(fullPath, 'leaf').label
+    return isDateFormattedPage(fullPath) ? formatJournalTitle(fullPath, journalDateFormat) : leaf
+  }
   // FEAT-3 Phase 3 — read tabs through the per-space selector so tabs
   // opened in space-A never bleed into space-B's bar.
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
@@ -210,7 +220,7 @@ export function TabBar(): React.ReactElement | null {
             // "Untitled" is preserved verbatim so the existing label test
             // keeps passing.
             const fullPath = tab.label || t('tabs.untitled')
-            const displayTitle = getPageDisplayName(fullPath, 'leaf').label
+            const displayTitle = displayLabel(fullPath)
             const button = (
               <button
                 key={tab.id}
@@ -289,7 +299,7 @@ export function TabBar(): React.ReactElement | null {
               // read consistently. The aria-label for the close action keeps
               // the full path so screen readers announce the unambiguous page.
               const fullPath = tab.label || t('tabs.untitled')
-              const displayTitle = getPageDisplayName(fullPath, 'leaf').label
+              const displayTitle = displayLabel(fullPath)
               const activateIdx = i * 2
               const closeIdx = i * 2 + 1
               return (
