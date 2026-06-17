@@ -1,12 +1,12 @@
 /**
  * AdvancedQueryView — the dedicated advanced-query surface (#1280).
  *
- * A builder pane (the reused Pages chip-row, restricted to the shared,
- * engine-supported filter vocabulary) plus the D2 controls bar (full-text /
- * sort / group-by / aggregates), over a results pane that renders the live
- * `run_advanced_query` matches. The chips form a flat conjunction; the IPC
- * boundary (in `useAdvancedQuery`) wraps them as a `FilterExpr.And` of `Leaf`
- * primitives and threads the D2 controls into the request.
+ * A builder pane — the #1280 D3 recursive nested-boolean {@link FilterGroup}
+ * tree (arbitrary And/Or/Not over filter leaves) — plus the D2 controls bar
+ * (full-text / sort / group-by / aggregates), over a results pane that renders
+ * the live `run_advanced_query` matches. The builder tree compiles to a wire
+ * `FilterExpr` via `builderTreeToFilterExpr`, which the IPC boundary (in
+ * `useAdvancedQuery`) sends verbatim alongside the D2 controls.
  *
  * Two render modes:
  *   - FLAT (no group-by): the result list plus a global aggregate summary bar
@@ -14,7 +14,7 @@
  *   - GROUPED: group headers (key label + count + per-group aggregate chips)
  *     over each bucket's previewed member rows.
  *
- * Nested And/Or/Not and saved views remain explicit D3 follow-ups.
+ * Saved views remain an explicit follow-up.
  */
 
 import type React from 'react'
@@ -23,20 +23,22 @@ import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
-import { PageBrowserFilterRow } from '@/components/PageBrowser/PageBrowserFilterRow'
 import { QueryResultList } from '@/components/query/QueryResultList'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
 import type { AggregateSpec, FilterPrimitive, GroupSpec, SortKey } from '@/lib/tauri'
 import {
+  type BuilderPath,
+  builderTreeToFilterExpr,
+  selectAdvancedQueryBuilderForSpace,
   selectAdvancedQueryControlsForSpace,
-  selectAdvancedQueryFiltersForSpace,
   useAdvancedQueryStore,
 } from '@/stores/advancedQuery'
 import { LEGACY_SPACE_KEY, useSpaceStore } from '@/stores/space'
 
 import { AggregateSummary } from './AggregateSummary'
+import { FilterGroup } from './FilterGroup'
 import { GroupedResults } from './GroupedResults'
 import { QueryControlsBar } from './QueryControlsBar'
 
@@ -48,31 +50,31 @@ export interface AdvancedQueryViewProps {
 export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React.ReactElement {
   const { t } = useTranslation()
 
-  // Per-space working set of filter chips (not persisted; see the store).
+  // Per-space working set (not persisted; see the store).
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const spaceKey = currentSpaceId ?? LEGACY_SPACE_KEY
-  const filters = useAdvancedQueryStore((s) =>
-    selectAdvancedQueryFiltersForSpace(s, currentSpaceId),
+  // The #1280 D3 nested-boolean builder tree (root group) for this space.
+  const builder = useAdvancedQueryStore((s) =>
+    selectAdvancedQueryBuilderForSpace(s, currentSpaceId),
   )
   const controls = useAdvancedQueryStore((s) =>
     selectAdvancedQueryControlsForSpace(s, currentSpaceId),
   )
-  const addFilter = useAdvancedQueryStore((s) => s.addFilter)
-  const removeFilter = useAdvancedQueryStore((s) => s.removeFilter)
-  const clearFilters = useAdvancedQueryStore((s) => s.clearFilters)
+  const addLeaf = useAdvancedQueryStore((s) => s.addLeaf)
+  const addGroup = useAdvancedQueryStore((s) => s.addGroup)
+  const removeNode = useAdvancedQueryStore((s) => s.removeNode)
+  const setGroupOp = useAdvancedQueryStore((s) => s.setGroupOp)
+  const toggleNegate = useAdvancedQueryStore((s) => s.toggleNegate)
+  const clearBuilder = useAdvancedQueryStore((s) => s.clearBuilder)
   const setFulltext = useAdvancedQueryStore((s) => s.setFulltext)
   const setSort = useAdvancedQueryStore((s) => s.setSort)
   const setGroupBy = useAdvancedQueryStore((s) => s.setGroupBy)
   const setAggregates = useAdvancedQueryStore((s) => s.setAggregates)
 
-  // The chips carry a React-key-only `_addId` stamp; strip it before the IPC so
-  // the wire `FilterPrimitive` leaves stay clean (the engine rejects unknown
-  // fields). `filters` identity changes whenever the chip set changes, so the
-  // memo recomputes exactly when needed.
-  const queryFilters = useMemo<FilterPrimitive[]>(
-    () => filters.map(({ _addId, ...primitive }) => primitive),
-    [filters],
-  )
+  // Compile the builder tree to the wire `FilterExpr` sent verbatim by the hook.
+  // `builder` identity changes only when the tree changes, so the memo (and the
+  // hook's `JSON.stringify` dep-key) recompute exactly when needed.
+  const filterExpr = useMemo(() => builderTreeToFilterExpr(builder), [builder])
 
   const {
     results,
@@ -87,16 +89,22 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
     handleLoadMore,
     fetchResults,
   } = useAdvancedQuery({
-    filters: queryFilters,
+    filters: [],
+    filterExpr,
     fulltext: controls.fulltext,
     sort: controls.sort,
     groupBy: controls.groupBy,
     aggregates: controls.aggregates,
   })
 
-  const handleAddFilter = (filter: FilterPrimitive): void => addFilter(spaceKey, filter)
-  const handleRemoveFilter = (index: number): void => removeFilter(spaceKey, index)
-  const handleClearAll = (): void => clearFilters(spaceKey)
+  const handleAddLeaf = (path: BuilderPath, filter: FilterPrimitive): void =>
+    addLeaf(spaceKey, path, filter)
+  const handleAddGroup = (path: BuilderPath): void => addGroup(spaceKey, path)
+  const handleRemoveNode = (path: BuilderPath): void => removeNode(spaceKey, path)
+  const handleSetGroupOp = (path: BuilderPath, op: 'And' | 'Or'): void =>
+    setGroupOp(spaceKey, path, op)
+  const handleToggleNegate = (path: BuilderPath): void => toggleNegate(spaceKey, path)
+  const handleClearAll = (): void => clearBuilder(spaceKey)
   const handleFulltextChange = (value: string): void => setFulltext(spaceKey, value)
   const handleSortChange = (sort: SortKey[]): void => setSort(spaceKey, sort)
   const handleGroupByChange = (groupBy: GroupSpec | null): void => setGroupBy(spaceKey, groupBy)
@@ -109,16 +117,32 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
 
   return (
     <div className="advanced-query-view flex flex-col gap-3" data-testid="advanced-query-view">
-      {/* Builder pane — the reused chip-row, restricted to shared keys. */}
+      {/* Builder pane — the #1280 D3 recursive nested-boolean tree. */}
       <div className="advanced-query-builder flex flex-col gap-3">
-        <PageBrowserFilterRow
-          filters={filters}
-          onAddFilter={handleAddFilter}
-          onRemoveFilter={handleRemoveFilter}
-          onClearAll={handleClearAll}
-          hidePagesFacets
-          showAdvancedFacets
-        />
+        <div className="flex flex-col gap-2">
+          <FilterGroup
+            node={builder}
+            path={[]}
+            depth={0}
+            onAddLeaf={handleAddLeaf}
+            onAddGroup={handleAddGroup}
+            onRemoveNode={handleRemoveNode}
+            onSetGroupOp={handleSetGroupOp}
+            onToggleNegate={handleToggleNegate}
+          />
+          {builder.children.length > 0 && (
+            <div>
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={handleClearAll}
+                aria-label={t('advancedQuery.builder.clearAll')}
+              >
+                {t('advancedQuery.builder.clearAll')}
+              </Button>
+            </div>
+          )}
+        </div>
         <QueryControlsBar
           fulltext={controls.fulltext}
           onFulltextChange={handleFulltextChange}

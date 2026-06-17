@@ -42,6 +42,13 @@ interface UseAdvancedQueryOptions {
   /** The flat conjunction of filter chips to run (the working set). */
   filters: FilterPrimitive[]
   /**
+   * #1280 D3 — a pre-compiled nested boolean `FilterExpr` (from the builder
+   * tree). When present it is sent as `filter` VERBATIM, bypassing
+   * `primitivesToFilterExpr` and the flat `filters` list entirely. Other callers
+   * that pass only `filters` keep the legacy flat-conjunction path.
+   */
+  filterExpr?: FilterExpr
+  /**
    * Optional full-text term. Empty/whitespace ⇒ omitted (purely structural).
    * When present, the engine intersects an FTS5 `MATCH` and exposes per-row
    * relevance; `SortSource::Relevance` becomes valid.
@@ -107,7 +114,7 @@ async function resolvePageTitles(items: BlockRow[]): Promise<Map<string, string>
 }
 
 export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQueryResult {
-  const { filters, fulltext, sort, groupBy, aggregates } = options
+  const { filters, filterExpr, fulltext, sort, groupBy, aggregates } = options
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [results, setResults] = useState<BlockRow[]>([])
   const [groups, setGroups] = useState<QueryGroup[] | null>(null)
@@ -124,6 +131,11 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
   // (the arrays/objects churn identity every render in the parent). A single
   // serialised key keeps the `fetchResults` callback deps minimal.
   const filtersKey = JSON.stringify(filters)
+  // #1280 D3 — serialise the optional pre-compiled boolean tree the same way so
+  // the fetch effect re-runs whenever the builder tree changes. `undefined`
+  // (the flat-`filters` callers) yields a stable `'null'` key, so those callers
+  // keep the legacy path and never churn on this dep.
+  const filterExprKey = JSON.stringify(filterExpr ?? null)
   // Normalise the full-text term once: trim, and treat empty as absent so we
   // omit `fulltext` rather than sending `''` (the engine treats `Some("")` as a
   // full-text query with no terms).
@@ -181,9 +193,18 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
         // Optional engine inputs are omitted (not sent as empty) when unset so
         // the request stays the minimal wire shape and the engine applies its
         // documented defaults.
+        // #1280 D3 — when a pre-compiled boolean `FilterExpr` is supplied (the
+        // nested-builder surface) send it VERBATIM, bypassing the flat-`filters`
+        // conjunction entirely. Other callers pass only `filters`, so `filterExpr`
+        // is absent and we fall back to wrapping the flat list as an `And` of Leaves.
+        const parsedFilterExpr = JSON.parse(filterExprKey) as FilterExpr | null
+        const filter =
+          parsedFilterExpr != null
+            ? parsedFilterExpr
+            : primitivesToFilterExpr(JSON.parse(filtersKey) as FilterPrimitive[])
         const response = await runAdvancedQuery({
           spaceId: currentSpaceId ?? '',
-          filter: primitivesToFilterExpr(JSON.parse(filtersKey) as FilterPrimitive[]),
+          filter,
           limit: PAGE_SIZE,
           ...(trimmedFulltext !== '' ? { fulltext: trimmedFulltext } : {}),
           ...(parsedSort.length > 0 ? { sort: parsedSort } : {}),
@@ -248,7 +269,15 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
         }
       }
     },
-    [currentSpaceId, filtersKey, trimmedFulltext, sortKey, groupByKey, aggregatesKey],
+    [
+      currentSpaceId,
+      filtersKey,
+      filterExprKey,
+      trimmedFulltext,
+      sortKey,
+      groupByKey,
+      aggregatesKey,
+    ],
   )
 
   useEffect(() => {

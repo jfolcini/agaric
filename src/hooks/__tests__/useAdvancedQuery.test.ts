@@ -18,6 +18,7 @@ vi.mock('@/lib/tauri', () => ({
 import type {
   AdvancedQueryResponse,
   AggregateSpec,
+  FilterExpr,
   GroupSpec,
   QueryGroup,
   SortKey,
@@ -104,6 +105,34 @@ describe('useAdvancedQuery — D2 inputs', () => {
     await waitFor(() => expect(mockedRun).toHaveBeenCalled())
     const arg = mockedRun.mock.calls[0]?.[0] as Record<string, unknown>
     expect(arg).not.toHaveProperty('fulltext')
+  })
+
+  it('sends a pre-compiled filterExpr VERBATIM, bypassing the flat filters', async () => {
+    const filterExpr: FilterExpr = {
+      type: 'Or',
+      children: [
+        { type: 'Leaf', primitive: { type: 'Tag', tag: 'a' } },
+        { type: 'Not', child: { type: 'Leaf', primitive: { type: 'Tag', tag: 'b' } } },
+      ],
+    }
+    // A non-empty flat `filters` is also supplied to prove `filterExpr` wins.
+    renderHook(() => useAdvancedQuery({ filters: [{ type: 'Tag', tag: 'ignored' }], filterExpr }))
+    await waitFor(() => expect(mockedRun).toHaveBeenCalled())
+    expect(mockedRun).toHaveBeenCalledWith({
+      spaceId: SPACE,
+      filter: filterExpr, // verbatim; flat `filters` ignored
+      limit: 50,
+    })
+  })
+
+  it('falls back to the flat conjunction when no filterExpr is supplied', async () => {
+    renderHook(() => useAdvancedQuery({ filters: [{ type: 'Tag', tag: 'x' }] }))
+    await waitFor(() => expect(mockedRun).toHaveBeenCalled())
+    expect(mockedRun).toHaveBeenCalledWith({
+      spaceId: SPACE,
+      filter: { type: 'And', children: [{ type: 'Leaf', primitive: { type: 'Tag', tag: 'x' } }] },
+      limit: 50,
+    })
   })
 
   it('surfaces global aggregates from the response', async () => {

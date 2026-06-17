@@ -52,12 +52,22 @@ function routeInvoke(response: AdvancedQueryResponse): void {
 beforeEach(() => {
   vi.clearAllMocks()
   useSpaceStore.setState({ currentSpaceId: SPACE_ID })
-  useAdvancedQueryStore.setState({ filtersBySpace: {}, controlsBySpace: {}, nextAddId: 0 })
+  useAdvancedQueryStore.setState({
+    filtersBySpace: {},
+    buildersBySpace: {},
+    controlsBySpace: {},
+    nextAddId: 0,
+  })
   routeInvoke(makeResponse())
 })
 
 afterEach(() => {
-  useAdvancedQueryStore.setState({ filtersBySpace: {}, controlsBySpace: {}, nextAddId: 0 })
+  useAdvancedQueryStore.setState({
+    filtersBySpace: {},
+    buildersBySpace: {},
+    controlsBySpace: {},
+    nextAddId: 0,
+  })
 })
 
 describe('AdvancedQueryView', () => {
@@ -89,19 +99,24 @@ describe('AdvancedQueryView', () => {
     expect(screen.getByTestId('advanced-query-total')).toHaveTextContent('1 matching block')
   })
 
-  it('adds a tag chip and re-runs the query wrapping it as an And of a Leaf', async () => {
-    const user = userEvent.setup()
-    render(<AdvancedQueryView />)
-    // Wait for the initial (empty-filter) fetch to settle.
-    await screen.findByText('No blocks match these filters')
-
+  /** Add a `tag: <value>` leaf into the root group via the Add-filter popover. */
+  async function addTagLeaf(user: ReturnType<typeof userEvent.setup>, tag: string): Promise<void> {
     await user.click(screen.getByRole('button', { name: 'Add filter' }))
     // Scope to the facet popover dialog — "Tag" also appears as a group-by
     // option, so the bare-text lookup is ambiguous.
     const popover = await screen.findByRole('dialog')
     await user.click(within(popover).getByText('Tag'))
-    await user.type(screen.getByLabelText('Tag id'), 'project')
+    await user.type(screen.getByLabelText('Tag id'), tag)
     await user.click(screen.getByRole('button', { name: 'Apply' }))
+  }
+
+  it('adds a tag leaf and re-runs the query wrapping it as an And of a Leaf', async () => {
+    const user = userEvent.setup()
+    render(<AdvancedQueryView />)
+    // Wait for the initial (empty-builder) fetch to settle.
+    await screen.findByText('No blocks match these filters')
+
+    await addTagLeaf(user, 'project')
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('run_advanced_query', {
@@ -115,7 +130,7 @@ describe('AdvancedQueryView', () => {
         },
       })
     })
-    // The chip is visible in the builder row.
+    // The leaf chip is visible in the builder.
     expect(screen.getByText('tag: project')).toBeInTheDocument()
   })
 
@@ -130,6 +145,127 @@ describe('AdvancedQueryView', () => {
     expect(within(popover).getByText('Tag')).toBeInTheDocument()
     // …but the Pages-only facet is gated out.
     expect(within(popover).queryByText('Orphan')).not.toBeInTheDocument()
+  })
+
+  it('toggles the root combinator to Or and re-runs the query', async () => {
+    const user = userEvent.setup()
+    render(<AdvancedQueryView />)
+    await screen.findByText('No blocks match these filters')
+
+    await addTagLeaf(user, 'a')
+    await addTagLeaf(user, 'b')
+
+    // Flip the root group's combinator from All (And) to Any (Or).
+    await user.click(screen.getByRole('radio', { name: 'Any' }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('run_advanced_query', {
+        request: {
+          spaceId: SPACE_ID,
+          filter: {
+            type: 'Or',
+            children: [
+              { type: 'Leaf', primitive: { type: 'Tag', tag: 'a' } },
+              { type: 'Leaf', primitive: { type: 'Tag', tag: 'b' } },
+            ],
+          },
+          limit: 50,
+        },
+      })
+    })
+  })
+
+  it('negates the root group, wrapping the compiled expr in Not', async () => {
+    const user = userEvent.setup()
+    render(<AdvancedQueryView />)
+    await screen.findByText('No blocks match these filters')
+
+    await addTagLeaf(user, 'a')
+    // The root group's NOT toggle is the first NOT button on the surface.
+    await user.click(screen.getAllByRole('button', { name: 'NOT' })[0] as HTMLElement)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('run_advanced_query', {
+        request: {
+          spaceId: SPACE_ID,
+          filter: {
+            type: 'Not',
+            child: {
+              type: 'And',
+              children: [{ type: 'Leaf', primitive: { type: 'Tag', tag: 'a' } }],
+            },
+          },
+          limit: 50,
+        },
+      })
+    })
+  })
+
+  it('adds a nested group with its own leaf and compiles the tree', async () => {
+    const user = userEvent.setup()
+    render(<AdvancedQueryView />)
+    await screen.findByText('No blocks match these filters')
+
+    await addTagLeaf(user, 'top')
+    // "+ Group" appends an empty And sub-group to the root.
+    await user.click(screen.getByRole('button', { name: 'Add group' }))
+
+    // The nested group renders at depth 1. Add a leaf into it via the nested
+    // group's OWN Add-filter button (scoped to the depth-1 group section).
+    const nestedGroup = await waitFor(() => {
+      const g = screen.getAllByTestId('filter-group').find((el) => el.dataset['depth'] === '1')
+      if (!g) throw new Error('nested group not yet rendered')
+      return g
+    })
+    await user.click(within(nestedGroup).getByRole('button', { name: 'Add filter' }))
+    const popover = await screen.findByRole('dialog')
+    await user.click(within(popover).getByText('Tag'))
+    await user.type(screen.getByLabelText('Tag id'), 'nested')
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('run_advanced_query', {
+        request: {
+          spaceId: SPACE_ID,
+          filter: {
+            type: 'And',
+            children: [
+              { type: 'Leaf', primitive: { type: 'Tag', tag: 'top' } },
+              {
+                type: 'And',
+                children: [{ type: 'Leaf', primitive: { type: 'Tag', tag: 'nested' } }],
+              },
+            ],
+          },
+          limit: 50,
+        },
+      })
+    })
+    // Two groups now render (root + nested).
+    expect(screen.getAllByTestId('filter-group').length).toBe(2)
+  })
+
+  it('removes a leaf, returning the compiled expr to an empty conjunction', async () => {
+    const user = userEvent.setup()
+    render(<AdvancedQueryView />)
+    await screen.findByText('No blocks match these filters')
+
+    await addTagLeaf(user, 'gone')
+    expect(screen.getByText('tag: gone')).toBeInTheDocument()
+
+    // Remove the leaf via its pill remove control.
+    await user.click(screen.getByRole('button', { name: 'Remove condition' }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenLastCalledWith('run_advanced_query', {
+        request: {
+          spaceId: SPACE_ID,
+          filter: { type: 'And', children: [] },
+          limit: 50,
+        },
+      })
+    })
+    expect(screen.queryByText('tag: gone')).not.toBeInTheDocument()
   })
 
   it('paginates via load-more, carrying the cursor', async () => {
