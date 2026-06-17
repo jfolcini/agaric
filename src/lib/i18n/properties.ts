@@ -51,6 +51,7 @@ export const properties: Record<string, string> = {
   'advancedQuery.aggregate.target.position': 'Position',
   'advancedQuery.aggregate.summaryLabel': 'Aggregate summary',
   'advancedQuery.group.summaryLabel': 'Group results',
+  'advancedQuery.group.noneKey': '(none)',
   'advancedQuery.group.countLabel_one': '{{count}} block',
   'advancedQuery.group.countLabel_other': '{{count}} blocks',
   // #1280 D3 — nested And/Or/Not boolean filter builder.

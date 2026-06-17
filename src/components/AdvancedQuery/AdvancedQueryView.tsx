@@ -209,7 +209,12 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
             )}
 
             {isGrouped ? (
-              <GroupedResults groups={groups} pageTitles={pageTitles} onNavigate={onNavigate} />
+              <GroupedResults
+                groups={groups}
+                groupBy={controls.groupBy}
+                pageTitles={pageTitles}
+                onNavigate={onNavigate}
+              />
             ) : (
               <QueryResultList results={results} pageTitles={pageTitles} onNavigate={onNavigate} />
             )}

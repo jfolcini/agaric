@@ -427,6 +427,41 @@ describe('AdvancedQueryView', () => {
     expect(within(group).getByText('Member row')).toBeInTheDocument()
   })
 
+  it('resolves a Tag group-key id to its title in the header (#1447)', async () => {
+    const tagId = '01J000000000000000000TAG00'
+    mockedInvoke.mockImplementation(async (cmd, args) => {
+      if (cmd === 'run_advanced_query') {
+        return makeResponse({
+          rows: [],
+          groups: [{ key: tagId, count: 2, members: [makeRow({ id: 'BLK_M' })] }],
+          totalCount: 1,
+        })
+      }
+      if (cmd === 'batch_resolve') {
+        // The hook folds the Tag group key into the SAME batch_resolve call as
+        // the member rows' page ids — assert both ids are requested.
+        const ids = (args as { ids: string[] }).ids
+        expect(ids).toContain(tagId)
+        return [
+          { id: tagId, title: 'project' },
+          { id: 'PAGE001', title: 'Parent page' },
+        ]
+      }
+      return null
+    })
+    useAdvancedQueryStore.setState({
+      controlsBySpace: {
+        [SPACE_ID]: { fulltext: '', sort: [], groupBy: { key: { type: 'Tag' } }, aggregates: [] },
+      },
+    })
+    render(<AdvancedQueryView />)
+
+    const group = await screen.findByTestId('advanced-query-group-section')
+    // Header shows the resolved tag title, not the raw id.
+    expect(within(group).getByTestId('advanced-query-group-key')).toHaveTextContent('project')
+    expect(within(group).queryByText(tagId)).not.toBeInTheDocument()
+  })
+
   it('shows the empty state in grouped mode when there are no groups', async () => {
     routeInvoke(makeResponse({ rows: [], groups: [], totalCount: 0 }))
     // Pre-seed a group-by so the very first fetch is grouped.
