@@ -5,10 +5,14 @@ use futures_util::future::try_join_all;
 use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 
+use super::projection::BacklinkProjection;
 use super::types::{BacklinkFilter, CompareOp};
 use super::{FTS_ROW_CAP, SMALL_IN_LIMIT};
 use crate::error::AppError;
 use crate::error::validation_code::{INVALID_DATE_FILTER, prefixed};
+use crate::filters::primitive::{
+    DatePredicate, FilterPrimitive, Projection, PropertyPredicate, PropertyValue,
+};
 use crate::fts::sanitize_fts_query;
 use crate::sql_utils::escape_like;
 use crate::tag_query::{resolve_tag_leaves, resolve_tag_prefix_leaves};
@@ -736,6 +740,73 @@ fn membership_fragment(ids: &FxHashSet<String>) -> Result<CompiledFilter, AppErr
     })
 }
 
+/// #1280 — which typed `PropertyValue` to wrap a backlink property leaf's
+/// value in when routing through the projection.
+#[derive(Clone, Copy)]
+enum PropValueKind {
+    Text,
+    Date,
+}
+
+/// #1280 — map a backlink `CompareOp` + typed `PropertyValue` to the shared
+/// [`PropertyPredicate`] the projection compiles. The numeric short-circuit
+/// (`Contains`/`StartsWith` on `Num` → `1=0`) is handled inside the
+/// projection's `compile_has_property`, so this is a total mapping.
+fn property_predicate(op: &CompareOp, value: PropertyValue) -> PropertyPredicate {
+    match op {
+        CompareOp::Eq => PropertyPredicate::Eq { value },
+        CompareOp::Neq => PropertyPredicate::Ne { value },
+        CompareOp::Lt => PropertyPredicate::Lt { value },
+        CompareOp::Gt => PropertyPredicate::Gt { value },
+        CompareOp::Lte => PropertyPredicate::Lte { value },
+        CompareOp::Gte => PropertyPredicate::Gte { value },
+        CompareOp::Contains => PropertyPredicate::Contains { value },
+        CompareOp::StartsWith => PropertyPredicate::StartsWith { value },
+    }
+}
+
+/// #1280 — compile a `has-property` predicate through the projection and
+/// convert the result to a backlink [`CompiledFilter`].
+fn route_has_property(key: &str, predicate: &PropertyPredicate) -> CompiledFilter {
+    BacklinkProjection::to_compiled(BacklinkProjection.compile(&FilterPrimitive::HasProperty {
+        key: key.to_string(),
+        predicate: predicate.clone(),
+    }))
+}
+
+/// #1280 — route a text/date property leaf (the `Text`/`Date`-valued
+/// backlink property filters) through the projection.
+fn route_property(
+    key: &str,
+    op: &CompareOp,
+    value: String,
+    kind: PropValueKind,
+) -> Result<CompiledFilter, AppError> {
+    let pv = match kind {
+        PropValueKind::Text => PropertyValue::Text { value },
+        PropValueKind::Date => PropertyValue::Date { value },
+    };
+    let pred = property_predicate(op, pv);
+    Ok(route_has_property(key, &pred))
+}
+
+/// #1280 — map a comparison `CompareOp` (NOT `Neq`/`Contains`/`StartsWith`)
+/// to the projection's [`DatePredicate`] for the `DueDate` leaf. `Eq → On`
+/// (exact, matching the legacy DATE-exact `= ?`), `Lt → Before`,
+/// `Lte → OnOrBefore`, `Gt → After`, `Gte → OnOrAfter`. Returns `None` for
+/// the unsupported ops (the caller handles `Neq` inline + rejects the rest).
+fn compare_op_to_date_predicate(op: &CompareOp, value: &str) -> Option<DatePredicate> {
+    let date = value.to_string();
+    match op {
+        CompareOp::Eq => Some(DatePredicate::On { date }),
+        CompareOp::Lt => Some(DatePredicate::Before { date }),
+        CompareOp::Lte => Some(DatePredicate::OnOrBefore { date }),
+        CompareOp::Gt => Some(DatePredicate::After { date }),
+        CompareOp::Gte => Some(DatePredicate::OnOrAfter { date }),
+        CompareOp::Neq | CompareOp::Contains | CompareOp::StartsWith => None,
+    }
+}
+
 /// Compile a [`BacklinkFilter`] subtree into a correlated boolean SQL
 /// fragment (against outer alias `b`) plus its ordered positional binds
 /// (#346 P1).
@@ -769,168 +840,108 @@ pub(crate) fn compile_backlink_filter<'a>(
             ));
         }
         match filter {
+            // ── Routed leaves (#1280) — compiled via `BacklinkProjection`
+            // through the shared `Projection` engine. Each produces SQL +
+            // binds BYTE-IDENTICAL to the legacy inline arm (proven by the
+            // `projection` byte-identity tests + the parity battery oracle).
             BacklinkFilter::PropertyText { key, op, value } => {
-                let (sql_op, needs_escape) = match op {
-                    CompareOp::Eq => ("=", false),
-                    CompareOp::Neq => ("<>", false),
-                    CompareOp::Lt => ("<", false),
-                    CompareOp::Gt => (">", false),
-                    CompareOp::Lte => ("<=", false),
-                    CompareOp::Gte => (">=", false),
-                    CompareOp::Contains | CompareOp::StartsWith => ("LIKE", true),
-                };
-                let bind_value: String = match op {
-                    CompareOp::Contains => format!("%{}%", escape_like(value)),
-                    CompareOp::StartsWith => format!("{}%", escape_like(value)),
-                    _ => value.clone(),
-                };
-                let escape_clause = if needs_escape { " ESCAPE '\\'" } else { "" };
-                let sql = format!(
-                    "EXISTS (SELECT 1 FROM block_properties bp \
-                     WHERE bp.block_id = b.id AND bp.key = ? \
-                       AND bp.value_text IS NOT NULL \
-                       AND bp.value_text {sql_op} ?{escape_clause})"
-                );
-                Ok(CompiledFilter {
-                    sql,
-                    binds: vec![FilterBind::Text(key.clone()), FilterBind::Text(bind_value)],
-                })
+                route_property(key, op, value.clone(), PropValueKind::Text)
             }
 
             BacklinkFilter::PropertyNum { key, op, value } => {
-                let sql_op = match op {
-                    CompareOp::Eq => "=",
-                    CompareOp::Neq => "<>",
-                    CompareOp::Lt => "<",
-                    CompareOp::Gt => ">",
-                    CompareOp::Lte => "<=",
-                    CompareOp::Gte => ">=",
-                    // `Contains`/`StartsWith` are meaningless on numeric
-                    // values and short-circuit to the empty set, exactly as
-                    // the resolver returns `FxHashSet::default()`.
-                    CompareOp::Contains | CompareOp::StartsWith => {
-                        return Ok(CompiledFilter::never());
-                    }
-                };
-                let sql = format!(
-                    "EXISTS (SELECT 1 FROM block_properties bp \
-                     WHERE bp.block_id = b.id AND bp.key = ? \
-                       AND bp.value_num IS NOT NULL \
-                       AND bp.value_num {sql_op} ?)"
-                );
-                Ok(CompiledFilter {
-                    sql,
-                    binds: vec![FilterBind::Text(key.clone()), FilterBind::Num(*value)],
-                })
+                // `Contains`/`StartsWith` on a numeric value short-circuit to
+                // the empty set (the projection emits `1=0`); the projection
+                // handles this internally.
+                let pred = property_predicate(op, PropertyValue::Num { value: *value });
+                Ok(route_has_property(key, &pred))
             }
 
             BacklinkFilter::PropertyDate { key, op, value } => {
-                let (sql_op, needs_escape) = match op {
-                    CompareOp::Eq => ("=", false),
-                    CompareOp::Neq => ("<>", false),
-                    CompareOp::Lt => ("<", false),
-                    CompareOp::Gt => (">", false),
-                    CompareOp::Lte => ("<=", false),
-                    CompareOp::Gte => (">=", false),
-                    CompareOp::Contains | CompareOp::StartsWith => ("LIKE", true),
-                };
-                let bind_value: String = match op {
-                    CompareOp::Contains => format!("%{}%", escape_like(value)),
-                    CompareOp::StartsWith => format!("{}%", escape_like(value)),
-                    _ => value.clone(),
-                };
-                let escape_clause = if needs_escape { " ESCAPE '\\'" } else { "" };
-                let sql = format!(
-                    "EXISTS (SELECT 1 FROM block_properties bp \
-                     WHERE bp.block_id = b.id AND bp.key = ? \
-                       AND bp.value_date IS NOT NULL \
-                       AND bp.value_date {sql_op} ?{escape_clause})"
-                );
-                Ok(CompiledFilter {
-                    sql,
-                    binds: vec![FilterBind::Text(key.clone()), FilterBind::Text(bind_value)],
-                })
+                route_property(key, op, value.clone(), PropValueKind::Date)
             }
 
-            BacklinkFilter::PropertyIsSet { key } => Ok(CompiledFilter {
-                sql: "EXISTS (SELECT 1 FROM block_properties bp \
-                      WHERE bp.block_id = b.id AND bp.key = ?)"
-                    .to_string(),
-                binds: vec![FilterBind::Text(key.clone())],
-            }),
+            BacklinkFilter::PropertyIsSet { key } => {
+                Ok(route_has_property(key, &PropertyPredicate::Exists))
+            }
 
-            BacklinkFilter::PropertyIsEmpty { key } => Ok(CompiledFilter {
-                sql: "NOT EXISTS (SELECT 1 FROM block_properties bp \
-                      WHERE bp.block_id = b.id AND bp.key = ?)"
-                    .to_string(),
-                binds: vec![FilterBind::Text(key.clone())],
-            }),
+            BacklinkFilter::PropertyIsEmpty { key } => {
+                Ok(route_has_property(key, &PropertyPredicate::NotExists))
+            }
 
-            BacklinkFilter::TodoState { state } => Ok(CompiledFilter {
-                sql: "b.todo_state = ?".to_string(),
-                binds: vec![FilterBind::Text(state.clone())],
-            }),
+            BacklinkFilter::TodoState { state } => {
+                let prim = FilterPrimitive::State {
+                    values: vec![state.clone()],
+                    is_null: false,
+                    exclude: false,
+                };
+                Ok(BacklinkProjection::to_compiled(
+                    BacklinkProjection.compile(&prim),
+                ))
+            }
 
-            BacklinkFilter::Priority { level } => Ok(CompiledFilter {
-                sql: "b.priority = ?".to_string(),
-                binds: vec![FilterBind::Text(level.clone())],
-            }),
+            BacklinkFilter::Priority { level } => {
+                let prim = FilterPrimitive::Priority {
+                    priority: level.clone(),
+                };
+                Ok(BacklinkProjection::to_compiled(
+                    BacklinkProjection.compile(&prim),
+                ))
+            }
 
             BacklinkFilter::DueDate { op, value } => {
-                // Mirror the resolver's per-op `IS NOT NULL` guards exactly.
-                // `Eq` has no explicit guard (a NULL due_date never equals a
-                // bound value anyway); every other comparison adds
-                // `due_date IS NOT NULL`.
-                let sql = match op {
-                    CompareOp::Eq => "b.due_date = ?".to_string(),
-                    CompareOp::Neq => "(b.due_date != ? AND b.due_date IS NOT NULL)".to_string(),
-                    CompareOp::Lt => "(b.due_date < ? AND b.due_date IS NOT NULL)".to_string(),
-                    CompareOp::Lte => "(b.due_date <= ? AND b.due_date IS NOT NULL)".to_string(),
-                    CompareOp::Gt => "(b.due_date > ? AND b.due_date IS NOT NULL)".to_string(),
-                    CompareOp::Gte => "(b.due_date >= ? AND b.due_date IS NOT NULL)".to_string(),
-                    CompareOp::Contains | CompareOp::StartsWith => {
-                        return Err(AppError::Validation(format!(
-                            "DueDate filter does not support {op:?} operator"
-                        )));
+                // `Eq`/`Lt`/`Gt`/`Lte`/`Gte` route through the projection's
+                // `DatePredicate`. `Neq` has NO `DatePredicate` counterpart
+                // (the vocabulary is `On/Before/After/OnOrBefore/OnOrAfter/
+                // Between/IsNull`), so it stays inline — byte-identical to the
+                // legacy `(b.due_date != ? AND b.due_date IS NOT NULL)`.
+                // `Contains`/`StartsWith` keep the legacy loud rejection.
+                match op {
+                    CompareOp::Neq => Ok(CompiledFilter {
+                        sql: "(b.due_date != ? AND b.due_date IS NOT NULL)".to_string(),
+                        binds: vec![FilterBind::Text(value.clone())],
+                    }),
+                    CompareOp::Contains | CompareOp::StartsWith => Err(AppError::Validation(
+                        format!("DueDate filter does not support {op:?} operator"),
+                    )),
+                    _ => {
+                        let predicate =
+                            compare_op_to_date_predicate(op, value).ok_or_else(|| {
+                                AppError::Validation(format!(
+                                    "DueDate filter does not support {op:?} operator"
+                                ))
+                            })?;
+                        let prim = FilterPrimitive::DueDate { predicate };
+                        Ok(BacklinkProjection::to_compiled(
+                            BacklinkProjection.compile(&prim),
+                        ))
                     }
-                };
-                Ok(CompiledFilter {
-                    sql,
-                    binds: vec![FilterBind::Text(value.clone())],
-                })
+                }
             }
 
             BacklinkFilter::CreatedInRange { after, before } => {
-                // #670 — same loud rejection in the compiled twin, so the
-                // resolver path and the compiled path agree on validity.
-                let after_prefix = resolve_range_bound(after.as_ref())?;
-                let before_prefix = resolve_range_bound(before.as_ref())?;
-
-                let mut clauses: Vec<&str> = Vec::new();
-                let mut binds: Vec<FilterBind> = Vec::new();
-                if let Some(lo) = after_prefix {
-                    clauses.push("b.id >= ?");
-                    binds.push(FilterBind::Text(lo));
-                }
-                if let Some(hi) = before_prefix {
-                    clauses.push("b.id < ?");
-                    binds.push(FilterBind::Text(hi));
-                }
-                // No bounds at all ⇒ every non-deleted block matched in the
-                // resolver. The outer query already constrains to non-deleted
-                // source blocks, so `1=1` reproduces "all candidates".
-                let sql = if clauses.is_empty() {
-                    "1=1".to_string()
-                } else {
-                    format!("({})", clauses.join(" AND "))
+                // #670 — keep the loud rejection here so the resolver path and
+                // the compiled path agree on validity BEFORE routing (the
+                // projection itself treats an unparseable bound as absent).
+                resolve_range_bound(after.as_ref())?;
+                resolve_range_bound(before.as_ref())?;
+                let prim = FilterPrimitive::Created {
+                    after: after.clone(),
+                    before: before.clone(),
                 };
-                Ok(CompiledFilter { sql, binds })
+                Ok(BacklinkProjection::to_compiled(
+                    BacklinkProjection.compile(&prim),
+                ))
             }
 
-            BacklinkFilter::BlockType { block_type } => Ok(CompiledFilter {
-                sql: "b.block_type = ?".to_string(),
-                binds: vec![FilterBind::Text(block_type.clone())],
-            }),
+            BacklinkFilter::BlockType { block_type } => {
+                let prim = FilterPrimitive::BlockType {
+                    values: vec![block_type.clone()],
+                    exclude: false,
+                };
+                Ok(BacklinkProjection::to_compiled(
+                    BacklinkProjection.compile(&prim),
+                ))
+            }
 
             // ── Hybrid leaves: pre-resolve once, embed as a json_each set ──
             BacklinkFilter::Contains { query } => {

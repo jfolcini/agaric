@@ -228,6 +228,9 @@ enum SqlBind<'a> {
     Str(&'a str),
     OwnedStr(String),
     I64(i64),
+    /// #1280 — a real (`f64`) value, emitted by a `has-property` predicate
+    /// over a numeric `PropertyValue::Num` operand.
+    F64(f64),
 }
 
 impl<'a> SqlBind<'a> {
@@ -245,6 +248,7 @@ impl<'a> SqlBind<'a> {
             SqlBind::Str(s) => q.bind(s),
             SqlBind::OwnedStr(s) => q.bind(s),
             SqlBind::I64(i) => q.bind(i),
+            SqlBind::F64(f) => q.bind(f),
         }
     }
 
@@ -263,6 +267,7 @@ impl<'a> SqlBind<'a> {
             SqlBind::Str(s) => q.bind(s),
             SqlBind::OwnedStr(s) => q.bind(s),
             SqlBind::I64(i) => q.bind(i),
+            SqlBind::F64(f) => q.bind(f),
         }
     }
 }
@@ -685,6 +690,7 @@ fn compile_pages_filters(
             binds.push(match b {
                 crate::filters::primitive::Bind::Text(s) => SqlBind::OwnedStr(s),
                 crate::filters::primitive::Bind::Int(i) => SqlBind::I64(i),
+                crate::filters::primitive::Bind::Real(f) => SqlBind::F64(f),
             });
         }
     }

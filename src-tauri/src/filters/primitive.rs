@@ -29,7 +29,10 @@ use std::collections::HashSet;
 /// support newtype variants wrapping a primitive — and struct variants
 /// give the frontend a self-describing field name (`{ type: "Tag", tag }`
 /// rather than a bare positional value).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+// NOTE: `Eq` is intentionally NOT derived — #1280 added the `Num { value: f64 }`
+// property value (via `PropertyPredicate`), and `f64` is not `Eq`. `PartialEq`
+// is sufficient for the tests / round-trip assertions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "type")]
 pub enum FilterPrimitive {
     /// Shared — block carries this tag id directly.
@@ -56,6 +59,33 @@ pub enum FilterPrimitive {
     Space { space_id: String },
     /// Shared — block's `priority` matches this value.
     Priority { priority: String },
+    /// #1280 — block's `todo_state` is in `values` (or IS NULL when
+    /// `is_null`). `exclude=true` negates the membership test. Multi-value
+    /// to support the chip vocabulary; the single-value backlink `TodoState`
+    /// leaf routes to `{ values: [state], is_null: false, exclude: false }`.
+    State {
+        values: Vec<String>,
+        #[serde(default)]
+        is_null: bool,
+        #[serde(default)]
+        exclude: bool,
+    },
+    /// #1280 — block's `block_type` is in `values`. `exclude=true` negates.
+    /// The single-value backlink `BlockType` leaf routes to
+    /// `{ values: [block_type], exclude: false }`.
+    BlockType { values: Vec<String>, exclude: bool },
+    /// #1280 — block's `due_date` matches the date predicate.
+    DueDate { predicate: DatePredicate },
+    /// #1280 — block's `scheduled_date` matches the date predicate.
+    Scheduled { predicate: DatePredicate },
+    /// #1280 — block was created (by ULID-prefix range) at or after `after`
+    /// and before `before`. Bounds are ISO dates; the projection converts
+    /// each to a ULID prefix and compares `b.id`. Routes the backlink
+    /// `CreatedInRange` leaf.
+    Created {
+        after: Option<String>,
+        before: Option<String>,
+    },
     // ── Pages-only ────────────────────────────────────────────────
     /// Pages-only — page has no inbound links AND no outbound links.
     /// (`HasNoInboundLinks` is the looser inbound-only sibling.)
@@ -92,7 +122,9 @@ pub enum FilterPrimitive {
 /// **Wire shape:** internally-tagged on `"type"` (PascalCase) so the TS
 /// union reads `{ type: "Exists" } | { type: "NotExists" }
 /// | { type: "Eq", value: PropertyValue } | { type: "Ne", value: PropertyValue }`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+// NOTE: `Eq` is intentionally NOT derived — see `FilterPrimitive` (the `Num`
+// property value carries an `f64`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "type")]
 pub enum PropertyPredicate {
     /// Property key exists (no value comparison).
@@ -106,13 +138,31 @@ pub enum PropertyPredicate {
     /// matching `(key, value)` row). `Text` compares `value_text`; `Ref`
     /// compares `value_ref`.
     Ne { value: PropertyValue },
+    /// #1280 — property value is strictly less than the operand. The
+    /// compared column is chosen from the [`PropertyValue`] variant (see
+    /// [`property_value_column`]).
+    Lt { value: PropertyValue },
+    /// #1280 — property value is strictly greater than the operand.
+    Gt { value: PropertyValue },
+    /// #1280 — property value is less than or equal to the operand.
+    Lte { value: PropertyValue },
+    /// #1280 — property value is greater than or equal to the operand.
+    Gte { value: PropertyValue },
+    /// #1280 — property value contains the operand as a substring
+    /// (`LIKE '%v%' ESCAPE '\'`). Meaningless on a `Num` value → `1=0`.
+    Contains { value: PropertyValue },
+    /// #1280 — property value starts with the operand (`LIKE 'v%' ESCAPE
+    /// '\'`). Meaningless on a `Num` value → `1=0`.
+    StartsWith { value: PropertyValue },
 }
 
 /// The right-hand-side value type for `HasProperty`.
 ///
 /// Internally-tagged on `"type"` (PascalCase) so the TS union reads
 /// `{ type: "Text", value } | { type: "Ref", value }`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+// NOTE: `Eq` is intentionally NOT derived — the `Num` variant carries an
+// `f64` (#1280), and `f64` is not `Eq`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "type")]
 pub enum PropertyValue {
     Text {
@@ -122,6 +172,125 @@ pub enum PropertyValue {
     Ref {
         value: String,
     },
+    /// #1280 — a numeric value compared against `block_properties.value_num`.
+    /// Bound as [`Bind::Real`] so it keeps its native SQLite REAL affinity.
+    Num {
+        value: f64,
+    },
+    /// #1280 — an ISO-TEXT date value compared against
+    /// `block_properties.value_date` (a TEXT column). Bound as
+    /// [`Bind::Text`] — lexical ISO comparison, same as the backlink
+    /// `PropertyDate` leaf.
+    Date {
+        value: String,
+    },
+}
+
+/// #1280 — a predicate over a TEXT-ISO date column (`blocks.due_date`,
+/// `blocks.scheduled_date`, or any `YYYY-MM-DD[...]` column). Comparisons
+/// are **lexical**: ISO-8601 dates sort the same byte-wise as
+/// chronologically, so `'2026-01-02' > '2026-01-01'` holds as a string
+/// compare.
+///
+/// Internally-tagged on `"type"` (PascalCase). The TS union reads
+/// `{ type: "IsNull" } | { type: "Before", date } | { type: "After", date }
+/// | { type: "OnOrBefore", date } | { type: "OnOrAfter", date }
+/// | { type: "On", date } | { type: "Between", from, to }`.
+///
+/// **`On` and the calendar-day rule:** `On YYYY-MM-DD` means "the whole
+/// calendar day". When the underlying column is *pure* `YYYY-MM-DD` (no
+/// time component) a lexical `= ?` already matches the whole day — that is
+/// the form [`BacklinkProjection::compile_due_date`] /
+/// [`compile_scheduled`](Projection::compile_scheduled) emit, byte-identical
+/// to the legacy backlink `DueDate{Eq}` leaf (the resolver oracle treats the
+/// column as DATE-exact). For a column that carries a *time* component the
+/// generic [`DatePredicate::to_lexical_sql`] expands `On` to the half-open
+/// day range `>= 'd' AND < 'd+1day'` so daytime values on the named day are
+/// included (mirroring `compile_last_edited`'s end-of-day handling).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(tag = "type")]
+pub enum DatePredicate {
+    /// The column is NULL (unset).
+    IsNull,
+    /// Strictly before the given date (`< 'date'`).
+    Before { date: String },
+    /// Strictly after the given date (`> 'date'`).
+    After { date: String },
+    /// On or before the given date (`<= 'date'`).
+    OnOrBefore { date: String },
+    /// On or after the given date (`>= 'date'`).
+    OnOrAfter { date: String },
+    /// Exactly on the given calendar day. See the type-level doc for the
+    /// day-expansion rule.
+    On { date: String },
+    /// Inclusive range `BETWEEN 'from' AND 'to'`.
+    Between { from: String, to: String },
+}
+
+impl DatePredicate {
+    /// #1280 — compile this predicate against a TEXT-ISO `column` for a
+    /// surface whose column may carry a **time** component, expanding `On`
+    /// to the half-open calendar-day range `>= 'd' AND < 'd+1day'` so
+    /// daytime values on the named day are included. The non-`On` variants
+    /// guard `column IS NOT NULL` (except `IsNull` itself). Returns the SQL
+    /// fragment plus its ordered text binds.
+    ///
+    /// `compile_due_date`/`compile_scheduled` deliberately do NOT use this
+    /// helper — the backlink columns are treated as DATE-exact to stay
+    /// byte-identical with the resolver oracle. It exists for callers /
+    /// surfaces that need true calendar-day semantics, and is unit-tested
+    /// for the `On`-expands-to-day rule.
+    #[must_use]
+    pub fn to_lexical_sql(&self, column: &str) -> (String, Vec<Bind>) {
+        match self {
+            DatePredicate::IsNull => (format!("{column} IS NULL"), Vec::new()),
+            DatePredicate::Before { date } => (
+                format!("({column} IS NOT NULL AND {column} < ?)"),
+                vec![Bind::Text(date.clone())],
+            ),
+            DatePredicate::After { date } => (
+                format!("({column} IS NOT NULL AND {column} > ?)"),
+                vec![Bind::Text(date.clone())],
+            ),
+            DatePredicate::OnOrBefore { date } => (
+                format!("({column} IS NOT NULL AND {column} <= ?)"),
+                vec![Bind::Text(date.clone())],
+            ),
+            DatePredicate::OnOrAfter { date } => (
+                format!("({column} IS NOT NULL AND {column} >= ?)"),
+                vec![Bind::Text(date.clone())],
+            ),
+            DatePredicate::On { date } => {
+                // Expand the bare day to the half-open range
+                // `>= 'd' AND < 'd+1'` so a column value like
+                // `2026-03-01T14:00:00Z` on that day is INCLUDED.
+                let next = next_day_iso(date);
+                (
+                    format!("({column} IS NOT NULL AND {column} >= ? AND {column} < ?)"),
+                    vec![Bind::Text(date.clone()), Bind::Text(next)],
+                )
+            }
+            DatePredicate::Between { from, to } => (
+                format!("({column} IS NOT NULL AND {column} BETWEEN ? AND ?)"),
+                vec![Bind::Text(from.clone()), Bind::Text(to.clone())],
+            ),
+        }
+    }
+}
+
+/// #1280 — given a bare `YYYY-MM-DD` (or an ISO string whose date part is
+/// the first 10 chars), return the next calendar day as `YYYY-MM-DD`. Used
+/// by [`DatePredicate::to_lexical_sql`] to upper-bound an `On` day range.
+/// A malformed input falls back to the input unchanged (the resulting
+/// `>= d AND < d` range simply matches nothing — fail-closed).
+fn next_day_iso(date: &str) -> String {
+    let day = &date.get(..10).unwrap_or(date);
+    match chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d") {
+        Ok(d) => (d + chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string(),
+        Err(_) => date.to_string(),
+    }
 }
 
 /// `last-edited:` time-window spec.
@@ -220,12 +389,17 @@ impl WhereClause {
     }
 }
 
-/// Bind shape for `WhereClause::binds`. Two scalars cover every
+/// Bind shape for `WhereClause::binds`. Three scalars cover every
 /// primitive we currently emit; future primitives can extend.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Bind {
     Text(String),
     Int(i64),
+    /// #1280 — a real (`f64`) value. Emitted by the property `Num`-valued
+    /// predicates routed through [`BacklinkProjection`](crate::backlink::projection::BacklinkProjection)
+    /// so a numeric property value keeps its native SQLite affinity rather
+    /// than being stringified.
+    Real(f64),
 }
 
 // ── Projection trait ─────────────────────────────────────────────────────
@@ -247,6 +421,24 @@ pub trait Projection {
     fn compile_last_edited(&self, spec: &LastEditedSpec) -> WhereClause;
     fn compile_space(&self, space_id: &str) -> WhereClause;
     fn compile_priority(&self, priority: &str) -> WhereClause;
+
+    // #1280 — shared metadata primitives; default to `unsupported` so a
+    // projection only opts in by overriding (currently `BacklinkProjection`).
+    fn compile_state(&self, _values: &[String], _is_null: bool, _exclude: bool) -> WhereClause {
+        WhereClause::unsupported()
+    }
+    fn compile_block_type(&self, _values: &[String], _exclude: bool) -> WhereClause {
+        WhereClause::unsupported()
+    }
+    fn compile_due_date(&self, _predicate: &DatePredicate) -> WhereClause {
+        WhereClause::unsupported()
+    }
+    fn compile_scheduled(&self, _predicate: &DatePredicate) -> WhereClause {
+        WhereClause::unsupported()
+    }
+    fn compile_created(&self, _after: Option<&str>, _before: Option<&str>) -> WhereClause {
+        WhereClause::unsupported()
+    }
 
     // Pages-only — default to `unsupported`.
     fn compile_orphan(&self) -> WhereClause {
@@ -290,6 +482,19 @@ pub trait Projection {
             FilterPrimitive::LastEdited { spec } => self.compile_last_edited(spec),
             FilterPrimitive::Space { space_id } => self.compile_space(space_id),
             FilterPrimitive::Priority { priority } => self.compile_priority(priority),
+            FilterPrimitive::State {
+                values,
+                is_null,
+                exclude,
+            } => self.compile_state(values, *is_null, *exclude),
+            FilterPrimitive::BlockType { values, exclude } => {
+                self.compile_block_type(values, *exclude)
+            }
+            FilterPrimitive::DueDate { predicate } => self.compile_due_date(predicate),
+            FilterPrimitive::Scheduled { predicate } => self.compile_scheduled(predicate),
+            FilterPrimitive::Created { after, before } => {
+                self.compile_created(after.as_deref(), before.as_deref())
+            }
             FilterPrimitive::Orphan => self.compile_orphan(),
             FilterPrimitive::Stub => self.compile_stub(),
             FilterPrimitive::HasNoInboundLinks => self.compile_has_no_inbound_links(),
@@ -353,11 +558,22 @@ impl FilterPrimitive {
             | FilterPrimitive::HasProperty { .. }
             | FilterPrimitive::Space { .. }
             | FilterPrimitive::Stub
-            | FilterPrimitive::HasNoInboundLinks => 0,
+            | FilterPrimitive::HasNoInboundLinks
+            // #1280 — `DueDate`/`Scheduled` hit the partial indexes
+            // `idx_blocks_due` / `idx_blocks_scheduled`; `Created` is a
+            // `b.id` (PK) range — all genuinely index-backed.
+            | FilterPrimitive::DueDate { .. }
+            | FilterPrimitive::Scheduled { .. }
+            | FilterPrimitive::Created { .. } => 0,
             // `Priority` is a per-row equality; `LastEdited` is a
             // per-row correlated `MAX()` subquery (served via
             // `idx_op_log_block_id`) — both rank above a full LIKE scan.
-            FilterPrimitive::Priority { .. } | FilterPrimitive::LastEdited { .. } => 1,
+            // #1280 — `State`/`BlockType` are per-row column membership
+            // tests with no dedicated index, ranking with `Priority`.
+            FilterPrimitive::Priority { .. }
+            | FilterPrimitive::LastEdited { .. }
+            | FilterPrimitive::State { .. }
+            | FilterPrimitive::BlockType { .. } => 1,
             // `PathGlob` is always a full `pages_cache.title` scan:
             // `LOWER(title) GLOB ?` (#1320-A) uses BINARY collation against
             // an expression, so no index applies and anchoring buys
@@ -386,6 +602,11 @@ impl FilterPrimitive {
             FilterPrimitive::LastEdited { .. } => "last-edited",
             FilterPrimitive::Space { .. } => "space",
             FilterPrimitive::Priority { .. } => "priority",
+            FilterPrimitive::State { .. } => "state",
+            FilterPrimitive::BlockType { .. } => "block-type",
+            FilterPrimitive::DueDate { .. } => "due-date",
+            FilterPrimitive::Scheduled { .. } => "scheduled",
+            FilterPrimitive::Created { .. } => "created",
             FilterPrimitive::Orphan => "orphan",
             FilterPrimitive::Stub => "stub",
             FilterPrimitive::HasNoInboundLinks => "has-no-inbound-links",
@@ -401,15 +622,71 @@ impl FilterPrimitive {
 
 // ── Property-value column mapping ─────────────────────────────────────────
 
-/// D26 — map a [`PropertyValue`] to the `block_properties` column it
-/// compares against (`value_text` for `Text`, `value_ref` for `Ref`) plus
-/// the bound operand. Both `Eq` and `Ne` share this mapping; only the
-/// `EXISTS` vs `NOT EXISTS` wrapper differs.
-fn property_value_column(value: &PropertyValue) -> (&'static str, String) {
+/// D26 / #1280 — map a [`PropertyValue`] to the `block_properties` column
+/// it compares against plus the bound operand (carrying its native
+/// affinity via [`Bind`]). The 4-column mapping:
+///
+/// | `PropertyValue` | column        | bind          |
+/// |-----------------|---------------|---------------|
+/// | `Text`          | `value_text`  | `Bind::Text`  |
+/// | `Ref`           | `value_ref`   | `Bind::Text`  |
+/// | `Num`           | `value_num`   | `Bind::Real`  |
+/// | `Date`          | `value_date`  | `Bind::Text`  |
+///
+/// `Eq`/`Ne` and the `Lt`/`Gt`/`Lte`/`Gte` comparisons share this mapping;
+/// only the surrounding `EXISTS`/`NOT EXISTS` wrapper + the SQL operator
+/// differ. `Contains`/`StartsWith` build their own `LIKE` bind instead.
+fn property_value_column(value: &PropertyValue) -> (&'static str, Bind) {
     match value {
+        PropertyValue::Text { value } => ("value_text", Bind::Text(value.clone())),
+        PropertyValue::Ref { value } => ("value_ref", Bind::Text(value.clone())),
+        PropertyValue::Num { value } => ("value_num", Bind::Real(*value)),
+        PropertyValue::Date { value } => ("value_date", Bind::Text(value.clone())),
+    }
+}
+
+/// #1280 — compile an ordered comparison (`<`/`>`/`<=`/`>=`) over a single
+/// property column, guarding the column `IS NOT NULL` so a row missing the
+/// value never spuriously matches (mirrors the backlink `PropertyNum`/
+/// `PropertyDate`/`PropertyText` resolver semantics, which only consider
+/// rows whose value column is non-NULL).
+fn compile_property_compare(key: &str, op: &str, value: &PropertyValue) -> WhereClause {
+    let (col, bind) = property_value_column(value);
+    WhereClause::new(
+        format!(
+            "EXISTS (SELECT 1 FROM block_properties \
+             WHERE block_id = b.id AND key = ? \
+               AND {col} IS NOT NULL AND {col} {op} ?)"
+        ),
+        vec![Bind::Text(key.to_string()), bind],
+    )
+}
+
+/// #1280 — compile a substring (`Contains`) or prefix (`StartsWith`) match
+/// as `LIKE ? ESCAPE '\'`. On a `Num` value the predicate is meaningless
+/// (a numeric column has no substring), so it short-circuits to `1=0` —
+/// exactly as the backlink `PropertyNum` resolver returns the empty set.
+fn compile_property_like(key: &str, value: &PropertyValue, contains: bool) -> WhereClause {
+    let (col, raw) = match value {
         PropertyValue::Text { value } => ("value_text", value.clone()),
         PropertyValue::Ref { value } => ("value_ref", value.clone()),
-    }
+        PropertyValue::Date { value } => ("value_date", value.clone()),
+        PropertyValue::Num { .. } => return WhereClause::new("1=0", Vec::new()),
+    };
+    let escaped = crate::sql_utils::escape_like(&raw);
+    let pattern = if contains {
+        format!("%{escaped}%")
+    } else {
+        format!("{escaped}%")
+    };
+    WhereClause::new(
+        format!(
+            "EXISTS (SELECT 1 FROM block_properties \
+             WHERE block_id = b.id AND key = ? \
+               AND {col} IS NOT NULL AND {col} LIKE ? ESCAPE '\\')"
+        ),
+        vec![Bind::Text(key.to_string()), Bind::Text(pattern)],
+    )
 }
 
 // ── Allowed-keys constants ───────────────────────────────────────────────
@@ -509,7 +786,7 @@ impl Projection for PagesProjection {
                         "EXISTS (SELECT 1 FROM block_properties \
                          WHERE block_id = b.id AND key = ? AND {col} = ?)"
                     ),
-                    vec![Bind::Text(key.to_string()), Bind::Text(v)],
+                    vec![Bind::Text(key.to_string()), v],
                 )
             }
             PropertyPredicate::Ne { value } => {
@@ -519,9 +796,15 @@ impl Projection for PagesProjection {
                         "NOT EXISTS (SELECT 1 FROM block_properties \
                          WHERE block_id = b.id AND key = ? AND {col} = ?)"
                     ),
-                    vec![Bind::Text(key.to_string()), Bind::Text(v)],
+                    vec![Bind::Text(key.to_string()), v],
                 )
             }
+            PropertyPredicate::Lt { value } => compile_property_compare(key, "<", value),
+            PropertyPredicate::Gt { value } => compile_property_compare(key, ">", value),
+            PropertyPredicate::Lte { value } => compile_property_compare(key, "<=", value),
+            PropertyPredicate::Gte { value } => compile_property_compare(key, ">=", value),
+            PropertyPredicate::Contains { value } => compile_property_like(key, value, true),
+            PropertyPredicate::StartsWith { value } => compile_property_like(key, value, false),
         }
     }
     fn compile_last_edited(&self, spec: &LastEditedSpec) -> WhereClause {
@@ -874,6 +1157,27 @@ mod tests {
             FilterPrimitive::Priority {
                 priority: "A".into(),
             },
+            FilterPrimitive::State {
+                values: vec!["TODO".into()],
+                is_null: false,
+                exclude: false,
+            },
+            FilterPrimitive::BlockType {
+                values: vec!["task".into()],
+                exclude: false,
+            },
+            FilterPrimitive::DueDate {
+                predicate: DatePredicate::On {
+                    date: "2026-01-01".into(),
+                },
+            },
+            FilterPrimitive::Scheduled {
+                predicate: DatePredicate::IsNull,
+            },
+            FilterPrimitive::Created {
+                after: Some("2026-01-01".into()),
+                before: None,
+            },
             FilterPrimitive::Orphan,
             FilterPrimitive::Stub,
             FilterPrimitive::HasNoInboundLinks,
@@ -902,6 +1206,11 @@ mod tests {
                 | FilterPrimitive::LastEdited { .. }
                 | FilterPrimitive::Space { .. }
                 | FilterPrimitive::Priority { .. }
+                | FilterPrimitive::State { .. }
+                | FilterPrimitive::BlockType { .. }
+                | FilterPrimitive::DueDate { .. }
+                | FilterPrimitive::Scheduled { .. }
+                | FilterPrimitive::Created { .. }
                 | FilterPrimitive::Orphan
                 | FilterPrimitive::Stub
                 | FilterPrimitive::HasNoInboundLinks
@@ -914,9 +1223,11 @@ mod tests {
         for prim in &all {
             let key = prim.allowed_key();
             assert!(
-                PAGES_ALLOWED_KEYS.contains(key) || SEARCH_ALLOWED_KEYS.contains(key),
-                "`{key}` (allowed_key of {prim:?}) is in neither \
-                 PAGES_ALLOWED_KEYS nor SEARCH_ALLOWED_KEYS"
+                PAGES_ALLOWED_KEYS.contains(key)
+                    || SEARCH_ALLOWED_KEYS.contains(key)
+                    || crate::backlink::projection::BACKLINK_ALLOWED_KEYS.contains(key),
+                "`{key}` (allowed_key of {prim:?}) is in none of \
+                 PAGES_ALLOWED_KEYS / SEARCH_ALLOWED_KEYS / BACKLINK_ALLOWED_KEYS"
             );
         }
     }

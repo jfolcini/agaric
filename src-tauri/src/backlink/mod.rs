@@ -2,6 +2,7 @@
 
 pub(crate) mod filters;
 mod grouped;
+pub(crate) mod projection;
 mod query;
 pub(crate) mod sort;
 pub mod types;
