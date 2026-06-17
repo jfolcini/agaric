@@ -26,6 +26,7 @@
 //! unit instead of silently emitting a `1=0 /* UNSUPPORTED */` conjunct.
 
 use super::primitive::{Bind, FilterPrimitive, Projection, WhereClause};
+use crate::error::AppError;
 
 /// A boolean tree over [`FilterPrimitive`] leaves.
 ///
@@ -60,6 +61,48 @@ impl FilterExpr {
             children: primitives.into_iter().map(FilterExpr::leaf).collect(),
         }
     }
+
+    /// Maximum boolean-tree nesting depth accepted from any caller (#1396).
+    ///
+    /// Mirrors the backlink resolver's `compile_backlink_filter` bound
+    /// (`backlink/filters.rs`: `depth > 50`) so the two boolean-tree compilers
+    /// reject pathological nesting identically.
+    pub const MAX_DEPTH: usize = 50;
+
+    /// Reject a `FilterExpr` whose nesting exceeds [`FilterExpr::MAX_DEPTH`]
+    /// (#1396). Callers that build a tree from UNTRUSTED input — a future IPC
+    /// command deserialising an advanced query — MUST call this before
+    /// [`CompileExpr::compile_expr`], exactly as the allow-list gate must reject
+    /// unsupported leaves before compiling. `compile_expr` recurses UNBOUNDED
+    /// and is an infallible pure SQL builder, so depth validation is a separate,
+    /// caller-invoked gate (the same shape the resolver uses: its entry point
+    /// threads `depth` and rejects before recursing deeper).
+    ///
+    /// The walk checks the bound at the TOP of each frame, BEFORE recursing into
+    /// children, so it bounds its OWN recursion to `MAX_DEPTH + 1` frames and
+    /// therefore cannot itself overflow the stack on a pathologically deep tree.
+    pub fn validate_depth(&self) -> Result<(), AppError> {
+        self.check_depth(0)
+    }
+
+    fn check_depth(&self, depth: usize) -> Result<(), AppError> {
+        if depth > Self::MAX_DEPTH {
+            return Err(AppError::Validation(format!(
+                "Filter nesting depth exceeds {}",
+                Self::MAX_DEPTH
+            )));
+        }
+        match self {
+            FilterExpr::Leaf { .. } => Ok(()),
+            FilterExpr::And { children } | FilterExpr::Or { children } => {
+                for child in children {
+                    child.check_depth(depth + 1)?;
+                }
+                Ok(())
+            }
+            FilterExpr::Not { child } => child.check_depth(depth + 1),
+        }
+    }
 }
 
 impl<P: Projection> CompileExpr for P {}
@@ -76,6 +119,11 @@ pub trait CompileExpr: Projection + Sized {
     /// Returns [`WhereClause::unsupported`] if ANY leaf is unsupported by this
     /// projection — the expression is rejected as a unit, never partially
     /// emitted.
+    ///
+    /// This recurses UNBOUNDED. Callers building a tree from untrusted input
+    /// MUST call [`FilterExpr::validate_depth`] first (#1396) — it bounds the
+    /// nesting to [`FilterExpr::MAX_DEPTH`] so this recursion cannot overflow
+    /// the stack.
     fn compile_expr(&self, expr: &FilterExpr) -> WhereClause {
         match expr {
             FilterExpr::Leaf { primitive } => self.compile(primitive),
@@ -255,5 +303,76 @@ mod tests {
             }
             _ => panic!("FilterExpr::all must build an And"),
         }
+    }
+
+    // ── #1396 — recursion-depth guard ──────────────────────────────────
+
+    /// Wrap a leaf in `n` `Not` layers, so the innermost leaf sits at frame
+    /// depth `n` under `check_depth`.
+    fn nest_not(n: usize) -> FilterExpr {
+        let mut e = tag("A");
+        for _ in 0..n {
+            e = FilterExpr::Not { child: Box::new(e) };
+        }
+        e
+    }
+
+    /// A tree whose deepest frame is exactly `MAX_DEPTH` is accepted.
+    #[test]
+    fn validate_depth_accepts_up_to_max() {
+        assert!(nest_not(FilterExpr::MAX_DEPTH).validate_depth().is_ok());
+    }
+
+    /// One level beyond `MAX_DEPTH` is rejected with a typed `Validation` error.
+    #[test]
+    fn validate_depth_rejects_beyond_max() {
+        let err = nest_not(FilterExpr::MAX_DEPTH + 1)
+            .validate_depth()
+            .unwrap_err();
+        match err {
+            AppError::Validation(msg) => {
+                assert!(msg.contains("exceeds 50"), "unexpected message: {msg}");
+            }
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+    }
+
+    /// Over-deep nesting via `And`/`Or` (not just `Not`) is also rejected — the
+    /// guard counts nesting on every combinator.
+    #[test]
+    fn validate_depth_rejects_deep_and_chain() {
+        let mut e = tag("A");
+        for _ in 0..(FilterExpr::MAX_DEPTH + 1) {
+            e = FilterExpr::And { children: vec![e] };
+        }
+        assert!(e.validate_depth().is_err());
+    }
+
+    /// Depth counts NESTING, not breadth: a very WIDE but shallow tree (1000
+    /// sibling leaves under one `And`) is accepted — only nesting can overflow
+    /// the `compile_expr` recursion.
+    #[test]
+    fn validate_depth_accepts_wide_shallow_tree() {
+        let wide = FilterExpr::And {
+            children: (0..1000).map(|_| tag("A")).collect(),
+        };
+        assert!(wide.validate_depth().is_ok());
+        // And a realistic shallow branching tree: A AND (B OR NOT C).
+        let expr = FilterExpr::And {
+            children: vec![
+                tag("A"),
+                FilterExpr::Or {
+                    children: vec![
+                        tag("B"),
+                        FilterExpr::Not {
+                            child: Box::new(tag("C")),
+                        },
+                    ],
+                },
+            ],
+        };
+        assert!(expr.validate_depth().is_ok());
+        // A bare leaf is the shallowest valid tree.
+        assert!(tag("A").validate_depth().is_ok());
     }
 }
