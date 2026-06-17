@@ -19,6 +19,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
+import type { DatePredicate } from '@/lib/bindings'
 import type { FilterPrimitive } from '@/lib/tauri'
 
 import { AddFilterPopover } from './AddFilterPopover'
@@ -48,6 +49,13 @@ export interface PageBrowserFilterRowProps {
    * Advanced Query view) offer only the shared, engine-supported keys.
    */
   hidePagesFacets?: boolean | undefined
+  /**
+   * #1280 D2 — forwarded to `AddFilterPopover` to offer the advanced-only facet
+   * group (State / Block type / Due date / Scheduled / Created). The Advanced
+   * Query view passes this; the Pages browser does not, so those facets stay
+   * off the Pages surface.
+   */
+  showAdvancedFacets?: boolean | undefined
 }
 
 /**
@@ -105,6 +113,76 @@ function hasPropertySummary(
 }
 
 /**
+ * #1280 D2 — human-readable summary for a `DueDate` / `Scheduled` chip. `prefix`
+ * is the localised facet word ("due" / "scheduled"); the operator + date(s) are
+ * appended. Extracted so `pageFilterSummary`'s switch stays under the
+ * cognitive-complexity cap.
+ */
+function datePredicateSummary(prefix: string, predicate: DatePredicate, t: TFunction): string {
+  switch (predicate.type) {
+    case 'IsNull':
+      return t('pageBrowser.filter.summaryDateIsNull', { prefix })
+    case 'Before':
+      return t('pageBrowser.filter.summaryDateBefore', { prefix, date: predicate.date })
+    case 'After':
+      return t('pageBrowser.filter.summaryDateAfter', { prefix, date: predicate.date })
+    case 'OnOrBefore':
+      return t('pageBrowser.filter.summaryDateOnOrBefore', { prefix, date: predicate.date })
+    case 'OnOrAfter':
+      return t('pageBrowser.filter.summaryDateOnOrAfter', { prefix, date: predicate.date })
+    case 'On':
+      return t('pageBrowser.filter.summaryDateOn', { prefix, date: predicate.date })
+    default:
+      // Between
+      return t('pageBrowser.filter.summaryDateBetween', {
+        prefix,
+        from: predicate.from,
+        to: predicate.to,
+      })
+  }
+}
+
+/**
+ * #1280 D2 — "state: TODO, DOING" / "state not: …" / appends "none" when the
+ * is-null toggle is set. Extracted so `pageFilterSummary` stays under the cap.
+ */
+function stateSummary(filter: Extract<FilterPrimitive, { type: 'State' }>, t: TFunction): string {
+  const list = filter.values.join(', ')
+  const parts = [list, filter.is_null ? t('pageBrowser.filter.summaryStateNone') : '']
+    .filter((p) => p !== '')
+    .join(', ')
+  return filter.exclude
+    ? t('pageBrowser.filter.summaryStateExclude', { values: parts })
+    : t('pageBrowser.filter.summaryState', { values: parts })
+}
+
+/** #1280 D2 — "type: content, page" / negated "type not: …". */
+function blockTypeSummary(
+  filter: Extract<FilterPrimitive, { type: 'BlockType' }>,
+  t: TFunction,
+): string {
+  const list = filter.values.join(', ')
+  return filter.exclude
+    ? t('pageBrowser.filter.summaryBlockTypeExclude', { values: list })
+    : t('pageBrowser.filter.summaryBlockType', { values: list })
+}
+
+/** #1280 D2 — "created after X", "created before Y", or "created X…Y". */
+function createdSummary(
+  filter: Extract<FilterPrimitive, { type: 'Created' }>,
+  t: TFunction,
+): string {
+  if (filter.after && filter.before)
+    return t('pageBrowser.filter.summaryCreatedBetween', {
+      after: filter.after,
+      before: filter.before,
+    })
+  if (filter.after) return t('pageBrowser.filter.summaryCreatedAfter', { date: filter.after })
+  if (filter.before) return t('pageBrowser.filter.summaryCreatedBefore', { date: filter.before })
+  return t('pageBrowser.filter.summaryUnknown')
+}
+
+/**
  * Per-facet long-form description for the boolean Pages facets, surfaced as the
  * chip's `title` tooltip so the (necessarily terse) chip label can be expanded
  * on hover. Mirrors the descriptions shown in the Add-Filter popover. Returns
@@ -147,6 +225,20 @@ export function pageFilterSummary(
       return t('pageBrowser.filter.summarySpace')
     case 'Priority':
       return t('pageBrowser.filter.summaryPriority', { priority: filter.priority })
+    case 'State':
+      return stateSummary(filter, t)
+    case 'BlockType':
+      return blockTypeSummary(filter, t)
+    case 'DueDate':
+      return datePredicateSummary(t('pageBrowser.filter.summaryDuePrefix'), filter.predicate, t)
+    case 'Scheduled':
+      return datePredicateSummary(
+        t('pageBrowser.filter.summaryScheduledPrefix'),
+        filter.predicate,
+        t,
+      )
+    case 'Created':
+      return createdSummary(filter, t)
     case 'Orphan':
       return t('pageBrowser.filter.facetOrphan')
     case 'Stub':
@@ -167,6 +259,7 @@ export function PageBrowserFilterRow({
   onClearAll,
   tagResolver,
   hidePagesFacets,
+  showAdvancedFacets,
 }: PageBrowserFilterRowProps): React.ReactElement {
   const { t } = useTranslation()
 
@@ -203,6 +296,7 @@ export function PageBrowserFilterRow({
         onAddFilter={onAddFilter}
         warnManyFilters={filters.length >= MAX_PAGE_FILTERS}
         {...(hidePagesFacets !== undefined ? { hidePagesFacets } : {})}
+        {...(showAdvancedFacets !== undefined ? { showAdvancedFacets } : {})}
       />
       {onClearAll && filters.length > 0 && (
         <Button

@@ -141,6 +141,44 @@ describe('pageFilterSummary', () => {
       { type: 'LastEdited', spec: { type: 'OlderThan', days: 30 } },
       'Edited long ago',
     ],
+    // #1280 D2 — advanced facet summaries.
+    [
+      'State values',
+      { type: 'State', values: ['TODO', 'DOING'], is_null: false, exclude: false },
+      'state: TODO, DOING',
+    ],
+    [
+      'State exclude + none',
+      { type: 'State', values: ['DONE'], is_null: true, exclude: true },
+      'state not: DONE, none',
+    ],
+    [
+      'BlockType values',
+      { type: 'BlockType', values: ['content', 'page'], exclude: false },
+      'type: content, page',
+    ],
+    ['BlockType exclude', { type: 'BlockType', values: ['tag'], exclude: true }, 'type not: tag'],
+    [
+      'DueDate OnOrBefore',
+      { type: 'DueDate', predicate: { type: 'OnOrBefore', date: '2026-04-01' } },
+      'due ≤ 2026-04-01',
+    ],
+    ['DueDate IsNull', { type: 'DueDate', predicate: { type: 'IsNull' } }, 'due unset'],
+    [
+      'Scheduled Between',
+      { type: 'Scheduled', predicate: { type: 'Between', from: '2026-01-01', to: '2026-03-31' } },
+      'scheduled 2026-01-01…2026-03-31',
+    ],
+    [
+      'Created after only',
+      { type: 'Created', after: '2026-01-01', before: null },
+      'created after 2026-01-01',
+    ],
+    [
+      'Created both bounds',
+      { type: 'Created', after: '2026-01-01', before: '2026-06-01' },
+      'created 2026-01-01…2026-06-01',
+    ],
     // summaryUnknown default — a Search-only primitive that never reaches the
     // Pages surface (allow-list gated) but must still summarise safely.
     ['Search-only (Regex) → unknown', { type: 'Regex', pattern: 'foo' }, 'filter'],

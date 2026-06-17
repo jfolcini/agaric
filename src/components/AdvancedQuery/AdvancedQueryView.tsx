@@ -81,6 +81,7 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
           onRemoveFilter={handleRemoveFilter}
           onClearAll={handleClearAll}
           hidePagesFacets
+          showAdvancedFacets
         />
       </div>
 

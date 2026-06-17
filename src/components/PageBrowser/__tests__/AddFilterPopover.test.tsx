@@ -460,4 +460,225 @@ describe('AddFilterPopover', () => {
     // container), so scan the whole body to actually include the open dialog.
     expect(await axe(document.body)).toHaveNoViolations()
   })
+
+  // ── #1280 D2 — advanced-only facets (State / Block type / Due / Scheduled /
+  // Created), gated on `showAdvancedFacets`. ───────────────────────────────
+  describe('advanced facets (#1280 D2)', () => {
+    it('does NOT offer the advanced facets by default (Pages surface unchanged)', async () => {
+      const user = userEvent.setup()
+      render(<AddFilterPopover onAddFilter={vi.fn()} />)
+      await openPopover(user)
+      expect(screen.queryByText('Advanced')).not.toBeInTheDocument()
+      expect(screen.queryByText('State')).not.toBeInTheDocument()
+      expect(screen.queryByText('Block type')).not.toBeInTheDocument()
+      expect(screen.queryByText('Due date')).not.toBeInTheDocument()
+      expect(screen.queryByText('Scheduled')).not.toBeInTheDocument()
+      expect(screen.queryByText('Created')).not.toBeInTheDocument()
+    })
+
+    it('offers the advanced facets when showAdvancedFacets is set', async () => {
+      const user = userEvent.setup()
+      render(<AddFilterPopover onAddFilter={vi.fn()} showAdvancedFacets />)
+      await openPopover(user)
+      expect(screen.getByText('Advanced')).toBeInTheDocument()
+      expect(screen.getByText('State')).toBeInTheDocument()
+      expect(screen.getByText('Block type')).toBeInTheDocument()
+      expect(screen.getByText('Due date')).toBeInTheDocument()
+      expect(screen.getByText('Scheduled')).toBeInTheDocument()
+      expect(screen.getByText('Created')).toBeInTheDocument()
+      // The shared facets are still offered alongside them.
+      expect(screen.getByText('Tag')).toBeInTheDocument()
+    })
+
+    it('emits a State primitive with the exact { values, is_null, exclude } shape', async () => {
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(<AddFilterPopover onAddFilter={onAddFilter} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('State'))
+      await user.click(screen.getByRole('checkbox', { name: 'TODO' }))
+      await user.click(screen.getByRole('checkbox', { name: 'DOING' }))
+      await user.click(screen.getByRole('checkbox', { name: 'Exclude matching blocks' }))
+      await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(onAddFilter).toHaveBeenCalledWith({
+        type: 'State',
+        values: ['TODO', 'DOING'],
+        is_null: false,
+        exclude: true,
+      })
+    })
+
+    it('emits a State primitive with is_null when the "no state" toggle is on', async () => {
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(<AddFilterPopover onAddFilter={onAddFilter} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('State'))
+      await user.click(screen.getByRole('checkbox', { name: 'No state (unset)' }))
+      await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(onAddFilter).toHaveBeenCalledWith({
+        type: 'State',
+        values: [],
+        is_null: true,
+        exclude: false,
+      })
+    })
+
+    it('disables State Apply until a value or the is-null toggle is set', async () => {
+      const user = userEvent.setup()
+      render(<AddFilterPopover onAddFilter={vi.fn()} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('State'))
+      const apply = screen.getByRole('button', { name: 'Apply' })
+      expect(apply).toBeDisabled()
+      await user.click(screen.getByRole('checkbox', { name: 'TODO' }))
+      expect(apply).toBeEnabled()
+    })
+
+    it('emits a BlockType primitive with the exact { values, exclude } shape', async () => {
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(<AddFilterPopover onAddFilter={onAddFilter} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Block type'))
+      await user.click(screen.getByRole('checkbox', { name: 'Content' }))
+      await user.click(screen.getByRole('checkbox', { name: 'Page' }))
+      await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(onAddFilter).toHaveBeenCalledWith({
+        type: 'BlockType',
+        values: ['content', 'page'],
+        exclude: false,
+      })
+    })
+
+    it('emits a DueDate primitive with an OnOrBefore date predicate', async () => {
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(<AddFilterPopover onAddFilter={onAddFilter} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Due date'))
+      // Default op is OnOrBefore; supply the single date.
+      await user.type(screen.getByLabelText('Date'), '2026-04-01')
+      await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(onAddFilter).toHaveBeenCalledWith({
+        type: 'DueDate',
+        predicate: { type: 'OnOrBefore', date: '2026-04-01' },
+      })
+    })
+
+    it('emits a DueDate IsNull predicate with no date input shown', async () => {
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(<AddFilterPopover onAddFilter={onAddFilter} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Due date'))
+      await user.selectOptions(screen.getByLabelText('Condition'), 'IsNull')
+      expect(screen.queryByLabelText('Date')).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(onAddFilter).toHaveBeenCalledWith({
+        type: 'DueDate',
+        predicate: { type: 'IsNull' },
+      })
+    })
+
+    it('emits a Scheduled Between predicate with two dates', async () => {
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(<AddFilterPopover onAddFilter={onAddFilter} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Scheduled'))
+      await user.selectOptions(screen.getByLabelText('Condition'), 'Between')
+      await user.type(screen.getByLabelText('From date'), '2026-01-01')
+      await user.type(screen.getByLabelText('To date'), '2026-03-31')
+      await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(onAddFilter).toHaveBeenCalledWith({
+        type: 'Scheduled',
+        predicate: { type: 'Between', from: '2026-01-01', to: '2026-03-31' },
+      })
+    })
+
+    it('disables date Apply until the required date(s) are supplied', async () => {
+      const user = userEvent.setup()
+      render(<AddFilterPopover onAddFilter={vi.fn()} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Due date'))
+      const apply = screen.getByRole('button', { name: 'Apply' })
+      expect(apply).toBeDisabled()
+      await user.type(screen.getByLabelText('Date'), '2026-04-01')
+      expect(apply).toBeEnabled()
+    })
+
+    it('emits a Created primitive with the exact { after, before } shape (after only)', async () => {
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(<AddFilterPopover onAddFilter={onAddFilter} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Created'))
+      await user.type(screen.getByLabelText('Created after'), '2026-01-01')
+      await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(onAddFilter).toHaveBeenCalledWith({
+        type: 'Created',
+        after: '2026-01-01',
+        before: null,
+      })
+    })
+
+    it('emits a Created primitive with both bounds', async () => {
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(<AddFilterPopover onAddFilter={onAddFilter} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Created'))
+      await user.type(screen.getByLabelText('Created after'), '2026-01-01')
+      await user.type(screen.getByLabelText('Created before'), '2026-06-01')
+      await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(onAddFilter).toHaveBeenCalledWith({
+        type: 'Created',
+        after: '2026-01-01',
+        before: '2026-06-01',
+      })
+    })
+
+    it('disables Created Apply until at least one bound is set', async () => {
+      const user = userEvent.setup()
+      render(<AddFilterPopover onAddFilter={vi.fn()} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Created'))
+      const apply = screen.getByRole('button', { name: 'Apply' })
+      expect(apply).toBeDisabled()
+      await user.type(screen.getByLabelText('Created before'), '2026-06-01')
+      expect(apply).toBeEnabled()
+    })
+
+    it('has no a11y violations with each advanced editor open', async () => {
+      const user = userEvent.setup()
+      render(<AddFilterPopover onAddFilter={vi.fn()} showAdvancedFacets />)
+      await openPopover(user)
+
+      for (const facet of ['State', 'Block type', 'Due date', 'Created']) {
+        await user.click(screen.getByText(facet))
+        expect(await axe(document.body)).toHaveNoViolations()
+        await user.click(screen.getByRole('button', { name: 'Back' }))
+      }
+    })
+  })
 })
