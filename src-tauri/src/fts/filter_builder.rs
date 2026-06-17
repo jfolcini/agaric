@@ -29,7 +29,15 @@
 
 use super::metadata_filter::{MetaBind, MetadataPredicates, append_metadata_sql};
 use crate::domain::search_types::SearchFilter;
-use crate::filters::primitive::{Bind, FilterPrimitive, Projection, SearchProjection};
+use crate::filters::primitive::{
+    Bind, FilterPrimitive, LastEditedSpec, Projection, SearchProjection,
+};
+
+/// #1320-C — `AND ` glue prefix for the `last-edited:` projection clause.
+/// Matches the 11-space indentation `append_metadata_sql` uses for its
+/// sibling metadata fragments, so the spliced last-edited clause lines up
+/// in the generated SQL.
+const LAST_EDITED_PREFIX: &str = "\n           AND ";
 
 /// One bound value, tagged with its SQLite affinity. Recorded in
 /// declaration order alongside the SQL fragment that references it, so
@@ -182,6 +190,24 @@ impl StructuralFilterBuilder {
         }
     }
 
+    /// #1320-C — `last-edited:` window filter routed through
+    /// [`SearchProjection`] (`compile_last_edited`, which delegates to
+    /// `PagesProjection`). The projection emits a
+    /// `COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id),
+    /// 0) <op> ?` comparison against the block's last-edit epoch-ms — so it
+    /// references the block table via the hardcoded `b.` alias the three FTS
+    /// builders use. Mirrors [`add_space_via_projection`]: build one
+    /// [`FilterPrimitive::LastEdited`], compile it, and splice the
+    /// bare-`?` fragment + ordered binds through
+    /// [`add_projection_clause`](Self::add_projection_clause). The caller
+    /// only invokes this when the spec is present (see
+    /// [`add_metadata`](Self::add_metadata)).
+    pub(super) fn add_last_edited_via_projection(&mut self, prefix: &str, spec: &LastEditedSpec) {
+        let prim = FilterPrimitive::LastEdited { spec: spec.clone() };
+        let wc = SearchProjection.compile(&prim);
+        self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+    }
+
     /// #1320 PR-1 — ALL-tags filter routed through [`SearchProjection`]
     /// instead of the inline `add_tags_all` `COUNT(DISTINCT)` fragment
     /// (#1320 PR-3 retired that legacy method; this is now the sole path).
@@ -329,6 +355,21 @@ impl StructuralFilterBuilder {
         let meta_binds = append_metadata_sql(&mut self.sql, &mut self.next_param, metadata, alias);
         for mb in meta_binds {
             self.binds.push(ScalarBind::Meta(mb));
+        }
+        // #1320-C — the `last-edited:` window is the one metadata field
+        // NOT emitted by `append_metadata_sql`: it is compiled through
+        // `SearchProjection::compile_last_edited`, whose SQL references the
+        // block table with a hardcoded `b.` alias. All three FTS builders
+        // splice metadata with `alias == "b"`, so the projection's alias
+        // matches; route here so every search surface picks it up without a
+        // parallel parameter threaded through the call chain.
+        if let Some(spec) = &metadata.last_edited {
+            debug_assert_eq!(
+                alias, "b",
+                "last_edited projection emits a hardcoded `b.` alias; \
+                 the metadata block alias must be `b`"
+            );
+            self.add_last_edited_via_projection(LAST_EDITED_PREFIX, spec);
         }
     }
 

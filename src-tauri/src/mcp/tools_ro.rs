@@ -886,6 +886,9 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
             excluded_property_filters: f.excluded_property_filters,
             excluded_state_filter: f.excluded_state_filter,
             excluded_priority_filter: f.excluded_priority_filter,
+            // #1320-C — the MCP `search` tool does not expose a
+            // `last-edited:` qualifier; leave the window filter unset.
+            last_edited: None,
         },
         // P4 (#346) — DB-side truncation to SEARCH_SNIPPET_CAP codepoints.
         // `substr` on TEXT cuts on codepoint boundaries, so the output is
