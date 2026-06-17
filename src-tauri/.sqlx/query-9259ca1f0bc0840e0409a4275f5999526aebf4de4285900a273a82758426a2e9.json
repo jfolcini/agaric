@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT DISTINCT key FROM block_properties ORDER BY key LIMIT 1001",
+  "query": "SELECT key FROM block_properties GROUP BY key ORDER BY COUNT(*) DESC, key ASC LIMIT 1001",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "59651e41a1a2873b1abcd48ef01682290bd2a6eaf6a85b20d06d8b558108ab36"
+  "hash": "9259ca1f0bc0840e0409a4275f5999526aebf4de4285900a273a82758426a2e9"
 }

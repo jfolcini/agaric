@@ -668,10 +668,16 @@ pub(super) async fn resolve_root_pages_cte(
 const PROPERTY_KEY_CAP: usize = 1000;
 
 pub async fn list_property_keys(pool: &SqlitePool) -> Result<Vec<String>, AppError> {
-    let mut rows =
-        sqlx::query_scalar!("SELECT DISTINCT key FROM block_properties ORDER BY key LIMIT 1001",)
-            .fetch_all(pool)
-            .await?;
+    // #1424: order the `::` property-key picker by usage frequency
+    // (most-used first) so the highest-signal keys surface at the top,
+    // mirroring how the tag picker ranks by usage. `key ASC` is a stable
+    // tiebreaker so equal-count keys have a deterministic order.
+    let mut rows = sqlx::query_scalar!(
+        "SELECT key FROM block_properties \
+         GROUP BY key ORDER BY COUNT(*) DESC, key ASC LIMIT 1001",
+    )
+    .fetch_all(pool)
+    .await?;
     if rows.len() > PROPERTY_KEY_CAP {
         tracing::warn!(
             target: "agaric::list_property_keys",
@@ -789,5 +795,55 @@ mod tests {
             resp.items[0].id, "BLK_A",
             "the surviving backlink must be BLK_A"
         );
+    }
+    async fn insert_property(pool: &SqlitePool, block_id: &str, key: &str) {
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
+            .bind(block_id)
+            .bind(key)
+            .bind("v")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// #1424: the `::` property-key picker must surface the most-used key
+    /// first and fall back to `key ASC` as a stable tiebreaker for keys
+    /// with equal usage counts.
+    #[tokio::test]
+    async fn list_property_keys_orders_by_usage_then_key() {
+        let (pool, _dir) = test_pool().await;
+        // Three blocks so we can vary usage counts. PK is (block_id, key),
+        // so a key's usage count == number of distinct blocks carrying it.
+        insert_block(&pool, "B1", "content", "one").await;
+        insert_block(&pool, "B2", "content", "two").await;
+        insert_block(&pool, "B3", "content", "three").await;
+
+        // `status` used 3x (most), `zeta` and `alpha` used 1x each (tie).
+        insert_property(&pool, "B1", "status").await;
+        insert_property(&pool, "B2", "status").await;
+        insert_property(&pool, "B3", "status").await;
+        insert_property(&pool, "B1", "zeta").await;
+        insert_property(&pool, "B2", "alpha").await;
+
+        let keys = list_property_keys(&pool).await.unwrap();
+
+        // Most-used first; ties broken by key ASC (alpha before zeta).
+        assert_eq!(
+            keys,
+            vec![
+                "status".to_string(),
+                "alpha".to_string(),
+                "zeta".to_string()
+            ],
+            "keys must order by usage DESC, then key ASC"
+        );
+    }
+
+    /// #1424: empty vault yields no property keys.
+    #[tokio::test]
+    async fn list_property_keys_empty() {
+        let (pool, _dir) = test_pool().await;
+        let keys = list_property_keys(&pool).await.unwrap();
+        assert!(keys.is_empty(), "no properties means no keys");
     }
 }
