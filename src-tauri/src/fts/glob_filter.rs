@@ -272,57 +272,6 @@ fn expand_braces(input: &str) -> Result<Vec<String>, AppError> {
     Ok(results)
 }
 
-/// P2 (#346) — append the page-name-glob `pages_cache` sub-select that
-/// was copy-pasted across the three FTS structural-filter builders
-/// (`search_fts`, the partitioned scan, and `regex_mode_query`).
-///
-/// Emits, into `sql`:
-/// ```text
-/// {prefix}b.page_id [NOT ]IN (SELECT pc.page_id FROM pages_cache pc
-///                             WHERE LOWER(pc.title) GLOB ?S OR … OR ?S+n)
-/// ```
-/// where `prefix` is the leading whitespace/`AND ` glue each call site
-/// supplies verbatim (it varies by builder indentation — kept as a
-/// parameter so the generated SQL stays byte-identical across the three
-/// sites), `negate` selects `IN` vs `NOT IN`, and one `?N` placeholder
-/// is consumed per glob starting at the current `*next_param`.
-///
-/// On a non-empty `globs` the function advances `*next_param` by
-/// `globs.len()` and returns `Some(start_index)` (the first placeholder
-/// index, which the caller binds the patterns against in order). On an
-/// empty `globs` it is a no-op and returns `None`.
-///
-/// SQL-2 (PEND-58f): the `LOWER(pc.title) GLOB ?` clause is a
-/// `pages_cache` SCAN and does NOT use `idx_pages_cache_title_nocase`
-/// (expression mismatch on `LOWER(...)`, GLOB-not-LIKE, leading-wildcard
-/// substring patterns). Migration 0068's comment claims the index serves
-/// the `LOWER(title) GLOB ?` path — that claim is incorrect; the index
-/// only helps explicit `title COLLATE NOCASE` range/equality forms, not
-/// GLOB. The scan is acceptable because `pages_cache` is the small
-/// per-page summary table.
-pub(crate) fn append_page_glob_subselect(
-    sql: &mut String,
-    prefix: &str,
-    negate: bool,
-    next_param: &mut usize,
-    globs: &[String],
-) -> Option<usize> {
-    if globs.is_empty() {
-        return None;
-    }
-    let start = *next_param;
-    let placeholders: Vec<String> = (0..globs.len())
-        .map(|i| format!("LOWER(pc.title) GLOB ?{}", start + i))
-        .collect();
-    let op = if negate { "NOT IN" } else { "IN" };
-    sql.push_str(&format!(
-        "{prefix}b.page_id {op} (SELECT pc.page_id FROM pages_cache pc WHERE {})",
-        placeholders.join(" OR ")
-    ));
-    *next_param += globs.len();
-    Some(start)
-}
-
 /// If the pattern has no glob metacharacters, wrap with `*…*` for a
 /// case-insensitive substring match (the VSCode-style default).
 fn wrap_substring(input: &str) -> String {

@@ -100,36 +100,6 @@ impl StructuralFilterBuilder {
         }
     }
 
-    /// ALL-tags predicate:
-    /// `AND (SELECT COUNT(DISTINCT bt.tag_id) FROM block_tags bt WHERE
-    ///       bt.block_id = b.id AND bt.tag_id IN (?,…)) = ?count`.
-    ///
-    /// `tags` must already be deduped + UPPERCASE-normalised by the
-    /// caller (SQL-1 / SQL-A6) so the bound list length is achievable by
-    /// `COUNT(DISTINCT)`. No-op on an empty slice. One placeholder per
-    /// tag id (bound in order) plus one trailing count placeholder.
-    pub(super) fn add_tags_all(&mut self, prefix: &str, tags: &[String]) {
-        if tags.is_empty() {
-            return;
-        }
-        let start = self.next_param;
-        let placeholders: Vec<String> =
-            (0..tags.len()).map(|i| format!("?{}", start + i)).collect();
-        self.next_param += tags.len();
-        let count_idx = self.next_param;
-        self.next_param += 1;
-        self.sql.push_str(&format!(
-            "{prefix}(SELECT COUNT(DISTINCT bt.tag_id) FROM block_tags bt WHERE bt.block_id = b.id AND bt.tag_id IN ({})) = ?{count_idx}",
-            placeholders.join(", ")
-        ));
-        for t in tags {
-            self.binds.push(ScalarBind::Str(t.clone()));
-        }
-        // Count target — must equal the achievable DISTINCT count.
-        let count: i64 = i64::try_from(tags.len()).unwrap_or(i64::MAX);
-        self.binds.push(ScalarBind::I64(count));
-    }
-
     /// `AND b.space_id = ?N` when `Some`.
     ///
     /// The fragment is identical across all three builders; only the
@@ -213,8 +183,9 @@ impl StructuralFilterBuilder {
     }
 
     /// #1320 PR-1 — ALL-tags filter routed through [`SearchProjection`]
-    /// instead of the inline [`add_tags_all`](Self::add_tags_all)
-    /// `COUNT(DISTINCT)` fragment. For each requested tag, compiles a
+    /// instead of the inline `add_tags_all` `COUNT(DISTINCT)` fragment
+    /// (#1320 PR-3 retired that legacy method; this is now the sole path).
+    /// For each requested tag, compiles a
     /// [`FilterPrimitive::Tag`] (which `SearchProjection::compile_tag`
     /// emits as `b.id IN (SELECT block_id FROM block_tags WHERE tag_id =
     /// ?)`) and splices it through [`add_projection_clause`] under the same
@@ -244,29 +215,10 @@ impl StructuralFilterBuilder {
         }
     }
 
-    /// `AND b.page_id [NOT ]IN (SELECT pc.page_id FROM pages_cache pc
-    ///   WHERE LOWER(pc.title) GLOB ?N OR …)` — delegates the fragment
-    /// to the shared [`super::glob_filter::append_page_glob_subselect`]
-    /// helper (P2 #346) and records the bind for each pattern in order.
-    pub(super) fn add_page_globs(&mut self, prefix: &str, negate: bool, globs: &[String]) {
-        if super::glob_filter::append_page_glob_subselect(
-            &mut self.sql,
-            prefix,
-            negate,
-            &mut self.next_param,
-            globs,
-        )
-        .is_some()
-        {
-            for g in globs {
-                self.binds.push(ScalarBind::Str(g.clone()));
-            }
-        }
-    }
-
-    /// #1320 PR-2 — page-name-glob filter routed through [`SearchProjection`]
-    /// instead of the inline [`add_page_globs`](Self::add_page_globs)
-    /// `append_page_glob_subselect` fragment, preserving the LEGACY
+    /// #1320 PR-2 — page-name-glob filter routed through [`SearchProjection`].
+    /// (#1320 PR-3 retired the former inline `add_page_globs` /
+    /// `append_page_glob_subselect` fragment; this is now the sole path.)
+    /// Preserves the LEGACY
     /// `LOWER(title) GLOB ?` dialect byte-for-byte at the result level
     /// (zero behaviour change — search users keep `GLOB` + brace +
     /// `[class]` semantics).
@@ -500,28 +452,6 @@ mod tests {
     }
 
     #[test]
-    fn tags_all_fragment_matches_legacy_shape() {
-        let mut fb = StructuralFilterBuilder::new(6);
-        let tags = vec!["A".to_string(), "B".to_string()];
-        fb.add_tags_all(FTS_PREFIX, &tags);
-        assert_eq!(
-            fb.sql(),
-            "\n           AND (SELECT COUNT(DISTINCT bt.tag_id) FROM block_tags bt WHERE bt.block_id = b.id AND bt.tag_id IN (?6, ?7)) = ?8"
-        );
-        // 2 tag binds + 1 count bind, count placeholder is ?8.
-        assert_eq!(fb.next_param(), 9);
-        assert_eq!(fb.bind_count(), 3);
-    }
-
-    #[test]
-    fn tags_all_empty_is_noop() {
-        let mut fb = StructuralFilterBuilder::new(6);
-        fb.add_tags_all(FTS_PREFIX, &[]);
-        assert_eq!(fb.sql(), "");
-        assert_eq!(fb.next_param(), 6);
-    }
-
-    #[test]
     fn space_fragment_matches_canonical_inner() {
         let mut fb = StructuralFilterBuilder::new(6);
         fb.add_space(FTS_PREFIX, Some("space1"));
@@ -635,25 +565,15 @@ mod tests {
             matches!(routed.binds.first(), Some(ScalarBind::Str(s)) if s == "01TAG0000000000000000000A")
         );
 
-        // Shape divergence from the legacy COUNT(DISTINCT) fragment is
-        // intentional and documented — the result sets are equivalent
-        // (see the DB equivalence tests), only the SQL shape differs.
-        let mut legacy = StructuralFilterBuilder::new(6);
-        legacy.add_tags_all(
-            FTS_PREFIX,
-            &[
-                "01TAG0000000000000000000A".to_string(),
-                "01TAG0000000000000000000B".to_string(),
-            ],
-        );
+        // #1320 PR-3 — the legacy `add_tags_all` `COUNT(DISTINCT)` fragment
+        // has been retired, so there is no live legacy builder to diff
+        // against. We still document the shape divergence intent: the routed
+        // path uses per-tag `IN`-subselects, NOT the former single
+        // `COUNT(DISTINCT bt.tag_id) = N` form (the two are result-equivalent,
+        // proved by the `tags_via_projection_matches_*` DB equivalence tests).
         assert!(
-            legacy.sql().contains("COUNT(DISTINCT bt.tag_id)"),
-            "legacy Tag uses COUNT(DISTINCT) ALL-semantics"
-        );
-        assert_ne!(
-            legacy.sql(),
-            routed.sql(),
-            "routed Tag SQL shape differs from legacy (result-equivalent, not byte-identical)"
+            !routed.sql().contains("COUNT(DISTINCT"),
+            "routed Tag is per-tag IN-subselects, not the legacy COUNT(DISTINCT) form"
         );
     }
 
@@ -825,22 +745,6 @@ mod tests {
     }
 
     #[test]
-    fn page_globs_include_and_exclude_advance_index() {
-        let mut fb = StructuralFilterBuilder::new(6);
-        let globs = vec!["*foo*".to_string()];
-        fb.add_page_globs(FTS_PREFIX, false, &globs);
-        assert_eq!(
-            fb.sql(),
-            "\n           AND b.page_id IN (SELECT pc.page_id FROM pages_cache pc WHERE LOWER(pc.title) GLOB ?6)"
-        );
-        fb.add_page_globs(FTS_PREFIX, true, &globs);
-        assert!(fb.sql().contains("b.page_id NOT IN"));
-        assert!(fb.sql().contains("GLOB ?7"));
-        assert_eq!(fb.next_param(), 8);
-        assert_eq!(fb.bind_count(), 2);
-    }
-
-    #[test]
     fn block_type_and_after_id_fragments() {
         let mut fb = StructuralFilterBuilder::new(3);
         fb.add_block_type(TOGGLE_PREFIX, Some("page"));
@@ -856,21 +760,27 @@ mod tests {
         // Mirrors the regex builder's order (metadata omitted): parent,
         // tags, space, globs, block_type. Indices must increase
         // monotonically with no gaps or reuse.
+        //
+        // #1320 PR-3 — routed through the `_via_projection` tag + glob
+        // variants (the legacy `add_tags_all` / `add_page_globs` were
+        // retired). `add_tags_via_projection` consumes ONE placeholder per
+        // tag (no trailing `COUNT(DISTINCT)` count bind), so the indices are
+        // now contiguous: parent ?1, tag ?2, space ?3, glob ?4, block_type ?5.
         let mut fb = StructuralFilterBuilder::new(1);
         fb.add_parent(TOGGLE_PREFIX, Some("p")); // ?1
-        fb.add_tags_all(TOGGLE_PREFIX, &["T".to_string()]); // ?2 (tag) ?3 (count)
-        fb.add_space(TOGGLE_PREFIX, Some("s")); // ?4
-        fb.add_page_globs(TOGGLE_PREFIX, false, &["*g*".to_string()]); // ?5
-        fb.add_block_type(TOGGLE_PREFIX, Some("page")); // ?6
-        assert_eq!(fb.next_param(), 7);
-        // parent(1) + tags_all(1 tag + 1 count = 2) + space(1) + glob(1)
-        // + block_type(1) = 6 recorded binds.
-        assert_eq!(fb.bind_count(), 6);
+        fb.add_tags_via_projection(TOGGLE_PREFIX, &["T".to_string()]); // ?2
+        fb.add_space(TOGGLE_PREFIX, Some("s")); // ?3
+        fb.add_page_globs_via_projection(TOGGLE_PREFIX, false, &["*g*".to_string()]); // ?4
+        fb.add_block_type(TOGGLE_PREFIX, Some("page")); // ?5
+        assert_eq!(fb.next_param(), 6);
+        // parent(1) + tags_via_projection(1 tag) + space(1) + glob(1)
+        // + block_type(1) = 5 recorded binds.
+        assert_eq!(fb.bind_count(), 5);
         // Placeholders appear in ascending order in the SQL.
         let sql = fb.sql();
         let p1 = sql.find("?1").unwrap();
-        let p4 = sql.find("?4").unwrap();
-        let p6 = sql.find("?6").unwrap();
-        assert!(p1 < p4 && p4 < p6, "placeholders must be in source order");
+        let p3 = sql.find("?3").unwrap();
+        let p5 = sql.find("?5").unwrap();
+        assert!(p1 < p3 && p3 < p5, "placeholders must be in source order");
     }
 }
