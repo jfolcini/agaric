@@ -19,6 +19,7 @@ import {
   blockquote,
   bold,
   boldItalic,
+  bulletList,
   callout,
   code,
   codeBlock,
@@ -69,11 +70,14 @@ describe('serialize', () => {
     it('plain text', () => {
       expect(serialize(doc(paragraph(text('hello world'))))).toBe('hello world')
     })
-    it('typed `- foo` does not silently drop content (BulletList not registered)', () => {
-      // ProseMirror json that the editor would produce *without* the
-      // BulletList extension: a plain paragraph.
+    it('a paragraph beginning with `- ` is escaped so it stays a paragraph (#1436)', () => {
+      // A literal `- foo` paragraph (e.g. typed text, not a list) must NOT
+      // re-parse into a bullet list. The serializer escapes the leading `- `
+      // to `\- ` (mirrors the `\. ` ordered-list / `\# ` heading escapes), and
+      // the round-trip recovers the same single paragraph.
       const json = doc(paragraph(text('- foo')))
-      expect(serialize(json, notifyUnknownNodeTypeToast)).toBe('- foo')
+      expect(serialize(json, notifyUnknownNodeTypeToast)).toBe('\\- foo')
+      expect(parse('\\- foo')).toEqual(doc(paragraph(text('- foo'))))
     })
 
     it('whitespace-only', () => {
@@ -1820,6 +1824,132 @@ describe('ordered list', () => {
 
     it('round-trip: three items', () => {
       const input = '1. a\n2. b\n3. c'
+      expect(serialize(parse(input))).toBe(input)
+    })
+  })
+})
+
+// -- bullet list --------------------------------------------------------------
+
+describe('bullet list', () => {
+  describe('parse', () => {
+    it('parses - a\\n- b produces bullet list', () => {
+      expect(parse('- a\n- b')).toEqual(
+        doc(bulletList(listItem(paragraph(text('a'))), listItem(paragraph(text('b'))))),
+      )
+    })
+
+    it('parses single-item `* a` bullet list (asterisk marker)', () => {
+      expect(parse('* a')).toEqual(doc(bulletList(listItem(paragraph(text('a'))))))
+    })
+
+    it('parses single-item `- a` bullet list (hyphen marker)', () => {
+      expect(parse('- a')).toEqual(doc(bulletList(listItem(paragraph(text('a'))))))
+    })
+
+    it('parses bullet list with marks', () => {
+      expect(parse('- **bold item**\n- *italic item*')).toEqual(
+        doc(
+          bulletList(
+            listItem(paragraph(bold('bold item'))),
+            listItem(paragraph(italic('italic item'))),
+          ),
+        ),
+      )
+    })
+
+    it('treats mixed `-`/`*` markers as one contiguous bullet list', () => {
+      expect(parse('- a\n* b')).toEqual(
+        doc(bulletList(listItem(paragraph(text('a'))), listItem(paragraph(text('b'))))),
+      )
+    })
+
+    it('bullet list mixed with surrounding paragraphs', () => {
+      expect(parse('Before\n- a\n- b\nAfter')).toEqual(
+        doc(
+          paragraph(text('Before')),
+          bulletList(listItem(paragraph(text('a'))), listItem(paragraph(text('b')))),
+          paragraph(text('After')),
+        ),
+      )
+    })
+
+    it('precedence: `---` still parses as a horizontal rule, not a bullet', () => {
+      expect(parse('---')).toEqual(doc(horizontalRule()))
+    })
+
+    it('task syntax `- [ ] x` stays a paragraph (NOT a bullet, #1435)', () => {
+      expect(parse('- [ ] x')).toEqual(doc(paragraph(text('- [ ] x'))))
+    })
+
+    it('task syntax `- [x] done` stays a paragraph (NOT a bullet)', () => {
+      expect(parse('- [x] done')).toEqual(doc(paragraph(text('- [x] done'))))
+    })
+
+    it('asterisk task syntax `* [ ] x` also stays a paragraph (NOT a bullet)', () => {
+      // GFM task lists accept either marker; the `*` form must be excluded too
+      // so it stays reserved for #1435 (regression guard for BULLET_TASK_RE).
+      expect(parse('* [ ] x')).toEqual(doc(paragraph(text('* [ ] x'))))
+    })
+
+    it('a task line splits an otherwise-contiguous bullet run', () => {
+      // The `- [ ] task` line is not a bullet, so it ends the list and falls
+      // through to the paragraph production.
+      expect(parse('- a\n- [ ] task\n- b')).toEqual(
+        doc(
+          bulletList(listItem(paragraph(text('a')))),
+          paragraph(text('- [ ] task')),
+          bulletList(listItem(paragraph(text('b')))),
+        ),
+      )
+    })
+  })
+
+  describe('serialize', () => {
+    it('serializes bullet list with `- ` markers', () => {
+      expect(
+        serialize(doc(bulletList(listItem(paragraph(text('a'))), listItem(paragraph(text('b')))))),
+      ).toBe('- a\n- b')
+    })
+
+    it('serializes single-item bullet list', () => {
+      expect(serialize(doc(bulletList(listItem(paragraph(text('only'))))))).toBe('- only')
+    })
+
+    it('serializes bullet list with marks', () => {
+      expect(
+        serialize(
+          doc(bulletList(listItem(paragraph(bold('bold'))), listItem(paragraph(italic('italic'))))),
+        ),
+      ).toBe('- **bold**\n- *italic*')
+    })
+
+    it('serializes empty bullet list', () => {
+      expect(serialize(doc(bulletList()))).toBe('')
+    })
+  })
+
+  describe('round-trip', () => {
+    it('round-trip: two-item bullet list', () => {
+      const input = '- a\n- b'
+      expect(serialize(parse(input))).toBe(input)
+    })
+
+    it('round-trip: `* a` normalises to `- a`', () => {
+      // `*` and `-` both parse to a bulletList; the serializer canonicalises
+      // the marker to `-`, so a second pass is a fixed point.
+      const md1 = serialize(parse('* a'))
+      expect(md1).toBe('- a')
+      expect(serialize(parse(md1))).toBe(md1)
+    })
+
+    it('round-trip: bullet list with marks', () => {
+      const input = '- **bold**\n- *italic*'
+      expect(serialize(parse(input))).toBe(input)
+    })
+
+    it('round-trip: bullet list mixed with paragraphs', () => {
+      const input = 'Before\n- a\n- b\nAfter'
       expect(serialize(parse(input))).toBe(input)
     })
   })

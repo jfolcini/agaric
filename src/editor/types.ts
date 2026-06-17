@@ -128,6 +128,11 @@ export interface OrderedListNode {
   readonly content?: readonly ListItemNode[]
 }
 
+export interface BulletListNode {
+  readonly type: 'bulletList'
+  readonly content?: readonly ListItemNode[]
+}
+
 export interface HorizontalRuleNode {
   readonly type: 'horizontalRule'
   readonly content?: undefined
@@ -140,6 +145,7 @@ export type BlockLevelNode =
   | BlockquoteNode
   | TableNode
   | OrderedListNode
+  | BulletListNode
   | HorizontalRuleNode
 
 export interface DocNode {

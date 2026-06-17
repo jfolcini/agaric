@@ -10,6 +10,7 @@ import type {
   BlockLevelNode,
   BlockLinkNode,
   BlockquoteNode,
+  BulletListNode,
   CodeBlockNode,
   DocNode,
   HardBreakNode,
@@ -139,6 +140,11 @@ export function listItem(...paragraphs: ParagraphNode[]): ListItemNode {
 export function orderedList(...items: ListItemNode[]): OrderedListNode {
   if (items.length === 0) return { type: 'orderedList' }
   return { type: 'orderedList', content: items }
+}
+
+export function bulletList(...items: ListItemNode[]): BulletListNode {
+  if (items.length === 0) return { type: 'bulletList' }
+  return { type: 'bulletList', content: items }
 }
 
 export function horizontalRule(): HorizontalRuleNode {

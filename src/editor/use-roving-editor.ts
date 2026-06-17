@@ -17,6 +17,11 @@ import Highlight from '@tiptap/extension-highlight'
 import History from '@tiptap/extension-history'
 import HorizontalRule from '@tiptap/extension-horizontal-rule'
 import Italic from '@tiptap/extension-italic'
+// BulletList is sourced from `@tiptap/extension-list` (the standalone
+// `@tiptap/extension-bullet-list` is just a re-export shim and is not a direct
+// dependency here, whereas `extension-list` is already installed — it is what
+// `@tiptap/extension-ordered-list` itself re-exports). Mirrors OrderedList.
+import { BulletList } from '@tiptap/extension-list'
 import ListItem from '@tiptap/extension-list-item'
 import OrderedList from '@tiptap/extension-ordered-list'
 import Paragraph from '@tiptap/extension-paragraph'
@@ -410,7 +415,9 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       Underline,
       CalloutBlockquote,
       OrderedList,
-
+      // #1436 — bullet/unordered lists. Shares `ListItem` with OrderedList and
+      // provides the `- ` / `* ` input rules (TipTap's BulletList default).
+      BulletList,
       ListItem,
       HorizontalRule,
       Table.configure({ resizable: false }),

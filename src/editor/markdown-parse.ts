@@ -17,6 +17,7 @@ import type {
   BlockLinkNode,
   BlockquoteNode,
   BlockRefNode,
+  BulletListNode,
   CodeBlockNode,
   DocNode,
   HeadingNode,
@@ -473,6 +474,43 @@ export function parseOrderedList(
   return { blocks: [block], consumed }
 }
 
+/**
+ * Bullet (unordered) list: consecutive `- item` / `* item` lines.
+ *
+ * Mirrors {@link parseOrderedList}. Two carve-outs preserve existing
+ * behaviour:
+ *  - A `- [ ] ` / `- [x] ` line (either `-` or `*` marker) is a task (#1435)
+ *    and must stay a paragraph — `BULLET_TASK_RE` excludes it so it falls
+ *    through to `parseParagraph`.
+ *  - `---` (and longer hyphen runs) is a horizontal rule, handled by
+ *    `parseHorizontalRule` which runs BEFORE this production in dispatch, so
+ *    `- ` here only matches a hyphen FOLLOWED by a space + content.
+ */
+const BULLET_ITEM_RE = /^[-*] (.*)$/
+const BULLET_TASK_RE = /^[-*] \[[ xX]\] /
+export function parseBulletList(
+  lines: readonly string[],
+  i: number,
+  depth: number,
+): BlockParseResult | null {
+  const first = lines[i] as string
+  if (!BULLET_ITEM_RE.test(first) || BULLET_TASK_RE.test(first)) return null
+  const items: ListItemNode[] = []
+  let j = i
+  while (j < lines.length) {
+    const line = lines[j] as string
+    if (BULLET_TASK_RE.test(line)) break
+    const itemMatch = line.match(BULLET_ITEM_RE)
+    if (!itemMatch) break
+    items.push(buildListItem(itemMatch[1] as string, depth))
+    j++
+  }
+  const consumed = j - i
+  if (items.length === 0) return { blocks: [], consumed }
+  const block: BulletListNode = { type: 'bulletList', content: items }
+  return { blocks: [block], consumed }
+}
+
 function buildListItem(itemText: string, depth: number): ListItemNode {
   const inlineContent = parseLine(itemText, depth)
   const paragraph: ParagraphNode =
@@ -542,6 +580,7 @@ function dispatchBlockProduction(
     parseTable(lines, i, depth) ??
     parseHorizontalRule(lines, i) ??
     parseOrderedList(lines, i, depth) ??
+    parseBulletList(lines, i, depth) ??
     parseParagraph(lines, i, depth)
   )
 }
@@ -727,6 +766,9 @@ function isEscapableChar(ch: string): boolean {
     // `.` is escapable so a paragraph beginning with `N. ` round-trips as
     // text (serialized `N\. `) instead of re-parsing as an ordered list.
     ch === '.' ||
+    // `-` is escapable so a paragraph beginning with `- ` round-trips as
+    // text (serialized `\- `) instead of re-parsing as a bullet list (#1436).
+    ch === '-' ||
     // `<` is escapable so a literal `<u>`/`</u>` in text (serialized as `\<u>`)
     // round-trips as text instead of opening an underline mark (#211 P2-5).
     ch === '<'
