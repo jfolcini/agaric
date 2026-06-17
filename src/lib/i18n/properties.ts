@@ -8,6 +8,10 @@
 
 export const properties: Record<string, string> = {
   'query.noResults': 'No results',
+  // #1280 D1 — advanced-query surface.
+  'advancedQuery.noResults': 'No blocks match these filters',
+  'advancedQuery.totalCount_one': '{{count}} matching block',
+  'advancedQuery.totalCount_other': '{{count}} matching blocks',
   'query.operator.eqDesc': 'equals',
   'query.operator.neqDesc': 'not equal',
   'query.operator.ltDesc': 'less than',

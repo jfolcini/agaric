@@ -46,6 +46,11 @@ import { type PageEntry, selectPageStack, useTabsStore } from '@/stores/tabs'
 // Each lazy() import automatically becomes its own Rollup chunk. The
 // Suspense fallback uses `LoadingSkeleton` (the shared primitive) so the
 // transient state matches the rest of the app visually.
+const AdvancedQueryView = lazy(() =>
+  import('@/components/AdvancedQuery/AdvancedQueryView').then((m) => ({
+    default: m.AdvancedQueryView,
+  })),
+)
 const GraphView = lazy(() =>
   import('@/components/graph/GraphView').then((m) => ({ default: m.GraphView })),
 )
@@ -232,6 +237,14 @@ export function ViewDispatcher({
         <FeatureErrorBoundary name="Graph">
           <Suspense fallback={<ViewFallback />}>
             <GraphView />
+          </Suspense>
+        </FeatureErrorBoundary>
+      )
+    case 'query':
+      return (
+        <FeatureErrorBoundary name="AdvancedQuery">
+          <Suspense fallback={<ViewFallback />}>
+            <AdvancedQueryView onNavigate={onPageSelect} />
           </Suspense>
         </FeatureErrorBoundary>
       )

@@ -33,6 +33,7 @@ export const common: Record<string, string> = {
   'sidebar.history': 'History',
   'sidebar.templates': 'Templates',
   'sidebar.graph': 'Graph',
+  'sidebar.query': 'Advanced Query',
   'sidebar.collapse': 'Collapse',
   'sidebar.toggleSidebar': 'Toggle Sidebar',
   'sidebar.newPageTooltip': 'New Page (Ctrl+N)',

@@ -7,6 +7,7 @@ import { isMobilePlatform } from './platform'
 import type { SafeLimit } from './safe-limit'
 
 export type {
+  ActiveBlockRow,
   AdvancedQueryRequest,
   AdvancedQueryResponse,
   BacklinkFilter,
@@ -21,6 +22,7 @@ export type {
   DiffSpan,
   DiffTag,
   Draft,
+  FilterExpr,
   FilterPrimitive,
   FlushAllDraftsResult,
   GroupedBacklinkResponse,

@@ -42,6 +42,12 @@ export interface PageBrowserFilterRowProps {
   onClearAll?: (() => void) | undefined
   /** Resolves a tag id to a human-readable label for the `tag:` chip. */
   tagResolver?: ((id: string) => string) | undefined
+  /**
+   * #1280 D1 — forwarded to `AddFilterPopover` to hide the Pages-only facet
+   * group (Orphan / Stub / No inbound links) so non-Pages surfaces (the
+   * Advanced Query view) offer only the shared, engine-supported keys.
+   */
+  hidePagesFacets?: boolean | undefined
 }
 
 /**
@@ -160,6 +166,7 @@ export function PageBrowserFilterRow({
   onRemoveFilter,
   onClearAll,
   tagResolver,
+  hidePagesFacets,
 }: PageBrowserFilterRowProps): React.ReactElement {
   const { t } = useTranslation()
 
@@ -195,6 +202,7 @@ export function PageBrowserFilterRow({
       <AddFilterPopover
         onAddFilter={onAddFilter}
         warnManyFilters={filters.length >= MAX_PAGE_FILTERS}
+        {...(hidePagesFacets !== undefined ? { hidePagesFacets } : {})}
       />
       {onClearAll && filters.length > 0 && (
         <Button
