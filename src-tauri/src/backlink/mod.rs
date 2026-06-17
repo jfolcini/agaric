@@ -12,7 +12,7 @@ mod tests;
 
 // Re-export public API (must match current surface)
 pub use grouped::{eval_backlink_query_grouped, eval_unlinked_references};
-pub use query::{eval_backlink_query, list_property_keys};
+pub use query::{eval_backlink_query, list_property_keys, list_property_values};
 pub use types::*;
 
 /// Threshold for switching from positional `IN (?,?,…)` placeholder binding

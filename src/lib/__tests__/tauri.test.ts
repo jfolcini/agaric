@@ -74,6 +74,7 @@ import {
   listProjectedAgendaLimit,
   listPropertyDefs,
   listPropertyKeys,
+  listPropertyValues,
   listSpaces,
   listTagsByPrefix,
   listTagsForBlock,
@@ -1917,6 +1918,31 @@ describe('listPropertyKeys', () => {
     mockedInvoke.mockResolvedValueOnce(expected)
 
     const result = await listPropertyKeys()
+
+    expect(result).toEqual(expected)
+    expect(Array.isArray(result)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// listPropertyValues (#1425)
+// ---------------------------------------------------------------------------
+
+describe('listPropertyValues', () => {
+  it('calls invoke with the command name and key argument', async () => {
+    mockedInvoke.mockResolvedValueOnce(['done', 'todo'])
+
+    await listPropertyValues('status')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('list_property_values', { key: 'status' })
+  })
+
+  it('returns the usage-ranked string array', async () => {
+    const expected = ['done', 'todo', 'blocked']
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await listPropertyValues('status')
 
     expect(result).toEqual(expected)
     expect(Array.isArray(result)).toBe(true)

@@ -130,11 +130,11 @@ pub use properties::{
     delete_property_def_inner, delete_property_inner, get_batch_properties,
     get_batch_properties_inner, get_properties, get_properties_inner, get_property,
     get_property_def, get_property_def_inner, get_property_inner, list_property_defs,
-    list_property_defs_inner, list_property_keys, list_property_keys_inner, set_due_date,
-    set_due_date_inner, set_priority, set_priority_inner, set_property, set_property_inner,
-    set_scheduled_date, set_scheduled_date_inner, set_todo_state, set_todo_state_batch,
-    set_todo_state_batch_inner, set_todo_state_inner, update_property_def_options,
-    update_property_def_options_inner,
+    list_property_defs_inner, list_property_keys, list_property_keys_inner, list_property_values,
+    list_property_values_inner, set_due_date, set_due_date_inner, set_priority, set_priority_inner,
+    set_property, set_property_inner, set_scheduled_date, set_scheduled_date_inner, set_todo_state,
+    set_todo_state_batch, set_todo_state_batch_inner, set_todo_state_inner,
+    update_property_def_options, update_property_def_options_inner,
 };
 pub use queries::{
     DateFilter, DateOp, MatchOffset, NamedDateRange, PropertyFilter, SearchBlockRow, SearchFilter,
@@ -233,10 +233,10 @@ pub use properties::{
     __specta__fn__create_property_def, __specta__fn__delete_property,
     __specta__fn__delete_property_def, __specta__fn__get_batch_properties,
     __specta__fn__get_properties, __specta__fn__get_property, __specta__fn__get_property_def,
-    __specta__fn__list_property_defs, __specta__fn__list_property_keys, __specta__fn__set_due_date,
-    __specta__fn__set_priority, __specta__fn__set_property, __specta__fn__set_scheduled_date,
-    __specta__fn__set_todo_state, __specta__fn__set_todo_state_batch,
-    __specta__fn__update_property_def_options,
+    __specta__fn__list_property_defs, __specta__fn__list_property_keys,
+    __specta__fn__list_property_values, __specta__fn__set_due_date, __specta__fn__set_priority,
+    __specta__fn__set_property, __specta__fn__set_scheduled_date, __specta__fn__set_todo_state,
+    __specta__fn__set_todo_state_batch, __specta__fn__update_property_def_options,
 };
 #[doc(hidden)]
 pub use queries::{
@@ -327,8 +327,9 @@ pub use properties::{
     __cmd__create_property_def, __cmd__delete_property, __cmd__delete_property_def,
     __cmd__get_batch_properties, __cmd__get_properties, __cmd__get_property,
     __cmd__get_property_def, __cmd__list_property_defs, __cmd__list_property_keys,
-    __cmd__set_due_date, __cmd__set_priority, __cmd__set_property, __cmd__set_scheduled_date,
-    __cmd__set_todo_state, __cmd__set_todo_state_batch, __cmd__update_property_def_options,
+    __cmd__list_property_values, __cmd__set_due_date, __cmd__set_priority, __cmd__set_property,
+    __cmd__set_scheduled_date, __cmd__set_todo_state, __cmd__set_todo_state_batch,
+    __cmd__update_property_def_options,
 };
 #[doc(hidden)]
 pub use queries::{

@@ -2385,6 +2385,24 @@ export const HANDLERS: Record<string, Handler> = {
     return [...keys].sort()
   },
 
+  // #1425 — distinct text values for a key, usage-ranked (most-used
+  // first), `value ASC` tiebreaker. Mirrors the backend
+  // `list_property_values`, surfacing only the `value_text` channel.
+  list_property_values: (args) => {
+    const a = args as Record<string, unknown>
+    const key = a['key'] as string
+    const counts = new Map<string, number>()
+    for (const blockProps of properties.values()) {
+      const prop = blockProps.get(key)
+      const value = prop?.['value_text']
+      if (typeof value !== 'string') continue
+      counts.set(value, (counts.get(value) ?? 0) + 1)
+    }
+    return [...counts.entries()]
+      .sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))
+      .map(([value]) => value)
+  },
+
   // ---------------------------------------------------------------------------
   // Sync / Peer-ref commands
   // ---------------------------------------------------------------------------

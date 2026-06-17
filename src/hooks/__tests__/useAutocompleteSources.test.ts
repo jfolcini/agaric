@@ -14,15 +14,17 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { TagCacheRow } from '@/lib/bindings'
+import type { PropertyDefinition, TagCacheRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { getPathHistory } from '@/lib/path-history'
 import type { AutocompleteAnchor } from '@/lib/search-query/autocomplete'
-import { listPropertyKeys, listTagsByPrefix } from '@/lib/tauri'
+import { getPropertyDef, listPropertyKeys, listPropertyValues, listTagsByPrefix } from '@/lib/tauri'
 
 vi.mock('@/lib/tauri', () => ({
   listTagsByPrefix: vi.fn(),
   listPropertyKeys: vi.fn(),
+  listPropertyValues: vi.fn(),
+  getPropertyDef: vi.fn(),
   paginationLimit: (n: number) => n,
 }))
 
@@ -41,12 +43,24 @@ vi.mock('@/lib/logger', () => ({
 
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
+import { _resetPropertyValuesCacheForTest } from '@/lib/property-values-cache'
 
 import { useAutocompleteSources } from '../useAutocompleteSources'
 
 const mockedListTagsByPrefix = vi.mocked(listTagsByPrefix)
 const mockedListPropertyKeys = vi.mocked(listPropertyKeys)
+const mockedListPropertyValues = vi.mocked(listPropertyValues)
+const mockedGetPropertyDef = vi.mocked(getPropertyDef)
 const mockedGetPathHistory = vi.mocked(getPathHistory)
+
+function propDef(key: string, valueType: string, options?: string[]): PropertyDefinition {
+  return {
+    key,
+    value_type: valueType,
+    options: options ? JSON.stringify(options) : null,
+    created_at: '2024-01-01T00:00:00Z',
+  }
+}
 
 function tag(name: string, id = `T-${name}`): TagCacheRow {
   return { tag_id: id, name, usage_count: 1, updated_at: '2024-01-01T00:00:00Z' }
@@ -56,10 +70,13 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.useFakeTimers()
   _resetPropertyKeysCacheForTest()
+  _resetPropertyValuesCacheForTest()
   __resetPriorityLevelsForTests()
   mockedGetPathHistory.mockReturnValue([])
   mockedListTagsByPrefix.mockResolvedValue([])
   mockedListPropertyKeys.mockResolvedValue([])
+  mockedListPropertyValues.mockResolvedValue([])
+  mockedGetPropertyDef.mockResolvedValue(null)
 })
 
 afterEach(() => {
@@ -250,7 +267,8 @@ describe('useAutocompleteSources', () => {
     expect(result.current.loading).toBe(false)
   })
 
-  it('propValue anchor returns empty (deferred past Phase 2)', () => {
+  it('propValue anchor: surfaces fetched usage-ranked values for the key (#1425)', async () => {
+    mockedListPropertyValues.mockResolvedValue(['done', 'todo', 'blocked'])
     const anchor: AutocompleteAnchor = {
       active: 'propValue',
       key: 'status',
@@ -258,6 +276,89 @@ describe('useAutocompleteSources', () => {
       anchor: 0,
     }
     const { result } = renderHook(() => useAutocompleteSources({ anchor, spaceId: 'S1' }))
-    expect(result.current).toEqual({ items: [], loading: false })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(mockedListPropertyValues).toHaveBeenCalledWith('status')
+    // Backend order is preserved (usage-ranked).
+    expect(result.current.items.map((i) => i.value)).toEqual(['done', 'todo', 'blocked'])
+    expect(result.current.loading).toBe(false)
+  })
+
+  it('propValue anchor: filters fetched values by the typed prefix', async () => {
+    mockedListPropertyValues.mockResolvedValue(['done', 'todo', 'doing'])
+    const { result, rerender } = renderHook(
+      ({ a }: { a: AutocompleteAnchor }) => useAutocompleteSources({ anchor: a, spaceId: 'S1' }),
+      {
+        initialProps: {
+          a: { active: 'propValue', key: 'status', query: '', anchor: 0 } as AutocompleteAnchor,
+        },
+      },
+    )
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    rerender({ a: { active: 'propValue', key: 'status', query: 'do', anchor: 0 } })
+    expect(result.current.items.map((i) => i.value)).toEqual(['done', 'doing'])
+  })
+
+  it('propValue anchor: seeds a select definition options, preferred and deduped (#1425)', async () => {
+    // Definition options lead; usage values follow; the overlapping `done`
+    // is de-duplicated to the select-option position.
+    mockedGetPropertyDef.mockResolvedValue(propDef('status', 'select', ['todo', 'doing', 'done']))
+    mockedListPropertyValues.mockResolvedValue(['done', 'archived'])
+    const anchor: AutocompleteAnchor = {
+      active: 'propValue',
+      key: 'status',
+      query: '',
+      anchor: 0,
+    }
+    const { result } = renderHook(() => useAutocompleteSources({ anchor, spaceId: 'S1' }))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(mockedGetPropertyDef).toHaveBeenCalledWith('status')
+    // Select options first (todo, doing, done), then non-overlapping
+    // usage values (archived). `done` appears once.
+    expect(result.current.items.map((i) => i.value)).toEqual(['todo', 'doing', 'done', 'archived'])
+  })
+
+  it('propValue anchor: non-select definition does not seed options', async () => {
+    mockedGetPropertyDef.mockResolvedValue(propDef('owner', 'text'))
+    mockedListPropertyValues.mockResolvedValue(['alice', 'bob'])
+    const anchor: AutocompleteAnchor = {
+      active: 'propValue',
+      key: 'owner',
+      query: '',
+      anchor: 0,
+    }
+    const { result } = renderHook(() => useAutocompleteSources({ anchor, spaceId: 'S1' }))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(result.current.items.map((i) => i.value)).toEqual(['alice', 'bob'])
+  })
+
+  it('propValue anchor: values IPC rejection falls back to empty without throwing', async () => {
+    mockedListPropertyValues.mockRejectedValueOnce(new Error('ipc-boom'))
+    const anchor: AutocompleteAnchor = {
+      active: 'propValue',
+      key: 'status',
+      query: '',
+      anchor: 0,
+    }
+    const { result } = renderHook(() => useAutocompleteSources({ anchor, spaceId: 'S1' }))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(result.current.items).toEqual([])
+    expect(result.current.loading).toBe(false)
   })
 })

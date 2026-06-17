@@ -86,6 +86,16 @@ pub async fn list_property_keys_inner(pool: &SqlitePool) -> Result<Vec<String>, 
     backlink::list_property_keys(pool).await
 }
 
+/// List the distinct text values in use for a single property `key`,
+/// usage-ranked (#1425).
+#[instrument(skip(pool), err)]
+pub async fn list_property_values_inner(
+    pool: &SqlitePool,
+    key: &str,
+) -> Result<Vec<String>, AppError> {
+    backlink::list_property_values(pool, key).await
+}
+
 /// Set (upsert) a property on a block.
 ///
 /// Thin wrapper around [`set_property_in_tx`] that manages the transaction
@@ -1122,6 +1132,19 @@ pub async fn get_batch_properties_inner(
 #[specta::specta]
 pub async fn list_property_keys(read_pool: State<'_, ReadPool>) -> Result<Vec<String>, AppError> {
     list_property_keys_inner(&read_pool.0)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: list distinct text values for a property key
+/// (#1425). Delegates to [`list_property_values_inner`].
+#[tauri::command]
+#[specta::specta]
+pub async fn list_property_values(
+    read_pool: State<'_, ReadPool>,
+    key: String,
+) -> Result<Vec<String>, AppError> {
+    list_property_values_inner(&read_pool.0, &key)
         .await
         .map_err(sanitize_internal_error)
 }
