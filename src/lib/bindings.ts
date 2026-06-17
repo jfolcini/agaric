@@ -784,6 +784,11 @@ export const commands = {
 	 *  on; the flag-off path continues to use `list_blocks(blockType='page')`.
 	 */
 	listPagesWithMetadata: (filter: ListPagesWithMetadataFilter, cursor: string | null, limit: number | null) => typedError<PageResponse<PageWithMetadataRow>, AppError>(__TAURI_INVOKE("list_pages_with_metadata", { filter, cursor, limit })),
+	/**
+	 *  Tauri command: run a composable advanced query over the structural filter
+	 *  dimensions and return a cursor-paginated page of blocks.
+	 */
+	runAdvancedQuery: (request: AdvancedQueryRequest) => typedError<AdvancedQueryResponse, AppError>(__TAURI_INVOKE("run_advanced_query", { request })),
 };
 
 /* Types */
@@ -1034,6 +1039,61 @@ export type ActorKind =
  *  socket.
  */
 "agent";
+
+/**
+ *  A composable advanced query: a boolean [`FilterExpr`] tree over the
+ *  structural filter dimensions, scoped to one space, with an optional
+ *  multi-key sort and keyset cursor.
+ *
+ *  The `filter` defaults to `And { children: [] }` — the TRUE expression
+ *  (`1=1`), i.e. "every block in the space". `sort` defaults to empty (the
+ *  engine applies its default keyset on `b.id DESC`). `limit` defaults to
+ *  the engine's [`engine::DEFAULT_LIMIT`].
+ */
+export type AdvancedQueryRequest = {
+	/**
+	 *  The space the query is scoped to. Always applied as
+	 *  `b.space_id = ?` regardless of any `Space` leaf in `filter`.
+	 */
+	spaceId: string,
+	/**
+	 *  The boolean filter tree. Defaults to the TRUE expression
+	 *  (`And { children: [] }`) so an omitted filter returns every block in
+	 *  the space.
+	 */
+	filter?: FilterExpr,
+	/**
+	 *  Ordered sort keys. Each key terminates in the `b.id` tiebreaker so
+	 *  the keyset is always stable. Empty → the engine's default keyset.
+	 */
+	sort?: SortKey[],
+	/**
+	 *  Opaque keyset cursor from a prior page's `next_cursor`. `None` =
+	 *  first page.
+	 */
+	cursor?: string | null,
+	/**
+	 *  Page size. `None` → [`engine::DEFAULT_LIMIT`]; bounded by
+	 *  [`engine::MAX_LIMIT`].
+	 */
+	limit?: number | null,
+};
+
+/**  The paginated result of an advanced query. */
+export type AdvancedQueryResponse = {
+	/**  The page of matched rows. */
+	rows: QueryResultRow[],
+	/**  Opaque cursor for the next page, or `None` at the end. */
+	nextCursor: string | null,
+	/**  `true` when a further page exists. */
+	hasMore: boolean,
+	/**
+	 *  Total matching rows ignoring the cursor/limit. Computed on the FIRST
+	 *  page only (a `COUNT(*)` over the same predicate); `None` on cursor
+	 *  pages (the total does not change as the same filter is paged).
+	 */
+	totalCount: number | null,
+};
 
 /**
  *  Bundled agenda filter for the [`list_blocks`] Tauri command.
@@ -1452,6 +1512,25 @@ export type ExtraQueryFilters = {
 	 */
 	excludeTodoStates: string[] | null,
 };
+
+/**
+ *  A boolean tree over [`FilterPrimitive`] leaves.
+ *
+ *  Struct variants (not newtype/tuple variants) for the same reason
+ *  [`FilterPrimitive`] uses them: serde's internally-tagged representation
+ *  (`#[serde(tag = "type")]`) does not support newtype variants wrapping a
+ *  non-struct, and named fields give the TS union self-describing shapes
+ *  (`{ type: "Not", child }`).
+ */
+export type FilterExpr =
+/**  A single primitive leaf. */
+{ type: "Leaf"; primitive: FilterPrimitive } |
+/**  Conjunction — every child must match. Empty = TRUE (`1=1`). */
+{ type: "And"; children: FilterExpr[] } |
+/**  Disjunction — at least one child must match. Empty = FALSE (`1=0`). */
+{ type: "Or"; children: FilterExpr[] } |
+/**  Set complement of the child (3-valued `NOT COALESCE((…), 0)`). */
+{ type: "Not"; child: FilterExpr };
 
 /**
  *  One filter atom in a compound-filter expression. Variants are tagged
@@ -2209,6 +2288,22 @@ export type PurgeResponse = {
 };
 
 /**
+ *  One row of an advanced-query page: a block plus its forward-compat
+ *  ranking score.
+ *
+ *  `block` is flattened so the wire shape is `{ ...ActiveBlockRow, score }`
+ *  — a stable superset of [`ActiveBlockRow`].
+ */
+export type QueryResultRow = {
+	/**
+	 *  The ranking channel. ALWAYS `None` in this structural-only PR; a
+	 *  future full-text / vector pass fills it. Kept so the wire shape is
+	 *  stable across the fast-follows.
+	 */
+	score?: number | null,
+} & ActiveBlockRow;
+
+/**
  *  #1255: durable, user-visible boot-recovery status.
  *
  *  Emitted as the [`EVENT_RECOVERY_DEGRADED`] payload AND returned by the
@@ -2544,8 +2639,62 @@ export type SnippetSpec = {
 	rightMarker: string,
 };
 
+/**
+ *  The closed set of columns an advanced query may sort on. Closed (rather
+ *  than a free `String`) so a sort column can NEVER be a user-controlled
+ *  string spliced into SQL.
+ */
+export type SortColumn =
+/**
+ *  Creation order. The block `id` is a ULID, whose lexical order is
+ *  creation order, so `Created` maps to `b.id`.
+ */
+"created" |
+/**
+ *  Last-edited time: `MAX(op_log.created_at)` over the block, `COALESCE`d
+ *  to the epoch sentinel for blocks with no op-log row (matching
+ *  `PagesProjection::compile_last_edited`'s no-op-log rule).
+ */
+"lastEdited" |
+/**  Sibling position (`b.position`). NULL positions sort last. */
+"position" |
+/**  `b.priority`. NULL priorities sort last. */
+"priority" |
+/**  Page title (`pages_cache.title`) of the block's owning page. */
+"title";
+
 /**  Sort direction. */
 export type SortDir = "Asc" | "Desc";
+
+/**
+ *  One sort key: a source plus a direction. Keys are applied
+ *  left-to-right; the engine always appends `b.id` as the final
+ *  tiebreaker so the resulting keyset is total.
+ */
+export type SortKey = {
+	/**  What to sort by. */
+	source: SortSource,
+	/**  Descending when `true` (default ascending). */
+	desc?: boolean,
+};
+
+/**
+ *  The thing a [`SortKey`] orders by.
+ *
+ *  Internally-tagged on `"type"`. Only `Column` exists in this
+ *  structural-only PR. `Relevance` (full-text rank), `Aggregate`
+ *  (group-by aggregate), and `VectorScore` (vector similarity) are RESERVED
+ *  for the fast-follow PRs — they are NOT added here because there is no
+ *  relevance / aggregate / vector channel to sort on yet.
+ */
+export type SortSource =
+/**
+ *  Sort by a fixed, closed-set block column. The column name is NEVER a
+ *  user-supplied string — it is a [`SortColumn`] enum the engine maps to
+ *  a literal SQL column, so SQL injection through a sort key is
+ *  impossible by construction.
+ */
+{ type: "Column"; name: SortColumn };
 
 /**
  *  Newtype wrapper around a space ULID for type-safety + IPC bindings.

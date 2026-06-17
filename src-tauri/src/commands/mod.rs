@@ -25,6 +25,7 @@ use crate::pairing::PairingSession;
 use crate::ulid::BlockId;
 
 // Domain sub-modules
+pub(crate) mod advanced_query;
 pub(crate) mod agenda;
 pub(crate) mod attachments;
 pub(crate) mod block_cleanup;

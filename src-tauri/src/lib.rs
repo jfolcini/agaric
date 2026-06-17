@@ -33,6 +33,10 @@ pub mod op_log;
 pub mod pagination;
 pub mod pairing;
 pub mod peer_refs;
+// #1280 — the advanced-query engine (composable FilterExpr boolean-tree
+// queries). Structural-only; full-text / grouping / aggregation are
+// fast-follows.
+pub mod query;
 pub mod recovery;
 pub mod recurrence;
 pub mod reverse;
@@ -281,6 +285,11 @@ macro_rules! agaric_commands {
             // (last-modified, inbound-link count, child-block count,
             // has-property bitmask) + richer sort taxonomy.
             $crate::commands::pages::list_pages_with_metadata,
+            // #1280 — composable advanced query: a FilterExpr boolean tree
+            // (AND/OR/NOT across all structural dimensions) compiled to a
+            // cursor-paginated page of blocks. Structural-only (no full-text
+            // / grouping / aggregation yet).
+            $crate::commands::advanced_query::run_advanced_query,
         ]
     };
 }

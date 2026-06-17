@@ -7,6 +7,8 @@ import { isMobilePlatform } from './platform'
 import type { SafeLimit } from './safe-limit'
 
 export type {
+  AdvancedQueryRequest,
+  AdvancedQueryResponse,
   BacklinkFilter,
   BacklinkGroup,
   BacklinkQueryResponse,
@@ -61,6 +63,8 @@ export {
 } from './safe-limit'
 
 import type {
+  AdvancedQueryRequest,
+  AdvancedQueryResponse,
   BacklinkFilter,
   BacklinkQueryResponse,
   BacklinkSort,
@@ -559,6 +563,20 @@ export async function listPagesWithMetadata(params: {
       params.limit ?? null,
     ),
   )
+}
+
+/**
+ * #1280 — run a composable advanced query (boolean `FilterExpr` over the shared
+ * filter vocabulary) against one space, returning a keyset-paginated page of
+ * blocks. The backend gates every leaf against the advanced-query allowed-keys
+ * set, bounds the tree depth, and binds every value as a parameter. Full-text,
+ * grouping, and aggregation are added in follow-ups (the `score` channel on each
+ * row is reserved for ranking).
+ */
+export async function runAdvancedQuery(
+  request: AdvancedQueryRequest,
+): Promise<AdvancedQueryResponse> {
+  return unwrap(await commands.runAdvancedQuery(request))
 }
 
 /** List undated tasks (tasks with todo_state but no due/scheduled date).
