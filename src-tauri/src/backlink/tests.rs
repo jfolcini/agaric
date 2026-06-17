@@ -1881,7 +1881,7 @@ async fn deleted_backlinks_excluded() {
 // ======================================================================
 
 #[tokio::test]
-async fn list_property_keys_returns_distinct_sorted() {
+async fn list_property_keys_returns_distinct_by_usage_then_key() {
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "BLK_A", "content", "a").await;
     insert_block(&pool, "BLK_B", "content", "b").await;
@@ -1890,11 +1890,14 @@ async fn list_property_keys_returns_distinct_sorted() {
     insert_property(&pool, "BLK_B", "status", Some("done"), None, None).await;
     insert_property(&pool, "BLK_B", "due", None, None, Some("2025-01-01")).await;
 
+    // #1424: the `::` picker orders by usage frequency, most-used first,
+    // with `key ASC` as a stable tiebreaker. `status` is used twice;
+    // `due` and `effort` are used once each and tie-break alphabetically.
     let keys = list_property_keys(&pool).await.unwrap();
     assert_eq!(
         keys,
-        vec!["due", "effort", "status"],
-        "should return distinct sorted keys"
+        vec!["status", "due", "effort"],
+        "should return distinct keys ordered by usage DESC, then key ASC"
     );
 }
 
