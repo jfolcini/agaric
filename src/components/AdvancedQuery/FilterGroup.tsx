@@ -220,7 +220,11 @@ export function FilterGroup({
       {/* Children — leaves and nested groups, intermixed in order. */}
       {node.children.length === 0 ? (
         <p className="px-1 text-xs text-muted-foreground" data-testid="filter-group-empty">
-          {t('advancedQuery.builder.emptyGroup')}
+          {t(
+            node.op === 'And'
+              ? 'advancedQuery.builder.emptyGroupAnd'
+              : 'advancedQuery.builder.emptyGroupOr',
+          )}
         </p>
       ) : (
         <ul className="flex flex-col gap-2 list-none m-0 p-0">
