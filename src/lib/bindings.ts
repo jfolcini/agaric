@@ -1087,20 +1087,42 @@ export type AdvancedQueryRequest = {
 	 *  compat with the C1 engine) and [`SortSource::Relevance`] is rejected.
 	 */
 	fulltext?: string | null,
+	/**
+	 *  Optional grouping. When `Some`, the engine runs the GROUPED path:
+	 *  it buckets the matched rows by the [`GroupSpec`]'s dimension and
+	 *  returns [`AdvancedQueryResponse::groups`] (per-bucket count + a
+	 *  bounded member preview) with group-level keyset pagination, leaving
+	 *  [`AdvancedQueryResponse::rows`] empty. When `None` (the default), the
+	 *  engine runs the FLAT path exactly as before (full backward compat).
+	 */
+	groupBy?: GroupSpec | null,
 };
 
-/**  The paginated result of an advanced query. */
+/**
+ *  The paginated result of an advanced query.
+ *
+ *  In FLAT mode (`group_by` absent) `rows` carries the page and `groups` is
+ *  empty. In GROUPED mode (`group_by` present) `groups` carries the bucket
+ *  page and `rows` is empty. `next_cursor` / `has_more` / `total_count`
+ *  describe whichever axis is paged (rows in flat mode, groups in grouped
+ *  mode — `total_count` is the total GROUP count in grouped mode).
+ */
 export type AdvancedQueryResponse = {
-	/**  The page of matched rows. */
+	/**  The page of matched rows (FLAT mode). Empty in grouped mode. */
 	rows: QueryResultRow[],
-	/**  Opaque cursor for the next page, or `None` at the end. */
+	/**  The page of group buckets (GROUPED mode). Empty in flat mode. */
+	groups?: QueryGroup[],
+	/**
+	 *  Opaque cursor for the next page, or `None` at the end. In grouped
+	 *  mode this is the GROUP-level keyset cursor.
+	 */
 	nextCursor: string | null,
 	/**  `true` when a further page exists. */
 	hasMore: boolean,
 	/**
-	 *  Total matching rows ignoring the cursor/limit. Computed on the FIRST
-	 *  page only (a `COUNT(*)` over the same predicate); `None` on cursor
-	 *  pages (the total does not change as the same filter is paged).
+	 *  Total matching rows ignoring the cursor/limit, computed on the FIRST
+	 *  page only; `None` on cursor pages. In grouped mode this is the total
+	 *  number of GROUPS over the same predicate.
 	 */
 	totalCount: number | null,
 };
@@ -1336,6 +1358,33 @@ export type CreateBlockSpec = {
 	 */
 	properties?: { [key in string]: string },
 };
+
+/**  The calendar granularity of a [`GroupKey::DateBucket`]. */
+export type DateBucketUnit =
+/**  One bucket per calendar day, rendered `YYYY-MM-DD`. */
+"day" |
+/**  One bucket per ISO-ish week, rendered `YYYY-Www` (`strftime('%Y-W%W')`). */
+"week" |
+/**  One bucket per calendar month, rendered `YYYY-MM`. */
+"month";
+
+/**  The date column / timestamp a [`GroupKey::DateBucket`] buckets over. */
+export type DateField =
+/**  `b.due_date` (TEXT ISO `YYYY-MM-DD`). */
+"due" |
+/**  `b.scheduled_date` (TEXT ISO `YYYY-MM-DD`). */
+"scheduled" |
+/**
+ *  Creation time. Derived from the EARLIEST `op_log.created_at`
+ *  (epoch-ms) for the block; blocks with no op-log row have no created
+ *  date → the `"none"` bucket.
+ */
+"created" |
+/**
+ *  Last-edited time. Derived from the LATEST `op_log.created_at`
+ *  (epoch-ms) for the block; same no-op-log rule as `Created`.
+ */
+"lastEdited";
 
 /**
  *  PEND-53 — Date-filter shape used by [`SearchFilter::due_filter`] /
@@ -1641,6 +1690,69 @@ export type FlushAllDraftsResult = {
 	 *  or soft-deleted) — anything that consumed a draft row counts.
 	 */
 	flushed: number,
+};
+
+/**
+ *  The dimension an advanced query groups by. Internally-tagged on `"type"`.
+ *
+ *  Every variant resolves to a fixed SQL group-key expression built from
+ *  STATIC column literals; the only user-controlled inputs are bound as `?`
+ *  parameters ([`GroupKey::Property`]'s `key`, [`GroupKey::DateBucket`]'s
+ *  `source`/`unit` — and `unit` maps to a literal `strftime` format, never
+ *  interpolated). No user string is ever spliced in as an identifier, so
+ *  grouping cannot inject SQL.
+ *
+ *  **Multiplicity:** [`GroupKey::Tag`] is the only MULTI-valued key — a
+ *  block with K tags lands in K groups. All others are single-valued.
+ */
+export type GroupKey =
+/**
+ *  Group by tag (`block_tags.tag_id`). Joins `block_tags`, so a block
+ *  appears once per tag it carries (documented multiplicity).
+ */
+{ type: "Tag" } |
+/**
+ *  Group by owning page (`b.page_id`). Blocks with no page bucket under
+ *  the rendered key `"none"`.
+ */
+{ type: "Page" } |
+/**
+ *  Group by todo state (`b.todo_state`); NULL state → the `"none"`
+ *  bucket.
+ */
+{ type: "State" } |
+/**  Group by block type (`b.block_type`), always non-NULL. */
+{ type: "BlockType" } |
+/**  Group by priority (`b.priority`); NULL → the `"none"` bucket. */
+{ type: "Priority" } |
+/**
+ *  Group by a typed property's `value_text` (correlated lookup on
+ *  `block_properties` keyed by `key`); blocks lacking the property →
+ *  the `"none"` bucket. `key` is BOUND as a `?` parameter.
+ */
+{ type: "Property";
+/**  The property key to read `value_text` for. */
+key: string } |
+/**
+ *  Group by a calendar bucket over a date column. `source` selects the
+ *  column / op-log timestamp; `unit` selects the `strftime` granularity.
+ *  Blocks with no date in the source → the `"none"` bucket.
+ */
+{ type: "DateBucket";
+/**  Which date the bucket is computed over. */
+source: DateField;
+/**  The calendar granularity (day / ISO-week / month). */
+unit: DateBucketUnit };
+
+/**
+ *  A grouping directive: bucket the matched rows by ONE dimension.
+ *
+ *  C4 will extend this with per-group aggregates; for now it carries only
+ *  the [`GroupKey`].
+ */
+export type GroupSpec = {
+	/**  The dimension to bucket by. */
+	key: GroupKey,
 };
 
 /**  Response for grouped backlink queries — backlinks organized by source page. */
@@ -2295,6 +2407,30 @@ export type PropertyValue = { type: "Text"; value: string } |
 export type PurgeResponse = {
 	block_id: string,
 	purged_count: number,
+};
+
+/**
+ *  One group bucket of a grouped advanced query.
+ *
+ *  `key` is the RENDERED group key — a tag id, page id, todo state /
+ *  priority string, block type, date-bucket label (`YYYY-MM-DD` /
+ *  `YYYY-Www` / `YYYY-MM`), or the literal `"none"` for the NULL/absent
+ *  bucket. `count` is the FULL bucket size (every matched row in the group,
+ *  not just the previewed members). `members` is a BOUNDED preview — the
+ *  first N members in the engine's default sort — so a huge bucket cannot
+ *  blow the payload; the full member list of one bucket is a follow-up
+ *  "expand group" flat query scoped to that key.
+ */
+export type QueryGroup = {
+	/**  The rendered group key (or `"none"` for the NULL/absent bucket). */
+	key: string,
+	/**  The full size of this bucket (independent of the member preview cap). */
+	count: number,
+	/**
+	 *  A bounded preview of this bucket's member rows (at most
+	 *  [`engine::GROUP_MEMBER_PREVIEW`]).
+	 */
+	members: QueryResultRow[],
 };
 
 /**
