@@ -9490,3 +9490,499 @@ async fn page_globs_via_projection_matches_legacy_glob_equivalence() {
         );
     }
 }
+
+// ======================================================================
+// #1280 B2 — search metadata (state / block-type / due / scheduled)
+// routed through `SearchProjection`. The legacy `append_metadata_sql`
+// fragments are the result oracle; these DB tests prove the SEARCH path is
+// wired to the canonical A2 SQL and the row sets match the hand-computed
+// legacy semantics — covering the NULL-state and exclude+none 3-valued
+// traps specifically.
+// ======================================================================
+
+/// Run an arbitrary `populate` against a bare `SELECT b.id FROM blocks b
+/// WHERE 1=1 <fragment>`, returning the matched ids. Same lightweight
+/// harness as [`tag_filter_ids`] / [`page_glob_filter_ids`]: it tests the
+/// builder's WHERE fragment directly against seeded `blocks` rows, with no
+/// FTS join in the way.
+async fn metadata_filter_ids<F>(
+    pool: &SqlitePool,
+    populate: F,
+) -> std::collections::BTreeSet<String>
+where
+    F: FnOnce(&mut crate::fts::filter_builder::StructuralFilterBuilder),
+{
+    let mut fb = crate::fts::filter_builder::StructuralFilterBuilder::new(1);
+    populate(&mut fb);
+    let sql = format!("SELECT b.id FROM blocks b WHERE 1=1{}", fb.sql());
+    let query = sqlx::query_as::<_, (String,)>(sqlx::AssertSqlSafe(sql.as_str()));
+    let query = fb.apply(query);
+    let rows = query.fetch_all(pool).await.unwrap();
+    rows.into_iter().map(|(id,)| id).collect()
+}
+
+/// Insert a block carrying explicit metadata columns (`todo_state`,
+/// `block_type`, `due_date`, `scheduled_date`). `NULL`s are passed as
+/// `None`. Bypasses [`insert_block`] (which leaves the metadata columns at
+/// their defaults) so the fixture can exercise the NULL-state / NULL-date
+/// branches the projection's `IS NULL` clauses key on.
+#[allow(clippy::too_many_arguments)]
+async fn insert_meta_block(
+    pool: &SqlitePool,
+    id: &str,
+    block_type: &str,
+    todo_state: Option<&str>,
+    due_date: Option<&str>,
+    scheduled_date: Option<&str>,
+    position: i64,
+) {
+    sqlx::query(
+        "INSERT INTO blocks \
+         (id, block_type, content, parent_id, position, page_id, todo_state, due_date, scheduled_date) \
+         VALUES (?, ?, 'body', NULL, ?, NULL, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(block_type)
+    .bind(position)
+    .bind(todo_state)
+    .bind(due_date)
+    .bind(scheduled_date)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+// Distinct 26-char uppercase ULID-style ids for the metadata fixture.
+const META_TODO: &str = "01HQMETATODO00000000000T01"; // TODO,  due 2026-05-18, sched 2026-05-20, content
+const META_DONE: &str = "01HQMETADONE00000000000D01"; // DONE,  due 2026-05-25, sched NULL,       content
+const META_DOING: &str = "01HQMETADOING0000000000G01"; // DOING, due NULL,       sched 2026-05-10, content
+const META_NULLST: &str = "01HQMETANULL00000000000N01"; // NULL,  due 2026-05-18, sched NULL,       content
+const META_PAGE: &str = "01HQMETAPAGE00000000000P01"; // NULL todo_state, page-typed, dates NULL
+
+/// Seed a fixed fixture exercising the metadata-filter matrix:
+/// - varied `todo_state` (TODO / DONE / DOING / NULL ×2)
+/// - varied `block_type` (content ×4, page ×1)
+/// - varied `due_date` / `scheduled_date` (incl. NULLs)
+async fn seed_metadata_fixture(pool: &SqlitePool) {
+    insert_meta_block(
+        pool,
+        META_TODO,
+        "content",
+        Some("TODO"),
+        Some("2026-05-18"),
+        Some("2026-05-20"),
+        0,
+    )
+    .await;
+    insert_meta_block(
+        pool,
+        META_DONE,
+        "content",
+        Some("DONE"),
+        Some("2026-05-25"),
+        None,
+        1,
+    )
+    .await;
+    insert_meta_block(
+        pool,
+        META_DOING,
+        "content",
+        Some("DOING"),
+        None,
+        Some("2026-05-10"),
+        2,
+    )
+    .await;
+    insert_meta_block(
+        pool,
+        META_NULLST,
+        "content",
+        None,
+        Some("2026-05-18"),
+        None,
+        3,
+    )
+    .await;
+    insert_meta_block(pool, META_PAGE, "page", None, None, None, 4).await;
+}
+
+fn id_set(ids: &[&str]) -> std::collections::BTreeSet<String> {
+    ids.iter().map(|s| (*s).to_string()).collect()
+}
+
+const META_PREFIX: &str = "\n           AND ";
+
+/// State INCLUDE: `state:TODO,DOING` → rows whose `todo_state IN (…)`.
+/// (NULL-state and other states excluded.)
+#[tokio::test]
+async fn b2_state_include_matches_legacy() {
+    let (pool, _dir) = test_pool().await;
+    seed_metadata_fixture(&pool).await;
+
+    let got = metadata_filter_ids(&pool, |fb| {
+        fb.add_state_via_projection(
+            META_PREFIX,
+            &["TODO".to_string(), "DOING".to_string()],
+            false,
+            false,
+        );
+    })
+    .await;
+    assert_eq!(
+        got,
+        id_set(&[META_TODO, META_DOING]),
+        "state include must match exactly the IN-set rows"
+    );
+}
+
+/// State INCLUDE + `none`: `state:TODO,none` → `todo_state IN ('TODO') OR
+/// todo_state IS NULL`. Covers the include-side NULL branch.
+#[tokio::test]
+async fn b2_state_include_with_none_matches_legacy() {
+    let (pool, _dir) = test_pool().await;
+    seed_metadata_fixture(&pool).await;
+
+    let got = metadata_filter_ids(&pool, |fb| {
+        fb.add_state_via_projection(META_PREFIX, &["TODO".to_string()], true, false);
+    })
+    .await;
+    // TODO (in-set) + the two NULL-state rows (content + page).
+    assert_eq!(
+        got,
+        id_set(&[META_TODO, META_NULLST, META_PAGE]),
+        "state include with `none` must add the IS NULL rows"
+    );
+}
+
+/// State EXCLUDE: `not-state:DONE` → `todo_state IS NULL OR todo_state NOT
+/// IN ('DONE')`. The NULL-state rows are INCLUDED (legacy PEND-63 design:
+/// the `IS NULL` branch lives outside the `NOT IN` list, sidestepping the
+/// 3-valued `NOT IN (…, NULL)` trap). Only DONE is dropped.
+#[tokio::test]
+async fn b2_state_exclude_includes_null_rows_matches_legacy() {
+    let (pool, _dir) = test_pool().await;
+    seed_metadata_fixture(&pool).await;
+
+    let got = metadata_filter_ids(&pool, |fb| {
+        fb.add_state_via_projection(META_PREFIX, &["DONE".to_string()], false, true);
+    })
+    .await;
+    assert_eq!(
+        got,
+        id_set(&[META_TODO, META_DOING, META_NULLST, META_PAGE]),
+        "exclude DONE must keep every non-DONE row INCLUDING the NULL-state rows"
+    );
+}
+
+/// State EXCLUDE + `none` sentinel: `not-state:DONE,none` → the values
+/// branch (`IS NULL OR NOT IN ('DONE')`) OR the `IS NOT NULL` branch. The
+/// two OR-branches compose to "every row" here (a NULL row hits the first
+/// branch, a non-NULL row hits the second), so nothing is excluded — the
+/// documented legacy shape. Specifically pins that the `none` sentinel maps
+/// to the `is_null=true` exclude param and the result still includes the
+/// NULL rows.
+#[tokio::test]
+async fn b2_state_exclude_with_none_sentinel_matches_legacy() {
+    let (pool, _dir) = test_pool().await;
+    seed_metadata_fixture(&pool).await;
+
+    let got = metadata_filter_ids(&pool, |fb| {
+        fb.add_state_via_projection(META_PREFIX, &["DONE".to_string()], true, true);
+    })
+    .await;
+    assert_eq!(
+        got,
+        id_set(&[META_TODO, META_DONE, META_DOING, META_NULLST, META_PAGE]),
+        "exclude-with-none composes to a tautology (legacy shape) — all rows match"
+    );
+}
+
+/// Pure `state:none` include → only the NULL-state rows.
+#[tokio::test]
+async fn b2_state_pure_none_matches_only_null_rows() {
+    let (pool, _dir) = test_pool().await;
+    seed_metadata_fixture(&pool).await;
+
+    let got = metadata_filter_ids(&pool, |fb| {
+        fb.add_state_via_projection(META_PREFIX, &[], true, false);
+    })
+    .await;
+    assert_eq!(
+        got,
+        id_set(&[META_NULLST, META_PAGE]),
+        "pure `state:none` must match only the IS NULL rows"
+    );
+}
+
+/// Empty state include (no values, not null) is a no-op → all rows pass.
+#[tokio::test]
+async fn b2_state_empty_is_noop() {
+    let (pool, _dir) = test_pool().await;
+    seed_metadata_fixture(&pool).await;
+
+    let got = metadata_filter_ids(&pool, |fb| {
+        fb.add_state_via_projection(META_PREFIX, &[], false, false);
+    })
+    .await;
+    assert_eq!(
+        got,
+        id_set(&[META_TODO, META_DONE, META_DOING, META_NULLST, META_PAGE]),
+        "empty state include must emit no clause — every row passes"
+    );
+}
+
+/// `block-type:page` → only the page-typed row, byte-result equivalent to
+/// the legacy `b.block_type = ?` fragment (the projection emits
+/// `b.block_type IN (?)`). Also diffed directly against the legacy
+/// `add_block_type` row set as a same-DB oracle.
+#[tokio::test]
+async fn b2_block_type_matches_legacy() {
+    let (pool, _dir) = test_pool().await;
+    seed_metadata_fixture(&pool).await;
+
+    let routed = metadata_filter_ids(&pool, |fb| {
+        fb.add_block_type_via_projection(META_PREFIX, Some("page"));
+    })
+    .await;
+    let legacy = metadata_filter_ids(&pool, |fb| {
+        fb.add_block_type(META_PREFIX, Some("page"));
+    })
+    .await;
+    assert_eq!(
+        routed, legacy,
+        "block-type routed row set must equal legacy"
+    );
+    assert_eq!(
+        routed,
+        id_set(&[META_PAGE]),
+        "block-type:page must match only the page-typed row"
+    );
+}
+
+/// `block-type:None` is a no-op (mirrors legacy `add_block_type(None)`).
+#[tokio::test]
+async fn b2_block_type_none_is_noop() {
+    let (pool, _dir) = test_pool().await;
+    seed_metadata_fixture(&pool).await;
+
+    let got = metadata_filter_ids(&pool, |fb| {
+        fb.add_block_type_via_projection(META_PREFIX, None);
+    })
+    .await;
+    assert_eq!(got.len(), 5, "None block-type must not filter any row");
+}
+
+/// Due-date predicate matrix. Each `DatePredicate` variant compiles to the
+/// canonical A2 SQL over `b.due_date`, result-equivalent to the legacy
+/// `append_date_predicate` fragment (guarded `IS NOT NULL`; `On` = exact
+/// `=`; `IsNull` matches the unset rows).
+#[tokio::test]
+async fn b2_due_date_predicate_matrix_matches_legacy() {
+    use crate::domain::search_types::DateOp;
+    use crate::fts::metadata_filter::DatePredicate;
+
+    let (pool, _dir) = test_pool().await;
+    seed_metadata_fixture(&pool).await;
+
+    // due_date values: TODO=2026-05-18, DONE=2026-05-25, NULLST=2026-05-18,
+    // DOING=NULL, PAGE=NULL.
+    let cases: &[(DatePredicate, std::collections::BTreeSet<String>, &str)] = &[
+        (
+            DatePredicate::Op {
+                op: DateOp::Eq,
+                date: "2026-05-18".into(),
+            },
+            id_set(&[META_TODO, META_NULLST]),
+            "On 2026-05-18",
+        ),
+        (
+            DatePredicate::Op {
+                op: DateOp::Lt,
+                date: "2026-05-20".into(),
+            },
+            id_set(&[META_TODO, META_NULLST]),
+            "Before 2026-05-20",
+        ),
+        (
+            DatePredicate::Op {
+                op: DateOp::Gte,
+                date: "2026-05-20".into(),
+            },
+            id_set(&[META_DONE]),
+            "OnOrAfter 2026-05-20",
+        ),
+        (
+            DatePredicate::Range {
+                from: "2026-05-18".into(),
+                to: "2026-05-25".into(),
+            },
+            id_set(&[META_TODO, META_DONE, META_NULLST]),
+            "Between 18..25",
+        ),
+        (
+            DatePredicate::IsNull,
+            id_set(&[META_DOING, META_PAGE]),
+            "IsNull (due unset)",
+        ),
+    ];
+
+    for (pred, expected, label) in cases {
+        let got = metadata_filter_ids(&pool, |fb| {
+            fb.add_due_date_via_projection(META_PREFIX, pred);
+        })
+        .await;
+        assert_eq!(&got, expected, "[due {label}] row set mismatch");
+    }
+}
+
+/// Scheduled-date predicate routed through `compile_scheduled` over
+/// `b.scheduled_date`. scheduled values: TODO=2026-05-20, DOING=2026-05-10,
+/// others NULL.
+#[tokio::test]
+async fn b2_scheduled_predicate_matches_legacy() {
+    use crate::fts::metadata_filter::DatePredicate;
+
+    let (pool, _dir) = test_pool().await;
+    seed_metadata_fixture(&pool).await;
+
+    // Between 2026-05-10..2026-05-15 → only DOING.
+    let between = metadata_filter_ids(&pool, |fb| {
+        fb.add_scheduled_via_projection(
+            META_PREFIX,
+            &DatePredicate::Range {
+                from: "2026-05-10".into(),
+                to: "2026-05-15".into(),
+            },
+        );
+    })
+    .await;
+    assert_eq!(
+        between,
+        id_set(&[META_DOING]),
+        "scheduled Between must match only DOING"
+    );
+
+    // IsNull → the three rows with no scheduled_date.
+    let is_null = metadata_filter_ids(&pool, |fb| {
+        fb.add_scheduled_via_projection(META_PREFIX, &DatePredicate::IsNull);
+    })
+    .await;
+    assert_eq!(
+        is_null,
+        id_set(&[META_DONE, META_NULLST, META_PAGE]),
+        "scheduled IsNull must match the unset rows"
+    );
+}
+
+/// End-to-end: `search_fts` with a `SearchFilter` carrying state + due +
+/// block-type returns the expected rows — proving the production search
+/// surface (not just the builder) is correctly wired to the routed path.
+#[tokio::test]
+async fn b2_search_fts_end_to_end_state_due_block_type() {
+    use crate::domain::search_types::{DateFilter, DateOp, SearchFilter};
+
+    let (pool, _dir) = test_pool().await;
+    seed_metadata_fixture(&pool).await;
+    // Make every fixture block discoverable via FTS MATCH ("body").
+    for id in [META_TODO, META_DONE, META_DOING, META_NULLST, META_PAGE] {
+        update_fts_for_block(&pool, id).await.unwrap();
+    }
+
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 5, 18).unwrap();
+
+    // state:TODO,DOING — expect the TODO + DOING content rows.
+    let f = SearchFilter {
+        state_filter: vec!["TODO".into(), "DOING".into()],
+        ..Default::default()
+    };
+    let meta = crate::fts::metadata_filter::prepare_metadata_with_today(&f, today).unwrap();
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let res = search_fts(
+        &pool,
+        "body",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &meta,
+        None,
+    )
+    .await
+    .unwrap();
+    let ids: std::collections::BTreeSet<String> = res
+        .items
+        .iter()
+        .map(|r| r.id.as_str().to_string())
+        .collect();
+    assert_eq!(
+        ids,
+        id_set(&[META_TODO, META_DOING]),
+        "search_fts state:TODO,DOING must return the TODO+DOING rows"
+    );
+
+    // due:=2026-05-18 (exact) — expect TODO + NULLST.
+    let f = SearchFilter {
+        due_filter: Some(DateFilter::Op {
+            op: DateOp::Eq,
+            date: "2026-05-18".into(),
+        }),
+        ..Default::default()
+    };
+    let meta = crate::fts::metadata_filter::prepare_metadata_with_today(&f, today).unwrap();
+    let res = search_fts(
+        &pool,
+        "body",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &meta,
+        None,
+    )
+    .await
+    .unwrap();
+    let ids: std::collections::BTreeSet<String> = res
+        .items
+        .iter()
+        .map(|r| r.id.as_str().to_string())
+        .collect();
+    assert_eq!(
+        ids,
+        id_set(&[META_TODO, META_NULLST]),
+        "search_fts due:=2026-05-18 must return the two due-on-that-day rows"
+    );
+
+    // block_type=page via the dedicated param — expect only the page row.
+    let res = search_fts(
+        &pool,
+        "body",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        Some("page"),
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
+    )
+    .await
+    .unwrap();
+    let ids: std::collections::BTreeSet<String> = res
+        .items
+        .iter()
+        .map(|r| r.id.as_str().to_string())
+        .collect();
+    assert_eq!(
+        ids,
+        id_set(&[META_PAGE]),
+        "search_fts block_type=page must return only the page row"
+    );
+}

@@ -983,10 +983,15 @@ async fn fts_fetch_rows(
     // merge by `page_id`. `None` preserves today's no-filter behaviour.
     // PEND-61 Phase 1 — the partitioned caller passes `None` here and
     // partitions in Rust instead.
-    fb.add_block_type(PREFIX, block_type_filter);
+    // #1280 B2 — routed through `SearchProjection::compile_block_type`
+    // (canonical A2 SQL). Result-equivalent to the legacy `b.block_type = ?`
+    // fragment for the single-value FTS filter (the projection emits
+    // `b.block_type IN (?)`); `None` stays a no-op.
+    fb.add_block_type_via_projection(PREFIX, block_type_filter);
 
-    // PEND-53 — state / priority / due / scheduled / property metadata
-    // predicates, spliced (with their ordered binds) into the builder.
+    // PEND-53 — priority / property metadata predicates (legacy path), plus
+    // state / due / scheduled routed through `SearchProjection` (#1280 B2),
+    // spliced (with their ordered binds) into the builder.
     fb.add_metadata(metadata, "b");
 
     sql.push_str(fb.sql());

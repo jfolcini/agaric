@@ -27,16 +27,46 @@
 //! the `search_fts` builder (11-space indent) and the toggle builders
 //! (13-space indent).
 
-use super::metadata_filter::{MetaBind, MetadataPredicates, append_metadata_sql};
-use crate::domain::search_types::SearchFilter;
+use super::metadata_filter::{
+    DatePredicate as MetaDatePredicate, MetaBind, MetadataPredicates, append_metadata_sql,
+};
+use crate::domain::search_types::{DateOp, SearchFilter};
 use crate::filters::primitive::{
-    Bind, FilterPrimitive, LastEditedSpec, Projection, SearchProjection,
+    Bind, DatePredicate, FilterPrimitive, LastEditedSpec, Projection, SearchProjection,
 };
 
-/// #1320-C — `AND ` glue prefix for the `last-edited:` projection clause.
-/// Matches the 11-space indentation `append_metadata_sql` uses for its
-/// sibling metadata fragments, so the spliced last-edited clause lines up
-/// in the generated SQL.
+/// #1280 B2 — bridge the search-side resolved [`MetaDatePredicate`]
+/// (`IsNull` / `Range` / `Op{DateOp}`) onto the cross-surface
+/// [`DatePredicate`] the projection compiles. The resolver oracle treats the
+/// `due_date` / `scheduled_date` columns as DATE-exact, so `Op{Eq}` maps to
+/// `On` (the projection's exact `= ?` form, NOT the half-open day expansion)
+/// and `Range` maps to the inclusive `Between` — keeping the compiled SQL
+/// result-equivalent to the legacy `append_date_predicate` fragment.
+fn meta_date_to_primitive(pred: &MetaDatePredicate) -> DatePredicate {
+    match pred {
+        MetaDatePredicate::IsNull => DatePredicate::IsNull,
+        MetaDatePredicate::Range { from, to } => DatePredicate::Between {
+            from: from.clone(),
+            to: to.clone(),
+        },
+        MetaDatePredicate::Op { op, date } => {
+            let date = date.clone();
+            match op {
+                DateOp::Lt => DatePredicate::Before { date },
+                DateOp::Lte => DatePredicate::OnOrBefore { date },
+                DateOp::Eq => DatePredicate::On { date },
+                DateOp::Gte => DatePredicate::OnOrAfter { date },
+                DateOp::Gt => DatePredicate::After { date },
+            }
+        }
+    }
+}
+
+/// #1320-C / #1280 B2 — `AND ` glue prefix for the projection-routed
+/// metadata clauses (`last-edited:`, and now `state:` / `due-date:` /
+/// `scheduled:`). Matches the 11-space indentation `append_metadata_sql`
+/// uses for its sibling metadata fragments, so the spliced clauses line up
+/// byte-for-byte with the legacy fragments in the generated SQL.
 const LAST_EDITED_PREFIX: &str = "\n           AND ";
 
 /// One bound value, tagged with its SQLite affinity. Recorded in
@@ -214,6 +244,100 @@ impl StructuralFilterBuilder {
         self.add_projection_clause(prefix, &wc.sql, &wc.binds);
     }
 
+    /// #1280 B2 — `state:` membership filter routed through
+    /// [`SearchProjection`] (`compile_state`, which delegates to the canonical
+    /// A2 `PagesProjection` SQL). Replaces the legacy `append_metadata_sql`
+    /// emission of the `b.todo_state IN (…) / IS NULL` include clause and the
+    /// `b.todo_state IS NULL OR … NOT IN (…)` exclude clause. The A2 SQL is
+    /// byte-shape-identical to the legacy `append_text_in_or_null` /
+    /// `append_text_not_in_or_not_null` oracle, so this is a zero-behaviour-
+    /// change cutover at the result level.
+    ///
+    /// Legacy state carries BOTH an include set (`state_values`/`state_is_null`)
+    /// and an exclude set (`excluded_state_values`/`excluded_state_not_null`).
+    /// The caller emits TWO primitives — an include `State { exclude: false }`
+    /// and an exclude `State { exclude: true }` — feeding each here. Each
+    /// emits its own AND-joined fragment under `prefix`, matching the legacy
+    /// two-clause shape. An empty include (no values, not is_null) compiles to
+    /// the no-op `1=1`, matching the legacy helper's early return; we splice it
+    /// regardless (a `1=1` AND-clause is inert), keeping the call unconditional.
+    pub(super) fn add_state_via_projection(
+        &mut self,
+        prefix: &str,
+        values: &[String],
+        is_null: bool,
+        exclude: bool,
+    ) {
+        // Mirror the legacy helpers' early return: emit nothing when there is
+        // no predicate at all (empty values AND no null/not-null flag), so the
+        // generated SQL stays byte-identical to the legacy no-clause case.
+        if values.is_empty() && !is_null {
+            return;
+        }
+        let prim = FilterPrimitive::State {
+            values: values.to_vec(),
+            is_null,
+            exclude,
+        };
+        let wc = SearchProjection.compile(&prim);
+        self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+    }
+
+    /// #1280 B2 — `block-type:` equality filter routed through
+    /// [`SearchProjection`] (`compile_block_type` → canonical A2
+    /// `PagesProjection` SQL). Replaces the legacy inline `add_block_type`
+    /// fragment (`b.block_type = ?N`). The routed SQL SHAPE differs
+    /// (`b.block_type IN (?)` vs `b.block_type = ?`) but is RESULT-EQUIVALENT
+    /// for the single-value filter the FTS surface passes. `None` is a no-op
+    /// (mirrors `add_block_type`); the projection's empty-include `1=0` is
+    /// never reached because we only compile a primitive when a value is
+    /// present.
+    pub(super) fn add_block_type_via_projection(&mut self, prefix: &str, block_type: Option<&str>) {
+        let Some(bt) = block_type else { return };
+        let prim = FilterPrimitive::BlockType {
+            values: vec![bt.to_string()],
+            exclude: false,
+        };
+        let wc = SearchProjection.compile(&prim);
+        self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+    }
+
+    /// #1280 B2 — `due-date:` predicate routed through [`SearchProjection`]
+    /// (`compile_due_date` → canonical A2 `PagesProjection` SQL over
+    /// `b.due_date`). Replaces the legacy `append_metadata_sql` emission of the
+    /// `b.due_date <pred>` clause. The A2 SQL is byte-shape-identical to the
+    /// legacy `append_date_predicate` oracle (guarded `IS NOT NULL`, exact `=`
+    /// for `On`). Only invoked when the predicate is present (see
+    /// [`add_metadata`](Self::add_metadata)).
+    pub(super) fn add_due_date_via_projection(
+        &mut self,
+        prefix: &str,
+        predicate: &MetaDatePredicate,
+    ) {
+        let prim = FilterPrimitive::DueDate {
+            predicate: meta_date_to_primitive(predicate),
+        };
+        let wc = SearchProjection.compile(&prim);
+        self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+    }
+
+    /// #1280 B2 — `scheduled:` predicate routed through [`SearchProjection`]
+    /// (`compile_scheduled` → canonical A2 `PagesProjection` SQL over
+    /// `b.scheduled_date`). Replaces the legacy `append_metadata_sql` emission
+    /// of the `b.scheduled_date <pred>` clause. Same byte-shape contract as
+    /// [`add_due_date_via_projection`].
+    pub(super) fn add_scheduled_via_projection(
+        &mut self,
+        prefix: &str,
+        predicate: &MetaDatePredicate,
+    ) {
+        let prim = FilterPrimitive::Scheduled {
+            predicate: meta_date_to_primitive(predicate),
+        };
+        let wc = SearchProjection.compile(&prim);
+        self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+    }
+
     /// #1320 PR-1 — ALL-tags filter routed through [`SearchProjection`]
     /// instead of the inline `add_tags_all` `COUNT(DISTINCT)` fragment
     /// (#1320 PR-3 retired that legacy method; this is now the sole path).
@@ -333,6 +457,13 @@ impl StructuralFilterBuilder {
     }
 
     /// `AND b.block_type = ?N` when `Some`.
+    ///
+    /// #1280 B2 — production callers were cut over to
+    /// [`add_block_type_via_projection`](Self::add_block_type_via_projection)
+    /// (canonical A2 `SearchProjection` SQL). This legacy single-value `= ?`
+    /// fragment is retained for the byte-shape snapshot tests that pin it as
+    /// the result-equivalence oracle; it has no non-test callers.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn add_block_type(&mut self, prefix: &str, block_type: Option<&str>) {
         if let Some(bt) = block_type {
             let i = self.next_param;
@@ -358,23 +489,59 @@ impl StructuralFilterBuilder {
     /// [`add_block_type`](Self::add_block_type) differs between the FTS
     /// and the toggle builders — the caller drives that order.
     pub(super) fn add_metadata(&mut self, metadata: &MetadataPredicates, alias: &str) {
+        // #1280 B2 — `state:` / `due-date:` / `scheduled:` are now routed
+        // through `SearchProjection` (which delegates to the canonical A2
+        // `PagesProjection` SQL), the same way `last-edited:` already is.
+        // These projections emit a hardcoded `b.` alias, so — like
+        // `last-edited:` — they require `alias == "b"` (all three FTS builders
+        // splice metadata with `"b"`). `append_metadata_sql` no longer emits
+        // them; it shrank to PRIORITY (needs a multi-value variant not yet
+        // added) and PROPERTY (its four-column `value_text/num/date/ref` OR
+        // diverges from the projection's single-column `value_text` match), so
+        // BOTH stay on the legacy path for now.
+        debug_assert_eq!(
+            alias, "b",
+            "state/due/scheduled/last_edited projections emit a hardcoded `b.` \
+             alias; the metadata block alias must be `b`"
+        );
+
+        // INCLUDE state (`state_values` / `state_is_null`) and the symmetric
+        // EXCLUDE state (`excluded_state_values` / `excluded_state_not_null`)
+        // are TWO separate legacy clauses → two primitives. Each splice is a
+        // no-op when its set is empty (mirrors the legacy helpers' early
+        // return), so the generated SQL stays byte-identical to the legacy
+        // no-clause cases.
+        self.add_state_via_projection(
+            LAST_EDITED_PREFIX,
+            &metadata.state_values,
+            metadata.state_is_null,
+            false,
+        );
+        self.add_state_via_projection(
+            LAST_EDITED_PREFIX,
+            &metadata.excluded_state_values,
+            metadata.excluded_state_not_null,
+            true,
+        );
+
+        // The remaining legacy metadata (priority, excluded_priority, property
+        // includes / excludes) still flows through `append_metadata_sql`.
         let meta_binds = append_metadata_sql(&mut self.sql, &mut self.next_param, metadata, alias);
         for mb in meta_binds {
             self.binds.push(ScalarBind::Meta(mb));
         }
-        // #1320-C — the `last-edited:` window is the one metadata field
-        // NOT emitted by `append_metadata_sql`: it is compiled through
-        // `SearchProjection::compile_last_edited`, whose SQL references the
-        // block table with a hardcoded `b.` alias. All three FTS builders
-        // splice metadata with `alias == "b"`, so the projection's alias
-        // matches; route here so every search surface picks it up without a
-        // parallel parameter threaded through the call chain.
+
+        // due_date / scheduled_date predicates routed through the projection.
+        if let Some(pred) = &metadata.due {
+            self.add_due_date_via_projection(LAST_EDITED_PREFIX, pred);
+        }
+        if let Some(pred) = &metadata.scheduled {
+            self.add_scheduled_via_projection(LAST_EDITED_PREFIX, pred);
+        }
+
+        // #1320-C — the `last-edited:` window is also compiled through
+        // `SearchProjection::compile_last_edited` (hardcoded `b.` alias).
         if let Some(spec) = &metadata.last_edited {
-            debug_assert_eq!(
-                alias, "b",
-                "last_edited projection emits a hardcoded `b.` alias; \
-                 the metadata block alias must be `b`"
-            );
             self.add_last_edited_via_projection(LAST_EDITED_PREFIX, spec);
         }
     }
@@ -801,6 +968,92 @@ mod tests {
         assert!(fb.sql().ends_with("\n             AND b.id < ?4"));
         assert_eq!(fb.next_param(), 5);
         assert_eq!(fb.bind_count(), 2);
+    }
+
+    // ── #1280 B2 — metadata splices (state / block_type / due / scheduled) ──
+
+    /// State INCLUDE compiles to the canonical `(b.todo_state IN (…) OR
+    /// b.todo_state IS NULL)` shape spliced under the metadata prefix, with
+    /// renumbered placeholders and one bind per value.
+    #[test]
+    fn state_include_via_projection_snapshot() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_state_via_projection(FTS_PREFIX, &["TODO".to_string()], true, false);
+        assert_eq!(
+            fb.sql(),
+            "\n           AND (b.todo_state IN (?6) OR b.todo_state IS NULL)"
+        );
+        assert_eq!(fb.next_param(), 7);
+        assert_eq!(fb.bind_count(), 1);
+    }
+
+    /// State EXCLUDE compiles to the NULL-inclusive inversion `(b.todo_state
+    /// IS NULL OR b.todo_state NOT IN (…))` — the `IS NULL` branch OUTSIDE
+    /// the `NOT IN` list (3-valued trap guard); `is_null=true` adds the
+    /// `IS NOT NULL` branch (the `not-state:none` sentinel).
+    #[test]
+    fn state_exclude_via_projection_snapshot() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_state_via_projection(FTS_PREFIX, &["DONE".to_string()], true, true);
+        assert_eq!(
+            fb.sql(),
+            "\n           AND (b.todo_state IS NULL OR b.todo_state NOT IN (?6) OR b.todo_state IS NOT NULL)"
+        );
+        assert_eq!(fb.next_param(), 7);
+        assert_eq!(fb.bind_count(), 1);
+    }
+
+    /// An empty, null-less state include is a no-op (mirrors the legacy
+    /// helper's early return) — no clause, no placeholder consumed.
+    #[test]
+    fn state_empty_via_projection_is_noop() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_state_via_projection(FTS_PREFIX, &[], false, false);
+        assert_eq!(fb.sql(), "");
+        assert_eq!(fb.next_param(), 6);
+        assert_eq!(fb.bind_count(), 0);
+    }
+
+    /// block_type routes to `b.block_type IN (?)` (result-equivalent to the
+    /// legacy `b.block_type = ?`); `None` is a no-op.
+    #[test]
+    fn block_type_via_projection_snapshot() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_block_type_via_projection(FTS_PREFIX, Some("page"));
+        assert_eq!(fb.sql(), "\n           AND b.block_type IN (?6)");
+        assert_eq!(fb.bind_count(), 1);
+
+        let mut none = StructuralFilterBuilder::new(6);
+        none.add_block_type_via_projection(FTS_PREFIX, None);
+        assert_eq!(none.sql(), "");
+        assert_eq!(none.next_param(), 6);
+    }
+
+    /// due / scheduled date predicates compile to the guarded canonical
+    /// fragment over the right column. `On{Eq}` is the exact `= ?` form;
+    /// `IsNull` is the bare `IS NULL`.
+    #[test]
+    fn due_scheduled_via_projection_snapshot() {
+        use crate::fts::metadata_filter::DatePredicate;
+
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_due_date_via_projection(
+            FTS_PREFIX,
+            &DatePredicate::Op {
+                op: crate::domain::search_types::DateOp::Eq,
+                date: "2026-05-18".into(),
+            },
+        );
+        assert_eq!(
+            fb.sql(),
+            "\n           AND (b.due_date IS NOT NULL AND b.due_date = ?6)"
+        );
+        assert_eq!(fb.bind_count(), 1);
+
+        let mut sched = StructuralFilterBuilder::new(6);
+        sched.add_scheduled_via_projection(FTS_PREFIX, &DatePredicate::IsNull);
+        assert_eq!(sched.sql(), "\n           AND b.scheduled_date IS NULL");
+        assert_eq!(sched.bind_count(), 0, "IsNull binds nothing");
     }
 
     #[test]

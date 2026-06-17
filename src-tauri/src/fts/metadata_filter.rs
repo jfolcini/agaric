@@ -386,15 +386,17 @@ pub fn append_metadata_sql(
 ) -> Vec<MetaBind> {
     let mut binds: Vec<MetaBind> = Vec::new();
 
-    // state ------------------------------------------------------------
-    append_text_in_or_null(
-        sql,
-        next_param,
-        &mut binds,
-        &meta.state_values,
-        meta.state_is_null,
-        &format!("{block_alias}.todo_state"),
-    );
+    // #1280 B2 — `state` / `excluded_state` / `due_date` / `scheduled_date`
+    // are NO LONGER emitted here: they are compiled through `SearchProjection`
+    // (which delegates to the canonical A2 `PagesProjection` SQL) and spliced
+    // by `StructuralFilterBuilder::add_metadata` via the `_via_projection`
+    // helpers. The A2 SQL is byte-shape-identical to the legacy fragments this
+    // function used to emit (`append_text_in_or_null` /
+    // `append_text_not_in_or_not_null` / `append_date_predicate`), so the
+    // cutover is behaviour-preserving. PRIORITY and PROPERTY stay here:
+    // priority needs the not-yet-added multi-value `State`-style variant, and
+    // property's four-column (`value_text/num/date/ref`) OR diverges from the
+    // projection's single-column `value_text` match.
 
     // priority ---------------------------------------------------------
     append_text_in_or_null(
@@ -406,16 +408,6 @@ pub fn append_metadata_sql(
         &format!("{block_alias}.priority"),
     );
 
-    // PEND-63 — excluded state -----------------------------------------
-    append_text_not_in_or_not_null(
-        sql,
-        next_param,
-        &mut binds,
-        &meta.excluded_state_values,
-        meta.excluded_state_not_null,
-        &format!("{block_alias}.todo_state"),
-    );
-
     // PEND-63 — excluded priority --------------------------------------
     append_text_not_in_or_not_null(
         sql,
@@ -425,28 +417,6 @@ pub fn append_metadata_sql(
         meta.excluded_priority_not_null,
         &format!("{block_alias}.priority"),
     );
-
-    // due_date ---------------------------------------------------------
-    if let Some(pred) = &meta.due {
-        append_date_predicate(
-            sql,
-            next_param,
-            &mut binds,
-            pred,
-            &format!("{block_alias}.due_date"),
-        );
-    }
-
-    // scheduled_date ---------------------------------------------------
-    if let Some(pred) = &meta.scheduled {
-        append_date_predicate(
-            sql,
-            next_param,
-            &mut binds,
-            pred,
-            &format!("{block_alias}.scheduled_date"),
-        );
-    }
 
     // property includes ------------------------------------------------
     for pf in &meta.property_includes {
@@ -677,52 +647,6 @@ fn append_text_not_in_or_not_null(
         parts.push(format!("{column} IS NOT NULL"));
     }
     sql.push_str(&format!("\n           AND ({})", parts.join(" OR ")));
-}
-
-/// Append a date predicate (`IS NULL` / `BETWEEN` / comparison) to `sql`.
-///
-/// # Date representation assumption (#349)
-///
-/// Every comparison here (`BETWEEN`, `<`/`<=`/`>`/`>=`) relies on the
-/// target columns (`due_date`, `scheduled_date`, …) storing **TEXT ISO-8601
-/// `YYYY-MM-DD`** values, which sort lexicographically the same way they
-/// sort chronologically. This holds today. Should a future migration move
-/// these columns to epoch-ms `INTEGER` (mirroring `deleted_at` post-0080),
-/// the bound `MetaBind::Str` values and the string comparisons here would
-/// silently mis-order — convert the binds to ms and revisit the operators
-/// at that time.
-fn append_date_predicate(
-    sql: &mut String,
-    next_param: &mut usize,
-    binds: &mut Vec<MetaBind>,
-    pred: &DatePredicate,
-    column: &str,
-) {
-    match pred {
-        DatePredicate::IsNull => {
-            sql.push_str(&format!("\n           AND {column} IS NULL"));
-        }
-        DatePredicate::Range { from, to } => {
-            let from_idx = *next_param;
-            *next_param += 1;
-            let to_idx = *next_param;
-            *next_param += 1;
-            sql.push_str(&format!(
-                "\n           AND {column} IS NOT NULL AND {column} BETWEEN ?{from_idx} AND ?{to_idx}"
-            ));
-            binds.push(MetaBind::Str(from.clone()));
-            binds.push(MetaBind::Str(to.clone()));
-        }
-        DatePredicate::Op { op, date } => {
-            let idx = *next_param;
-            *next_param += 1;
-            sql.push_str(&format!(
-                "\n           AND {column} IS NOT NULL AND {column} {} ?{idx}",
-                op.as_sql()
-            ));
-            binds.push(MetaBind::Str(date.clone()));
-        }
-    }
 }
 
 fn monday_of(d: NaiveDate) -> NaiveDate {
@@ -1092,39 +1016,17 @@ mod tests {
         assert!(m.excluded_priority_values.is_empty());
     }
 
-    #[test]
-    fn excluded_state_sql_emits_null_inclusive_not_in() {
-        let meta = MetadataPredicates {
-            excluded_state_values: vec!["DONE".into(), "CANCELLED".into()],
-            ..Default::default()
-        };
-        let mut sql = String::new();
-        let mut p = 1usize;
-        let binds = append_metadata_sql(&mut sql, &mut p, &meta, "b");
-        // NULL-inclusive inversion is the PEND-63 design.
-        assert!(
-            sql.contains("b.todo_state IS NULL OR b.todo_state NOT IN (?1, ?2)"),
-            "got SQL: {sql}",
-        );
-        assert_eq!(binds.len(), 2);
-        // Combined with `excluded_state_not_null` it would be a
-        // separate OR-branch; verify the values-only case alone here.
-        assert!(matches!(&binds[0], MetaBind::Str(s) if s == "DONE"));
-        assert!(matches!(&binds[1], MetaBind::Str(s) if s == "CANCELLED"));
-    }
-
-    #[test]
-    fn excluded_state_none_sentinel_sql_emits_is_not_null() {
-        let meta = MetadataPredicates {
-            excluded_state_not_null: true,
-            ..Default::default()
-        };
-        let mut sql = String::new();
-        let mut p = 1usize;
-        let binds = append_metadata_sql(&mut sql, &mut p, &meta, "b");
-        assert!(sql.contains("b.todo_state IS NOT NULL"), "got SQL: {sql}",);
-        assert!(binds.is_empty());
-    }
+    // #1280 B2 — the `state:` / `excluded_state` SQL emission moved OFF
+    // `append_metadata_sql` and onto `SearchProjection::compile_state` (which
+    // delegates to the canonical A2 `PagesProjection` SQL). The byte-shape of
+    // that SQL is proved by A2's projection oracle tests; the search-path
+    // wiring + row equivalence is proved by the B2 DB tests in `fts::tests`.
+    // The former `excluded_state_sql_emits_null_inclusive_not_in` /
+    // `excluded_state_none_sentinel_sql_emits_is_not_null` SQL-shape tests
+    // were retired here because `append_metadata_sql` no longer emits state.
+    // The RESOLUTION tests (`excluded_state_values_route_to_predicate` /
+    // `excluded_state_none_sentinel_flips_to_not_null`) remain — they cover
+    // `prepare_metadata`, which is unchanged.
 
     #[test]
     fn excluded_priority_combined_with_values_and_null_sentinel() {
