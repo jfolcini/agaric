@@ -35,6 +35,14 @@ export interface AddFilterPopoverProps {
   onAddFilter: (filter: FilterPrimitive) => void
   /** Soft-cap warning copy shown when the chip count is already high. */
   warnManyFilters?: boolean
+  /**
+   * #1280 D1 — when `true`, the Pages-only facet group (Orphan / Stub / No
+   * inbound links) is hidden, leaving only the SHARED vocabulary
+   * (tag / path / has-property / last-edited / priority). The advanced-query
+   * engine rejects the Pages-only leaves, so the Advanced Query surface passes
+   * this to restrict the offered keys to the supported set.
+   */
+  hidePagesFacets?: boolean
 }
 
 /** Which inline value-editor is open inside the popover (null = category menu). */
@@ -56,6 +64,7 @@ const LAST_EDITED_BUCKETS: ReadonlyArray<{ key: string; spec: FilterPrimitive }>
 export function AddFilterPopover({
   onAddFilter,
   warnManyFilters,
+  hidePagesFacets,
 }: AddFilterPopoverProps): React.ReactElement {
   const { t } = useTranslation()
   // E1 — the offered Priority values must mirror the user-configured priority
@@ -236,26 +245,28 @@ export function AddFilterPopover({
               </div>
             </FilterCategoryGroup>
 
-            <FilterCategoryGroup label={t('pageBrowser.filter.pagesGroup')}>
-              <FilterMenuItem
-                onClick={() => emit({ type: 'Orphan' })}
-                description={t('pageBrowser.filter.facetOrphanDesc')}
-              >
-                {t('pageBrowser.filter.facetOrphan')}
-              </FilterMenuItem>
-              <FilterMenuItem
-                onClick={() => emit({ type: 'Stub' })}
-                description={t('pageBrowser.filter.facetStubDesc')}
-              >
-                {t('pageBrowser.filter.facetStub')}
-              </FilterMenuItem>
-              <FilterMenuItem
-                onClick={() => emit({ type: 'HasNoInboundLinks' })}
-                description={t('pageBrowser.filter.facetHasNoInboundLinksDesc')}
-              >
-                {t('pageBrowser.filter.facetHasNoInboundLinks')}
-              </FilterMenuItem>
-            </FilterCategoryGroup>
+            {!hidePagesFacets && (
+              <FilterCategoryGroup label={t('pageBrowser.filter.pagesGroup')}>
+                <FilterMenuItem
+                  onClick={() => emit({ type: 'Orphan' })}
+                  description={t('pageBrowser.filter.facetOrphanDesc')}
+                >
+                  {t('pageBrowser.filter.facetOrphan')}
+                </FilterMenuItem>
+                <FilterMenuItem
+                  onClick={() => emit({ type: 'Stub' })}
+                  description={t('pageBrowser.filter.facetStubDesc')}
+                >
+                  {t('pageBrowser.filter.facetStub')}
+                </FilterMenuItem>
+                <FilterMenuItem
+                  onClick={() => emit({ type: 'HasNoInboundLinks' })}
+                  description={t('pageBrowser.filter.facetHasNoInboundLinksDesc')}
+                >
+                  {t('pageBrowser.filter.facetHasNoInboundLinks')}
+                </FilterMenuItem>
+              </FilterCategoryGroup>
+            )}
           </div>
         )}
 

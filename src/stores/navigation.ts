@@ -54,6 +54,7 @@ export type View =
   | 'templates'
   | 'settings'
   | 'graph'
+  | 'query'
   | 'page-editor'
 
 interface NavigationStore {
@@ -116,6 +117,7 @@ const ALL_VIEWS = Object.keys({
   templates: true,
   settings: true,
   graph: true,
+  query: true,
   'page-editor': true,
 } satisfies Record<View, true>) as readonly View[]
 

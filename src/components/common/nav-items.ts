@@ -16,6 +16,7 @@ import {
   Network,
   Search,
   Settings,
+  SlidersHorizontal,
   Tag,
   Trash2,
 } from 'lucide-react'
@@ -41,4 +42,5 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'history', icon: History, labelKey: 'sidebar.history' },
   { id: 'templates', icon: LayoutTemplate, labelKey: 'sidebar.templates' },
   { id: 'graph', icon: Network, labelKey: 'sidebar.graph' },
+  { id: 'query', icon: SlidersHorizontal, labelKey: 'sidebar.query' },
 ]
