@@ -5,7 +5,14 @@ import { notify } from '@/lib/notify'
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
-import { addTag, createBlock, listBlocks, listTagsForBlock, removeTag } from '../lib/tauri'
+import {
+  addTag,
+  createBlock,
+  listBlocks,
+  listInheritedTagsForBlock,
+  listTagsForBlock,
+  removeTag,
+} from '../lib/tauri'
 import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
@@ -14,13 +21,27 @@ import { useUndoStore } from '../stores/undo'
 export interface TagEntry {
   id: string
   name: string
+  /**
+   * #1423 — true when this tag reaches the block via inheritance
+   * (`block_tag_inherited`) rather than a direct association. Inherited
+   * (derived) chips render distinctly and are not directly removable. A
+   * tag applied directly always wins over an inherited copy, so this is
+   * only ever set for tags NOT in the direct set.
+   */
+  inherited?: boolean
 }
 
 export interface UseBlockTagsReturn {
   /** All available tags in the system */
   allTags: TagEntry[]
-  /** Set of tag IDs applied to the current block */
+  /** Set of tag IDs applied directly to the current block (`block_tags`) */
   appliedTagIds: Set<string>
+  /**
+   * #1423 — set of tag IDs reaching the block via inheritance
+   * (`block_tag_inherited`), excluding any tag that is also applied
+   * directly (direct wins).
+   */
+  inheritedTagIds: Set<string>
   /** Loading state for initial tag fetch */
   loading: boolean
   /** Add an existing tag to the block */
@@ -36,6 +57,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [allTags, setAllTags] = useState<TagEntry[]>([])
   const [appliedTagIds, setAppliedTagIds] = useState<Set<string>>(new Set())
+  const [inheritedTagIds, setInheritedTagIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
 
   // Load all available tags for the active space.
@@ -53,14 +75,21 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
       })
   }, [currentSpaceId])
 
-  // Load applied tags when blockId changes
+  // Load applied + inherited tags when blockId changes (#1423).
+  // Direct (`block_tags`) and inherited (`block_tag_inherited`) tags are
+  // fetched in parallel; a tag present in BOTH is treated as direct only
+  // (direct wins, since a direct tag is removable) so it never renders as
+  // a derived chip.
   useEffect(() => {
     setAppliedTagIds(new Set())
+    setInheritedTagIds(new Set())
     setLoading(true)
     if (blockId) {
-      listTagsForBlock(blockId)
-        .then((tagIds) => {
-          setAppliedTagIds(new Set(tagIds))
+      Promise.all([listTagsForBlock(blockId), listInheritedTagsForBlock(blockId)])
+        .then(([directIds, inheritedIds]) => {
+          const direct = new Set(directIds)
+          setAppliedTagIds(direct)
+          setInheritedTagIds(new Set(inheritedIds.filter((id) => !direct.has(id))))
           setLoading(false)
         })
         .catch((error) => {
@@ -132,5 +161,13 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
     [blockId, pageStore],
   )
 
-  return { allTags, appliedTagIds, loading, handleAddTag, handleRemoveTag, handleCreateTag }
+  return {
+    allTags,
+    appliedTagIds,
+    inheritedTagIds,
+    loading,
+    handleAddTag,
+    handleRemoveTag,
+    handleCreateTag,
+  }
 }

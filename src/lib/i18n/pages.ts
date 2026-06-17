@@ -70,6 +70,12 @@ export const pages: Record<string, string> = {
   'pageHeader.insertEmoji': 'Insert emoji',
   'pageHeader.addTag': 'Add tag',
   'pageHeader.removeTag': 'Remove tag {{name}}',
+  // #1423 — inherited (derived) tag chips. The aria description marks the
+  // chip as derived for screen readers (styling alone is not color-only);
+  // the tooltip explains the "matches descendants" capability.
+  'pageHeader.inheritedTag': 'Inherited tag {{name}}',
+  'pageHeader.inheritedTagHint':
+    'Inherited from a parent — querying this tag also matches descendants',
   'pageHeader.searchTags': 'Search or create tag...',
   'pageHeader.searchTagsLabel': 'Search tags',
   'pageHeader.tagPicker': 'Tag picker',

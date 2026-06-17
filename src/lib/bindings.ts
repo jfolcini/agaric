@@ -240,6 +240,11 @@ export const commands = {
 	/**  Tauri command: list tag IDs for a block. Delegates to [`list_tags_for_block_inner`]. */
 	listTagsForBlock: (blockId: BlockId) => typedError<string[], AppError>(__TAURI_INVOKE("list_tags_for_block", { blockId })),
 	/**
+	 *  Tauri command: list inherited tag IDs for a block (#1423).
+	 *  Delegates to [`list_inherited_tags_for_block_inner`].
+	 */
+	listInheritedTagsForBlock: (blockId: BlockId) => typedError<string[], AppError>(__TAURI_INVOKE("list_inherited_tags_for_block", { blockId })),
+	/**
 	 *  Tauri command: set (upsert) a property on a block. Delegates to [`set_property_inner`].
 	 *
 	 *  PEND-14: typed value fields are bundled into [`SetPropertyArgs`] so the

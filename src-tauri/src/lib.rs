@@ -144,6 +144,10 @@ macro_rules! agaric_commands {
             // clamp.
             $crate::commands::tags::list_all_tags_in_space,
             $crate::commands::tags::list_tags_for_block,
+            // #1423 — inherited (derived) tag IDs, paired with
+            // list_tags_for_block so the UI can render inherited chips
+            // distinctly from directly-applied ones.
+            $crate::commands::tags::list_inherited_tags_for_block,
             $crate::commands::properties::set_property,
             $crate::commands::properties::set_todo_state,
             // PEND-35 Tier 2.1 — multi-select batch set-todo: collapses

@@ -409,10 +409,22 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   }, [])
 
   // --- Tag badges ---
-  const { allTags, appliedTagIds, handleAddTag, handleRemoveTag, handleCreateTag } =
-    useBlockTags(pageId)
+  const {
+    allTags,
+    appliedTagIds,
+    inheritedTagIds,
+    handleAddTag,
+    handleRemoveTag,
+    handleCreateTag,
+  } = useBlockTags(pageId)
 
-  const appliedTags = allTags.filter((t_) => appliedTagIds.has(t_.id))
+  // #1423 — direct chips first, then inherited (derived) chips flagged so
+  // the section can render them distinctly. A directly-applied tag never
+  // also appears as inherited (the hook dedupes; direct wins).
+  const appliedTags = [
+    ...allTags.filter((t_) => appliedTagIds.has(t_.id)),
+    ...allTags.filter((t_) => inheritedTagIds.has(t_.id)).map((t_) => ({ ...t_, inherited: true })),
+  ]
   const availableTags = allTags
     .filter((t_) => !appliedTagIds.has(t_.id))
     // UX-248 — Unicode-aware fold.

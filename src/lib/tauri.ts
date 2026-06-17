@@ -1053,6 +1053,16 @@ export async function listTagsForBlock(blockId: string): Promise<string[]> {
   return unwrap(await commands.listTagsForBlock(blockId))
 }
 
+/**
+ * List the tag IDs a block holds via inheritance (`block_tag_inherited`),
+ * i.e. tags a strict ancestor applies directly that propagate down. Paired
+ * with {@link listTagsForBlock} so the UI can render inherited (derived) tag
+ * chips distinctly from directly-applied ones (#1423).
+ */
+export async function listInheritedTagsForBlock(blockId: string): Promise<string[]> {
+  return unwrap(await commands.listInheritedTagsForBlock(blockId))
+}
+
 // ---------------------------------------------------------------------------
 // Property commands
 // ---------------------------------------------------------------------------
