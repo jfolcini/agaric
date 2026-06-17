@@ -94,11 +94,22 @@ export function primitivesToFilterExpr(prims: FilterPrimitive[]): FilterExpr {
   return { type: 'And', children: prims.map((primitive) => ({ type: 'Leaf', primitive })) }
 }
 
-/** Resolve parent-page titles for a batch of rows into a fresh Map. */
-async function resolvePageTitles(items: BlockRow[]): Promise<Map<string, string>> {
+/**
+ * Resolve titles for a batch of block ids into a fresh Map. Used for both the
+ * member rows' parent `page_id`s and (in GROUPED mode) the Tag/Page group keys,
+ * which arrive as raw block ids (a tag's block id / a page's block id). Both go
+ * through the same `batchResolve` so the header and the member rows share one
+ * resolved-title map. `extraIds` lets the grouped path fold the group keys into
+ * the same single IPC.
+ */
+async function resolvePageTitles(
+  items: BlockRow[],
+  extraIds: readonly string[] = [],
+): Promise<Map<string, string>> {
   const parentIds = items.map((b) => b.page_id).filter((id): id is string => id != null)
-  if (parentIds.length === 0) return new Map()
-  const resolved = await batchResolve([...new Set(parentIds)])
+  const allIds = [...parentIds, ...extraIds]
+  if (allIds.length === 0) return new Map()
+  const resolved = await batchResolve([...new Set(allIds)])
   const titleMap = new Map<string, string>()
   for (const r of resolved) {
     if (r.title) titleMap.set(r.id, r.title)
@@ -151,8 +162,11 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
       // Resolve the parent-page titles for a batch of member/result rows and
       // merge them into `pageTitles` (append on load-more, replace on a fresh
       // fetch). Returns `false` if a newer request superseded this one.
-      const applyTitles = async (rows: BlockRow[]): Promise<boolean> => {
-        const titles = await resolvePageTitles(rows)
+      const applyTitles = async (
+        rows: BlockRow[],
+        extraIds: readonly string[] = [],
+      ): Promise<boolean> => {
+        const titles = await resolvePageTitles(rows, extraIds)
         if (myReqId !== reqIdRef.current) return false
         if (titles.size > 0) {
           setPageTitles((prev) => (isLoadMore ? new Map([...prev, ...titles]) : titles))
@@ -211,7 +225,17 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
           setCursor(response.nextCursor)
           setHasMore(response.hasMore)
           const memberRows = pageGroups.flatMap((g) => g.members as unknown as BlockRow[])
-          await applyTitles(memberRows)
+          // For Tag/Page grouping the bucket key is a raw block id (a tag's /
+          // page's block id), not a human label — fold those keys into the same
+          // `batchResolve` so the header renders the resolved title (#1447).
+          // Other dimensions' keys are already display-ready; `"none"` is the
+          // NULL bucket and has no id to resolve.
+          const groupKeyType = parsedGroupBy.key.type
+          const groupKeyIds =
+            groupKeyType === 'Tag' || groupKeyType === 'Page'
+              ? pageGroups.map((g) => g.key).filter((k) => k !== 'none')
+              : []
+          await applyTitles(memberRows, groupKeyIds)
           return
         }
 
