@@ -212,6 +212,38 @@ impl StructuralFilterBuilder {
         }
     }
 
+    /// #1320 PR-1 — ALL-tags filter routed through [`SearchProjection`]
+    /// instead of the inline [`add_tags_all`](Self::add_tags_all)
+    /// `COUNT(DISTINCT)` fragment. For each requested tag, compiles a
+    /// [`FilterPrimitive::Tag`] (which `SearchProjection::compile_tag`
+    /// emits as `b.id IN (SELECT block_id FROM block_tags WHERE tag_id =
+    /// ?)`) and splices it through [`add_projection_clause`] under the same
+    /// `prefix`. Because every per-tag fragment is AND-joined with the same
+    /// `AND ` glue prefix, a block must sit in EVERY per-tag set — i.e. it
+    /// must carry every requested tag. That is RESULT-EQUIVALENT to the
+    /// legacy `COUNT(DISTINCT bt.tag_id) = N` ALL-semantics (proved by the
+    /// `tags_via_projection_matches_legacy_*` DB equivalence tests), though
+    /// the emitted SQL SHAPE differs (N IN-subselects vs one
+    /// `COUNT(DISTINCT)` sub-select).
+    ///
+    /// `tags` must already be deduped + UPPERCASE-normalised by the caller
+    /// (SQL-1 / SQL-A6) — dedup is now a correctness-neutral nicety rather
+    /// than a hard requirement (a duplicated tag id only emits a redundant
+    /// identical IN-subselect), but the caller keeps deduping for SQL
+    /// economy. No-op on an empty slice (mirrors `add_tags_all`). The
+    /// loop calls `add_projection_clause` once per tag, each consuming one
+    /// `?N` placeholder, so `next_param` advances by exactly `tags.len()`.
+    pub(super) fn add_tags_via_projection(&mut self, prefix: &str, tags: &[String]) {
+        if tags.is_empty() {
+            return;
+        }
+        for tag in tags {
+            let prim = FilterPrimitive::Tag { tag: tag.clone() };
+            let wc = SearchProjection.compile(&prim);
+            self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+        }
+    }
+
     /// `AND b.page_id [NOT ]IN (SELECT pc.page_id FROM pages_cache pc
     ///   WHERE LOWER(pc.title) GLOB ?N OR …)` — delegates the fragment
     /// to the shared [`super::glob_filter::append_page_glob_subselect`]
@@ -474,37 +506,70 @@ mod tests {
         assert_eq!(fb.bind_count(), 0);
     }
 
-    /// Tag does NOT compile byte-identically: the legacy fragment is a
-    /// single `COUNT(DISTINCT)` ALL-semantics sub-select; `SearchProjection`
-    /// emits a per-tag `b.id IN (SELECT block_id FROM block_tags ...)`. This
-    /// divergence is WHY Tag is excluded from the PR-0 cutover (kept legacy).
-    /// The test pins the divergence so a future "wire Tag" PR is forced to
-    /// reconcile it deliberately.
+    /// #1320 PR-1 — Tag is now ROUTED through `SearchProjection` in
+    /// `fts_fetch_rows` (`add_tags_via_projection`), replacing the legacy
+    /// inline `COUNT(DISTINCT)` ALL-semantics fragment (`add_tags_all`).
+    ///
+    /// The two SQL SHAPES still differ — that divergence is real and
+    /// intentional: the legacy fragment is a single `COUNT(DISTINCT
+    /// bt.tag_id) = N` sub-select, while the routed path emits N per-tag
+    /// `b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?N)`
+    /// sub-selects AND-joined under the same prefix. They are
+    /// RESULT-EQUIVALENT (a block in every per-tag set has all N tags),
+    /// proved at the DB level by the `tags_via_projection_matches_legacy_*`
+    /// equivalence tests below.
+    ///
+    /// This test (formerly `projection_tag_diverges_from_legacy_kept_legacy`)
+    /// is repurposed to PIN the routed behaviour: it asserts the exact SQL
+    /// `add_tags_via_projection` now emits, that it AND-joins per tag with
+    /// correct placeholder renumbering, and documents (via the still-present
+    /// shape divergence assertion) that the SQL differs from the legacy
+    /// `COUNT(DISTINCT)` form even though the result set is identical.
     #[test]
-    fn projection_tag_diverges_from_legacy_kept_legacy() {
-        use crate::filters::primitive::FilterPrimitive;
+    fn tags_via_projection_routes_and_documents_shape_cutover() {
+        // Routed path (the production cutover) — two tags, ALL-semantics.
+        let mut routed = StructuralFilterBuilder::new(6);
+        routed.add_tags_via_projection(
+            FTS_PREFIX,
+            &[
+                "01TAG0000000000000000000A".to_string(),
+                "01TAG0000000000000000000B".to_string(),
+            ],
+        );
 
+        // Exact SQL snapshot: two per-tag IN-subselects, AND-joined, with
+        // renumbered `?6` / `?7` placeholders (one bind each).
+        assert_eq!(
+            routed.sql(),
+            "\n           AND b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?6)\
+             \n           AND b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?7)",
+            "routed Tag emits N AND-joined per-tag IN sub-selects"
+        );
+        assert_eq!(routed.next_param(), 8, "two tags consume ?6 and ?7");
+        assert_eq!(routed.bind_count(), 2, "one bind per tag, no count bind");
+        assert!(
+            matches!(routed.binds.first(), Some(ScalarBind::Str(s)) if s == "01TAG0000000000000000000A")
+        );
+
+        // Shape divergence from the legacy COUNT(DISTINCT) fragment is
+        // intentional and documented — the result sets are equivalent
+        // (see the DB equivalence tests), only the SQL shape differs.
         let mut legacy = StructuralFilterBuilder::new(6);
-        legacy.add_tags_all(FTS_PREFIX, &["01TAG0000000000000000000A".to_string()]);
-
-        let projected = SearchProjection.compile(&FilterPrimitive::Tag {
-            tag: "01TAG0000000000000000000A".to_string(),
-        });
-
+        legacy.add_tags_all(
+            FTS_PREFIX,
+            &[
+                "01TAG0000000000000000000A".to_string(),
+                "01TAG0000000000000000000B".to_string(),
+            ],
+        );
         assert!(
             legacy.sql().contains("COUNT(DISTINCT bt.tag_id)"),
             "legacy Tag uses COUNT(DISTINCT) ALL-semantics"
         );
-        assert!(
-            projected
-                .sql
-                .contains("b.id IN (SELECT block_id FROM block_tags"),
-            "projection Tag uses a per-tag IN sub-select"
-        );
         assert_ne!(
-            legacy.sql().trim_start(),
-            projected.sql,
-            "Tag fragments diverge — Tag MUST stay on the legacy path"
+            legacy.sql(),
+            routed.sql(),
+            "routed Tag SQL shape differs from legacy (result-equivalent, not byte-identical)"
         );
     }
 

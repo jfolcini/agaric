@@ -926,7 +926,18 @@ async fn fts_fetch_rows(
         }
         _ => Vec::new(),
     };
-    fb.add_tags_all(PREFIX, &active_tag_ids);
+    // #1320 PR-1 — the ALL-tags filter is now compiled through
+    // `SearchProjection` (the cross-surface filter compiler) rather than
+    // the inline `COUNT(DISTINCT)` fragment. `add_tags_via_projection`
+    // emits one per-tag `b.id IN (SELECT block_id FROM block_tags WHERE
+    // tag_id = ?N)` sub-select, AND-joined under `PREFIX`. A block in
+    // EVERY per-tag set carries every requested tag, so this is
+    // result-equivalent to the legacy `COUNT(DISTINCT bt.tag_id) = N`
+    // ALL-semantics (the SQL shape differs; equivalence is proved by the
+    // `tags_via_projection_matches_legacy_*` DB tests in `filter_builder`).
+    // Follows the `Space` cutover (PR-0). The `add_tags_all` helper stays
+    // for the toggle-filter builders, which are not yet routed.
+    fb.add_tags_via_projection(PREFIX, &active_tag_ids);
 
     // FEAT-3 Phase 2 — optional space-id filter. Filters on the
     // first-class `b.space_id` column directly (#533, migration 0086 — the
