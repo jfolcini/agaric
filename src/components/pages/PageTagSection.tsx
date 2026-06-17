@@ -1,4 +1,4 @@
-import { Plus, Smile, X } from 'lucide-react'
+import { CornerDownRight, Plus, Smile, X } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -66,19 +66,39 @@ export function PageTagSection({
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      {appliedTags.map((tag) => (
-        <Badge key={tag.id} tone="secondary" className="gap-1">
-          {tag.name}
-          <button
-            type="button"
-            className="ml-0.5 inline-flex items-center justify-center rounded-full p-0.5 hover:bg-muted-foreground/20 focus-ring-visible [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 [@media(pointer:coarse)]:p-2"
-            onClick={() => onRemoveTag(tag.id)}
-            aria-label={t('pageHeader.removeTag', { name: tag.name })}
+      {appliedTags.map((tag) =>
+        tag.inherited ? (
+          // #1423 — inherited (derived) tag chip. Distinguished from a
+          // direct chip by an outlined (not solid) tone, reduced opacity,
+          // italic name, and a propagation icon — not color alone. The
+          // chip is NOT directly removable (the tag lives on an ancestor);
+          // the `title` + `aria-label` convey that querying it also matches
+          // descendants, so the affordance is perceivable by screen readers.
+          <Badge
+            key={tag.id}
+            tone="outline"
+            data-inherited="true"
+            className="gap-1 border-dashed italic opacity-70"
+            title={t('pageHeader.inheritedTagHint')}
+            aria-label={t('pageHeader.inheritedTag', { name: tag.name })}
           >
-            <X className="h-3 w-3" />
-          </button>
-        </Badge>
-      ))}
+            <CornerDownRight aria-hidden="true" className="h-3 w-3" />
+            {tag.name}
+          </Badge>
+        ) : (
+          <Badge key={tag.id} tone="secondary" className="gap-1">
+            {tag.name}
+            <button
+              type="button"
+              className="ml-0.5 inline-flex items-center justify-center rounded-full p-0.5 hover:bg-muted-foreground/20 focus-ring-visible [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 [@media(pointer:coarse)]:p-2"
+              onClick={() => onRemoveTag(tag.id)}
+              aria-label={t('pageHeader.removeTag', { name: tag.name })}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </Badge>
+        ),
+      )}
 
       <Popover
         open={showTagPicker}

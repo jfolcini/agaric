@@ -413,6 +413,38 @@ pub async fn list_tags_for_block(
     Ok(rows)
 }
 
+/// List the tag_ids a block holds via **inheritance** (`block_tag_inherited`),
+/// i.e. tags that a strict ancestor applies directly and which propagate down
+/// to this block. Direct tags (`block_tags`) are intentionally NOT returned —
+/// the caller pairs this with [`list_tags_for_block`] to distinguish derived
+/// chips from directly-applied ones (#1423).
+///
+/// A given tag can appear in BOTH lists when a block is tagged directly *and*
+/// inherits the same tag from an ancestor; callers that render a single chip
+/// per tag should treat "direct" as winning (a direct tag is removable, an
+/// inherited one is not). The same `BLOCK_TAG_CAP` insurance applies.
+pub async fn list_inherited_tags_for_block(
+    pool: &SqlitePool,
+    block_id: &str,
+) -> Result<Vec<String>, AppError> {
+    let mut rows = sqlx::query_scalar!(
+        "SELECT tag_id FROM block_tag_inherited WHERE block_id = ?1 ORDER BY tag_id LIMIT 1001",
+        block_id
+    )
+    .fetch_all(pool)
+    .await?;
+    if rows.len() > BLOCK_TAG_CAP {
+        tracing::warn!(
+            target: "agaric::list_inherited_tags_for_block",
+            block_id,
+            cap = BLOCK_TAG_CAP,
+            "inherited block tag count exceeds the typeahead cap; result truncated"
+        );
+        rows.truncate(BLOCK_TAG_CAP);
+    }
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -897,6 +929,69 @@ mod tests {
             "list_tags_for_block must cap at LIMIT 1000; got {}",
             result.len()
         );
+    }
+
+    async fn insert_inherited_assoc(
+        pool: &SqlitePool,
+        block_id: &str,
+        tag_id: &str,
+        inherited_from: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO block_tag_inherited (block_id, tag_id, inherited_from) VALUES (?, ?, ?)",
+        )
+        .bind(block_id)
+        .bind(tag_id)
+        .bind(inherited_from)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// #1423 — `list_inherited_tags_for_block` returns ONLY the inherited
+    /// (`block_tag_inherited`) tag IDs, never the direct (`block_tags`)
+    /// ones, so the UI can render derived chips distinctly. A parent holds
+    /// a tag directly and the child inherits it; the child also carries a
+    /// distinct direct tag. The two list functions must partition cleanly.
+    #[tokio::test]
+    async fn list_inherited_tags_for_block_returns_only_inherited() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "TAG_INH", "tag", "inherited-tag").await;
+        insert_block(&pool, "TAG_DIR", "tag", "direct-tag").await;
+        insert_block(&pool, "PARENT", "content", "parent").await;
+        insert_child_block(&pool, "CHILD", "content", "child", "PARENT").await;
+
+        // PARENT holds TAG_INH directly; CHILD inherits it from PARENT.
+        insert_tag_assoc(&pool, "PARENT", "TAG_INH").await;
+        insert_inherited_assoc(&pool, "CHILD", "TAG_INH", "PARENT").await;
+        // CHILD also holds TAG_DIR directly.
+        insert_tag_assoc(&pool, "CHILD", "TAG_DIR").await;
+
+        let inherited = list_inherited_tags_for_block(&pool, "CHILD").await.unwrap();
+        assert_eq!(inherited, vec!["TAG_INH".to_string()]);
+
+        let direct = list_tags_for_block(&pool, "CHILD").await.unwrap();
+        assert_eq!(direct, vec!["TAG_DIR".to_string()]);
+
+        // The PARENT (which holds the tag directly) inherits nothing.
+        let parent_inherited = list_inherited_tags_for_block(&pool, "PARENT")
+            .await
+            .unwrap();
+        assert!(
+            parent_inherited.is_empty(),
+            "a directly-tagged block has no inherited rows; got {parent_inherited:?}"
+        );
+    }
+
+    /// A block with no inherited tags yields an empty list.
+    #[tokio::test]
+    async fn list_inherited_tags_for_block_no_inherited_returns_empty() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "TAG_DIR", "tag", "direct-tag").await;
+        insert_block(&pool, "BLK_1", "content", "only direct").await;
+        insert_tag_assoc(&pool, "BLK_1", "TAG_DIR").await;
+        let result = list_inherited_tags_for_block(&pool, "BLK_1").await.unwrap();
+        assert!(result.is_empty());
     }
 
     /// I-Search-14 — defense-in-depth: the final projection SELECT in

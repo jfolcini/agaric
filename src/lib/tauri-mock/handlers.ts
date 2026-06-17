@@ -2065,6 +2065,13 @@ export const HANDLERS: Record<string, Handler> = {
     return [...tagSet]
   },
 
+  // #1423 — inherited (derived) tag IDs. The mock models only direct
+  // associations (`blockTags`); tag inheritance via `block_tag_inherited`
+  // is intentionally not modelled here, so this always returns an empty
+  // list. Inherited-chip rendering is exercised by component unit tests
+  // that pass the flag directly rather than through this mock.
+  list_inherited_tags_for_block: () => [],
+
   set_property: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string

@@ -541,6 +541,18 @@ pub async fn list_tags_for_block_inner(
     tag_query::list_tags_for_block(pool, block_id.as_str()).await
 }
 
+/// List the tag_ids a block holds via inheritance (`block_tag_inherited`).
+///
+/// #1423 — paired with [`list_tags_for_block_inner`] so the UI can render
+/// derived (inherited) tag chips distinctly from directly-applied ones.
+#[instrument(skip(pool), err)]
+pub async fn list_inherited_tags_for_block_inner(
+    pool: &SqlitePool,
+    block_id: BlockId,
+) -> Result<Vec<String>, AppError> {
+    tag_query::list_inherited_tags_for_block(pool, block_id.as_str()).await
+}
+
 /// Tauri command: add a tag to a block. Delegates to [`add_tag_inner`].
 #[tauri::command]
 #[specta::specta]
@@ -774,6 +786,19 @@ pub async fn list_tags_for_block(
     block_id: BlockId,
 ) -> Result<Vec<String>, AppError> {
     list_tags_for_block_inner(&pool.0, block_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: list inherited tag IDs for a block (#1423).
+/// Delegates to [`list_inherited_tags_for_block_inner`].
+#[tauri::command]
+#[specta::specta]
+pub async fn list_inherited_tags_for_block(
+    pool: State<'_, ReadPool>,
+    block_id: BlockId,
+) -> Result<Vec<String>, AppError> {
+    list_inherited_tags_for_block_inner(&pool.0, block_id)
         .await
         .map_err(sanitize_internal_error)
 }

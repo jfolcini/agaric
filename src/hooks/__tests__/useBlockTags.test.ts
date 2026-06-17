@@ -147,6 +147,39 @@ describe('useBlockTags appliedTagIds', () => {
     })
   })
 
+  // #1423 — direct (`block_tags`) and inherited (`block_tag_inherited`)
+  // tags are fetched in parallel; a tag present in BOTH must surface as
+  // direct only (direct wins, since a direct tag is removable) and never
+  // be duplicated into the inherited set.
+  it('partitions inherited tags excluding direct ones (direct wins)', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return ['TAG_DIR', 'TAG_BOTH']
+      // TAG_BOTH is also inherited; it must be deduped out (direct wins).
+      if (cmd === 'list_inherited_tags_for_block') return ['TAG_INH', 'TAG_BOTH']
+      return emptyPage
+    })
+
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.appliedTagIds.size).toBe(2)
+    })
+
+    // Direct set keeps both directly-applied tags verbatim.
+    expect(result.current.appliedTagIds.has('TAG_DIR')).toBe(true)
+    expect(result.current.appliedTagIds.has('TAG_BOTH')).toBe(true)
+
+    // Inherited set is ONLY the purely-inherited tag — TAG_BOTH is
+    // excluded (renders once, as direct), TAG_INH is present.
+    expect([...result.current.inheritedTagIds].sort()).toEqual(['TAG_INH'])
+    expect(result.current.inheritedTagIds.has('TAG_BOTH')).toBe(false)
+
+    expect(mockedInvoke).toHaveBeenCalledWith('list_inherited_tags_for_block', {
+      blockId: 'BLOCK_1',
+    })
+  })
+
   it('resets appliedTagIds when blockId is null', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return emptyPage
@@ -160,9 +193,15 @@ describe('useBlockTags appliedTagIds', () => {
     })
 
     expect(result.current.appliedTagIds.size).toBe(0)
-    // list_tags_for_block should NOT be called when blockId is null
+    // #1423 — inherited set resets too.
+    expect(result.current.inheritedTagIds.size).toBe(0)
+    // Neither tag-listing IPC should fire when blockId is null.
     const tagCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_tags_for_block')
     expect(tagCalls).toHaveLength(0)
+    const inhCalls = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'list_inherited_tags_for_block',
+    )
+    expect(inhCalls).toHaveLength(0)
   })
 
   it('shows toast error when loading applied tags fails', async () => {
