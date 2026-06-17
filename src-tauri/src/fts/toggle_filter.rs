@@ -839,13 +839,19 @@ async fn regex_mode_query(
         }
         None => Vec::new(),
     };
-    fb.add_tags_all(PREFIX, &tag_ids_active);
+    // #1320 PR-3 — route the regex-mode ALL-tags + page-glob filters through
+    // `SearchProjection` (the cross-surface filter compiler), matching the
+    // `fts_fetch_rows` cutover (PR-1/PR-2). The toggle path receives the SAME
+    // already-prepared, deduped/uppercased tags + already-prepared globs as the
+    // main path (single `prepare_search_filter` source), so these are drop-in,
+    // result-equivalent swaps for the legacy `add_tags_all` / `add_page_globs`.
+    fb.add_tags_via_projection(PREFIX, &tag_ids_active);
 
     fb.add_space(PREFIX, space_id);
 
     // P2 (#346) — shared page-glob sub-select helper (via the builder).
-    fb.add_page_globs(PREFIX, false, include_page_globs);
-    fb.add_page_globs(PREFIX, true, exclude_page_globs);
+    fb.add_page_globs_via_projection(PREFIX, false, include_page_globs);
+    fb.add_page_globs_via_projection(PREFIX, true, exclude_page_globs);
 
     // PEND-53 — metadata predicates (same shape as `search_fts`).
     fb.add_metadata(metadata, "b");
@@ -1074,13 +1080,18 @@ async fn filter_only_scan(
         }
         None => Vec::new(),
     };
-    fb.add_tags_all(PREFIX, &tag_ids_active);
+    // #1320 PR-3 — route the filter-only-scan ALL-tags + page-glob filters
+    // through `SearchProjection`, matching the `fts_fetch_rows` cutover
+    // (PR-1/PR-2). Same already-prepared deduped/uppercased tags + globs as the
+    // main path, so these are drop-in, result-equivalent swaps for the legacy
+    // `add_tags_all` / `add_page_globs`.
+    fb.add_tags_via_projection(PREFIX, &tag_ids_active);
 
     fb.add_space(PREFIX, space_id);
 
     // P2 (#346) — shared page-glob sub-select helper (via the builder).
-    fb.add_page_globs(PREFIX, false, include_page_globs);
-    fb.add_page_globs(PREFIX, true, exclude_page_globs);
+    fb.add_page_globs_via_projection(PREFIX, false, include_page_globs);
+    fb.add_page_globs_via_projection(PREFIX, true, exclude_page_globs);
 
     // PEND-53 — metadata predicates (same shape as `regex_mode_query`).
     fb.add_metadata(metadata, "b");

@@ -935,8 +935,10 @@ async fn fts_fetch_rows(
     // result-equivalent to the legacy `COUNT(DISTINCT bt.tag_id) = N`
     // ALL-semantics (the SQL shape differs; equivalence is proved by the
     // `tags_via_projection_matches_legacy_*` DB tests in `filter_builder`).
-    // Follows the `Space` cutover (PR-0). The `add_tags_all` helper stays
-    // for the toggle-filter builders, which are not yet routed.
+    // Follows the `Space` cutover (PR-0). As of #1320 PR-3 the legacy
+    // `add_tags_all` builder is retired — every search path (this one plus
+    // the toggle-filter `regex_mode_query` / `filter_only_scan` builders) now
+    // routes tags through `add_tags_via_projection`.
     fb.add_tags_via_projection(PREFIX, &active_tag_ids);
 
     // FEAT-3 Phase 2 — optional space-id filter. Filters on the

@@ -9031,19 +9031,15 @@ async fn tags_via_projection_matches_legacy_count_distinct_equivalence() {
 
     const PREFIX: &str = " AND ";
     for (label, tags, expected) in cases {
+        // #1320 PR-3 — the legacy `add_tags_all` `COUNT(DISTINCT)` path was
+        // retired, so there is no live legacy builder to diff against. PR-1
+        // proved the row-set equivalence; this test now pins the routed path
+        // against the hand-computed oracle (the durable correctness invariant).
         let projected = tag_filter_ids(&pool, |fb| {
             fb.add_tags_via_projection(PREFIX, tags);
         })
         .await;
-        let legacy = tag_filter_ids(&pool, |fb| {
-            fb.add_tags_all(PREFIX, tags);
-        })
-        .await;
 
-        assert_eq!(
-            projected, legacy,
-            "[{label}] projection-routed and legacy COUNT(DISTINCT) row sets must be identical"
-        );
         assert_eq!(
             &projected, expected,
             "[{label}] routed row set must equal the hand-computed expectation"
@@ -9204,23 +9200,18 @@ async fn page_globs_via_projection_matches_legacy_glob_equivalence() {
         // `prepare_globs` preprocessing the production pipeline runs upstream.
         let prepared = crate::fts::glob_filter::prepare_globs(raw).unwrap();
 
+        // #1320 PR-3 — the legacy `add_page_globs` /
+        // `append_page_glob_subselect` path was retired, so there is no live
+        // legacy builder to diff against. PR-2 proved the row-set equivalence;
+        // this test now pins the routed path against the hand-computed oracle
+        // (the durable zero-behaviour-change correctness invariant — including
+        // the `[class]` bracket case LIKE could never express, proving the
+        // GLOB dialect is preserved).
         let projected = page_glob_filter_ids(&pool, |fb| {
             fb.add_page_globs_via_projection(PREFIX, *negate, &prepared);
         })
         .await;
-        let legacy = page_glob_filter_ids(&pool, |fb| {
-            fb.add_page_globs(PREFIX, *negate, &prepared);
-        })
-        .await;
 
-        assert_eq!(
-            projected,
-            legacy,
-            "[{label}] projection-routed and legacy GLOB sub-select row sets must be identical \
-             (projected={:?} legacy={:?})",
-            projected.iter().map(|id| title_of(id)).collect::<Vec<_>>(),
-            legacy.iter().map(|id| title_of(id)).collect::<Vec<_>>(),
-        );
         assert_eq!(
             &projected,
             expected,
