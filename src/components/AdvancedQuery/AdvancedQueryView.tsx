@@ -104,8 +104,8 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
               size="sm"
               onClick={fetchResults}
               aria-label={t('action.retry')}
-              disabled={loading || loadingMore}
-              aria-busy={loading || loadingMore}
+              disabled={loadingMore}
+              aria-busy={loadingMore}
             >
               {t('action.retry')}
             </Button>
