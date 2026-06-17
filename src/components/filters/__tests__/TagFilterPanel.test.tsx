@@ -1129,3 +1129,171 @@ describe('TagFilterPanel', () => {
     expect(screen.queryByText('in:')).not.toBeInTheDocument()
   })
 })
+
+// ── #1426 — prefix pills + nested And/Or/Not composer ──────────────────────
+
+/**
+ * Route the shared `invoke` mock by command name so `list_tags_by_prefix`
+ * (typeahead) and `query_by_tags` (results) resolve independently. Returns the
+ * last `query_by_tags` payload via the captured array for convenient assertion.
+ */
+function routeInvoke(opts: {
+  tags?: { tag_id: string; name: string; usage_count: number }[]
+  page?: unknown
+}): void {
+  mockedInvoke.mockImplementation((cmd: string) => {
+    if (cmd === 'list_tags_by_prefix') return Promise.resolve(opts.tags ?? [])
+    if (cmd === 'query_by_tags') return Promise.resolve(opts.page ?? emptyPage)
+    if (cmd === 'batch_resolve') return Promise.resolve([])
+    return Promise.resolve(emptyPage)
+  })
+}
+
+/** Pull the args of the most recent `query_by_tags` invoke. */
+function lastTagQuery(): Record<string, unknown> | undefined {
+  const calls = mockedInvoke.mock.calls.filter((c) => c[0] === 'query_by_tags')
+  return calls.at(-1)?.[1] as Record<string, unknown> | undefined
+}
+
+describe('TagFilterPanel — prefix pills (#1426)', () => {
+  it('adds a prefix pill and compiles it into query_by_tags prefixes', async () => {
+    routeInvoke({})
+    render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
+    fireEvent.change(input, { target: { value: 'proj' } })
+
+    await user.click(screen.getByRole('button', { name: t('tagFilter.addPrefixLabel') }))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // The pill renders.
+    expect(
+      screen.getByLabelText(t('tagFilter.removePrefixLabel', { prefix: 'proj' })),
+    ).toBeInTheDocument()
+
+    // It reaches the IPC as a prefix (no longer hardcoded to []).
+    await waitFor(() => {
+      expect(lastTagQuery()).toMatchObject({ tagIds: [], prefixes: ['proj'], mode: 'and' })
+    })
+  })
+
+  it('removes a prefix pill', async () => {
+    routeInvoke({})
+    render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
+    fireEvent.change(input, { target: { value: 'proj' } })
+    await user.click(screen.getByRole('button', { name: t('tagFilter.addPrefixLabel') }))
+    await vi.advanceTimersByTimeAsync(0)
+
+    await user.click(screen.getByLabelText(t('tagFilter.removePrefixLabel', { prefix: 'proj' })))
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(
+      screen.queryByLabelText(t('tagFilter.removePrefixLabel', { prefix: 'proj' })),
+    ).not.toBeInTheDocument()
+  })
+})
+
+describe('TagFilterPanel — nested composer (#1426)', () => {
+  it('keeps the flat default working (no composer opened)', async () => {
+    routeInvoke({ tags: [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })] })
+    render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
+    await typeAndWaitForTags(input, 'work')
+    await user.click(screen.getByRole('button', { name: /Add$/i }))
+    await vi.advanceTimersByTimeAsync(0)
+
+    await waitFor(() => {
+      expect(lastTagQuery()).toMatchObject({ tagIds: ['T1'], prefixes: [], mode: 'and' })
+    })
+  })
+
+  it('opening the composer reveals the recursive builder root group', async () => {
+    routeInvoke({})
+    render(<TagFilterPanel />)
+
+    await user.click(screen.getByTestId('tag-filter-composer-toggle'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(screen.getByTestId('tag-composer-group')).toBeInTheDocument()
+    expect(screen.getByLabelText(t('tagFilter.composer.rootLabel'))).toBeInTheDocument()
+  })
+
+  it('composing a tag + prefix under the Any combinator compiles to mode "or"', async () => {
+    routeInvoke({ tags: [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })] })
+    render(<TagFilterPanel />)
+
+    await user.click(screen.getByTestId('tag-filter-composer-toggle'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Switch the combinator to Any (Or).
+    await user.click(screen.getByRole('radio', { name: t('tagFilter.composer.opOr') }))
+
+    // Add a resolved tag via the typeahead popover.
+    await user.click(screen.getByRole('button', { name: t('tagFilter.composer.addTag') }))
+    const search = screen.getByLabelText(t('tagFilter.composer.searchLabel'))
+    fireEvent.change(search, { target: { value: 'work' } })
+    await vi.advanceTimersByTimeAsync(0)
+    await user.click(await screen.findByText('work'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Add a prefix leaf via the same popover.
+    await user.click(screen.getByRole('button', { name: t('tagFilter.composer.addTag') }))
+    const search2 = screen.getByLabelText(t('tagFilter.composer.searchLabel'))
+    fireEvent.change(search2, { target: { value: 'proj' } })
+    await vi.advanceTimersByTimeAsync(0)
+    await user.click(
+      screen.getByRole('button', {
+        name: t('tagFilter.composer.addPrefixOption', { prefix: 'proj' }),
+      }),
+    )
+    await vi.advanceTimersByTimeAsync(0)
+
+    // The compiled params are EXACTLY what the IPC runs (no flattening): an Or
+    // over the tag + prefix the user composed.
+    await waitFor(() => {
+      expect(lastTagQuery()).toMatchObject({
+        tagIds: ['T1'],
+        prefixes: ['proj'],
+        mode: 'or',
+      })
+    })
+  })
+
+  it('the None combinator compiles to mode "not"', async () => {
+    routeInvoke({ tags: [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })] })
+    render(<TagFilterPanel />)
+
+    await user.click(screen.getByTestId('tag-filter-composer-toggle'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Add a tag leaf.
+    await user.click(screen.getByRole('button', { name: t('tagFilter.composer.addTag') }))
+    fireEvent.change(screen.getByLabelText(t('tagFilter.composer.searchLabel')), {
+      target: { value: 'work' },
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    await user.click(await screen.findByText('work'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Switch the combinator to None.
+    await user.click(screen.getByRole('radio', { name: t('tagFilter.composer.opNot') }))
+    await vi.advanceTimersByTimeAsync(0)
+
+    await waitFor(() => {
+      expect(lastTagQuery()).toMatchObject({ tagIds: ['T1'], prefixes: [], mode: 'not' })
+    })
+  })
+
+  it('has no a11y violations with the composer open', async () => {
+    vi.useRealTimers()
+    routeInvoke({})
+    const { container } = render(<TagFilterPanel />)
+    fireEvent.click(screen.getByTestId('tag-filter-composer-toggle'))
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})
