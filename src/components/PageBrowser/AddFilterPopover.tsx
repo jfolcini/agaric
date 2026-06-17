@@ -27,7 +27,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
-import type { PropertyPredicate } from '@/lib/bindings'
+import type { DatePredicate, PropertyPredicate } from '@/lib/bindings'
 import type { FilterPrimitive } from '@/lib/tauri'
 
 export interface AddFilterPopoverProps {
@@ -43,16 +43,62 @@ export interface AddFilterPopoverProps {
    * this to restrict the offered keys to the supported set.
    */
   hidePagesFacets?: boolean
+  /**
+   * #1280 D2 — when `true`, the advanced-only facet group (State / Block type /
+   * Due date / Scheduled / Created) is offered in addition to the shared
+   * vocabulary. These compile to real SQL in the advanced-query engine + the
+   * PagesProjection but are deliberately gated OFF on the Pages browser, which
+   * passes neither this nor `hidePagesFacets`. The Advanced Query surface passes
+   * `showAdvancedFacets` (and keeps `hidePagesFacets`).
+   */
+  showAdvancedFacets?: boolean
 }
 
 /** Which inline value-editor is open inside the popover (null = category menu). */
-type EditorKey = 'tag' | 'path' | 'property' | null
+type EditorKey =
+  | 'tag'
+  | 'path'
+  | 'property'
+  | 'state'
+  | 'blockType'
+  | 'due'
+  | 'scheduled'
+  | 'created'
+  | null
 
 /** D24 — the four property predicate kinds the popover can emit. */
 type PropertyOpKind = PropertyPredicate['type']
 
 /** Predicate kinds that compare a value (the value input is required for these). */
 const VALUE_BEARING_OPS: ReadonlySet<PropertyOpKind> = new Set<PropertyOpKind>(['Eq', 'Ne'])
+
+/**
+ * #1280 D2 — the todo-state values offered by the State editor. Mirrors the
+ * canonical states the agenda/backlink surfaces emit (TODO/DOING/DONE/CANCELLED;
+ * see `agenda-sort.ts`'s `stateRank`). These match `b.todo_state` byte-for-byte
+ * so the projection's `IN (...)` membership test resolves.
+ */
+const TODO_STATE_VALUES: ReadonlyArray<string> = ['TODO', 'DOING', 'DONE', 'CANCELLED']
+
+/**
+ * #1280 D2 — the block-type values offered by the Block type editor. Mirrors the
+ * `b.block_type` vocabulary (content/page/tag/todo; see the backlink
+ * `TypeFilterForm`). `todo` is included so the advanced query can filter the
+ * task rows specifically.
+ */
+const BLOCK_TYPE_VALUES: ReadonlyArray<string> = ['content', 'page', 'tag', 'todo']
+
+/** #1280 D2 — the date predicate operators the Due/Scheduled editors offer, in display order. */
+type DateOpKind = DatePredicate['type']
+const DATE_OPS: ReadonlyArray<{ value: DateOpKind; labelKey: string }> = [
+  { value: 'IsNull', labelKey: 'pageBrowser.filter.dateOpIsNull' },
+  { value: 'Before', labelKey: 'pageBrowser.filter.dateOpBefore' },
+  { value: 'After', labelKey: 'pageBrowser.filter.dateOpAfter' },
+  { value: 'OnOrBefore', labelKey: 'pageBrowser.filter.dateOpOnOrBefore' },
+  { value: 'OnOrAfter', labelKey: 'pageBrowser.filter.dateOpOnOrAfter' },
+  { value: 'On', labelKey: 'pageBrowser.filter.dateOpOn' },
+  { value: 'Between', labelKey: 'pageBrowser.filter.dateOpBetween' },
+]
 
 const LAST_EDITED_BUCKETS: ReadonlyArray<{ key: string; spec: FilterPrimitive }> = [
   { key: 'today', spec: { type: 'LastEdited', spec: { type: 'Rolling', days: 1 } } },
@@ -65,6 +111,7 @@ export function AddFilterPopover({
   onAddFilter,
   warnManyFilters,
   hidePagesFacets,
+  showAdvancedFacets,
 }: AddFilterPopoverProps): React.ReactElement {
   const { t } = useTranslation()
   // E1 — the offered Priority values must mirror the user-configured priority
@@ -81,6 +128,20 @@ export function AddFilterPopover({
   const [propKey, setPropKey] = useState('')
   const [propValue, setPropValue] = useState('')
   const [propOp, setPropOp] = useState<PropertyOpKind>('Eq')
+  // #1280 D2 — advanced facet editor state.
+  const [stateValues, setStateValues] = useState<ReadonlyArray<string>>([])
+  const [stateIsNull, setStateIsNull] = useState(false)
+  const [stateExclude, setStateExclude] = useState(false)
+  const [blockTypeValues, setBlockTypeValues] = useState<ReadonlyArray<string>>([])
+  const [blockTypeExclude, setBlockTypeExclude] = useState(false)
+  // Due / Scheduled share the same predicate-editor shape; `dateKind` says
+  // which primitive the open editor emits.
+  const [dateKind, setDateKind] = useState<'DueDate' | 'Scheduled'>('DueDate')
+  const [dateOp, setDateOp] = useState<DateOpKind>('OnOrBefore')
+  const [dateValue, setDateValue] = useState('')
+  const [dateValue2, setDateValue2] = useState('')
+  const [createdAfter, setCreatedAfter] = useState('')
+  const [createdBefore, setCreatedBefore] = useState('')
   const triggerRef = useRef<HTMLButtonElement>(null)
 
   const reset = useCallback(() => {
@@ -91,6 +152,17 @@ export function AddFilterPopover({
     setPropKey('')
     setPropValue('')
     setPropOp('Eq')
+    setStateValues([])
+    setStateIsNull(false)
+    setStateExclude(false)
+    setBlockTypeValues([])
+    setBlockTypeExclude(false)
+    setDateKind('DueDate')
+    setDateOp('OnOrBefore')
+    setDateValue('')
+    setDateValue2('')
+    setCreatedAfter('')
+    setCreatedBefore('')
   }, [])
 
   const close = useCallback(() => {
@@ -126,6 +198,54 @@ export function AddFilterPopover({
     }
     emit({ type: 'HasProperty', key: k, predicate })
   }, [propKey, propValue, propOp, emit])
+
+  // #1280 D2 — State: emit the multi-value membership leaf. At least one value
+  // OR the is-null toggle must be set (an empty, non-null State is a no-op the
+  // engine treats as match-nothing); gate Apply on that in the editor.
+  const applyState = useCallback(() => {
+    if (stateValues.length === 0 && !stateIsNull) return
+    emit({
+      type: 'State',
+      values: [...stateValues],
+      is_null: stateIsNull,
+      exclude: stateExclude,
+    })
+  }, [stateValues, stateIsNull, stateExclude, emit])
+
+  // #1280 D2 — BlockType: emit the multi-value membership leaf.
+  const applyBlockType = useCallback(() => {
+    if (blockTypeValues.length === 0) return
+    emit({ type: 'BlockType', values: [...blockTypeValues], exclude: blockTypeExclude })
+  }, [blockTypeValues, blockTypeExclude, emit])
+
+  // #1280 D2 — Due/Scheduled: build the DatePredicate and emit. IsNull needs no
+  // date; Between needs both; the rest need one. The editor gates Apply on the
+  // same condition.
+  const applyDate = useCallback(() => {
+    let predicate: DatePredicate
+    if (dateOp === 'IsNull') {
+      predicate = { type: 'IsNull' }
+    } else if (dateOp === 'Between') {
+      const from = dateValue.trim()
+      const to = dateValue2.trim()
+      if (!from || !to) return
+      predicate = { type: 'Between', from, to }
+    } else {
+      const date = dateValue.trim()
+      if (!date) return
+      predicate = { type: dateOp, date }
+    }
+    emit({ type: dateKind, predicate })
+  }, [dateKind, dateOp, dateValue, dateValue2, emit])
+
+  // #1280 D2 — Created: an after/before ULID-range. Either bound may be null,
+  // but emitting with both null is a no-op; require at least one.
+  const applyCreated = useCallback(() => {
+    const after = createdAfter.trim()
+    const before = createdBefore.trim()
+    if (!after && !before) return
+    emit({ type: 'Created', after: after || null, before: before || null })
+  }, [createdAfter, createdBefore, emit])
 
   return (
     <Popover
@@ -245,6 +365,47 @@ export function AddFilterPopover({
               </div>
             </FilterCategoryGroup>
 
+            {showAdvancedFacets && (
+              <FilterCategoryGroup label={t('pageBrowser.filter.advancedGroup')}>
+                <FilterMenuItem
+                  onClick={() => setEditor('state')}
+                  description={t('pageBrowser.filter.facetStateDesc')}
+                >
+                  {t('pageBrowser.filter.facetState')}
+                </FilterMenuItem>
+                <FilterMenuItem
+                  onClick={() => setEditor('blockType')}
+                  description={t('pageBrowser.filter.facetBlockTypeDesc')}
+                >
+                  {t('pageBrowser.filter.facetBlockType')}
+                </FilterMenuItem>
+                <FilterMenuItem
+                  onClick={() => {
+                    setDateKind('DueDate')
+                    setEditor('due')
+                  }}
+                  description={t('pageBrowser.filter.facetDueDateDesc')}
+                >
+                  {t('pageBrowser.filter.facetDueDate')}
+                </FilterMenuItem>
+                <FilterMenuItem
+                  onClick={() => {
+                    setDateKind('Scheduled')
+                    setEditor('scheduled')
+                  }}
+                  description={t('pageBrowser.filter.facetScheduledDesc')}
+                >
+                  {t('pageBrowser.filter.facetScheduled')}
+                </FilterMenuItem>
+                <FilterMenuItem
+                  onClick={() => setEditor('created')}
+                  description={t('pageBrowser.filter.facetCreatedDesc')}
+                >
+                  {t('pageBrowser.filter.facetCreated')}
+                </FilterMenuItem>
+              </FilterCategoryGroup>
+            )}
+
             {!hidePagesFacets && (
               <FilterCategoryGroup label={t('pageBrowser.filter.pagesGroup')}>
                 <FilterMenuItem
@@ -310,6 +471,67 @@ export function AddFilterPopover({
             onOpChange={setPropOp}
             onBack={() => setEditor(null)}
             onApply={applyProperty}
+          />
+        )}
+
+        {editor === 'state' && (
+          <StateEditor
+            values={stateValues}
+            isNull={stateIsNull}
+            exclude={stateExclude}
+            onToggleValue={(v) =>
+              setStateValues((prev) =>
+                prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v],
+              )
+            }
+            onIsNullChange={setStateIsNull}
+            onExcludeChange={setStateExclude}
+            onBack={() => setEditor(null)}
+            onApply={applyState}
+          />
+        )}
+
+        {editor === 'blockType' && (
+          <BlockTypeEditor
+            values={blockTypeValues}
+            exclude={blockTypeExclude}
+            onToggleValue={(v) =>
+              setBlockTypeValues((prev) =>
+                prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v],
+              )
+            }
+            onExcludeChange={setBlockTypeExclude}
+            onBack={() => setEditor(null)}
+            onApply={applyBlockType}
+          />
+        )}
+
+        {(editor === 'due' || editor === 'scheduled') && (
+          <DatePredicateEditor
+            label={
+              dateKind === 'DueDate'
+                ? t('pageBrowser.filter.facetDueDate')
+                : t('pageBrowser.filter.facetScheduled')
+            }
+            op={dateOp}
+            date={dateValue}
+            date2={dateValue2}
+            onOpChange={setDateOp}
+            onDateChange={setDateValue}
+            onDate2Change={setDateValue2}
+            onBack={() => setEditor(null)}
+            onApply={applyDate}
+          />
+        )}
+
+        {editor === 'created' && (
+          <CreatedEditor
+            after={createdAfter}
+            before={createdBefore}
+            onAfterChange={setCreatedAfter}
+            onBeforeChange={setCreatedBefore}
+            onBack={() => setEditor(null)}
+            onApply={applyCreated}
           />
         )}
       </PopoverContent>
@@ -584,6 +806,307 @@ function PropertyEditor({
           {t('pageBrowser.filter.apply')}
         </Button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * #1280 D2 — shared Back/Apply footer for the advanced facet editors. Mirrors
+ * the inline editors' footer (D14 — Apply gated/disabled when the editor's
+ * required input is incomplete).
+ */
+function EditorFooter({
+  canApply,
+  onBack,
+  onApply,
+}: {
+  canApply: boolean
+  onBack: () => void
+  onApply: () => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  return (
+    <div className="flex justify-between gap-2">
+      <Button type="button" variant="ghost" size="xs" onClick={onBack}>
+        {t('pageBrowser.filter.back')}
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        size="xs"
+        onClick={onApply}
+        disabled={!canApply}
+        aria-disabled={!canApply}
+      >
+        {t('pageBrowser.filter.apply')}
+      </Button>
+    </div>
+  )
+}
+
+/**
+ * #1280 D2 — a labelled multi-select checkbox row. Each value renders as a
+ * checkbox the user toggles; the parent owns the membership set. Used by both
+ * the State and Block-type editors.
+ */
+function MultiSelectGroup({
+  legend,
+  options,
+  selected,
+  optionLabel,
+  onToggle,
+}: {
+  legend: string
+  options: ReadonlyArray<string>
+  selected: ReadonlyArray<string>
+  optionLabel: (value: string) => string
+  onToggle: (value: string) => void
+}): React.ReactElement {
+  return (
+    <fieldset className="flex flex-col gap-1 px-1">
+      <legend className="text-xs font-medium">{legend}</legend>
+      {options.map((value) => {
+        const label = optionLabel(value)
+        return (
+          // oxlint-disable-next-line jsx-a11y/label-has-associated-control -- the Radix Checkbox (a button) is the control and carries its own aria-label; oxlint can't see it through the component boundary
+          <label key={value} className="flex items-center gap-2 text-xs">
+            <Checkbox
+              checked={selected.includes(value)}
+              onCheckedChange={() => onToggle(value)}
+              aria-label={label}
+            />
+            {label}
+          </label>
+        )
+      })}
+    </fieldset>
+  )
+}
+
+/**
+ * Editor for the `State` facet (#1280 D2). A multi-select of todo-state values
+ * plus a "none / unset" toggle (`is_null`) and an "exclude" toggle. Apply is
+ * gated on at least one selected value OR the is-null toggle (an empty,
+ * non-null State matches nothing). Emits
+ * `{ type: 'State', values, is_null, exclude }`.
+ */
+function StateEditor({
+  values,
+  isNull,
+  exclude,
+  onToggleValue,
+  onIsNullChange,
+  onExcludeChange,
+  onBack,
+  onApply,
+}: {
+  values: ReadonlyArray<string>
+  isNull: boolean
+  exclude: boolean
+  onToggleValue: (value: string) => void
+  onIsNullChange: (v: boolean) => void
+  onExcludeChange: (v: boolean) => void
+  onBack: () => void
+  onApply: () => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const canApply = values.length > 0 || isNull
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="px-1 text-xs font-medium">{t('pageBrowser.filter.facetState')}</span>
+      <MultiSelectGroup
+        legend={t('pageBrowser.filter.stateValuesLabel')}
+        options={TODO_STATE_VALUES}
+        selected={values}
+        optionLabel={(v) => v}
+        onToggle={onToggleValue}
+      />
+      {/* oxlint-disable-next-line jsx-a11y/label-has-associated-control -- the Radix Checkbox (a button) is the control and carries its own aria-label */}
+      <label className="flex items-center gap-2 px-1 text-xs">
+        <Checkbox
+          checked={isNull}
+          onCheckedChange={(next) => onIsNullChange(next === true)}
+          aria-label={t('pageBrowser.filter.stateIsNullLabel')}
+        />
+        {t('pageBrowser.filter.stateIsNullLabel')}
+      </label>
+      {/* oxlint-disable-next-line jsx-a11y/label-has-associated-control -- the Radix Checkbox (a button) is the control and carries its own aria-label */}
+      <label className="flex items-center gap-2 px-1 text-xs">
+        <Checkbox
+          checked={exclude}
+          onCheckedChange={(next) => onExcludeChange(next === true)}
+          aria-label={t('pageBrowser.filter.excludeLabel')}
+        />
+        {t('pageBrowser.filter.excludeLabel')}
+      </label>
+      <EditorFooter canApply={canApply} onBack={onBack} onApply={onApply} />
+    </div>
+  )
+}
+
+/**
+ * Editor for the `BlockType` facet (#1280 D2). A multi-select of block types
+ * plus an "exclude" toggle. Apply is gated on at least one selected value.
+ * Emits `{ type: 'BlockType', values, exclude }`.
+ */
+function BlockTypeEditor({
+  values,
+  exclude,
+  onToggleValue,
+  onExcludeChange,
+  onBack,
+  onApply,
+}: {
+  values: ReadonlyArray<string>
+  exclude: boolean
+  onToggleValue: (value: string) => void
+  onExcludeChange: (v: boolean) => void
+  onBack: () => void
+  onApply: () => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const canApply = values.length > 0
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="px-1 text-xs font-medium">{t('pageBrowser.filter.facetBlockType')}</span>
+      <MultiSelectGroup
+        legend={t('pageBrowser.filter.blockTypeValuesLabel')}
+        options={BLOCK_TYPE_VALUES}
+        selected={values}
+        optionLabel={(v) => t(`pageBrowser.filter.blockType.${v}`)}
+        onToggle={onToggleValue}
+      />
+      {/* oxlint-disable-next-line jsx-a11y/label-has-associated-control -- the Radix Checkbox (a button) is the control and carries its own aria-label */}
+      <label className="flex items-center gap-2 px-1 text-xs">
+        <Checkbox
+          checked={exclude}
+          onCheckedChange={(next) => onExcludeChange(next === true)}
+          aria-label={t('pageBrowser.filter.excludeLabel')}
+        />
+        {t('pageBrowser.filter.excludeLabel')}
+      </label>
+      <EditorFooter canApply={canApply} onBack={onBack} onApply={onApply} />
+    </div>
+  )
+}
+
+/**
+ * Editor for the `DueDate` / `Scheduled` facets (#1280 D2). An operator dropdown
+ * (is-null / before / after / on-or-before / on-or-after / on / between) plus
+ * date input(s) — one for the single-date ops, two for `Between`, none for
+ * `IsNull`. Apply is gated on the required date(s) being present. The parent's
+ * `applyDate` builds the `DatePredicate` and emits the correct primitive.
+ */
+function DatePredicateEditor({
+  label,
+  op,
+  date,
+  date2,
+  onOpChange,
+  onDateChange,
+  onDate2Change,
+  onBack,
+  onApply,
+}: {
+  label: string
+  op: DateOpKind
+  date: string
+  date2: string
+  onOpChange: (v: DateOpKind) => void
+  onDateChange: (v: string) => void
+  onDate2Change: (v: string) => void
+  onBack: () => void
+  onApply: () => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const isNull = op === 'IsNull'
+  const isBetween = op === 'Between'
+  const canApply =
+    isNull || (isBetween ? date.trim() !== '' && date2.trim() !== '' : date.trim() !== '')
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="px-1 text-xs font-medium">{label}</span>
+      {/* Native <select>: see PropertyEditor for the rationale (Radix Select
+          portals + focus-scope inside the dialog scope are brittle in jsdom). */}
+      <select
+        className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-hidden transition-[color,box-shadow] focus-visible:border-ring focus-ring-visible"
+        value={op}
+        onChange={(e) => onOpChange(e.target.value as DateOpKind)}
+        aria-label={t('pageBrowser.filter.dateOpLabel')}
+      >
+        {DATE_OPS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {t(o.labelKey)}
+          </option>
+        ))}
+      </select>
+      {!isNull && (
+        <Input
+          type="date"
+          value={date}
+          onChange={(e) => onDateChange(e.target.value)}
+          aria-label={
+            isBetween ? t('pageBrowser.filter.dateFromLabel') : t('pageBrowser.filter.dateLabel')
+          }
+        />
+      )}
+      {isBetween && (
+        <Input
+          type="date"
+          value={date2}
+          onChange={(e) => onDate2Change(e.target.value)}
+          aria-label={t('pageBrowser.filter.dateToLabel')}
+        />
+      )}
+      <EditorFooter canApply={canApply} onBack={onBack} onApply={onApply} />
+    </div>
+  )
+}
+
+/**
+ * Editor for the `Created` facet (#1280 D2). An after/before date range; either
+ * bound may be left blank (→ `null`). Apply is gated on at least one bound being
+ * set. Emits `{ type: 'Created', after, before }`.
+ */
+function CreatedEditor({
+  after,
+  before,
+  onAfterChange,
+  onBeforeChange,
+  onBack,
+  onApply,
+}: {
+  after: string
+  before: string
+  onAfterChange: (v: string) => void
+  onBeforeChange: (v: string) => void
+  onBack: () => void
+  onApply: () => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const canApply = after.trim() !== '' || before.trim() !== ''
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="px-1 text-xs font-medium">{t('pageBrowser.filter.facetCreated')}</span>
+      <label className="flex flex-col gap-1 px-1 text-xs">
+        {t('pageBrowser.filter.createdAfterLabel')}
+        <Input
+          type="date"
+          value={after}
+          onChange={(e) => onAfterChange(e.target.value)}
+          aria-label={t('pageBrowser.filter.createdAfterLabel')}
+        />
+      </label>
+      <label className="flex flex-col gap-1 px-1 text-xs">
+        {t('pageBrowser.filter.createdBeforeLabel')}
+        <Input
+          type="date"
+          value={before}
+          onChange={(e) => onBeforeChange(e.target.value)}
+          aria-label={t('pageBrowser.filter.createdBeforeLabel')}
+        />
+      </label>
+      <EditorFooter canApply={canApply} onBack={onBack} onApply={onApply} />
     </div>
   )
 }
