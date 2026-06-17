@@ -972,8 +972,8 @@ async fn fts_fetch_rows(
     // `pages_cache` SCAN; it does NOT use `idx_pages_cache_title_nocase`.
     // See `glob_filter::append_page_glob_subselect` and migration
     // `0068_pages_cache_title_index.sql` for the full rationale.
-    fb.add_page_globs(PREFIX, false, include_page_globs);
-    fb.add_page_globs(PREFIX, true, exclude_page_globs);
+    fb.add_page_globs_via_projection(PREFIX, false, include_page_globs);
+    fb.add_page_globs_via_projection(PREFIX, true, exclude_page_globs);
 
     // PEND-51 — optional `block_type` equality filter. The palette
     // fires a page-only query (`block_type_filter = Some("page")`)
