@@ -19,7 +19,7 @@
  */
 
 import type React from 'react'
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -106,6 +106,14 @@ export function QueryControlsBar({
   // Local mirror of the full-text input so typing is responsive while the
   // committed value is debounced into the store.
   const [fulltextDraft, setFulltextDraft] = useState(fulltext)
+  // Re-sync the local mirror when the committed value changes from outside
+  // (e.g. a space switch resets `fulltext` to the new space's value) so the
+  // input never shows a stale term while the query sends a different one.
+  // While typing this is a no-op: the prop only changes once the debounced
+  // commit lands, at which point it already equals the draft.
+  useEffect(() => {
+    setFulltextDraft(fulltext)
+  }, [fulltext])
   const debounced = useDebouncedCallback(onFulltextChange, 300)
   const hasFulltext = fulltext.trim() !== ''
 
