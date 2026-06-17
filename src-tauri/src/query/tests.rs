@@ -168,6 +168,7 @@ fn req(filter: FilterExpr) -> AdvancedQueryRequest {
         limit: None,
         fulltext: None,
         group_by: None,
+        aggregates: Vec::new(),
     }
 }
 
@@ -397,6 +398,7 @@ async fn sort_by_position_ascending_with_cursor_resume() {
         limit: Some(2),
         fulltext: None,
         group_by: None,
+        aggregates: Vec::new(),
     };
 
     let p1 = compile_and_run(&pool, make(None)).await.unwrap();
@@ -474,6 +476,7 @@ async fn sort_by_last_edited_desc() {
         limit: Some(50),
         fulltext: None,
         group_by: None,
+        aggregates: Vec::new(),
     };
     let resp = compile_and_run(&pool, request).await.unwrap();
     let order: Vec<String> = resp
@@ -597,6 +600,7 @@ async fn cursor_sort_mismatch_is_rejected() {
             limit: Some(2),
             fulltext: None,
             group_by: None,
+            aggregates: Vec::new(),
         },
     )
     .await
@@ -625,6 +629,7 @@ async fn cursor_sort_mismatch_is_rejected() {
         limit: Some(2),
         fulltext: None,
         group_by: None,
+        aggregates: Vec::new(),
     };
     assert!(matches!(
         compile_and_run(&pool, resumed).await.unwrap_err(),
@@ -700,6 +705,7 @@ fn ft_req(fulltext: &str) -> AdvancedQueryRequest {
         limit: None,
         fulltext: Some(fulltext.to_string()),
         group_by: None,
+        aggregates: Vec::new(),
     }
 }
 
@@ -793,6 +799,7 @@ async fn relevance_sort_rejected_without_fulltext() {
         limit: None,
         fulltext: None, // no rank channel to sort on.
         group_by: None,
+        aggregates: Vec::new(),
     };
     assert!(matches!(
         compile_and_run(&pool, request).await.unwrap_err(),
@@ -878,6 +885,7 @@ fn group_req(filter: FilterExpr, key: GroupKey) -> AdvancedQueryRequest {
         limit: None,
         fulltext: None,
         group_by: Some(GroupSpec { key }),
+        aggregates: Vec::new(),
     }
 }
 
@@ -1205,5 +1213,423 @@ async fn group_composes_with_fulltext() {
     assert!(
         red.members.iter().all(|m| m.score.is_some()),
         "grouped full-text members must carry a score"
+    );
+}
+
+// ── Aggregation (#1280 C4) ────────────────────────────────────────────────
+
+use crate::query::{AggOp, AggregateColumn, AggregateResult, AggregateSpec, AggregateTarget};
+
+/// Set a numeric (or non-numeric) `value_text` property on a block.
+async fn set_property(pool: &SqlitePool, block_id: &str, key: &str, value: &str) {
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind(key)
+        .bind(value)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// Seed an `estimate` property: B1=3, B2=5, B3=8 (numeric) and B4="big"
+/// (NON-numeric → must be SKIPPED by every fold). Sum of numerics = 16,
+/// avg = 16/3 (NOT /4), min = 3, max = 8, numeric-count = 3.
+async fn seed_estimates(pool: &SqlitePool) {
+    set_property(pool, "01B1000000000000000000000", "estimate", "3").await;
+    set_property(pool, "01B2000000000000000000000", "estimate", "5").await;
+    set_property(pool, "01B3000000000000000000000", "estimate", "8").await;
+    set_property(pool, "01B4000000000000000000000", "estimate", "big").await;
+}
+
+/// Build an aggregate spec over a property key.
+fn agg_prop(op: AggOp, key: &str) -> AggregateSpec {
+    AggregateSpec {
+        op,
+        target: Some(AggregateTarget::Property {
+            key: key.to_string(),
+        }),
+    }
+}
+
+/// Look up the result for the i-th requested aggregate.
+fn agg_at(resp: &AdvancedQueryResponse, i: usize) -> &AggregateResult {
+    &resp.aggregates[i]
+}
+
+/// A small epsilon comparator for the f64 aggregate values.
+fn approx(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-9
+}
+
+#[tokio::test]
+async fn global_count_equals_match_count() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    let mut request = req(default_filter());
+    request.aggregates = vec![AggregateSpec {
+        op: AggOp::Count,
+        target: None,
+    }];
+    let resp = compile_and_run(&pool, request).await.unwrap();
+    // Whole SPACE: B1..B4 + RED + BLUE tag blocks = 6.
+    assert_eq!(resp.total_count, Some(6));
+    assert_eq!(agg_at(&resp, 0).op, AggOp::Count);
+    assert_eq!(agg_at(&resp, 0).count, Some(6));
+    assert_eq!(agg_at(&resp, 0).value, None);
+}
+
+#[tokio::test]
+async fn global_folds_skip_non_numeric() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    seed_estimates(&pool).await;
+
+    let mut request = req(default_filter());
+    request.aggregates = vec![
+        agg_prop(AggOp::Sum, "estimate"),
+        agg_prop(AggOp::Avg, "estimate"),
+        agg_prop(AggOp::Min, "estimate"),
+        agg_prop(AggOp::Max, "estimate"),
+        // Count WITH a target = the NUMERIC count (skips "big").
+        agg_prop(AggOp::Count, "estimate"),
+    ];
+    let resp = compile_and_run(&pool, request).await.unwrap();
+
+    // Sum = 3+5+8 = 16 (the "big" row is skipped, NOT summed as 0).
+    assert!(approx(agg_at(&resp, 0).value.unwrap(), 16.0), "{resp:?}");
+    // Avg = 16 / 3 (numeric denominator), NOT 16 / 4.
+    assert!(
+        approx(agg_at(&resp, 1).value.unwrap(), 16.0 / 3.0),
+        "avg must divide by the numeric count (3), not the row count (4): {resp:?}"
+    );
+    assert!(approx(agg_at(&resp, 2).value.unwrap(), 3.0), "{resp:?}");
+    assert!(approx(agg_at(&resp, 3).value.unwrap(), 8.0), "{resp:?}");
+    // Count-with-target = the numeric count = 3 (the non-numeric "big" skipped).
+    assert_eq!(agg_at(&resp, 4).count, Some(3), "{resp:?}");
+}
+
+#[tokio::test]
+async fn global_folds_all_non_numeric_is_none() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    // EVERY estimate value is non-numeric.
+    set_property(&pool, "01B1000000000000000000000", "estimate", "big").await;
+    set_property(&pool, "01B2000000000000000000000", "estimate", "huge").await;
+
+    let mut request = req(default_filter());
+    request.aggregates = vec![
+        agg_prop(AggOp::Sum, "estimate"),
+        agg_prop(AggOp::Avg, "estimate"),
+        agg_prop(AggOp::Min, "estimate"),
+        agg_prop(AggOp::Max, "estimate"),
+        agg_prop(AggOp::Count, "estimate"),
+    ];
+    let resp = compile_and_run(&pool, request).await.unwrap();
+    // All folds over an all-non-numeric set → NULL → value None.
+    assert_eq!(agg_at(&resp, 0).value, None, "sum: {resp:?}");
+    assert_eq!(agg_at(&resp, 1).value, None, "avg: {resp:?}");
+    assert_eq!(agg_at(&resp, 2).value, None, "min: {resp:?}");
+    assert_eq!(agg_at(&resp, 3).value, None, "max: {resp:?}");
+    // Count-with-target over an all-non-numeric set = 0.
+    assert_eq!(agg_at(&resp, 4).count, Some(0), "count: {resp:?}");
+}
+
+#[tokio::test]
+async fn global_aggregate_over_priority_column_skips_non_numeric() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    // priority is TEXT; the `select` values are "1"/"2"/"3" — and a label "A"
+    // that must be skipped by the numeric guard.
+    sqlx::query("UPDATE blocks SET priority = '2' WHERE id = '01B1000000000000000000000'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET priority = '4' WHERE id = '01B2000000000000000000000'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET priority = 'A' WHERE id = '01B3000000000000000000000'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut request = req(default_filter());
+    request.aggregates = vec![
+        AggregateSpec {
+            op: AggOp::Sum,
+            target: Some(AggregateTarget::Column {
+                name: AggregateColumn::Priority,
+            }),
+        },
+        AggregateSpec {
+            op: AggOp::Count,
+            target: Some(AggregateTarget::Column {
+                name: AggregateColumn::Priority,
+            }),
+        },
+    ];
+    let resp = compile_and_run(&pool, request).await.unwrap();
+    // 2 + 4 = 6 ("A" skipped).
+    assert!(approx(agg_at(&resp, 0).value.unwrap(), 6.0), "{resp:?}");
+    assert_eq!(agg_at(&resp, 1).count, Some(2), "{resp:?}");
+}
+
+#[tokio::test]
+async fn global_aggregate_over_position_column() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    // positions: B1=1, B2=2, B3=3, B4=4; tag blocks NULL (skipped by SUM).
+    let mut request = req(default_filter());
+    request.aggregates = vec![
+        AggregateSpec {
+            op: AggOp::Sum,
+            target: Some(AggregateTarget::Column {
+                name: AggregateColumn::Position,
+            }),
+        },
+        AggregateSpec {
+            op: AggOp::Max,
+            target: Some(AggregateTarget::Column {
+                name: AggregateColumn::Position,
+            }),
+        },
+    ];
+    let resp = compile_and_run(&pool, request).await.unwrap();
+    assert!(approx(agg_at(&resp, 0).value.unwrap(), 10.0), "{resp:?}");
+    assert!(approx(agg_at(&resp, 1).value.unwrap(), 4.0), "{resp:?}");
+}
+
+#[tokio::test]
+async fn per_group_aggregates_correct() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    seed_estimates(&pool).await;
+    // States: B1 TODO (est 3), B3 TODO (est 8) → TODO sum 11.
+    //         B2 DONE (est 5)                  → DONE sum 5.
+    //         B4 none (est "big" skipped)      → none sum NULL.
+    let mut request = group_req(default_filter(), GroupKey::State);
+    request.aggregates = vec![agg_prop(AggOp::Sum, "estimate")];
+    let resp = compile_and_run(&pool, request).await.unwrap();
+
+    let todo = find_group(&resp, "TODO");
+    let done = find_group(&resp, "DONE");
+    let none = find_group(&resp, "none");
+    assert!(
+        approx(todo.aggregates[0].value.unwrap(), 11.0),
+        "TODO group sum: {:?}",
+        todo.aggregates
+    );
+    assert!(
+        approx(done.aggregates[0].value.unwrap(), 5.0),
+        "DONE group sum: {:?}",
+        done.aggregates
+    );
+    // The `none` state bucket = B4 ("big", skipped) + RED + BLUE tag blocks (no
+    // estimate) → all NULL → fold None.
+    assert_eq!(
+        none.aggregates[0].value, None,
+        "none group sum must be None (all-non-numeric/absent): {:?}",
+        none.aggregates
+    );
+
+    // Grouped mode also carries the GLOBAL aggregate over the full set.
+    assert!(
+        approx(resp.aggregates[0].value.unwrap(), 16.0),
+        "global sum over the full set = 16: {:?}",
+        resp.aggregates
+    );
+}
+
+#[tokio::test]
+async fn aggregates_compose_with_structural_filter_and_fulltext() {
+    let (pool, _d) = test_pool().await;
+    seed_ft(&pool).await;
+    // estimates on the FTS fixture: F1=3, F2=5 (RED), F3=8 (no tag).
+    set_property(&pool, F1, "estimate", "3").await;
+    set_property(&pool, F2, "estimate", "5").await;
+    set_property(&pool, F3, "estimate", "8").await;
+
+    // "alpha" (F1,F2,F3) ∩ tag RED (F1,F2) → sum estimate = 8, count = 2.
+    let mut request = ft_req("alpha");
+    request.filter = leaf(FilterPrimitive::Tag {
+        tag: TAG_RED.to_string(),
+    });
+    request.aggregates = vec![
+        agg_prop(AggOp::Sum, "estimate"),
+        AggregateSpec {
+            op: AggOp::Count,
+            target: None,
+        },
+    ];
+    let resp = compile_and_run(&pool, request).await.unwrap();
+    assert_eq!(ids(&resp), set(&[F1, F2]));
+    assert!(approx(agg_at(&resp, 0).value.unwrap(), 8.0), "{resp:?}");
+    assert_eq!(agg_at(&resp, 1).count, Some(2), "{resp:?}");
+}
+
+#[tokio::test]
+async fn aggregates_over_empty_match_set() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    // A filter matching nothing: state = a value no block has.
+    let mut request = req(leaf(FilterPrimitive::State {
+        values: vec!["NEVER".to_string()],
+        is_null: false,
+        exclude: false,
+    }));
+    request.aggregates = vec![
+        AggregateSpec {
+            op: AggOp::Count,
+            target: None,
+        },
+        agg_prop(AggOp::Sum, "estimate"),
+        agg_prop(AggOp::Avg, "estimate"),
+    ];
+    let resp = compile_and_run(&pool, request).await.unwrap();
+    assert_eq!(resp.total_count, Some(0));
+    // Count over an empty set = 0; folds = None.
+    assert_eq!(agg_at(&resp, 0).count, Some(0), "{resp:?}");
+    assert_eq!(agg_at(&resp, 1).value, None, "{resp:?}");
+    assert_eq!(agg_at(&resp, 2).value, None, "{resp:?}");
+}
+
+#[tokio::test]
+async fn aggregates_invariant_across_pagination() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    seed_estimates(&pool).await;
+
+    let make = |limit: i64, cursor: Option<String>| {
+        let mut r = req(default_filter());
+        r.limit = Some(limit);
+        r.cursor = cursor;
+        r.sort = vec![SortKey {
+            source: SortSource::Column {
+                name: SortColumn::Position,
+            },
+            desc: false,
+        }];
+        r.aggregates = vec![
+            AggregateSpec {
+                op: AggOp::Count,
+                target: None,
+            },
+            agg_prop(AggOp::Sum, "estimate"),
+        ];
+        r
+    };
+
+    // One big page: aggregates present on the first page.
+    let big = compile_and_run(&pool, make(50, None)).await.unwrap();
+    assert_eq!(big.aggregates[0].count, Some(6));
+    assert!(approx(big.aggregates[1].value.unwrap(), 16.0));
+
+    // First page of a paginated run: SAME aggregates (full-set invariant).
+    let p1 = compile_and_run(&pool, make(2, None)).await.unwrap();
+    assert_eq!(p1.aggregates[0].count, Some(6), "page-1 count == full set");
+    assert!(
+        approx(p1.aggregates[1].value.unwrap(), 16.0),
+        "page-1 sum == full set"
+    );
+
+    // Cursor page: aggregates are NOT recomputed (empty, like total_count).
+    let cursor = p1.next_cursor.clone().expect("has more");
+    let p2 = compile_and_run(&pool, make(2, Some(cursor))).await.unwrap();
+    assert!(
+        p2.aggregates.is_empty(),
+        "cursor pages skip aggregates (full-set invariant), got {:?}",
+        p2.aggregates
+    );
+    assert_eq!(p2.total_count, None);
+}
+
+#[tokio::test]
+async fn no_aggregates_requested_yields_empty() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    // Default request carries no aggregates → response aggregates empty (flat).
+    let flat = compile_and_run(&pool, req(default_filter())).await.unwrap();
+    assert!(flat.aggregates.is_empty());
+    // Grouped with no aggregates → empty global + empty per-group.
+    let grouped = compile_and_run(&pool, group_req(default_filter(), GroupKey::State))
+        .await
+        .unwrap();
+    assert!(grouped.aggregates.is_empty());
+    assert!(grouped.groups.iter().all(|g| g.aggregates.is_empty()));
+}
+
+#[tokio::test]
+async fn equal_count_grouped_pagination_no_dup() {
+    let (pool, _d) = test_pool().await;
+    // A dedicated fixture: 4 distinct states each with EXACTLY 2 blocks, so the
+    // `gcount DESC, gkey ASC` keyset must lean on the `gkey` tiebreak for every
+    // equal-count page boundary. Exercises the C3-deferred tie regression.
+    for sp in [SPACE] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, page_id, space_id) VALUES (?, 'page', ?, NULL)",
+        )
+        .bind(sp)
+        .bind(sp)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+            .bind(sp)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    // States AA, BB, CC, DD each get two blocks → 4 equal-count (2) groups.
+    let states = ["AA", "BB", "CC", "DD"];
+    for (si, st) in states.iter().enumerate() {
+        for j in 0..2 {
+            let id = format!("01EQ{si}{j}0000000000000000000");
+            insert_block(&pool, &id, Some(SPACE), "content", Some(st), None, None).await;
+        }
+    }
+
+    // One big page over all 4 groups.
+    let mut big = group_req(default_filter(), GroupKey::State);
+    big.limit = Some(50);
+    let big_resp = compile_and_run(&pool, big).await.unwrap();
+    let all_keys: Vec<String> = big_resp.groups.iter().map(|g| g.key.clone()).collect();
+    assert_eq!(all_keys.len(), 4, "got {all_keys:?}");
+    // All counts equal (2) → order is purely the gkey ASC tiebreak: AA,BB,CC,DD.
+    assert_eq!(
+        all_keys,
+        vec!["AA", "BB", "CC", "DD"],
+        "tie order by gkey ASC"
+    );
+
+    // Page through at limit 1: must reproduce the big-page order with no dup.
+    let mut collected: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut page = group_req(default_filter(), GroupKey::State);
+        page.limit = Some(1);
+        page.cursor = cursor.clone();
+        let resp = compile_and_run(&pool, page).await.unwrap();
+        for g in &resp.groups {
+            collected.push(g.key.clone());
+        }
+        if resp.has_more {
+            cursor = resp.next_cursor.clone();
+            assert!(cursor.is_some());
+        } else {
+            assert!(resp.next_cursor.is_none());
+            break;
+        }
+    }
+    assert_eq!(
+        collected, all_keys,
+        "equal-count page-through must equal one big page (gkey tiebreak)"
+    );
+    let uniq: BTreeSet<&String> = collected.iter().collect();
+    assert_eq!(
+        uniq.len(),
+        collected.len(),
+        "no duplicate groups across pages"
     );
 }
