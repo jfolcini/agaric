@@ -689,6 +689,88 @@ fn compile_property_like(key: &str, value: &PropertyValue, contains: bool) -> Wh
     )
 }
 
+/// #1280 — canonical Pages SQL for a multi-value text-membership leaf
+/// (`state:` over `b.todo_state`), byte-shape identical to the legacy FTS
+/// metadata oracle. INCLUDE mirrors
+/// `fts::metadata_filter::append_text_in_or_null`; EXCLUDE mirrors
+/// `append_text_not_in_or_not_null`. See the `compile_state` doc for the
+/// per-branch rationale. An empty-and-null-less filter degenerates to the
+/// no-op `1=1` (the legacy helpers emit no clause at all in that case).
+fn in_or_null(column: &str, values: &[String], is_null: bool, exclude: bool) -> WhereClause {
+    if values.is_empty() && !is_null {
+        // Legacy helpers return early (emit nothing) → no-op.
+        return WhereClause::new("1=1", Vec::new());
+    }
+    let placeholders = std::iter::repeat_n("?", values.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut parts: Vec<String> = Vec::new();
+    if exclude {
+        // `append_text_not_in_or_not_null`: NULL branch OUTSIDE the IN list.
+        if !values.is_empty() {
+            parts.push(format!(
+                "{column} IS NULL OR {column} NOT IN ({placeholders})"
+            ));
+        }
+        if is_null {
+            parts.push(format!("{column} IS NOT NULL"));
+        }
+    } else {
+        // `append_text_in_or_null`.
+        if !values.is_empty() {
+            parts.push(format!("{column} IN ({placeholders})"));
+        }
+        if is_null {
+            parts.push(format!("{column} IS NULL"));
+        }
+    }
+    WhereClause::new(
+        format!("({})", parts.join(" OR ")),
+        values.iter().cloned().map(Bind::Text).collect(),
+    )
+}
+
+/// #1280 — canonical Pages SQL for a [`DatePredicate`] over a TEXT-ISO date
+/// `column` (`b.due_date` / `b.scheduled_date`), byte-shape identical to the
+/// legacy `fts::metadata_filter::append_date_predicate` oracle. Every
+/// comparison (`On`/`Before`/`After`/`OnOrBefore`/`OnOrAfter`/`Between`)
+/// guards `column IS NOT NULL` first; `On` is the legacy **exact** `= ?`
+/// (DateOp::Eq) — NOT the half-open day expansion of
+/// [`DatePredicate::to_lexical_sql`] (the Pages/FTS columns store pure
+/// `YYYY-MM-DD`, so an exact compare already matches the whole day). This is
+/// the one shape that DEVIATES from `BacklinkProjection::compile_due_date`'s
+/// guard-less `b.col = ?`: the legacy FTS oracle guards `IS NOT NULL`, and
+/// matching that oracle is the contract for the Search-path B2 cutover.
+fn pages_date_predicate(predicate: &DatePredicate, column: &str) -> WhereClause {
+    match predicate {
+        DatePredicate::IsNull => WhereClause::new(format!("{column} IS NULL"), Vec::new()),
+        DatePredicate::On { date } => WhereClause::new(
+            format!("({column} IS NOT NULL AND {column} = ?)"),
+            vec![Bind::Text(date.clone())],
+        ),
+        DatePredicate::Before { date } => WhereClause::new(
+            format!("({column} IS NOT NULL AND {column} < ?)"),
+            vec![Bind::Text(date.clone())],
+        ),
+        DatePredicate::After { date } => WhereClause::new(
+            format!("({column} IS NOT NULL AND {column} > ?)"),
+            vec![Bind::Text(date.clone())],
+        ),
+        DatePredicate::OnOrBefore { date } => WhereClause::new(
+            format!("({column} IS NOT NULL AND {column} <= ?)"),
+            vec![Bind::Text(date.clone())],
+        ),
+        DatePredicate::OnOrAfter { date } => WhereClause::new(
+            format!("({column} IS NOT NULL AND {column} >= ?)"),
+            vec![Bind::Text(date.clone())],
+        ),
+        DatePredicate::Between { from, to } => WhereClause::new(
+            format!("({column} IS NOT NULL AND {column} BETWEEN ? AND ?)"),
+            vec![Bind::Text(from.clone()), Bind::Text(to.clone())],
+        ),
+    }
+}
+
 // ── Allowed-keys constants ───────────────────────────────────────────────
 
 /// Pages-surface allowed tokens. Shared + Pages-only.
@@ -927,6 +1009,87 @@ impl Projection for PagesProjection {
     }
     fn compile_priority(&self, priority: &str) -> WhereClause {
         WhereClause::new("b.priority = ?", vec![Bind::Text(priority.to_string())])
+    }
+    fn compile_state(&self, values: &[String], is_null: bool, exclude: bool) -> WhereClause {
+        // #1280 — canonical Pages SQL for the `state:` leaf, byte-shape
+        // identical to the LEGACY FTS metadata oracle
+        // (`fts::metadata_filter::append_text_in_or_null` /
+        // `append_text_not_in_or_not_null`, column `b.todo_state`) so
+        // routing the Search metadata path through this projection (B2) is a
+        // zero-behaviour-change cutover.
+        //
+        // INCLUDE (`!exclude`) — `append_text_in_or_null`:
+        //   `(col IN (?,…) OR col IS NULL)`. Empty values + `!is_null` emits
+        //   NO clause (a no-op `1=1`), exactly as the legacy helper returns
+        //   early. With only `is_null` → `(col IS NULL)`; with only values →
+        //   `(col IN (?,…))`.
+        //
+        // EXCLUDE — `append_text_not_in_or_not_null`:
+        //   `(col IS NULL OR col NOT IN (?,…))` — the `IS NULL` branch lives
+        //   OUTSIDE the `IN` list by design (NULL-state rows count as "not in
+        //   the excluded set"), which also sidesteps the 3-valued
+        //   `NOT IN (…, NULL)` trap. The `is_null` flag ADDS `OR col IS NOT
+        //   NULL` (the legacy `not-state:none` sentinel → "exclude blocks
+        //   with no state"). Empty values + `!is_null` emits a no-op `1=1`.
+        in_or_null("b.todo_state", values, is_null, exclude)
+    }
+    fn compile_block_type(&self, values: &[String], exclude: bool) -> WhereClause {
+        // #1280 — `b.block_type` is NOT NULL, so there is no `none`/NULL
+        // sentinel. Empty `values` degenerates to the identity of the join:
+        // an empty INCLUDE matches nothing (`1=0`), an empty EXCLUDE excludes
+        // nothing (`1=1`) — mirroring `BacklinkProjection::compile_block_type`'s
+        // empty-set short-circuit on the include side.
+        if values.is_empty() {
+            return WhereClause::new(if exclude { "1=1" } else { "1=0" }, Vec::new());
+        }
+        let placeholders = std::iter::repeat_n("?", values.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let op = if exclude { "NOT IN" } else { "IN" };
+        WhereClause::new(
+            format!("b.block_type {op} ({placeholders})"),
+            values.iter().cloned().map(Bind::Text).collect(),
+        )
+    }
+    fn compile_due_date(&self, predicate: &DatePredicate) -> WhereClause {
+        pages_date_predicate(predicate, "b.due_date")
+    }
+    fn compile_scheduled(&self, predicate: &DatePredicate) -> WhereClause {
+        pages_date_predicate(predicate, "b.scheduled_date")
+    }
+    fn compile_created(&self, after: Option<&str>, before: Option<&str>) -> WhereClause {
+        // #1280 — ULID-prefix range over `b.id`, reusing the SAME
+        // `parse_iso_to_ms` + `ms_to_ulid_prefix` conversion as
+        // `BacklinkProjection::compile_created` so the two surfaces agree
+        // byte-for-byte on the `Created` leaf. Each present bound becomes a
+        // 10-char ULID prefix compared against the block id PK
+        // (`b.id >= ?` for `after`, `b.id < ?` for `before`). Neither bound →
+        // `1=1`. A malformed-but-present bound is treated as absent (the
+        // `and_then` drops it); the Pages caller validates bounds loudly
+        // upstream before routing, matching the BacklinkProjection contract.
+        let after_prefix = after
+            .and_then(crate::backlink::filters::parse_iso_to_ms)
+            .map(crate::backlink::filters::ms_to_ulid_prefix);
+        let before_prefix = before
+            .and_then(crate::backlink::filters::parse_iso_to_ms)
+            .map(crate::backlink::filters::ms_to_ulid_prefix);
+
+        let mut clauses: Vec<&str> = Vec::new();
+        let mut binds: Vec<Bind> = Vec::new();
+        if let Some(lo) = after_prefix {
+            clauses.push("b.id >= ?");
+            binds.push(Bind::Text(lo));
+        }
+        if let Some(hi) = before_prefix {
+            clauses.push("b.id < ?");
+            binds.push(Bind::Text(hi));
+        }
+        let sql = if clauses.is_empty() {
+            "1=1".to_string()
+        } else {
+            format!("({})", clauses.join(" AND "))
+        };
+        WhereClause::new(sql, binds)
     }
     fn compile_orphan(&self) -> WhereClause {
         // Orphan := no inbound block-link edges AND no outbound block-link
@@ -1719,6 +1882,432 @@ mod tests {
         // Pages-only key is not in the Search set.
         assert!(PAGES_ALLOWED_KEYS.contains(FilterPrimitive::Orphan.allowed_key()));
         assert!(!SEARCH_ALLOWED_KEYS.contains(FilterPrimitive::Orphan.allowed_key()));
+    }
+
+    // ── #1280 A2 — canonical Pages SQL for the new metadata leaves ────────
+    // Each test pins the emitted SQL + binds AND, where the canonical form
+    // must equal the legacy `fts::metadata_filter` oracle, documents the
+    // matching shape.
+
+    #[test]
+    fn pages_state_include_emits_in_or_null() {
+        let p = PagesProjection;
+        // Values only → `(col IN (?, ?))`, matching
+        // `append_text_in_or_null` (no IS NULL part).
+        let w = p.compile(&FilterPrimitive::State {
+            values: vec!["TODO".into(), "DOING".into()],
+            is_null: false,
+            exclude: false,
+        });
+        assert_eq!(w.sql, "(b.todo_state IN (?, ?))");
+        assert_eq!(
+            w.binds,
+            vec![Bind::Text("TODO".into()), Bind::Text("DOING".into())]
+        );
+
+        // Values + none-sentinel → `(col IN (?) OR col IS NULL)`.
+        let w = p.compile(&FilterPrimitive::State {
+            values: vec!["TODO".into()],
+            is_null: true,
+            exclude: false,
+        });
+        assert_eq!(w.sql, "(b.todo_state IN (?) OR b.todo_state IS NULL)");
+        assert_eq!(w.binds, vec![Bind::Text("TODO".into())]);
+
+        // none-sentinel only → `(col IS NULL)`.
+        let w = p.compile(&FilterPrimitive::State {
+            values: vec![],
+            is_null: true,
+            exclude: false,
+        });
+        assert_eq!(w.sql, "(b.todo_state IS NULL)");
+        assert!(w.binds.is_empty());
+
+        // Empty + no-null → no-op `1=1` (legacy helper emits no clause).
+        let w = p.compile(&FilterPrimitive::State {
+            values: vec![],
+            is_null: false,
+            exclude: false,
+        });
+        assert_eq!(w.sql, "1=1");
+        assert!(w.binds.is_empty());
+    }
+
+    #[test]
+    fn pages_state_exclude_keeps_null_outside_the_in_list() {
+        let p = PagesProjection;
+        // Exclude values → `(col IS NULL OR col NOT IN (?, ?))`. The IS NULL
+        // branch is OUTSIDE the IN list (legacy SQL-6 / 3-valued NOT IN trap
+        // guard) so NULL-state rows are KEPT, not dropped.
+        let w = p.compile(&FilterPrimitive::State {
+            values: vec!["DONE".into(), "CANCELLED".into()],
+            is_null: false,
+            exclude: true,
+        });
+        assert_eq!(
+            w.sql,
+            "(b.todo_state IS NULL OR b.todo_state NOT IN (?, ?))"
+        );
+        assert_eq!(
+            w.binds,
+            vec![Bind::Text("DONE".into()), Bind::Text("CANCELLED".into())]
+        );
+        // The NULL element is never inside the IN list.
+        assert!(!w.sql.contains("IN (?, ?, b.todo_state IS NULL)"));
+
+        // Exclude values + none-sentinel → adds `OR col IS NOT NULL`
+        // (`not-state:none` → "exclude blocks with no state").
+        let w = p.compile(&FilterPrimitive::State {
+            values: vec!["DONE".into()],
+            is_null: true,
+            exclude: true,
+        });
+        assert_eq!(
+            w.sql,
+            "(b.todo_state IS NULL OR b.todo_state NOT IN (?) OR b.todo_state IS NOT NULL)"
+        );
+        assert_eq!(w.binds, vec![Bind::Text("DONE".into())]);
+
+        // Exclude none-sentinel only → `(col IS NOT NULL)`.
+        let w = p.compile(&FilterPrimitive::State {
+            values: vec![],
+            is_null: true,
+            exclude: true,
+        });
+        assert_eq!(w.sql, "(b.todo_state IS NOT NULL)");
+        assert!(w.binds.is_empty());
+
+        // Exclude empty + no-null → no-op `1=1`.
+        let w = p.compile(&FilterPrimitive::State {
+            values: vec![],
+            is_null: false,
+            exclude: true,
+        });
+        assert_eq!(w.sql, "1=1");
+    }
+
+    #[test]
+    fn pages_state_matches_legacy_metadata_oracle_shape() {
+        // The canonical Pages `state:` SQL must reproduce the legacy
+        // `fts::metadata_filter::append_text_in_or_null` /
+        // `append_text_not_in_or_not_null` boolean shape (the legacy helpers
+        // are module-private, so — like the BacklinkProjection byte-identity
+        // tests — the expected boolean is pasted verbatim from those helpers
+        // with the positional `?N` collapsed to `?` and the leading
+        // "\n           AND " stripped, since the projection emits a
+        // self-contained fragment the Pages composer AND-joins).
+        //
+        // INCLUDE: `append_text_in_or_null` builds
+        //   `({col} IN (?, ?) OR {col} IS NULL)` for values + is_null.
+        let pages = PagesProjection.compile(&FilterPrimitive::State {
+            values: vec!["TODO".into(), "DOING".into()],
+            is_null: true,
+            exclude: false,
+        });
+        assert_eq!(
+            pages.sql,
+            "(b.todo_state IN (?, ?) OR b.todo_state IS NULL)"
+        );
+
+        // EXCLUDE: `append_text_not_in_or_not_null` builds
+        //   `({col} IS NULL OR {col} NOT IN (?))` — NULL OUTSIDE the IN list.
+        let pages = PagesProjection.compile(&FilterPrimitive::State {
+            values: vec!["DONE".into()],
+            is_null: false,
+            exclude: true,
+        });
+        assert_eq!(
+            pages.sql,
+            "(b.todo_state IS NULL OR b.todo_state NOT IN (?))"
+        );
+    }
+
+    #[test]
+    fn pages_block_type_include_and_exclude() {
+        let p = PagesProjection;
+        let inc = p.compile(&FilterPrimitive::BlockType {
+            values: vec!["task".into(), "note".into()],
+            exclude: false,
+        });
+        assert_eq!(inc.sql, "b.block_type IN (?, ?)");
+        assert_eq!(
+            inc.binds,
+            vec![Bind::Text("task".into()), Bind::Text("note".into())]
+        );
+
+        let exc = p.compile(&FilterPrimitive::BlockType {
+            values: vec!["task".into()],
+            exclude: true,
+        });
+        assert_eq!(exc.sql, "b.block_type NOT IN (?)");
+        assert_eq!(exc.binds, vec![Bind::Text("task".into())]);
+
+        // block_type is NOT NULL → no `IS NULL` sentinel ever appears.
+        assert!(!inc.sql.contains("IS NULL"));
+        assert!(!exc.sql.contains("IS NULL"));
+
+        // Empty include matches nothing; empty exclude excludes nothing.
+        let inc_empty = p.compile(&FilterPrimitive::BlockType {
+            values: vec![],
+            exclude: false,
+        });
+        assert_eq!(inc_empty.sql, "1=0");
+        let exc_empty = p.compile(&FilterPrimitive::BlockType {
+            values: vec![],
+            exclude: true,
+        });
+        assert_eq!(exc_empty.sql, "1=1");
+    }
+
+    #[test]
+    fn pages_due_date_all_variants_guard_is_not_null() {
+        let p = PagesProjection;
+        let on = p.compile(&FilterPrimitive::DueDate {
+            predicate: DatePredicate::On {
+                date: "2026-03-01".into(),
+            },
+        });
+        // Canonical Pages form: `On` is exact `=` WITH the legacy
+        // `IS NOT NULL` guard — matching the FTS oracle (DateOp::Eq), and
+        // DEVIATING from BacklinkProjection's guard-less `b.due_date = ?`.
+        assert_eq!(on.sql, "(b.due_date IS NOT NULL AND b.due_date = ?)");
+        assert_eq!(on.binds, vec![Bind::Text("2026-03-01".into())]);
+
+        for (pred, op) in [
+            (
+                DatePredicate::Before {
+                    date: "2026-03-01".into(),
+                },
+                "<",
+            ),
+            (
+                DatePredicate::After {
+                    date: "2026-03-01".into(),
+                },
+                ">",
+            ),
+            (
+                DatePredicate::OnOrBefore {
+                    date: "2026-03-01".into(),
+                },
+                "<=",
+            ),
+            (
+                DatePredicate::OnOrAfter {
+                    date: "2026-03-01".into(),
+                },
+                ">=",
+            ),
+        ] {
+            let w = p.compile(&FilterPrimitive::DueDate { predicate: pred });
+            assert_eq!(
+                w.sql,
+                format!("(b.due_date IS NOT NULL AND b.due_date {op} ?)")
+            );
+            assert_eq!(w.binds, vec![Bind::Text("2026-03-01".into())]);
+        }
+
+        let between = p.compile(&FilterPrimitive::DueDate {
+            predicate: DatePredicate::Between {
+                from: "2026-03-01".into(),
+                to: "2026-03-31".into(),
+            },
+        });
+        assert_eq!(
+            between.sql,
+            "(b.due_date IS NOT NULL AND b.due_date BETWEEN ? AND ?)"
+        );
+        assert_eq!(
+            between.binds,
+            vec![
+                Bind::Text("2026-03-01".into()),
+                Bind::Text("2026-03-31".into())
+            ]
+        );
+
+        let is_null = p.compile(&FilterPrimitive::DueDate {
+            predicate: DatePredicate::IsNull,
+        });
+        assert_eq!(is_null.sql, "b.due_date IS NULL");
+        assert!(is_null.binds.is_empty());
+    }
+
+    #[test]
+    fn pages_scheduled_uses_scheduled_date_column() {
+        let p = PagesProjection;
+        let w = p.compile(&FilterPrimitive::Scheduled {
+            predicate: DatePredicate::OnOrAfter {
+                date: "2026-04-01".into(),
+            },
+        });
+        assert_eq!(
+            w.sql,
+            "(b.scheduled_date IS NOT NULL AND b.scheduled_date >= ?)"
+        );
+        assert_eq!(w.binds, vec![Bind::Text("2026-04-01".into())]);
+        // Distinct column from due_date.
+        assert!(!w.sql.contains("due_date"));
+    }
+
+    #[test]
+    fn pages_due_date_matches_legacy_date_predicate_oracle() {
+        // The Pages `due-date:`/`scheduled:` SQL must reproduce the legacy
+        // `fts::metadata_filter::append_date_predicate` shape: the column is
+        // guarded `IS NOT NULL` and `On` (legacy `Op{DateOp::Eq}`) is an
+        // EXACT `=` — NOT the half-open day expansion. The legacy emitter is
+        // module-private, so the expected boolean is pasted verbatim (the
+        // legacy text minus its leading "\n           AND " and with the
+        // positional `?1` collapsed to `?`), then wrapped in the parens the
+        // projection adds.
+        //
+        // Legacy `Op` body: `{col} IS NOT NULL AND {col} = ?`.
+        let pages = PagesProjection.compile(&FilterPrimitive::DueDate {
+            predicate: DatePredicate::On {
+                date: "2026-03-01".into(),
+            },
+        });
+        assert_eq!(pages.sql, "(b.due_date IS NOT NULL AND b.due_date = ?)");
+
+        // Legacy `Range` body: `{col} IS NOT NULL AND {col} BETWEEN ? AND ?`.
+        let pages = PagesProjection.compile(&FilterPrimitive::DueDate {
+            predicate: DatePredicate::Between {
+                from: "2026-03-01".into(),
+                to: "2026-03-31".into(),
+            },
+        });
+        assert_eq!(
+            pages.sql,
+            "(b.due_date IS NOT NULL AND b.due_date BETWEEN ? AND ?)"
+        );
+    }
+
+    #[test]
+    fn pages_created_ulid_prefix_range_matches_backlink() {
+        let p = PagesProjection;
+        // Both bounds → `(b.id >= ? AND b.id < ?)` with the SAME ULID
+        // prefixes the BacklinkProjection produces.
+        let both = p.compile(&FilterPrimitive::Created {
+            after: Some("2026-01-01".into()),
+            before: Some("2026-02-01".into()),
+        });
+        assert_eq!(both.sql, "(b.id >= ? AND b.id < ?)");
+        let lo = crate::backlink::filters::ms_to_ulid_prefix(
+            crate::backlink::filters::parse_iso_to_ms("2026-01-01").unwrap(),
+        );
+        let hi = crate::backlink::filters::ms_to_ulid_prefix(
+            crate::backlink::filters::parse_iso_to_ms("2026-02-01").unwrap(),
+        );
+        assert_eq!(both.binds, vec![Bind::Text(lo), Bind::Text(hi)]);
+
+        // Only after → `(b.id >= ?)`.
+        let after_only = p.compile(&FilterPrimitive::Created {
+            after: Some("2026-01-01".into()),
+            before: None,
+        });
+        assert_eq!(after_only.sql, "(b.id >= ?)");
+        assert_eq!(after_only.binds.len(), 1);
+
+        // Only before → `(b.id < ?)`.
+        let before_only = p.compile(&FilterPrimitive::Created {
+            after: None,
+            before: Some("2026-02-01".into()),
+        });
+        assert_eq!(before_only.sql, "(b.id < ?)");
+        assert_eq!(before_only.binds.len(), 1);
+
+        // Neither → `1=1`.
+        let none = p.compile(&FilterPrimitive::Created {
+            after: None,
+            before: None,
+        });
+        assert_eq!(none.sql, "1=1");
+        assert!(none.binds.is_empty());
+
+        // Malformed bound is treated as absent (drops to no-op for that side).
+        let bad = p.compile(&FilterPrimitive::Created {
+            after: Some("not-a-date".into()),
+            before: None,
+        });
+        assert_eq!(bad.sql, "1=1");
+        assert!(bad.binds.is_empty());
+    }
+
+    #[test]
+    fn pages_typed_property_predicates_compile() {
+        // #1280 — the typed comparisons (Lt/Gt/Lte/Gte) + Contains +
+        // Num/Date values compile to real SQL on the Pages surface (the
+        // shared `compile_property_compare` / `compile_property_like`
+        // helpers, guarding `IS NOT NULL`).
+        let p = PagesProjection;
+
+        // Num ordered comparison → `value_num … < ?` with a Real bind.
+        let lt_num = p.compile(&FilterPrimitive::HasProperty {
+            key: "count".into(),
+            predicate: PropertyPredicate::Lt {
+                value: PropertyValue::Num { value: 3.5 },
+            },
+        });
+        assert!(!lt_num.is_unsupported());
+        assert!(
+            lt_num
+                .sql
+                .contains("value_num IS NOT NULL AND value_num < ?")
+        );
+        assert_eq!(
+            lt_num.binds,
+            vec![Bind::Text("count".into()), Bind::Real(3.5)]
+        );
+
+        // Date ordered comparison → `value_date >= ?`.
+        let gte_date = p.compile(&FilterPrimitive::HasProperty {
+            key: "when".into(),
+            predicate: PropertyPredicate::Gte {
+                value: PropertyValue::Date {
+                    value: "2026-01-01".into(),
+                },
+            },
+        });
+        assert!(
+            gte_date
+                .sql
+                .contains("value_date IS NOT NULL AND value_date >= ?")
+        );
+
+        // Contains over Text → `LIKE ? ESCAPE '\'` with `%…%`.
+        let contains = p.compile(&FilterPrimitive::HasProperty {
+            key: "label".into(),
+            predicate: PropertyPredicate::Contains {
+                value: PropertyValue::Text {
+                    value: "ab%c".into(),
+                },
+            },
+        });
+        assert!(contains.sql.contains("LIKE ? ESCAPE '\\'"));
+        assert_eq!(
+            contains.binds,
+            vec![Bind::Text("label".into()), Bind::Text("%ab\\%c%".into())]
+        );
+
+        // StartsWith over Text → `v%`.
+        let starts = p.compile(&FilterPrimitive::HasProperty {
+            key: "label".into(),
+            predicate: PropertyPredicate::StartsWith {
+                value: PropertyValue::Text {
+                    value: "pre".into(),
+                },
+            },
+        });
+        assert_eq!(starts.binds[1], Bind::Text("pre%".into()));
+
+        // Contains over a Num value is meaningless → `1=0`.
+        let contains_num = p.compile(&FilterPrimitive::HasProperty {
+            key: "count".into(),
+            predicate: PropertyPredicate::Contains {
+                value: PropertyValue::Num { value: 3.0 },
+            },
+        });
+        assert_eq!(contains_num.sql, "1=0");
+        assert!(contains_num.binds.is_empty());
     }
 }
 
