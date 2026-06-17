@@ -130,6 +130,54 @@ pub(crate) fn typed_property_args_for_string_value(key: &str, value: String) -> 
     }
 }
 
+/// Registry-aware typed field-shape for [`set_property_in_tx`] (#1432).
+///
+/// Like [`typed_property_args_for_string_value`], but consults the declared
+/// `value_type` from `property_definitions` (passed by the caller, which has
+/// already queried it in-tx) so that a flat string value coerces into the
+/// *correct* `block_properties` column — `value_num` for `number`,
+/// `value_bool` for `boolean`, `value_date` for `date`, and `value_text` for
+/// `text` / `select` / unknown. This is what makes the frontmatter export →
+/// import round-trip preserve typed page properties (a `count: 5` number
+/// re-lands in `value_num`, not `value_text`).
+///
+/// `ref`-typed keys are deliberately NOT handled here: the exporter renders a
+/// ref as the target page's *title*, so recovering the original ULID needs a
+/// title→id reverse lookup against the DB, which the caller does (this is a
+/// pure function with no DB access). A `ref` type therefore falls through to
+/// the `value_text` default; the caller overrides that case.
+///
+/// `value_type == None` (no registered definition for the key) falls back to
+/// the reserved-key routing of [`typed_property_args_for_string_value`], so
+/// unknown frontmatter keys are stored as `value_text` exactly like an
+/// unknown inline `key:: value` property.
+///
+/// Coercion failures (e.g. a `number`-typed key whose value isn't a valid
+/// `f64`) degrade gracefully to `value_text` so a single malformed line can
+/// never abort the whole import.
+pub(crate) fn typed_property_args_for_registry_value(
+    key: &str,
+    value: String,
+    value_type: Option<&str>,
+) -> TypedPropertyArgs {
+    match value_type {
+        Some("number") => match value.trim().parse::<f64>() {
+            Ok(n) => (None, Some(n), None, None, None),
+            Err(_) => (Some(value), None, None, None, None),
+        },
+        Some("boolean") => match value.trim().to_ascii_lowercase().as_str() {
+            "true" => (None, None, None, None, Some(true)),
+            "false" => (None, None, None, None, Some(false)),
+            _ => (Some(value), None, None, None, None),
+        },
+        Some("date") => (None, None, Some(value), None, None),
+        // text / select / ref / unknown declared type, or no definition at
+        // all: fall back to the reserved-key-aware string routing (`ref` is
+        // overridden by the caller with a title→ULID reverse lookup).
+        _ => typed_property_args_for_string_value(key, value),
+    }
+}
+
 /// Create a new block inside an existing transaction.
 ///
 /// This is the core implementation shared by [`create_block_inner`](crate::commands::create_block_inner) (which

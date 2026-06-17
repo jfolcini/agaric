@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id FROM blocks\n                       WHERE content = ?\n                         AND block_type IN ('page', 'tag')\n                         AND deleted_at IS NULL\n                         AND space_id = ?\n                       ORDER BY id ASC\n                       LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cb135cdeb75c24a58ad9b3c4af13ebff2ae0337232e98539dc1faa7e8dbbc86f"
+}
