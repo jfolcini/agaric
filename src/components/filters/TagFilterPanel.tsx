@@ -25,11 +25,14 @@ import { usePaginatedQuery } from '@/hooks/usePaginatedQuery'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { compileTagBuilder, tagBuilderHasLeaves } from '@/lib/tagExpr'
 import type { BlockRow } from '@/lib/tauri'
 import { batchResolve, getBlock, listTagsByPrefix, queryByTags } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
+
+import { TagComposer, useTagComposerState } from './TagComposer'
 
 interface SelectedTag {
   id: string
@@ -55,6 +58,78 @@ function HighlightPrefix({ text, prefix }: { text: string; prefix: string }): Re
   )
 }
 
+/** The "N blocks match …" / "select tags" feedback line under the controls. */
+function FilterFeedback({
+  hasQuery,
+  loading,
+  resultCount,
+  flat,
+  selectedCount,
+  mode,
+}: {
+  hasQuery: boolean
+  loading: boolean
+  resultCount: number
+  /** Flat default (composer closed) — append the "(N tags, MODE)" detail. */
+  flat: boolean
+  selectedCount: number
+  mode: 'and' | 'or' | 'not'
+}): React.ReactElement | null {
+  const { t } = useTranslation()
+  if (!hasQuery) {
+    return (
+      <p className="text-sm text-muted-foreground" data-testid="tag-filter-feedback">
+        {t('tagFilter.selectTagsMessage')}
+      </p>
+    )
+  }
+  if (loading || resultCount === 0) return null
+  const matchText =
+    resultCount === 1
+      ? t('tagFilter.blockMatchOne', { count: resultCount })
+      : t('tagFilter.blockMatchMany', { count: resultCount })
+  return (
+    <p className="text-sm text-muted-foreground" data-testid="tag-filter-feedback">
+      {matchText}
+      {flat && selectedCount > 0 && (
+        <>
+          {' '}
+          {selectedCount}{' '}
+          {selectedCount === 1 ? t('tagFilter.tagSingular') : t('tagFilter.tagPlural')} (
+          {mode.toUpperCase()})
+        </>
+      )}
+    </p>
+  )
+}
+
+/** #1426 — the removable tag-prefix search pills (renders nothing when empty). */
+function PrefixPillBar({
+  prefixes,
+  onRemove,
+}: {
+  prefixes: string[]
+  onRemove: (prefix: string) => void
+}): React.ReactElement | null {
+  const { t } = useTranslation()
+  if (prefixes.length === 0) return null
+  return (
+    <div className="flex flex-wrap items-center gap-2" data-testid="tag-filter-prefix-pills">
+      <span className="text-sm text-muted-foreground">{t('tagFilter.prefixesLabel')}</span>
+      {prefixes.map((p) => (
+        <FilterPill
+          key={p}
+          label={t('tagFilter.prefixPillLabel', { prefix: p })}
+          onRemove={() => onRemove(p)}
+          removeAriaLabel={t('tagFilter.removePrefixLabel', { prefix: p })}
+          className="truncate max-w-[180px]"
+          title={p}
+        />
+      ))}
+    </div>
+  )
+}
+
 export function TagFilterPanel(): React.ReactElement {
   const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
@@ -62,6 +137,21 @@ export function TagFilterPanel(): React.ReactElement {
   const [matchingTags, setMatchingTags] = useState<MatchingTag[]>([])
   const [selectedTags, setSelectedTags] = useState<SelectedTag[]>([])
   const [mode, setMode] = useState<'and' | 'or' | 'not'>('and')
+  // #1426 — tag-prefix search pills, surfaced into the query (the panel used to
+  // hardcode `prefixes: []`). Each pill compiles to a `TagExpr::Prefix` leaf.
+  const [prefixPills, setPrefixPills] = useState<string[]>([])
+  // #1426 — opt-in single-level All/Any/None composer (mixes resolved-tag and
+  // name-prefix leaves under one combinator). When `builder` is `null` the panel
+  // runs the flat default (selected tags + prefix pills under `mode`), so
+  // nothing regresses for users who never open the composer. When set, the
+  // compiled builder params drive the query instead. The builder is constrained
+  // to exactly what the flat `query_by_tags` IPC can execute — no deep nesting
+  // or per-leaf negation, which the IPC cannot represent.
+  const {
+    builder: composer,
+    callbacks: composerCallbacks,
+    toggle: toggleComposer,
+  } = useTagComposerState()
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const resultsListRef = useRef<HTMLDivElement>(null)
@@ -104,18 +194,31 @@ export function TagFilterPanel(): React.ReactElement {
     debounced.schedule(value)
   }
 
+  // #1426 — the active query params: the compiled composer params when the
+  // composer is open and non-empty, otherwise the flat default (selected tags +
+  // prefix pills under the single `mode`). `compileTagBuilder` lowers the
+  // single-level builder LOSSLESSLY onto the flat `query_by_tags` IPC — the
+  // builder only models what the IPC can faithfully run.
+  const composerActive = composer != null && tagBuilderHasLeaves(composer)
+  const queryParams = composerActive
+    ? compileTagBuilder(composer)
+    : { tagIds: selectedTags.map((tg) => tg.id), prefixes: prefixPills, mode }
+  const hasQuery = queryParams.tagIds.length > 0 || queryParams.prefixes.length > 0
+
   // Block results via usePaginatedQuery
   const blockQueryFn = useCallback(
     (cursor?: string) =>
       queryByTags({
-        tagIds: selectedTags.map((t) => t.id),
-        prefixes: [],
-        mode,
+        tagIds: queryParams.tagIds,
+        prefixes: queryParams.prefixes,
+        mode: queryParams.mode,
         ...(cursor != null && { cursor }),
         limit: PAGINATION_LIMIT,
         spaceId: currentSpaceId,
       }),
-    [selectedTags, mode, currentSpaceId],
+    // Re-key on the serialized params so a composer/pill edit re-runs the query.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- queryParams is derived; the JSON key captures every input
+    [JSON.stringify(queryParams), currentSpaceId],
   )
 
   const {
@@ -125,14 +228,14 @@ export function TagFilterPanel(): React.ReactElement {
     loadMore,
     setItems,
   } = usePaginatedQuery(blockQueryFn, {
-    enabled: selectedTags.length > 0,
+    enabled: hasQuery,
     onError: t('tags.loadFailed'),
   })
 
-  // Clear items when all tags are removed
+  // Clear items when the query goes empty (all tags + pills removed / composer empty)
   useEffect(() => {
-    if (selectedTags.length === 0) setItems([])
-  }, [selectedTags.length, setItems])
+    if (!hasQuery) setItems([])
+  }, [hasQuery, setItems])
 
   // Resolve page titles for breadcrumbs when results change
   useEffect(() => {
@@ -169,6 +272,42 @@ export function TagFilterPanel(): React.ReactElement {
     setSelectedTags((prev) => prev.filter((t) => t.id !== tagId))
   }, [])
 
+  // ── #1426 prefix pills ───────────────────────────────────────────
+  const handleAddPrefixPill = useCallback(() => {
+    const value = prefix.trim()
+    if (!value) return
+    setPrefixPills((prev) => (prev.includes(value) ? prev : [...prev, value]))
+    setPrefix('')
+    setMatchingTags([])
+  }, [prefix])
+
+  const handleRemovePrefixPill = useCallback((value: string) => {
+    setPrefixPills((prev) => prev.filter((p) => p !== value))
+  }, [])
+
+  // Filter out already-selected tags from matching results
+  const filteredMatching = matchingTags.filter((t) => !selectedTags.some((s) => s.id === t.tag_id))
+
+  const handleSearchKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setPrefix('')
+        setMatchingTags([])
+      }
+      // #1426 — Enter promotes the typed text to a prefix pill.
+      if (e.key === 'Enter' && prefix.trim()) {
+        e.preventDefault()
+        handleAddPrefixPill()
+      }
+      if (e.key === 'ArrowDown' && filteredMatching.length > 0 && matchingTagsRef.current) {
+        e.preventDefault()
+        matchingTagsRef.current.focus()
+      }
+    },
+    [prefix, filteredMatching.length, handleAddPrefixPill],
+  )
+
   const handleResultClick = useCallback(
     async (block: BlockRow) => {
       if (block.block_type === 'page') {
@@ -186,9 +325,6 @@ export function TagFilterPanel(): React.ReactElement {
     },
     [navigateToPage, t],
   )
-
-  // Filter out already-selected tags from matching results
-  const filteredMatching = matchingTags.filter((t) => !selectedTags.some((s) => s.id === t.tag_id))
 
   // ── List keyboard navigation ─────────────────────────────────────
   const {
@@ -251,33 +387,52 @@ export function TagFilterPanel(): React.ReactElement {
 
   return (
     <div className="tag-filter-panel space-y-4">
-      <h3 className="text-sm font-semibold">{t('tagFilter.title')}</h3>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold">{t('tagFilter.title')}</h3>
+        {/* #1426 — opt into the nested And/Or/Not composer. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={toggleComposer}
+          aria-pressed={composer != null}
+          data-testid="tag-filter-composer-toggle"
+        >
+          {composer != null ? t('tagFilter.composer.hide') : t('tagFilter.composer.show')}
+        </Button>
+      </div>
 
       {/* Prefix search */}
       <div className="flex items-center gap-2">
         <SearchInput
           value={prefix}
           onChange={handlePrefixChange}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') {
-              e.preventDefault()
-              setPrefix('')
-              setMatchingTags([])
-            }
-            if (e.key === 'ArrowDown' && filteredMatching.length > 0 && matchingTagsRef.current) {
-              e.preventDefault()
-              matchingTagsRef.current.focus()
-            }
-          }}
+          onKeyDown={handleSearchKeyDown}
           placeholder={t('tagFilter.searchPlaceholder')}
           aria-label={t('tagFilter.searchLabel')}
           className="flex-1"
         />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleAddPrefixPill}
+          disabled={!prefix.trim()}
+          aria-label={t('tagFilter.addPrefixLabel')}
+        >
+          <Plus className="h-3 w-3" aria-hidden="true" />
+          {t('tagFilter.addPrefixButton')}
+        </Button>
         <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
       </div>
 
+      {/* #1426 — prefix-search pills */}
+      <PrefixPillBar prefixes={prefixPills} onRemove={handleRemovePrefixPill} />
+
+      {/* #1426 — single-level All/Any/None composer (opt-in). Replaces the flat
+          selected-tags + mode controls while open. */}
+      {composer != null && <TagComposer builder={composer} {...composerCallbacks} />}
+
       {/* Selected tags */}
-      {selectedTags.length > 0 && (
+      {composer == null && selectedTags.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm text-muted-foreground">{t('tagFilter.selectedLabel')}</span>
           {selectedTags.map((tag) => (
@@ -293,72 +448,67 @@ export function TagFilterPanel(): React.ReactElement {
         </div>
       )}
 
-      {/* AND/OR/NOT mode toggle */}
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-muted-foreground">{t('tagFilter.modeLabel')}</span>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={mode === 'and' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setMode('and')}
-              aria-pressed={mode === 'and'}
-            >
-              {t('tagFilter.andMode')}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>{t('tagFilter.andModeTooltip')}</p>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={mode === 'or' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setMode('or')}
-              aria-pressed={mode === 'or'}
-            >
-              {t('tagFilter.orMode')}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>{t('tagFilter.orModeTooltip')}</p>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={mode === 'not' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setMode('not')}
-              aria-pressed={mode === 'not'}
-            >
-              {t('tagFilter.notMode')}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>{t('tagFilter.notModeTooltip')}</p>
-          </TooltipContent>
-        </Tooltip>
-      </div>
+      {/* AND/OR/NOT mode toggle (flat default; hidden while the composer is open) */}
+      {composer == null && (
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">{t('tagFilter.modeLabel')}</span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={mode === 'and' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setMode('and')}
+                aria-pressed={mode === 'and'}
+              >
+                {t('tagFilter.andMode')}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('tagFilter.andModeTooltip')}</p>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={mode === 'or' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setMode('or')}
+                aria-pressed={mode === 'or'}
+              >
+                {t('tagFilter.orMode')}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('tagFilter.orModeTooltip')}</p>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={mode === 'not' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setMode('not')}
+                aria-pressed={mode === 'not'}
+              >
+                {t('tagFilter.notMode')}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('tagFilter.notModeTooltip')}</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      )}
 
       {/* Filter feedback summary */}
-      {selectedTags.length === 0 && (
-        <p className="text-sm text-muted-foreground" data-testid="tag-filter-feedback">
-          {t('tagFilter.selectTagsMessage')}
-        </p>
-      )}
-      {selectedTags.length > 0 && !loading && results.length > 0 && (
-        <p className="text-sm text-muted-foreground" data-testid="tag-filter-feedback">
-          {results.length === 1
-            ? t('tagFilter.blockMatchOne', { count: results.length })
-            : t('tagFilter.blockMatchMany', { count: results.length })}{' '}
-          {selectedTags.length}{' '}
-          {selectedTags.length === 1 ? t('tagFilter.tagSingular') : t('tagFilter.tagPlural')} (
-          {mode.toUpperCase()})
-        </p>
-      )}
+      <FilterFeedback
+        hasQuery={hasQuery}
+        loading={loading}
+        resultCount={results.length}
+        flat={composer == null}
+        selectedCount={selectedTags.length}
+        mode={mode}
+      />
 
       {/* Matching tags from prefix search */}
       {filteredMatching.length > 0 && (
@@ -425,7 +575,7 @@ export function TagFilterPanel(): React.ReactElement {
       )}
 
       {/* Empty results */}
-      {selectedTags.length > 0 && !loading && results.length === 0 && (
+      {hasQuery && !loading && results.length === 0 && (
         <div className="tag-filter-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
           {t('tagFilter.noMatchesFound')}
         </div>
