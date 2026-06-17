@@ -1,3 +1,5 @@
+import { substituteTemplateVariables } from '@/editor/template-variables'
+
 import { logger } from './logger'
 import type { BlockRow, CreateBlockSpec } from './tauri'
 import {
@@ -135,8 +137,14 @@ export function expandTemplateVariables(content: string, context: { pageTitle?: 
  * Insert a template's children as new blocks under the given parent.
  * Recursively copies content, ordering, and nested structure from the
  * template page's entire subtree.
- * Template variables (e.g. `<% today %>`) are expanded during insertion.
- * Returns the IDs of all created blocks.
+ *
+ * Template variables are expanded during insertion: the legacy
+ * `<% today %>` family AND the #1442 `{{date}}`/`{{date:FORMAT}}`/`{{time}}`/
+ * `{{title}}` grammar (see `src/editor/template-variables.ts`). A
+ * `{{cursor}}` marker in a block records the caret target: it is stripped
+ * from the content and, when `context.onCursorBlock` is supplied, the
+ * created block's id is reported back so the caller can focus it after the
+ * template lands. Returns the IDs of all created blocks.
  *
  * PEND-35 Tier 4.3 — replaces the per-descendant `createBlock` IPC loop
  * with a single `createBlocksBatch` call. limit-clamp-followup — the
@@ -158,7 +166,7 @@ export async function insertTemplateBlocks(
   templatePageId: string,
   parentId: string,
   spaceId: string | null,
-  context?: { pageTitle?: string },
+  context?: { pageTitle?: string; onCursorBlock?: (blockId: string) => void },
 ): Promise<string[]> {
   // Templates belong to a single space, so the descendant fetch is
   // scoped to `spaceId`. The `?? ''` fallback exists for the pre-
@@ -179,6 +187,11 @@ export async function insertTemplateBlocks(
   // as we walk so children can reference their just-pushed parent.
   type DeferredSpec = { spec: CreateBlockSpec; resolveParentFromIndex: number | null }
   const deferred: DeferredSpec[] = []
+
+  // Deferred index of the block that carried the `{{cursor}}` marker (the
+  // first one wins). Resolved to a created block id after the batch lands and
+  // reported via `context.onCursorBlock`.
+  let cursorDeferredIndex: number | null = null
 
   // Single IPC fetches every descendant of the template root (root
   // itself excluded). Group by `parent_id` and sort each sibling group
@@ -207,8 +220,15 @@ export async function insertTemplateBlocks(
     const children = childrenByParent.get(sourceParentId)
     if (!children) return
     for (const child of children) {
-      const expandedContent = expandTemplateVariables(child.content ?? '', context ?? {})
+      // Two-stage expansion: legacy `<% %>` first, then the #1442 `{{ }}`
+      // grammar (which also strips any `{{cursor}}` marker and reports it).
+      const legacyExpanded = expandTemplateVariables(child.content ?? '', context ?? {})
+      const { text: expandedContent, hasCursor } = substituteTemplateVariables(
+        legacyExpanded,
+        context?.pageTitle === undefined ? {} : { pageTitle: context.pageTitle },
+      )
       const myIndex = deferred.length
+      if (hasCursor && cursorDeferredIndex === null) cursorDeferredIndex = myIndex
       deferred.push({
         spec: {
           blockType: 'content',
@@ -299,6 +319,14 @@ export async function insertTemplateBlocks(
       // try/catch → ids accumulate as far as we got).
       break
     }
+  }
+
+  // Report the caret-target block (from a `{{cursor}}` marker) once its real
+  // id is known. Best-effort: if the cursor block's level failed to land its
+  // id stays a hole and we simply don't fire the callback.
+  if (cursorDeferredIndex !== null && context?.onCursorBlock) {
+    const cursorId = ids[cursorDeferredIndex]
+    if (typeof cursorId === 'string') context.onCursorBlock(cursorId)
   }
 
   // Filter out any holes (in case a level batch failed mid-way and

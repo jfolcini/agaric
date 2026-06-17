@@ -3765,6 +3765,19 @@ describe('PageBlockStore', () => {
       )
     })
 
+    // #1442 regression — template-variable substitution must NOT leak into the
+    // generic clipboard-paste path. A pasted literal `{{date}}` stays literal.
+    it('leaves {{date}}/{{title}} tokens literal (no template substitution)', async () => {
+      const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
+      store.setState({ blocks: [anchor] })
+      const { batches } = wireBatchAndReload([anchor])
+
+      await store.getState().pasteBlocks('A', 'Due: {{date}}\nFor {{title}}')
+
+      const specs = batches[0] as Array<{ content: string }>
+      expect(specs.map((s) => s.content)).toEqual(['Due: {{date}}', 'For {{title}}'])
+    })
+
     it('materializes a nested outline level-by-level with resolved parents', async () => {
       const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
       store.setState({ blocks: [anchor] })

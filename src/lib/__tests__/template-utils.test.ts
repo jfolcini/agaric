@@ -233,6 +233,87 @@ describe('insertTemplateBlocks', () => {
   })
 })
 
+describe('insertTemplateBlocks — {{ }} variable substitution (#1442)', () => {
+  it('expands {{date}} and {{title}} in copied template blocks', async () => {
+    const now = new Date()
+    const yyyy = now.getFullYear()
+    const mm = String(now.getMonth() + 1).padStart(2, '0')
+    const dd = String(now.getDate()).padStart(2, '0')
+    const today = `${yyyy}-${mm}-${dd}`
+
+    // load_page_subtree → two template blocks carrying {{date}} / {{title}}.
+    mockedInvoke.mockResolvedValueOnce({
+      blocks: [
+        {
+          id: 'TC1',
+          block_type: 'content',
+          content: 'Due: {{date}}',
+          parent_id: 'TMPL',
+          position: 0,
+        },
+        {
+          id: 'TC2',
+          block_type: 'content',
+          content: 'For {{title}}',
+          parent_id: 'TMPL',
+          position: 1,
+        },
+      ],
+      truncated: false,
+      total: 2,
+    })
+    // create_blocks_batch → echoes content back in input order.
+    mockedInvoke.mockResolvedValueOnce([
+      { id: 'NEW1', block_type: 'content', content: `Due: ${today}` },
+      { id: 'NEW2', block_type: 'content', content: 'For Weekly Review' },
+    ])
+
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', null, { pageTitle: 'Weekly Review' })
+
+    expect(ids).toEqual(['NEW1', 'NEW2'])
+    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
+    expect(batchCalls).toHaveLength(1)
+    const specs = (batchCalls[0]?.[1] as { specs: Array<{ content: string }> } | undefined)?.specs
+    expect(specs?.[0]?.content).toBe(`Due: ${today}`)
+    expect(specs?.[1]?.content).toBe('For Weekly Review')
+  })
+
+  it('strips {{cursor}} and reports the created block via onCursorBlock', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      blocks: [
+        { id: 'A', block_type: 'content', content: 'first', parent_id: 'TMPL', position: 0 },
+        {
+          id: 'B',
+          block_type: 'content',
+          content: 'here{{cursor}}',
+          parent_id: 'TMPL',
+          position: 1,
+        },
+      ],
+      truncated: false,
+      total: 2,
+    })
+    mockedInvoke.mockResolvedValueOnce([
+      { id: 'NEW_A', block_type: 'content', content: 'first' },
+      { id: 'NEW_B', block_type: 'content', content: 'here' },
+    ])
+
+    let cursorBlockId: string | null = null
+    await insertTemplateBlocks('TMPL', 'PARENT', null, {
+      onCursorBlock: (blockId) => {
+        cursorBlockId = blockId
+      },
+    })
+
+    // The marker block's created id is reported, and the marker is stripped
+    // from the inserted content.
+    expect(cursorBlockId).toBe('NEW_B')
+    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
+    const specs = (batchCalls[0]?.[1] as { specs: Array<{ content: string }> } | undefined)?.specs
+    expect(specs?.[1]?.content).toBe('here')
+  })
+})
+
 describe('loadJournalTemplate', () => {
   it('returns the journal template page when it exists', async () => {
     mockedInvoke.mockResolvedValueOnce({
