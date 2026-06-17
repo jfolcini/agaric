@@ -40,6 +40,7 @@ use crate::domain::search_types::{
 };
 use crate::error::AppError;
 use crate::error::validation_code::{INVALID_DATE_FILTER, prefixed};
+use crate::filters::primitive::LastEditedSpec;
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
 
 /// Pre-validated metadata predicates ready for SQL composition.
@@ -88,6 +89,16 @@ pub struct MetadataPredicates {
     /// AND-joined exclude property predicates. Each entry becomes one
     /// `NOT EXISTS (...)` sub-select.
     pub property_excludes: Vec<SearchPropertyFilter>,
+    /// #1320-C — resolved `last-edited:` time-window predicate. `None`
+    /// means "no filter". Unlike the other fields here, this one is NOT
+    /// emitted by `append_metadata_sql` — it is compiled through
+    /// `SearchProjection::compile_last_edited` and spliced via the
+    /// builder's `add_last_edited_via_projection` (the projection emits
+    /// hardcoded `b.id` references, so it bypasses the alias-parameterised
+    /// metadata SQL). Carried on this bundle purely so it threads through
+    /// every search surface (FTS / regex / filter-only / partitioned)
+    /// alongside the rest of the metadata, with no new function signatures.
+    pub last_edited: Option<LastEditedSpec>,
 }
 
 /// Resolved date predicate ready for SQL composition.
@@ -159,6 +170,7 @@ impl MetadataPredicates {
             && self.scheduled.is_none()
             && self.property_includes.is_empty()
             && self.property_excludes.is_empty()
+            && self.last_edited.is_none()
     }
 }
 
@@ -248,6 +260,14 @@ pub fn prepare_metadata_with_today(
     // handles the EXISTS / NOT EXISTS construction.
     out.property_includes = filter.property_filters.clone();
     out.property_excludes = filter.excluded_property_filters.clone();
+
+    // #1320-C — `last-edited:` window. Carried verbatim; the builder
+    // splices it through `SearchProjection::compile_last_edited`. Unlike the
+    // pages-view path (which runs `validate_last_edited_date`), the search
+    // path does NOT pre-validate the bounds: `compile_last_edited`'s `to_ms`
+    // debug-asserts and falls back to `0` on a malformed bound (release: an
+    // empty result; never an injection — the bound is always a bound `?`).
+    out.last_edited = filter.last_edited.clone();
 
     Ok(out)
 }

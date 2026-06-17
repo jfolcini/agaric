@@ -3716,6 +3716,272 @@ async fn search_fts_nonexistent_space_returns_empty() {
 }
 
 // ======================================================================
+// #1320-C — `last-edited:` window filter (routed through
+// `SearchProjection::compile_last_edited` via the builder's
+// `add_last_edited_via_projection` splice).
+// ======================================================================
+
+/// Append one `op_log` row pinning a block's last-edit timestamp.
+///
+/// `compile_last_edited` compares `COALESCE(MAX(op_log.created_at WHERE
+/// block_id = b.id), 0)` (epoch-ms, migration 0079) against a rolling /
+/// absolute boundary, so the only column that matters for these tests is
+/// `created_at`. The remaining NOT-NULL columns get inert placeholders;
+/// `seq` is unique per call so the `(device_id, seq)` PK never collides.
+async fn insert_op_log_at(pool: &SqlitePool, block_id: &str, seq: i64, created_at_ms: i64) {
+    sqlx::query(
+        "INSERT INTO op_log \
+         (device_id, seq, hash, op_type, payload, created_at, block_id) \
+         VALUES ('test-device', ?, 'h' || ?, 'edit_block', '{}', ?, ?)",
+    )
+    .bind(seq)
+    .bind(seq)
+    .bind(created_at_ms)
+    .bind(block_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// epoch-ms `n` days before `now`.
+fn ms_days_ago(days: i64) -> i64 {
+    (chrono::Utc::now() - chrono::Duration::days(days)).timestamp_millis()
+}
+
+fn last_edited_meta(
+    spec: crate::filters::primitive::LastEditedSpec,
+) -> crate::fts::metadata_filter::MetadataPredicates {
+    crate::fts::metadata_filter::MetadataPredicates {
+        last_edited: Some(spec),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn search_last_edited_rolling_returns_only_in_window_blocks() {
+    use crate::filters::primitive::LastEditedSpec;
+    let (pool, _dir) = test_pool().await;
+
+    // Three blocks sharing the keyword, edited 1 / 10 / 100 days ago.
+    insert_block(&pool, BLOCK_A, "content", "rolling needle", None, Some(0)).await;
+    insert_block(&pool, BLOCK_B, "content", "rolling needle", None, Some(1)).await;
+    insert_block(&pool, BLOCK_C, "content", "rolling needle", None, Some(2)).await;
+    insert_op_log_at(&pool, BLOCK_A, 1, ms_days_ago(1)).await;
+    insert_op_log_at(&pool, BLOCK_B, 2, ms_days_ago(10)).await;
+    insert_op_log_at(&pool, BLOCK_C, 3, ms_days_ago(100)).await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+
+    // Rolling 7d — only the 1-day-old block is in-window.
+    let resp = search_fts(
+        &pool,
+        "needle",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &last_edited_meta(LastEditedSpec::Rolling { days: 7 }),
+        None,
+    )
+    .await
+    .unwrap();
+    let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, vec![BLOCK_A], "Rolling{{7}} must return only BLOCK_A");
+
+    // Rolling 30d — BLOCK_A (1d) and BLOCK_B (10d), not BLOCK_C (100d).
+    let resp = search_fts(
+        &pool,
+        "needle",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &last_edited_meta(LastEditedSpec::Rolling { days: 30 }),
+        None,
+    )
+    .await
+    .unwrap();
+    let mut ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(
+        ids,
+        vec![BLOCK_A, BLOCK_B],
+        "Rolling{{30}} must return BLOCK_A + BLOCK_B, exclude the 100d-old BLOCK_C"
+    );
+
+    // No filter (default metadata) — all three blocks.
+    let resp = search_fts(
+        &pool,
+        "needle",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        resp.items.len(),
+        3,
+        "no last_edited filter must surface all three matches"
+    );
+}
+
+#[tokio::test]
+async fn search_last_edited_older_than_returns_only_stale_blocks() {
+    use crate::filters::primitive::LastEditedSpec;
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, BLOCK_A, "content", "older needle", None, Some(0)).await;
+    insert_block(&pool, BLOCK_B, "content", "older needle", None, Some(1)).await;
+    insert_op_log_at(&pool, BLOCK_A, 1, ms_days_ago(2)).await; // recent
+    insert_op_log_at(&pool, BLOCK_B, 2, ms_days_ago(90)).await; // stale
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+
+    // OlderThan 30d — only the 90-day-old block.
+    let resp = search_fts(
+        &pool,
+        "needle",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &last_edited_meta(LastEditedSpec::OlderThan { days: 30 }),
+        None,
+    )
+    .await
+    .unwrap();
+    let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![BLOCK_B],
+        "OlderThan{{30}} must return only the stale BLOCK_B"
+    );
+}
+
+#[tokio::test]
+async fn search_last_edited_range_returns_only_blocks_inside_window() {
+    use crate::filters::primitive::LastEditedSpec;
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, BLOCK_A, "content", "range needle", None, Some(0)).await;
+    insert_block(&pool, BLOCK_B, "content", "range needle", None, Some(1)).await;
+    insert_block(&pool, BLOCK_C, "content", "range needle", None, Some(2)).await;
+    insert_op_log_at(&pool, BLOCK_A, 1, ms_days_ago(5)).await; // inside
+    insert_op_log_at(&pool, BLOCK_B, 2, ms_days_ago(40)).await; // before start
+    insert_op_log_at(&pool, BLOCK_C, 3, ms_days_ago(1)).await; // after end
+    rebuild_fts_index(&pool).await.unwrap();
+
+    // Window: [10 days ago, 3 days ago] (inclusive calendar days).
+    let start = (chrono::Utc::now() - chrono::Duration::days(10))
+        .format("%Y-%m-%d")
+        .to_string();
+    let end = (chrono::Utc::now() - chrono::Duration::days(3))
+        .format("%Y-%m-%d")
+        .to_string();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let resp = search_fts(
+        &pool,
+        "needle",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &last_edited_meta(LastEditedSpec::Range { start, end }),
+        None,
+    )
+    .await
+    .unwrap();
+    let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![BLOCK_A],
+        "Range must return only the in-window BLOCK_A (BLOCK_B before start, BLOCK_C after end)"
+    );
+}
+
+#[tokio::test]
+async fn search_last_edited_no_op_log_block_excluded_from_rolling() {
+    use crate::filters::primitive::LastEditedSpec;
+    let (pool, _dir) = test_pool().await;
+
+    // BLOCK_A has a recent op-log; BLOCK_B has NONE → its
+    // COALESCE(MAX(...), 0) is the epoch sentinel, far in the past, so a
+    // Rolling window must exclude it (the PEND-58d D7 no-op-log rule).
+    insert_block(&pool, BLOCK_A, "content", "coalesce needle", None, Some(0)).await;
+    insert_block(&pool, BLOCK_B, "content", "coalesce needle", None, Some(1)).await;
+    insert_op_log_at(&pool, BLOCK_A, 1, ms_days_ago(1)).await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let resp = search_fts(
+        &pool,
+        "needle",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &last_edited_meta(LastEditedSpec::Rolling { days: 7 }),
+        None,
+    )
+    .await
+    .unwrap();
+    let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![BLOCK_A],
+        "no-op-log block (epoch sentinel) must be excluded from a Rolling window"
+    );
+
+    // OlderThan must INCLUDE the no-op-log block (epoch < now-N).
+    let resp = search_fts(
+        &pool,
+        "needle",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &last_edited_meta(LastEditedSpec::OlderThan { days: 7 }),
+        None,
+    )
+    .await
+    .unwrap();
+    let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![BLOCK_B],
+        "no-op-log block (epoch sentinel) must be INCLUDED by OlderThan"
+    );
+}
+
+// ======================================================================
 // PEND-20 D — Chunked rebuild_fts_index regression test
 // ======================================================================
 //
@@ -5494,6 +5760,9 @@ async fn partitioned_all_filters_populated_executes_cleanly() {
         }],
         excluded_state_filter: vec!["DONE".to_string()],
         excluded_priority_filter: vec!["C".to_string()],
+        // #1320-C — exercise the `last-edited:` projection splice in the
+        // partitioned builder alongside every other filter clause.
+        last_edited: Some(crate::filters::primitive::LastEditedSpec::Rolling { days: 7 }),
     };
 
     // The corpus deliberately does NOT match all of these predicates —

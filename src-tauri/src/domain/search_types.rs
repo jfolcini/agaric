@@ -16,6 +16,8 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::filters::primitive::LastEditedSpec;
+
 /// PEND-53 — Date-filter shape used by [`SearchFilter::due_filter`] /
 /// [`SearchFilter::scheduled_filter`].
 ///
@@ -253,6 +255,18 @@ pub struct SearchFilter {
     /// [`Self::excluded_state_filter`].
     #[serde(default)]
     pub excluded_priority_filter: Vec<String>,
+    /// #1320-C — `last-edited:` time-window predicate. Resolved against
+    /// each block's last `op_log.created_at` (epoch-ms `MAX(...)`,
+    /// COALESCE'd to the epoch sentinel for blocks with no op-log row).
+    /// `None` (the default) preserves the existing "no filter" behaviour.
+    /// Compiled through [`crate::filters::primitive::SearchProjection`]
+    /// (`compile_last_edited`) and spliced into the dynamic FTS WHERE via
+    /// the [`crate::fts::filter_builder`] projection routing — see the
+    /// `add_last_edited_via_projection` splice. `#[serde(default)]` keeps
+    /// the wire shape additive: pre-#1320-C frontends omit the field and
+    /// observe today's behaviour unchanged.
+    #[serde(default)]
+    pub last_edited: Option<LastEditedSpec>,
 }
 
 /// Match span emitted by the PEND-55 toggle pipeline.

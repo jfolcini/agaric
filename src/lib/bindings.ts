@@ -2354,6 +2354,19 @@ export type SearchFilter = {
 	 *  [`Self::excluded_state_filter`].
 	 */
 	excludedPriorityFilter?: string[],
+	/**
+	 *  #1320-C — `last-edited:` time-window predicate. Resolved against
+	 *  each block's last `op_log.created_at` (epoch-ms `MAX(...)`,
+	 *  COALESCE'd to the epoch sentinel for blocks with no op-log row).
+	 *  `None` (the default) preserves the existing "no filter" behaviour.
+	 *  Compiled through [`crate::filters::primitive::SearchProjection`]
+	 *  (`compile_last_edited`) and spliced into the dynamic FTS WHERE via
+	 *  the [`crate::fts::filter_builder`] projection routing — see the
+	 *  `add_last_edited_via_projection` splice. `#[serde(default)]` keeps
+	 *  the wire shape additive: pre-#1320-C frontends omit the field and
+	 *  observe today's behaviour unchanged.
+	 */
+	lastEdited?: LastEditedSpec | null,
 };
 
 /**
