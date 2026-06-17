@@ -1223,6 +1223,27 @@ impl Projection for SearchProjection {
     fn compile_priority(&self, priority: &str) -> WhereClause {
         WhereClause::new("b.priority = ?", vec![Bind::Text(priority.to_string())])
     }
+    // #1280 B2 — the search metadata leaves (`state:` / `block-type:` /
+    // `due-date:` / `scheduled:`) DELEGATE to the canonical `PagesProjection`
+    // SQL (merged in A2), exactly as `compile_space` / `compile_has_property`
+    // already delegate. The A2 SQL was authored byte-shape-identical to the
+    // legacy FTS metadata oracle (`fts::metadata_filter::append_text_in_or_null`
+    // / `append_text_not_in_or_not_null` / `append_date_predicate`, column
+    // alias `b`), so routing the FTS path through these is a zero-behaviour-
+    // change cutover. Both projections use the `b` alias, so the fragment is
+    // alias-compatible verbatim — no rewrite needed.
+    fn compile_state(&self, values: &[String], is_null: bool, exclude: bool) -> WhereClause {
+        PagesProjection.compile_state(values, is_null, exclude)
+    }
+    fn compile_block_type(&self, values: &[String], exclude: bool) -> WhereClause {
+        PagesProjection.compile_block_type(values, exclude)
+    }
+    fn compile_due_date(&self, predicate: &DatePredicate) -> WhereClause {
+        PagesProjection.compile_due_date(predicate)
+    }
+    fn compile_scheduled(&self, predicate: &DatePredicate) -> WhereClause {
+        PagesProjection.compile_scheduled(predicate)
+    }
     fn compile_regex(&self, pattern: &str) -> WhereClause {
         // Search uses a post-FTS regex pass. Phase 2 wires this to the
         // existing `is_regex` path in `fts::search`.

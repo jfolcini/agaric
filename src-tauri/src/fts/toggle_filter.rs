@@ -862,7 +862,8 @@ async fn regex_mode_query(
     // cap. NOTE: emitted AFTER metadata in this builder (the FTS builder
     // emits it before) — the builder records each fragment's binds in
     // call order, so this ordering difference stays self-consistent.
-    fb.add_block_type(PREFIX, block_type_filter);
+    // #1280 B2 — routed through `SearchProjection::compile_block_type`.
+    fb.add_block_type_via_projection(PREFIX, block_type_filter);
 
     sql.push_str(fb.sql());
 
@@ -1096,7 +1097,8 @@ async fn filter_only_scan(
     // PEND-53 — metadata predicates (same shape as `regex_mode_query`).
     fb.add_metadata(metadata, "b");
 
-    fb.add_block_type(PREFIX, block_type_filter);
+    // #1280 B2 — routed through `SearchProjection::compile_block_type`.
+    fb.add_block_type_via_projection(PREFIX, block_type_filter);
 
     // id-DESC cursor pagination — ULID prefixes sort lexicographically by
     // recency, so `b.id < ?` resumes strictly after the previous page's
