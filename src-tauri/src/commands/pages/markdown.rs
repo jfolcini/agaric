@@ -366,6 +366,39 @@ pub async fn export_page_markdown_inner(
         })
         .collect();
 
+    // 4b. (#1433) Read the page's aliases and tag names for frontmatter.
+    //
+    // Aliases come straight from `page_aliases`, sorted alphabetically so
+    // the exported sequence is deterministic (mirrors
+    // `get_page_aliases_inner`'s `ORDER BY alias`). Read through the #660
+    // snapshot tx so they observe the same consistent state as the rest of
+    // the export.
+    let aliases: Vec<String> = sqlx::query_scalar!(
+        "SELECT alias FROM page_aliases WHERE page_id = ?1 ORDER BY alias",
+        page_id,
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+
+    // Tags are the tag blocks explicitly associated with the page block via
+    // `block_tags`; the human-readable NAME is the tag block's `content`.
+    // We emit names (not ULIDs). NULL-content tag blocks are skipped, and
+    // the results are ordered by name (NOCASE, matching the `tags_cache`
+    // UNIQUE index collation) then id for a stable, reproducible sequence.
+    let tag_names_fm: Vec<String> = sqlx::query_scalar!(
+        r#"SELECT t.content AS "content!"
+             FROM block_tags bt
+             JOIN blocks t ON t.id = bt.tag_id
+            WHERE bt.block_id = ?1
+              AND t.block_type = 'tag'
+              AND t.deleted_at IS NULL
+              AND t.content IS NOT NULL
+            ORDER BY t.content COLLATE NOCASE ASC, t.id ASC"#,
+        page_id,
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+
     // #660 — all reads are done; release the snapshot tx. A read-only
     // `BEGIN DEFERRED` tx takes no writer lock, so the `commit` here is
     // effectively a rollback (nothing was written); committing rather
@@ -380,9 +413,99 @@ pub async fn export_page_markdown_inner(
     let title = page.content.unwrap_or_else(|| "Untitled".to_string());
     output.push_str(&format!("# {title}\n\n"));
 
-    // Frontmatter (if properties exist)
-    if !properties.is_empty() {
+    // Frontmatter (if properties, aliases, or tags exist)
+    //
+    // (#1433) `aliases`/`tags` are emitted as YAML *flow sequences*
+    // (`[a, b]`). An item is emitted *bare* only when it is unambiguously a
+    // plain string in flow context — i.e. it does not look like a YAML
+    // scalar token (`true`/`null`/a number/etc.), does not start with a YAML
+    // indicator, has no surrounding whitespace, and contains no
+    // flow-significant or control characters. Anything else is emitted as a
+    // YAML double-quoted scalar with `\`, `"` and all control characters
+    // (`\n`, `\t`, `\r`, and `\xNN` for the rest) escaped, which is valid for
+    // *any* string. Legacy scalar property values keep their verbatim
+    // emission below.
+    fn yaml_looks_like_special_token(s: &str) -> bool {
+        // YAML 1.1 boolean / null tokens (the common spellings parsers accept).
+        const RESERVED: &[&str] = &[
+            "null", "Null", "NULL", "~", "true", "True", "TRUE", "false", "False", "FALSE", "yes",
+            "Yes", "YES", "no", "No", "NO", "on", "On", "ON", "off", "Off", "OFF",
+        ];
+        if RESERVED.contains(&s) {
+            return true;
+        }
+        // Numeric-looking scalars (int / float / hex / octal / inf / nan).
+        // A bare numeric value would round-trip as a number, not a string, so
+        // we quote it. Be conservative: any token that parses as i64 or f64,
+        // or matches the common hex / sexagesimal-free special forms.
+        if s.parse::<i64>().is_ok() || s.parse::<f64>().is_ok() {
+            return true;
+        }
+        matches!(
+            s,
+            ".inf" | ".Inf" | ".INF" | "-.inf" | "+.inf" | ".nan" | ".NaN" | ".NAN"
+        ) || s
+            .strip_prefix("0x")
+            .is_some_and(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_hexdigit() || c == '_'))
+            || s.strip_prefix("0o").is_some_and(|o| {
+                !o.is_empty() && o.chars().all(|c| ('0'..='7').contains(&c) || c == '_')
+            })
+    }
+    fn yaml_flow_item(s: &str) -> String {
+        let plain_safe = !s.is_empty()
+            && s == s.trim()
+            && !yaml_looks_like_special_token(s)
+            // First char must not be a YAML indicator that changes meaning.
+            && !s.starts_with([
+                '-', '?', ':', ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', '\'', '"',
+                '%', '@', '`', ' ',
+            ])
+            // No flow-significant, comment, mapping, or control characters.
+            && s.chars().all(|c| {
+                !matches!(c, ',' | '[' | ']' | '{' | '}' | ':' | '#' | '"' | '\'')
+                    && !c.is_control()
+            });
+        if plain_safe {
+            return s.to_string();
+        }
+        let mut escaped = String::with_capacity(s.len() + 2);
+        escaped.push('"');
+        for c in s.chars() {
+            match c {
+                '\\' => escaped.push_str("\\\\"),
+                '"' => escaped.push_str("\\\""),
+                '\n' => escaped.push_str("\\n"),
+                '\t' => escaped.push_str("\\t"),
+                '\r' => escaped.push_str("\\r"),
+                c if c.is_control() => {
+                    // YAML double-quoted escapes: `\xNN` (8-bit) covers C0 and
+                    // DEL; C1 controls (U+0080..=U+009F) need `\uNNNN`.
+                    let cp = c as u32;
+                    if cp <= 0xFF {
+                        escaped.push_str(&format!("\\x{cp:02X}"));
+                    } else {
+                        escaped.push_str(&format!("\\u{cp:04X}"));
+                    }
+                }
+                c => escaped.push(c),
+            }
+        }
+        escaped.push('"');
+        escaped
+    }
+    fn yaml_flow_sequence(items: &[String]) -> String {
+        let inner: Vec<String> = items.iter().map(|s| yaml_flow_item(s)).collect();
+        format!("[{}]", inner.join(", "))
+    }
+
+    if !properties.is_empty() || !aliases.is_empty() || !tag_names_fm.is_empty() {
         output.push_str("---\n");
+        if !aliases.is_empty() {
+            output.push_str(&format!("aliases: {}\n", yaml_flow_sequence(&aliases)));
+        }
+        if !tag_names_fm.is_empty() {
+            output.push_str(&format!("tags: {}\n", yaml_flow_sequence(&tag_names_fm)));
+        }
         for prop in &properties {
             // Precedence: date, then text, then ref (resolved to page title
             // or raw ULID), then numeric, then bool. A `block_properties` row
