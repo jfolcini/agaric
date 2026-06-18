@@ -123,25 +123,24 @@ export const BlockRef = Node.create<BlockRefOptions>({
 
   addKeyboardShortcuts() {
     return {
-      // B-66: Backspace on a block_ref chip re-expands it to ((content text,
-      // letting the suggestion plugin reopen for editing the reference.
+      // B-66 (#1739): Backspace immediately after a block_ref chip deletes the
+      // whole chip atom in one keystroke. We do NOT re-expand it to `((content`
+      // text: the `((` suggestion plugin only reopens when the user types the
+      // trigger char, not when it is inserted programmatically, so re-inserting
+      // plain text would leave an inert `((content` string (with a dangling open
+      // bracket) behind. Deleting cleanly is the honest behaviour; the user can
+      // retype `((` to open the picker again. (Matches tag_ref / block_link.)
       Backspace: () => {
-        const { $from } = this.editor.state.selection
+        const { selection } = this.editor.state
+        if (!selection.empty) return false
+        const { $from } = selection
         const nodeBefore = $from.nodeBefore
         if (!nodeBefore || nodeBefore.type.name !== 'block_ref') return false
 
-        const id = nodeBefore.attrs['id'] as string
-        const content = this.options.resolveContent(id)
-        const nodeSize = nodeBefore.nodeSize
-        const from = $from.pos - nodeSize
+        const from = $from.pos - nodeBefore.nodeSize
         const to = $from.pos
 
-        this.editor
-          .chain()
-          .focus()
-          .deleteRange({ from, to })
-          .insertContentAt(from, `((${content}`)
-          .run()
+        this.editor.chain().focus().deleteRange({ from, to }).run()
 
         return true
       },

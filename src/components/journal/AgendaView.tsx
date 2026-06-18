@@ -31,15 +31,40 @@ interface AgendaViewProps {
   onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
 }
 
+// Default agenda filter — active task states (TODO + DOING) so the agenda
+// opens (and "Clear filters" returns) to actionable items only, with DONE
+// hidden (UX-196, #1744). A fresh array per build keeps the React state
+// reference stable while never sharing a mutable instance across renders.
+const makeDefaultAgendaFilters = (): AgendaFilter[] => [
+  { dimension: 'status', values: ['TODO', 'DOING'] },
+]
+
+// Whether the current filters differ from the default view. Drives the
+// "Clear filters" affordance and the empty-state copy ("No matches" +
+// Clear vs. "No tasks"): a user sitting on the untouched default with no
+// results should see "No tasks", not be offered a Clear that does nothing
+// new (#1744).
+const isNonDefaultAgendaFilters = (filters: AgendaFilter[]): boolean => {
+  const def = makeDefaultAgendaFilters()
+  if (filters.length !== def.length) return true
+  return filters.some((f, i) => {
+    const d = def[i]
+    return (
+      d === undefined ||
+      f.dimension !== d.dimension ||
+      f.values.length !== d.values.length ||
+      f.values.some((v, j) => v !== d.values[j])
+    )
+  })
+}
+
 export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactElement {
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   // ── Agenda filter state ────────────────────────────────────────────
   // Default to active task states (TODO + DOING) so the agenda opens with
   // actionable items only — DONE is hidden until the user clears the filter
   // or adds their own status filter (UX-196).
-  const [agendaFilters, setAgendaFilters] = useState<AgendaFilter[]>([
-    { dimension: 'status', values: ['TODO', 'DOING'] },
-  ])
+  const [agendaFilters, setAgendaFilters] = useState<AgendaFilter[]>(makeDefaultAgendaFilters)
   const [filteredBlocks, setFilteredBlocks] = useState<BlockRow[]>([])
   const [agendaLoading, setAgendaLoading] = useState(false)
   // #1345 — the initial-query failure used to be swallowed (logged + empty
@@ -174,8 +199,8 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
         hasMore={agendaHasMore}
         onLoadMore={loadMoreAgenda}
         onNavigateToPage={onNavigateToPage}
-        hasActiveFilters={agendaFilters.length > 0}
-        onClearFilters={() => setAgendaFilters([])}
+        hasActiveFilters={isNonDefaultAgendaFilters(agendaFilters)}
+        onClearFilters={() => setAgendaFilters(makeDefaultAgendaFilters())}
         pageTitles={agendaPageTitles}
         groupBy={agendaGroupBy}
         sortBy={agendaSortBy}

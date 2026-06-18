@@ -42,7 +42,7 @@ Five inline pickers share one mechanism (`src/editor/extensions/picker-plugin.ts
 
 **Capture before await.** Every picker captures `insertPos = editor.state.selection.from` BEFORE its async IPC call. After the await, if `insertPos > editor.state.doc.content.size` (the doc shrank), it falls back to inserting at the current cursor. This is the documented contract; missing the guard is a classic stale-position bug.
 
-**Chip re-expansion.** Pressing `Backspace` immediately after a picker-inserted chip re-expands the chip to its source text (`@projects`, `[[Roadmap]]`) for further editing. The `tag-ref` / `block-link` / `block-ref` node types implement the re-expansion on `Backspace`.
+**Chip deletion.** Pressing `Backspace` immediately after a picker-inserted chip deletes the whole chip atom in one keystroke. The `tag-ref` / `block-link` / `block-ref` node types implement this on `Backspace`. (It does not re-expand to source text: the `@` / `[[` / `((` suggestion plugins only reopen on a user-typed trigger char, so re-inserting text would leave an inert string behind — the user retypes the trigger to open the picker again.)
 
 ## Auto-split on blur
 

@@ -246,6 +246,14 @@ export function GraphView(): React.ReactElement {
 
   const localActive = localMode && seedPageId !== null
 
+  // #1752: when the active tab loses its page (seed becomes `null`), clear
+  // local-graph mode in state. Otherwise the boolean lingers as `true` —
+  // visually inert while there's no seed, but silently reactivating the
+  // moment a page reopens. Resetting forces a deliberate re-entry instead.
+  useEffect(() => {
+    if (seedPageId === null && localMode) setLocalMode(false)
+  }, [seedPageId, localMode])
+
   const { displayNodes, displayEdges } = useMemo(() => {
     if (!localActive || seedPageId === null) {
       return { displayNodes: filteredNodes, displayEdges: filteredEdges }

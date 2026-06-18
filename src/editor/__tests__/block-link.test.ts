@@ -2,7 +2,11 @@
  * Tests for the BlockLink extension.
  */
 
-import { describe, expect, it } from 'vitest'
+import { Editor } from '@tiptap/core'
+import Document from '@tiptap/extension-document'
+import Paragraph from '@tiptap/extension-paragraph'
+import Text from '@tiptap/extension-text'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { BlockLink } from '../extensions/block-link'
 
@@ -41,19 +45,78 @@ describe('BlockLink', () => {
   })
 })
 
-describe('BlockLink Backspace re-expand (H-14)', () => {
-  it('registers Backspace keyboard shortcut', () => {
-    const ext = BlockLink.configure({
-      resolveTitle: (id) => `Title:${id}`,
+describe('BlockLink Backspace deletes the chip cleanly (#1739)', () => {
+  let editor: Editor
+
+  afterEach(() => {
+    editor?.destroy()
+  })
+
+  function createEditor(content: Record<string, unknown>): Editor {
+    return new Editor({
+      element: document.createElement('div'),
+      extensions: [
+        Document,
+        Paragraph,
+        Text,
+        BlockLink.configure({ resolveTitle: (id: string) => `[[${id}]]` }),
+      ],
+      content,
     })
+  }
+
+  it('registers a Backspace keyboard shortcut', () => {
+    const ext = BlockLink.configure({ resolveTitle: (id) => `Title:${id}` })
     expect(ext.config.addKeyboardShortcuts).toBeDefined()
   })
 
-  it('uses resolveTitle to get the display name for re-expansion', () => {
-    const resolveTitle = (_id: string) => `My Page Title`
-    const ext = BlockLink.configure({ resolveTitle })
-    // Verify the option is available (keyboard shortcut uses it internally)
-    expect(ext.options.resolveTitle('any-id')).toBe('My Page Title')
+  it('removes the whole chip and leaves NO inert [[title text behind', () => {
+    editor = createEditor({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'block_link', attrs: { id: 'ROADMAP' } }],
+        },
+      ],
+    })
+
+    // Sanity: chip is mounted before Backspace.
+    expect(editor.view.dom.querySelector('[data-type="block-link"]')).not.toBeNull()
+
+    // Place the caret immediately after the chip, then fire Backspace.
+    editor.commands.setTextSelection(editor.state.doc.content.size)
+    const handled = editor.view.someProp('handleKeyDown', (f) =>
+      f(editor.view, new KeyboardEvent('keydown', { key: 'Backspace' })),
+    )
+
+    expect(handled).toBe(true)
+    // Chip is gone...
+    expect(editor.view.dom.querySelector('[data-type="block-link"]')).toBeNull()
+    // ...and no block_link node remains in the doc...
+    let hasBlockLink = false
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === 'block_link') hasBlockLink = true
+    })
+    expect(hasBlockLink).toBe(false)
+    // ...and crucially, no inert "[[title" text (with dangling bracket) remains.
+    expect(editor.getText()).toBe('')
+  })
+
+  it('does nothing when the caret is not immediately after a chip', () => {
+    editor = createEditor({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }],
+    })
+
+    editor.commands.setTextSelection(editor.state.doc.content.size)
+    const handled = editor.view.someProp('handleKeyDown', (f) =>
+      f(editor.view, new KeyboardEvent('keydown', { key: 'Backspace' })),
+    )
+
+    // Our chip handler does not claim the key (returns false); ProseMirror's
+    // someProp resolves to undefined when no registered handler returns true.
+    expect(handled).toBeFalsy()
   })
 })
 

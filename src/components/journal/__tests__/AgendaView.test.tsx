@@ -514,8 +514,11 @@ describe('AgendaView', () => {
     })
   })
 
-  // 9. Clear filters resets to empty filter array
-  it('clearing filters resets to empty array', async () => {
+  // 9. #1744 — "Clear filters" restores the DEFAULT view (TODO + DOING),
+  // NOT an empty filter array (which would broaden to the completed-
+  // inclusive unfiltered superset). The label means "neutral reset to
+  // default", so DONE must stay excluded after a clear.
+  it('clearing filters restores the default TODO+DOING view (not an unfiltered superset)', async () => {
     mockedExecuteAgendaFilters.mockResolvedValue({
       blocks: [],
       hasMore: false,
@@ -528,7 +531,7 @@ describe('AgendaView', () => {
       expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-loading', 'false')
     })
 
-    // First add a filter
+    // First narrow to a non-default filter so "Clear filters" is offered.
     filterChangeRef.current?.([{ dimension: 'status', values: ['TODO'] }])
 
     await waitFor(() => {
@@ -538,7 +541,7 @@ describe('AgendaView', () => {
       )
     })
 
-    // Now clear filters via AgendaResults callback
+    // Now clear filters via AgendaResults callback.
     mockedExecuteAgendaFilters.mockResolvedValueOnce({
       blocks: [],
       hasMore: false,
@@ -548,12 +551,24 @@ describe('AgendaView', () => {
     clearFiltersRef.current?.()
 
     await waitFor(() => {
+      // Clear restores the default (a single TODO+DOING status filter), so
+      // the view is no longer "actively filtered" beyond the default…
       expect(screen.getByTestId('agenda-results')).toHaveAttribute(
         'data-has-active-filters',
         'false',
       )
-      expect(screen.getByTestId('agenda-filter-builder')).toHaveAttribute('data-filter-count', '0')
+      // …but the filter is NOT emptied — the default chip remains.
+      expect(screen.getByTestId('agenda-filter-builder')).toHaveAttribute('data-filter-count', '1')
     })
+
+    // The fetch after clear must re-run with the default TODO+DOING filter
+    // (DONE excluded), NOT an empty array (which would route to the
+    // completed-inclusive unfiltered superset, #1744).
+    expect(mockedExecuteAgendaFilters).toHaveBeenLastCalledWith(
+      [{ dimension: 'status', values: ['TODO', 'DOING'] }],
+      null,
+    )
+    expect(mockedExecuteAgendaFilters).not.toHaveBeenLastCalledWith([], null)
   })
 
   // 10. Load more — with active filters, routes through loadMoreAgendaFilters
@@ -612,8 +627,11 @@ describe('AgendaView', () => {
   // which resumes the merged due/scheduled/undated windows from the
   // composite cursor minted by executeAgendaFilters (#721).
   it('load more routes through loadMoreUnfilteredAgenda when no filters are active', async () => {
-    // First mount with default TODO+DOING filter, then clear it so the
-    // default-unfiltered branch is exercised on load-more.
+    // First mount with the default TODO+DOING filter, then have the user
+    // remove every filter chip (builder emits []) so the unfiltered branch
+    // is exercised on load-more. #1744 — "Clear filters" no longer empties
+    // the filter (it restores the default), so the only path into the
+    // no-filter branch is the filter builder emptying out.
     mockedExecuteAgendaFilters.mockResolvedValue({
       blocks: [makeBlock({ id: 'B1' })],
       hasMore: true,
@@ -626,15 +644,12 @@ describe('AgendaView', () => {
       expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-has-more', 'true')
     })
 
-    // Clear filters via AgendaResults' clearFilters callback — this is
-    // the only way the FE drops into the no-filter branch.
-    clearFiltersRef.current?.()
+    // User clears all filter chips via the filter builder → empty filters →
+    // no-filter (unfiltered superset) branch.
+    filterChangeRef.current?.([])
 
     await waitFor(() => {
-      expect(screen.getByTestId('agenda-results')).toHaveAttribute(
-        'data-has-active-filters',
-        'false',
-      )
+      expect(screen.getByTestId('agenda-filter-builder')).toHaveAttribute('data-filter-count', '0')
     })
 
     mockedLoadMoreUnfilteredAgenda.mockResolvedValueOnce({
@@ -701,7 +716,10 @@ describe('AgendaView', () => {
 
     // One default filter pill should be present on first render.
     expect(screen.getByTestId('agenda-filter-builder')).toHaveAttribute('data-filter-count', '1')
-    expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-has-active-filters', 'true')
+    // #1744 — the untouched default is NOT considered "actively filtered":
+    // an empty default agenda should show "No tasks", not "No matches" +
+    // a Clear that would reset to the very same default.
+    expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-has-active-filters', 'false')
 
     // The backend query should be called with the active-states filter,
     // not an empty array (which would include DONE). FEAT-3 Phase 4

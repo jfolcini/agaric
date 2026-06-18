@@ -22,7 +22,7 @@
  */
 
 import type React from 'react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -45,9 +45,22 @@ import {
 export function GestureCoachMark(): React.ReactElement | null {
   const { t } = useTranslation()
   const shouldShowMobileChrome = useShouldShowMobileChrome()
-  // Read the persisted flag once into open-state: when already seen the
-  // overlay never opens; otherwise it owns its own dismiss lifecycle.
-  const [open, setOpen] = useState(() => !isGestureCoachMarkSeen())
+  // Start CLOSED and only open once the responsive mobile chrome is
+  // genuinely active. Seeding open-state directly from the persisted
+  // flag at mount latched `open=true` even on a desktop-width boot,
+  // so a later resize to mobile mid-session popped the coach-mark on
+  // every render — not just on a true first mobile launch (#1749).
+  const [open, setOpen] = useState(false)
+
+  // Open exactly once, the first time the mobile chrome turns on and
+  // the user hasn't dismissed it before. Re-checking the persisted flag
+  // here (rather than at mount) keeps the open-state in sync with the
+  // responsive chrome across resize / breakpoint / keyboard changes.
+  useEffect(() => {
+    if (shouldShowMobileChrome && !isGestureCoachMarkSeen()) {
+      setOpen(true)
+    }
+  }, [shouldShowMobileChrome])
 
   const handleDismiss = useCallback(() => {
     setOpen(false)

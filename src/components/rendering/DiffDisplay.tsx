@@ -43,6 +43,13 @@ function findScrollableAncestor(el: HTMLElement | null): HTMLElement | null {
  * Deletions are red with strikethrough, insertions green.
  * ULID tokens inside spans are resolved via renderRichContent().
  *
+ * WCAG 1.4.1 (use of color): insert/delete runs carry a non-color affordance
+ * so they stay distinguishable for color-blind sighted users — deletions keep
+ * their strikethrough plus a leading "−" marker, insertions get a leading "+"
+ * marker. The markers are rendered via a `::before` pseudo-element, so they
+ * stay out of the text content (and the a11y tree) — the <ins>/<del> tags
+ * already convey the semantics to assistive tech.
+ *
  * UX-265 sub-fix 5: when the diff has more than {@link LARGE_DIFF_THRESHOLD}
  * spans, the first {@link COLLAPSED_SPAN_COUNT} are shown by default and a
  * `t('diff.showMore')` button reveals the rest. Click the same button
@@ -168,6 +175,10 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
                     data-hunk-active={isActiveHunk || undefined}
                     className={cn(
                       'bg-destructive/15 text-destructive no-underline line-through',
+                      // Non-color affordance (WCAG 1.4.1): a leading "−" marker
+                      // (via ::before so it stays out of textContent and the a11y
+                      // tree — the <del> element already conveys the semantics).
+                      "before:content-['−'] before:mr-0.5 before:font-semibold before:no-underline",
                       isActiveHunk && 'ring-2 ring-inset ring-ring/60 rounded-sm',
                     )}
                   >
@@ -183,6 +194,10 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
                     data-hunk-active={isActiveHunk || undefined}
                     className={cn(
                       'bg-status-done text-status-done-foreground no-underline',
+                      // Non-color affordance (WCAG 1.4.1): a leading "+" marker
+                      // (via ::before so it stays out of textContent and the a11y
+                      // tree — the <ins> element already conveys the semantics).
+                      "before:content-['+'] before:mr-0.5 before:font-semibold",
                       isActiveHunk && 'ring-2 ring-inset ring-ring/60 rounded-sm',
                     )}
                   >

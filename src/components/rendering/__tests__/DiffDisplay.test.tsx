@@ -63,6 +63,41 @@ describe('DiffDisplay', () => {
     expect(ins).toHaveClass('bg-status-done', 'text-status-done-foreground')
   })
 
+  // #1738 WCAG 1.4.1: insert/delete must be distinguishable without relying on
+  // color. Insertions get a leading "+" marker, deletions a leading "−" marker
+  // (rendered via a ::before pseudo-element so they stay out of textContent and
+  // the a11y tree — the <ins>/<del> tags already convey the semantics, and a
+  // pseudo-element keeps the diff text clean for copy + assertions). Equal spans
+  // carry no marker. jsdom can't compute ::before content, so we assert the
+  // Tailwind `before:content-[…]` utility classes that produce the markers.
+  it('renders non-color +/− affordance markers on insert/delete', () => {
+    const spans: DiffSpan[] = [
+      makeSpan('Delete', 'old'),
+      makeSpan('Insert', 'new'),
+      makeSpan('Equal', 'same'),
+    ]
+
+    const { container } = render(<DiffDisplay spans={spans} />)
+
+    const del = container.querySelector('del')
+    expect(del).not.toBeNull()
+    expect(del?.className).toContain("before:content-['−']")
+    // marker is pseudo-element-only: it must NOT pollute the diff text
+    expect(del?.textContent).toBe('old')
+
+    const ins = container.querySelector('ins')
+    expect(ins).not.toBeNull()
+    expect(ins?.className).toContain("before:content-['+']")
+    expect(ins?.textContent).toBe('new')
+
+    // Equal spans must not carry a marker class.
+    const equalSpan = Array.from(container.querySelectorAll('p.diff-display > span')).find(
+      (el) => el.textContent === 'same',
+    )
+    expect(equalSpan).toBeDefined()
+    expect(equalSpan?.className ?? '').not.toContain('before:content')
+  })
+
   it('renders Equal span as plain text', () => {
     const spans: DiffSpan[] = [makeSpan('Equal', 'unchanged')]
 
