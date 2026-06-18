@@ -37,18 +37,15 @@ export interface McpStatus {
 
 /**
  * Mirrors the Rust `McpRwStatus` struct exposed by `get_mcp_rw_status`.
- * Same shape as `McpStatus` but a distinct type so the RO / RW
- * surfaces stay symmetric.
+ * Identical shape to `McpStatus`; aliased rather than re-declared so the
+ * single source of truth lives on `McpStatus`. The distinct name is kept
+ * so the RO / RW call sites stay symmetric and self-documenting.
  */
-export interface McpRwStatus {
-  enabled: boolean
-  socket_path: string
-  active_connections: number
-}
+export type McpRwStatus = McpStatus
 
 export interface McpStatusSectionProps {
   variant: 'ro' | 'rw'
-  status: McpStatus | McpRwStatus | null
+  status: McpStatus | null
   onToggle: (next: boolean) => void
   onCopySocket: (path: string) => void
   onDisconnect: () => void

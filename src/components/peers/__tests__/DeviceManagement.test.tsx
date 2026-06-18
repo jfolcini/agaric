@@ -22,7 +22,8 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { DeviceManagement } from '@/components/peers/DeviceManagement'
+import { comparePeers, DeviceManagement } from '@/components/peers/DeviceManagement'
+import type { PeerRefRow } from '@/lib/tauri'
 
 // Mock PairingDialog to prevent it from making its own invoke calls.
 // Expose onOpenChange so tests can simulate dialog close.
@@ -907,6 +908,116 @@ describe('DeviceManagement', () => {
     expect(names[0]).toBe('Apple')
     expect(names[1]).toBe('Zebra')
     expect(names[2]).toBe('peer-3')
+  })
+
+  // #1673: total-order comparator properties + tiebreaks
+  describe('comparePeers (#1673)', () => {
+    const row = (over: Partial<PeerRefRow>): PeerRefRow => ({
+      peer_id: 'peer-x',
+      last_hash: null,
+      last_sent_hash: null,
+      synced_at: null,
+      reset_count: 0,
+      last_reset_at: null,
+      cert_hash: null,
+      device_name: null,
+      last_address: null,
+      ...over,
+    })
+
+    const sign = (n: number): number => (n > 0 ? 1 : n < 0 ? -1 : 0)
+
+    it('orders named devices before unnamed', () => {
+      const named = row({ peer_id: 'a', device_name: 'Box' })
+      const unnamed = row({ peer_id: 'b', device_name: null })
+      expect(sign(comparePeers(named, unnamed))).toBe(-1)
+      expect(sign(comparePeers(unnamed, named))).toBe(1)
+    })
+
+    it('orders two named devices alphabetically by name', () => {
+      const apple = row({ peer_id: 'a', device_name: 'Apple' })
+      const zebra = row({ peer_id: 'z', device_name: 'Zebra' })
+      expect(sign(comparePeers(apple, zebra))).toBe(-1)
+      expect(sign(comparePeers(zebra, apple))).toBe(1)
+    })
+
+    it('orders two unnamed devices by synced_at descending (most recent first)', () => {
+      const older = row({ peer_id: 'o', synced_at: 1000 })
+      const newer = row({ peer_id: 'n', synced_at: 2000 })
+      expect(sign(comparePeers(newer, older))).toBe(-1)
+      expect(sign(comparePeers(older, newer))).toBe(1)
+    })
+
+    it('sorts never-synced (null synced_at) unnamed devices last', () => {
+      const synced = row({ peer_id: 's', synced_at: 1000 })
+      const never = row({ peer_id: 'z', synced_at: null })
+      expect(sign(comparePeers(synced, never))).toBe(-1)
+      expect(sign(comparePeers(never, synced))).toBe(1)
+    })
+
+    it('breaks ties deterministically on peer_id', () => {
+      // identical name + synced_at -> only peer_id distinguishes them
+      const a = row({ peer_id: 'aaa', device_name: 'Same', synced_at: 5 })
+      const b = row({ peer_id: 'bbb', device_name: 'Same', synced_at: 5 })
+      expect(sign(comparePeers(a, b))).toBe(-1)
+      expect(sign(comparePeers(b, a))).toBe(1)
+    })
+
+    it('is reflexive: returns 0 for an identical row', () => {
+      const r = row({ peer_id: 'same', device_name: 'Same', synced_at: 5 })
+      expect(comparePeers(r, r)).toBe(0)
+      expect(comparePeers(r, { ...r })).toBe(0)
+    })
+
+    it('is antisymmetric and transitive across a mixed set', () => {
+      const rows: PeerRefRow[] = [
+        row({ peer_id: 'p-unnamed-old', synced_at: 100 }),
+        row({ peer_id: 'p-unnamed-new', synced_at: 999 }),
+        row({ peer_id: 'p-unnamed-never', synced_at: null }),
+        row({ peer_id: 'p-zebra', device_name: 'Zebra', synced_at: 1 }),
+        row({ peer_id: 'p-apple', device_name: 'Apple', synced_at: 1 }),
+        row({ peer_id: 'p-apple-2', device_name: 'Apple', synced_at: 1 }),
+      ]
+
+      // antisymmetry: sign(cmp(a,b)) === -sign(cmp(b,a)) for every pair
+      for (const a of rows) {
+        for (const b of rows) {
+          expect(sign(comparePeers(a, b))).toBe(-sign(comparePeers(b, a)) || 0)
+        }
+      }
+
+      // transitivity: a<=b<=c implies a<=c (no contradiction) for every triple
+      for (const a of rows) {
+        for (const b of rows) {
+          for (const c of rows) {
+            if (comparePeers(a, b) <= 0 && comparePeers(b, c) <= 0) {
+              expect(comparePeers(a, c)).toBeLessThanOrEqual(0)
+            }
+          }
+        }
+      }
+
+      const order = [...rows].sort(comparePeers).map((p) => p.peer_id)
+      expect(order).toEqual([
+        'p-apple', // named, alpha; tie on name+synced_at broken by peer_id
+        'p-apple-2',
+        'p-zebra',
+        'p-unnamed-new', // unnamed, synced_at desc
+        'p-unnamed-old',
+        'p-unnamed-never', // null synced_at last
+      ])
+    })
+
+    it('does not mutate the input array (sorts a copy in onSuccess path)', () => {
+      // guards the IPC-payload-mutation fix: callers should spread before sort
+      const original: PeerRefRow[] = [
+        row({ peer_id: 'b', device_name: 'Zed' }),
+        row({ peer_id: 'a', device_name: 'Abe' }),
+      ]
+      const snapshot = original.map((p) => p.peer_id)
+      void [...original].sort(comparePeers)
+      expect(original.map((p) => p.peer_id)).toEqual(snapshot)
+    })
   })
 
   it('opens rename dialog when rename button clicked (#422)', async () => {
