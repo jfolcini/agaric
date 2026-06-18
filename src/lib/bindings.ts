@@ -1776,6 +1776,32 @@ export type FilterPrimitive =
  */
 { type: "Created"; after: string | null; before: string | null } |
 /**
+ *  #1455 — block has an OUTBOUND link to the concrete `target` block id:
+ *  `EXISTS (SELECT 1 FROM block_links l WHERE l.source_id = b.id AND
+ *  l.target_id = ?)`. The richer "target is itself a `FilterExpr`" form
+ *  is a deliberate follow-up; this leaf takes a concrete id.
+ */
+{ type: "LinksTo"; target: string } |
+/**
+ *  #1455 — block has an INBOUND link FROM the concrete `source` block id
+ *  (inverse of [`LinksTo`]): `EXISTS (SELECT 1 FROM block_links l WHERE
+ *  l.target_id = b.id AND l.source_id = ?)`. The richer FilterExpr-source
+ *  form is a follow-up; this leaf takes a concrete id.
+ */
+{ type: "LinkedFrom"; source: string } |
+/**
+ *  #1455 — block's PARENT row satisfies the nested `matcher` expression:
+ *  `EXISTS (SELECT 1 FROM blocks p WHERE p.id = b.parent_id AND
+ *  (<matcher compiled against the parent row `p`>))`. The boxed
+ *  [`FilterExpr`] is compiled against the parent alias `p` rather than the
+ *  outer `b`. Recursion (a `HasParentMatching` whose matcher itself
+ *  contains another `HasParentMatching`) is bounded by
+ *  [`FilterExpr::MAX_DEPTH`](crate::filters::FilterExpr::MAX_DEPTH): the
+ *  depth gate descends into the boxed matcher (#1455), so the compile
+ *  recursion cannot run away.
+ */
+{ type: "HasParentMatching"; matcher: FilterExpr } |
+/**
  *  Pages-only — page has no inbound links AND no outbound links.
  *  (`HasNoInboundLinks` is the looser inbound-only sibling.)
  */

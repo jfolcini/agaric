@@ -86,6 +86,29 @@ pub enum FilterPrimitive {
         after: Option<String>,
         before: Option<String>,
     },
+    // ── #1455 relational / multi-hop predicates ───────────────────
+    /// #1455 — block has an OUTBOUND link to the concrete `target` block id:
+    /// `EXISTS (SELECT 1 FROM block_links l WHERE l.source_id = b.id AND
+    /// l.target_id = ?)`. The richer "target is itself a `FilterExpr`" form
+    /// is a deliberate follow-up; this leaf takes a concrete id.
+    LinksTo { target: String },
+    /// #1455 — block has an INBOUND link FROM the concrete `source` block id
+    /// (inverse of [`LinksTo`]): `EXISTS (SELECT 1 FROM block_links l WHERE
+    /// l.target_id = b.id AND l.source_id = ?)`. The richer FilterExpr-source
+    /// form is a follow-up; this leaf takes a concrete id.
+    LinkedFrom { source: String },
+    /// #1455 — block's PARENT row satisfies the nested `matcher` expression:
+    /// `EXISTS (SELECT 1 FROM blocks p WHERE p.id = b.parent_id AND
+    /// (<matcher compiled against the parent row `p`>))`. The boxed
+    /// [`FilterExpr`] is compiled against the parent alias `p` rather than the
+    /// outer `b`. Recursion (a `HasParentMatching` whose matcher itself
+    /// contains another `HasParentMatching`) is bounded by
+    /// [`FilterExpr::MAX_DEPTH`](crate::filters::FilterExpr::MAX_DEPTH): the
+    /// depth gate descends into the boxed matcher (#1455), so the compile
+    /// recursion cannot run away.
+    HasParentMatching {
+        matcher: Box<crate::filters::FilterExpr>,
+    },
     // ── Pages-only ────────────────────────────────────────────────
     /// Pages-only — page has no inbound links AND no outbound links.
     /// (`HasNoInboundLinks` is the looser inbound-only sibling.)
@@ -440,6 +463,27 @@ pub trait Projection {
         WhereClause::unsupported()
     }
 
+    // #1455 relational predicates — default to `unsupported` so a projection
+    // only opts in by overriding (currently `QueryProjection`).
+    fn compile_links_to(&self, _target: &str) -> WhereClause {
+        WhereClause::unsupported()
+    }
+    fn compile_linked_from(&self, _source: &str) -> WhereClause {
+        WhereClause::unsupported()
+    }
+    /// #1455 — compile `has-parent-matching`. The boxed sub-expression must be
+    /// compiled against the PARENT row (alias `p`), not the outer `b`, so this
+    /// needs `Self: Sized` to recurse through `compile_expr`. The default is
+    /// `unsupported()`; only `QueryProjection` overrides it. The recursion is
+    /// bounded by the caller's `FilterExpr::validate_depth` gate, which now
+    /// descends into the boxed matcher (#1455).
+    fn compile_has_parent_matching(&self, _matcher: &crate::filters::FilterExpr) -> WhereClause
+    where
+        Self: Sized,
+    {
+        WhereClause::unsupported()
+    }
+
     // Pages-only — default to `unsupported`.
     fn compile_orphan(&self) -> WhereClause {
         WhereClause::unsupported()
@@ -494,6 +538,11 @@ pub trait Projection {
             FilterPrimitive::Scheduled { predicate } => self.compile_scheduled(predicate),
             FilterPrimitive::Created { after, before } => {
                 self.compile_created(after.as_deref(), before.as_deref())
+            }
+            FilterPrimitive::LinksTo { target } => self.compile_links_to(target),
+            FilterPrimitive::LinkedFrom { source } => self.compile_linked_from(source),
+            FilterPrimitive::HasParentMatching { matcher } => {
+                self.compile_has_parent_matching(matcher)
             }
             FilterPrimitive::Orphan => self.compile_orphan(),
             FilterPrimitive::Stub => self.compile_stub(),
@@ -573,6 +622,12 @@ impl FilterPrimitive {
             FilterPrimitive::Priority { .. }
             | FilterPrimitive::LastEdited { .. }
             | FilterPrimitive::State { .. }
+            // #1455 — `LinksTo`/`LinkedFrom` are single-edge `EXISTS`
+            // subqueries served by `idx_block_links_source` /
+            // `idx_block_links_target`; cheap, but a correlated `EXISTS`
+            // ranks just above a per-row column test.
+            | FilterPrimitive::LinksTo { .. }
+            | FilterPrimitive::LinkedFrom { .. }
             | FilterPrimitive::BlockType { .. } => 1,
             // `PathGlob` is always a full `pages_cache.title` scan:
             // `LOWER(title) GLOB ?` (#1320-A) uses BINARY collation against
@@ -583,6 +638,11 @@ impl FilterPrimitive {
             // no materialised counterpart (PEND-58e E11) — expensive tier,
             // emitted after any index-backed clause that can pre-narrow.
             FilterPrimitive::Orphan
+            // #1455 — `HasParentMatching` is a correlated `EXISTS` over a
+            // re-scan of `blocks` whose body is itself an arbitrary compiled
+            // sub-tree (potentially nested); emit it after any index-backed
+            // clause that can pre-narrow the candidate rows.
+            | FilterPrimitive::HasParentMatching { .. }
             | FilterPrimitive::Regex { .. }
             | FilterPrimitive::CaseSensitive { .. }
             | FilterPrimitive::WholeWord { .. }
@@ -607,6 +667,9 @@ impl FilterPrimitive {
             FilterPrimitive::DueDate { .. } => "due-date",
             FilterPrimitive::Scheduled { .. } => "scheduled",
             FilterPrimitive::Created { .. } => "created",
+            FilterPrimitive::LinksTo { .. } => "links-to",
+            FilterPrimitive::LinkedFrom { .. } => "linked-from",
+            FilterPrimitive::HasParentMatching { .. } => "has-parent-matching",
             FilterPrimitive::Orphan => "orphan",
             FilterPrimitive::Stub => "stub",
             FilterPrimitive::HasNoInboundLinks => "has-no-inbound-links",
@@ -1362,6 +1425,21 @@ mod tests {
                 after: Some("2026-01-01".into()),
                 before: None,
             },
+            FilterPrimitive::LinksTo {
+                target: "01TARGET00000000000000000T".into(),
+            },
+            FilterPrimitive::LinkedFrom {
+                source: "01SOURCE00000000000000000S".into(),
+            },
+            FilterPrimitive::HasParentMatching {
+                matcher: Box::new(crate::filters::FilterExpr::Leaf {
+                    primitive: FilterPrimitive::State {
+                        values: vec!["TODO".into()],
+                        is_null: false,
+                        exclude: false,
+                    },
+                }),
+            },
             FilterPrimitive::Orphan,
             FilterPrimitive::Stub,
             FilterPrimitive::HasNoInboundLinks,
@@ -1395,6 +1473,9 @@ mod tests {
                 | FilterPrimitive::DueDate { .. }
                 | FilterPrimitive::Scheduled { .. }
                 | FilterPrimitive::Created { .. }
+                | FilterPrimitive::LinksTo { .. }
+                | FilterPrimitive::LinkedFrom { .. }
+                | FilterPrimitive::HasParentMatching { .. }
                 | FilterPrimitive::Orphan
                 | FilterPrimitive::Stub
                 | FilterPrimitive::HasNoInboundLinks
@@ -1409,9 +1490,14 @@ mod tests {
             assert!(
                 PAGES_ALLOWED_KEYS.contains(key)
                     || SEARCH_ALLOWED_KEYS.contains(key)
-                    || crate::backlink::projection::BACKLINK_ALLOWED_KEYS.contains(key),
+                    || crate::backlink::projection::BACKLINK_ALLOWED_KEYS.contains(key)
+                    // #1455 — the relational predicates (`links-to` /
+                    // `linked-from` / `has-parent-matching`) live ONLY on the
+                    // advanced-query surface (QUERY_ALLOWED_KEYS); they are not
+                    // (yet) offered on Pages / Search / Backlink.
+                    || crate::query::QUERY_ALLOWED_KEYS.contains(key),
                 "`{key}` (allowed_key of {prim:?}) is in none of \
-                 PAGES_ALLOWED_KEYS / SEARCH_ALLOWED_KEYS / BACKLINK_ALLOWED_KEYS"
+                 PAGES_ALLOWED_KEYS / SEARCH_ALLOWED_KEYS / BACKLINK_ALLOWED_KEYS / QUERY_ALLOWED_KEYS"
             );
         }
     }

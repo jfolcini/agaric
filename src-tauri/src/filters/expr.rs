@@ -96,6 +96,14 @@ impl FilterExpr {
             )));
         }
         match self {
+            // #1455 — a `has-parent-matching` leaf carries a NESTED FilterExpr
+            // (the parent matcher). It must count toward depth so a chain of
+            // `has-parent-matching` whose matchers nest each other cannot run
+            // the compile recursion away. The boxed matcher is one frame deeper
+            // than this leaf, mirroring the `Not { child }` arm.
+            FilterExpr::Leaf {
+                primitive: FilterPrimitive::HasParentMatching { matcher },
+            } => matcher.check_depth(depth + 1),
             FilterExpr::Leaf { .. } => Ok(()),
             FilterExpr::And { children } | FilterExpr::Or { children } => {
                 for child in children {

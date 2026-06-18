@@ -1633,3 +1633,426 @@ async fn equal_count_grouped_pagination_no_dup() {
         "no duplicate groups across pages"
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// #1455 — relational / multi-hop predicates (links-to / linked-from /
+// has-parent-matching). These tests seed `block_links` edges and
+// `parent_id` chains on top of the standard fixture and assert the
+// matched id set, AND/OR/NOT composition, keyset pagination, and the
+// nested-`has-parent-matching` depth/cycle safety.
+// ─────────────────────────────────────────────────────────────────────
+
+/// Insert a directed link edge `source -> target` into `block_links`.
+async fn insert_link(pool: &SqlitePool, source: &str, target: &str) {
+    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(source)
+        .bind(target)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// Insert a content block with an explicit `parent_id`.
+async fn insert_child(pool: &SqlitePool, id: &str, parent_id: &str, todo_state: Option<&str>) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, space_id, parent_id, todo_state, position) \
+         VALUES (?, 'content', ?, ?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(format!("content {id}"))
+    .bind(SPACE)
+    .bind(parent_id)
+    .bind(todo_state)
+    .bind(1)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+const LINK_TARGET: &str = "01TARGET00000000000000000T";
+const LINK_SOURCE: &str = "01SOURCE00000000000000000S";
+
+#[tokio::test]
+async fn links_to_matches_only_blocks_with_outbound_edge() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    // A concrete target block (a content block in SPACE).
+    insert_block(
+        &pool,
+        LINK_TARGET,
+        Some(SPACE),
+        "content",
+        None,
+        None,
+        Some(9),
+    )
+    .await;
+    // B1 and B3 link to the target; B2/B4 do NOT.
+    insert_link(&pool, "01B1000000000000000000000", LINK_TARGET).await;
+    insert_link(&pool, "01B3000000000000000000000", LINK_TARGET).await;
+    // A red herring edge with a different target.
+    insert_link(
+        &pool,
+        "01B2000000000000000000000",
+        "01B4000000000000000000000",
+    )
+    .await;
+
+    let resp = compile_and_run(
+        &pool,
+        req(leaf(FilterPrimitive::LinksTo {
+            target: LINK_TARGET.to_string(),
+        })),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        ids(&resp),
+        set(&["01B1000000000000000000000", "01B3000000000000000000000"]),
+        "links-to must match exactly the blocks with an outbound edge to the target"
+    );
+}
+
+#[tokio::test]
+async fn linked_from_matches_only_blocks_with_inbound_edge() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    insert_block(
+        &pool,
+        LINK_SOURCE,
+        Some(SPACE),
+        "content",
+        None,
+        None,
+        Some(9),
+    )
+    .await;
+    // The source links INTO B2 and B4 (inbound for those).
+    insert_link(&pool, LINK_SOURCE, "01B2000000000000000000000").await;
+    insert_link(&pool, LINK_SOURCE, "01B4000000000000000000000").await;
+    // A red herring edge from a different source.
+    insert_link(
+        &pool,
+        "01B1000000000000000000000",
+        "01B3000000000000000000000",
+    )
+    .await;
+
+    let resp = compile_and_run(
+        &pool,
+        req(leaf(FilterPrimitive::LinkedFrom {
+            source: LINK_SOURCE.to_string(),
+        })),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        ids(&resp),
+        set(&["01B2000000000000000000000", "01B4000000000000000000000"]),
+        "linked-from must match exactly the blocks with an inbound edge from the source"
+    );
+}
+
+#[tokio::test]
+async fn has_parent_matching_selects_children_of_matching_parent() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    // Two parents in SPACE: PA is TODO, PB is DONE.
+    insert_block(
+        &pool,
+        "01PA00000000000000000000A",
+        Some(SPACE),
+        "content",
+        Some("TODO"),
+        None,
+        Some(20),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01PB00000000000000000000B",
+        Some(SPACE),
+        "content",
+        Some("DONE"),
+        None,
+        Some(21),
+    )
+    .await;
+    // Children: C_A under PA (TODO parent), C_B under PB (DONE parent).
+    insert_child(
+        &pool,
+        "01CA00000000000000000000A",
+        "01PA00000000000000000000A",
+        Some("DONE"),
+    )
+    .await;
+    insert_child(
+        &pool,
+        "01CB00000000000000000000B",
+        "01PB00000000000000000000B",
+        Some("DONE"),
+    )
+    .await;
+
+    // has-parent-matching(state TODO) → only C_A (its parent PA is TODO).
+    let f = leaf(FilterPrimitive::HasParentMatching {
+        matcher: Box::new(leaf(FilterPrimitive::State {
+            values: vec!["TODO".to_string()],
+            is_null: false,
+            exclude: false,
+        })),
+    });
+    let resp = compile_and_run(&pool, req(f)).await.unwrap();
+    let got = ids(&resp);
+    assert!(
+        got.contains("01CA00000000000000000000A"),
+        "child of TODO parent matches"
+    );
+    assert!(
+        !got.contains("01CB00000000000000000000B"),
+        "child of DONE parent excluded"
+    );
+    // Top-level blocks (no parent) never match has-parent-matching.
+    assert!(!got.contains("01B1000000000000000000000"));
+}
+
+#[tokio::test]
+async fn relational_composes_with_and_or_not() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    insert_block(
+        &pool,
+        LINK_TARGET,
+        Some(SPACE),
+        "content",
+        None,
+        None,
+        Some(9),
+    )
+    .await;
+    // B1 (TODO) and B2 (DONE) both link to target.
+    insert_link(&pool, "01B1000000000000000000000", LINK_TARGET).await;
+    insert_link(&pool, "01B2000000000000000000000", LINK_TARGET).await;
+
+    // links-to(target) AND state TODO → only B1.
+    let and = FilterExpr::And {
+        children: vec![
+            leaf(FilterPrimitive::LinksTo {
+                target: LINK_TARGET.to_string(),
+            }),
+            leaf(FilterPrimitive::State {
+                values: vec!["TODO".to_string()],
+                is_null: false,
+                exclude: false,
+            }),
+        ],
+    };
+    let resp = compile_and_run(&pool, req(and)).await.unwrap();
+    assert_eq!(
+        ids(&resp),
+        set(&["01B1000000000000000000000"]),
+        "AND with links-to intersects"
+    );
+
+    // NOT links-to(target) → blocks WITHOUT the edge (B3, B4, tag block, …);
+    // B1/B2 excluded.
+    let not = FilterExpr::Not {
+        child: Box::new(leaf(FilterPrimitive::LinksTo {
+            target: LINK_TARGET.to_string(),
+        })),
+    };
+    let resp = compile_and_run(&pool, req(not)).await.unwrap();
+    let got = ids(&resp);
+    assert!(!got.contains("01B1000000000000000000000"));
+    assert!(!got.contains("01B2000000000000000000000"));
+    assert!(got.contains("01B3000000000000000000000"));
+    assert!(got.contains("01B4000000000000000000000"));
+
+    // links-to(target) OR state TODO → B1, B2 (links) ∪ B1, B3 (TODO).
+    let or = FilterExpr::Or {
+        children: vec![
+            leaf(FilterPrimitive::LinksTo {
+                target: LINK_TARGET.to_string(),
+            }),
+            leaf(FilterPrimitive::State {
+                values: vec!["TODO".to_string()],
+                is_null: false,
+                exclude: false,
+            }),
+        ],
+    };
+    let resp = compile_and_run(&pool, req(or)).await.unwrap();
+    assert_eq!(
+        ids(&resp),
+        set(&[
+            "01B1000000000000000000000",
+            "01B2000000000000000000000",
+            "01B3000000000000000000000",
+        ]),
+        "OR with links-to unions"
+    );
+}
+
+#[tokio::test]
+async fn relational_predicate_paginates_correctly() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    insert_block(
+        &pool,
+        LINK_TARGET,
+        Some(SPACE),
+        "content",
+        None,
+        None,
+        Some(99),
+    )
+    .await;
+    // All four content blocks link to the target so the match set is B1..B4.
+    for b in [
+        "01B1000000000000000000000",
+        "01B2000000000000000000000",
+        "01B3000000000000000000000",
+        "01B4000000000000000000000",
+    ] {
+        insert_link(&pool, b, LINK_TARGET).await;
+    }
+
+    let make = |cursor: Option<String>| AdvancedQueryRequest {
+        space_id: SPACE.to_string(),
+        filter: leaf(FilterPrimitive::LinksTo {
+            target: LINK_TARGET.to_string(),
+        }),
+        sort: vec![SortKey {
+            source: SortSource::Column {
+                name: SortColumn::Position,
+            },
+            desc: false,
+        }],
+        cursor,
+        limit: Some(2),
+        fulltext: None,
+        group_by: None,
+        aggregates: Vec::new(),
+    };
+
+    // One big page = ground truth order.
+    let mut big = make(None);
+    big.limit = Some(50);
+    let big_resp = compile_and_run(&pool, big).await.unwrap();
+    let all: Vec<String> = big_resp
+        .rows
+        .iter()
+        .map(|r| r.block.id.as_str().to_string())
+        .collect();
+    assert_eq!(all.len(), 4, "all four linked blocks match");
+    assert!(!big_resp.has_more);
+
+    // Page through with limit 2; the keyset predicate must compose with the
+    // relational EXISTS subquery without skipping or repeating rows.
+    let mut collected: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let resp = compile_and_run(&pool, make(cursor.clone())).await.unwrap();
+        for r in &resp.rows {
+            collected.push(r.block.id.as_str().to_string());
+        }
+        if resp.has_more {
+            cursor = resp.next_cursor.clone();
+            assert!(cursor.is_some());
+        } else {
+            assert!(resp.next_cursor.is_none());
+            break;
+        }
+    }
+    assert_eq!(
+        collected, all,
+        "paged result must equal one big page under a relational filter"
+    );
+    let uniq: BTreeSet<&String> = collected.iter().collect();
+    assert_eq!(
+        uniq.len(),
+        collected.len(),
+        "no duplicate rows across pages"
+    );
+}
+
+#[tokio::test]
+async fn nested_has_parent_matching_uses_distinct_aliases() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    // Grandparent GP (TODO) → parent P (DONE) → child C (DONE).
+    insert_block(
+        &pool,
+        "01GP00000000000000000GP",
+        Some(SPACE),
+        "content",
+        Some("TODO"),
+        None,
+        Some(30),
+    )
+    .await;
+    insert_child(
+        &pool,
+        "01PP00000000000000000PP",
+        "01GP00000000000000000GP",
+        Some("DONE"),
+    )
+    .await;
+    insert_child(
+        &pool,
+        "01CC00000000000000000CC",
+        "01PP00000000000000000PP",
+        Some("DONE"),
+    )
+    .await;
+
+    // has-parent-matching( has-parent-matching(state TODO) )
+    //   → blocks whose GRANDparent is TODO → only C (GP is TODO).
+    // This exercises the per-level `p1`/`p2` aliasing: `p2.id = p1.parent_id`.
+    let f = leaf(FilterPrimitive::HasParentMatching {
+        matcher: Box::new(leaf(FilterPrimitive::HasParentMatching {
+            matcher: Box::new(leaf(FilterPrimitive::State {
+                values: vec!["TODO".to_string()],
+                is_null: false,
+                exclude: false,
+            })),
+        })),
+    });
+    let resp = compile_and_run(&pool, req(f)).await.unwrap();
+    let got = ids(&resp);
+    assert!(
+        got.contains("01CC00000000000000000CC"),
+        "grandchild of TODO grandparent matches"
+    );
+    // P's parent GP is TODO, but P itself is the child of GP (one hop) — the
+    // TWO-hop filter must NOT match P, and must NOT match GP (top-level).
+    assert!(!got.contains("01PP00000000000000000PP"));
+    assert!(!got.contains("01GP00000000000000000GP"));
+}
+
+#[tokio::test]
+async fn has_parent_matching_depth_exceeded_is_rejected() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    // Build a chain of MAX_DEPTH + 2 nested has-parent-matching leaves so the
+    // depth gate (which now descends into the boxed matcher, #1455) rejects it
+    // BEFORE the unbounded compile recursion runs.
+    let mut expr = leaf(FilterPrimitive::State {
+        values: vec!["TODO".to_string()],
+        is_null: false,
+        exclude: false,
+    });
+    for _ in 0..(FilterExpr::MAX_DEPTH + 2) {
+        expr = leaf(FilterPrimitive::HasParentMatching {
+            matcher: Box::new(expr),
+        });
+    }
+    let err = compile_and_run(&pool, req(expr)).await.unwrap_err();
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "deeply-nested has-parent-matching must be rejected by the depth gate, got {err:?}"
+    );
+}
