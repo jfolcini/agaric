@@ -20,6 +20,34 @@ expect.extend(matchers)
 // and module state is isolated per test file, so this default does not leak.
 setLogLevel('warn')
 
+// a11y regression guard (#1505): fail any test that renders a Radix
+// dialog/sheet/alert-dialog surface without an accessible description. Radix
+// logs `Warning: Missing \`Description\` or \`aria-describedby={undefined}\` for
+// {…}` via `console.warn` (fired from a mount-time effect, so it has already
+// run by the time `afterEach` checks). This regressed to 95 warnings before
+// #1505; surfacing it as a test failure keeps it at zero. The wrapper forwards
+// to the original `console.warn` so the message stays visible, and any test
+// that installs its own `console.warn` spy transparently bypasses it.
+const RADIX_MISSING_DESCRIPTION = /Missing `Description` or `aria-describedby=/
+const capturedDialogA11yWarnings: string[] = []
+const originalConsoleWarn = console.warn.bind(console)
+console.warn = (...args: unknown[]): void => {
+  const message = args.map((a) => (typeof a === 'string' ? a : String(a))).join(' ')
+  if (RADIX_MISSING_DESCRIPTION.test(message)) capturedDialogA11yWarnings.push(message)
+  originalConsoleWarn(...args)
+}
+afterEach(() => {
+  if (capturedDialogA11yWarnings.length > 0) {
+    const messages = [...new Set(capturedDialogA11yWarnings)].join('\n')
+    capturedDialogA11yWarnings.length = 0
+    throw new Error(
+      `Radix dialog surface rendered without an accessible Description (#1505):\n${messages}\n` +
+        'Add a <Description>/<SheetDescription>/<AlertDialogDescription> (sr-only is fine), ' +
+        'or pass aria-describedby={undefined} when a description is genuinely N/A.',
+    )
+  }
+})
+
 // The a11y convention across the suite runs `axe(container)` inside a
 // `waitFor(async …)` block. `axe` is CPU-heavy, and the pre-push gate
 // (`scripts/verify-ci-equivalent.sh`, Phase 2a) runs vitest *concurrently*

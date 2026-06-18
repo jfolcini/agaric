@@ -17,8 +17,8 @@ import { useTranslation } from 'react-i18next'
 
 import { useIsMobile } from '@/hooks/useIsMobile'
 
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../ui/sheet'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../ui/sheet'
 import { EmojiPicker } from './EmojiPicker'
 
 export interface EmojiPickerDialogProps {
@@ -53,6 +53,9 @@ export function EmojiPickerDialog({
         <SheetContent side="bottom" className="max-h-[80dvh]">
           <SheetHeader>
             <SheetTitle>{t('emojiPicker.title')}</SheetTitle>
+            <SheetDescription className="sr-only">
+              {t('emojiPicker.dialogDescription')}
+            </SheetDescription>
           </SheetHeader>
           <EmojiPicker onSelect={handleSelect} />
         </SheetContent>
@@ -65,6 +68,9 @@ export function EmojiPickerDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{t('emojiPicker.title')}</DialogTitle>
+          <DialogDescription className="sr-only">
+            {t('emojiPicker.dialogDescription')}
+          </DialogDescription>
         </DialogHeader>
         <EmojiPicker onSelect={handleSelect} />
       </DialogContent>

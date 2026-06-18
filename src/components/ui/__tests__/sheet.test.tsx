@@ -97,7 +97,7 @@ describe('SheetContent base classes', () => {
   it('SheetContent is `flex flex-col overflow-hidden p-6` so SheetBody can constrain its height', () => {
     render(
       <Sheet open>
-        <SheetContent>
+        <SheetContent aria-describedby={undefined}>
           <SheetHeader>
             <SheetTitle>Test Sheet</SheetTitle>
           </SheetHeader>
@@ -117,7 +117,7 @@ describe('SheetBody', () => {
   it('renders children inside a flex-1 min-h-0 ScrollArea so the body owns the scroll', () => {
     render(
       <Sheet open>
-        <SheetContent>
+        <SheetContent aria-describedby={undefined}>
           <SheetHeader>
             <SheetTitle>Test Sheet</SheetTitle>
           </SheetHeader>
@@ -139,7 +139,7 @@ describe('SheetBody', () => {
   it('viewport carries `px-6` so the scrollbar can sit in the SheetContent gutter without eating content padding', () => {
     render(
       <Sheet open>
-        <SheetContent>
+        <SheetContent aria-describedby={undefined}>
           <SheetHeader>
             <SheetTitle>Test Sheet</SheetTitle>
           </SheetHeader>
@@ -159,7 +159,7 @@ describe('SheetBody', () => {
     const ref = React.createRef<HTMLDivElement>()
     render(
       <Sheet open>
-        <SheetContent>
+        <SheetContent aria-describedby={undefined}>
           <SheetHeader>
             <SheetTitle>Test Sheet</SheetTitle>
           </SheetHeader>
@@ -178,7 +178,7 @@ describe('SheetBody', () => {
   it('forwards aria-* / data-* onto the scroll container', () => {
     render(
       <Sheet open>
-        <SheetContent>
+        <SheetContent aria-describedby={undefined}>
           <SheetHeader>
             <SheetTitle>Test Sheet</SheetTitle>
           </SheetHeader>
@@ -238,7 +238,7 @@ function installVisualViewport(height: number): FakeVisualViewport {
 function renderBottomSheet(): HTMLElement {
   render(
     <Sheet open>
-      <SheetContent side="bottom">
+      <SheetContent side="bottom" aria-describedby={undefined}>
         <SheetHeader>
           <SheetTitle>Bottom Sheet</SheetTitle>
         </SheetHeader>
@@ -312,7 +312,7 @@ describe('SheetContent soft-keyboard avoidance (#760)', () => {
     installVisualViewport(468)
     render(
       <Sheet open>
-        <SheetContent side="right">
+        <SheetContent side="right" aria-describedby={undefined}>
           <SheetHeader>
             <SheetTitle>Right Sheet</SheetTitle>
           </SheetHeader>
@@ -370,7 +370,7 @@ describe('SheetContent soft-keyboard avoidance (#760)', () => {
 
     const { unmount } = render(
       <Sheet open>
-        <SheetContent side="bottom">
+        <SheetContent side="bottom" aria-describedby={undefined}>
           <SheetHeader>
             <SheetTitle>Bottom Sheet</SheetTitle>
           </SheetHeader>
