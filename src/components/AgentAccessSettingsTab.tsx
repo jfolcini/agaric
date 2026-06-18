@@ -262,7 +262,7 @@ export function AgentAccessSettingsTab(): React.ReactElement {
   }
 
   return (
-    <div className="agent-access-tab space-y-4 max-w-xl">
+    <div className="agent-access-tab space-y-6">
       <Card>
         <CardHeader className="pb-3">
           <CardTitle>{t('agentAccess.title')}</CardTitle>

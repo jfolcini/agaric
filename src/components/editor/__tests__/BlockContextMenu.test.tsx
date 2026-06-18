@@ -26,15 +26,17 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { BlockContextMenu, type BlockContextMenuProps } from '@/components/editor/BlockContextMenu'
 import type { BlockActions } from '@/hooks/useBlockActions'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
+import { resetAllShortcuts, setCustomShortcut } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { openUrl } from '@/lib/open-url'
+import { __resetPlatformCacheForTests, isMac } from '@/lib/platform'
 import { useBlockStore } from '@/stores/blocks'
 
 vi.mock('@floating-ui/dom', () => ({
@@ -473,6 +475,51 @@ describe('BlockContextMenu', () => {
     expect(within(menu).getByText('Alt+.')).toBeInTheDocument()
     // #976 (item 15) — block-history keyboard binding hint.
     expect(within(menu).getByText('Ctrl+Shift+Y')).toBeInTheDocument()
+  })
+
+  // #1728 — the hints are no longer hardcoded literals; they are sourced from
+  // the keyboard catalog via `getShortcutKeys(id)`, so a user rebind shows up
+  // immediately and the platform modifier glyph (⌘ on macOS) is respected.
+  describe('#1728 — shortcut hints reflect the live catalog binding', () => {
+    const originalUserAgentData = Object.getOwnPropertyDescriptor(navigator, 'userAgentData')
+
+    afterEach(() => {
+      // Drop any override + platform spoofing so later tests see defaults.
+      resetAllShortcuts()
+      if (originalUserAgentData) {
+        Object.defineProperty(navigator, 'userAgentData', originalUserAgentData)
+      } else {
+        // jsdom has no userAgentData by default; remove the spoof we set.
+        Reflect.deleteProperty(navigator, 'userAgentData')
+      }
+      __resetPlatformCacheForTests()
+    })
+
+    it('reflects a user rebind of a context-menu action', () => {
+      // Rebind "indent" from the default Ctrl+Shift+→ to Alt+Shift+→.
+      setCustomShortcut('indentBlock', 'Alt + Shift + Arrow Right')
+      renderMenu()
+      const menu = screen.getByRole('menu')
+      // The remapped binding is shown; the stale default is gone.
+      expect(within(menu).getByText('Alt+Shift+→')).toBeInTheDocument()
+      expect(within(menu).queryByText('Ctrl+Shift+→')).not.toBeInTheDocument()
+    })
+
+    it('uses the ⌘ glyph for the Ctrl modifier on macOS', () => {
+      // Spoof macOS via UA-CH so `modKey()` resolves to ⌘ (mirrors platform.test.ts).
+      Object.defineProperty(navigator, 'userAgentData', {
+        value: { platform: 'macOS' },
+        configurable: true,
+        writable: true,
+      })
+      __resetPlatformCacheForTests()
+      expect(isMac()).toBe(true)
+      renderMenu()
+      const menu = screen.getByRole('menu')
+      // Collapse/expand hint becomes ⌘+. instead of Ctrl+.
+      expect(within(menu).getByText('⌘+.')).toBeInTheDocument()
+      expect(within(menu).queryByText('Ctrl+.')).not.toBeInTheDocument()
+    })
   })
 
   it('#1109 — surfaces the move/merge hints once "Move & arrange" is expanded', async () => {

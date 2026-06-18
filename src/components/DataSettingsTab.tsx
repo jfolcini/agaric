@@ -192,7 +192,7 @@ export function DataSettingsTab(): React.ReactElement {
   }, [t, currentSpaceId, availableSpaces])
 
   return (
-    <div className="data-settings-tab space-y-4">
+    <div className="data-settings-tab space-y-6">
       <Card>
         <CardHeader className="pb-3">
           <CardTitle

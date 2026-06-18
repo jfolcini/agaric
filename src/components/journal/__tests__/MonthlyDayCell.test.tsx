@@ -246,6 +246,30 @@ describe('MonthlyDayCell', () => {
     expect(cell).toHaveAttribute('aria-label', 'Wednesday, January 15, 2025')
   })
 
+  // #1730: dots/badge are aria-hidden and the explicit aria-label overrides
+  // inner text, so the day's density must be folded into the aria-label for
+  // screen-reader users.
+  it('#1730: folds agenda + backlink counts into aria-label (pluralized)', () => {
+    render(<MonthlyDayCell {...defaultProps} agendaCount={3} backlinkCount={1} />)
+    const cell = screen.getByRole('gridcell')
+    expect(cell).toHaveAttribute(
+      'aria-label',
+      'Wednesday, January 15, 2025, 3 agenda items, 1 reference',
+    )
+  })
+
+  it('#1730: aria-label omits a count category that is zero', () => {
+    render(<MonthlyDayCell {...defaultProps} agendaCount={1} backlinkCount={0} />)
+    const cell = screen.getByRole('gridcell')
+    expect(cell).toHaveAttribute('aria-label', 'Wednesday, January 15, 2025, 1 agenda item')
+  })
+
+  it('#1730: aria-label is the bare date when there are no counts', () => {
+    render(<MonthlyDayCell {...defaultProps} agendaCount={0} backlinkCount={0} />)
+    const cell = screen.getByRole('gridcell')
+    expect(cell).toHaveAttribute('aria-label', 'Wednesday, January 15, 2025')
+  })
+
   it('has tabIndex 0 for current month', () => {
     render(<MonthlyDayCell {...defaultProps} isCurrentMonth />)
     const cell = screen.getByRole('gridcell')

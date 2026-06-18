@@ -6,6 +6,7 @@
 import { format } from 'date-fns'
 import type React from 'react'
 
+import { t } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
 import { getSourceColor } from '../../lib/date-property-colors'
@@ -34,6 +35,19 @@ export function MonthlyDayCell({
   const totalCount = agendaCount + backlinkCount
   const fullDate = format(entry.date, 'EEEE, MMMM d, yyyy')
 
+  // #1730: the decorative dots and total-count badge are aria-hidden, and the
+  // explicit aria-label below overrides any inner text, so a screen-reader user
+  // gets no indication of a day's density. Surface the counts in the label.
+  const countParts: string[] = []
+  if (agendaCount > 0) {
+    countParts.push(t('journal.dayCellAgendaCount', { count: agendaCount }))
+  }
+  if (backlinkCount > 0) {
+    countParts.push(t('journal.dayCellBacklinkCount', { count: backlinkCount }))
+  }
+  const countLabel = countParts.join(', ')
+  const ariaLabel = countLabel ? `${fullDate}, ${countLabel}` : fullDate
+
   const handleClick = () => {
     if (isCurrentMonth) onNavigateToDate(entry.dateStr)
   }
@@ -49,7 +63,7 @@ export function MonthlyDayCell({
     <div
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- ARIA grid cell on a CSS-grid div; a real <td> requires <table>/<tr> ancestry that would break the calendar grid layout
       role="gridcell"
-      aria-label={fullDate}
+      aria-label={ariaLabel}
       tabIndex={isCurrentMonth ? 0 : -1}
       className={cn(
         'relative bg-background p-1.5 min-h-[80px] [@media(pointer:coarse)]:min-h-[44px] transition-colors focus-ring-visible',

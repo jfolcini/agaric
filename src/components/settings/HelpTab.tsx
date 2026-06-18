@@ -78,7 +78,7 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
       : t('help.updateLastCheckedNever')
 
   return (
-    <div className="space-y-4 max-w-xl">
+    <div className="space-y-6">
       <Card>
         <CardHeader className="pb-3">
           <CardTitle>{t('help.reportBugTitle')}</CardTitle>

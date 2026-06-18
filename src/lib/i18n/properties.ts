@@ -8,6 +8,14 @@
 
 export const properties: Record<string, string> = {
   'query.noResults': 'No results',
+  // #1743 — inline query result count. When more pages remain unloaded
+  // (`hasMore`), the loaded-so-far count is NOT the true total, so it is
+  // labelled as partial ("first N loaded…") rather than presented as the
+  // final count (which would mislead vs. the AdvancedQueryView total).
+  'query.resultCount_one': '{{count}} result',
+  'query.resultCount_other': '{{count}} results',
+  'query.resultCountPartial_one': 'first {{count}} loaded',
+  'query.resultCountPartial_other': 'first {{count}} loaded',
   // #1280 D1 — advanced-query surface.
   'advancedQuery.noResults': 'No blocks match these filters',
   'advancedQuery.totalCount_one': '{{count}} matching block',

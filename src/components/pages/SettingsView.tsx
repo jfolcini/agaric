@@ -309,13 +309,20 @@ export function SettingsView(): React.ReactElement {
           ))}
         </div>
 
-        {/* Tab panels */}
+        {/* Tab panels.
+
+            #1731 — the tabpanel host owns the one width decision (`max-w-2xl`)
+            so every tab shares the same content cap. Previously each pane root
+            set its own (max-w-md / max-w-xl / none) plus a divergent
+            vertical-rhythm token (space-y-4 vs space-y-6), so switching tabs
+            visibly re-widthed and re-spaced the content. The width cap is unified
+            here; the panes' own roots now all use the same `space-y-6` rhythm. */}
         <div
           role="tabpanel"
           id={`settings-panel-${activeTab}`}
           aria-labelledby={`settings-tab-${activeTab}`}
           data-testid={`settings-panel-${activeTab}`}
-          className="min-w-0 flex-1"
+          className="min-w-0 flex-1 max-w-2xl"
         >
           {activeTab === 'general' && <GeneralTab />}
 

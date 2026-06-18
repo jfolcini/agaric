@@ -56,6 +56,32 @@ describe('EmptyState', () => {
     expect(screen.getByRole('button', { name: 'Add item' })).toBeInTheDocument()
   })
 
+  it('renders the message as an h2 heading by default', () => {
+    render(<EmptyState message="Nothing here yet" />)
+
+    const heading = screen.getByRole('heading', { name: 'Nothing here yet', level: 2 })
+    expect(heading).toBeInTheDocument()
+    expect(heading.tagName).toBe('H2')
+  })
+
+  it('renders the message at a configurable heading level', () => {
+    render(<EmptyState message="Nothing here yet" headingLevel="h3" />)
+
+    const heading = screen.getByRole('heading', { name: 'Nothing here yet', level: 3 })
+    expect(heading).toBeInTheDocument()
+    expect(heading.tagName).toBe('H3')
+    // The default h2 must not be emitted when a level is provided.
+    expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument()
+  })
+
+  it('renders the message as a non-heading element when headingLevel is "p"', () => {
+    render(<EmptyState message="Nothing here yet" headingLevel="p" />)
+
+    expect(screen.getByText('Nothing here yet').tagName).toBe('P')
+    // No heading should be emitted so the surrounding outline stays coherent.
+    expect(screen.queryByRole('heading')).not.toBeInTheDocument()
+  })
+
   it('applies compact styling with smaller padding', () => {
     const { container } = render(<EmptyState message="Compact state" compact />)
     const wrapper = container.firstElementChild as HTMLElement
@@ -104,6 +130,17 @@ describe('EmptyState', () => {
 
   it('has no a11y violations in compact mode', async () => {
     const { container } = render(<EmptyState message="Select an item to see details" compact />)
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  it('has no a11y violations with a non-heading message element', async () => {
+    const { container } = render(
+      <EmptyState message="No linked references" description="Nothing yet" headingLevel="p" />,
+    )
 
     await waitFor(async () => {
       const results = await axe(container)
