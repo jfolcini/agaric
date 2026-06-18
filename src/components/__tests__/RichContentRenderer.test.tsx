@@ -368,6 +368,52 @@ describe('RichContentRenderer', () => {
     expect(link?.textContent).toContain('click here')
   })
 
+  it('keeps the ↗ icon and sr-only affordance outside text marks on a marked link (#1737)', () => {
+    // A link that also carries strike + code marks: the marks must wrap the
+    // visible label only, not the trailing ↗ glyph or the sr-only "opens in new
+    // tab" span — otherwise strike crosses the icon and code monospaces it.
+    mockedParse.mockReturnValueOnce({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            {
+              type: 'text',
+              text: 'click here',
+              marks: [
+                { type: 'link', attrs: { href: 'https://example.com' } },
+                { type: 'strike' },
+                { type: 'code' },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    const { container } = render(renderRichContent('[click here](https://example.com)', {}))
+    const link = container.querySelector('span.external-link')
+    expect(link).not.toBeNull()
+
+    // The mark elements wrap the label.
+    const struck = link?.querySelector('s')
+    const code = link?.querySelector('code')
+    expect(struck).not.toBeNull()
+    expect(code).not.toBeNull()
+    expect(struck?.textContent).toBe('click here')
+    expect(code?.textContent).toBe('click here')
+
+    // The affordances live on the link, OUTSIDE every mark element.
+    const srOnly = link?.querySelector('.sr-only')
+    const icon = link?.querySelector('[aria-hidden="true"]')
+    expect(srOnly?.textContent).toContain('opens in new tab')
+    expect(icon?.textContent).toContain('↗')
+    expect(struck?.contains(srOnly ?? null)).toBe(false)
+    expect(struck?.contains(icon ?? null)).toBe(false)
+    expect(code?.contains(srOnly ?? null)).toBe(false)
+    expect(code?.contains(icon ?? null)).toBe(false)
+  })
+
   it('renders a blocked-scheme link href as plain text, not an openUrl sink (XSS hardening)', () => {
     // A javascript:/data: href can reach stored content via markdown import or
     // peer sync, bypassing input-time validation. The render sink must not turn

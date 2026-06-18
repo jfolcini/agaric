@@ -11,6 +11,7 @@ import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { FilterPill } from '@/components/ui/filter-pill'
 import { FormField } from '@/components/ui/form-field'
 import { Label } from '@/components/ui/label'
 import {
@@ -124,22 +125,20 @@ export function EditorTab(): React.ReactElement {
       {allowedHosts.length > 0 && (
         <div className="space-y-2" data-testid="external-image-allowlist">
           <Label muted={false}>{t('settings.editor.externalImageAllowedHosts')}</Label>
-          <ul className="space-y-1">
+          {/* Removable host chips via the shared FilterPill primitive (#1754) so
+              the remove control matches the design system (lucide X icon, 44px
+              coarse-pointer touch target, focus ring, accessible aria-label)
+              instead of a bespoke text-× button. */}
+          <ul className="flex flex-wrap gap-2 list-none m-0 p-0">
             {allowedHosts.map((host) => (
-              <li
-                key={host}
-                className="flex items-center justify-between gap-2 rounded border border-input bg-muted/40 px-2 py-1 text-sm"
-              >
-                <span className="truncate font-mono text-xs">{host}</span>
-                <button
-                  type="button"
-                  className="rounded border border-input bg-background px-1.5 py-0.5 text-xs text-foreground hover:bg-accent hover:text-accent-foreground"
-                  data-testid={`external-image-remove-${host}`}
-                  aria-label={t('settings.editor.externalImageRemoveHost', { host })}
-                  onClick={() => removeHost(host)}
-                >
-                  ×
-                </button>
+              <li key={host} className="contents">
+                <FilterPill
+                  label={host}
+                  onRemove={() => removeHost(host)}
+                  removeAriaLabel={t('settings.editor.externalImageRemoveHost', { host })}
+                  className="font-mono"
+                  data-testid={`external-image-host-${host}`}
+                />
               </li>
             ))}
           </ul>

@@ -569,14 +569,19 @@ describe('StaticBlock', () => {
     expect(em?.textContent).toBe('bold italic')
   })
 
-  it('renders bold external link with <strong> wrapping the link span', () => {
+  it('renders bold external link with <strong> wrapping the link text (icon outside marks, #1737)', () => {
     const content = '**[click](https://example.com)**'
     const { container } = render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
-    const strong = container.querySelector('strong')
-    expect(strong).toBeInTheDocument()
-    const link = strong?.querySelector('.external-link')
+    // #1737: the link element wraps the marked text — the mark no longer crosses
+    // the ↗ icon / sr-only affordance.
+    const link = container.querySelector('.external-link')
     expect(link).toBeInTheDocument()
-    expect(link?.textContent).toContain('click')
+    const strong = link?.querySelector('strong')
+    expect(strong).toBeInTheDocument()
+    expect(strong?.textContent).toContain('click')
+    // the sr-only affordance and the decorative icon are NOT inside the mark
+    expect(strong?.querySelector('.sr-only')).toBeNull()
+    expect(strong?.querySelector('[aria-hidden="true"]')).toBeNull()
   })
 
   it('renders bold text adjacent to block_link chip', () => {
@@ -596,14 +601,16 @@ describe('StaticBlock', () => {
 
   // -- Mark combinations ------------------------------------------------------
 
-  it('renders italic external link with <em> wrapping the link span', () => {
+  it('renders italic external link with <em> wrapping the link text (icon outside marks, #1737)', () => {
     const content = '*[click](https://example.com)*'
     const { container } = render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
-    const em = container.querySelector('em')
-    expect(em).toBeInTheDocument()
-    const link = em?.querySelector('.external-link')
+    const link = container.querySelector('.external-link')
     expect(link).toBeInTheDocument()
-    expect(link?.textContent).toContain('click')
+    const em = link?.querySelector('em')
+    expect(em).toBeInTheDocument()
+    expect(em?.textContent).toContain('click')
+    expect(em?.querySelector('.sr-only')).toBeNull()
+    expect(em?.querySelector('[aria-hidden="true"]')).toBeNull()
   })
 
   it('renders mixed bold, italic, and plain text segments', () => {

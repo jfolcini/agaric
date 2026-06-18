@@ -1,6 +1,14 @@
 /**
  * GlobalDateControls — compact Today + Agenda + calendar trio rendered in
- * the App header bar for non-journal views.
+ * the App header bar for date-relevant content/navigation views
+ * (`pages`, `search`, `tags`, `query`).
+ *
+ * #1740: every handler here calls `setView('journal')`, so this is purely a
+ * jump-to-journal-date affordance. It is intentionally NOT mounted on the
+ * tool/admin views (settings, history, status, graph, trash, templates) or the
+ * focused page-editor surface, where a bare calendar trio reads as
+ * off-context. The allowlist that gates it lives in `App.tsx`
+ * (`DATE_CONTROL_VIEWS`).
  *
  * Extracted from `JournalPage.tsx` under MAINT-119.
  */

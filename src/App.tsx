@@ -43,7 +43,7 @@ import { logger } from './lib/logger'
 import { isOnboardingDone } from './lib/onboarding'
 import { createPageInSpace, listPeerRefs } from './lib/tauri'
 import { cn } from './lib/utils'
-import { useNavigationStore } from './stores/navigation'
+import { useNavigationStore, type View } from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
 import { useSpaceStore } from './stores/space'
 import { selectPageStack, useTabsStore } from './stores/tabs'
@@ -106,6 +106,16 @@ const CommandPalette = lazy(() =>
 const SearchSheet = lazy(() =>
   import('./components/SearchSheet').then((m) => ({ default: m.SearchSheet })),
 )
+
+// #1740 — `GlobalDateControls` is purely a jump-to-journal-date affordance
+// (every handler calls `setView('journal')`). It only belongs in headers of
+// views where landing on a journal date is a plausible next step — the
+// content/navigation surfaces (`pages`, `search`, `tags`, `query`). The
+// tool/admin views (settings, history, status, graph, trash, templates) and
+// the focused `page-editor` surface read a bare calendar trio as off-context,
+// so they no longer carry it. (`journal` itself renders `JournalControls`, not
+// this control, so it is intentionally absent here.)
+const DATE_CONTROL_VIEWS: ReadonlySet<View> = new Set<View>(['pages', 'search', 'tags', 'query'])
 
 function App() {
   const { t } = useTranslation()
@@ -426,7 +436,7 @@ function App() {
                     {headerLabel}
                   </span>
                   <div className="flex-1" />
-                  <GlobalDateControls />
+                  {DATE_CONTROL_VIEWS.has(currentView) && <GlobalDateControls />}
                 </>
               )}
               {/* Sole touch entry point for the unified search sheet.
