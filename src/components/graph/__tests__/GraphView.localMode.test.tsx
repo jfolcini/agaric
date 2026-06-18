@@ -14,7 +14,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -140,6 +140,31 @@ describe('GraphView local-graph mode (#1429)', () => {
     await waitFor(() => expect(captured.nodes.length).toBe(3))
     fireEvent.click(toggle)
     await waitFor(() => expect(captured.nodes.length).toBe(5))
+  })
+
+  it('clears local mode when the active tab loses its page and does not reactivate on return (#1752)', async () => {
+    await renderGraph()
+    const toggle = screen.getByTestId('local-graph-toggle')
+    fireEvent.click(toggle)
+    // Local mode active: 2-hop neighborhood of hub.
+    await waitFor(() => expect(captured.nodes.length).toBe(3))
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+
+    // Active tab loses its page → local mode must clear back to the full graph.
+    act(() => {
+      seedTab(null)
+    })
+    await waitFor(() => expect(captured.nodes.length).toBe(5))
+    expect(screen.getByTestId('local-graph-toggle')).toHaveAttribute('aria-pressed', 'false')
+
+    // Returning to a page must NOT silently reactivate local mode.
+    act(() => {
+      seedTab('hub')
+    })
+    await waitFor(() =>
+      expect(captured.nodes.map((n) => n.id).sort()).toEqual(['a', 'b', 'c', 'hub', 'island']),
+    )
+    expect(screen.getByTestId('local-graph-toggle')).toHaveAttribute('aria-pressed', 'false')
   })
 
   it('does not issue extra IPC calls when entering local mode', async () => {

@@ -51,19 +51,78 @@ describe('TagRef', () => {
   })
 })
 
-describe('TagRef Backspace re-expand (H-14)', () => {
-  it('registers Backspace keyboard shortcut', () => {
-    const ext = TagRef.configure({
-      resolveName: (id) => `Name:${id}`,
+describe('TagRef Backspace deletes the chip cleanly (#1739)', () => {
+  let editor: Editor
+
+  afterEach(() => {
+    editor?.destroy()
+  })
+
+  function createEditor(content: Record<string, unknown>): Editor {
+    return new Editor({
+      element: document.createElement('div'),
+      extensions: [
+        Document,
+        Paragraph,
+        Text,
+        TagRef.configure({ resolveName: (id: string) => `#${id}` }),
+      ],
+      content,
     })
+  }
+
+  it('registers a Backspace keyboard shortcut', () => {
+    const ext = TagRef.configure({ resolveName: (id) => `Name:${id}` })
     expect(ext.config.addKeyboardShortcuts).toBeDefined()
   })
 
-  it('uses resolveName to get the display name for re-expansion', () => {
-    const resolveName = (_id: string) => `My Tag Name`
-    const ext = TagRef.configure({ resolveName })
-    // Verify the option is available (keyboard shortcut uses it internally)
-    expect(ext.options.resolveName('any-id')).toBe('My Tag Name')
+  it('removes the whole chip and leaves NO inert @name text behind', () => {
+    editor = createEditor({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'tag_ref', attrs: { id: 'PROJECTS' } }],
+        },
+      ],
+    })
+
+    // Sanity: chip is mounted before Backspace.
+    expect(editor.view.dom.querySelector('[data-type="tag-ref"]')).not.toBeNull()
+
+    // Place the caret immediately after the chip, then fire Backspace.
+    editor.commands.setTextSelection(editor.state.doc.content.size)
+    const handled = editor.view.someProp('handleKeyDown', (f) =>
+      f(editor.view, new KeyboardEvent('keydown', { key: 'Backspace' })),
+    )
+
+    expect(handled).toBe(true)
+    // Chip is gone...
+    expect(editor.view.dom.querySelector('[data-type="tag-ref"]')).toBeNull()
+    // ...and no tag_ref node remains in the doc...
+    let hasTagRef = false
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === 'tag_ref') hasTagRef = true
+    })
+    expect(hasTagRef).toBe(false)
+    // ...and crucially, no inert "@name" text was inserted.
+    expect(editor.getText()).toBe('')
+  })
+
+  it('does nothing when the caret is not immediately after a chip', () => {
+    editor = createEditor({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }],
+    })
+
+    editor.commands.setTextSelection(editor.state.doc.content.size)
+    const handled = editor.view.someProp('handleKeyDown', (f) =>
+      f(editor.view, new KeyboardEvent('keydown', { key: 'Backspace' })),
+    )
+
+    // Our chip handler does not claim the key (returns false); ProseMirror's
+    // someProp resolves to undefined when no registered handler returns true.
+    expect(handled).toBeFalsy()
   })
 })
 

@@ -62,6 +62,37 @@ describe('GestureCoachMark', () => {
     expect(screen.queryByText(t('gestures.coachmark.title'))).toBeNull()
   })
 
+  it('opens only when the mobile chrome turns on after a desktop-width boot', () => {
+    // Boot desktop-width: gate off, nothing renders and (critically) the
+    // open-state must NOT latch true at mount (#1749).
+    mockedUseShouldShowMobileChrome.mockReturnValue(false)
+    const { rerender } = render(<GestureCoachMark />)
+    expect(screen.queryByTestId('gesture-coachmark')).toBeNull()
+
+    // Narrow to mobile mid-session: the chrome turns on, so the coach-mark
+    // surfaces once (genuine first mobile activation).
+    mockedUseShouldShowMobileChrome.mockReturnValue(true)
+    rerender(<GestureCoachMark />)
+    expect(screen.getByTestId('gesture-coachmark')).toBeInTheDocument()
+  })
+
+  it('does not reopen on a later mobile flip once dismissed', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<GestureCoachMark />)
+
+    await user.click(screen.getByRole('button', { name: t('gestures.coachmark.dismiss') }))
+    await waitFor(() => {
+      expect(screen.queryByTestId('gesture-coachmark')).toBeNull()
+    })
+
+    // Resize desktop then back to mobile: the seen flag keeps it closed.
+    mockedUseShouldShowMobileChrome.mockReturnValue(false)
+    rerender(<GestureCoachMark />)
+    mockedUseShouldShowMobileChrome.mockReturnValue(true)
+    rerender(<GestureCoachMark />)
+    expect(screen.queryByTestId('gesture-coachmark')).toBeNull()
+  })
+
   it('lists the four key gestures', () => {
     render(<GestureCoachMark />)
     for (const key of GESTURE_TITLE_KEYS) {

@@ -93,7 +93,7 @@ The five **picker triggers** — `[[`, `@`, `((`, `/`, `::` — are part of the 
 | `↑` / `↓` | Move selection in the picker |
 | `Enter` / `Tab` | Insert the highlighted result |
 | `Esc` | Close the picker without inserting |
-| `Backspace` (after a chip) | Re-expand the chip to its source text for editing |
+| `Backspace` (after a chip) | Delete the whole chip in one keystroke (retype the trigger to reopen the picker) |
 
 The picker captures these keys *before* the block-keyboard handler sees them; that's deliberate.
 
