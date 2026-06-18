@@ -10,18 +10,23 @@
  * serializes it on blur, so typing the `![alt](url)` markdown and saving (blur)
  * drives the full parse → serialize → static-render round-trip.
  *
- * A short URL is used (not a long data URL) so the editor's per-keystroke
- * draft-autosave serialize loop stays cheap — a multi-hundred-char single line
- * stalls that loop in the harness regardless of node type. The `<img>` element
- * is asserted as ATTACHED (it exists in the DOM as soon as the static view
- * renders, before/whether or not the src resolves); the unit render test covers
- * the visual broken-image fallback on a load error.
+ * A tiny inline `data:` GIF is used as the src so the image actually LOADS
+ * (deterministically, no network) and the node view keeps the real `<img>`
+ * mounted. An external `http(s)` URL would (a) be blocked by the Tauri CSP
+ * `img-src` and (b) fail to load in CI's no-network sandbox — either way the
+ * `onError` fallback would REPLACE the `<img>` with the placeholder, detaching
+ * it. `data:` is short enough to keep the per-keystroke draft-autosave serialize
+ * loop cheap. The unit render test covers the broken-image fallback path.
  */
 import { expect, test } from '@playwright/test'
 
 import { focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
 
-const IMG_URL = 'https://example.com/cat.png'
+// A short same-origin asset the dev server serves: CSP `img-src 'self'` allows
+// it and it actually loads, so the real <img> stays mounted (no onError
+// fallback). Short — avoids both the no-network failure of an external URL and
+// the long-single-line-URL autosave loop a data: URI would trip.
+const IMG_URL = '/favicon.svg'
 
 test.describe('markdown image round-trip (#1434)', () => {
   test.beforeEach(async ({ page }) => {
@@ -41,8 +46,8 @@ test.describe('markdown image round-trip (#1434)', () => {
     await saveBlock(page)
 
     const block = page.locator('[data-testid="sortable-block"]').first()
-    // The static renderer drew an <img> carrying the alt + src (attached in the
-    // DOM regardless of whether the network src resolves).
+    // The static renderer drew an <img> carrying the alt + src; the data: src
+    // loads, so the real <img> stays mounted (no fallback swap).
     const img = block.locator('img[alt="a cat"]')
     await expect(img).toBeAttached({ timeout: 10_000 })
     await expect(img).toHaveAttribute('src', IMG_URL)
