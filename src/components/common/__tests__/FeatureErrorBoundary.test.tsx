@@ -91,6 +91,31 @@ describe('FeatureErrorBoundary', () => {
     consoleErrorSpy.mockRestore()
   })
 
+  // #1700: when a `nameKey` is supplied the fallback shows the *translated*
+  // section label (here the `sidebar.query` "Advanced Query" copy), not the
+  // raw English `name` literal ("AdvancedQuery"). The `name` is kept only as
+  // the stable, untranslated log domain.
+  it('shows the localized section name from nameKey, not the raw name', () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    shouldThrow = true
+
+    render(
+      <FeatureErrorBoundary name="AdvancedQuery" nameKey="sidebar.query">
+        <Bomb />
+      </FeatureErrorBoundary>,
+    )
+
+    // Localized label is rendered…
+    expect(screen.getByText('Advanced Query encountered an error')).toBeInTheDocument()
+    // …and the raw English literal is NOT shown to the user.
+    expect(screen.queryByText('AdvancedQuery encountered an error')).not.toBeInTheDocument()
+
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(2)
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Boom!'))
+    consoleErrorSpy.mockRestore()
+  })
+
   it('retry button resets error state and re-renders children', async () => {
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const user = userEvent.setup()

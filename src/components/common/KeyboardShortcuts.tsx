@@ -21,7 +21,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { getCurrentShortcuts } from '@/lib/keyboard-config'
+import { getCurrentShortcuts, getShortcutKeys } from '@/lib/keyboard-config'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { loadQuickCaptureShortcut } from '@/lib/quick-capture-shortcut'
 import { renderKeys } from '@/lib/render-keyboard-shortcut'
@@ -80,21 +80,38 @@ function buildShortcutGroups(): { category: string; shortcuts: ShortcutDef[] }[]
 // #214 Phase 3 — the "Essential" group. A small, hand-curated set of the
 // five core triggers a new user needs first. Rendered above the full
 // per-category shortcut list (which is generated from the keyboard-config
-// catalog) so it is the first thing seen in the help sheet. The keys are
-// the literal characters a user types (or the platform mod chord for undo)
-// rather than catalog ids, so they read as a quick-start cheat sheet.
+// catalog) so it is the first thing seen in the help sheet. It reads as a
+// quick-start cheat sheet.
+//
+// #1711 — chord entries (undo, search) carry a `shortcutId` so their keys
+// resolve live from the keybinding registry (`getShortcutKeys`), keeping the
+// cheat sheet in sync with user rebinds — exactly like the catalog list below
+// and like `CommandsModeBody`/`BlockContextMenu`. The platform mod key (⌘ vs
+// Ctrl) is substituted at render time by `renderKeys`. The remaining entries
+// are literal characters a user types in the editor (`/`, `[[`, `@`), which
+// are not rebindable shortcuts, so they keep their literal `keys`.
 interface EssentialEntry {
-  keys: string
+  /** Literal chord, used only when `shortcutId` is absent. */
+  keys?: string
+  /** Catalog id whose live binding (incl. rebinds) supplies the keys. */
+  shortcutId?: string
   description: string
 }
 
 const ESSENTIAL_ENTRIES: EssentialEntry[] = [
-  { keys: 'Ctrl + Z', description: 'keyboard.essential.undo' },
+  { shortcutId: 'undoLastPageOp', description: 'keyboard.essential.undo' },
   { keys: '/', description: 'keyboard.essential.slash' },
   { keys: '[[', description: 'keyboard.essential.link' },
   { keys: '@', description: 'keyboard.essential.tag' },
-  { keys: 'Ctrl + F', description: 'keyboard.essential.search' },
+  { shortcutId: 'findInPage', description: 'keyboard.essential.search' },
 ]
+
+/** Resolve an Essential entry's display chord — live from the registry when
+ * it references a catalog id, else its literal `keys`. */
+function essentialKeys(entry: EssentialEntry): string {
+  if (entry.shortcutId) return getShortcutKeys(entry.shortcutId)
+  return entry.keys ?? ''
+}
 
 interface DeepLinkEntry {
   path: string
@@ -250,7 +267,7 @@ export function KeyboardShortcuts({
                 <tr key={entry.description} className="border-b last:border-0">
                   <td className="py-3 pr-4">
                     <span className="inline-flex flex-wrap items-center gap-1">
-                      {renderKeys(entry.keys)}
+                      {renderKeys(essentialKeys(entry))}
                     </span>
                   </td>
                   <td className="py-3 text-muted-foreground">{t(entry.description)}</td>

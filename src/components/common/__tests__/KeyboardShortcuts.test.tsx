@@ -533,4 +533,55 @@ describe('KeyboardShortcuts', () => {
       expect(row.textContent).not.toContain(t('keyboard.settings.customized'))
     })
   })
+
+  // #1711: the prominent "Essential" cheat sheet must source its chord entries
+  // (undo, search) from the keybinding registry so it reflects user rebinds —
+  // it previously hardcoded the literal chords while the catalog list below it
+  // already honoured rebinds.
+  describe('essential section reflects rebinds (#1711)', () => {
+    it('renders the default chord for the undo essential entry', () => {
+      setPlatform('Linux x86_64')
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      const row = screen.getByText(t('keyboard.essential.undo')).closest('tr') as HTMLElement
+      expect(row).toBeTruthy()
+      const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
+      expect(kbdTexts).toEqual(['Ctrl', 'Z'])
+    })
+
+    it('reflects a rebound undo chord in the essential entry', () => {
+      setPlatform('Linux x86_64')
+      // Rebind the catalog `undoLastPageOp` shortcut.
+      setCustomShortcut('undoLastPageOp', 'Ctrl + Shift + U')
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      const row = screen.getByText(t('keyboard.essential.undo')).closest('tr') as HTMLElement
+      expect(row).toBeTruthy()
+      const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
+      // The Essential chip now mirrors the rebind, not the hardcoded default.
+      expect(kbdTexts).toEqual(['Ctrl', 'Shift', 'U'])
+    })
+
+    it('reflects a rebound search chord in the essential entry', () => {
+      setPlatform('Linux x86_64')
+      // The "search" essential entry is backed by the `findInPage` catalog id.
+      setCustomShortcut('findInPage', 'Ctrl + G')
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      const row = screen.getByText(t('keyboard.essential.search')).closest('tr') as HTMLElement
+      expect(row).toBeTruthy()
+      const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
+      expect(kbdTexts).toEqual(['Ctrl', 'G'])
+      expect(kbdTexts).not.toContain('F')
+    })
+
+    it('substitutes the platform mod glyph (⌘) for an essential chord on macOS', () => {
+      setPlatform('MacIntel')
+      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+      const row = screen.getByText(t('keyboard.essential.undo')).closest('tr') as HTMLElement
+      const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
+      expect(kbdTexts).toEqual(['⌘', 'Z'])
+    })
+  })
 })
