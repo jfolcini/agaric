@@ -18,11 +18,24 @@ runs:
 
         # Bound apt download stalls: a hung mirror connection fails after 30s and
         # retries, instead of crawling at ~6 min/package with no timeout.
+        # `Keep-Downloaded-Packages "true"` stops apt from deleting the .deb
+        # archives after install so an `actions/cache` step on
+        # /var/cache/apt/archives can persist them across runs (#1464) — the
+        # slow part is the mirror download, not the dpkg install.
         sudo tee /etc/apt/apt.conf.d/99-ci-resilience >/dev/null <<'APT'
         Acquire::Retries "5";
         Acquire::http::Timeout "30";
         Acquire::https::Timeout "30";
+        APT::Keep-Downloaded-Packages "true";
         APT
+
+        # Make the archive dir writable by the runner user (not just root) so the
+        # `actions/cache` restore can populate it before the sudo `apt-get`
+        # install reads the cached .debs, and the post-job save can read them
+        # back. The .debs apt writes are world-readable (0644), so the save's tar
+        # can include them even though they stay root-owned.
+        sudo install -d -m 0777 /var/cache/apt/archives/partial
+        sudo chmod 0777 /var/cache/apt/archives
 
         # Stop the background apt jobs that hold the dpkg lock at boot. Each is
         # best-effort (the unit may not exist on every image), hence `|| true`.

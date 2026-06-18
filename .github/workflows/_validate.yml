@@ -196,6 +196,16 @@ jobs:
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
 
+      # Shared across every job that installs the same Tauri system deps
+      # (lint, cargo-tests, mcp-tests) and across runs (#1464): on a hit the
+      # `apt-get install` below resolves from the cached .debs instead of the
+      # slow Ubuntu mirror. Bump the `-v1` suffix when the package list changes.
+      - name: Cache apt archives (Tauri system deps)
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-tauri-${{ runner.os }}-v1
+
       - name: Install system dependencies
         # `mold` is added to speed up the linker step on the Rust builds
         # (clippy, cargo-deny, sqlx prepare's compile pass, etc).
@@ -708,9 +718,21 @@ jobs:
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
 
+      # Cache the Playwright system-dep .debs (#1464): `install-deps` apt-pulls
+      # ~33 MB of libs/fonts each run; on a hit apt resolves from the cache
+      # instead of the mirror. Keyed on package-lock so a Playwright bump busts
+      # it; restore-keys lets a stale set seed a partial hit.
+      - name: Cache apt archives (Playwright system deps)
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: apt-playwright-${{ runner.os }}-
+
       - name: Install Playwright system deps (always)
         # `install-deps` apt-installs ~33 MB of system libs/fonts each run (not
-        # on the base image, not cacheable). The real flake source was the
+        # on the base image; the .debs are now cached by the step above, #1464).
+        # The earlier flake source was the
         # runner's `unattended-upgrades`/`apt-daily` holding the dpkg lock at
         # boot: this step queued behind a ~6-min background job and ran out the
         # 20-min budget during SETUP, never reaching the suite (runs
@@ -821,6 +843,16 @@ jobs:
 
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
+
+      # Shared with the other Tauri-dep jobs (lint, cargo-tests, mcp-tests) and
+      # reused across runs (#1464): on a hit `apt-get install` resolves from the
+      # cached .debs instead of the slow Ubuntu mirror. Bump `-v1` if the list
+      # below changes.
+      - name: Cache apt archives (Tauri system deps)
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-tauri-${{ runner.os }}-v1
 
       - name: Install system dependencies
         # Same apt list as the `lint` sibling — both jobs compile Rust and
@@ -1048,6 +1080,16 @@ jobs:
 
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
+
+      # Shared with the other Tauri-dep jobs (lint, cargo-tests, mcp-tests) and
+      # reused across runs (#1464): on a hit `apt-get install` resolves from the
+      # cached .debs instead of the slow Ubuntu mirror. Bump `-v1` if the list
+      # below changes.
+      - name: Cache apt archives (Tauri system deps)
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-tauri-${{ runner.os }}-v1
 
       - name: Install system dependencies
         # Same apt list as cargo-tests / lint — the agaric-mcp crate
