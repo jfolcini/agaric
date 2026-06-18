@@ -8,12 +8,24 @@
  */
 
 import type React from 'react'
+import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { FormField } from '@/components/ui/form-field'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { useExternalImageAllowlist, useExternalImagePolicy } from '@/hooks/useExternalImagePolicy'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { EMOJI_PICKER_ENABLED_KEY, TAB_INDENTS_BLOCKS_KEY } from '@/lib/editor-preferences'
+import { type ExternalImagePolicy, isExternalImagePolicy } from '@/lib/external-image-policy'
+import { notify } from '@/lib/notify'
 
 export function EditorTab(): React.ReactElement {
   const { t } = useTranslation()
@@ -25,6 +37,22 @@ export function EditorTab(): React.ReactElement {
     TAB_INDENTS_BLOCKS_KEY,
     true,
   )
+  // #1492 — external-image load policy + the managed per-host allowlist.
+  const { policy, setPolicy } = useExternalImagePolicy()
+  const { allowlist, removeHost } = useExternalImageAllowlist()
+
+  const handlePolicyChange = useCallback(
+    (value: string) => {
+      // The Select can only emit the values we render, but validate defensively.
+      if (!isExternalImagePolicy(value)) return
+      setPolicy(value satisfies ExternalImagePolicy)
+      notify.success(t('settings.editor.externalImageUpdated'))
+    },
+    [setPolicy, t],
+  )
+
+  // Stable, sorted for a deterministic managed-domains list.
+  const allowedHosts = [...allowlist].sort((a, b) => a.localeCompare(b))
 
   return (
     <div className="space-y-6">
@@ -63,6 +91,60 @@ export function EditorTab(): React.ReactElement {
           data-testid="tab-indent-toggle"
         />
       </div>
+
+      {/* #1492 — external-image load policy (Always / Ask each time / Never).
+          Privacy-first default is "click" (ask each time): external http(s)
+          images show a placeholder until the user loads them; choosing Load
+          remembers the domain. Local/data/asset/same-origin images are never
+          gated. */}
+      <FormField
+        label={t('settings.editor.externalImageLabel')}
+        htmlFor="external-image-policy-select"
+        description={t('settings.editor.externalImageHelp')}
+      >
+        <Select value={policy} onValueChange={handlePolicyChange}>
+          <SelectTrigger
+            id="external-image-policy-select"
+            aria-label={t('settings.editor.externalImageLabel')}
+            data-testid="external-image-policy-select"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="always">{t('settings.editor.externalImageAlways')}</SelectItem>
+            <SelectItem value="click">{t('settings.editor.externalImageClick')}</SelectItem>
+            <SelectItem value="never">{t('settings.editor.externalImageNever')}</SelectItem>
+          </SelectContent>
+        </Select>
+      </FormField>
+
+      {/* Managed domains — hosts remembered via "Load" in Ask-each-time mode.
+          Only surfaced when non-empty (keeps the tab clean for the common
+          default). Removing a host stops its images auto-loading. */}
+      {allowedHosts.length > 0 && (
+        <div className="space-y-2" data-testid="external-image-allowlist">
+          <Label muted={false}>{t('settings.editor.externalImageAllowedHosts')}</Label>
+          <ul className="space-y-1">
+            {allowedHosts.map((host) => (
+              <li
+                key={host}
+                className="flex items-center justify-between gap-2 rounded border border-input bg-muted/40 px-2 py-1 text-sm"
+              >
+                <span className="truncate font-mono text-xs">{host}</span>
+                <button
+                  type="button"
+                  className="rounded border border-input bg-background px-1.5 py-0.5 text-xs text-foreground hover:bg-accent hover:text-accent-foreground"
+                  data-testid={`external-image-remove-${host}`}
+                  aria-label={t('settings.editor.externalImageRemoveHost', { host })}
+                  onClick={() => removeHost(host)}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }

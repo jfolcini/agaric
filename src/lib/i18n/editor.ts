@@ -20,6 +20,11 @@ export const editor: Record<string, string> = {
   'attachment.openImageFullscreen': 'Open image {{filename}} in full screen',
   'attachment.loadingImage': 'Loading image…',
   'attachment.imageLoadFailed': 'Failed to load image',
+  // #1492 — external-image privacy placeholder (node view + static renderer).
+  'editor.image.loadButton': 'Load',
+  'editor.image.blockedNote': 'external image blocked',
+  'editor.image.externalBlockedAria':
+    'External image from {{domain}} (blocked by your privacy settings)',
   'slash.repeatSet': 'Set repeat to {{value}}',
   'slash.repeatFailed': 'Failed to set repeat',
   'slash.repeatRemoved': 'Repeat removed',
