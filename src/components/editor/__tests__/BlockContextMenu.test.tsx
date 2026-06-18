@@ -429,12 +429,14 @@ describe('BlockContextMenu', () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
 
-    // #217 A1 — the first item is now the Tasks group (TODO cycle), not the
-    // destructive Delete (which moved to the bottom). Enter activates the
-    // focused (first) item.
+    // #1445 — the link group (now always present via "Copy block reference")
+    // leads the menu, so the focused first item is "Copy block reference".
+    // Enter activates it: it copies `((BLOCK_01))` and closes.
     await user.keyboard('{Enter}')
 
-    expect(props.onToggleTodo).toHaveBeenCalledWith('BLOCK_01')
+    await waitFor(() => {
+      expect(mockedWriteText).toHaveBeenCalledWith('((BLOCK_01))')
+    })
     expect(props.onClose).toHaveBeenCalled()
   })
 
@@ -549,8 +551,10 @@ describe('BlockContextMenu', () => {
     renderMenu()
 
     const separators = screen.getAllByRole('separator')
-    // With all callbacks wired and hasChildren=true, we have 4 groups → 3 separators
-    expect(separators.length).toBe(3)
+    // #1445 — the link group is now always present ("Copy block reference"),
+    // so the default menu has 5 groups (link · tasks · move/arrange · view ·
+    // delete) → 4 separators.
+    expect(separators.length).toBe(4)
   })
 
   // ── Existing tests (updated) ────────────────────────────────────
@@ -696,11 +700,13 @@ describe('BlockContextMenu', () => {
     renderMenu()
 
     const items = screen.getAllByRole('menuitem')
-    // #1109 — Move up / Move down now live behind the collapsed "Move &
-    // arrange" disclosure, so the default (collapsed) menu shows 7 rows:
-    // Set as TODO, Set priority 1, Indent, Dedent, Move & arrange (toggle),
-    // Collapse, Delete. The two move ops surface only once the toggle expands.
-    expect(items.length).toBe(7)
+    // #1109 — Move up / Move down live behind the collapsed "Move & arrange"
+    // disclosure. #1445 — the link group is now always present, contributing
+    // "Copy block reference" (and, when a containing page is known, "Copy page
+    // reference"; absent here since no `pageRefId` prop is passed). So the
+    // default (collapsed) menu shows 8 rows: Copy block reference, Set as TODO,
+    // Set priority 1, Indent, Dedent, Move & arrange (toggle), Collapse, Delete.
+    expect(items.length).toBe(8)
   })
 
   it('menu has aria-label', () => {
@@ -754,8 +760,8 @@ describe('BlockContextMenu', () => {
     renderMenu({ onShowHistory: vi.fn() })
 
     const separators = screen.getAllByRole('separator')
-    // With all callbacks wired, hasChildren=true, and onShowHistory: 5 groups → 4 separators
-    expect(separators.length).toBe(4)
+    // #1445 — link group always present + History group: 6 groups → 5 separators.
+    expect(separators.length).toBe(5)
   })
 
   // ── Merge menu item ──────────────────────────────────────────────
@@ -859,8 +865,9 @@ describe('BlockContextMenu', () => {
 
     await user.keyboard('{Enter}')
 
-    // #217 A1 — Tasks group is first now: item[0]=TODO cycle, item[1]=Priority.
-    expect(props.onTogglePriority).toHaveBeenCalledWith('BLOCK_01')
+    // #1445 — the link group leads (item[0]=Copy block reference), so the
+    // second item is the Tasks group's TODO cycle.
+    expect(props.onToggleTodo).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
   })
 
@@ -942,6 +949,86 @@ describe('BlockContextMenu', () => {
     // #924 — the link group leads the menu: Open link, then Copy URL.
     expect(items[0]).toHaveTextContent(t('contextMenu.openLink'))
     expect(items[1]).toHaveTextContent(t('contextMenu.copyUrl'))
+  })
+
+  // ── Copy block / page reference menu items (#1445) ───────────────
+
+  describe('copy block/page reference (#1445)', () => {
+    it('renders "Copy block reference" even when not on a link', () => {
+      renderMenu()
+      expect(screen.getByText(t('contextMenu.copyBlockRef'))).toBeInTheDocument()
+    })
+
+    it('renders "Copy page reference" when pageRefId is provided', () => {
+      renderMenu({ pageRefId: 'PAGE_01' })
+      expect(screen.getByText(t('contextMenu.copyPageRef'))).toBeInTheDocument()
+    })
+
+    it('does not render "Copy page reference" when pageRefId is undefined', () => {
+      renderMenu({ pageRefId: undefined })
+      expect(screen.queryByText(t('contextMenu.copyPageRef'))).not.toBeInTheDocument()
+    })
+
+    it('clicking "Copy block reference" writes ((ULID)) and shows toast + closes', async () => {
+      const { props } = renderMenu({ blockId: 'BLOCK_42' })
+
+      fireEvent.click(screen.getByText(t('contextMenu.copyBlockRef')))
+
+      await waitFor(() => {
+        expect(mockedWriteText).toHaveBeenCalledWith('((BLOCK_42))')
+      })
+      expect(toast.success).toHaveBeenCalledWith(t('contextMenu.blockRefCopied'))
+      expect(props.onClose).toHaveBeenCalled()
+    })
+
+    it('clicking "Copy page reference" writes [[ULID]] (not a bare ULID) and shows toast + closes', async () => {
+      const { props } = renderMenu({ blockId: 'BLOCK_42', pageRefId: 'PAGE_07' })
+
+      fireEvent.click(screen.getByText(t('contextMenu.copyPageRef')))
+
+      await waitFor(() => {
+        expect(mockedWriteText).toHaveBeenCalledWith('[[PAGE_07]]')
+      })
+      // Must NOT replicate the palette "copy id" bug that copies a bare ULID.
+      expect(mockedWriteText).not.toHaveBeenCalledWith('PAGE_07')
+      expect(toast.success).toHaveBeenCalledWith(t('contextMenu.pageRefCopied'))
+      expect(props.onClose).toHaveBeenCalled()
+    })
+
+    it('page reference uses the containing page id when the target is not itself a page', async () => {
+      // SortableBlock resolves pageRefId to the CONTAINING page when the block
+      // is an ordinary block (block_type !== 'page'); the menu copies exactly
+      // that id wrapped in [[…]]. Here blockId is the block, pageRefId its page.
+      renderMenu({ blockId: 'CHILD_BLOCK', pageRefId: 'CONTAINING_PAGE' })
+
+      fireEvent.click(screen.getByText(t('contextMenu.copyPageRef')))
+
+      await waitFor(() => {
+        expect(mockedWriteText).toHaveBeenCalledWith('[[CONTAINING_PAGE]]')
+      })
+      // The block's own id is the block ref, never the page ref.
+      expect(mockedWriteText).not.toHaveBeenCalledWith('[[CHILD_BLOCK]]')
+    })
+
+    it('surfaces an error toast and still closes when the clipboard write fails', async () => {
+      const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
+      mockedWriteText.mockRejectedValueOnce(new Error('clipboard boom'))
+      const { props } = renderMenu({ blockId: 'BLOCK_42' })
+
+      fireEvent.click(screen.getByText(t('contextMenu.copyBlockRef')))
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(t('contextMenu.copyRefFailed'))
+      })
+      expect(props.onClose).toHaveBeenCalled()
+      errorSpy.mockRestore()
+    })
+
+    it('has no a11y violations with both reference items present', async () => {
+      const { container } = renderMenu({ pageRefId: 'PAGE_01' })
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 
   // ── Floating UI safeguards (MAINT-121) ───────────────────────────
