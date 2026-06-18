@@ -110,9 +110,19 @@ function drawNodes(g: GSel, simNodes: GraphNode[]): NodeSel {
     .data(simNodes)
     .join('g')
     .attr('class', 'node')
-    .attr('tabindex', '0')
+    // #1725 — roving tabindex: only ONE node is in the page tab order at a
+    // time (the first; thereafter the last-focused). All others are
+    // `tabindex="-1"` and reached via Arrow keys, so a large graph is a
+    // single Tab stop instead of hundreds. `applyRovingTabindex` sets the
+    // initial -1/0 split; `attachNodeRovingKeys` handles Arrow/Home/End.
     .attr('role', 'button')
+    // #1725 — explicit accessible name per node (don't rely solely on the
+    // child <title>, whose name computation is inconsistent across screen
+    // readers under role="button").
+    .attr('aria-label', (d) => d.label)
     .style('cursor', 'pointer')
+
+  applyRovingTabindex(node)
 
   // Hit-area circle for touch targets (44px diameter).
   node
@@ -142,14 +152,91 @@ function drawNodes(g: GSel, simNodes: GraphNode[]): NodeSel {
 }
 
 /**
+ * #1725 — roving tabindex helpers.
+ *
+ * A graph can hold hundreds of nodes; making every node `tabindex="0"`
+ * turned the graph into hundreds of sequential Tab stops. Instead we adopt
+ * the standard roving-tabindex pattern (as for toolbars/listboxes):
+ *
+ *   - exactly one node carries `tabindex="0"` (the rest are `"-1"`), so a
+ *     single Tab enters the graph and a single Tab leaves it;
+ *   - Arrow keys (and Home/End) move focus *within* the node group,
+ *     transferring the `0` to the newly-focused node.
+ *
+ * `applyRovingTabindex` sets the initial split (first node `0`, others
+ * `-1`). It is idempotent and safe to re-run after a data-join patch.
+ */
+export function applyRovingTabindex(node: NodeSel): void {
+  // If a node is already the roving target (tabindex="0") and still in the
+  // selection, keep it; otherwise anoint the first node. This preserves the
+  // focused node across filter-toggle patches.
+  const nodes = node.nodes()
+  if (nodes.length === 0) return
+  const hasRovingTarget = nodes.some((el) => el.getAttribute('tabindex') === '0')
+  const firstNode = nodes[0]
+  node.attr('tabindex', function () {
+    if (hasRovingTarget) {
+      return this.getAttribute('tabindex') === '0' ? '0' : '-1'
+    }
+    return this === firstNode ? '0' : '-1'
+  })
+}
+
+/**
+ * Move the roving `tabindex="0"` to `target` (others → `-1`) and focus it.
+ */
+function focusRovingNode(node: NodeSel, target: SVGGElement): void {
+  node.attr('tabindex', function () {
+    return this === target ? '0' : '-1'
+  })
+  target.focus()
+}
+
+/**
+ * Arrow/Home/End navigation across the node selection (roving tabindex).
+ * Bound under the `.roving` keydown namespace so it coexists with the
+ * activation handler in `attachNodeClickAndKeyboard`.
+ */
+export function attachNodeRovingKeys(node: NodeSel): void {
+  node.on('keydown.roving', function (event: KeyboardEvent) {
+    const keys = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End']
+    if (!keys.includes(event.key)) return
+    const all = node.nodes()
+    if (all.length === 0) return
+    const current = all.indexOf(this as SVGGElement)
+    if (current === -1) return
+    event.preventDefault()
+    let next = current
+    switch (event.key) {
+      case 'ArrowRight':
+      case 'ArrowDown':
+        next = (current + 1) % all.length
+        break
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        next = (current - 1 + all.length) % all.length
+        break
+      case 'Home':
+        next = 0
+        break
+      case 'End':
+        next = all.length - 1
+        break
+    }
+    const target = all[next]
+    if (target) focusRovingNode(node, target)
+  })
+}
+
+/**
  * Attach click + keyboard activation to graph nodes (UX-270).
  *
- * Each node `<g>` gets `tabindex="0"` + `role="button"` in `drawNodes`,
- * so it joins the page's tab order as an activatable widget. This handler
- * mirrors the native button activation contract: Enter and Space both
- * navigate to the underlying page (with `preventDefault` on Space to
- * suppress page-scroll). Click parity comes from the `click` listener so
- * pointer + keyboard paths converge on `navigateToPage`.
+ * Each node `<g>` has `role="button"` (set in `drawNodes`) and a roving
+ * `tabindex` (#1725). This handler mirrors the native button activation
+ * contract: Enter and Space both navigate to the underlying page (with
+ * `preventDefault` on Space to suppress page-scroll). Click parity comes
+ * from the `click` listener so pointer + keyboard paths converge on
+ * `navigateToPage`.
  */
 function attachNodeClickAndKeyboard(
   node: NodeSel,
@@ -258,6 +345,7 @@ export function renderGraphElements(
   const node = drawNodes(nodeLayer, simNodes)
 
   attachNodeClickAndKeyboard(node, navigateToPage)
+  attachNodeRovingKeys(node)
   attachNodeFocusStyles(node)
   attachNodeHover(node, link)
 

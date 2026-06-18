@@ -56,6 +56,8 @@ vi.mock('d3-selection', () => ({
     text: vi.fn().mockReturnThis(),
     on: vi.fn().mockReturnThis(),
     call: vi.fn().mockReturnThis(),
+    // #1725 — applyRovingTabindex calls `selection.nodes()`.
+    nodes: vi.fn(() => []),
     append: vi.fn(() => ({
       selectAll: vi.fn().mockReturnThis(),
       data: vi.fn().mockReturnThis(),
@@ -72,6 +74,12 @@ vi.mock('d3-selection', () => ({
       datum: vi.fn().mockReturnThis(),
       select: vi.fn().mockReturnThis(),
       node: vi.fn().mockReturnValue(null),
+      // #1725 — applyRovingTabindex calls `selection.nodes()`; return a couple
+      // of fake <g> stand-ins so the roving `.attr('tabindex', fn)` runs.
+      nodes: vi.fn(() => [
+        { getAttribute: () => null, focus: () => {} },
+        { getAttribute: () => null, focus: () => {} },
+      ]),
     })),
     remove: vi.fn().mockReturnThis(),
     style: vi.fn().mockReturnThis(),
@@ -671,7 +679,7 @@ describe('useGraphSimulation', () => {
       return selectResult.append.mock.results[0]?.value
     }
 
-    it('marks node groups with tabindex=0 and role=button', () => {
+    it('marks node groups with role=button + an explicit aria-label, and roving tabindex (#1725)', () => {
       render(
         React.createElement(Harness, {
           nodes: makeNodes(),
@@ -680,8 +688,13 @@ describe('useGraphSimulation', () => {
         }),
       )
       const nodeSel = getNodeSelectionMock()
-      expect(nodeSel.attr).toHaveBeenCalledWith('tabindex', '0')
       expect(nodeSel.attr).toHaveBeenCalledWith('role', 'button')
+      // #1725 — explicit accessible name per node (not only the child <title>).
+      expect(nodeSel.attr).toHaveBeenCalledWith('aria-label', expect.any(Function))
+      // #1725 — tabindex is now set via the roving helper as a value FUNCTION
+      // (one node "0", the rest "-1"), never the literal "0" on every node.
+      expect(nodeSel.attr).toHaveBeenCalledWith('tabindex', expect.any(Function))
+      expect(nodeSel.attr).not.toHaveBeenCalledWith('tabindex', '0')
     })
 
     it('registers click and keydown handlers on each node', () => {

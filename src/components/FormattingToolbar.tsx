@@ -31,6 +31,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { useRovingTabindex } from '@/hooks/useRovingTabindex'
 import { type ToolbarItem, useToolbarOverflow } from '@/hooks/useToolbarOverflow'
 import {
   createHistoryButtons,
@@ -110,6 +111,19 @@ export function FormattingToolbar({
   const containerRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const overflowMenuId = useId()
+
+  // WAI-ARIA toolbar roving-tabindex model (#1724): one tab stop, Arrow/Home/End
+  // move focus between the visible buttons. The hook needs the container node;
+  // compose its callback ref with our existing `containerRef` (used for overflow
+  // measurement) so both observe the same element. The off-screen measurement
+  // sentinel renders duplicate buttons, but it carries `aria-hidden="true"` and
+  // the hook ignores any button inside an `aria-hidden` / `inert` subtree, so
+  // the sentinel's buttons never join the roving set or steal the tab stop.
+  const roving = useRovingTabindex()
+  const setContainer = (node: HTMLDivElement | null) => {
+    containerRef.current = node
+    roving.containerRef(node)
+  }
 
   // #925 f3 — keep the pinned (touch) toolbar resting on top of the soft
   // keyboard. The bar is `position: fixed` at the layout-viewport bottom; we
@@ -253,7 +267,10 @@ export function FormattingToolbar({
 
   return (
     <div
-      ref={containerRef}
+      tabIndex={-1}
+      ref={setContainer}
+      onKeyDown={roving.onKeyDown}
+      onFocus={roving.onFocus}
       role="toolbar"
       aria-label={t('toolbar.formatting')}
       aria-controls={blockId ? `editor-${blockId}` : undefined}

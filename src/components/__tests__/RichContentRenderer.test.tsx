@@ -290,6 +290,7 @@ describe('RichContentRenderer', () => {
     const content = `[[${BLOCK_ID}]]`
     render(
       renderRichContent(content, {
+        interactive: true,
         onNavigate,
         resolveBlockTitle: () => 'My Page',
       }),
@@ -414,11 +415,12 @@ describe('RichContentRenderer', () => {
 
   // -- Interactive mode -------------------------------------------------------
 
-  it('adds tabIndex and role to elements in interactive mode', () => {
+  it('adds tabIndex and role to clickable elements in interactive mode', () => {
     const content = `[[${BLOCK_ID}]]`
     render(
       renderRichContent(content, {
         interactive: true,
+        onNavigate: () => {},
         resolveBlockTitle: () => 'Page',
       }),
     )
@@ -710,6 +712,82 @@ describe('RichContentRenderer', () => {
     expect(screen.getByTestId('block-link-chip')).toBeInTheDocument()
   })
 
+  // -- block_link interactivity gating (unified chip policy) ------------------
+  // Mirrors the tag_ref policy describe block: a block_link is only interactive
+  // when clickable (onNavigate AND interactive). Otherwise it is fully inert;
+  // interactive-without-handler gets tabIndex focus parity only.
+  describe('block_link interactivity gating', () => {
+    it('clickable chip has role=link, tabIndex=0, and cursor-pointer', () => {
+      render(
+        renderRichContent(`[[${BLOCK_ID}]]`, {
+          interactive: true,
+          onNavigate: () => {},
+          resolveBlockTitle: () => 'Page',
+        }),
+      )
+      const chip = screen.getByTestId('block-link-chip')
+      expect(chip).toHaveAttribute('role', 'link')
+      expect(chip).toHaveAttribute('tabindex', '0')
+      expect(chip.classList.contains('cursor-pointer')).toBe(true)
+    })
+
+    it('is fully inert without interactive=true (even with onNavigate)', async () => {
+      const onNavigate = vi.fn()
+      const user = userEvent.setup()
+      render(
+        renderRichContent(`[[${BLOCK_ID}]]`, {
+          onNavigate,
+          resolveBlockTitle: () => 'Page',
+        }),
+      )
+      const chip = screen.getByTestId('block-link-chip')
+      expect(chip).not.toHaveAttribute('role')
+      expect(chip).not.toHaveAttribute('tabindex')
+      expect(chip.classList.contains('cursor-pointer')).toBe(false)
+      await user.click(chip)
+      expect(onNavigate).not.toHaveBeenCalled()
+    })
+
+    it('interactive without onNavigate is inert focus parity (tabIndex only)', async () => {
+      const user = userEvent.setup()
+      render(
+        renderRichContent(`[[${BLOCK_ID}]]`, {
+          interactive: true,
+          resolveBlockTitle: () => 'Page',
+        }),
+      )
+      const chip = screen.getByTestId('block-link-chip')
+      expect(chip).not.toHaveAttribute('role')
+      // Inert interactive surface still exposes tabIndex for focus parity.
+      expect(chip).toHaveAttribute('tabindex', '0')
+      expect(chip.classList.contains('cursor-pointer')).toBe(false)
+      // Pointer click does not throw and does not fire anything observable.
+      await user.click(chip)
+    })
+
+    it('has no a11y violations for an interactive clickable chip', async () => {
+      const { container } = render(
+        renderRichContent(`[[${BLOCK_ID}]]`, {
+          interactive: true,
+          onNavigate: () => {},
+          resolveBlockTitle: () => 'Page',
+        }),
+      )
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+
+    it('has no a11y violations when inert (non-interactive)', async () => {
+      const { container } = render(
+        renderRichContent(`[[${BLOCK_ID}]]`, {
+          resolveBlockTitle: () => 'Page',
+        }),
+      )
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
   // -- Block ref interactions -------------------------------------------------
 
   it('block_ref click calls onNavigate', async () => {
@@ -727,6 +805,7 @@ describe('RichContentRenderer', () => {
     render(
       <TooltipProvider>
         {renderRichContent(`((${REF_BLOCK}))`, {
+          interactive: true,
           onNavigate,
           resolveBlockTitle: () => 'Referenced',
         })}
@@ -752,6 +831,7 @@ describe('RichContentRenderer', () => {
     render(
       <TooltipProvider>
         {renderRichContent(`((${REF_BLOCK}))`, {
+          interactive: true,
           onNavigate,
           resolveBlockTitle: () => 'Referenced',
         })}
@@ -763,7 +843,11 @@ describe('RichContentRenderer', () => {
     expect(onNavigate).toHaveBeenCalledTimes(1)
   })
 
-  it('block_ref role is button when non-interactive', () => {
+  // Unified chip interactivity policy (matches tagRef / blockLink): a block_ref
+  // is only interactive when it is clickable (onNavigate AND interactive). When
+  // not interactive it is fully inert; when interactive without a handler it
+  // gets tabIndex focus parity only (no role / cursor / handlers).
+  it('block_ref is fully inert when non-interactive (no role/tabIndex/cursor)', () => {
     mockedParse.mockReturnValueOnce({
       type: 'doc',
       content: [
@@ -780,10 +864,38 @@ describe('RichContentRenderer', () => {
         })}
       </TooltipProvider>,
     )
-    expect(screen.getByTestId('block-ref-chip')).toHaveAttribute('role', 'button')
+    const chip = screen.getByTestId('block-ref-chip')
+    expect(chip).not.toHaveAttribute('role')
+    expect(chip).not.toHaveAttribute('tabindex')
+    expect(chip.classList.contains('cursor-pointer')).toBe(false)
   })
 
-  it('block_ref role is link in interactive mode', () => {
+  it('block_ref role is link with full affordances when clickable', () => {
+    mockedParse.mockReturnValueOnce({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'block_ref', attrs: { id: REF_BLOCK } }],
+        },
+      ],
+    })
+    render(
+      <TooltipProvider>
+        {renderRichContent(`((${REF_BLOCK}))`, {
+          resolveBlockTitle: () => 'Referenced',
+          interactive: true,
+          onNavigate: () => {},
+        })}
+      </TooltipProvider>,
+    )
+    const chip = screen.getByTestId('block-ref-chip')
+    expect(chip).toHaveAttribute('role', 'link')
+    expect(chip).toHaveAttribute('tabindex', '0')
+    expect(chip.classList.contains('cursor-pointer')).toBe(true)
+  })
+
+  it('block_ref interactive without onNavigate is inert focus parity (tabIndex only)', () => {
     mockedParse.mockReturnValueOnce({
       type: 'doc',
       content: [
@@ -801,7 +913,54 @@ describe('RichContentRenderer', () => {
         })}
       </TooltipProvider>,
     )
-    expect(screen.getByTestId('block-ref-chip')).toHaveAttribute('role', 'link')
+    const chip = screen.getByTestId('block-ref-chip')
+    expect(chip).toHaveAttribute('tabindex', '0')
+    expect(chip).not.toHaveAttribute('role')
+    expect(chip.classList.contains('cursor-pointer')).toBe(false)
+  })
+
+  it('block_ref has no a11y violations for an interactive clickable chip', async () => {
+    mockedParse.mockReturnValueOnce({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'block_ref', attrs: { id: REF_BLOCK } }],
+        },
+      ],
+    })
+    const { container } = render(
+      <TooltipProvider>
+        {renderRichContent(`((${REF_BLOCK}))`, {
+          resolveBlockTitle: () => 'Referenced',
+          interactive: true,
+          onNavigate: () => {},
+        })}
+      </TooltipProvider>,
+    )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  it('block_ref has no a11y violations when inert (non-interactive)', async () => {
+    mockedParse.mockReturnValueOnce({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'block_ref', attrs: { id: REF_BLOCK } }],
+        },
+      ],
+    })
+    const { container } = render(
+      <TooltipProvider>
+        {renderRichContent(`((${REF_BLOCK}))`, {
+          resolveBlockTitle: () => 'Referenced',
+        })}
+      </TooltipProvider>,
+    )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 
   it('block_ref long content is truncated in chip label', () => {

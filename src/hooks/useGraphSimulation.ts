@@ -44,6 +44,8 @@ import { useGraphRenderElements } from '@/hooks/useGraphRenderElements'
 import { useGraphWorkerSimulation } from '@/hooks/useGraphWorkerSimulation'
 import { useGraphZoom } from '@/hooks/useGraphZoom'
 import {
+  applyRovingTabindex,
+  attachNodeRovingKeys,
   createApplyPositions,
   DEFAULT_HEIGHT,
   DEFAULT_WIDTH,
@@ -153,8 +155,11 @@ export function patchGraphSelections(
         const grp = enter
           .append('g')
           .attr('class', 'node')
-          .attr('tabindex', '0')
+          // #1725 — roving tabindex (set below via applyRovingTabindex) +
+          // explicit per-node aria-label so the accessible name doesn't rely
+          // solely on the child <title>.
           .attr('role', 'button')
+          .attr('aria-label', (d) => d.label)
           .style('cursor', 'pointer')
 
         grp
@@ -184,10 +189,20 @@ export function patchGraphSelections(
         // changed, even though the DOM element is the same.
         update.select<SVGTextElement>('text').text((d) => truncateLabel(d.label))
         update.select<SVGTitleElement>('title').text((d) => d.label)
+        // #1725 — keep the explicit accessible name in sync on rename.
+        update.attr('aria-label', (d) => d.label)
         return update
       },
       (exit) => exit.remove(),
     )
+
+  // #1725 — (re)establish the roving tabindex on the merged selection and
+  // bind Arrow/Home/End navigation. Mirrors `renderGraphElements` so the
+  // patch path (filter toggles) keeps the single-Tab-stop behaviour. Run
+  // before the activation/focus listeners below so all handlers attach to
+  // the same merged selection.
+  applyRovingTabindex(node)
+  attachNodeRovingKeys(node)
 
   // ── Listeners (re-bound each patch so closures pick up the latest
   // `navigateToPage`). d3's `.on()` replaces existing handlers, so this

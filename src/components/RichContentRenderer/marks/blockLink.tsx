@@ -5,29 +5,31 @@ import { getPageDisplayName } from '../../../lib/page-display'
 import { cn } from '../../../lib/utils'
 import type { RenderContext } from '../context'
 
-function blockLinkProps(
-  linkId: string,
-  onNavigate: ((id: string) => void) | undefined,
-  interactive: boolean | undefined,
-): Record<string, unknown> {
-  const props: Record<string, unknown> = {
+/**
+ * Build the event-handler + role props bundle for a clickable block-link chip.
+ * Mirrors `tagRefProps` / `blockRefProps`: returns `{ role: 'link', tabIndex: 0,
+ * onClick, onKeyDown }` with Enter + Space activation and `stopPropagation` on
+ * every handler.
+ *
+ * Only spread when the chip is clickable (handler AND interactive). The caller
+ * gates on both conditions, so this helper only ever produces the active bag.
+ */
+function blockLinkProps(linkId: string, onNavigate: (id: string) => void): Record<string, unknown> {
+  return {
     role: 'link',
+    tabIndex: 0,
     onClick: (e: React.MouseEvent) => {
-      if (onNavigate) {
-        e.stopPropagation()
-        onNavigate(linkId)
-      }
+      e.stopPropagation()
+      onNavigate(linkId)
     },
     onKeyDown: (e: React.KeyboardEvent) => {
-      if ((e.key === 'Enter' || e.key === ' ') && onNavigate) {
+      if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
         e.stopPropagation()
         onNavigate(linkId)
       }
     },
   }
-  if (interactive === true) props['tabIndex'] = 0
-  return props
 }
 
 export function renderBlockLink(
@@ -43,14 +45,29 @@ export function renderBlockLink(
   // flowing text where a full namespaced path overflows the line.
   const { label } = getPageDisplayName(title, 'leaf')
   const deletedProps = status === 'deleted' ? { 'aria-label': `${title} (deleted)` } : {}
+  // Unified chip interactivity policy (matches tagRef / blockRef):
+  // - clickable (handler AND interactive) → full affordances: role=link,
+  //   tabIndex=0, key/click handlers, cursor-pointer.
+  // - interactive but no handler → inert focus parity: tabIndex=0 only.
+  // - not interactive → fully inert: no role, no tabIndex, no handlers, no
+  //   cursor-pointer.
+  const clickable = ctx.onNavigate !== undefined && ctx.interactive === true
+  const inertProps: Record<string, unknown> = ctx.interactive === true ? { tabIndex: 0 } : {}
+  const interactiveProps = clickable
+    ? blockLinkProps(linkId, ctx.onNavigate as (id: string) => void)
+    : inertProps
   return (
     <span
       key={key}
-      className={cn('block-link-chip cursor-pointer', status === 'deleted' && 'block-link-deleted')}
+      className={cn(
+        'block-link-chip',
+        clickable && 'cursor-pointer',
+        status === 'deleted' && 'block-link-deleted',
+      )}
       data-testid="block-link-chip"
       title={title}
       {...deletedProps}
-      {...blockLinkProps(linkId, ctx.onNavigate, ctx.interactive)}
+      {...interactiveProps}
     >
       {label}
     </span>

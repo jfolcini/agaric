@@ -44,7 +44,8 @@ export const references: Record<string, string> = {
   'graph.noMatches': 'No pages match the current filters',
   'graph.loadFailed': 'Failed to load graph data',
   'graph.title': 'Page Relationships',
-  'graph.keyboardHint': 'Use Tab to focus a node, then Enter or Space to open the page.',
+  'graph.keyboardHint':
+    'Use Tab to enter the graph, Arrow keys to move between nodes, then Enter or Space to open the page.',
   'graph.zoomIn': 'Zoom in',
   'graph.zoomOut': 'Zoom out',
   'graph.zoomReset': 'Fit to view',

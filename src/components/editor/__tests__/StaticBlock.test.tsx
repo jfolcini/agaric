@@ -215,7 +215,8 @@ describe('StaticBlock', () => {
     const chip = screen.getByText('My Page')
     expect(chip).toBeInTheDocument()
     expect(chip.classList.contains('block-link-chip')).toBe(true)
-    expect(chip.classList.contains('cursor-pointer')).toBe(true)
+    // #1726: with no onNavigate wired the chip is inert (no pointer affordance).
+    expect(chip.classList.contains('cursor-pointer')).toBe(false)
   })
 
   it('falls back to truncated ULID when resolveBlockTitle is not provided', () => {
@@ -1167,7 +1168,8 @@ describe('StaticBlock', () => {
       expect(chip).toBeInTheDocument()
       expect(chip.textContent).toBe('Referenced block content')
       expect(chip.classList.contains('block-ref-chip')).toBe(true)
-      expect(chip.classList.contains('cursor-pointer')).toBe(true)
+      // #1726: with no onNavigate wired the chip is inert (no pointer affordance).
+      expect(chip.classList.contains('cursor-pointer')).toBe(false)
     })
 
     it('renders block_ref chip with truncated first line', () => {

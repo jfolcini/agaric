@@ -4,6 +4,7 @@ import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { useRovingTabindex } from '@/hooks/useRovingTabindex'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { setProperty } from '@/lib/tauri'
@@ -64,6 +65,7 @@ export function ImageResizeToolbar({
   onAlignmentChange: (alignment: ImageAlignment) => void
 }): React.ReactElement {
   const { t } = useTranslation()
+  const roving = useRovingTabindex()
 
   const handleClick = useCallback(
     (value: string) => {
@@ -101,6 +103,10 @@ export function ImageResizeToolbar({
 
   return (
     <div
+      tabIndex={-1}
+      ref={roving.containerRef}
+      onKeyDown={roving.onKeyDown}
+      onFocus={roving.onFocus}
       className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 z-10 flex items-center gap-1 rounded-full bg-popover border border-border shadow-md px-2 py-1"
       role="toolbar"
       aria-label={t('imageResize.toolbar')}

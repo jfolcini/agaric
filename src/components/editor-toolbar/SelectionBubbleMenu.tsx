@@ -30,6 +30,7 @@ import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { useRovingTabindex } from '@/hooks/useRovingTabindex'
 import { getShortcutKeys, toAriaKeyshortcuts } from '@/lib/keyboard-config'
 import { createMarkToggles, toolbarActiveClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
@@ -248,8 +249,17 @@ export function SelectionBubbleMenu({
 
   const markToggles = useMemo(() => createMarkToggles(editor), [editor])
 
+  // WAI-ARIA toolbar roving-tabindex model (#1724): one tab stop, Arrow/Home/End
+  // move focus between the mark/link buttons. BubbleMenu forwards ref + DOM
+  // handlers to its container div.
+  const roving = useRovingTabindex()
+
   return (
     <BubbleMenu
+      tabIndex={-1}
+      ref={roving.containerRef}
+      onKeyDown={roving.onKeyDown}
+      onFocus={roving.onFocus}
       editor={editor}
       shouldShow={({ state: editorState }) =>
         // #925 f4 — never float the bubble on touch; it collides with the OS
