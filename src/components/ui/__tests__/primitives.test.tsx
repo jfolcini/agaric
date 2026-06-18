@@ -8,7 +8,7 @@
  *  - a11y compliance via axe audit
  */
 
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -795,6 +795,56 @@ describe('IconButton', () => {
     )
     const btn = screen.getByTestId('star-btn')
     expect(btn).toHaveAttribute('data-starred', 'true')
+  })
+
+  // #1735: Radix hover tooltips never open on a coarse-pointer tap, so the
+  // visible label of an icon-only control is invisible to sighted touch users.
+  // IconButton opts into the press-and-hold fallback so a long-press surfaces it.
+  it('surfaces the tooltip on a press-and-hold (touch fallback, #1735)', async () => {
+    vi.useFakeTimers()
+    try {
+      render(
+        <IconButton tooltip="Search" ariaLabel="Search" data-testid="lp-btn">
+          <span aria-hidden="true">🔍</span>
+        </IconButton>,
+      )
+      const btn = screen.getByTestId('lp-btn')
+      // No hover, no focus — only a held pointer. The tooltip is absent at rest.
+      expect(screen.queryAllByRole('tooltip')).toHaveLength(0)
+
+      fireEvent.pointerDown(btn, { clientX: 10, clientY: 10 })
+      // Hold past the long-press delay (500ms) without moving.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600)
+      })
+
+      const tooltips = screen.getAllByRole('tooltip')
+      expect(tooltips.length).toBeGreaterThan(0)
+      expect(tooltips[0]).toHaveTextContent('Search')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does NOT open on a short tap that releases before the hold delay (#1735)', async () => {
+    vi.useFakeTimers()
+    try {
+      render(
+        <IconButton tooltip="Search" ariaLabel="Search" data-testid="lp-tap-btn">
+          <span aria-hidden="true">🔍</span>
+        </IconButton>,
+      )
+      const btn = screen.getByTestId('lp-tap-btn')
+      fireEvent.pointerDown(btn, { clientX: 10, clientY: 10 })
+      // A quick tap releases well before the 500ms hold → fallback must not fire.
+      fireEvent.pointerUp(btn)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600)
+      })
+      expect(screen.queryAllByRole('tooltip')).toHaveLength(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('has no a11y violations', async () => {

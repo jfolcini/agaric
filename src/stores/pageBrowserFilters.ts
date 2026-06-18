@@ -11,13 +11,17 @@
  * - survive the navigation round-trip within a session (create → editor → back),
  * - stay partitioned by space (chip values reference space-scoped ids — tags,
  *   pages — so a space switch reads the new space's slice, empty if none, and
- *   chips never cross spaces).
- *
- * Not persisted to localStorage: chips are a transient working set, intentionally
- * cleared on app restart.
+ *   chips never cross spaces),
+ * - survive an app restart (#1750): persisted to localStorage so the same
+ *   "I set up a filter" gesture has the same lifetime as the graph view's
+ *   filters (which already persist via `GraphFilterBar`'s `agaric:graph-filters`
+ *   key). Backlinks deliberately stay page-scoped and reset on navigation; the
+ *   two surfaces that own a durable filter set (graph + pages) now persist
+ *   consistently.
  */
 
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 
 import type { PageFilterWithKey } from '../components/PageBrowser/PageBrowserFilterRow'
 import type { FilterPrimitive } from '../lib/tauri'
@@ -59,45 +63,60 @@ export function selectPageFiltersForSpace(
   return state.filtersBySpace[key] ?? (EMPTY_FILTERS as PageFilterWithKey[])
 }
 
-export const usePageBrowserFiltersStore = create<PageBrowserFiltersState>()((set) => ({
-  filtersBySpace: {},
-  nextAddId: 0,
-  addFilter: (spaceKey, filter) =>
-    set((state) => {
-      const current = state.filtersBySpace[spaceKey] ?? []
-      // Dedupe: strip the React-key-only `_addId` and compare a stable JSON
-      // serialisation. Re-applying a structurally-identical chip is a no-op —
-      // it would ship a duplicate primitive to the IPC (an AND of a condition
-      // with itself) and add a redundant pill.
-      const incoming = JSON.stringify(filter)
-      if (current.some(({ _addId, ...rest }) => JSON.stringify(rest) === incoming)) {
-        return state
-      }
-      const nextAddId = state.nextAddId + 1
-      return {
-        nextAddId,
-        filtersBySpace: {
-          ...state.filtersBySpace,
-          [spaceKey]: [...current, { ...filter, _addId: nextAddId }],
-        },
-      }
+export const usePageBrowserFiltersStore = create<PageBrowserFiltersState>()(
+  persist(
+    (set) => ({
+      filtersBySpace: {},
+      nextAddId: 0,
+      addFilter: (spaceKey, filter) =>
+        set((state) => {
+          const current = state.filtersBySpace[spaceKey] ?? []
+          // Dedupe: strip the React-key-only `_addId` and compare a stable JSON
+          // serialisation. Re-applying a structurally-identical chip is a no-op —
+          // it would ship a duplicate primitive to the IPC (an AND of a condition
+          // with itself) and add a redundant pill.
+          const incoming = JSON.stringify(filter)
+          if (current.some(({ _addId, ...rest }) => JSON.stringify(rest) === incoming)) {
+            return state
+          }
+          const nextAddId = state.nextAddId + 1
+          return {
+            nextAddId,
+            filtersBySpace: {
+              ...state.filtersBySpace,
+              [spaceKey]: [...current, { ...filter, _addId: nextAddId }],
+            },
+          }
+        }),
+      removeFilter: (spaceKey, index) =>
+        set((state) => {
+          const current = state.filtersBySpace[spaceKey] ?? []
+          return {
+            filtersBySpace: {
+              ...state.filtersBySpace,
+              [spaceKey]: current.filter((_, i) => i !== index),
+            },
+          }
+        }),
+      clearFilters: (spaceKey) =>
+        set((state) => {
+          const current = state.filtersBySpace[spaceKey] ?? []
+          if (current.length === 0) return state
+          return {
+            filtersBySpace: { ...state.filtersBySpace, [spaceKey]: [] },
+          }
+        }),
     }),
-  removeFilter: (spaceKey, index) =>
-    set((state) => {
-      const current = state.filtersBySpace[spaceKey] ?? []
-      return {
-        filtersBySpace: {
-          ...state.filtersBySpace,
-          [spaceKey]: current.filter((_, i) => i !== index),
-        },
-      }
-    }),
-  clearFilters: (spaceKey) =>
-    set((state) => {
-      const current = state.filtersBySpace[spaceKey] ?? []
-      if (current.length === 0) return state
-      return {
-        filtersBySpace: { ...state.filtersBySpace, [spaceKey]: [] },
-      }
-    }),
-}))
+    {
+      name: 'agaric:page-browser-filters',
+      version: 1,
+      // Persist the chip lists and the monotonic id counter so `_addId` keys
+      // stay unique across a restart (a fresh 0 would collide with rehydrated
+      // chips). Function members are not serialisable and are excluded.
+      partialize: (state) => ({
+        filtersBySpace: state.filtersBySpace,
+        nextAddId: state.nextAddId,
+      }),
+    },
+  ),
+)

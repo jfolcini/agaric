@@ -55,6 +55,22 @@ interface SwipeState {
   swiping: boolean
 }
 
+/**
+ * #1732/#1748: which structural/destructive gesture the current drag is armed
+ * to fire on release, derived live during `onTouchMove`. The overlay keys its
+ * backdrop on this so the affordance always matches the action:
+ * - `'indent'`  — right swipe past {@link INDENT_THRESHOLD} (non-destructive)
+ * - `'outdent'` — short left swipe in the outdent band (non-destructive)
+ * - `'delete'`  — left swipe at/past the reveal floor (destructive)
+ * - `null`      — no gesture armed yet (below all thresholds, or no handler)
+ *
+ * Before this flag the overlay rendered the destructive delete backdrop for
+ * ANY left translate (#1732: outdent showed the red delete cue then outdented)
+ * and had no backdrop at all for right swipes (#1748: indent was a blank
+ * gutter slide).
+ */
+export type SwipeGestureIntent = 'indent' | 'outdent' | 'delete' | null
+
 /** Optional structural-gesture handlers (#927 f4). */
 interface SwipeOptions {
   /** Right-swipe-to-indent handler. Omit to disable indent. */
@@ -85,6 +101,12 @@ interface SwipeOptions {
  * {@link OUTDENT_MAX} instead of {@link REVEAL_THRESHOLD}, so outdent and the
  * delete-reveal never overlap. When neither structural handler is supplied the
  * hook behaves exactly as the original delete-only swipe (backward compatible).
+ *
+ * The returned `gestureIntent` ({@link SwipeGestureIntent}) reports which
+ * gesture the live drag would fire on release, so the overlay can render a
+ * backdrop that matches the action: the destructive delete cue ONLY in the
+ * delete band (#1732), a neutral indent cue while a right swipe is armed
+ * (#1748), and a neutral outdent cue in the outdent band.
  */
 export function useBlockSwipeActions(onDelete: () => void, options?: SwipeOptions) {
   const onIndent = options?.onIndent
@@ -96,6 +118,11 @@ export function useBlockSwipeActions(onDelete: () => void, options?: SwipeOption
   // so the overlay can switch from the muted reveal state to a
   // destructive "release to delete" affordance before touch-end.
   const [thresholdCrossed, setThresholdCrossed] = useState(false)
+  // #1732/#1748: the gesture the current drag would fire on release, so the
+  // overlay can render a matching (and direction-correct) backdrop instead of
+  // assuming every left translate is a delete and every right translate is
+  // un-cued. Derived from the same band logic that touchEnd dispatches on.
+  const [gestureIntent, setGestureIntent] = useState<SwipeGestureIntent>(null)
   const stateRef = useRef<SwipeState>({
     startX: 0,
     startY: 0,
@@ -145,6 +172,9 @@ export function useBlockSwipeActions(onDelete: () => void, options?: SwipeOption
         stateRef.current.currentX = touch.clientX
         setTranslateX(Math.min(dx, INDENT_THRESHOLD))
         setThresholdCrossed(false)
+        // #1748: arm the (non-destructive) indent affordance once the drag has
+        // travelled far enough that release would actually indent.
+        setGestureIntent(dx >= INDENT_THRESHOLD ? 'indent' : null)
         return
       }
 
@@ -158,9 +188,22 @@ export function useBlockSwipeActions(onDelete: () => void, options?: SwipeOption
         // once reached — we need the unclamped value to flip back if the
         // user drags partway back without lifting their finger).
         setThresholdCrossed(dx < -AUTO_DELETE_THRESHOLD)
+        // #1732: classify the left swipe against the SAME bands touchEnd
+        // dispatches on, so the overlay shows the destructive delete backdrop
+        // ONLY in the delete band — the outdent band gets its own neutral cue
+        // instead of the red "delete then outdent" contradiction.
+        const leftDist = -dx
+        const revealFloor = onOutdent ? OUTDENT_MAX : REVEAL_THRESHOLD
+        if (onOutdent && leftDist >= OUTDENT_THRESHOLD && leftDist < OUTDENT_MAX) {
+          setGestureIntent('outdent')
+        } else if (leftDist >= revealFloor) {
+          setGestureIntent('delete')
+        } else {
+          setGestureIntent(null)
+        }
       }
     },
-    [isTouch, onIndent],
+    [isTouch, onIndent, onOutdent],
   )
 
   const onTouchEnd = useCallback(() => {
@@ -176,6 +219,7 @@ export function useBlockSwipeActions(onDelete: () => void, options?: SwipeOption
       setIsRevealed(false)
       stateRef.current.swiping = false
       setThresholdCrossed(false)
+      setGestureIntent(null)
       return
     }
 
@@ -189,6 +233,7 @@ export function useBlockSwipeActions(onDelete: () => void, options?: SwipeOption
       setIsRevealed(false)
       stateRef.current.swiping = false
       setThresholdCrossed(false)
+      setGestureIntent(null)
       return
     }
 
@@ -202,14 +247,18 @@ export function useBlockSwipeActions(onDelete: () => void, options?: SwipeOption
       onDelete()
       setTranslateX(0)
       setIsRevealed(false)
+      setGestureIntent(null)
     } else if (leftDist >= revealFloor) {
-      // Partial swipe — reveal delete button
+      // Partial swipe — reveal delete button (stays open, so keep the
+      // destructive intent armed so the overlay keeps its delete backdrop).
       setTranslateX(-REVEAL_THRESHOLD)
       setIsRevealed(true)
+      setGestureIntent('delete')
     } else {
       // Below threshold — snap back
       setTranslateX(0)
       setIsRevealed(false)
+      setGestureIntent(null)
     }
     stateRef.current.swiping = false
     setThresholdCrossed(false)
@@ -219,12 +268,14 @@ export function useBlockSwipeActions(onDelete: () => void, options?: SwipeOption
     setTranslateX(0)
     setIsRevealed(false)
     setThresholdCrossed(false)
+    setGestureIntent(null)
   }, [])
 
   return {
     translateX,
     isRevealed,
     thresholdCrossed,
+    gestureIntent,
     handlers: { onTouchStart, onTouchMove, onTouchEnd },
     reset,
   }

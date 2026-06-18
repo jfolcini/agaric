@@ -320,6 +320,19 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     rebindable: false,
   },
   {
+    // #1733 — keyboard parity with the list views' Space-to-toggle. Adds/removes
+    // the anchor block (the last selected, the same block Shift+Arrow extends
+    // from) to/from the selection without the mouse. Routed through
+    // `matchesShortcutBinding` in `useBlockTreeKeyboardShortcuts` so it's
+    // genuinely rebindable (drift test pins this). Default Ctrl+Space avoids the
+    // bare-Space collision with text input / scroll.
+    id: 'toggleBlockSelectionKbd',
+    keys: 'Ctrl + Space',
+    category: 'keyboard.category.blockSelection',
+    description: 'keyboard.toggleBlockSelectionKbd',
+    condition: 'keyboard.condition.withSelection',
+  },
+  {
     id: 'selectAllBlocks',
     keys: 'Ctrl + A',
     category: 'keyboard.category.blockSelection',

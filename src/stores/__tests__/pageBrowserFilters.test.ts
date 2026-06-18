@@ -17,6 +17,7 @@ function filtersFor(spaceId: string | null) {
 describe('pageBrowserFilters store', () => {
   beforeEach(() => {
     usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
+    localStorage.clear()
   })
 
   it('appends a chip with a monotonic _addId', () => {
@@ -79,5 +80,55 @@ describe('pageBrowserFilters store', () => {
     expect(first).toBe(second) // referentially stable so the selector is idempotent
     usePageBrowserFiltersStore.getState().addFilter(LEGACY_SPACE_KEY, orphan)
     expect(filtersFor(null)).toHaveLength(1)
+  })
+
+  // #1750 — the chip set persists to localStorage so it has the same lifetime
+  // as the graph view's filters (both surfaces own a durable filter set);
+  // backlinks deliberately stay page-scoped and are NOT covered here.
+  describe('persistence (#1750)', () => {
+    const STORAGE_KEY = 'agaric:page-browser-filters'
+
+    it('writes the chip set and nextAddId to localStorage on change', () => {
+      const { addFilter } = usePageBrowserFiltersStore.getState()
+      addFilter(SPACE_A, orphan)
+      addFilter(SPACE_A, tagX)
+
+      const raw = localStorage.getItem(STORAGE_KEY)
+      expect(raw).not.toBeNull()
+      const persisted = JSON.parse(raw as string) as {
+        state: { filtersBySpace: Record<string, FilterPrimitive[]>; nextAddId: number }
+      }
+      expect(persisted.state.filtersBySpace[SPACE_A]).toMatchObject([
+        { type: 'Orphan', _addId: 1 },
+        { type: 'Tag', tag: 'X', _addId: 2 },
+      ])
+      // nextAddId is persisted so rehydrated chips don't collide with fresh ones.
+      expect(persisted.state.nextAddId).toBe(2)
+    })
+
+    it('rehydrates the chip set from localStorage', async () => {
+      // Reset in-memory state first, THEN seed storage — a `setState` reset
+      // triggers a persist write, so seeding afterwards is what the rehydrate
+      // reads back (simulating an app restart reading the persisted slice).
+      usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          state: {
+            filtersBySpace: { [SPACE_A]: [{ type: 'Orphan', _addId: 7 }] },
+            nextAddId: 7,
+          },
+          version: 1,
+        }),
+      )
+
+      await usePageBrowserFiltersStore.persist.rehydrate()
+
+      expect(filtersFor(SPACE_A)).toMatchObject([{ type: 'Orphan', _addId: 7 }])
+      expect(usePageBrowserFiltersStore.getState().nextAddId).toBe(7)
+      // A subsequent add continues the counter from the rehydrated value.
+      usePageBrowserFiltersStore.getState().addFilter(SPACE_A, tagX)
+      expect(filtersFor(SPACE_A)[1]).toMatchObject({ type: 'Tag', tag: 'X', _addId: 8 })
+    })
   })
 })

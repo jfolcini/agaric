@@ -44,8 +44,10 @@ interface BlockStore {
   /** Toggle a block in/out of the selection (Ctrl+Click). */
   toggleSelected: (blockId: string) => void
   /**
-   * Extend selection from the last selected to the given block (Shift+Click).
-   * Requires the visible block IDs from the per-page store.
+   * Select the contiguous range anchor→block (Shift+Click), REPLACING the prior
+   * selection (#1729 — anchor/focus model, can shrink as well as grow). The
+   * anchor is the persisted `selectionAnchorId` if still visible, else the last
+   * selected block. Requires the visible block IDs from the per-page store.
    */
   rangeSelect: (blockId: string, visibleIds: string[]) => void
   /**
@@ -111,21 +113,48 @@ export const useBlockStore = create<BlockStore>((set) => ({
 
   rangeSelect: (blockId, visibleIds) => {
     set((state) => {
-      const { selectedBlockIds } = state
+      const { selectedBlockIds, selectionAnchorId } = state
+      // #1729 — adopt the SAME anchor/focus replace model the keyboard path
+      // (`extendSelection`) and the list surfaces (`useListMultiSelect`) use,
+      // so mouse range-select can SHRINK as well as grow. Previously this
+      // unioned the new range into the prior selection (add-only): a second
+      // Shift+Click nearer the anchor could never deselect rows, diverging from
+      // both Shift+Arrow in the same tree and Shift+Click in Trash/History.
       if (selectedBlockIds.length === 0) {
-        return { selectedBlockIds: [blockId], selectionAnchorId: null, selectionFocusId: null }
+        // No selection yet: the click seeds a single-block selection AND the
+        // anchor, so a follow-up Shift+Click/Shift+Arrow ranges from here.
+        return {
+          selectedBlockIds: [blockId],
+          selectionAnchorId: blockId,
+          selectionFocusId: blockId,
+        }
       }
-      const lastSelected = selectedBlockIds[selectedBlockIds.length - 1] as string
-      const lastIdx = visibleIds.indexOf(lastSelected)
+      // Anchor = the in-progress range anchor if still visible, else the last
+      // selected block (matches `extendSelection`'s seeding). The range is
+      // anchor→clicked and REPLACES the prior selection (not unioned).
+      const anchorId =
+        selectionAnchorId && visibleIds.includes(selectionAnchorId)
+          ? selectionAnchorId
+          : (selectedBlockIds[selectedBlockIds.length - 1] as string)
+      const anchorIdx = visibleIds.indexOf(anchorId)
       const targetIdx = visibleIds.indexOf(blockId)
-      if (lastIdx < 0 || targetIdx < 0) {
-        return { selectedBlockIds: [blockId], selectionAnchorId: null, selectionFocusId: null }
+      if (anchorIdx < 0 || targetIdx < 0) {
+        return {
+          selectedBlockIds: [blockId],
+          selectionAnchorId: blockId,
+          selectionFocusId: blockId,
+        }
       }
-      const start = Math.min(lastIdx, targetIdx)
-      const end = Math.max(lastIdx, targetIdx)
+      const start = Math.min(anchorIdx, targetIdx)
+      const end = Math.max(anchorIdx, targetIdx)
       const rangeIds = visibleIds.slice(start, end + 1)
-      const merged = [...new Set([...selectedBlockIds, ...rangeIds])]
-      return { selectedBlockIds: merged, selectionAnchorId: null, selectionFocusId: null }
+      // Persist anchor + focus so a subsequent Shift+Arrow continues from the
+      // clicked end without re-seeding.
+      return {
+        selectedBlockIds: rangeIds,
+        selectionAnchorId: anchorId,
+        selectionFocusId: blockId,
+      }
     })
   },
 

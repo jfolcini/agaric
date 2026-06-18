@@ -29,6 +29,7 @@ interface Overrides {
   batchInProgress?: boolean
   batchDeleteConfirm?: boolean
   onBatchSetTodo?: (state: string | null) => void
+  onBatchSetPriority?: (() => void) | undefined
   onBatchDelete?: () => void
   onSetBatchDeleteConfirm?: (open: boolean) => void
   onClearSelection?: () => void
@@ -40,6 +41,7 @@ function renderToolbar(overrides: Overrides = {}) {
     batchInProgress: false,
     batchDeleteConfirm: false,
     onBatchSetTodo: vi.fn(),
+    onBatchSetPriority: vi.fn(),
     onBatchDelete: vi.fn(),
     onSetBatchDeleteConfirm: vi.fn(),
     onClearSelection: vi.fn(),
@@ -119,6 +121,25 @@ describe('BlockBatchActionMenu', () => {
     expect(props.onBatchSetTodo).toHaveBeenCalledWith('DOING')
   })
 
+  // ── Priority parity (#1734) ────────────────────────────────────────
+  it('renders a Priority button and calls onBatchSetPriority (parity with the bulk context menu)', async () => {
+    const user = userEvent.setup()
+    const { props } = renderToolbar()
+
+    const priorityBtn = screen.getByRole('button', { name: t('contextMenu.cyclePrioritySelected') })
+    expect(priorityBtn).toBeInTheDocument()
+
+    await user.click(priorityBtn)
+    expect(props.onBatchSetPriority).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides the Priority button when no onBatchSetPriority handler is provided', () => {
+    renderToolbar({ onBatchSetPriority: undefined })
+    expect(
+      screen.queryByRole('button', { name: t('contextMenu.cyclePrioritySelected') }),
+    ).not.toBeInTheDocument()
+  })
+
   it('DONE button calls onBatchSetTodo with "DONE"', async () => {
     const user = userEvent.setup()
     const { props } = renderToolbar()
@@ -195,6 +216,7 @@ describe('BlockBatchActionMenu', () => {
       t('blockContext.todoLabel'),
       t('blockContext.doingLabel'),
       t('blockContext.doneLabel'),
+      t('contextMenu.cyclePrioritySelected'),
       t('blockContext.delete'),
     ]) {
       expect(within(toolbar).getByRole('button', { name })).toBeDisabled()

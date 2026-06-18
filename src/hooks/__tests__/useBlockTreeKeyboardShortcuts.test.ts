@@ -70,6 +70,7 @@ function makeOptions(
     toggleCollapse: vi.fn(),
     rawSelectAll: vi.fn(),
     extendSelection: vi.fn(),
+    toggleSelected: vi.fn(),
     clearSelected: vi.fn(),
     handleFlush: vi.fn(() => null),
     setFocused: vi.fn(),
@@ -274,6 +275,88 @@ describe('useBlockTreeKeyboardShortcuts', () => {
 
       expect(opts.extendSelection).not.toHaveBeenCalled()
       // Non-owning tree must not swallow the chord.
+      expect(e.defaultPrevented).toBe(false)
+    })
+  })
+
+  describe('Keyboard toggle selection (#1733 — Ctrl+Space)', () => {
+    /** Three owned, visible blocks; a single block pre-selected as the anchor. */
+    function selectOpts(overrides: Partial<UseBlockTreeKeyboardShortcutsOptions> = {}) {
+      return makeOptions({
+        focusedBlockId: null,
+        pageStore: makePageStore(['B1', 'B2', 'B3']),
+        selectedBlockIds: ['B1'],
+        blocks: [{ id: 'B1' }, { id: 'B2' }, { id: 'B3' }],
+        visibleIds: ['B1', 'B2', 'B3'],
+        ...overrides,
+      })
+    }
+
+    it('Ctrl+Space toggles the anchor (last selected) block', () => {
+      const opts = selectOpts({ selectedBlockIds: ['B1', 'B2'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      const e = new KeyboardEvent('keydown', {
+        key: ' ',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+      document.dispatchEvent(e)
+
+      // Toggles the anchor — the last selected block (the same block
+      // Shift+Arrow extends from).
+      expect(opts.toggleSelected).toHaveBeenCalledWith('B2')
+      expect(e.defaultPrevented).toBe(true)
+    })
+
+    it('does nothing when an editor is focused', () => {
+      const opts = selectOpts({ focusedBlockId: 'B1' })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      const e = new KeyboardEvent('keydown', {
+        key: ' ',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+      document.dispatchEvent(e)
+
+      expect(opts.toggleSelected).not.toHaveBeenCalled()
+      expect(e.defaultPrevented).toBe(false)
+    })
+
+    it('does nothing with no active selection (no anchor)', () => {
+      const opts = selectOpts({ selectedBlockIds: [] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: ' ', ctrlKey: true })
+
+      expect(opts.toggleSelected).not.toHaveBeenCalled()
+    })
+
+    it('ignores a bare Space without Ctrl', () => {
+      const opts = selectOpts()
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: ' ' })
+
+      expect(opts.toggleSelected).not.toHaveBeenCalled()
+    })
+
+    it('#713 — only the tree owning the anchor acts (no double-toggle)', () => {
+      const opts = selectOpts({ selectedBlockIds: ['OTHER'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      const e = new KeyboardEvent('keydown', {
+        key: ' ',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+      document.dispatchEvent(e)
+
+      expect(opts.toggleSelected).not.toHaveBeenCalled()
       expect(e.defaultPrevented).toBe(false)
     })
   })

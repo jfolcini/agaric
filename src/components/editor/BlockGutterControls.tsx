@@ -123,7 +123,9 @@ export const GutterButton = ({
   // Spread the override only when set so we never pass `delayDuration={undefined}`
   // (rejected under exactOptionalPropertyTypes) — an unset value must inherit
   // the app-level baseline, not override it with undefined.
-  <Tooltip {...(delayDuration === undefined ? {} : { delayDuration })}>
+  // #1735: `openOnLongPress` surfaces the gutter button's label on a touch
+  // press-and-hold, since Radix hover tooltips never open on a coarse-pointer tap.
+  <Tooltip openOnLongPress {...(delayDuration === undefined ? {} : { delayDuration })}>
     <TooltipTrigger asChild>
       <button
         ref={ref}

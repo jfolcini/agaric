@@ -467,6 +467,7 @@ export function BlockTree({
     batchInProgress,
     setBatchDeleteConfirm,
     handleBatchSetTodo,
+    handleBatchSetPriority,
     handleBatchDelete,
   } = useBlockMultiSelect({
     selectedBlockIds,
@@ -474,6 +475,7 @@ export function BlockTree({
     rootParentId,
     pageStore,
     t,
+    handleTogglePriority,
   })
 
   // Reload + reset zoom when the page changes (parentId). `load` and
@@ -815,6 +817,7 @@ export function BlockTree({
     toggleCollapse,
     rawSelectAll,
     extendSelection,
+    toggleSelected,
     clearSelected,
     handleFlush,
     setFocused,
@@ -960,6 +963,7 @@ export function BlockTree({
         batchInProgress={batchInProgress}
         batchDeleteConfirm={batchDeleteConfirm}
         onBatchSetTodo={handleBatchSetTodo}
+        onBatchSetPriority={handleBatchSetPriority}
         onBatchDelete={handleBatchDelete}
         onSetBatchDeleteConfirm={setBatchDeleteConfirm}
         onClearSelection={clearSelected}

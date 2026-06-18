@@ -140,6 +140,13 @@ vi.mock('lucide-react', () => ({
   Trash2: (props: { size: number }) => (
     <svg data-testid="trash-icon" width={props.size} height={props.size} />
   ),
+  // #1748/#1732: structural-swipe affordance icons.
+  IndentIncrease: (props: { className?: string }) => (
+    <svg data-testid="indent-increase-icon" className={props.className} />
+  ),
+  IndentDecrease: (props: { className?: string }) => (
+    <svg data-testid="indent-decrease-icon" className={props.className} />
+  ),
   X: (props: { size: number; className?: string }) => (
     <svg data-testid="x-icon" width={props.size} height={props.size} className={props.className} />
   ),
@@ -239,6 +246,7 @@ const mockUseBlockSwipeActions = vi.fn((..._args: unknown[]) => ({
   translateX: 0,
   isRevealed: false,
   thresholdCrossed: false,
+  gestureIntent: null as 'indent' | 'outdent' | 'delete' | null,
   handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
   reset: vi.fn(),
 }))
@@ -4591,6 +4599,7 @@ describe('SortableBlock swipe-to-delete progressive cue (UX-304)', () => {
     translateX: 0,
     isRevealed: false,
     thresholdCrossed: false,
+    gestureIntent: null as 'indent' | 'outdent' | 'delete' | null,
     handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
     reset: vi.fn(),
   })
@@ -4634,6 +4643,7 @@ describe('SortableBlock swipe-to-delete progressive cue (UX-304)', () => {
       translateX: -80,
       isRevealed: true,
       thresholdCrossed: false,
+      gestureIntent: 'delete' as const,
       handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
       reset: vi.fn(),
     }))
@@ -4663,6 +4673,7 @@ describe('SortableBlock swipe-to-delete progressive cue (UX-304)', () => {
       translateX: -200,
       isRevealed: true,
       thresholdCrossed: true,
+      gestureIntent: 'delete' as const,
       handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
       reset: vi.fn(),
     }))
@@ -4691,6 +4702,7 @@ describe('SortableBlock swipe-to-delete progressive cue (UX-304)', () => {
       translateX: -200,
       isRevealed: true,
       thresholdCrossed: true,
+      gestureIntent: 'delete' as const,
       handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
       reset: vi.fn(),
     }))
@@ -4716,6 +4728,7 @@ describe('SortableBlock swipe-to-delete progressive cue (UX-304)', () => {
       translateX: -200,
       isRevealed: true,
       thresholdCrossed: true,
+      gestureIntent: 'delete' as const,
       handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
       reset: vi.fn(),
     }))
@@ -4753,6 +4766,7 @@ describe('SortableBlock swipe-to-delete progressive cue (UX-304)', () => {
       translateX: -200,
       isRevealed: true,
       thresholdCrossed: true,
+      gestureIntent: 'delete' as const,
       handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
       reset: vi.fn(),
     }))
@@ -4770,6 +4784,98 @@ describe('SortableBlock swipe-to-delete progressive cue (UX-304)', () => {
 
     expect(screen.queryByTestId('swipe-delete-action')).not.toBeInTheDocument()
     expect(screen.queryByTestId('swipe-release-hint')).not.toBeInTheDocument()
+  })
+
+  // ── #1732: an outdent-band left swipe must NOT show the delete backdrop ──
+  it('does not render the destructive delete backdrop when the gesture is an outdent (#1732)', () => {
+    mockUseBlockSwipeActions.mockImplementation(() => ({
+      // Short left translate (outdent band) — old code showed the red delete
+      // backdrop for ANY negative translate; the intent now gates it.
+      translateX: -90,
+      isRevealed: false,
+      thresholdCrossed: false,
+      gestureIntent: 'outdent' as const,
+      handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
+      reset: vi.fn(),
+    }))
+
+    render(
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn(), onDedent: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_SWIPE"
+          content="swipe test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
+    )
+
+    // The destructive backdrop is gone…
+    expect(screen.queryByTestId('swipe-delete-action')).not.toBeInTheDocument()
+    // …and a neutral outdent affordance takes its place.
+    const overlay = screen.getByTestId('swipe-outdent-action')
+    expect(overlay.className).toContain('bg-primary/10')
+    expect(overlay.className).toContain('text-primary')
+    expect(overlay.className).not.toContain('bg-destructive')
+    expect(screen.getByTestId('swipe-outdent-hint')).toHaveTextContent('Outdent')
+  })
+
+  // ── #1748: a right swipe to indent gets a (neutral) affordance ──────────
+  it('renders a neutral indent affordance while a right swipe is armed (#1748)', () => {
+    mockUseBlockSwipeActions.mockImplementation(() => ({
+      translateX: 60,
+      isRevealed: false,
+      thresholdCrossed: false,
+      gestureIntent: 'indent' as const,
+      handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
+      reset: vi.fn(),
+    }))
+
+    render(
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn(), onIndent: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_SWIPE"
+          content="swipe test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
+    )
+
+    const overlay = screen.getByTestId('swipe-indent-action')
+    // Neutral accent backdrop on the left edge — not the destructive delete cue.
+    expect(overlay.className).toContain('bg-primary/10')
+    expect(overlay.className).toContain('text-primary')
+    expect(overlay.className).toContain('left-0')
+    expect(screen.getByTestId('swipe-indent-hint')).toHaveTextContent('Indent')
+    // The delete backdrop is not rendered for a right (indent) swipe.
+    expect(screen.queryByTestId('swipe-delete-action')).not.toBeInTheDocument()
+  })
+
+  it('gates the structural-swipe hints behind the coarse-pointer media query', () => {
+    mockUseBlockSwipeActions.mockImplementation(() => ({
+      translateX: 60,
+      isRevealed: false,
+      thresholdCrossed: false,
+      gestureIntent: 'indent' as const,
+      handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
+      reset: vi.fn(),
+    }))
+
+    render(
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn(), onIndent: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_SWIPE"
+          content="swipe test"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
+    )
+
+    const hint = screen.getByTestId('swipe-indent-hint')
+    expect(hint.className).toContain('hidden')
+    expect(hint.className).toContain('[@media(pointer:coarse)]:inline')
   })
 })
 
@@ -4789,6 +4895,7 @@ describe('SortableBlock swipe-to-delete undo toast (#927 f7)', () => {
       translateX: 0,
       isRevealed: false,
       thresholdCrossed: false,
+      gestureIntent: null as 'indent' | 'outdent' | 'delete' | null,
       handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
       reset: vi.fn(),
     }))
@@ -5032,6 +5139,7 @@ describe('SortableBlock swipe-row gestures & a11y (#1346/#1347/#1349)', () => {
       translateX: 0,
       isRevealed: false,
       thresholdCrossed: false,
+      gestureIntent: null as 'indent' | 'outdent' | 'delete' | null,
       handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
       reset: vi.fn(),
     }))
@@ -5098,6 +5206,7 @@ describe('SortableBlock swipe-row gestures & a11y (#1346/#1347/#1349)', () => {
       translateX: -50,
       isRevealed: false,
       thresholdCrossed: false,
+      gestureIntent: null as 'indent' | 'outdent' | 'delete' | null,
       handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
       reset: vi.fn(),
     }))

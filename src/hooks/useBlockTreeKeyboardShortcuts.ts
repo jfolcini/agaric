@@ -56,6 +56,8 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
   rawSelectAll: (ids: string[]) => void
   /** Extend the block selection by one visible block (#922 — Shift+Arrow). */
   extendSelection: (direction: 'up' | 'down', visibleIds: string[]) => void
+  /** Toggle a single block in/out of the selection (#1733 — keyboard toggle). */
+  toggleSelected: (blockId: string) => void
   clearSelected: () => void
   handleFlush: () => string | null
   setFocused: (id: string | null) => void
@@ -86,6 +88,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     toggleCollapse,
     rawSelectAll,
     extendSelection,
+    toggleSelected,
     clearSelected,
     handleFlush,
     setFocused,
@@ -196,6 +199,32 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
   }, [focusedBlockId, pageStore, selectedBlockIds, visibleIds, extendSelection])
+
+  // ── Keyboard shortcut: toggle block selection (#1733 — Ctrl+Space) ──
+  // Keyboard parity with the list views' Space-to-toggle: add/remove the anchor
+  // block (the last selected — the same block Shift+Arrow extends from) to/from
+  // the selection without the mouse, the keyboard counterpart to Ctrl+Click.
+  // Only fires in BLOCK-SELECT mode (no focused block / active editor) and only
+  // with an active selection (the binding's `withSelection` condition), so the
+  // anchor is well-defined. #713 ownership gate mirrors extendSelection: only
+  // the tree whose store owns the anchoring block may handle (and
+  // preventDefault); other trees fall through so the chord isn't double-handled.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Editor active → leave the chord to the editor / browser.
+      if (focusedBlockId) return
+      if (e.defaultPrevented) return
+      if (!matchesShortcutBinding(e, 'toggleBlockSelectionKbd')) return
+      // Need a selection to define the anchor (block-select mode entry point).
+      if (selectedBlockIds.length === 0) return
+      const anchorId = selectedBlockIds[selectedBlockIds.length - 1]
+      if (anchorId == null || !storeOwnsBlock(pageStore, anchorId)) return
+      e.preventDefault()
+      toggleSelected(anchorId)
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [focusedBlockId, pageStore, selectedBlockIds, toggleSelected])
 
   // ── Keyboard shortcuts: block cut / copy / paste (#913) ─────────────
   // Copy/cut serialize the SELECTION ROOTS (+ subtrees) to indented markdown
