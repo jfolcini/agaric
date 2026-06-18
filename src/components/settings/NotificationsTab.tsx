@@ -85,7 +85,7 @@ export function NotificationsTab(): React.ReactElement {
   }, [t])
 
   return (
-    <div className="notifications-tab space-y-4 max-w-xl">
+    <div className="notifications-tab space-y-6">
       <Card>
         <CardHeader className="pb-3">
           <CardTitle>{t('notifications.title')}</CardTitle>

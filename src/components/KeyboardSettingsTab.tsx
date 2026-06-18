@@ -110,7 +110,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
   )
 
   return (
-    <div className="space-y-4" data-testid="keyboard-settings-tab">
+    <div className="space-y-6" data-testid="keyboard-settings-tab">
       <Card>
         <CardHeader className="pb-3">
           <CardTitle>{t('keyboard.settings.title')}</CardTitle>

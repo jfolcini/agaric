@@ -47,6 +47,13 @@ export const pages: Record<string, string> = {
   'journal.agendaCountBadge': '{{count}} {{label}} items, click to view',
   'journal.backlinkCountBadge': '{{count}} references, click to view',
   'journal.openInEditorLabel': 'Open {{date}} in editor',
+  // Screen-reader density suffix appended to a monthly day cell's aria-label
+  // when the day has agenda items and/or backlinks (#1730). The decorative
+  // dots/badge are aria-hidden, so these counts would otherwise be silent.
+  'journal.dayCellAgendaCount_one': '{{count}} agenda item',
+  'journal.dayCellAgendaCount_other': '{{count}} agenda items',
+  'journal.dayCellBacklinkCount_one': '{{count}} reference',
+  'journal.dayCellBacklinkCount_other': '{{count}} references',
   'pageHeader.pageTitle': 'Page title',
   'pageHeader.goBack': 'Go back',
   'pageHeader.undoAction': 'Undo last page action',

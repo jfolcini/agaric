@@ -163,7 +163,14 @@ export function QueryResult({
           <Search className="h-3 w-3 shrink-0" />
           <QueryExpressionPills expression={expression} />
           <span className="shrink-0 tabular-nums">
-            {loading ? '...' : `${results.length} result${results.length !== 1 ? 's' : ''}`}
+            {loading
+              ? '...'
+              : // #1743 — when more pages remain unloaded, the loaded-so-far
+                // count is not the true total; label it as partial so it is not
+                // mistaken for the final count (cf. AdvancedQueryView total).
+                hasMore
+                ? t('query.resultCountPartial', { count: results.length })
+                : t('query.resultCount', { count: results.length })}
           </span>
           <ChevronToggle isExpanded={!collapsed} />
         </button>

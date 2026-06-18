@@ -174,7 +174,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
   const filteredDefs = definitions.filter((d) => matchesSearchFolded(d.key, searchFilter))
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <h2 className="text-lg font-semibold">{t('propertiesView.title')}</h2>
 
       {/* Search input */}

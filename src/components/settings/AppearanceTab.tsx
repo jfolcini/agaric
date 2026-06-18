@@ -156,7 +156,7 @@ export function AppearanceTab(): React.ReactElement {
   )
 
   return (
-    <div className="space-y-6 max-w-md">
+    <div className="space-y-6">
       {/* Theme selector */}
       <FormField label={t('settings.themeLabel')} htmlFor="theme-select">
         <Select value={themeToSelect(theme)} onValueChange={handleThemeChange}>

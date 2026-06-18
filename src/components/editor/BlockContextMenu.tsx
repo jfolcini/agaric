@@ -40,9 +40,11 @@ import type { BlockActions } from '@/hooks/useBlockActions'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { writeText } from '@/lib/clipboard'
+import { getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { openUrl } from '@/lib/open-url'
+import { modKey } from '@/lib/platform'
 import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '@/lib/slash-commands'
 import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
@@ -176,6 +178,75 @@ function getPriorityLabel(priority: string | null | undefined, t: (key: string) 
     default:
       return t('contextMenu.setPriority1')
   }
+}
+
+// ── Shortcut-hint helpers ─────────────────────────────────────────────
+//
+// #1728 — the trailing shortcut hints used to be hardcoded literal strings
+// ("Ctrl+Shift+→", "Ctrl+Enter", …). That ignored two real sources of truth:
+//  1. The user's rebinds — every other shortcut surface (command palette,
+//     bubble menu, slash menu, sidebar…) reads the live binding via
+//     `getShortcutKeys(id)`, but this menu showed stale defaults forever.
+//  2. The platform modifier glyph — macOS users expect `⌘`, not `Ctrl`
+//     (`modKey()` already drives `KbdChord` everywhere else).
+//
+// We now source every rebindable hint from the catalog by id and render it in
+// the menu's existing compact form: platform mod glyph for `Ctrl`, arrow
+// glyphs for the spelled-out "Arrow X" tokens, `+`-joined with no spaces. The
+// positional, documentation-only chords (delete/merge on Backspace, gated on
+// cursor position) are sourced the same way and keep their "(when empty)" /
+// "(at start)" condition suffix.
+
+const ARROW_GLYPHS: Record<string, string> = {
+  'Arrow Right': '→',
+  'Arrow Left': '←',
+  'Arrow Up': '↑',
+  'Arrow Down': '↓',
+}
+
+/**
+ * Format a catalog `keys` string ("Ctrl + Shift + Arrow Up") into the menu's
+ * compact hint form ("Ctrl+Shift+↑", or "⌘+Shift+↑" on macOS). `Ctrl` maps to
+ * the platform modifier; spelled-out arrows map to glyphs; tokens join with a
+ * bare `+`. ` / ` alternatives are preserved as `/`.
+ */
+function formatHintKeys(keys: string): string {
+  if (!keys) return ''
+  const mod = modKey()
+  return keys
+    .split(' / ')
+    .map((alt) =>
+      alt
+        .split('+')
+        .map((tok) => tok.trim())
+        .filter((tok) => tok.length > 0)
+        .map((tok) => (tok === 'Ctrl' ? mod : (ARROW_GLYPHS[tok] ?? tok)))
+        .join('+'),
+    )
+    .join('/')
+}
+
+/** Compact hint for a single rebindable catalog shortcut id. */
+function shortcutHint(id: string): string {
+  return formatHintKeys(getShortcutKeys(id))
+}
+
+/**
+ * #1728 — the "Set priority" row cycles through three INDEPENDENT catalog
+ * bindings (`priority1`/`priority2`/`priority3`, default `Ctrl+Shift+1..3`).
+ * Render the modifier-prefixed first binding fully, then append the trailing
+ * key of the other two as a `/`-alternation ("Ctrl+Shift+1/2/3"), sourced from
+ * the catalog so a rebind/platform glyph is reflected. Falls back to whatever
+ * each id resolves to if a binding is missing/customised away.
+ */
+function priorityHint(): string {
+  const full = shortcutHint('priority1')
+  const tail = (id: string): string => {
+    const tokens = formatHintKeys(getShortcutKeys(id)).split('+')
+    return tokens.at(-1) ?? ''
+  }
+  const alts = [tail('priority2'), tail('priority3')].filter((tok) => tok.length > 0)
+  return alts.length > 0 ? `${full}/${alts.join('/')}` : full
 }
 
 export function BlockContextMenu({
@@ -466,7 +537,10 @@ export function BlockContextMenu({
       // (`deleteBlock`: Backspace on an empty block), so the hint carries the
       // "(when empty)" condition rather than implying Backspace always deletes.
       // Suppressed in bulk mode, where the batch-delete has no single-key chord.
-      ...(isBulk ? {} : { shortcut: 'Backspace (when empty)' }),
+      // #1728 — the key is sourced from the `deleteBlock` catalog entry
+      // (positional, documentation-only); the "(when empty)" condition stays
+      // appended verbatim.
+      ...(isBulk ? {} : { shortcut: `${shortcutHint('deleteBlock')} (when empty)` }),
     },
   ]
 
@@ -478,13 +552,13 @@ export function BlockContextMenu({
       label: t('contextMenu.indent'),
       icon: <ArrowRightToLine className="h-3.5 w-3.5" />,
       action: onIndent ? () => dispatch(onIndent) : undefined,
-      shortcut: 'Ctrl+Shift+→',
+      shortcut: shortcutHint('indentBlock'),
     },
     {
       label: t('contextMenu.dedent'),
       icon: <ArrowLeftToLine className="h-3.5 w-3.5" />,
       action: onDedent ? () => dispatch(onDedent) : undefined,
-      shortcut: 'Ctrl+Shift+←',
+      shortcut: shortcutHint('dedentBlock'),
     },
   ]
 
@@ -498,7 +572,7 @@ export function BlockContextMenu({
       label: t('contextMenu.moveUp'),
       icon: <MoveUp className="h-3.5 w-3.5" />,
       action: onMoveUp ? () => dispatch(onMoveUp) : undefined,
-      shortcut: 'Ctrl+Shift+↑',
+      shortcut: shortcutHint('moveBlockUp'),
       indented: true,
       disclosureId: moveArrangeGroupId,
       disclosureLabel: t('contextMenu.moveArrange'),
@@ -507,7 +581,7 @@ export function BlockContextMenu({
       label: t('contextMenu.moveDown'),
       icon: <MoveDown className="h-3.5 w-3.5" />,
       action: onMoveDown ? () => dispatch(onMoveDown) : undefined,
-      shortcut: 'Ctrl+Shift+↓',
+      shortcut: shortcutHint('moveBlockDown'),
       indented: true,
       disclosureId: moveArrangeGroupId,
       disclosureLabel: t('contextMenu.moveArrange'),
@@ -522,10 +596,10 @@ export function BlockContextMenu({
             label: t('contextMenu.duplicate'),
             icon: <CopyPlus className="h-3.5 w-3.5" />,
             action: () => handleAction(onDuplicate),
-            // #976 (item 13) — surface the new `duplicateBlock` catalog binding,
-            // matching the adjacent move/merge hints. `Ctrl+Shift+D` is taken by
-            // the date picker, so duplicate lives on `Ctrl+Shift+J`.
-            shortcut: 'Ctrl+Shift+J',
+            // #976 (item 13) — surface the `duplicateBlock` catalog binding,
+            // matching the adjacent move/merge hints. #1728 — sourced from the
+            // catalog (default `Ctrl+Shift+J`) so a rebind/platform glyph shows.
+            shortcut: shortcutHint('duplicateBlock'),
             indented: true,
             disclosureId: moveArrangeGroupId,
             disclosureLabel: t('contextMenu.moveArrange'),
@@ -541,8 +615,9 @@ export function BlockContextMenu({
             // #976 (item 17) — surface the merge binding. It's positional
             // (`mergeWithPrevious`: Backspace at the start of the block), so the
             // hint carries the "(at start)" condition to avoid implying a bare
-            // Backspace deletes the block.
-            shortcut: 'Backspace (at start)',
+            // Backspace deletes the block. #1728 — key sourced from the
+            // `mergeWithPrevious` catalog entry (positional, documentation-only).
+            shortcut: `${shortcutHint('mergeWithPrevious')} (at start)`,
             indented: true,
             disclosureId: moveArrangeGroupId,
             disclosureLabel: t('contextMenu.moveArrange'),
@@ -582,7 +657,7 @@ export function BlockContextMenu({
             <ChevronDown className="h-3.5 w-3.5" />
           ),
           action: onToggleCollapse ? () => handleAction(onToggleCollapse) : undefined,
-          shortcut: 'Ctrl+.',
+          shortcut: shortcutHint('collapseExpand'),
         },
         ...(onZoomIn
           ? [
@@ -591,8 +666,9 @@ export function BlockContextMenu({
                 icon: <ZoomIn className="h-3.5 w-3.5" />,
                 action: () => handleAction(onZoomIn),
                 // #976 (item 18) — surface the `zoomIn` catalog binding (Alt+.),
-                // matching the adjacent collapse (Ctrl+.) / properties hints.
-                shortcut: 'Alt+.',
+                // matching the adjacent collapse / properties hints. #1728 —
+                // sourced from the catalog so a rebind/platform glyph shows.
+                shortcut: shortcutHint('zoomIn'),
               },
             ]
           : []),
@@ -608,7 +684,7 @@ export function BlockContextMenu({
       label: isBulk ? t('contextMenu.cycleTodoSelected') : getTodoLabel(todoState, t),
       icon: <CheckSquare className="h-3.5 w-3.5" />,
       action: onToggleTodo ? () => dispatch(onToggleTodo) : undefined,
-      shortcut: 'Ctrl+Enter',
+      shortcut: shortcutHint('cycleTaskState'),
     },
     {
       label: isBulk ? t('contextMenu.cyclePrioritySelected') : getPriorityLabel(priority, t),
@@ -617,8 +693,9 @@ export function BlockContextMenu({
       // #976 (item 19) — `'Ctrl+Shift+1-3'` read ambiguously as "press 1 then 2
       // then 3"; the catalog defines three INDEPENDENT bindings
       // (`priority1`/`priority2`/`priority3`). Alternation notation ("1/2/3")
-      // makes it clear any one of the three sets that priority.
-      shortcut: 'Ctrl+Shift+1/2/3',
+      // makes it clear any one of the three sets that priority. #1728 — the
+      // chord is now sourced from those catalog ids (rebind/platform aware).
+      shortcut: priorityHint(),
     },
   ]
 
@@ -630,9 +707,10 @@ export function BlockContextMenu({
             label: t('contextMenu.history'),
             icon: <Clock className="h-3.5 w-3.5" />,
             action: () => handleAction(onShowHistory),
-            // #976 (item 15) — surface the new block-history binding, matching
-            // the adjacent properties row (Ctrl+Shift+P).
-            shortcut: 'Ctrl+Shift+Y',
+            // #976 (item 15) — surface the block-history binding, matching the
+            // adjacent properties row. #1728 — sourced from the catalog
+            // (`openBlockHistory`) so a rebind/platform glyph is reflected.
+            shortcut: shortcutHint('openBlockHistory'),
           },
         ]
       : []),
@@ -642,7 +720,8 @@ export function BlockContextMenu({
             label: t('contextMenu.properties'),
             icon: <Settings2 className="h-3.5 w-3.5" />,
             action: () => handleAction(onShowProperties),
-            shortcut: 'Ctrl+Shift+P',
+            // #1728 — sourced from the `openPropertiesDrawer` catalog entry.
+            shortcut: shortcutHint('openPropertiesDrawer'),
           },
         ]
       : []),
@@ -752,9 +831,9 @@ export function BlockContextMenu({
           expanded: turnIntoOpen,
           disclosureId: turnIntoGroupId,
           // #976 (item 14) — surface the `turnIntoBlock` catalog binding next to
-          // the disclosure chevron. `Alt+T`/`Ctrl+T` are taken, so it lives on
-          // `Ctrl+Shift+T`.
-          shortcut: 'Ctrl+Shift+T',
+          // the disclosure chevron. #1728 — sourced from the catalog (default
+          // `Ctrl+Shift+T`) so a rebind/platform glyph is reflected.
+          shortcut: shortcutHint('turnIntoBlock'),
         },
         ...(turnIntoOpen
           ? TURN_INTO_OPTIONS.map((opt): MenuItem => {

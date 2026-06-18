@@ -1193,6 +1193,74 @@ describe('QueryResult – pagination', () => {
     expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument()
   })
 
+  // #1743 — when more pages remain unloaded the header count is the
+  // loaded-so-far count, which is NOT the true total. It must be labelled
+  // as partial ("first N loaded") rather than presented as the final count
+  // (which would mislead vs. the AdvancedQueryView true total).
+  it('labels the count as partial when has_more is true', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        return {
+          items: [
+            makeBlock({ id: 'B1', content: 'First page item', parent_id: 'P1', page_id: 'P1' }),
+          ],
+          next_cursor: 'cursor1',
+          has_more: true,
+          total_count: null,
+        }
+      }
+      if (cmd === 'batch_resolve') {
+        return [{ id: 'P1', title: 'Page', block_type: 'page', deleted: false }]
+      }
+      return null
+    })
+
+    render(<QueryResult expression="type:tag expr:project" />)
+
+    expect(await screen.findByText(/First page item/)).toBeInTheDocument()
+    // Partial label, NOT the misleading "1 result" final-count phrasing.
+    expect(screen.getByText('first 1 loaded')).toBeInTheDocument()
+    expect(screen.queryByText('1 result')).not.toBeInTheDocument()
+  })
+
+  it('shows the exact count (not partial) once the last page is loaded', async () => {
+    let callCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        callCount++
+        if (callCount === 1) {
+          return {
+            items: [makeBlock({ id: 'B1', content: 'First page item', parent_id: null })],
+            next_cursor: 'cursor1',
+            has_more: true,
+            total_count: null,
+          }
+        }
+        return {
+          items: [makeBlock({ id: 'B2', content: 'Second page item', parent_id: null })],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }
+      }
+      if (cmd === 'batch_resolve') return []
+      return null
+    })
+
+    const user = userEvent.setup()
+    render(<QueryResult expression="type:tag expr:project" />)
+
+    // First page: partial label.
+    expect(await screen.findByText(/First page item/)).toBeInTheDocument()
+    expect(screen.getByText('first 1 loaded')).toBeInTheDocument()
+
+    // Load the final page → count becomes exact, no longer partial.
+    await user.click(screen.getByRole('button', { name: /load more/i }))
+    expect(await screen.findByText(/Second page item/)).toBeInTheDocument()
+    expect(screen.getByText('2 results')).toBeInTheDocument()
+    expect(screen.queryByText(/first \d+ loaded/)).not.toBeInTheDocument()
+  })
+
   it('load more button is hidden when has_more is false', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_tags') {
