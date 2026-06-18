@@ -25,19 +25,37 @@ export const INTERNAL_PROPERTY_KEYS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * Detect markdown checkbox syntax at the start of content.
- * `- [ ] ` -> TODO, `- [x] ` / `- [X] ` -> DONE.
- * Returns the cleaned content and the detected todo state, or null if no match.
+ * Detect a leading GFM task-list marker on a single block's content and fold it
+ * into the separate `todo_state` column (#1481). Markers map to the app's fixed
+ * cycle, matching the markdown serialize/parse layer (#1435):
+ *   `- [ ] ` → TODO   `- [/] ` → DOING   `- [x] `/`- [X] ` → DONE
+ *   `- [-] ` → CANCELLED   (either `-` or `*` marker)
+ *
+ * Returns the marker-stripped content and the detected todo state, or the
+ * original content with `todoState: null` when there is no leading marker.
  */
+// Mirrors `TASK_ITEM_RE` in markdown-parse, but anchored to the START of a
+// single-block content string (marker + REQUIRED trailing space + rest); the
+// empty `- [ ]` form is handled by the markdown layer on full-doc parse, not
+// here (a bare marker with no text never reaches `edit`).
+const LEADING_TASK_MARKER_RE = /^[-*] \[([ xX/-])\] /
+const MARKER_TO_STATE: Record<string, string> = {
+  ' ': 'TODO',
+  '/': 'DOING',
+  x: 'DONE',
+  X: 'DONE',
+  '-': 'CANCELLED',
+}
 export function processCheckboxSyntax(content: string): {
   cleanContent: string
   todoState: string | null
 } {
-  if (content.startsWith('- [ ] ')) {
-    return { cleanContent: content.slice(6), todoState: 'TODO' }
-  }
-  if (content.startsWith('- [x] ') || content.startsWith('- [X] ')) {
-    return { cleanContent: content.slice(6), todoState: 'DONE' }
+  const match = LEADING_TASK_MARKER_RE.exec(content)
+  if (match) {
+    return {
+      cleanContent: content.slice(match[0].length),
+      todoState: MARKER_TO_STATE[match[1] as string] as string,
+    }
   }
   return { cleanContent: content, todoState: null }
 }

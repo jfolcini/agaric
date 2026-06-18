@@ -24,7 +24,6 @@ import Italic from '@tiptap/extension-italic'
 import { BulletList } from '@tiptap/extension-list'
 import ListItem from '@tiptap/extension-list-item'
 import OrderedList from '@tiptap/extension-ordered-list'
-import Paragraph from '@tiptap/extension-paragraph'
 import Placeholder from '@tiptap/extension-placeholder'
 import Strike from '@tiptap/extension-strike'
 import { Table } from '@tiptap/extension-table'
@@ -56,6 +55,8 @@ import { PropertyPicker, propertyPickerPluginKey } from './extensions/property-p
 import { QueryHint } from './extensions/query-hint'
 import { SlashCommand, slashCommandPluginKey } from './extensions/slash-command'
 import { TagRef } from './extensions/tag-ref'
+import { TaskParagraph } from './extensions/task-paragraph'
+import { TaskPaste } from './extensions/task-paste'
 import { Underline } from './extensions/underline'
 import { notifyUnknownNodeTypeToast } from './markdown-serialize-toast'
 import { parse, serialize } from './markdown-serializer'
@@ -417,7 +418,9 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const extensions = useMemo(
     () => [
       Document,
-      Paragraph,
+      // #1481 — Paragraph carrying the GFM task `todoState` attr so parsed
+      // checkbox state survives `nodeFromJSON` (the stock Paragraph drops it).
+      TaskParagraph,
       Text,
       Bold,
       Italic,
@@ -497,6 +500,11 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       CheckboxInputRule.configure({
         onCheckbox: (state: 'TODO' | 'DONE') => onCheckboxRef.current?.(state),
       }),
+      // #1481 — route a pasted single-line GFM task (`- [ ] x`) through the
+      // markdown parser so it becomes a task paragraph (carrying `todoState`)
+      // instead of literal `- [ ] x` text. Narrowly scoped to task lines on an
+      // empty selection; every other paste falls through to default handling.
+      TaskPaste,
     ],
     [],
   )
