@@ -111,7 +111,10 @@ name = "oxfmt (write)"
 entry = "npx oxfmt --write"
 language = "system"
 types_or = ["javascript", "jsx", "ts", "tsx", "json", "css"]
-exclude = "(src/lib/bindings\\.ts$|\\.sqlx/)"
+# oxfmt errors (exit 2) when every passed file is internally ignored, which
+# breaks lockfile-only commits: package(-lock).json matches `json` here but
+# oxfmt won't format it. Exclude them so a deps-only commit has ≥1 target.
+exclude = "(src/lib/bindings\\.ts$|\\.sqlx/|^package(-lock)?\\.json$)"
 pass_filenames = true
 stages = ["pre-commit"]
 
