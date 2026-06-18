@@ -32,7 +32,7 @@ import { TableCell } from '@tiptap/extension-table-cell'
 import { TableHeader } from '@tiptap/extension-table-header'
 import { TableRow } from '@tiptap/extension-table-row'
 import Text from '@tiptap/extension-text'
-import { type Editor, Extension, useEditor } from '@tiptap/react'
+import { type Editor, Extension, ReactNodeViewRenderer, useEditor } from '@tiptap/react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 
 import { dispatchBlockEvent } from '@/lib/block-events'
@@ -49,6 +49,7 @@ import { CalloutBlockquote } from './extensions/callout-blockquote'
 import { CheckboxInputRule } from './extensions/checkbox-input-rule'
 import { EmojiPicker, emojiPickerPluginKey } from './extensions/emoji-picker'
 import { ExternalLink } from './extensions/external-link'
+import { MermaidCodeBlockView } from './extensions/MermaidCodeBlockView'
 import { PropertyPicker, propertyPickerPluginKey } from './extensions/property-picker'
 import { QueryHint } from './extensions/query-hint'
 import { SlashCommand, slashCommandPluginKey } from './extensions/slash-command'
@@ -194,6 +195,15 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
         return true
       }),
     }
+  },
+  // #1438 — render a code block via a React node view. For language `mermaid`
+  // it shows the rendered diagram (reusing MermaidDiagram) with a raw-source
+  // toggle; every other language renders the standard editable code block, so
+  // non-mermaid code-block behaviour is unchanged. The block is still a plain
+  // `codeBlock(language=mermaid)`, so it round-trips to a ```mermaid fence via
+  // the existing markdown serializer.
+  addNodeView() {
+    return ReactNodeViewRenderer(MermaidCodeBlockView)
   },
 })
 

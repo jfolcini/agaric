@@ -1576,6 +1576,33 @@ describe('code blocks', () => {
     expect((block as { attrs?: { language?: string } }).attrs?.language).toBe('typescript')
   })
 
+  // -- #1438 mermaid fence ----------------------------------------------------
+
+  it('parses a ```mermaid fence to a codeBlock(language=mermaid) with the raw source', () => {
+    const md = '```mermaid\ngraph TD\n  A-->B\n```'
+    expect(parse(md)).toEqual(doc(codeBlock('graph TD\n  A-->B', 'mermaid')))
+  })
+
+  it('serializes a mermaid code block back to a ```mermaid fence', () => {
+    expect(serialize(doc(codeBlock('graph TD\n  A-->B', 'mermaid')))).toBe(
+      '```mermaid\ngraph TD\n  A-->B\n```',
+    )
+  })
+
+  it('round-trips a ```mermaid fence losslessly (#1438)', () => {
+    const md = '```mermaid\nsequenceDiagram\n  Alice->>Bob: Hi\n  Bob-->>Alice: Hello\n```'
+    expect(serialize(parse(md))).toBe(md)
+    // parse → serialize → parse is a fixed point too.
+    expect(parse(serialize(parse(md)))).toEqual(parse(md))
+  })
+
+  it('leaves a non-mermaid (```js) code block unaffected by the mermaid path', () => {
+    const md = '```js\nconst a = 1\n```'
+    const result = parse(md)
+    expect(result).toEqual(doc(codeBlock('const a = 1', 'js')))
+    expect(serialize(result)).toBe(md)
+  })
+
   it('code block language with special valid chars (c++, c#, .net)', () => {
     for (const lang of ['c++', 'c#', 'objective-c', 'f#', '.net']) {
       const md = `\`\`\`${lang}\ncode\n\`\`\``
