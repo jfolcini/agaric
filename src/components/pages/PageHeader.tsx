@@ -121,9 +121,8 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     (action: 'undo' | 'redo') => () => {
       const successKey = action === 'undo' ? 'pageHeader.undone' : 'pageHeader.redone'
       const errorKey = action === 'undo' ? 'pageHeader.undoFailed' : 'pageHeader.redoFailed'
-      useUndoStore
-        .getState()
-        [action](pageId)
+      const undoStore = useUndoStore.getState()
+      undoStore[action](pageId)
         .then(async (result) => {
           if (result) {
             notify(t(successKey), { duration: 1500 })

@@ -273,7 +273,9 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
                 const showSessionHeader = isFirstSeenOfSession && sessionOps.length >= 2
                 const isRevertingSession = revertingSessions.has(entry.sessionId)
                 return (
-                  <Fragment key={`${entry.timestamp}-${idx}-${entry.toolName}`}>
+                  <Fragment
+                    key={undoKey ?? `${entry.timestamp}-${entry.sessionId}-${entry.toolName}`}
+                  >
                     {showSessionHeader && (
                       <SessionRevertControls
                         sessionId={entry.sessionId}

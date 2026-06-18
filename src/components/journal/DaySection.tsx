@@ -28,6 +28,10 @@ import type { JournalMode } from '../../stores/journal'
 import { useJournalStore } from '../../stores/journal'
 import { PageBlockStoreProvider } from '../../stores/page-blocks'
 
+/** Stable empty-map defaults so optional count props don't re-create `{}` each render. */
+const EMPTY_COUNTS: Record<string, number> = {}
+const EMPTY_COUNTS_BY_SOURCE: Record<string, Record<string, number>> = {}
+
 interface DaySectionProps {
   entry: DayEntry
   headingLevel?: ('h2' | 'h3') | undefined
@@ -105,9 +109,9 @@ function DaySectionInner({
   hideHeading = false,
   compact = false,
   mode,
-  agendaCounts: _agendaCounts = {},
-  agendaCountsBySource = {},
-  backlinkCounts = {},
+  agendaCounts: _agendaCounts = EMPTY_COUNTS,
+  agendaCountsBySource = EMPTY_COUNTS_BY_SOURCE,
+  backlinkCounts = EMPTY_COUNTS,
   onNavigateToPage,
   onAddBlock,
   lazyMount = false,

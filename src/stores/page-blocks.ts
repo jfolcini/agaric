@@ -864,7 +864,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         await applyStructuralMove(set, get, {
           validateAtCommit: (state) => {
             const curBlock = state.blocks.find((b) => b.id === blockId)
-            return !curBlock || (curBlock.parent_id ?? null) !== (parentId ?? null) ? false : true
+            return !!curBlock && (curBlock.parent_id ?? null) === (parentId ?? null)
           },
           computeSpliced: (state) => {
             const cur = state.blocks

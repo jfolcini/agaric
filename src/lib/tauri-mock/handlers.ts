@@ -1524,7 +1524,7 @@ export const HANDLERS: Record<string, Handler> = {
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     const items = [...opLog]
-      .reverse()
+      .toReversed()
       .filter((o) => {
         if (spaceId === null) return true
         let payloadObj: Record<string, unknown>

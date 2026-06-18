@@ -99,6 +99,7 @@ export function useVoiceInput({ onResult, lang }: UseVoiceInputOptions): UseVoic
       const transcript = alternative?.transcript?.trim()
       if (transcript) onResultRef.current(transcript)
     }
+    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- kept symmetric with onresult/onend (not flagged); all three are property-assigned and explicitly nulled in the teardown below to block late fires into an unmounted component
     rec.onerror = (event: SpeechRecognitionErrorEvent) => {
       // `no-speech` / `aborted` are expected user outcomes, not faults —
       // log at debug-equivalent (warn with context) and let `onend`
@@ -132,6 +133,7 @@ export function useVoiceInput({ onResult, lang }: UseVoiceInputOptions): UseVoic
       const rec = recognitionRef.current
       if (rec == null) return
       rec.onresult = null
+      // oxlint-disable-next-line unicorn/prefer-add-event-listener -- symmetric teardown of the property-assigned handlers above
       rec.onerror = null
       rec.onend = null
       try {

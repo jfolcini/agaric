@@ -7,7 +7,13 @@
 
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import type * as React from 'react'
-import { DayPicker, type DayPickerProps, useDayPicker } from 'react-day-picker'
+import { useMemo } from 'react'
+import {
+  type CustomComponents,
+  DayPicker,
+  type DayPickerProps,
+  useDayPicker,
+} from 'react-day-picker'
 
 import { buttonVariants } from '@/components/ui/button'
 import { i18n } from '@/lib/i18n'
@@ -68,6 +74,86 @@ const BASE_CLASS_NAMES = {
   week_number_header: 'text-[0.7rem] text-muted-foreground w-8',
 } as const
 
+// Hoisted to module scope (no closure deps) so its identity is stable across
+// every <Calendar> render — react-day-picker's `components` map otherwise sees
+// a brand-new component each render and remounts the chevrons.
+const CalendarChevron = ({
+  orientation,
+  ...chevronProps
+}: {
+  orientation?: 'left' | 'right' | 'up' | 'down'
+} & React.HTMLAttributes<SVGElement>) => {
+  const Icon = orientation === 'left' ? ChevronLeft : ChevronRight
+  return <Icon className="size-4" {...chevronProps} />
+}
+
+// Custom WeekNumber component to make week numbers clickable.
+//
+// react-day-picker v10 removed the `onWeekNumberClick` prop; the sanctioned
+// replacement is to supply a custom `WeekNumber` component (`week: CalendarWeek`
+// + th attrs).
+//
+// IMPORTANT: the default WeekNumber renders a <th>, and the parent Week renders
+// a <tr>. If we returned a bare <button> here, the DOM would become
+// <tr><button>...</button></tr> — which triggers React 19's "In HTML, <button>
+// cannot be a child of <tr>" hydration warning. Wrap the interactive element in
+// a <th> so the <tr><th>... nesting stays valid and forward the week-number
+// cell's ARIA / styling attributes onto the <th> (not the <button>).
+//
+// Defined at module scope (factory closed over the click handler) so the
+// component identity is stable across renders once memoized by the caller.
+const makeWeekNumber = (
+  onWeekNumberClick: (weekNumber: number, dates: Date[]) => void,
+): CustomComponents['WeekNumber'] => {
+  const WeekNumber: CustomComponents['WeekNumber'] = ({ week, children, ...thProps }) => {
+    const dates = week.days.map((d) => d.date)
+    const weekNum = week.weekNumber
+    return (
+      <th {...thProps}>
+        <button
+          type="button"
+          className="text-[0.7rem] text-muted-foreground w-8 text-center cursor-pointer hover:text-foreground hover:bg-accent rounded-md transition-colors focus-ring-visible"
+          onClick={() => onWeekNumberClick(weekNum, dates)}
+          aria-label={i18n.t('journal.goToWeek', { weekNum })}
+        >
+          {children}
+        </button>
+      </th>
+    )
+  }
+  return WeekNumber
+}
+
+// Read the CURRENTLY displayed month from the DayPicker context rather than
+// `props.defaultMonth`. `defaultMonth` is only the month the picker OPENED on;
+// once the user pages with the chevrons the displayed month diverges from it.
+// The context's `months[0].date` is the first day of the active month, so the
+// caption "go to monthly view" click targets what's on screen (#745).
+// `useDayPicker()` is valid here because CaptionLabel renders inside the
+// DayPicker provider.
+//
+// Defined at module scope (factory closed over the click handler) so the
+// component identity is stable across renders once memoized by the caller.
+const makeCaptionLabel = (
+  onMonthClick: (month: Date) => void,
+): CustomComponents['CaptionLabel'] => {
+  const CaptionLabel: CustomComponents['CaptionLabel'] = ({ children }) => {
+    const { months } = useDayPicker()
+    const displayedMonth = months[0]?.date ?? new Date()
+    return (
+      <button
+        type="button"
+        className="text-sm font-medium cursor-pointer rounded-md px-2 py-1 hover:bg-accent hover:text-accent-foreground transition-colors focus-ring-visible"
+        onClick={() => onMonthClick(displayedMonth)}
+        aria-label={i18n.t('journal.monthlyViewButtonLabel')}
+      >
+        {children}
+      </button>
+    )
+  }
+  return CaptionLabel
+}
+
 const Calendar = ({
   ref,
   className,
@@ -78,6 +164,19 @@ const Calendar = ({
   components: componentsProp,
   ...props
 }: CalendarProps) => {
+  // Build the custom-components map once per dependency change so each custom
+  // component keeps a stable identity across renders (react-day-picker remounts
+  // any component whose reference changes). The interactive WeekNumber /
+  // CaptionLabel are only added when their click handler is supplied.
+  const components = useMemo<Partial<CustomComponents>>(
+    () => ({
+      Chevron: CalendarChevron,
+      ...(onWeekNumberClick ? { WeekNumber: makeWeekNumber(onWeekNumberClick) } : {}),
+      ...(onMonthClick ? { CaptionLabel: makeCaptionLabel(onMonthClick) } : {}),
+      ...componentsProp,
+    }),
+    [onWeekNumberClick, onMonthClick, componentsProp],
+  )
   return (
     <div ref={ref} data-slot="calendar" data-editor-portal="">
       <DayPicker
@@ -87,73 +186,7 @@ const Calendar = ({
           ...BASE_CLASS_NAMES,
           ...classNames,
         }}
-        components={{
-          Chevron: ({ orientation, ...chevronProps }) => {
-            const Icon = orientation === 'left' ? ChevronLeft : ChevronRight
-            return <Icon className="size-4" {...chevronProps} />
-          },
-          // Custom WeekNumber component to make week numbers clickable.
-          //
-          // react-day-picker v10 removed the `onWeekNumberClick` prop; the
-          // sanctioned replacement is to supply a custom `WeekNumber`
-          // component (`week: CalendarWeek` + th attrs).
-          //
-          // IMPORTANT: the default WeekNumber renders a <th>, and the parent
-          // Week renders a <tr>. If we return a bare <button> here, the DOM
-          // becomes <tr><button>...</button></tr> — which triggers React 19's
-          // "In HTML, <button> cannot be a child of <tr>" hydration warning.
-          // Wrap the interactive element in a <th> so the <tr><th>... nesting
-          // stays valid and forward the week number cell's ARIA / styling
-          // attributes onto the <th> (not the <button>) so voice-over tools
-          // see the table cell correctly.
-          ...(onWeekNumberClick
-            ? {
-                WeekNumber: ({ week, children, ...thProps }) => {
-                  const dates = week.days.map((d) => d.date)
-                  const weekNum = week.weekNumber
-                  return (
-                    <th {...thProps}>
-                      <button
-                        type="button"
-                        className="text-[0.7rem] text-muted-foreground w-8 text-center cursor-pointer hover:text-foreground hover:bg-accent rounded-md transition-colors focus-ring-visible"
-                        onClick={() => onWeekNumberClick(weekNum, dates)}
-                        aria-label={i18n.t('journal.goToWeek', { weekNum })}
-                      >
-                        {children}
-                      </button>
-                    </th>
-                  )
-                },
-              }
-            : {}),
-          ...(onMonthClick
-            ? {
-                // Read the CURRENTLY displayed month from the DayPicker context
-                // rather than `props.defaultMonth`. `defaultMonth` is only the
-                // month the picker OPENED on; once the user pages with the
-                // chevrons the displayed month diverges from it. The context's
-                // `months[0].date` is the first day of the active month, so the
-                // caption "go to monthly view" click targets what's on screen
-                // (#745). `useDayPicker()` is valid here because CaptionLabel
-                // renders inside the DayPicker provider.
-                CaptionLabel: ({ children }: React.HTMLAttributes<HTMLSpanElement>) => {
-                  const { months } = useDayPicker()
-                  const displayedMonth = months[0]?.date ?? new Date()
-                  return (
-                    <button
-                      type="button"
-                      className="text-sm font-medium cursor-pointer rounded-md px-2 py-1 hover:bg-accent hover:text-accent-foreground transition-colors focus-ring-visible"
-                      onClick={() => onMonthClick(displayedMonth)}
-                      aria-label={i18n.t('journal.monthlyViewButtonLabel')}
-                    >
-                      {children}
-                    </button>
-                  )
-                },
-              }
-            : {}),
-          ...componentsProp,
-        }}
+        components={components}
         {...props}
       />
     </div>
