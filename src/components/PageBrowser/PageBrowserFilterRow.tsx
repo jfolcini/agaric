@@ -205,6 +205,14 @@ export function pageFilterSummary(
   filter: FilterPrimitive,
   t: TFunction,
   tagResolver?: (id: string) => string,
+  /**
+   * #1478 — resolves a page/block ULID to its title for the relational
+   * `LinksTo` / `LinkedFrom` chips. SEPARATE from `tagResolver` because the
+   * relational ids are page/block ids (resolved via the global resolve store),
+   * not tag ids; conflating them would route the `tag:` chip through the wrong
+   * resolver. Falls back to the raw id when absent.
+   */
+  refResolver?: (id: string) => string,
 ): string {
   switch (filter.type) {
     case 'Tag':
@@ -239,6 +247,21 @@ export function pageFilterSummary(
       )
     case 'Created':
       return createdSummary(filter, t)
+    case 'LinksTo':
+      // #1478 — `target` is a ULID; resolve to the page title (same resolver the
+      // grouped-results headers use, #1447), falling back to the raw id.
+      return t('pageBrowser.filter.summaryLinksTo', {
+        target: refResolver ? refResolver(filter.target) : filter.target,
+      })
+    case 'LinkedFrom':
+      return t('pageBrowser.filter.summaryLinkedFrom', {
+        source: refResolver ? refResolver(filter.source) : filter.source,
+      })
+    case 'HasParentMatching':
+      // #1478 — the matcher is a nested FilterExpr; the chip is a terse
+      // "has parent matching (…)" placeholder (the full sub-expr is built/edited
+      // via the nested mini-builder in the popover, not re-rendered in the chip).
+      return t('pageBrowser.filter.summaryHasParentMatching')
     case 'Orphan':
       return t('pageBrowser.filter.facetOrphan')
     case 'Stub':

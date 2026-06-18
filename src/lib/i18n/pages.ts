@@ -419,6 +419,26 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.facetScheduledDesc': 'Blocks whose scheduled date matches.',
   'pageBrowser.filter.facetCreated': 'Created',
   'pageBrowser.filter.facetCreatedDesc': 'Blocks created in a date range.',
+  // #1478 — relational facets (links-to / linked-from / has-parent-matching).
+  'pageBrowser.filter.facetLinksTo': 'Links to',
+  'pageBrowser.filter.facetLinksToDesc': 'Blocks with an outbound link to a page.',
+  'pageBrowser.filter.facetLinkedFrom': 'Linked from',
+  'pageBrowser.filter.facetLinkedFromDesc': 'Blocks with an inbound link from a page.',
+  'pageBrowser.filter.facetHasParentMatching': 'Has parent matching',
+  'pageBrowser.filter.facetHasParentMatchingDesc': 'Blocks whose parent satisfies a nested filter.',
+  // Relational editor labels.
+  'pageBrowser.filter.linkTargetLabel': 'Target page',
+  'pageBrowser.filter.linkSourceLabel': 'Source page',
+  'pageBrowser.filter.linkPickPage': 'Pick a page…',
+  'pageBrowser.filter.linkSearchPages': 'Search pages',
+  'pageBrowser.filter.linkNoPages': 'No matching pages',
+  'pageBrowser.filter.hasParentMatchingLabel': 'Parent matcher',
+  'pageBrowser.filter.hasParentMatchingHint': 'Build the filter the parent block must satisfy.',
+  'pageBrowser.filter.hasParentMatchingEmpty': 'Add at least one condition for the parent matcher.',
+  // Relational chip summaries.
+  'pageBrowser.filter.summaryLinksTo': 'links to {{target}}',
+  'pageBrowser.filter.summaryLinkedFrom': 'linked from {{source}}',
+  'pageBrowser.filter.summaryHasParentMatching': 'has parent matching (…)',
   // Editor field labels.
   'pageBrowser.filter.stateValuesLabel': 'States',
   'pageBrowser.filter.stateIsNullLabel': 'No state (unset)',

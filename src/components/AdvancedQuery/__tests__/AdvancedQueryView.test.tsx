@@ -6,6 +6,7 @@ import { axe } from 'vitest-axe'
 
 import type { ActiveBlockRow, AdvancedQueryResponse } from '@/lib/tauri'
 import { useAdvancedQueryStore } from '@/stores/advancedQuery'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
 import { AdvancedQueryView } from '../AdvancedQueryView'
@@ -510,5 +511,130 @@ describe('AdvancedQueryView', () => {
       },
       { timeout: 5000 },
     )
+  })
+
+  // ── #1478 — relational predicates wired end-to-end through the builder. ──────
+  describe('relational predicates (#1478)', () => {
+    beforeEach(() => {
+      useResolveStore.setState({ cache: new Map(), version: 0 })
+      // Seed the resolver so the LinksTo chip renders the page TITLE, and serve
+      // the link picker's page list, in addition to the base IPC routes.
+      useResolveStore.getState().batchSet([{ id: 'PAGE_X', title: 'Roadmap', deleted: false }])
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'run_advanced_query') return makeResponse()
+        if (cmd === 'batch_resolve') return [{ id: 'PAGE001', title: 'Parent page' }]
+        if (cmd === 'list_all_pages_in_space') return [{ id: 'PAGE_X', content: 'Roadmap' }]
+        return null
+      })
+    })
+
+    it('adds a links-to leaf: stores the ULID, shows the resolved title, compiles to LinksTo', async () => {
+      const user = userEvent.setup()
+      render(<AdvancedQueryView />)
+      await screen.findByText('No blocks match these filters')
+
+      await user.click(screen.getByRole('button', { name: 'Add filter' }))
+      const popover = await screen.findByRole('dialog')
+      await user.click(within(popover).getByText('Links to'))
+      await screen.findByText('Roadmap')
+      await user.click(screen.getByText('Roadmap'))
+
+      // The chip resolves the stored ULID back to its title.
+      expect(await screen.findByText('links to Roadmap')).toBeInTheDocument()
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenLastCalledWith('run_advanced_query', {
+          request: {
+            spaceId: SPACE_ID,
+            filter: {
+              type: 'And',
+              children: [{ type: 'Leaf', primitive: { type: 'LinksTo', target: 'PAGE_X' } }],
+            },
+            limit: 50,
+          },
+        })
+      })
+    })
+
+    it('removing a links-to leaf returns the compiled expr to an empty conjunction', async () => {
+      const user = userEvent.setup()
+      render(<AdvancedQueryView />)
+      await screen.findByText('No blocks match these filters')
+
+      await user.click(screen.getByRole('button', { name: 'Add filter' }))
+      await user.click(within(await screen.findByRole('dialog')).getByText('Links to'))
+      await screen.findByText('Roadmap')
+      await user.click(screen.getByText('Roadmap'))
+      expect(await screen.findByText('links to Roadmap')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'Remove condition' }))
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenLastCalledWith('run_advanced_query', {
+          request: { spaceId: SPACE_ID, filter: { type: 'And', children: [] }, limit: 50 },
+        })
+      })
+      expect(screen.queryByText('links to Roadmap')).not.toBeInTheDocument()
+    })
+
+    it('compiles a has-parent-matching leaf with a nested matcher sub-expr', async () => {
+      const user = userEvent.setup()
+      render(<AdvancedQueryView />)
+      await screen.findByText('No blocks match these filters')
+
+      await user.click(screen.getByRole('button', { name: 'Add filter' }))
+      await user.click(within(await screen.findByRole('dialog')).getByText('Has parent matching'))
+      const editor = await screen.findByTestId('has-parent-matching-editor')
+
+      // Add a Tag leaf into the nested mini-builder (a SECOND Add-filter dialog).
+      await user.click(within(editor).getByRole('button', { name: 'Add filter' }))
+      const inner = await waitFor(() => {
+        const all = screen.getAllByRole('dialog', { name: 'Add a filter' })
+        if (all.length < 2) throw new Error('inner popover not yet open')
+        return all[all.length - 1] as HTMLElement
+      })
+      await user.click(within(inner).getByText('Tag'))
+      await user.type(within(inner).getByLabelText('Tag id'), 'project')
+      await user.click(within(inner).getByRole('button', { name: 'Apply' }))
+
+      // Apply the has-parent leaf.
+      await waitFor(() =>
+        expect(
+          within(screen.getByTestId('has-parent-matching-editor')).getByRole('button', {
+            name: 'Apply',
+          }),
+        ).toBeEnabled(),
+      )
+      await user.click(
+        within(screen.getByTestId('has-parent-matching-editor')).getByRole('button', {
+          name: 'Apply',
+        }),
+      )
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenLastCalledWith('run_advanced_query', {
+          request: {
+            spaceId: SPACE_ID,
+            filter: {
+              type: 'And',
+              children: [
+                {
+                  type: 'Leaf',
+                  primitive: {
+                    type: 'HasParentMatching',
+                    matcher: {
+                      type: 'And',
+                      children: [{ type: 'Leaf', primitive: { type: 'Tag', tag: 'project' } }],
+                    },
+                  },
+                },
+              ],
+            },
+            limit: 50,
+          },
+        })
+      })
+      // The chip renders the terse placeholder summary.
+      expect(screen.getByText('has parent matching (…)')).toBeInTheDocument()
+    })
   })
 })

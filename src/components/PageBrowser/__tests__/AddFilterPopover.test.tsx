@@ -10,19 +10,39 @@
  * behaviour are all covered end-to-end.
  */
 
-import { render, screen } from '@testing-library/react'
+import { invoke } from '@tauri-apps/api/core'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { FilterGroup } from '@/components/AdvancedQuery/FilterGroup'
+import {
+  HasParentMatchingEditor,
+  type HasParentMatchingEditorProps,
+} from '@/components/AdvancedQuery/HasParentMatchingEditor'
 import {
   __resetPriorityLevelsForTests,
   DEFAULT_PRIORITY_LEVELS,
   setPriorityLevels,
 } from '@/lib/priority-levels'
 import type { FilterPrimitive } from '@/lib/tauri'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 import { AddFilterPopover } from '../AddFilterPopover'
+
+const mockedInvoke = vi.mocked(invoke)
+
+// #1478 — the has-parent facet's editor (and its recursive sub-builder) is
+// dependency-injected: `AddFilterPopover` imports neither `HasParentMatchingEditor`
+// nor `FilterGroup`, to keep the import graph acyclic. Production (FilterGroup)
+// injects this exact closure; mirror it here so the has-parent tests exercise the
+// same nested-builder UX they always did.
+const renderHasParentEditor = (props: {
+  onApply: HasParentMatchingEditorProps['onApply']
+  onBack: HasParentMatchingEditorProps['onBack']
+}) => <HasParentMatchingEditor {...props} renderBuilder={(b) => <FilterGroup {...b} />} />
 
 /** Opens the popover via its trigger and resolves once the dialog is mounted. */
 async function openPopover(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
@@ -679,6 +699,173 @@ describe('AddFilterPopover', () => {
         expect(await axe(document.body)).toHaveNoViolations()
         await user.click(screen.getByRole('button', { name: 'Back' }))
       }
+    })
+  })
+
+  // ── #1478 — relational facets (links-to / linked-from / has-parent-matching),
+  // gated on `showAdvancedFacets` alongside the other advanced facets. ─────────
+  describe('relational facets (#1478)', () => {
+    const SPACE = 'SPACE_REL'
+
+    beforeEach(() => {
+      vi.clearAllMocks()
+      useSpaceStore.setState({ currentSpaceId: SPACE })
+      useResolveStore.setState({ cache: new Map(), version: 0 })
+      // The link picker loads the space's pages via `list_all_pages_in_space`.
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_all_pages_in_space')
+          return [
+            { id: 'PAGE_A', content: 'Roadmap' },
+            { id: 'PAGE_B', content: 'Backlog' },
+          ]
+        return null
+      })
+    })
+
+    it('offers the three relational facets when showAdvancedFacets is set', async () => {
+      const user = userEvent.setup()
+      render(
+        <AddFilterPopover
+          onAddFilter={vi.fn()}
+          showAdvancedFacets
+          renderHasParentEditor={renderHasParentEditor}
+        />,
+      )
+      await openPopover(user)
+      expect(screen.getByText('Links to')).toBeInTheDocument()
+      expect(screen.getByText('Linked from')).toBeInTheDocument()
+      expect(screen.getByText('Has parent matching')).toBeInTheDocument()
+    })
+
+    it('the link picker stores the ULID and emits a LinksTo primitive', async () => {
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(<AddFilterPopover onAddFilter={onAddFilter} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Links to'))
+      // The picker shows page titles; clicking one stores its id, not its title.
+      await screen.findByText('Roadmap')
+      await user.click(screen.getByText('Roadmap'))
+
+      expect(onAddFilter).toHaveBeenCalledWith({ type: 'LinksTo', target: 'PAGE_A' })
+    })
+
+    it('filters the picker by folded title search', async () => {
+      const user = userEvent.setup()
+      render(<AddFilterPopover onAddFilter={vi.fn()} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Linked from'))
+      await screen.findByText('Roadmap')
+      await user.type(screen.getByLabelText('Search pages'), 'back')
+      expect(screen.queryByText('Roadmap')).not.toBeInTheDocument()
+      expect(screen.getByText('Backlog')).toBeInTheDocument()
+    })
+
+    it('the linked-from picker emits a LinkedFrom primitive storing the ULID', async () => {
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(<AddFilterPopover onAddFilter={onAddFilter} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Linked from'))
+      await screen.findByText('Backlog')
+      await user.click(screen.getByText('Backlog'))
+
+      expect(onAddFilter).toHaveBeenCalledWith({ type: 'LinkedFrom', source: 'PAGE_B' })
+    })
+
+    it('has-parent-matching nests a sub-expr and compiles to { HasParentMatching, matcher }', async () => {
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(
+        <AddFilterPopover
+          onAddFilter={onAddFilter}
+          showAdvancedFacets
+          renderHasParentEditor={renderHasParentEditor}
+        />,
+      )
+      await openPopover(user)
+
+      await user.click(screen.getByText('Has parent matching'))
+      const editor = await screen.findByTestId('has-parent-matching-editor')
+      // Apply is gated until the matcher has at least one condition.
+      expect(within(editor).getByRole('button', { name: 'Apply' })).toBeDisabled()
+
+      // Add a Tag leaf into the nested mini-builder (its own Add-filter popover).
+      await user.click(within(editor).getByRole('button', { name: 'Add filter' }))
+      // The inner popover is a SECOND dialog (the mini-builder's own AddFilter);
+      // scope to the most-recently-opened one.
+      const dialogs = await waitFor(() => {
+        const all = screen.getAllByRole('dialog', { name: 'Add a filter' })
+        if (all.length < 2) throw new Error('inner popover not yet open')
+        return all
+      })
+      const inner = dialogs[dialogs.length - 1] as HTMLElement
+      await user.click(within(inner).getByText('Tag'))
+      await user.type(within(inner).getByLabelText('Tag id'), 'urgent')
+      await user.click(within(inner).getByRole('button', { name: 'Apply' }))
+
+      // Now the matcher is non-empty; Apply the has-parent leaf.
+      await waitFor(() =>
+        expect(
+          within(screen.getByTestId('has-parent-matching-editor')).getByRole('button', {
+            name: 'Apply',
+          }),
+        ).toBeEnabled(),
+      )
+      await user.click(
+        within(screen.getByTestId('has-parent-matching-editor')).getByRole('button', {
+          name: 'Apply',
+        }),
+      )
+
+      expect(onAddFilter).toHaveBeenCalledWith({
+        type: 'HasParentMatching',
+        matcher: {
+          type: 'And',
+          children: [{ type: 'Leaf', primitive: { type: 'Tag', tag: 'urgent' } }],
+        },
+      })
+    })
+
+    it('disables has-parent Apply on an empty matcher', async () => {
+      const user = userEvent.setup()
+      render(
+        <AddFilterPopover
+          onAddFilter={vi.fn()}
+          showAdvancedFacets
+          renderHasParentEditor={renderHasParentEditor}
+        />,
+      )
+      await openPopover(user)
+
+      await user.click(screen.getByText('Has parent matching'))
+      const editor = await screen.findByTestId('has-parent-matching-editor')
+      expect(within(editor).getByRole('button', { name: 'Apply' })).toBeDisabled()
+      expect(within(editor).getByTestId('has-parent-empty-hint')).toBeInTheDocument()
+    })
+
+    it('has no a11y violations with each relational editor open', async () => {
+      const user = userEvent.setup()
+      render(
+        <AddFilterPopover
+          onAddFilter={vi.fn()}
+          showAdvancedFacets
+          renderHasParentEditor={renderHasParentEditor}
+        />,
+      )
+      await openPopover(user)
+
+      await user.click(screen.getByText('Links to'))
+      await screen.findByText('Roadmap')
+      expect(await axe(document.body)).toHaveNoViolations()
+      await user.click(screen.getByRole('button', { name: 'Back' }))
+
+      await user.click(screen.getByText('Has parent matching'))
+      await screen.findByTestId('has-parent-matching-editor')
+      expect(await axe(document.body)).toHaveNoViolations()
     })
   })
 })

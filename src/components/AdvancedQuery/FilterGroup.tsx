@@ -30,8 +30,10 @@ import type {
   BuilderNode,
   BuilderPath,
 } from '@/stores/advancedQuery'
+import { useResolveStore } from '@/stores/resolve'
 
 import { AddFilterPopover } from '../PageBrowser/AddFilterPopover'
+import { HasParentMatchingEditor } from './HasParentMatchingEditor'
 
 /** Append `index` to `path` (a child address relative to a parent path). */
 function childPath(path: BuilderPath, index: number): BuilderPath {
@@ -123,7 +125,13 @@ function LeafChip({
   onToggleNegate: (path: BuilderPath) => void
 }): React.ReactElement {
   const { t } = useTranslation()
-  const label = pageFilterSummary(node.primitive, t)
+  // #1478 — the relational `LinksTo` / `LinkedFrom` chips store a ULID; resolve
+  // it to the page title for the chip label (same resolver the grouped-results
+  // headers use, #1447). Non-id facets ignore the resolver.
+  const resolveTitle = useResolveStore((s) => s.resolveTitle)
+  // Pass the resolver as the relational `refResolver` (4th arg) only — the
+  // `tagResolver` (3rd) stays unset so non-relational chips render as before.
+  const label = pageFilterSummary(node.primitive, t, undefined, resolveTitle)
   const kind = t('advancedQuery.builder.kindLeaf')
   return (
     <li className="inline-flex items-center gap-1" data-testid="filter-group-leaf">
@@ -265,6 +273,18 @@ export function FilterGroup({
           onAddFilter={(primitive) => onAddLeaf(path, primitive)}
           hidePagesFacets
           showAdvancedFacets
+          // Inject the has-parent matcher editor, wiring FilterGroup itself in
+          // as its recursive sub-builder. `AddFilterPopover` imports neither the
+          // editor nor FilterGroup (either edge would re-form an import cycle via
+          // advancedQuery.ts / PageBrowserFilterRow.tsx); the recursion happens
+          // through these render-prop closures at runtime, not import edges. The
+          // self-reference is fine — FilterGroup is already recursive here.
+          renderHasParentEditor={(editorProps) => (
+            <HasParentMatchingEditor
+              {...editorProps}
+              renderBuilder={(builderProps) => <FilterGroup {...builderProps} />}
+            />
+          )}
         />
         <Button
           type="button"
