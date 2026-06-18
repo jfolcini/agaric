@@ -29,6 +29,29 @@ describe('processCheckboxSyntax', () => {
     expect(result).toEqual({ cleanContent: 'Buy groceries', todoState: 'DONE' })
   })
 
+  // #1481 — fold the full task-state vocabulary (DOING/CANCELLED + `*` marker),
+  // matching the markdown serialize/parse layer (#1435).
+  it('detects DOING checkbox `- [/] `', () => {
+    expect(processCheckboxSyntax('- [/] in progress')).toEqual({
+      cleanContent: 'in progress',
+      todoState: 'DOING',
+    })
+  })
+
+  it('detects CANCELLED checkbox `- [-] `', () => {
+    expect(processCheckboxSyntax('- [-] dropped')).toEqual({
+      cleanContent: 'dropped',
+      todoState: 'CANCELLED',
+    })
+  })
+
+  it('accepts the `*` task marker', () => {
+    expect(processCheckboxSyntax('* [ ] star task')).toEqual({
+      cleanContent: 'star task',
+      todoState: 'TODO',
+    })
+  })
+
   it('returns null todoState for content without checkbox', () => {
     const result = processCheckboxSyntax('Just plain text')
     expect(result).toEqual({ cleanContent: 'Just plain text', todoState: null })
