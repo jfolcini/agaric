@@ -602,6 +602,14 @@ pub struct AttachmentRow {
     pub fs_path: String,
     /// Epoch-ms (attachments.created_at is INTEGER since migration 0081).
     pub created_at: i64,
+    /// blake3 hex digest of the file bytes (#1453 Phase 1). Same scheme as the
+    /// file-sync layer (`sync_files.rs`), so it matches the sync offer's hash.
+    ///
+    /// `None` for rows attached before migration 0093, or whose file was
+    /// missing on disk when the boot-time backfill ran. Persisted only — the
+    /// dedup / skip-transfer / mutation-safety USES of it are follow-ups.
+    #[serde(default)]
+    pub content_hash: Option<String>,
 }
 
 /// Check whether `mime` matches one of [`ALLOWED_MIME_PATTERNS`].

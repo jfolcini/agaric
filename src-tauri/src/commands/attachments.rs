@@ -132,13 +132,33 @@ pub async fn add_attachment_inner(
         )));
     }
 
+    // #1453 Phase 1: compute and persist the blake3 content hash. Reuse the
+    // file-sync hashing helper (`read_attachment_file` → `blake3::hash(&data)
+    // .to_hex()`) so the stored hash is byte-for-byte identical to the hash
+    // the sync layer computes for the same bytes. The file is already on disk
+    // (the FE wrote it before invoking, and the M-29 stat above confirmed it).
+    // Synchronous std::fs read on the blocking pool (PEND-20 H), like the read
+    // path. A hash failure is fatal here: the bytes the M-29 stat just saw are
+    // unreadable, so the row would be broken regardless.
+    let content_hash = {
+        let dir = app_data_dir.to_path_buf();
+        let path = fs_path.clone();
+        let (_bytes, hash) = tokio::task::spawn_blocking(move || {
+            crate::sync_files::read_attachment_file(&dir, &path)
+        })
+        .await
+        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))??;
+        hash
+    };
+
     // Append to op_log within transaction
     let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
 
     // Insert into attachments table within same transaction
     sqlx::query(
-        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO attachments \
+         (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&attachment_id)
     .bind(block_id.as_str())
@@ -147,6 +167,7 @@ pub async fn add_attachment_inner(
     .bind(size_bytes)
     .bind(&fs_path)
     .bind(now)
+    .bind(&content_hash)
     .execute(&mut **tx)
     .await?;
 
@@ -162,6 +183,7 @@ pub async fn add_attachment_inner(
         size_bytes,
         fs_path,
         created_at: now,
+        content_hash: Some(content_hash),
     })
 }
 
@@ -480,7 +502,7 @@ pub async fn list_attachments_inner(
     let block_id_str = block_id.as_str();
     let rows = sqlx::query_as!(
         AttachmentRow,
-        "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at \
+        "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash \
          FROM attachments WHERE block_id = ? \
          ORDER BY created_at, id",
         block_id_str
@@ -530,7 +552,7 @@ pub async fn list_attachments_batch_inner(
     // the per-row shape is identical.
     let rows = sqlx::query_as!(
         AttachmentRow,
-        "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at \
+        "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash \
          FROM attachments \
          WHERE block_id IN (SELECT value FROM json_each(?)) \
          ORDER BY created_at, id",

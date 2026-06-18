@@ -32,6 +32,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+mod attachment_hash_backfill;
 mod boot;
 mod cache_refresh;
 mod draft_recovery;
@@ -40,6 +41,7 @@ mod sync_inbox;
 #[cfg(test)]
 mod tests;
 
+pub use attachment_hash_backfill::backfill_attachment_content_hashes;
 pub use boot::recover_at_boot;
 pub use cache_refresh::refresh_caches_for_recovered_drafts;
 pub use draft_recovery::find_prev_edit;

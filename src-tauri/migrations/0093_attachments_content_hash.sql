@@ -1,0 +1,28 @@
+-- Issue #1453 Phase 1: persist a blake3 content hash for attachments.
+--
+-- Adds a NULLABLE `content_hash` column to `attachments`. The hash is the
+-- blake3 hex digest of the file bytes — the SAME scheme already used by the
+-- file-sync layer (`sync_files.rs`: `blake3::hash(&data).to_hex()`), so a
+-- persisted hash matches the sync offer's `blake3_hash` byte-for-byte.
+--
+-- This Phase 1 migration ONLY persists the hash so it is available; the
+-- dedup / skip-transfer / mutation-safety USES of it are explicit follow-ups
+-- and are intentionally NOT built here.
+--
+-- Nullability rationale:
+--   * existing rows pre-date the column → must be valid with no value;
+--   * the Rust boot-time backfill (recovery::attachment_hash_backfill) fills
+--     them in lazily and tolerates a missing-on-disk file by leaving NULL;
+--   * a row whose file vanished before the backfill ran stays NULL (valid).
+--
+-- Why a plain `ALTER TABLE ADD COLUMN` (no STRICT-table rebuild recipe):
+-- the column is nullable with no DEFAULT and no new constraint, which SQLite
+-- supports directly on a STRICT table — no `_new_attachments` rebuild needed
+-- (contrast 0081, which had to rebuild to change a column's *type*). The
+-- existing FK and both indexes (idx_attachments_block, the partial
+-- idx_attachments_fs_path_unique) are untouched.
+--
+-- Append-only (#806): this is a NEW migration file; no existing migration is
+-- edited.
+
+ALTER TABLE attachments ADD COLUMN content_hash TEXT;

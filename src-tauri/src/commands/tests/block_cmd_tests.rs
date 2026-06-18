@@ -3378,7 +3378,7 @@ async fn add_attachment_creates_row() {
     // Verify persistence in DB via direct query
     let db_row = sqlx::query_as!(
         AttachmentRow,
-        "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at \
+        "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash \
          FROM attachments WHERE id = ?",
         att.id
     )
@@ -3388,6 +3388,81 @@ async fn add_attachment_creates_row() {
     assert_eq!(db_row.id, att.id, "DB row id should match returned id");
     assert_eq!(db_row.block_id, block.id, "DB row block_id should match");
     assert_eq!(db_row.filename, "photo.png", "DB row filename should match");
+
+    mat.shutdown();
+}
+
+/// #1453 Phase 1: attaching a file persists a `content_hash` equal to the
+/// blake3 hex digest of the bytes — and equal to the value the file-sync
+/// hasher (`read_attachment_file`) computes for the same bytes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_attachment_persists_blake3_content_hash() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "h".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    // Non-trivial, deterministic bytes so the hash is meaningful.
+    let bytes: Vec<u8> = (0u8..=200).cycle().take(4096).collect();
+    let fs_path = "attachments/hashme.bin";
+    std::fs::write(app_data_dir.join(fs_path), &bytes).unwrap();
+
+    let size = i64::try_from(bytes.len()).unwrap();
+    let att = add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "hashme.bin".into(),
+        "application/zip".into(),
+        size,
+        fs_path.into(),
+    )
+    .await
+    .unwrap();
+
+    // The returned row carries the hash.
+    let returned = att
+        .content_hash
+        .clone()
+        .expect("attach should populate content_hash");
+
+    // It must equal a raw blake3 of the bytes.
+    let expected_raw = blake3::hash(&bytes).to_hex().to_string();
+    assert_eq!(
+        returned, expected_raw,
+        "content_hash should be blake3 of bytes"
+    );
+
+    // It must equal what the SYNC hasher computes for the same bytes — this is
+    // the cross-check that the persisted hash matches the sync scheme.
+    let (_b, sync_hash) = crate::sync_files::read_attachment_file(app_data_dir, fs_path).unwrap();
+    assert_eq!(returned, sync_hash, "content_hash should match sync hasher");
+
+    // And it must be persisted in the DB row, not just on the returned struct.
+    let db_hash: Option<String> =
+        sqlx::query_scalar!("SELECT content_hash FROM attachments WHERE id = ?", att.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        db_hash.as_deref(),
+        Some(expected_raw.as_str()),
+        "persisted content_hash should match"
+    );
 
     mat.shutdown();
 }
