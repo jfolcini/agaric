@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT t.content AS \"content!\"\n             FROM block_tags bt\n             JOIN blocks t ON t.id = bt.tag_id\n            WHERE bt.block_id = ?1\n              AND t.block_type = 'tag'\n              AND t.deleted_at IS NULL\n              AND t.content IS NOT NULL\n            ORDER BY t.content COLLATE NOCASE ASC, t.id ASC",
+  "describe": {
+    "columns": [
+      {
+        "name": "content!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "543c76a49800f293b63646f40681dd9f2d1b5cf0541746349e8bea7f3582c2fc"
+}

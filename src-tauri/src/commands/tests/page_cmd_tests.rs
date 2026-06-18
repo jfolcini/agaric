@@ -4635,3 +4635,198 @@ async fn load_page_subtree_rejects_malformed_root_id() {
         "malformed root id must surface as Ulid, got {err:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #1433 — export aliases + tags into frontmatter (EXPORT direction only).
+// IMPORT (parse/resolve/create) is a deferred follow-up and is NOT tested
+// here.
+// ---------------------------------------------------------------------------
+
+/// Helper: insert a `page_aliases` row directly (bypasses the command layer).
+async fn insert_alias(pool: &SqlitePool, page_id: &str, alias: &str) {
+    sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
+        .bind(page_id)
+        .bind(alias)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// Helper: associate a tag block with a block via `block_tags`.
+async fn insert_block_tag(pool: &SqlitePool, block_id: &str, tag_id: &str) {
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(block_id)
+        .bind(tag_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// A page with aliases exports an `aliases:` frontmatter key whose YAML
+/// sequence holds the alias strings, sorted (deterministic).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_emits_aliases_frontmatter_key_1433() {
+    let (pool, _dir) = test_pool().await;
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAAAAS01";
+    insert_block(&pool, PAGE, "page", "Aliased Page", None, Some(0)).await;
+    // Insert out of order; export must sort.
+    insert_alias(&pool, PAGE, "Gamma").await;
+    insert_alias(&pool, PAGE, "Alpha").await;
+    insert_alias(&pool, PAGE, "Beta").await;
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+    assert!(
+        md.contains("aliases: [Alpha, Beta, Gamma]\n"),
+        "aliases must be a sorted YAML flow sequence, got:\n{md}"
+    );
+    assert!(!md.contains("tags:"), "no tags expected, got:\n{md}");
+}
+
+/// A page with tags exports a `tags:` key carrying the tag NAMES (the tag
+/// blocks' content), not ULIDs, sorted (deterministic).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_emits_tags_frontmatter_with_names_1433() {
+    let (pool, _dir) = test_pool().await;
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAATAGS01";
+    const TAG_Z: &str = "01AAAAAAAAAAAAAAAAAAATAGZ1";
+    const TAG_A: &str = "01AAAAAAAAAAAAAAAAAAATAGA1";
+    insert_block(&pool, PAGE, "page", "Tagged Page", None, Some(0)).await;
+    insert_block(&pool, TAG_Z, "tag", "zebra", None, None).await;
+    insert_block(&pool, TAG_A, "tag", "apple", None, None).await;
+    // Associate out of name order; export must sort by name.
+    insert_block_tag(&pool, PAGE, TAG_Z).await;
+    insert_block_tag(&pool, PAGE, TAG_A).await;
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+    assert!(
+        md.contains("tags: [apple, zebra]\n"),
+        "tags must emit sorted NAMES, not ULIDs, got:\n{md}"
+    );
+    assert!(
+        !md.contains(TAG_A) && !md.contains(TAG_Z),
+        "tag ULIDs must not leak into the export, got:\n{md}"
+    );
+    assert!(!md.contains("aliases:"), "no aliases expected, got:\n{md}");
+}
+
+/// A page with neither aliases nor tags omits both keys (and, with no
+/// properties either, emits no frontmatter fence at all).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_omits_aliases_and_tags_when_none_1433() {
+    let (pool, _dir) = test_pool().await;
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAAANN01";
+    insert_block(&pool, PAGE, "page", "Plain Page", None, Some(0)).await;
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+    assert!(!md.contains("aliases:"), "no aliases key, got:\n{md}");
+    assert!(!md.contains("tags:"), "no tags key, got:\n{md}");
+    assert!(
+        !md.contains("---\n"),
+        "no frontmatter fence when nothing to emit, got:\n{md}"
+    );
+}
+
+/// Alias/tag values containing YAML-significant characters are double-quoted
+/// and escaped in the emitted flow sequence.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_quotes_yaml_significant_alias_and_tag_values_1433() {
+    let (pool, _dir) = test_pool().await;
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAAQTE01";
+    const TAG_HASH: &str = "01AAAAAAAAAAAAAAAAATAGHS01";
+    const TAG_PLAIN: &str = "01AAAAAAAAAAAAAAAAATAGPN01";
+    insert_block(&pool, PAGE, "page", "Quoting Page", None, Some(0)).await;
+    // Alias with a colon-space (mapping-significant) and a comma.
+    insert_alias(&pool, PAGE, "a: b, c").await;
+    // Alias with a literal double-quote → must be backslash-escaped.
+    insert_alias(&pool, PAGE, "say \"hi\"").await;
+    // A plain alias stays bare.
+    insert_block(&pool, TAG_PLAIN, "tag", "plain", None, None).await;
+    // Tag name starting with `#` → quoted in flow context.
+    insert_block(&pool, TAG_HASH, "tag", "#urgent", None, None).await;
+    insert_block_tag(&pool, PAGE, TAG_PLAIN).await;
+    insert_block_tag(&pool, PAGE, TAG_HASH).await;
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+    // Aliases sorted: "a: b, c" < "say \"hi\"".
+    assert!(
+        md.contains(r#"aliases: ["a: b, c", "say \"hi\""]"#),
+        "yaml-significant aliases must be quoted/escaped, got:\n{md}"
+    );
+    // Tags sorted (NOCASE): "#urgent" < "plain"; `#` value quoted, plain bare.
+    assert!(
+        md.contains(r##"tags: ["#urgent", plain]"##),
+        "hash-leading tag must be quoted, plain tag bare, got:\n{md}"
+    );
+}
+
+/// Regression (#1433): values that would corrupt the YAML if emitted bare —
+/// embedded newline/tab/control chars, and tokens that *look like* YAML
+/// scalars (numbers, booleans, null) — must be emitted as escaped
+/// double-quoted scalars so they round-trip as strings rather than being
+/// folded, dropped, or retyped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_escapes_control_chars_and_yaml_scalar_lookalikes_1433() {
+    let (pool, _dir) = test_pool().await;
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAAESC01";
+    insert_block(&pool, PAGE, "page", "Escape Page", None, Some(0)).await;
+    // Sorted by `alias` (NOCASE; for these values == BINARY on the first
+    // printable byte): "123" < "line…" < "null" < "qu…" < "tab…" < "true".
+    insert_alias(&pool, PAGE, "line\nbreak").await; // embedded newline
+    insert_alias(&pool, PAGE, "tab\there").await; // embedded tab
+    insert_alias(&pool, PAGE, "123").await; // number-lookalike
+    insert_alias(&pool, PAGE, "true").await; // bool-lookalike
+    insert_alias(&pool, PAGE, "null").await; // null-lookalike
+    insert_alias(&pool, PAGE, "qu\"ote\\bs").await; // quote + backslash
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+    let line = md
+        .lines()
+        .find(|l| l.starts_with("aliases:"))
+        .expect("aliases line");
+    // Newline/tab are escaped to \n/\t (NOT emitted literally, which would
+    // fold to a space or break the single-line frontmatter); embedded `"` and
+    // `\` are backslash-escaped; and the scalar-lookalikes (123/null/true)
+    // are quoted so they stay strings rather than being retyped.
+    assert_eq!(
+        line, r#"aliases: ["123", "line\nbreak", "null", "qu\"ote\\bs", "tab\there", "true"]"#,
+        "control chars + scalar lookalikes must be escaped/quoted, got:\n{md}"
+    );
+    // The emitted aliases line must be a single physical line (no raw newline
+    // leaked from the alias value).
+    assert_eq!(
+        md.matches("aliases:").count(),
+        1,
+        "exactly one aliases line, got:\n{md}"
+    );
+}
+
+/// Aliases AND tags coexist with custom properties in a single frontmatter
+/// block, in a stable order (aliases, then tags, then properties).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_aliases_tags_and_properties_coexist_1433() {
+    let (pool, _dir) = test_pool().await;
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAABTH01";
+    const TAG: &str = "01AAAAAAAAAAAAAAAAAATAGBT1";
+    insert_block(&pool, PAGE, "page", "Both Page", None, Some(0)).await;
+    insert_block(&pool, TAG, "tag", "work", None, None).await;
+    insert_alias(&pool, PAGE, "AKA").await;
+    insert_block_tag(&pool, PAGE, TAG).await;
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'category', 'notes')",
+    )
+    .bind(PAGE)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+    let fence_start = md.find("---\n").expect("frontmatter fence");
+    let body = &md[fence_start..];
+    let a_pos = body.find("aliases: [AKA]").expect("aliases key");
+    let t_pos = body.find("tags: [work]").expect("tags key");
+    let p_pos = body.find("category: notes").expect("property key");
+    assert!(
+        a_pos < t_pos && t_pos < p_pos,
+        "frontmatter order must be aliases, tags, then properties, got:\n{md}"
+    );
+}
