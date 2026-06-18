@@ -174,6 +174,39 @@ function EditableBlockInner({
       setLiveContent('')
       return
     }
+    // #1489 — coalesce the markdown-change → React re-render onto the next
+    // animation frame instead of calling `setLiveContent` synchronously inside
+    // ProseMirror's transaction dispatch.
+    //
+    // The serializing callback fires from the editor's `update` event, which is
+    // emitted SYNCHRONOUSLY from `EditorView.dispatch`. Calling `setLiveContent`
+    // there re-renders this component (and the sibling toolbars that read the
+    // editor) inside the same dispatch flush; that React commit writes back to
+    // the editor's contenteditable DOM, which ProseMirror's `DOMObserver`
+    // re-reads as a change and turns into ANOTHER `dispatch` → `update` →
+    // `setLiveContent` … an infinite "Maximum update depth exceeded" loop. A
+    // long single-line URL (or a `[text](url)` link) reliably triggers it; short
+    // content settles before tipping the limit. A microtask is NOT enough — the
+    // `DOMObserver` flushes on the same microtask queue — so we defer to the
+    // next animation frame, which lets the current dispatch + DOM read fully
+    // settle before the re-render. Coalescing keeps only the most recent
+    // markdown; autosave still receives it (one frame later) so behavior is
+    // unchanged for the user. When `requestAnimationFrame` is unavailable
+    // (jsdom without the polyfill — there is no DOMObserver loop there) we apply
+    // synchronously so unit tests observe the value immediately.
+    let rafId: number | null = null
+    let pending: string | null = null
+    const hasRaf = typeof requestAnimationFrame === 'function'
+    const flush = () => {
+      rafId = null
+      const next = pending
+      pending = null
+      // Re-check identity at flush time: a block switch may have landed between
+      // the editor `update` and this frame.
+      if (next !== null && rovingEditorRef.current.activeBlockId === blockId) {
+        setLiveContent(next)
+      }
+    }
     // Register whenever focused — do NOT gate on `activeBlockId === blockId`
     // here. On a block→block focus switch React runs this effect before the
     // auto-mount effect (:179), so `activeBlockId` still points at the OLD
@@ -181,10 +214,21 @@ function EditableBlockInner({
     // (silent draft-autosave loss, #1015). Block identity is enforced inside
     // the callback instead, so late/cross-block fires are ignored.
     rovingEditorRef.current.setOnMarkdownChange((md) => {
-      if (rovingEditorRef.current.activeBlockId === blockId) setLiveContent(md)
+      if (rovingEditorRef.current.activeBlockId !== blockId) return
+      if (!hasRaf) {
+        setLiveContent(md)
+        return
+      }
+      pending = md
+      if (rafId === null) rafId = requestAnimationFrame(flush)
     })
     return () => {
       rovingEditorRef.current.setOnMarkdownChange(null)
+      pending = null
+      if (rafId !== null && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(rafId)
+      }
+      rafId = null
     }
   }, [isFocused, blockId])
 
