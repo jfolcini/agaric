@@ -110,6 +110,15 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         const { rootParentId } = pageStore.getState()
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         setAppliedTagIds((prev) => new Set([...prev, tagId]))
+        // Adding an inherited-only tag directly promotes it to a direct tag;
+        // drop it from the inherited set so it doesn't render as a duplicate
+        // chip (same React key) until the next blockId-change refetch (#1423).
+        setInheritedTagIds((prev) => {
+          if (!prev.has(tagId)) return prev
+          const next = new Set(prev)
+          next.delete(tagId)
+          return next
+        })
       } catch (error) {
         logger.error('useBlockTags', 'Failed to add tag', { blockId, tagId }, error)
         notify.error(i18n.t('tags.addFailed'))

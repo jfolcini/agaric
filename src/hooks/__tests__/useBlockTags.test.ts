@@ -253,6 +253,33 @@ describe('useBlockTags handleAddTag', () => {
     expect(result.current.appliedTagIds.has('TAG_1')).toBe(true)
   })
 
+  it('promotes an inherited-only tag to direct on add, removing it from inheritedTagIds (#1423)', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'list_inherited_tags_for_block') return ['TAG_INH']
+      if (cmd === 'add_tag') return { success: true }
+      return undefined
+    })
+
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+    // Starts inherited-only.
+    expect(result.current.inheritedTagIds.has('TAG_INH')).toBe(true)
+    expect(result.current.appliedTagIds.has('TAG_INH')).toBe(false)
+
+    await act(async () => {
+      await result.current.handleAddTag('TAG_INH')
+    })
+
+    // Now direct, and no longer inherited — so it can't render as a duplicate chip.
+    expect(result.current.appliedTagIds.has('TAG_INH')).toBe(true)
+    expect(result.current.inheritedTagIds.has('TAG_INH')).toBe(false)
+  })
+
   it('does nothing when blockId is null', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return emptyPage
