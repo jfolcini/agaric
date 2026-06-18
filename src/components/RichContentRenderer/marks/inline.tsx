@@ -5,6 +5,7 @@ import type { RenderContext } from '../context'
 import { renderBlockLink } from './blockLink'
 import { renderBlockRef } from './blockRef'
 import { renderHardBreak } from './hardBreak'
+import { renderImage } from './image'
 import { renderMathInline } from './math'
 import { renderTagRef } from './tagRef'
 import { renderTextInline } from './text'
@@ -31,6 +32,8 @@ function renderInlineNode(
       return renderHardBreak(node, key)
     case 'math_inline':
       return renderMathInline(node, key)
+    case 'image':
+      return renderImage(node, key)
     default:
       return null
   }

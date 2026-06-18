@@ -193,6 +193,27 @@ function unescapeUrl(url: string): string {
 }
 
 /**
+ * Unescape an image alt label (#1434): decode the `\]` and `\\` escapes that
+ * `escapeImageAlt` emits, mirroring it exactly so an alt containing `]` or `\`
+ * round-trips. Other backslash sequences are left verbatim (the serializer only
+ * ever emits these two).
+ */
+function unescapeImageAlt(alt: string): string {
+  let out = ''
+  for (let i = 0; i < alt.length; i++) {
+    const ch = alt[i]
+    const next = alt[i + 1]
+    if (ch === '\\' && (next === ']' || next === '\\')) {
+      out += next
+      i++
+      continue
+    }
+    out += ch
+  }
+  return out
+}
+
+/**
  * Consume a matched external link and return InlineNode[] with link marks applied.
  * Parses inner display text recursively for bold/italic/code/tokens.
  *
@@ -920,6 +941,10 @@ function isEscapableChar(ch: string): boolean {
     ch === ']' ||
     ch === '~' ||
     ch === '=' ||
+    // `!` is escapable so a literal `!` immediately before `[` round-trips as
+    // text instead of opening an `![alt](url)` image (#1434). `\!` emits a bare
+    // `!`; any following `[…](…)` then parses as an ordinary link, never an image.
+    ch === '!' ||
     // `$` is escapable so a literal dollar sign round-trips as text (`\$`)
     // instead of opening an inline-math span (#1437) — this is what keeps a
     // currency amount like `$5` literal once the serializer has escaped it.
@@ -953,6 +978,47 @@ export function scanTokenRef(st: InlineState): boolean {
   if (!token) return false
   flushBuf(st, currentMarks(st))
   st.nodes.push(token)
+  return true
+}
+
+/**
+ * Image (#1434): `![alt](url)`. The leading `!` is the discriminator that sets
+ * an image apart from a `[text](url)` link — the `!` MUST be immediately
+ * followed by `[`, and the `[…](…)` that follows must form a valid link shape
+ * (balanced `]` then `(…)`). The alt text is taken raw (an opaque string; it is
+ * not parsed for nested marks — an image is an atom), and the URL is unescaped
+ * with the same `unescapeUrl` the link path uses so an escaped `\)` round-trips.
+ *
+ * A literal `\![…]` never reaches here: `scanEscape` runs first and consumes the
+ * `\!` into a bare `!`, so the following `[…](…)` parses as a normal link.
+ *
+ * Ordered BEFORE `scanExternalLinkToken` in the scanner chain so `![x](y)` is
+ * matched as an image rather than `!` + a `[x](y)` link.
+ */
+export function scanImage(st: InlineState): boolean {
+  const s = st.scanner
+  if (peek(s) !== '!' || peek(s, 1) !== '[') return false
+
+  // Find the matching `]` for the alt label (bracket-balanced, capped).
+  const altStart = s.pos + 2 // past `![`
+  const maxBracketPos = Math.min(altStart + MAX_LINK_SCAN, s.src.length)
+  const altEnd = scanBalancedClose(s.src, altStart, '[', ']', maxBracketPos)
+  if (altEnd === -1) return false
+
+  // Must have `(` immediately after `]`.
+  if (altEnd + 1 >= s.src.length || s.src[altEnd + 1] !== '(') return false
+
+  // Find the matching `)` for the URL (paren-balanced).
+  const urlStart = altEnd + 2
+  const urlEnd = scanBalancedClose(s.src, urlStart, '(', ')', s.src.length)
+  if (urlEnd === -1) return false
+
+  const alt = unescapeImageAlt(s.src.slice(altStart, altEnd))
+  const src = unescapeUrl(s.src.slice(urlStart, urlEnd))
+
+  flushBuf(st, currentMarks(st))
+  st.nodes.push({ type: 'image', attrs: { alt, src } })
+  s.pos = urlEnd + 1
   return true
 }
 
@@ -1235,6 +1301,7 @@ function parseLine(line: string, depth = 0): InlineNode[] {
     if (scanEscape(st)) continue
     if (scanMathInline(st)) continue
     if (scanTokenRef(st)) continue
+    if (scanImage(st)) continue
     if (scanExternalLinkToken(st)) continue
     if (scanAutolink(st)) continue
     if (scanBold(st)) continue
@@ -1264,6 +1331,8 @@ function nodeToPlainText(node: InlineNode): string {
       return `((${node.attrs.id}))`
     case 'math_inline':
       return `$${node.attrs.latex}$`
+    case 'image':
+      return `![${node.attrs.alt}](${node.attrs.src})`
     /* v8 ignore start -- hardBreak never appears during line parsing; default is type guard */
     case 'hardBreak':
       return '\n'
