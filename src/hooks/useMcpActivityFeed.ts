@@ -12,10 +12,11 @@
  * inline behaviour.
  */
 
-import { listen } from '@tauri-apps/api/event'
 import { useEffect, useState } from 'react'
 
 import { logger } from '@/lib/logger'
+
+import { useTauriEventListener } from './useTauriEventListener'
 
 /**
  * Mirrors the Rust `ActivityEntry` struct emitted on the `mcp:activity`
@@ -65,27 +66,23 @@ export function useMcpActivityFeed(): UseMcpActivityFeedResult {
   // Subscribe to `mcp:activity` events — each completed tool call from
   // the backend fires one event carrying a single `ActivityEntry` payload.
   // Maintain a bounded render buffer (oldest entries drop off at 100).
-  useEffect(() => {
-    let cancelled = false
-    let unlisten: (() => void) | undefined
-    listen<ActivityEntry>(MCP_ACTIVITY_EVENT, (event) => {
-      if (cancelled) return
+  //
+  // The listen/unlisten lifecycle (incl. the unmount-before-resolve race)
+  // lives in `useTauriEventListener`; the functional `setEntries` updater
+  // needs no ref refresh, so the shared hook's handler ref handles it.
+  useTauriEventListener<ActivityEntry>(
+    MCP_ACTIVITY_EVENT,
+    (event) => {
       setEntries((prev) => [event.payload, ...prev].slice(0, ACTIVITY_RENDER_CAP))
-    })
-      .then((fn) => {
-        if (cancelled) fn()
-        else unlisten = fn
-      })
-      .catch((err) => {
+    },
+    {
+      onError: (err) => {
         // Not in Tauri context (e.g. running under Vite dev server without
         // the tauri-mock shim) — log and keep the empty feed rendering.
         logger.warn('AgentAccessSettingsTab', 'failed to subscribe to mcp:activity', undefined, err)
-      })
-    return () => {
-      cancelled = true
-      unlisten?.()
-    }
-  }, [])
+      },
+    },
+  )
 
   return { entries }
 }

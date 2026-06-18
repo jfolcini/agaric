@@ -9,7 +9,10 @@
  *  - Empty trim is a no-op (no IPC).
  *  - Unchanged trim is a no-op (no IPC).
  *  - IPC failure → toast.error + revert to canonical name.
- *  - Re-syncs on prop change (upstream rename).
+ *  - Re-syncs on prop change (upstream rename) when NOT focused.
+ *  - Guarded re-sync (#1674): a prop change while the input is focused
+ *    does NOT clobber the in-flight draft; the re-sync resumes once the
+ *    field is no longer focused.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -147,7 +150,7 @@ describe('SpaceNameEditor', () => {
     })
   })
 
-  it('re-syncs the input value when the canonical name prop changes', () => {
+  it('re-syncs the input value when the canonical name prop changes (not focused)', () => {
     const { rerender } = render(
       <SpaceNameEditor spaceId="SPACE_1" spaceName="Personal" onRefresh={() => {}} />,
     )
@@ -155,5 +158,34 @@ describe('SpaceNameEditor', () => {
 
     rerender(<SpaceNameEditor spaceId="SPACE_1" spaceName="Work" onRefresh={() => {}} />)
     expect(screen.getByDisplayValue('Work')).toBeInTheDocument()
+  })
+
+  it('does not clobber an in-flight draft when the prop changes while focused (#1674)', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(
+      <SpaceNameEditor spaceId="SPACE_1" spaceName="Personal" onRefresh={() => {}} />,
+    )
+
+    const input = screen.getByDisplayValue('Personal') as HTMLInputElement
+    // Begin an in-flight edit: focus + type without committing.
+    await user.click(input)
+    await user.clear(input)
+    await user.type(input, 'My in-flight name')
+    expect(input.value).toBe('My in-flight name')
+
+    // A parent refresh lands mid-type with new server truth. The
+    // guarded re-sync must skip while focused so the draft survives.
+    rerender(<SpaceNameEditor spaceId="SPACE_1" spaceName="Work" onRefresh={() => {}} />)
+    expect(input.value).toBe('My in-flight name')
+
+    // Once the field loses focus, the re-sync resumes on the next prop
+    // change and picks up the canonical value.
+    input.blur()
+    rerender(
+      <SpaceNameEditor spaceId="SPACE_1" spaceName="Renamed Elsewhere" onRefresh={() => {}} />,
+    )
+    await waitFor(() => {
+      expect(input.value).toBe('Renamed Elsewhere')
+    })
   })
 })
