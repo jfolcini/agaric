@@ -22,10 +22,15 @@
  */
 
 import { type NodeViewProps, NodeViewContent, NodeViewWrapper } from '@tiptap/react'
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { MermaidDiagram } from '@/components/rendering/MermaidDiagram'
+// Lazy-load MermaidDiagram so mermaid.js stays out of the editor/index chunk
+// (#750 bundle budget) — it loads only when a mermaid diagram is shown. Mirrors
+// the read-only RichContentRenderer mermaid path.
+const MermaidDiagram = lazy(() =>
+  import('@/components/rendering/MermaidDiagram').then((m) => ({ default: m.MermaidDiagram })),
+)
 
 // `NodeViewContent`'s `as` prop is `NoInfer<T>` (default `'div'`), so passing
 // `as="code"` directly fails to widen the element type. Bind the generic to
@@ -88,7 +93,9 @@ export function MermaidCodeBlockView(props: NodeViewProps): React.ReactElement {
         {/* Keying on the source remounts the diagram when the text changes so
             edits in raw mode re-render on toggle back. */}
         {source.trim().length > 0 ? (
-          <MermaidDiagram key={source} code={source} />
+          <Suspense fallback={null}>
+            <MermaidDiagram key={source} code={source} />
+          </Suspense>
         ) : (
           <p className="rounded-md bg-muted px-3 py-4 text-sm text-muted-foreground">
             {t('mermaid.empty')}
