@@ -292,6 +292,26 @@ export const common: Record<string, string> = {
   'tabs.nextTab': 'Next tab',
   'tabs.previousTab': 'Previous tab',
   'quickCapture.fabLabel': 'Quick capture',
+  // #1422 — mobile touch-gesture discoverability. The same gesture
+  // copy is shared by the first-run coach-mark overlay
+  // (`gestures.coachmark.*` chrome + `gestures.*.title/desc` rows) and the
+  // persistent "Touch gestures" help section.
+  'gestures.coachmark.title': 'Touch gestures',
+  'gestures.coachmark.description':
+    'Agaric has a few hidden touch gestures. Here are the essentials — you can find them again under Settings › Help.',
+  'gestures.coachmark.dismiss': 'Got it',
+  'gestures.help.title': 'Touch gestures',
+  'gestures.help.description':
+    'Quick reference for the touch gestures available on phones and tablets.',
+  'gestures.swipe.title': 'Swipe a block',
+  'gestures.swipe.desc':
+    'Swipe right to indent, short-swipe left to outdent, or swipe further left to reveal delete.',
+  'gestures.longPress.title': 'Long-press a block',
+  'gestures.longPress.desc': 'Hold a block to open its menu — indent, dedent, move, and more.',
+  'gestures.edgeSwipe.title': 'Swipe from the left edge',
+  'gestures.edgeSwipe.desc': 'Drag in from the left edge of the screen to open the sidebar.',
+  'gestures.quickCapture.title': 'Quick-capture button',
+  'gestures.quickCapture.desc': 'Tap the floating pen button to jot a note into your journal.',
   'dialog.cancel': 'Cancel',
   'dialog.confirm': 'Confirm',
   'data.importTitle': 'Import',
