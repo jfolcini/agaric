@@ -385,8 +385,27 @@ function serializeInlineNodes(
  *
  * Groups consecutive nodes by link mark, wrapping linked spans in [text](url).
  */
+/**
+ * GFM task-list markers for each `todo_state` (#1435). TODO/DONE are standard
+ * GFM (`[ ]`/`[x]`); DOING/CANCELLED reuse the Obsidian-Tasks extension
+ * markers (`[/]`/`[-]`) so the full TODO→DOING→DONE→CANCELLED cycle survives
+ * a markdown round-trip without polluting the task text with keywords.
+ */
+const TASK_MARKER: Record<NonNullable<ParagraphNode['attrs']>['todoState'], string> = {
+  TODO: '- [ ] ',
+  DOING: '- [/] ',
+  DONE: '- [x] ',
+  CANCELLED: '- [-] ',
+}
+
 function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) => void): string {
-  if (!node.content || node.content.length === 0) return ''
+  const taskPrefix = node.attrs?.todoState ? TASK_MARKER[node.attrs.todoState] : ''
+
+  if (!node.content || node.content.length === 0) {
+    // An empty task block still emits its checkbox marker so the state
+    // round-trips; the trailing space is trimmed to keep `- [ ]` canonical.
+    return taskPrefix ? taskPrefix.trimEnd() : ''
+  }
 
   const groups = groupByLink(node.content)
   let result = ''
@@ -427,10 +446,13 @@ function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) 
   // Only the START of the paragraph can trigger a block production (hard-break
   // continuation lines are consumed by the paragraph parser before any block
   // production sees them).
-  return result
+  const escaped = result
     .replace(/^(\d+)\. /, '$1\\. ')
     .replace(/^(#{1,6}) /, '\\$1 ')
     .replace(/^- /, '\\- ')
+  // The task prefix (#1435) is prepended AFTER block-marker escaping so the
+  // leading-`-` escape only sees the user text, never our own `- [ ] ` marker.
+  return taskPrefix + escaped
 }
 
 function serializeHeading(node: HeadingNode, onUnknownNode?: (type: string) => void): string {

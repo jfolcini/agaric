@@ -19,7 +19,7 @@ vi.mock('../../lib/logger', () => ({
 import { logger } from '../../lib/logger'
 import { parse } from '../markdown-parse'
 import { serialize } from '../markdown-serialize'
-import { bold, doc, italic, paragraph, text } from './builders'
+import { bold, bulletList, doc, italic, listItem, paragraph, task, text } from './builders'
 
 describe('parse — depth-limit truncation (FE-L-7)', () => {
   beforeEach(() => {
@@ -263,6 +263,41 @@ describe('parse — bare-URL & angle autolinks (#1441)', () => {
     ]) {
       const once = serialize(parse(input))
       expect(serialize(parse(once))).toBe(once)
+    }
+  })
+})
+
+describe('parse — GFM task lists (#1435)', () => {
+  it('parses "- [ ] a" as a TODO task block', () => {
+    expect(parse('- [ ] a')).toEqual(doc(task('TODO', text('a'))))
+  })
+
+  it('parses "- [x] b" as a DONE task block', () => {
+    expect(parse('- [x] b')).toEqual(doc(task('DONE', text('b'))))
+  })
+
+  it('parses "- [/] c" as a DOING task block', () => {
+    expect(parse('- [/] c')).toEqual(doc(task('DOING', text('c'))))
+  })
+
+  it('parses "- [-] d" as a CANCELLED task block', () => {
+    expect(parse('- [-] d')).toEqual(doc(task('CANCELLED', text('d'))))
+  })
+
+  it('does NOT turn a plain bullet into a task', () => {
+    expect(parse('- item')).toEqual(doc(bulletList(listItem(paragraph(text('item'))))))
+  })
+
+  it('imports a multi-item GFM task list', () => {
+    expect(parse('- [ ] one\n- [x] two')).toEqual(
+      doc(task('TODO', text('one')), task('DONE', text('two'))),
+    )
+  })
+
+  it('round-trips each state through serialize→parse', () => {
+    for (const state of ['TODO', 'DOING', 'DONE', 'CANCELLED'] as const) {
+      const original = doc(task(state, text('x')))
+      expect(parse(serialize(original))).toEqual(original)
     }
   })
 })

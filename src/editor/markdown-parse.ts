@@ -31,6 +31,7 @@ import type {
   TableRowNode,
   TagRefNode,
   TextNode,
+  TodoState,
 } from './types'
 
 // -- Constants ----------------------------------------------------------------
@@ -478,19 +479,62 @@ export function parseOrderedList(
 }
 
 /**
+ * GFM task list item (#1435): `- [ ] `, `- [x] `, `- [/] `, `- [-] ` (either
+ * `-` or `*` marker). Parses to a SINGLE paragraph carrying `attrs.todoState`
+ * so the checkbox state round-trips with the block's `todo_state`. Markers map
+ * to the app's fixed cycle:
+ *   `[ ]` → TODO   `[/]` → DOING   `[x]`/`[X]` → DONE   `[-]` → CANCELLED
+ *
+ * Runs BEFORE `parseBulletList` in dispatch; `parseBulletList` excludes these
+ * lines via `BULLET_TASK_RE` so they never collapse into a plain bullet list.
+ * A single line only (one task = one block), mirroring how the editor models a
+ * task as one block with a `todo_state` property.
+ */
+// The text part is optional so an EMPTY task (`- [ ]`, no trailing space —
+// which is how the serializer emits an empty task block) still parses back to
+// a task and round-trips. With content, a separating space is required.
+const TASK_ITEM_RE = /^[-*] \[([ xX/-])\](?: (.*))?$/
+const TASK_MARKER_TO_STATE: Record<string, TodoState> = {
+  ' ': 'TODO',
+  '/': 'DOING',
+  x: 'DONE',
+  X: 'DONE',
+  '-': 'CANCELLED',
+}
+export function parseTask(
+  lines: readonly string[],
+  i: number,
+  depth: number,
+): BlockParseResult | null {
+  const match = (lines[i] as string).match(TASK_ITEM_RE)
+  if (!match) return null
+  const todoState = TASK_MARKER_TO_STATE[match[1] as string] as TodoState
+  const text = (match[2] ?? '') as string
+  const inlineContent = parseLine(text, depth)
+  const block: ParagraphNode =
+    inlineContent.length === 0
+      ? { type: 'paragraph', attrs: { todoState } }
+      : { type: 'paragraph', attrs: { todoState }, content: inlineContent }
+  return { blocks: [block], consumed: 1 }
+}
+
+/**
  * Bullet (unordered) list: consecutive `- item` / `* item` lines.
  *
  * Mirrors {@link parseOrderedList}. Two carve-outs preserve existing
  * behaviour:
- *  - A `- [ ] ` / `- [x] ` line (either `-` or `*` marker) is a task (#1435)
- *    and must stay a paragraph — `BULLET_TASK_RE` excludes it so it falls
- *    through to `parseParagraph`.
+ *  - A GFM task line (`- [ ] ` / `- [x] ` / `- [/] ` / `- [-] `, either `-`
+ *    or `*` marker) is a task (#1435) handled by `parseTask` and must stay out
+ *    of the list — `BULLET_TASK_RE` excludes it so it falls through.
  *  - `---` (and longer hyphen runs) is a horizontal rule, handled by
  *    `parseHorizontalRule` which runs BEFORE this production in dispatch, so
  *    `- ` here only matches a hyphen FOLLOWED by a space + content.
  */
 const BULLET_ITEM_RE = /^[-*] (.*)$/
-const BULLET_TASK_RE = /^[-*] \[[ xX]\] /
+// Matches a task line so the bullet production excludes it (both `- [ ] text`
+// and the empty `- [ ]` with no trailing space — kept in sync with
+// `TASK_ITEM_RE`).
+const BULLET_TASK_RE = /^[-*] \[[ xX/-]\](?: |$)/
 export function parseBulletList(
   lines: readonly string[],
   i: number,
@@ -583,6 +627,7 @@ function dispatchBlockProduction(
     parseTable(lines, i, depth) ??
     parseHorizontalRule(lines, i) ??
     parseOrderedList(lines, i, depth) ??
+    parseTask(lines, i, depth) ??
     parseBulletList(lines, i, depth) ??
     parseParagraph(lines, i, depth)
   )
