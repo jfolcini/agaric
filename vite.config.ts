@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs'
 import path from 'node:path'
 
 import babel from '@rolldown/plugin-babel'
@@ -144,6 +145,17 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // Allow Vite to serve files from the REAL `node_modules` directory even
+    // when it is a symlink pointing outside the project root (the e2e/CI
+    // worktree layout symlinks `node_modules` to the main checkout). Without
+    // this, dev-server `/@fs/<realpath>/node_modules/...` asset requests — e.g.
+    // KaTeX's `dist/fonts/*.woff2`, referenced by the bundled `katex.min.css`
+    // (#1437) — are rejected with a 403 outside the FS allow-list. Harmless in
+    // a normal checkout (the realpath is the project's own node_modules) and
+    // dev-server-only (production bundles these fonts into `dist/assets`).
+    fs: {
+      allow: [path.resolve(__dirname), realpathSync(path.resolve(__dirname, 'node_modules'))],
+    },
   },
   envPrefix: ['VITE_', 'TAURI_'],
   build: {

@@ -49,6 +49,7 @@ import { CalloutBlockquote } from './extensions/callout-blockquote'
 import { CheckboxInputRule } from './extensions/checkbox-input-rule'
 import { EmojiPicker, emojiPickerPluginKey } from './extensions/emoji-picker'
 import { ExternalLink } from './extensions/external-link'
+import { MathBlock, MathInline } from './extensions/math'
 import { MermaidCodeBlockView } from './extensions/MermaidCodeBlockView'
 import { PropertyPicker, propertyPickerPluginKey } from './extensions/property-picker'
 import { QueryHint } from './extensions/query-hint'
@@ -439,6 +440,9 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       HardBreak,
       History,
       ExternalLink,
+      // #1437 — KaTeX math: inline `$…$` and block `$$…$$` atoms (lazy KaTeX).
+      MathInline,
+      MathBlock,
       PriorityShortcuts,
       Placeholder.configure({ placeholder: () => placeholderRef.current }),
       TagRef.configure({

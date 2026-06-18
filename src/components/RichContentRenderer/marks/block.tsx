@@ -7,6 +7,7 @@ import { renderCodeBlock } from './code'
 import { renderHeadingBlock } from './heading'
 import { renderHorizontalRuleBlock } from './horizontalRule'
 import { renderInlineContent } from './inline'
+import { renderMathBlock } from './math'
 import { renderOrderedListBlock } from './orderedList'
 import { renderTableBlock } from './table'
 
@@ -33,6 +34,8 @@ export function renderBlock(
       return renderHorizontalRuleBlock(key)
     case 'table':
       return renderTableBlock(block, key, ctx)
+    case 'math_block':
+      return renderMathBlock(block, key)
     case 'paragraph':
       return block.content ? renderInlineContent(block.content, key, ctx) : null
     default:

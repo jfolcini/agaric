@@ -135,6 +135,8 @@ export const editor: Record<string, string> = {
   'mermaid.editSource': 'Edit source',
   'mermaid.showDiagram': 'Show diagram',
   'mermaid.empty': 'Empty diagram — switch to source to add Mermaid code.',
+  'math.editSource': 'Edit LaTeX',
+  'math.empty': 'Empty math — click to add LaTeX.',
   'rename.title': 'Rename device',
   'rename.deviceName': 'Enter a name for this device.',
   'rename.placeholder': 'Device name',
