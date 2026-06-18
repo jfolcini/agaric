@@ -554,6 +554,132 @@ describe('useUndoStore', () => {
       expect(useUndoStore.getState().pages.get('page2')?.undoDepth).toBe(1)
       expect(useUndoStore.getState().pages.get('page2')?.redoStack).toHaveLength(1)
     })
+
+    // -------------------------------------------------------------------------
+    // #1692 — reanchor / onNewAction interleaving with an IN-FLIGHT undo/redo.
+    //
+    // The existing coverage only fires reanchor/onNewAction AFTER undo()/redo()
+    // have fully resolved (every mock uses mockResolvedValueOnce). These tests
+    // hold the undoPageOp / redoPageOp promise open and fire reanchor (or
+    // onNewAction) DURING the await window, then resolve — the exact race a
+    // sync:complete handler can create against a key-held Ctrl+Z.
+    //
+    // The optimistic set has no async gap to clobber, so this is not a
+    // data-loss bug. These tests pin the OBSERVED post-resolve state so the
+    // group-size / redo-stack accounting across the seam is regression-guarded.
+    // -------------------------------------------------------------------------
+    describe('#1692 — interleaving with an in-flight undo/redo', () => {
+      it('reanchor fired during an in-flight undo: undo result still appends, depth stays 0', async () => {
+        mockedFindUndoGroup.mockResolvedValueOnce(1)
+
+        // Hold undoPageOp open until we resolve it manually.
+        let resolveUndo: (r: ReturnType<typeof makeUndoResult>) => void = () => {}
+        mockedUndoPageOp.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveUndo = resolve
+            }),
+        )
+
+        // Kick off undo; flush past `await findUndoGroup` so the optimistic
+        // increment lands (entry exists, undoDepth = 1).
+        const undoPromise = useUndoStore.getState().undo('page1')
+        await Promise.resolve()
+        await Promise.resolve()
+        expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
+
+        // A sync lands remote ops mid-undo → re-anchor. This resets the live
+        // entry to the pristine baseline WHILE the IPC is still pending.
+        useUndoStore.getState().reanchorAfterRemoteOps('page1')
+        const midFlight = useUndoStore.getState().pages.get('page1')
+        expect(midFlight?.undoDepth).toBe(0)
+        expect(midFlight?.redoStack).toEqual([])
+        expect(midFlight?.redoGroupSizes).toEqual([])
+
+        // Backend now resolves. The success updater finds a live entry (the
+        // reanchored one) and appends the reversed op; undo() then records the
+        // group size. Depth stays 0 (reanchor zeroed it; success path does not
+        // touch undoDepth), but the redo stack + group size reflect the
+        // completed op.
+        resolveUndo(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+        await undoPromise
+
+        const after = useUndoStore.getState().pages.get('page1')
+        expect(after?.undoDepth).toBe(0)
+        expect(after?.redoStack).toHaveLength(1)
+        expect(after?.redoGroupSizes).toEqual([1])
+      })
+
+      it('onNewAction fired during an in-flight undo behaves like reanchor across the seam', async () => {
+        mockedFindUndoGroup.mockResolvedValueOnce(1)
+
+        let resolveUndo: (r: ReturnType<typeof makeUndoResult>) => void = () => {}
+        mockedUndoPageOp.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveUndo = resolve
+            }),
+        )
+
+        const undoPromise = useUndoStore.getState().undo('page1')
+        await Promise.resolve()
+        await Promise.resolve()
+        expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
+
+        // A new local action fires mid-undo (e.g. the user types while the
+        // Ctrl+Z IPC is still pending). onNewAction zeroes the live entry.
+        useUndoStore.getState().onNewAction('page1')
+        const midFlight = useUndoStore.getState().pages.get('page1')
+        expect(midFlight?.undoDepth).toBe(0)
+        expect(midFlight?.redoStack).toEqual([])
+        expect(midFlight?.redoGroupSizes).toEqual([])
+
+        resolveUndo(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+        await undoPromise
+
+        const after = useUndoStore.getState().pages.get('page1')
+        expect(after?.undoDepth).toBe(0)
+        expect(after?.redoStack).toHaveLength(1)
+        expect(after?.redoGroupSizes).toEqual([1])
+      })
+
+      it('reanchor fired during an in-flight redo: redo result leaves the reanchored entry empty', async () => {
+        // Seed a redo entry: one resolved undo gives redoStack length 1.
+        mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+        await useUndoStore.getState().undo('page1')
+        expect(useUndoStore.getState().pages.get('page1')?.redoStack).toHaveLength(1)
+
+        // Hold redoPageOp open.
+        let resolveRedo: (r: ReturnType<typeof makeUndoResult>) => void = () => {}
+        mockedRedoPageOp.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveRedo = resolve
+            }),
+        )
+
+        // Kick off redo; the optimistic update pops the redo stack and
+        // decrements undoDepth synchronously (no await before the set), so the
+        // entry is already emptied before we reanchor.
+        const redoPromise = useUndoStore.getState().redo('page1')
+        await Promise.resolve()
+        expect(useUndoStore.getState().pages.get('page1')?.redoStack).toEqual([])
+
+        // Remote ops land mid-redo → re-anchor to the pristine baseline.
+        useUndoStore.getState().reanchorAfterRemoteOps('page1')
+
+        // Backend resolves. The redo success path is a no-op on state (the
+        // optimistic update already applied), so the entry stays at the
+        // reanchored baseline: empty stacks, depth 0.
+        resolveRedo(makeUndoResult({ isRedo: true }))
+        await redoPromise
+
+        const after = useUndoStore.getState().pages.get('page1')
+        expect(after?.undoDepth).toBe(0)
+        expect(after?.redoStack).toEqual([])
+        expect(after?.redoGroupSizes).toEqual([])
+      })
+    })
   })
 
   // ---------------------------------------------------------------------------

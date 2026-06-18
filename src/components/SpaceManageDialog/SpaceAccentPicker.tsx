@@ -46,11 +46,25 @@ export type AccentToken = (typeof ACCENT_SWATCHES)[number]['token']
 
 interface SpaceAccentPickerProps {
   spaceId: string
+  /**
+   * The space's already-saved accent token (`SpaceRow.accent_color`), or
+   * `null`/`undefined` if unset. Hydrates the initial selection so the
+   * matching swatch shows `aria-pressed=true` + the Check icon on mount.
+   * Unrecognised tokens (palette drift) hydrate to "no selection".
+   */
+  initialAccent?: string | null
 }
 
-export function SpaceAccentPicker({ spaceId }: SpaceAccentPickerProps): React.JSX.Element {
+function asAccentToken(value: string | null | undefined): AccentToken | null {
+  return ACCENT_SWATCHES.some((s) => s.token === value) ? (value as AccentToken) : null
+}
+
+export function SpaceAccentPicker({
+  spaceId,
+  initialAccent,
+}: SpaceAccentPickerProps): React.JSX.Element {
   const { t } = useTranslation()
-  const [accent, setAccent] = useState<AccentToken | null>(null)
+  const [accent, setAccent] = useState<AccentToken | null>(() => asAccentToken(initialAccent))
   const [savingAccent, setSavingAccent] = useState(false)
 
   const handleAccentClick = useCallback(

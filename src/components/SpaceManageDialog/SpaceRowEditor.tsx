@@ -67,7 +67,7 @@ export function SpaceRowEditor({
         />
       </div>
       <SpaceDeleteBlockedHint emptiness={emptiness} isLastSpace={isLastSpace} />
-      <SpaceAccentPicker spaceId={space.id} />
+      <SpaceAccentPicker spaceId={space.id} initialAccent={space.accent_color} />
       {initialJournalTemplate !== undefined && (
         <SpaceJournalTemplateEditor
           spaceId={space.id}
