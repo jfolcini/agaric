@@ -71,8 +71,8 @@ App
 | **Search** | Debounced + cursor-paginated FTS; filter chips for pages and tags. Cmd/Ctrl+F also focuses it. | Search |
 | **Pages** | Virtualised list of all page blocks; multi-select + delete. | FileText |
 | **Tags** | Tag CRUD + colour picker + filtered task panel. | Tag |
-| **Properties** | Property-definition CRUD. Not in the sidebar — reachable from links / nav state only. | — |
-| **Settings** | Tabbed; deep-linkable via the `?settings=<tab>` query string parsed inside `SettingsView` (no real router). | Settings |
+| **Query** | Advanced-query builder (`AdvancedQuery/AdvancedQueryView.tsx`); navigate to saved/ad-hoc queries. | SlidersHorizontal |
+| **Settings** | Tabbed (incl. a **Properties** tab for property-definition CRUD); deep-linkable via the `?settings=<tab>` query string parsed inside `SettingsView` (no real router). | Settings |
 | **Trash** | Soft-deleted blocks; batch restore / purge; original-location breadcrumb. Badge polls periodically. | Trash |
 | **Status** | Materializer metrics (queue depths, op counts). Polls periodically. | Activity |
 | **History** | Global op log; multi-select revert; diff toggle. | History |
@@ -168,8 +168,6 @@ All modal-style dialogs use `useDialogOrSheet`, which swaps to a bottom Sheet on
 
 Findings surfaced during the doc audit + codebase pass. Each is a real drift / gap / inconsistency the user can act on independently. Not in this doc as an action item — kept here so the surface map is the canonical place to find "what's wrong with the UI surface".
 
-- **Properties tab in Settings is wired up halfway.** The `settings.tabProperties` i18n key exists but `SettingsView` never branches on `activeTab === 'properties'` — the Properties view is reachable only via top-level nav state, not from inside Settings. Either remove the orphan key + finish the tab branch, or drop the key entirely.
-- **Properties view has no sidebar entry.** `nav-items.ts` lists 10 nav items; Properties isn't one. Users can't navigate there from the chrome. If it's still a supported view, add the nav item; if not, fold it into Settings or remove it.
 - **Toast deduplication.** sonner doesn't dedupe by default, and `notify()` doesn't either. Rapid identical errors (e.g. sync failures in a loop) stack visibly. Worth either threading a dedup helper into `notify()` or using sonner's `id` field for known-recurring-error categories.
 - **Long-press constants moved out of `SortableBlock`.** Documentation that named `SortableBlock.tsx` as their home has rotted. Already corrected in `docs/UX.md`; verify other doc / comment references still point at `SortableBlock`.
 - **Sidebar resize on mobile is a no-op** but the toggle still appears clickable in some collapsed states. Consider hiding the toggle entirely on mobile, or making the affordance match behaviour.

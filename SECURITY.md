@@ -15,7 +15,7 @@ That makes the in-scope / out-of-scope list shorter than for a typical web app, 
 A vulnerability report is welcome if you can demonstrate any of the following:
 
 - **Memory safety / undefined behaviour** in the Rust backend, despite the crate-wide `unsafe_code = "deny"` lint. New `unsafe { … }` blocks slipping past review, FFI mistakes, or out-of-bounds reads in any `bytes::` / `&[u8]` decoder all count.
-- **Accidental data exposure** — file modes that are too permissive on `notes.db` or `~/.local/share/com.agaric.app/`, secrets in logs (a `log::info!` or `console.log` that prints a private key or OAuth token; the rolling `agaric.log` is in-process and unredacted), the `bug_report` deny-by-default redactor missing a code path so user content leaks into a support bundle, plaintext dumps of user content, IPC commands that return data outside the calling page.
+- **Accidental data exposure** — file modes that are too permissive on `notes.db` or `~/.local/share/com.agaric.app/`, secrets in logs (a `log::info!` or `console.log` that prints a private key or device-pairing certificate; the rolling `agaric.log` is in-process and unredacted), the `bug_report` deny-by-default redactor missing a code path so user content leaks into a support bundle, plaintext dumps of user content, IPC commands that return data outside the calling page.
 - **Supply-chain concerns** — a direct or transitive dependency that ships a known CVE not yet covered by the `.nsprc` exception list, a typosquat in `package.json` / `Cargo.toml`, an install/post-install script that contacts an external network.
 - **Threat-model violations in code** — anything that adds an outbound network call to a server the maintainer doesn't operate, opens a listening port the user didn't ask for, or otherwise widens the attack surface beyond "the user's own paired devices on a local network."
 - **CSP / IPC bypass** — code that escapes Tauri's command allowlist, that lets the WebView reach arbitrary `file://` or `asset:` URLs, or that defeats the `default-src 'self'` policy declared in `tauri.conf.json`.
@@ -28,7 +28,7 @@ These are not security bugs in this project — they are by design and reports d
 - "An attacker on the local network can see / modify sync packets." Mitigations exist (TLS, mTLS, TOFU pinning) but the threat model assumes the LAN is trusted; see AGENTS.md.
 - "An attacker who already has filesystem access can read `notes.db`." Local-first apps store local data — that is the model, not a leak.
 - "An attacker sends malformed sync messages and the daemon panics." Sync peers are the user's own devices, not adversarial. Robustness against accidental corruption is welcome (file a regular bug); panics under hostile peer input are not treated as security issues.
-- DoS / rate-limit scenarios against any local-only listener (sync daemon, OAuth callback server, MCP socket).
+- DoS / rate-limit scenarios against any local-only listener (sync daemon, MCP socket).
 - Vulnerabilities that require the user to install a malicious package outside the legitimate distribution channel — that is outside the project's control surface.
 - Findings against pre-tag commits on `main`. Always reproduce against the latest tagged release.
 
@@ -113,7 +113,7 @@ Anything compromised below would bypass the rest of the policy. We trust:
 - **Anthropic / Claude Code.** Used as an authoring assistant. Outputs are reviewed before commit, but a malicious patch landing through this path would still be a maintainer-machine compromise (above).
 - **GitHub.** Hosts source, releases, Actions runners, and the advisory database used by Dependabot / CodeQL. A GitHub-side compromise would defeat SHA-pinned actions and the release pipeline.
 - **The npm registry and crates.io.** Dependency tarballs are fetched from these registries. Sigstore provenance (`npm audit signatures`) covers packages that publish it; the rest are trusted on registry integrity alone. A registry-side compromise would defeat lockfile hashes only if the original publish was malicious.
-- **Direct dependency maintainers.** Especially Tauri, rustls, Loro, TipTap, SQLite, and the keyring crate. A malicious release would land via Dependabot and reach users at the next tag; lockfile pinning slows but does not prevent this.
+- **Direct dependency maintainers.** Especially Tauri, rustls, Loro, TipTap, and SQLite. A malicious release would land via Dependabot and reach users at the next tag; lockfile pinning slows but does not prevent this.
 
 ### Untrusted inputs
 
@@ -123,7 +123,6 @@ These are the bytes that cross into Agaric from outside the trust boundary. Each
 - **Loro CRDT bytes.** Op-log entries from a paired peer are decoded by the `loro` crate. Decoder panics on hostile input are not treated as security issues (peers are trusted) but are welcome as regular bug reports.
 - **User-pasted text and clipboard.** Rendered through the TipTap editor and the custom markdown serializer; sanitisation lives in the editor extensions and `dompurify` (via mermaid).
 - **File imports (Markdown, OPML, JSON exports).** Parsed by frontend importers; treated as user-supplied content, not adversarial.
-- **OAuth tokens (Google Calendar today).** PKCE flow via `tauri-plugin-oauth`; tokens are stored encrypted at rest in the OS keychain via the `keyring` crate (Secret Service on Linux, Keychain on macOS, Credential Manager on Windows — see `src-tauri/Cargo.toml` keyring feature list).
 - **WebView content.** Constrained by the Tauri CSP (`default-src 'self'`, see `src-tauri/tauri.conf.json`) and the per-window capability allowlist ([`src-tauri/capabilities/default.json`](src-tauri/capabilities/default.json)).
 
 ### Accepted risks
@@ -160,7 +159,7 @@ The following are explicitly outside this threat model. Reports that fit these c
 - Mobile MDM, secure-enclave attestation, or jailbreak detection.
 - Anonymity properties of the LAN sync protocol (who is paired with whom, traffic-analysis resistance).
 - Adversarial-peer hardening. See AGENTS.md § Threat Model and the In-scope / Out-of-scope sections above.
-- DoS / rate-limiting on local-only listeners (sync daemon, OAuth callback, MCP socket).
+- DoS / rate-limiting on local-only listeners (sync daemon, MCP socket).
 
 **If a future change shifts any of these into scope** — for example a server-mode build, a multi-user feature, or a public deployment — this document must be revisited _before_ the change lands. The trust anchors, untrusted-input list, and mitigation set above all assume the local-first, single-user framing.
 
@@ -172,7 +171,7 @@ The `TAURI_SIGNING_PRIVATE_KEY` repo secret is the **root of trust for every aut
 
 **Procedure.**
 
-1. Generate a fresh keypair locally: `cargo tauri signer generate -w ~/.tauri/agaric-<YYYY-MM>.key`. Choose a strong password; the maintainer stores the password in the system keychain (Secret Service / Keychain / Credential Manager) via the same `keyring` crate the app uses for OAuth tokens. Never commit the private key.
+1. Generate a fresh keypair locally: `cargo tauri signer generate -w ~/.tauri/agaric-<YYYY-MM>.key`. Choose a strong password; the maintainer stores the password in the system keychain (Secret Service / Keychain / Credential Manager). Never commit the private key.
 2. Update the GitHub Actions repo secrets `TAURI_SIGNING_PRIVATE_KEY` (the new private key file's contents) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (its password) under repo Settings → Secrets and variables → Actions.
 3. Update the embedded **public** key in [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) `plugins.updater.pubkey` (the `cargo tauri signer generate` output prints both halves; the public half is what goes here). Commit on `main`.
 4. Cut a release with `scripts/bump-version.sh` — the matrix runs against the new secrets, the new bundle is signed by the new key, and the new binary embeds the new public key.

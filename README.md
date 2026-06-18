@@ -26,7 +26,7 @@ Think Logseq or Notion, but:
 - **Local-first** — SQLite database on your filesystem, no server required
 - **Offline-first** — works without internet, syncs peer-to-peer over local WiFi
 - **Fast** — Rust backend, instant search via FTS5, sub-millisecond operations
-- **Private** — no cloud telemetry, no external analytics, no cloud. Your vault is a plain SQLite file on disk (no at-rest encryption) — rely on OS full-disk encryption (LUKS / FileVault / BitLocker) for confidentiality; only OAuth tokens are encrypted, in the OS keychain. (The local logger in `src/lib/logger.ts` writes errors to disk so the in-app `BugReportDialog` can attach them — nothing leaves your machine.)
+- **Private** — no cloud telemetry, no external analytics, no cloud. Your vault is a plain SQLite file on disk (no at-rest encryption) — rely on OS full-disk encryption (LUKS / FileVault / BitLocker) for confidentiality. (The local logger in `src/lib/logger.ts` writes errors to disk so the in-app `BugReportDialog` can attach them — nothing leaves your machine.)
 
 ## Core Concepts
 
@@ -81,18 +81,17 @@ WYSIWYG editing powered by TipTap. A single roving editor instance mounts into w
 
 ### Sync
 
-Peer-to-peer sync over local WiFi — no cloud server needed. Append-only operation log with three-way merge conflict resolution.
+Peer-to-peer sync over local WiFi — no cloud server needed. Every operation is applied through a per-space Loro CRDT document, so concurrent edits converge automatically — no conflict dialogs.
 
 - **Discovery** — mDNS automatic peer discovery on the local network
 - **Pairing** — QR code or 4-word passphrase, per-session ephemeral keys
 - **Transport** — TLS WebSocket with self-signed ECDSA certificates, certificate pinning
-- **Merge** — three-way text merge via `diffy`, LWW for properties and moves, conflict copies for overlapping edits
-- **Conflicts view** — review and resolve merge conflicts inline
+- **Merge** — CRDT merge engine (Loro): concurrent edits converge automatically — per-key property LWW, move-as-CRDT, delete-vs-edit resurrection guards. No manual conflict-resolution UI
 - **Auto-sync** — background daemon with change-triggered and periodic sync, exponential backoff on failure
 
 ### More Features
 
-- **Search** — three surfaces: in-page find (`Ctrl+F`), find across pages (`Ctrl+Shift+F`), and the upcoming `Cmd+K` palette. Full-text engine is FTS5 (trigram index). In-app help via the `?` button in the search toolbar; user guide at [docs/SEARCH.md](docs/SEARCH.md).
+- **Search** — three surfaces: in-page find (`Ctrl+F`), find across pages (`Ctrl+Shift+F`), and the `Cmd+K` command palette. Full-text engine is FTS5 (trigram index). In-app help via the `?` button in the search toolbar; user guide at [docs/SEARCH.md](docs/SEARCH.md).
 - **Graph view** — force-directed page relationship visualization (d3-force), click-to-navigate, zoom/pan, keyboard-accessible
 - **History view** — browse the operation log for any block, point-in-time page restore
 - **Visual query builder** — modal for constructing inline queries by tag, property, or backlinks
@@ -101,9 +100,8 @@ Peer-to-peer sync over local WiFi — no cloud server needed. Append-only operat
 - **Status panel** — materializer queue stats, FTS health, sync state, op log compaction
 - **Attachments** — attach files to any block (drag-and-drop, paste), MIME validation, size limits
 - **Import / Export** — Logseq/Markdown import (YAML frontmatter stripping, tab normalization), Markdown export with ULID-to-name resolution
-- **Trash** — soft delete with 30-day auto-purge, restore at any time
+- **Trash** — soft delete with 90-day auto-purge, restore at any time
 - **Recurring tasks** — three repeat modes (+, .+, ++), end conditions (count, date), agenda projection
-- **Google Calendar push** — opt-in, off by default. Daily-digest event per date pushed to a dedicated "Agaric Agenda" calendar, per-space configuration foundation in place (FEAT-3p9 M1)
 
 ## Tech Stack
 
