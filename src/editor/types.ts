@@ -73,9 +73,27 @@ export interface HardBreakNode {
   readonly type: 'hardBreak'
 }
 
+/**
+ * Task state carried on a paragraph block so a GFM task list item
+ * (`- [ ]` / `- [x]`) round-trips through markdown (#1435).
+ *
+ * The app's fixed cycle is TODO → DOING → DONE → CANCELLED. GFM only has
+ * checked/unchecked, so the two non-binary states use the de-facto
+ * extension markers popularised by the Obsidian Tasks plugin:
+ *   - TODO      → `- [ ]`
+ *   - DOING     → `- [/]`  (in progress)
+ *   - DONE      → `- [x]`
+ *   - CANCELLED → `- [-]`
+ * `[x]` and `[ ]` stay standard GFM; `[/]` and `[-]` degrade gracefully to
+ * an unchecked box in viewers that don't understand them.
+ */
+export type TodoState = 'TODO' | 'DOING' | 'DONE' | 'CANCELLED'
+
 export interface ParagraphNode {
   readonly type: 'paragraph'
   readonly content?: readonly InlineNode[]
+  /** Present iff this paragraph is a task block; carries the GFM checkbox state. */
+  readonly attrs?: { readonly todoState: TodoState }
 }
 
 export interface HeadingNode {

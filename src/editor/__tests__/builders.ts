@@ -82,6 +82,15 @@ export function paragraph(...nodes: InlineNode[]): ParagraphNode {
   return { type: 'paragraph', content: nodes }
 }
 
+/** A task paragraph carrying a GFM checkbox `todoState` (#1435). */
+export function task(
+  todoState: 'TODO' | 'DOING' | 'DONE' | 'CANCELLED',
+  ...nodes: InlineNode[]
+): ParagraphNode {
+  if (nodes.length === 0) return { type: 'paragraph', attrs: { todoState } }
+  return { type: 'paragraph', attrs: { todoState }, content: nodes }
+}
+
 export function heading(level: number, ...nodes: InlineNode[]): HeadingNode {
   if (nodes.length === 0) return { type: 'heading', attrs: { level } }
   return { type: 'heading', attrs: { level }, content: nodes }

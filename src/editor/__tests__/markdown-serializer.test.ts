@@ -38,6 +38,7 @@ import {
   tableHeader,
   tableRow,
   tagRef,
+  task,
   text,
   underline,
 } from './builders'
@@ -1903,27 +1904,27 @@ describe('bullet list', () => {
       expect(parse('---')).toEqual(doc(horizontalRule()))
     })
 
-    it('task syntax `- [ ] x` stays a paragraph (NOT a bullet, #1435)', () => {
-      expect(parse('- [ ] x')).toEqual(doc(paragraph(text('- [ ] x'))))
+    it('task syntax `- [ ] x` becomes a TODO task block (NOT a bullet, #1435)', () => {
+      expect(parse('- [ ] x')).toEqual(doc(task('TODO', text('x'))))
     })
 
-    it('task syntax `- [x] done` stays a paragraph (NOT a bullet)', () => {
-      expect(parse('- [x] done')).toEqual(doc(paragraph(text('- [x] done'))))
+    it('task syntax `- [x] done` becomes a DONE task block (NOT a bullet)', () => {
+      expect(parse('- [x] done')).toEqual(doc(task('DONE', text('done'))))
     })
 
-    it('asterisk task syntax `* [ ] x` also stays a paragraph (NOT a bullet)', () => {
-      // GFM task lists accept either marker; the `*` form must be excluded too
-      // so it stays reserved for #1435 (regression guard for BULLET_TASK_RE).
-      expect(parse('* [ ] x')).toEqual(doc(paragraph(text('* [ ] x'))))
+    it('asterisk task syntax `* [ ] x` also becomes a task block (NOT a bullet)', () => {
+      // GFM task lists accept either marker; the `*` form is handled by
+      // `parseTask` too (regression guard for BULLET_TASK_RE + TASK_ITEM_RE).
+      expect(parse('* [ ] x')).toEqual(doc(task('TODO', text('x'))))
     })
 
     it('a task line splits an otherwise-contiguous bullet run', () => {
-      // The `- [ ] task` line is not a bullet, so it ends the list and falls
-      // through to the paragraph production.
+      // The `- [ ] task` line is a task block (#1435), so it ends the list and
+      // is parsed by `parseTask`, splitting the surrounding bullets.
       expect(parse('- a\n- [ ] task\n- b')).toEqual(
         doc(
           bulletList(listItem(paragraph(text('a')))),
-          paragraph(text('- [ ] task')),
+          task('TODO', text('task')),
           bulletList(listItem(paragraph(text('b')))),
         ),
       )
@@ -2653,5 +2654,118 @@ describe('#710 round-trip corruption family', () => {
       const md = '[broken](https://x.com/foo%29bar)'
       expect(serialize(parse(md))).toBe(md)
     })
+  })
+})
+
+// -- GFM task lists (#1435) ---------------------------------------------------
+
+describe('GFM task lists (#1435)', () => {
+  describe('serialize: task block → GFM checkbox', () => {
+    it('TODO → "- [ ] text"', () => {
+      expect(serialize(doc(task('TODO', text('a'))))).toBe('- [ ] a')
+    })
+
+    it('DONE → "- [x] text"', () => {
+      expect(serialize(doc(task('DONE', text('b'))))).toBe('- [x] b')
+    })
+
+    it('DOING → "- [/] text"', () => {
+      expect(serialize(doc(task('DOING', text('c'))))).toBe('- [/] c')
+    })
+
+    it('CANCELLED → "- [-] text"', () => {
+      expect(serialize(doc(task('CANCELLED', text('d'))))).toBe('- [-] d')
+    })
+
+    it('an empty task block still emits its marker', () => {
+      expect(serialize(doc(task('TODO')))).toBe('- [ ]')
+    })
+
+    it('serializes inline marks inside the task text', () => {
+      expect(serialize(doc(task('TODO', bold('x'))))).toBe('- [ ] **x**')
+    })
+  })
+
+  describe('parse: GFM checkbox → task block', () => {
+    it('"- [ ] a" → TODO block', () => {
+      expect(parse('- [ ] a')).toEqual(doc(task('TODO', text('a'))))
+    })
+
+    it('"- [x] b" → DONE block (lowercase)', () => {
+      expect(parse('- [x] b')).toEqual(doc(task('DONE', text('b'))))
+    })
+
+    it('"- [X] b" → DONE block (uppercase)', () => {
+      expect(parse('- [X] b')).toEqual(doc(task('DONE', text('b'))))
+    })
+
+    it('"- [/] c" → DOING block', () => {
+      expect(parse('- [/] c')).toEqual(doc(task('DOING', text('c'))))
+    })
+
+    it('"- [-] d" → CANCELLED block', () => {
+      expect(parse('- [-] d')).toEqual(doc(task('CANCELLED', text('d'))))
+    })
+
+    it('"* [ ] a" (asterisk marker) → TODO block', () => {
+      expect(parse('* [ ] a')).toEqual(doc(task('TODO', text('a'))))
+    })
+
+    it('a plain bullet (no checkbox) is NOT a task', () => {
+      expect(parse('- item')).toEqual(doc(bulletList(listItem(paragraph(text('item'))))))
+    })
+
+    it('imports a multi-item GFM task list as separate task blocks', () => {
+      expect(parse('- [ ] one\n- [x] two\n- [/] three\n- [-] four')).toEqual(
+        doc(
+          task('TODO', text('one')),
+          task('DONE', text('two')),
+          task('DOING', text('three')),
+          task('CANCELLED', text('four')),
+        ),
+      )
+    })
+
+    it('a task list interleaved with plain bullets keeps each kind distinct', () => {
+      expect(parse('- [ ] task\n- plain')).toEqual(
+        doc(task('TODO', text('task')), bulletList(listItem(paragraph(text('plain'))))),
+      )
+    })
+
+    it('an empty task marker with no trailing space parses back to a task (#1435)', () => {
+      // The serializer emits an EMPTY task as `- [ ]` (no trailing space), so
+      // the parser must recognise the trailing-space-less form too — otherwise
+      // an empty task degrades to a `[ ]` bullet on round-trip.
+      expect(parse('- [ ]')).toEqual(doc(task('TODO')))
+      expect(parse('- [x]')).toEqual(doc(task('DONE')))
+      expect(parse('- [/]')).toEqual(doc(task('DOING')))
+      expect(parse('- [-]')).toEqual(doc(task('CANCELLED')))
+    })
+
+    it('a checkbox with no separating space before non-empty text is NOT a task', () => {
+      // `- [x]nospace` lacks the GFM separator, so it stays a plain bullet.
+      expect(parse('- [x]nospace')).toEqual(
+        doc(bulletList(listItem(paragraph(text('[x]nospace'))))),
+      )
+    })
+  })
+
+  describe('round-trip: stable for every state', () => {
+    for (const state of ['TODO', 'DOING', 'DONE', 'CANCELLED'] as const) {
+      it(`doc→md→doc is stable for ${state}`, () => {
+        const original = doc(task(state, text('do it')))
+        expect(parse(serialize(original))).toEqual(original)
+      })
+
+      it(`md→doc→md is stable for ${state}`, () => {
+        const md = serialize(doc(task(state, text('do it'))))
+        expect(serialize(parse(md))).toBe(md)
+      })
+
+      it(`empty task round-trips for ${state} (#1435)`, () => {
+        const original = doc(task(state))
+        expect(parse(serialize(original))).toEqual(original)
+      })
+    }
   })
 })
