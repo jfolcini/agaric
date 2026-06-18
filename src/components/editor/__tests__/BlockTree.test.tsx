@@ -4957,7 +4957,7 @@ describe('BlockTree /attach slash command', () => {
 
     await act(async () => {
       // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
-      capturedInput!.onchange?.(new Event('change'))
+      capturedInput!.dispatchEvent(new Event('change'))
     })
 
     expect(mockedInvoke).toHaveBeenCalledWith('add_attachment_with_bytes', {
@@ -5012,7 +5012,7 @@ describe('BlockTree /attach slash command', () => {
 
     await act(async () => {
       // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
-      capturedInput!.onchange?.(new Event('change'))
+      capturedInput!.dispatchEvent(new Event('change'))
     })
 
     // Should NOT ship bytes for a disallowed type.
@@ -5066,7 +5066,7 @@ describe('BlockTree /attach slash command', () => {
 
     await act(async () => {
       // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
-      capturedInput!.onchange?.(new Event('change'))
+      capturedInput!.dispatchEvent(new Event('change'))
     })
 
     expect(mockedInvoke).toHaveBeenCalledWith('add_attachment_with_bytes', {
