@@ -444,9 +444,9 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
               // block's priority; expose its set/unset state per WAI-ARIA
               // toggle-button semantics (matching the collapse/attachment
               // toggles' `aria-expanded`). The badge only renders when a
-              // priority is set, so this is always `true` here, but it makes the
-              // toggle semantics explicit for AT.
-              aria-pressed={priority !== undefined && priority !== null}
+              // priority is set, so the pressed state is always `true` here;
+              // stating it explicitly keeps the toggle semantics clear for AT.
+              aria-pressed
               // #1498: keep editor focus on click (see collapse-toggle note).
               onMouseDown={(e) => e.preventDefault()}
               onClick={(e) => {
