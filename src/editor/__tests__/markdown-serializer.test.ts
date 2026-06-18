@@ -1148,6 +1148,29 @@ describe('external links', () => {
       )
     })
 
+    it('emits a bare URL (not [url](url)) when link text === href (#1441)', () => {
+      expect(serialize(doc(paragraph(linked('https://example.com', 'https://example.com'))))).toBe(
+        'https://example.com',
+      )
+    })
+
+    it('keeps [url](url) when text === href but the URL is NOT bare-autolinkable', () => {
+      // A space in the href means a bare emit would not re-link as one unit, so
+      // the explicit `[url](url)` form is kept. The display text's embedded URL
+      // is defused (`\:`) so it does not nest-autolink when the display text is
+      // re-parsed.
+      expect(serialize(doc(paragraph(linked('https://x.com a', 'https://x.com a'))))).toBe(
+        '[https\\://x.com a](https://x.com a)',
+      )
+    })
+
+    it('does NOT autolink a bare URL that lives in PLAIN (unlinked) text (#1441)', () => {
+      // No link mark → must round-trip as literal text, defused so the next
+      // parse does not autolink it (scheme colon escaped as `\:`).
+      expect(serialize(doc(paragraph(text('https://example.com'))))).toBe('https\\://example.com')
+      expect(parse('https\\://example.com')).toEqual(doc(paragraph(text('https://example.com'))))
+    })
+
     it('link adjacent to block_link token', () => {
       expect(
         serialize(
@@ -1258,9 +1281,11 @@ describe('external links', () => {
       )
     })
 
-    it('incomplete link (no closing paren) falls back to text', () => {
+    it('incomplete link (no closing paren) autolinks the bare URL (#1441)', () => {
+      // `[no close paren](` is not valid link syntax, so the trailing
+      // `https://x.com` is a bare URL in text and is autolinked.
       expect(parse('[no close paren](https://x.com')).toEqual(
-        doc(paragraph(text('[no close paren](https://x.com'))),
+        doc(paragraph(text('[no close paren]('), linked('https://x.com', 'https://x.com'))),
       )
     })
 
@@ -2228,9 +2253,19 @@ describe('external link scan edge cases', () => {
     expect(result).toEqual(doc(paragraph(text('[label] trailing'))))
   })
 
-  it('returns plain text when url is unclosed (missing )', () => {
+  it('autolinks the bare URL when the link url is unclosed (missing )) (#1441)', () => {
+    // The `[label](` prefix is not a valid link, so the bare `https://…` run is
+    // autolinked and the trailing ` unterminated` stays literal text.
     const result = parse('[label](https://example.com unterminated')
-    expect(result).toEqual(doc(paragraph(text('[label](https://example.com unterminated'))))
+    expect(result).toEqual(
+      doc(
+        paragraph(
+          text('[label]('),
+          linked('https://example.com', 'https://example.com'),
+          text(' unterminated'),
+        ),
+      ),
+    )
   })
 
   it('returns plain text when label has no closing ]', () => {

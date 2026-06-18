@@ -123,3 +123,146 @@ describe('parse — GFM underscore emphasis (#211)', () => {
     expect(parse('_foo*')).toEqual(doc(paragraph(text('_foo*'))))
   })
 })
+
+describe('parse — bare-URL & angle autolinks (#1441)', () => {
+  /** A text node carrying just a link mark (text === href is the common case). */
+  const link = (t: string, href = t) => text(t, [{ type: 'link', attrs: { href } }])
+
+  it('autolinks a bare https:// URL in text (acceptance criterion)', () => {
+    expect(parse('https://example.com')).toEqual(doc(paragraph(link('https://example.com'))))
+  })
+
+  it('autolinks a bare http:// URL', () => {
+    expect(parse('http://example.com')).toEqual(doc(paragraph(link('http://example.com'))))
+  })
+
+  it('autolinks a bare URL embedded in a sentence', () => {
+    expect(parse('see https://example.com here')).toEqual(
+      doc(paragraph(text('see '), link('https://example.com'), text(' here'))),
+    )
+  })
+
+  it('autolinks an <https://…> angle-bracket autolink', () => {
+    expect(parse('<https://example.com>')).toEqual(doc(paragraph(link('https://example.com'))))
+  })
+
+  it('keeps a trailing period as text (GFM trailing-punctuation trim)', () => {
+    expect(parse('https://example.com.')).toEqual(
+      doc(paragraph(link('https://example.com'), text('.'))),
+    )
+  })
+
+  it('keeps trailing sentence punctuation (comma) as text', () => {
+    expect(parse('see https://example.com, ok')).toEqual(
+      doc(paragraph(text('see '), link('https://example.com'), text(', ok'))),
+    )
+  })
+
+  it('does NOT re-link a URL already inside [text](url) syntax', () => {
+    expect(parse('[text](https://example.com)')).toEqual(
+      doc(paragraph(link('text', 'https://example.com'))),
+    )
+  })
+
+  it('does NOT re-link a URL whose display text is the URL in [url](url)', () => {
+    // The explicit link wins; the bare-URL scanner never sees the inner URL.
+    expect(parse('[https://example.com](https://example.com)')).toEqual(
+      doc(paragraph(link('https://example.com', 'https://example.com'))),
+    )
+  })
+
+  it('does NOT autolink an intraword http (left boundary)', () => {
+    expect(parse('ahttps://example.com')).toEqual(doc(paragraph(text('ahttps://example.com'))))
+  })
+
+  it('keeps a balanced trailing paren in a Wikipedia-style URL', () => {
+    expect(parse('https://en.wikipedia.org/wiki/Foo_(bar)')).toEqual(
+      doc(paragraph(link('https://en.wikipedia.org/wiki/Foo_(bar)'))),
+    )
+  })
+
+  it('does NOT autolink a URL inside a code span (backticks win)', () => {
+    // scanCodeSpan runs before scanAutolink, so the URL is raw code, not a link.
+    expect(parse('inline `https://example.com` only')).toEqual(
+      doc(
+        paragraph(text('inline '), text('https://example.com', [{ type: 'code' }]), text(' only')),
+      ),
+    )
+  })
+
+  it('does NOT swallow a closing bold delimiter into the href (#1441 regression)', () => {
+    // The bare-URL body only hard-stops at whitespace/`<`/`\`; without trimming
+    // trailing mark delimiters the URL would eat the closing `**`, leaving bold
+    // unclosed (reverted to literal text). The trailing `**` must close bold and
+    // the link mark must sit ON the bolded URL text.
+    expect(parse('**https://example.com**')).toEqual(
+      doc(
+        paragraph(
+          text('https://example.com', [
+            { type: 'bold' },
+            { type: 'link', attrs: { href: 'https://example.com' } },
+          ]),
+        ),
+      ),
+    )
+  })
+
+  it('does NOT swallow a closing strike delimiter into the href (#1441)', () => {
+    expect(parse('~~https://example.com~~')).toEqual(
+      doc(
+        paragraph(
+          text('https://example.com', [
+            { type: 'strike' },
+            { type: 'link', attrs: { href: 'https://example.com' } },
+          ]),
+        ),
+      ),
+    )
+  })
+
+  it('trims a trailing pipe/bracket and round-trips them as escaped text (#1441)', () => {
+    // A bare URL followed by a structural delimiter (`|` table gate, `]` label
+    // close) must not absorb it; the delimiter stays literal text. The serializer
+    // escapes it (`\|`/`\]`) and the bare-URL scanner hard-stops at the `\`, so
+    // the next parse re-globs the URL identically (idempotent, no escape pileup).
+    expect(parse('see https://example.com| end')).toEqual(
+      doc(paragraph(text('see '), link('https://example.com'), text('| end'))),
+    )
+    expect(parse('see https://example.com] end')).toEqual(
+      doc(paragraph(text('see '), link('https://example.com'), text('] end'))),
+    )
+    for (const input of [
+      'see https://example.com| end',
+      'see https://example.com] end',
+      'https://example.com/path*glob*',
+      '**https://example.com**',
+      '~~https://example.com~~',
+    ]) {
+      const once = serialize(parse(input))
+      expect(serialize(parse(once))).toBe(once)
+    }
+  })
+
+  it('round-trips (parse→serialize) bare and angle autolinks losslessly', () => {
+    // A bare URL stays bare (not `[url](url)`); an angle autolink normalizes to
+    // the bare URL (the serializer's canonical, link-preserving form).
+    expect(serialize(parse('https://example.com'))).toBe('https://example.com')
+    expect(serialize(parse('see https://example.com here'))).toBe('see https://example.com here')
+    expect(serialize(parse('https://example.com.'))).toBe('https://example.com.')
+    expect(serialize(parse('<https://example.com>'))).toBe('https://example.com')
+    expect(serialize(parse('[text](https://example.com)'))).toBe('[text](https://example.com)')
+
+    // parse∘serialize is a stable fixed point for each.
+    for (const input of [
+      'https://example.com',
+      'see https://example.com here',
+      'https://example.com.',
+      '<https://example.com>',
+      '[text](https://example.com)',
+      'https://en.wikipedia.org/wiki/Foo_(bar)',
+    ]) {
+      const once = serialize(parse(input))
+      expect(serialize(parse(once))).toBe(once)
+    }
+  })
+})
