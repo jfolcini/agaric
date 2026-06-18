@@ -13,6 +13,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { NAV_GROUPS, NAV_ITEMS } from '@/components/common/nav-items'
 import { AppSidebar, type AppSidebarProps } from '@/components/layout/AppSidebar'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/lib/i18n'
@@ -108,6 +109,44 @@ describe('AppSidebar', () => {
   it('shows the sidebar branding (space switcher trigger)', () => {
     renderSidebar()
     expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+  })
+
+  // #1741 — the nav is grouped into labeled sections (Workspace / System)
+  // instead of one flat 11-item list, with Settings moved to the footer.
+  // Pin that every group label renders as a wired-up group label and that
+  // each group's menu is announced via aria-labelledby.
+  it('renders labeled nav groups wired to their menus (#1741)', () => {
+    renderSidebar()
+
+    for (const group of NAV_GROUPS) {
+      const labelEl = screen.getByText(t(group.labelKey))
+      expect(labelEl).toHaveAttribute('data-sidebar', 'group-label')
+
+      const labelId = labelEl.getAttribute('id')
+      expect(labelId).toBeTruthy()
+
+      // The group's menu must reference its label via aria-labelledby so
+      // assistive tech announces the section.
+      const menu = document.querySelector(`[aria-labelledby="${labelId}"]`)
+      expect(menu).not.toBeNull()
+    }
+  })
+
+  // #1741 — grouping must not drop any destination: every NAV_ITEMS entry
+  // (the grouped Workspace/System items plus the footer Settings item) must
+  // still render exactly once.
+  it('keeps all nav items present after grouping (#1741)', () => {
+    renderSidebar()
+
+    for (const item of NAV_ITEMS) {
+      expect(screen.getByText(t(item.labelKey))).toBeInTheDocument()
+    }
+
+    // Settings specifically lives in the footer now, not the main nav.
+    const settingsButton = screen
+      .getByText(t('sidebar.settings'))
+      .closest('[data-sidebar="menu-button"]')
+    expect(settingsButton?.closest('[data-sidebar="footer"]')).not.toBeNull()
   })
 
   it('calls onSelectView when a menu item is clicked', async () => {

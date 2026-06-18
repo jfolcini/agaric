@@ -22,7 +22,7 @@ import { memo, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
-import { NAV_ITEMS } from '@/components/common/nav-items'
+import { NAV_GROUPS, type NavItem, SETTINGS_NAV_ITEM } from '@/components/common/nav-items'
 import { SpaceAccentBadge } from '@/components/common/SpaceAccentBadge'
 import { SpaceSwitcher } from '@/components/layout/SpaceSwitcher'
 import { useTrashCount } from '@/components/pages/ViewDispatcher'
@@ -32,6 +32,7 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuBadge,
@@ -125,6 +126,44 @@ function AppSidebarInner({
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const trashCount = useTrashCount()
+
+  /**
+   * Render a single nav destination. Shared between the grouped main-nav
+   * sections and the footer Settings item (#1741) so the active-state,
+   * tooltip, trash badge, and status dot behaviour stay identical
+   * wherever an item appears.
+   */
+  const renderNavItem = (item: NavItem): ReactElement => {
+    const label = t(item.labelKey)
+    return (
+      <SidebarMenuItem key={item.id}>
+        <SidebarMenuButton
+          isActive={currentView === item.id}
+          aria-current={currentView === item.id ? 'page' : undefined}
+          tooltip={label}
+          onClick={() => onSelectView(item.id)}
+        >
+          <item.icon />
+          <span>{label}</span>
+          {item.id === 'trash' && trashCount > 0 && (
+            <SidebarMenuBadge aria-label={t('sidebar.trashCount', { count: trashCount })}>
+              {trashCount}
+            </SidebarMenuBadge>
+          )}
+          {item.id === 'status' && (
+            <span
+              className={cn(
+                'ml-auto h-2.5 w-2.5 rounded-full',
+                syncDotClass(syncState, syncPeers.length > 0),
+              )}
+              aria-hidden="true"
+            />
+          )}
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    )
+  }
+
   return (
     /*
      * "icon" collapses the sidebar to a 48px icon-only rail rather than
@@ -170,48 +209,34 @@ function AppSidebarInner({
       </SidebarHeader>
       <SidebarContent>
         <FeatureErrorBoundary name="Sidebar">
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {NAV_ITEMS.map((item) => {
-                  const label = t(item.labelKey)
-                  return (
-                    <SidebarMenuItem key={item.id}>
-                      <SidebarMenuButton
-                        isActive={currentView === item.id}
-                        aria-current={currentView === item.id ? 'page' : undefined}
-                        tooltip={label}
-                        onClick={() => onSelectView(item.id)}
-                      >
-                        <item.icon />
-                        <span>{label}</span>
-                        {item.id === 'trash' && trashCount > 0 && (
-                          <SidebarMenuBadge
-                            aria-label={t('sidebar.trashCount', { count: trashCount })}
-                          >
-                            {trashCount}
-                          </SidebarMenuBadge>
-                        )}
-                        {item.id === 'status' && (
-                          <span
-                            className={cn(
-                              'ml-auto h-2.5 w-2.5 rounded-full',
-                              syncDotClass(syncState, syncPeers.length > 0),
-                            )}
-                            aria-hidden="true"
-                          />
-                        )}
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+          {/*
+           * #1741 — the nav is split into labeled groups (Workspace /
+           * System) instead of one flat list. Each `SidebarGroup` carries
+           * a `SidebarGroupLabel` wired to its menu via `aria-labelledby`,
+           * so assistive tech announces the section. Group labels collapse
+           * to zero height in icon mode (handled by `SidebarGroupLabel`),
+           * keeping the compact rail intact.
+           */}
+          {NAV_GROUPS.map((group) => {
+            const labelId = `sidebar-group-${group.id}`
+            return (
+              <SidebarGroup key={group.id}>
+                <SidebarGroupLabel id={labelId}>{t(group.labelKey)}</SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SidebarMenu aria-labelledby={labelId}>
+                    {group.items.map(renderNavItem)}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            )
+          })}
         </FeatureErrorBoundary>
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
+          {/* #1741 — Settings moved out of the mid-list main nav into the
+              footer with the other utility actions. */}
+          {renderNavItem(SETTINGS_NAV_ITEM)}
           <SidebarMenuItem>
             <SidebarMenuButton tooltip={t('sidebar.newPageTooltip')} onClick={onNewPage}>
               <Plus />

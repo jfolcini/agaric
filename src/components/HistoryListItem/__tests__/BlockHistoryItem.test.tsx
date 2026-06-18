@@ -6,10 +6,12 @@
  * file is independently audited.
  */
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { computeBlockVsCurrentDiff } from '../../../lib/tauri'
 import type { BlockHistoryItemProps } from '../BlockHistoryItem'
 import { BlockHistoryItem } from '../BlockHistoryItem'
 
@@ -74,6 +76,10 @@ function renderInList(props: BlockHistoryItemProps) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // `mock*ValueOnce` queues persist across tests (clearAllMocks only resets
+  // call history), so reset the diff mock to its default resolving impl to
+  // keep the failure-path tests isolated.
+  vi.mocked(computeBlockVsCurrentDiff).mockReset().mockResolvedValue([])
 })
 
 describe('BlockHistoryItem (extracted sibling)', () => {
@@ -120,5 +126,60 @@ describe('BlockHistoryItem (extracted sibling)', () => {
     )
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // #1736: when the compared-to-current diff fetch rejects, the row must
+  // surface an inline error + retry instead of an empty diff container.
+  describe('compared-to-current diff fetch failure (#1736)', () => {
+    const mockedDiff = vi.mocked(computeBlockVsCurrentDiff)
+
+    it('renders an inline error + retry affordance when the fetch rejects', async () => {
+      mockedDiff.mockRejectedValueOnce(new Error('ipc boom'))
+      renderInList(defaultProps({ isExpanded: true }))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('block-history-diff-error-0')).toBeInTheDocument()
+      })
+      expect(screen.getByText('Failed to load diff')).toBeInTheDocument()
+      expect(screen.getByTestId('block-history-diff-retry-0')).toHaveTextContent('Retry')
+    })
+
+    it('re-fetches the diff when Retry is clicked, replacing the error with the diff', async () => {
+      const user = userEvent.setup()
+      // First call (initial expand) rejects → error state; every subsequent
+      // call resolves with the recovered diff so the retry succeeds
+      // regardless of how many times the effect fires.
+      mockedDiff
+        .mockReset()
+        .mockResolvedValue([{ tag: 'Insert', value: 'recovered' }])
+        .mockRejectedValueOnce(new Error('ipc boom'))
+
+      renderInList(defaultProps({ isExpanded: true }))
+
+      const retry = await screen.findByTestId('block-history-diff-retry-0')
+      const callsBeforeRetry = mockedDiff.mock.calls.length
+      await user.click(retry)
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('block-history-diff-error-0')).not.toBeInTheDocument()
+      })
+      // Insert is flipped to Delete in comparedToCurrent mode (MAINT-217),
+      // so the recovered span renders inside a <del>.
+      await waitFor(() => {
+        expect(document.querySelector('del')?.textContent).toBe('recovered')
+      })
+      // Retry must trigger at least one additional fetch.
+      expect(mockedDiff.mock.calls.length).toBeGreaterThan(callsBeforeRetry)
+    })
+
+    it('has no a11y violations in the error state', async () => {
+      mockedDiff.mockRejectedValueOnce(new Error('ipc boom'))
+      const { container } = renderInList(defaultProps({ isExpanded: true }))
+      await waitFor(() => {
+        expect(screen.getByTestId('block-history-diff-error-0')).toBeInTheDocument()
+      })
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 })

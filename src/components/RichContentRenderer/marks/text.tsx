@@ -36,7 +36,7 @@ function externalLinkProps(
 }
 
 function renderExternalLink(
-  text: string,
+  label: React.ReactNode,
   href: string,
   ctx: RenderContext,
   key: string,
@@ -49,7 +49,7 @@ function renderExternalLink(
       data-href={href}
       {...externalLinkProps(href, ctx.interactive)}
     >
-      {text}
+      {label}
       <span className="sr-only"> {i18n.t('link.opensInNewTab')}</span>
       <span className="inline-block ml-0.5 text-[0.7em] opacity-60" aria-hidden="true">
         ↗
@@ -61,14 +61,12 @@ function renderExternalLink(
 /** Apply bold / italic / code / strike / highlight / underline / link marks to a text node, innermost-out. */
 function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.ReactNode {
   const linkMark = node.marks?.find((m) => m.type === 'link')
-  // Re-validate the href scheme at the render sink: input-time validation
-  // (external-link extension / link editor) is bypassed by markdown import
-  // and peer sync, so a `javascript:`/`data:` href can reach stored content.
-  // Render those as plain text rather than a clickable link to `openUrl`.
-  let content: React.ReactNode =
-    linkMark && linkMark.type === 'link' && isAllowedUrl(linkMark.attrs.href)
-      ? renderExternalLink(node.text, linkMark.attrs.href, ctx, `${key}-link`)
-      : node.text
+  // Text marks (code/strike/highlight/italic/bold/underline) wrap the
+  // visible label only. The external-link element is applied LAST, around
+  // the already-marked label, so its trailing ↗ glyph and sr-only
+  // "opens in new tab" affordance stay outside the marks (a struck-through
+  // or `code`-styled link must not cross/monospace the icon). See #1737.
+  let content: React.ReactNode = node.text
 
   if (node.marks?.some((m) => m.type === 'code') === true) {
     content = (
@@ -101,6 +99,16 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
   if (node.marks?.some((m) => m.type === 'underline') === true) {
     content = <u>{content}</u>
   }
+
+  // Re-validate href scheme at the render sink: input-time validation
+  // (external-link extension / link editor) is bypassed by the markdown
+  // import / peer sync, so a `javascript:`/`data:` href can reach stored
+  // content. Render those as plain marked text rather than a clickable link
+  // that would hand the href to `openUrl`.
+  if (linkMark && linkMark.type === 'link' && isAllowedUrl(linkMark.attrs.href)) {
+    content = renderExternalLink(content, linkMark.attrs.href, ctx, `${key}-link`)
+  }
+
   return content
 }
 

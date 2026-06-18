@@ -28,10 +28,11 @@
  * so external consumers see no surface change.
  */
 
-import { Lock, RotateCcw } from 'lucide-react'
+import { AlertTriangle, Lock, RotateCcw } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EmptyState } from '@/components/common/EmptyState'
 import { DiffDisplay } from '@/components/rendering/DiffDisplay'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -105,6 +106,11 @@ export function BlockHistoryItem({
   const [comparedDiff, setComparedDiff] = React.useState<DiffSpan[] | null>(null)
   const [comparedLoading, setComparedLoading] = React.useState(false)
   const [comparedFailed, setComparedFailed] = React.useState(false)
+  // #1736: bumped by the retry affordance to force the lazy-fetch effect to
+  // re-run after a failure. The guard state (comparedFailed/comparedDiff) is
+  // intentionally NOT in the effect's dep array, so it can't drive a re-fetch
+  // on its own — this nonce is a real dep that does.
+  const [retryNonce, setRetryNonce] = React.useState(0)
 
   // Lazy-fetch the compared-to-current diff on first expand. Refetch
   // when the entry's seq changes (e.g. parent renders a different row
@@ -165,8 +171,17 @@ export function BlockHistoryItem({
       // flag.
       setComparedLoading(false)
     }
-  }, [isExpanded, isRestorable, blockId, entry.seq, t])
+  }, [isExpanded, isRestorable, blockId, entry.seq, t, retryNonce])
   /* oxlint-enable react-hooks/exhaustive-deps */
+
+  // #1736: clear the failure guard (and any stale diff) and bump the nonce so
+  // the lazy-fetch effect re-runs. comparedFailed/comparedDiff alone can't
+  // re-trigger the effect (not deps); the nonce is the actual re-run trigger.
+  const handleRetryComparedDiff = React.useCallback(() => {
+    setComparedDiff(null)
+    setComparedFailed(false)
+    setRetryNonce((n) => n + 1)
+  }, [])
 
   const handleRowClick = (e: React.MouseEvent) => {
     if (!isRestorable) return
@@ -330,6 +345,31 @@ export function BlockHistoryItem({
           <div className="diff-container w-full">
             {activeLoading ? (
               <Spinner className="h-4 w-4" />
+            ) : diffMode === 'comparedToCurrent' && comparedFailed ? (
+              // #1736: the compared-to-current fetch rejected and the guard
+              // blocks any re-fetch, so the container would otherwise render
+              // nothing. Surface an inline error + retry, mirroring the
+              // EmptyState pattern DiffDisplay already uses for empty diffs.
+              <div data-testid={`block-history-diff-error-${index}`}>
+                <EmptyState
+                  compact
+                  headingLevel="p"
+                  icon={AlertTriangle}
+                  message={t('history.loadDiffFailed')}
+                  action={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-2"
+                      data-testid={`block-history-diff-retry-${index}`}
+                      onClick={handleRetryComparedDiff}
+                    >
+                      {t('action.retry')}
+                    </Button>
+                  }
+                />
+              </div>
             ) : activeSpans != null ? (
               <DiffDisplay spans={activeSpans} />
             ) : null}

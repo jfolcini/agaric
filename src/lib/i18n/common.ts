@@ -21,6 +21,8 @@ export const common: Record<string, string> = {
   // canonical — but a restart usually re-runs recovery cleanly).
   'boot.recoveryDegradedBody':
     'A startup recovery step did not finish, so recent edits may not appear yet. Your data is safe — restarting Agaric usually fixes this. Avoid making large edits until it is resolved.',
+  'sidebar.groupWorkspace': 'Workspace',
+  'sidebar.groupSystem': 'System',
   'sidebar.pages': 'Pages',
   'sidebar.journal': 'Journal',
   'sidebar.newPage': 'New Page',
