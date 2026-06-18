@@ -16,6 +16,9 @@
  * `src/index.css`; if a value there changes, update it here too.
  */
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 type Oklch = readonly [L: number, C: number, h: number]
@@ -140,4 +143,109 @@ describe('theme OKLCH contrast (WCAG AA)', () => {
   it.each(PAIRS)('$name clears its WCAG ratio', ({ fg, bg, min }) => {
     expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(min)
   })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// Live-CSS guard (#1684).
+//
+// The PAIRS table above mirrors token values by hand, so a tweak in
+// `src/index.css` can silently drift below AA while this suite stays green.
+// The block below instead parses the *actual* OKLCH declarations out of
+// `src/index.css` per theme selector and asserts the contrast guarantees the
+// CSS comments themselves document — so a regression in the stylesheet fails
+// CI, not just a stale copy.
+// ─────────────────────────────────────────────────────────────────────────
+
+// Resolved from the project root (vitest cwd) so it stays valid regardless of
+// how `import.meta.url` is exposed under the test transform.
+const CSS_PATH = resolve(process.cwd(), 'src/index.css')
+const CSS_SOURCE = readFileSync(CSS_PATH, 'utf8')
+
+/**
+ * Slice the declaration body of a top-level theme selector (`:root`, `.dark`,
+ * `.theme-solarized-light`, …) from the stylesheet. Brace-counts from the
+ * selector's opening `{` so nested at-rules/blocks don't truncate it early.
+ */
+function themeBlock(selector: string): string {
+  // Anchor on a selector that begins a line so we don't match it inside a
+  // descendant rule like `.dark .hljs`.
+  const re = new RegExp(`(^|\\n)\\s*${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{`)
+  const m = re.exec(CSS_SOURCE)
+  if (!m) throw new Error(`theme selector not found in index.css: ${selector}`)
+  const start = m.index + m[0].length
+  let depth = 1
+  let i = start
+  for (; i < CSS_SOURCE.length && depth > 0; i++) {
+    if (CSS_SOURCE[i] === '{') depth++
+    else if (CSS_SOURCE[i] === '}') depth--
+  }
+  return CSS_SOURCE.slice(start, i - 1)
+}
+
+/** Read the first `--token: oklch(...)` value declared inside a theme block. */
+function readOklch(block: string, token: string): Oklch {
+  const re = new RegExp(`--${token}\\s*:\\s*oklch\\(\\s*([\\d.]+)\\s+([\\d.]+)\\s+([\\d.]+)`)
+  const m = re.exec(block)
+  if (!m) throw new Error(`token --${token} (oklch) not found in theme block`)
+  return [Number(m[1]), Number(m[2]), Number(m[3])]
+}
+
+// Each entry mirrors a contrast guarantee asserted in an index.css comment.
+const DOCUMENTED_GUARANTEES: ReadonlyArray<{
+  name: string
+  selector: string
+  fg: string
+  bg: string
+  min: number
+  /** Documented ratio from the CSS comment, for a tighter regression bound. */
+  documented: number
+}> = [
+  {
+    // index.css ~159-163: "Darkening --primary L 0.55 → 0.50 raises it to ≈5.07:1"
+    name: 'light :root — --primary-foreground on --primary ≈5.07:1',
+    selector: ':root',
+    fg: 'primary-foreground',
+    bg: 'primary',
+    min: AA_NORMAL,
+    documented: 5.07,
+  },
+  {
+    // index.css ~315: ".dark — same --primary-foreground/--primary pair as light"
+    name: 'dark .dark — --primary-foreground on --primary ≈5.07:1',
+    selector: '.dark',
+    fg: 'primary-foreground',
+    bg: 'primary',
+    min: AA_NORMAL,
+    documented: 5.07,
+  },
+  {
+    // index.css ~466-468: "muted-foreground … L 0.58 → 0.50 raises it to ≈5.45:1"
+    name: 'Solarized Light — --muted-foreground on --background ≈5.45:1',
+    selector: '.theme-solarized-light',
+    fg: 'muted-foreground',
+    bg: 'background',
+    min: AA_NORMAL,
+    documented: 5.45,
+  },
+]
+
+describe('documented CSS contrast guarantees hold in src/index.css (#1684)', () => {
+  it('the parser locates a known token and theme block', () => {
+    // --background in :root is pure white (oklch(1 0 0)); a smoke test that the
+    // brace-matching slice + token regex agree with the live stylesheet.
+    expect(readOklch(themeBlock(':root'), 'background')).toEqual([1, 0, 0])
+  })
+
+  it.each(DOCUMENTED_GUARANTEES)(
+    '$name (parsed from index.css)',
+    ({ selector, fg, bg, min, documented }) => {
+      const block = themeBlock(selector)
+      const ratio = contrastRatio(readOklch(block, fg), readOklch(block, bg))
+      // Hard floor: never regress below the WCAG minimum the comment promises.
+      expect(ratio).toBeGreaterThanOrEqual(min)
+      // Soft bound: stay within tolerance of the ratio the comment documents,
+      // so a token tweak that changes the real contrast trips this test.
+      expect(ratio).toBeCloseTo(documented, 1)
+    },
+  )
 })

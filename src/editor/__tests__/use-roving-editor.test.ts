@@ -1156,6 +1156,117 @@ describe('useRovingEditor integration (renderHook)', () => {
     unmountHook()
   })
 
+  // #1691 — split exactly on an active-mark boundary. The caret sits at the
+  // seam between a bold run and a plain run; both halves must round-trip and
+  // the bold must survive on the before-half (doc.cut carries spanning marks).
+  it('splitAtCaret() at an active-mark boundary keeps the mark on the before-half', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    act(() => {
+      // "**bold**plain" → bold run "bold", then plain "plain".
+      result.current.mount('block-split-mark', '**bold**plain')
+    })
+
+    // Caret right after the bold run (text begins at pos 1, "bold" = 4 chars,
+    // so the boundary between bold and plain is pos 5).
+    act(() => {
+      ;(result.current.editor as Editor).commands.setTextSelection(5)
+    })
+
+    const split = result.current.splitAtCaret()
+    // Before-half is the whole bold run; after-half is the plain run.
+    expect(split).toEqual({ before: '**bold**', after: 'plain' })
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  // #1691 — split INSIDE an active mark (not on its boundary). Both halves
+  // carry the mark across the seam, so each half re-serializes its own bold
+  // wrapper. This is the case where a naive cut could drop the mark on one
+  // side; doc.cut preserves it on both.
+  it('splitAtCaret() inside an active mark wraps both halves in the mark', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    act(() => {
+      result.current.mount('block-split-inside-mark', '**bold text**')
+    })
+
+    // Caret after "bold" (pos 1 + 4 = 5), still inside the bold span.
+    act(() => {
+      ;(result.current.editor as Editor).commands.setTextSelection(5)
+    })
+
+    const split = result.current.splitAtCaret()
+    // Both halves keep the bold mark across the seam.
+    expect(split).toEqual({ before: '**bold**', after: '** text**' })
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  // #1691 — split adjacent to an inline atom (tag_ref). Caret BEFORE the atom:
+  // the before-half holds the leading text, the after-half holds the atom and
+  // the atom must round-trip as `#[ULID]`.
+  it('splitAtCaret() before an inline atom keeps the atom whole on the after-half', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    act(() => {
+      // "hi " + tag_ref(ULID). The atom is a single inline atom node;
+      // `#[ULID]` only parses to tag_ref when the id is a real 26-char ULID.
+      result.current.mount('block-split-atom-before', 'hi #[01ARZ3NDEKTSV4RRFFQ69G5FAV]')
+    })
+
+    // Find the position of the tag_ref atom and place the caret right before it.
+    const editor = result.current.editor as Editor
+    let atomPos = -1
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'tag_ref') atomPos = pos
+      return true
+    })
+    expect(atomPos).toBeGreaterThan(0)
+    act(() => {
+      editor.commands.setTextSelection(atomPos)
+    })
+
+    const split = result.current.splitAtCaret()
+    expect(split?.before).toBe('hi ')
+    expect(split?.after).toBe('#[01ARZ3NDEKTSV4RRFFQ69G5FAV]')
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  // #1691 — split adjacent to an inline atom (tag_ref). Caret AFTER the atom:
+  // the before-half holds the atom (round-tripping as `#[ULID]`), the
+  // after-half holds the trailing text.
+  it('splitAtCaret() after an inline atom keeps the atom whole on the before-half', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    act(() => {
+      result.current.mount('block-split-atom-after', '#[01ARZ3NDEKTSV4RRFFQ69G5FAV] bye')
+    })
+
+    // Position right after the atom: atom occupies one position, so caret = pos+1.
+    const editor = result.current.editor as Editor
+    let atomPos = -1
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'tag_ref') atomPos = pos
+      return true
+    })
+    expect(atomPos).toBeGreaterThanOrEqual(0)
+    act(() => {
+      editor.commands.setTextSelection(atomPos + 1)
+    })
+
+    const split = result.current.splitAtCaret()
+    expect(split?.before).toBe('#[01ARZ3NDEKTSV4RRFFQ69G5FAV]')
+    expect(split?.after).toBe(' bye')
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
   it('mount() → unmount() returns null for unchanged content', async () => {
     const { result, unmount: unmountHook } = await setup()
 
