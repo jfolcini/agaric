@@ -22,6 +22,72 @@ import { computeSelectionRoots, getDragDescendants } from './tree-utils'
 /** Spaces per indent level — the repo's outline convention (2-space indent). */
 export const INDENT_UNIT = 2
 
+// ── Human-readable reference rendering (export/clipboard only, #1440) ─────────
+
+/**
+ * Inline reference-token regexes. These mirror the canonical patterns the
+ * markdown serializer EMITS (`src/editor/markdown-serialize.ts`) and the Rust
+ * page-export resolver consumes (`src-tauri/src/cache/mod.rs`:
+ * `TAG_REF_RE` / `PAGE_LINK_RE`, plus the `((ULID))` block-ref delimiter).
+ * ULIDs are always 26 uppercase Crockford-base32 chars in canonical form, so
+ * the character class is intentionally `[0-9A-Z]` (no lowercase).
+ *
+ * Kept verbatim-aligned with the Rust regexes so the clipboard/copy rendering
+ * is byte-identical to what page-export produces for `#[ULID]` and `[[ULID]]`.
+ */
+const TAG_REF_RE = /#\[([0-9A-Z]{26})\]/g
+const PAGE_LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
+const BLOCK_REF_RE = /\(\(([0-9A-Z]{26})\)\)/g
+
+/**
+ * Resolve an internal-reference ULID to a human-readable name for export.
+ *
+ * Returns the display name (page title / tag name / block snippet) when the
+ * ULID is known, or `undefined` when it is not — a `undefined` (dangling)
+ * result tells {@link humanizeRefTokens} to fall back to the opaque ULID form,
+ * so a broken/cross-space reference is never dropped or made to crash.
+ */
+export type RefResolver = (ulid: string) => string | undefined
+
+/**
+ * Rewrite the opaque-ULID reference tokens in a single block's content into
+ * the human-readable forms used by page-export (#1440):
+ *
+ *   `#[ULID]`   → `#tag`          (tag reference)
+ *   `[[ULID]]`  → `[[Page Name]]` (block/page link)
+ *   `((ULID))`  → `((Name))`      (block reference)
+ *
+ * Resolution REUSES the same name source page-export uses (the title/tag
+ * resolver) via the injected {@link RefResolver}; this function only renders.
+ *
+ * A ULID the resolver cannot resolve (a dangling ref, or a block-ref target
+ * whose content isn't cached — page-export likewise leaves those verbatim)
+ * falls back GRACEFULLY to the original ULID token, exactly like the Rust
+ * `resolve_ulids_for_export` "keep original if not found" branch. Nothing is
+ * dropped and no exception is thrown.
+ *
+ * This is a pure rendering pass over an EXPORT copy of the content; the stored
+ * canonical block content (ULID-based) is never mutated.
+ */
+export function humanizeRefTokens(content: string, resolve: RefResolver): string {
+  // Tag refs first, then page links, then block refs — the three token shapes
+  // are disjoint, so ordering is immaterial for correctness; it just mirrors
+  // the Rust resolver's tag→page sequence for readability.
+  return content
+    .replace(TAG_REF_RE, (match, ulid: string) => {
+      const name = resolve(ulid)
+      return name === undefined ? match : `#${name}`
+    })
+    .replace(PAGE_LINK_RE, (match, ulid: string) => {
+      const name = resolve(ulid)
+      return name === undefined ? match : `[[${name}]]`
+    })
+    .replace(BLOCK_REF_RE, (match, ulid: string) => {
+      const name = resolve(ulid)
+      return name === undefined ? match : `((${name}))`
+    })
+}
+
 /**
  * A parsed clipboard block: its content and a pointer to its parent's index in
  * the SAME parsed list (`null` = top-level / paste root). Children always
@@ -49,8 +115,20 @@ export interface ParsedBlock {
  * flat `items` list).
  *
  * Returns the empty string when nothing is selected / nothing matches.
+ *
+ * `humanize` (#1440) — optional reference renderer. When supplied, each block's
+ * content has its opaque-ULID reference tokens rewritten to human-readable
+ * names (`[[Page Name]]` / `#tag` / `((Name))`) via {@link humanizeRefTokens},
+ * matching what page-export emits. This is for the SYSTEM-CLIPBOARD copy path
+ * only; the internal copy→paste round-trips (duplicate, context-menu paste)
+ * call WITHOUT it so block content stays ULID-canonical for re-import. Omitting
+ * it preserves the original verbatim-content behaviour exactly.
  */
-export function serializeBlockSubtree(items: FlatBlock[], selectedIds: Iterable<string>): string {
+export function serializeBlockSubtree(
+  items: FlatBlock[],
+  selectedIds: Iterable<string>,
+  humanize?: RefResolver,
+): string {
   const roots = computeSelectionRoots(items, selectedIds)
   if (roots.length === 0) return ''
 
@@ -71,7 +149,8 @@ export function serializeBlockSubtree(items: FlatBlock[], selectedIds: Iterable<
   return emitted
     .map((b) => {
       const indent = ' '.repeat(INDENT_UNIT * (b.depth - baseDepth))
-      return indent + (b.content ?? '')
+      const content = b.content ?? ''
+      return indent + (humanize ? humanizeRefTokens(content, humanize) : content)
     })
     .join('\n')
 }

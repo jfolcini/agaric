@@ -29,6 +29,8 @@ import { computeSelectionRoots } from '../lib/tree-utils'
 import { useBlockStore } from '../stores/blocks'
 import type { PageBlockState } from '../stores/page-blocks'
 import { storeOwnsBlock } from '../stores/page-blocks'
+import { keyFor, useResolveStore } from '../stores/resolve'
+import { useSpaceStore } from '../stores/space'
 import type { DatePickerMode } from './useBlockDatePicker'
 
 export interface UseBlockTreeKeyboardShortcutsOptions {
@@ -227,7 +229,23 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
         // through without claiming the chord.
         const ownedSelected = selectedBlockIds.filter((id) => state.blocksById.has(id))
         if (ownedSelected.length === 0) return
-        const markdown = serializeBlockSubtree(state.blocks, ownedSelected)
+        // #1440 — render internal references human-readably for the SYSTEM
+        // clipboard (`[[Page Name]]` / `#tag` / `((Name))`), reusing the same
+        // title/tag source page-export uses: the global resolve cache
+        // (`useResolveStore`, populated on boot + as pages/tags load). We read
+        // the cache directly (composed against the active space, mirroring
+        // `useBlockResolve.resolveBlockTitle`) and return `undefined` on a miss
+        // so a dangling/uncached ULID falls back to its opaque token instead of
+        // the store's `[[xxxx…]]` placeholder. The internal copy→paste paths
+        // (duplicate) call `serializeBlockSubtree` WITHOUT a resolver, keeping
+        // their content ULID-canonical for re-import.
+        const resolveCache = useResolveStore.getState().cache
+        const spaceId = useSpaceStore.getState().currentSpaceId
+        const markdown = serializeBlockSubtree(
+          state.blocks,
+          ownedSelected,
+          (ulid) => resolveCache.get(keyFor(spaceId, ulid))?.title,
+        )
         if (markdown.length === 0) return
         e.preventDefault()
         void writeText(markdown).catch((err) =>

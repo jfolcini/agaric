@@ -5,8 +5,19 @@
 import { describe, expect, it } from 'vitest'
 
 import { makeBlock } from '../../__tests__/fixtures'
-import { INDENT_UNIT, parseIndentedMarkdown, serializeBlockSubtree } from '../block-clipboard'
+import {
+  humanizeRefTokens,
+  INDENT_UNIT,
+  parseIndentedMarkdown,
+  serializeBlockSubtree,
+} from '../block-clipboard'
 import type { FlatBlock } from '../tree-utils'
+
+// Canonical 26-char uppercase Crockford-base32 ULIDs (the only shape the
+// reference-token regexes accept). Reused across the #1440 humanize tests.
+const PAGE_ULID = '01HZ0PAGE0000000000000000A'
+const TAG_ULID = '01HZ0TAG00000000000000000B'
+const BLOCK_ULID = '01HZ0BLOCK000000000000000C'
 
 /** Build a flat tree from `[id, depth, parentId, content]` rows. */
 function tree(rows: Array<[string, number, string | null, string]>): FlatBlock[] {
@@ -188,5 +199,93 @@ describe('round-trip serialize ⇄ parse', () => {
       { content: 'b', parentIndex: null },
       { content: 'b1', parentIndex: 2 },
     ])
+  })
+})
+
+// #1440 — export/clipboard rendering of internal references as human-readable
+// names, reusing the page-export resolver semantics (`resolve_ulids_for_export`
+// in src-tauri): `[[ULID]]`→`[[Name]]`, `((ULID))`→`((Name))`, `#[ULID]`→`#tag`,
+// with a graceful fallback to the opaque ULID token for dangling refs.
+describe('humanizeRefTokens (#1440)', () => {
+  // Mirrors the Rust resolver's pre-fetched name maps: a plain lookup that
+  // returns the display name, or `undefined` for an unknown ULID.
+  const names: Record<string, string> = {
+    [PAGE_ULID]: 'My Page',
+    [TAG_ULID]: 'todo',
+    [BLOCK_ULID]: 'a referenced block',
+  }
+  const resolve = (ulid: string) => names[ulid]
+
+  it('renders a page/block link [[ULID]] as [[Page Name]]', () => {
+    expect(humanizeRefTokens(`see [[${PAGE_ULID}]] here`, resolve)).toBe('see [[My Page]] here')
+  })
+
+  it('renders a tag #[ULID] as #tag', () => {
+    expect(humanizeRefTokens(`tagged #[${TAG_ULID}]`, resolve)).toBe('tagged #todo')
+  })
+
+  it('renders a block ref ((ULID)) as ((Name))', () => {
+    expect(humanizeRefTokens(`quote ((${BLOCK_ULID}))`, resolve)).toBe(
+      'quote ((a referenced block))',
+    )
+  })
+
+  it('resolves every reference kind in one line', () => {
+    const content = `[[${PAGE_ULID}]] #[${TAG_ULID}] ((${BLOCK_ULID}))`
+    expect(humanizeRefTokens(content, resolve)).toBe('[[My Page]] #todo ((a referenced block))')
+  })
+
+  it('falls back to the opaque ULID token for a dangling/unresolvable ref', () => {
+    const dangling = '01HZ0MISSING000000000000ZZ'
+    // Unknown page link, tag, and block ref all keep their original token.
+    expect(humanizeRefTokens(`[[${dangling}]]`, resolve)).toBe(`[[${dangling}]]`)
+    expect(humanizeRefTokens(`#[${dangling}]`, resolve)).toBe(`#[${dangling}]`)
+    expect(humanizeRefTokens(`((${dangling}))`, resolve)).toBe(`((${dangling}))`)
+  })
+
+  it('leaves content without reference tokens untouched', () => {
+    expect(humanizeRefTokens('plain **bold** text, no refs', resolve)).toBe(
+      'plain **bold** text, no refs',
+    )
+  })
+})
+
+describe('serializeBlockSubtree reference rendering (#1440)', () => {
+  const names: Record<string, string> = {
+    [PAGE_ULID]: 'My Page',
+    [TAG_ULID]: 'todo',
+    [BLOCK_ULID]: 'a referenced block',
+  }
+  const resolve = (ulid: string) => names[ulid]
+
+  it('keeps stored ULID tokens verbatim when no resolver is passed (internal round-trip)', () => {
+    // The duplicate / internal copy→paste paths call without a resolver — the
+    // stored canonical content must NOT be rewritten so it re-imports as-is.
+    const items = tree([['A', 0, null, `link [[${PAGE_ULID}]] and #[${TAG_ULID}]`]])
+    expect(serializeBlockSubtree(items, ['A'])).toBe(`link [[${PAGE_ULID}]] and #[${TAG_ULID}]`)
+  })
+
+  it('renders references human-readably for the clipboard when a resolver is passed', () => {
+    const items = tree([
+      ['A', 0, null, `parent links [[${PAGE_ULID}]]`],
+      ['B', 1, 'A', `child tags #[${TAG_ULID}] and quotes ((${BLOCK_ULID}))`],
+    ])
+    expect(serializeBlockSubtree(items, ['A'], resolve)).toBe(
+      'parent links [[My Page]]\n  child tags #todo and quotes ((a referenced block))',
+    )
+  })
+
+  it('falls back to the ULID token for a dangling ref while still humanizing the rest', () => {
+    const dangling = '01HZ0MISSING000000000000ZZ'
+    const items = tree([['A', 0, null, `[[${PAGE_ULID}]] then [[${dangling}]]`]])
+    expect(serializeBlockSubtree(items, ['A'], resolve)).toBe(`[[My Page]] then [[${dangling}]]`)
+  })
+
+  it('does not mutate the source block content (storage canonical unchanged)', () => {
+    const original = `link [[${PAGE_ULID}]]`
+    const items = tree([['A', 0, null, original]])
+    serializeBlockSubtree(items, ['A'], resolve)
+    // The FlatBlock in `items` still carries the ULID-based stored content.
+    expect(items[0]?.content).toBe(original)
   })
 })
