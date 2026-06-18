@@ -113,4 +113,26 @@ describe('HelpTab', () => {
       { timeout: 5000 },
     )
   })
+
+  // #1422 — persistent "Touch gestures" reference card. Lists the same
+  // hidden gestures the first-run coach-mark surfaces, so users can
+  // re-find them after the one-time overlay is dismissed.
+  describe('Touch gestures section', () => {
+    it('renders the Touch gestures card and all four gesture rows', () => {
+      render(<HelpTab onReportBugClick={vi.fn()} />)
+
+      expect(screen.getByText(t('gestures.help.title'))).toBeInTheDocument()
+      expect(screen.getByText(t('gestures.swipe.title'))).toBeInTheDocument()
+      expect(screen.getByText(t('gestures.longPress.title'))).toBeInTheDocument()
+      expect(screen.getByText(t('gestures.edgeSwipe.title'))).toBeInTheDocument()
+      expect(screen.getByText(t('gestures.quickCapture.title'))).toBeInTheDocument()
+    })
+
+    it('lists the gestures on mobile too', () => {
+      setUserAgent(ANDROID_UA)
+      render(<HelpTab onReportBugClick={vi.fn()} />)
+      expect(screen.getByText(t('gestures.help.title'))).toBeInTheDocument()
+      expect(screen.getByText(t('gestures.swipe.title'))).toBeInTheDocument()
+    })
+  })
 })

@@ -59,6 +59,12 @@ const KeyboardShortcuts = lazy(() =>
 const WelcomeModal = lazy(() =>
   import('@/components/pages/WelcomeModal').then((m) => ({ default: m.WelcomeModal })),
 )
+// #1422 — first-run mobile gesture coach-mark. Lazy + self-gating on
+// `useShouldShowMobileChrome()` so the chunk is fetched only on
+// mobile/touch sessions; the component reads its own one-time flag.
+const GestureCoachMark = lazy(() =>
+  import('@/components/mobile/GestureCoachMark').then((m) => ({ default: m.GestureCoachMark })),
+)
 // PERF (design-system review tier-2 #12): the three shell-level dialogs
 // below are mounted unconditionally near the bottom of `App` but only
 // render content when their `open` boolean flips true. Code-splitting
@@ -550,6 +556,22 @@ function App() {
         <FeatureErrorBoundary name="Welcome">
           <Suspense fallback={null}>
             <WelcomeModal />
+          </Suspense>
+        </FeatureErrorBoundary>
+      )}
+      {/* #1422 — first-run mobile gesture coach-mark. Gated at the JSX
+          level on BOTH `!showWelcome` (so the two first-run overlays never
+          stack on a brand-new install — welcome shows first, the coach-mark
+          only once it's dismissed) AND `shouldShowMobileChrome` (so the
+          lazy chunk is fetched ONLY on mobile/touch sessions — without this
+          gate every desktop session that has finished onboarding would mount
+          the component and pull the chunk over the wire just to render null).
+          The component still self-gates on `useShouldShowMobileChrome()` and
+          its own one-time localStorage flag as defense-in-depth. */}
+      {!showWelcome && shouldShowMobileChrome && (
+        <FeatureErrorBoundary name="Gesture coach-mark">
+          <Suspense fallback={null}>
+            <GestureCoachMark />
           </Suspense>
         </FeatureErrorBoundary>
       )}
