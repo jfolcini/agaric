@@ -92,7 +92,7 @@ repo = "local"
 [[repos.hooks]]
 id = "oxlint"
 name = "oxlint"
-entry = "npx oxlint"
+entry = "npx oxlint --report-unused-disable-directives-severity=error"
 language = "system"
 types_or = ["javascript", "jsx", "ts", "tsx"]
 exclude = "(src/lib/bindings\\.ts$|\\.sqlx/)"
