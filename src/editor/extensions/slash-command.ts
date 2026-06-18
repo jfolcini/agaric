@@ -14,7 +14,6 @@
  * Follows the same pattern as AtTagPicker and BlockLinkPicker.
  */
 
-import type { Editor } from '@tiptap/core'
 import { Extension } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 
@@ -27,8 +26,12 @@ export const slashCommandPluginKey = new PluginKey('slashCommand')
 export interface SlashCommandOptions {
   /** Return slash commands matching the query. Called on every keystroke after /. */
   items: (query: string) => PickerItem[] | Promise<PickerItem[]>
-  /** Execute the selected command. */
-  onCommand: (item: PickerItem, editor: Editor) => void
+  /**
+   * Execute the selected command. The active editor is NOT passed here:
+   * production handlers obtain it independently (via `rovingEditor` in the
+   * slash-command context), so an `editor` parameter would be dead (#1668).
+   */
+  onCommand: (item: PickerItem) => void
 }
 
 export const SlashCommand = Extension.create<SlashCommandOptions>({
@@ -61,7 +64,7 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
         items: (query) => extensionOptions.items(query),
         command: ({ editor, range, props }) => {
           editor.chain().focus().deleteRange(range).run()
-          extensionOptions.onCommand(props as PickerItem, editor)
+          extensionOptions.onCommand(props as PickerItem)
         },
         render: () => createSuggestionRenderer('Slash commands', slashCommandPluginKey, '/'),
       }),

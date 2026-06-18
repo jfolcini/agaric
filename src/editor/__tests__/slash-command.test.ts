@@ -122,7 +122,9 @@ describe('slash-command — explicit selection only (no auto-execute)', () => {
 
     command({ editor, range: { from: 0, to: 5 }, props: item })
 
-    expect(onCommand).toHaveBeenCalledWith(item, editor)
+    // #1668 — onCommand receives only the item; the editor is obtained
+    // independently by production handlers (no `editor` arg).
+    expect(onCommand).toHaveBeenCalledWith(item)
   })
 
   // #1344 — the slash menu must not trigger mid-word (URLs, `6/15`,
