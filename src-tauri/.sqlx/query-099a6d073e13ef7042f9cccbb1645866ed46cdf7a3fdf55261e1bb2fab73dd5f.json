@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at FROM attachments WHERE block_id = ? ORDER BY created_at, id",
+  "query": "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash FROM attachments WHERE id = ?",
   "describe": {
     "columns": [
       {
@@ -79,6 +79,17 @@
             "name": "created_at"
           }
         }
+      },
+      {
+        "name": "content_hash",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "content_hash"
+          }
+        }
       }
     ],
     "parameters": {
@@ -91,8 +102,9 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "d1056c350f5c8f39cd4d1db47e582ed5258785f9c57f145578b572c554751956"
+  "hash": "099a6d073e13ef7042f9cccbb1645866ed46cdf7a3fdf55261e1bb2fab73dd5f"
 }

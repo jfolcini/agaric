@@ -262,6 +262,36 @@ pub async fn recover_at_boot(
         );
     }
 
+    // -----------------------------------------------------------------
+    // Step 3: #1453 Phase 1 — backfill blake3 content_hash for attachment
+    // rows that pre-date migration 0093 (or were materialized from a remote
+    // AddAttachment op, whose payload carries no hash). Idempotent (only
+    // `content_hash IS NULL` rows are touched) and tolerant of a missing
+    // file (leaves NULL). Best-effort: a failure is logged and boot
+    // continues — the persisted hash is an availability optimization, not a
+    // correctness invariant. `app_data_dir` comes from the Materializer,
+    // which `lib.rs` sets before boot recovery runs; if it is somehow unset
+    // (test harnesses, an early boot path) the backfill is skipped.
+    // -----------------------------------------------------------------
+    match materializer.app_data_dir() {
+        Some(dir) => {
+            if let Err(e) =
+                super::attachment_hash_backfill::backfill_attachment_content_hashes(pool, &dir)
+                    .await
+            {
+                tracing::warn!(
+                    error = %e,
+                    "#1453 attachment content_hash backfill failed — continuing boot"
+                );
+            }
+        }
+        None => {
+            tracing::debug!(
+                "#1453 attachment content_hash backfill skipped — app_data_dir not set on Materializer"
+            );
+        }
+    }
+
     // Elapsed millis for boot recovery won't exceed u64; saturate on overflow.
     let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
 
