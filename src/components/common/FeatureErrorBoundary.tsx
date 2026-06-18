@@ -9,7 +9,18 @@ import { cn } from '@/lib/utils'
 
 interface FeatureErrorBoundaryProps {
   children: React.ReactNode
+  /**
+   * Stable English identifier used as the log domain in `componentDidCatch`
+   * (kept untranslated so logs/bug reports stay grep-able across locales).
+   */
   name: string
+  /**
+   * i18n key for the user-facing section label in the fallback UI (#1700).
+   * When provided, the displayed section name is `t(nameKey)`; otherwise the
+   * raw `name` is shown. A class component can't use the `useTranslation`
+   * hook, so we resolve the key through the standalone `i18n.t` here.
+   */
+  nameKey?: string
   className?: string
 }
 
@@ -66,7 +77,9 @@ export class FeatureErrorBoundary extends React.Component<
         >
           <AlertCircle className="h-6 w-6 text-destructive" />
           <p className="text-sm font-medium">
-            {i18n.t('error.sectionCrashed', { section: this.props.name })}
+            {i18n.t('error.sectionCrashed', {
+              section: this.props.nameKey ? i18n.t(this.props.nameKey) : this.props.name,
+            })}
           </p>
           <p className="max-w-xs text-center text-xs text-muted-foreground">
             {this.state.error?.message ?? i18n.t('error.unexpected')}

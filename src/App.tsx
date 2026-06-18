@@ -454,7 +454,7 @@ function App() {
              * blanking the entire app (same for every shell-chrome wrap
              * below: QuickAccessBar, the overlays, the dialogs, Toaster).
              */}
-            <FeatureErrorBoundary name="Tab bar">
+            <FeatureErrorBoundary name="Tab bar" nameKey="errorBoundary.section.tabBar">
               <TabBar />
             </FeatureErrorBoundary>
             {/*
@@ -467,7 +467,7 @@ function App() {
              * affordance (TabBar is desktop-only, no bottom-nav). Returns null
              * only when there are no recents.
              */}
-            <FeatureErrorBoundary name="Quick access">
+            <FeatureErrorBoundary name="Quick access" nameKey="errorBoundary.section.quickAccess">
               <QuickAccessBar />
             </FeatureErrorBoundary>
             {/*
@@ -518,7 +518,7 @@ function App() {
           showing its in-page segment — the sheet mounts the same
           toolbar inside its body. */}
       {!hideFindOverlay && (
-        <FeatureErrorBoundary name="Find in page">
+        <FeatureErrorBoundary name="Find in page" nameKey="errorBoundary.section.findInPage">
           <Suspense fallback={null}>
             <InPageFind />
           </Suspense>
@@ -527,7 +527,7 @@ function App() {
       {/* Cmd/Ctrl+K command palette — same overlay shape, same yield
           rule for the sheet's all-pages segment. */}
       {!hidePaletteOverlay && (
-        <FeatureErrorBoundary name="Command palette">
+        <FeatureErrorBoundary name="Command palette" nameKey="errorBoundary.section.commandPalette">
           <Suspense fallback={null}>
             <CommandPalette />
           </Suspense>
@@ -536,7 +536,7 @@ function App() {
       {/* Mobile unified search sheet — opened via the header trigger
           on mobile viewports. Mounts the InPageFind toolbar or
           PaletteBody inside its body depending on the active segment. */}
-      <FeatureErrorBoundary name="Search sheet">
+      <FeatureErrorBoundary name="Search sheet" nameKey="errorBoundary.section.searchSheet">
         <Suspense fallback={null}>
           <SearchSheet />
         </Suspense>
@@ -546,14 +546,17 @@ function App() {
           `useAppDialogs` (the sheet can't open itself while unmounted);
           the welcome gate reads the onboarding flag once per session. */}
       {shortcutsOpen && (
-        <FeatureErrorBoundary name="Keyboard shortcuts">
+        <FeatureErrorBoundary
+          name="Keyboard shortcuts"
+          nameKey="errorBoundary.section.keyboardShortcuts"
+        >
           <Suspense fallback={null}>
             <KeyboardShortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
           </Suspense>
         </FeatureErrorBoundary>
       )}
       {showWelcome && (
-        <FeatureErrorBoundary name="Welcome">
+        <FeatureErrorBoundary name="Welcome" nameKey="errorBoundary.section.welcome">
           <Suspense fallback={null}>
             <WelcomeModal />
           </Suspense>
@@ -569,7 +572,10 @@ function App() {
           The component still self-gates on `useShouldShowMobileChrome()` and
           its own one-time localStorage flag as defense-in-depth. */}
       {!showWelcome && shouldShowMobileChrome && (
-        <FeatureErrorBoundary name="Gesture coach-mark">
+        <FeatureErrorBoundary
+          name="Gesture coach-mark"
+          nameKey="errorBoundary.section.gestureCoachMark"
+        >
           <Suspense fallback={null}>
             <GestureCoachMark />
           </Suspense>
@@ -589,7 +595,7 @@ function App() {
        * truthy the prefill is already in place.
        */}
       {bugReportOpen && (
-        <FeatureErrorBoundary name="Bug report">
+        <FeatureErrorBoundary name="Bug report" nameKey="errorBoundary.section.bugReport">
           <Suspense fallback={null}>
             <BugReportDialog
               open={bugReportOpen}
@@ -612,7 +618,10 @@ function App() {
           the only reachable way to open the dialog there. Reuses the same
           `setQuickCaptureOpen` setter; self-gates on
           `useShouldShowMobileChrome()` and renders nothing on desktop. */}
-      <FeatureErrorBoundary name="Quick capture button">
+      <FeatureErrorBoundary
+        name="Quick capture button"
+        nameKey="errorBoundary.section.quickCaptureButton"
+      >
         <QuickCaptureFab setQuickCaptureOpen={setQuickCaptureOpen} />
       </FeatureErrorBoundary>
       {/* FEAT-12: Quick-capture dialog — driven by the global hotkey
@@ -620,7 +629,7 @@ function App() {
           + lazy-loaded so the editor surface stays off the critical path
           until the chord fires. */}
       {quickCaptureOpen && (
-        <FeatureErrorBoundary name="Quick capture">
+        <FeatureErrorBoundary name="Quick capture" nameKey="errorBoundary.section.quickCapture">
           <Suspense fallback={null}>
             <QuickCaptureDialog open={quickCaptureOpen} onOpenChange={setQuickCaptureOpen} />
           </Suspense>
@@ -632,7 +641,7 @@ function App() {
           links the user to the pairing flow. Lazy + Suspense so the
           alert-dialog tree only ships once the no-peers branch fires. */}
       {showNoPeersDialog && (
-        <FeatureErrorBoundary name="Sync setup">
+        <FeatureErrorBoundary name="Sync setup" nameKey="errorBoundary.section.syncSetup">
           <Suspense fallback={null}>
             <NoPeersDialog
               open={showNoPeersDialog}
@@ -646,7 +655,7 @@ function App() {
           `richColors` toasts rendered the light palette in dark themes.
           #733 — `isDark` comes from the now-module-level theme store, so
           a Settings theme change reaches the toaster without a reload. */}
-      <FeatureErrorBoundary name="Notifications">
+      <FeatureErrorBoundary name="Notifications" nameKey="errorBoundary.section.notifications">
         <Toaster
           position={isMobile ? 'top-center' : 'bottom-right'}
           theme={isDark ? 'dark' : 'light'}

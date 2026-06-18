@@ -158,13 +158,13 @@ export function ViewDispatcher({
   switch (currentView) {
     case 'journal':
       return (
-        <FeatureErrorBoundary name="Journal">
+        <FeatureErrorBoundary name="Journal" nameKey="sidebar.journal">
           <JournalPage onNavigateToPage={onPageSelect} />
         </FeatureErrorBoundary>
       )
     case 'search':
       return (
-        <FeatureErrorBoundary name="Search">
+        <FeatureErrorBoundary name="Search" nameKey="sidebar.search">
           <Suspense fallback={<ViewFallback />}>
             <SearchPanel />
           </Suspense>
@@ -172,7 +172,7 @@ export function ViewDispatcher({
       )
     case 'pages':
       return (
-        <FeatureErrorBoundary name="Pages">
+        <FeatureErrorBoundary name="Pages" nameKey="sidebar.pages">
           <Suspense fallback={<ViewFallback />}>
             <PageBrowser onPageSelect={onPageSelect} />
           </Suspense>
@@ -180,7 +180,7 @@ export function ViewDispatcher({
       )
     case 'tags':
       return (
-        <FeatureErrorBoundary name="Tags">
+        <FeatureErrorBoundary name="Tags" nameKey="sidebar.tags">
           <Suspense fallback={<ViewFallback />}>
             <div className="space-y-8">
               <TagList onTagClick={(tagId, tagName) => navigateToPage(tagId, tagName)} />
@@ -198,7 +198,7 @@ export function ViewDispatcher({
       )
     case 'trash':
       return (
-        <FeatureErrorBoundary name="Trash">
+        <FeatureErrorBoundary name="Trash" nameKey="sidebar.trash">
           <Suspense fallback={<ViewFallback />}>
             <TrashView />
           </Suspense>
@@ -206,7 +206,7 @@ export function ViewDispatcher({
       )
     case 'settings':
       return (
-        <FeatureErrorBoundary name="Settings">
+        <FeatureErrorBoundary name="Settings" nameKey="sidebar.settings">
           <Suspense fallback={<ViewFallback />}>
             <SettingsView />
           </Suspense>
@@ -214,7 +214,7 @@ export function ViewDispatcher({
       )
     case 'status':
       return (
-        <FeatureErrorBoundary name="Status">
+        <FeatureErrorBoundary name="Status" nameKey="sidebar.status">
           <Suspense fallback={<ViewFallback />}>
             <StatusPanel />
           </Suspense>
@@ -222,7 +222,7 @@ export function ViewDispatcher({
       )
     case 'history':
       return (
-        <FeatureErrorBoundary name="History">
+        <FeatureErrorBoundary name="History" nameKey="sidebar.history">
           <Suspense fallback={<ViewFallback />}>
             <HistoryView />
           </Suspense>
@@ -230,7 +230,7 @@ export function ViewDispatcher({
       )
     case 'templates':
       return (
-        <FeatureErrorBoundary name="Templates">
+        <FeatureErrorBoundary name="Templates" nameKey="sidebar.templates">
           <Suspense fallback={<ViewFallback />}>
             <TemplatesView />
           </Suspense>
@@ -238,7 +238,7 @@ export function ViewDispatcher({
       )
     case 'graph':
       return (
-        <FeatureErrorBoundary name="Graph">
+        <FeatureErrorBoundary name="Graph" nameKey="sidebar.graph">
           <Suspense fallback={<ViewFallback />}>
             <GraphView />
           </Suspense>
@@ -246,7 +246,7 @@ export function ViewDispatcher({
       )
     case 'query':
       return (
-        <FeatureErrorBoundary name="AdvancedQuery">
+        <FeatureErrorBoundary name="AdvancedQuery" nameKey="sidebar.query">
           <Suspense fallback={<ViewFallback />}>
             <AdvancedQueryView onNavigate={onPageSelect} />
           </Suspense>
@@ -260,7 +260,7 @@ export function ViewDispatcher({
       // (which always has a today/daily fallback) instead.
       if (!activePage) {
         return (
-          <FeatureErrorBoundary name="PageEditor">
+          <FeatureErrorBoundary name="PageEditor" nameKey="errorBoundary.section.pageEditor">
             <EmptyState
               message={t('pageEditor.empty.message')}
               description={t('pageEditor.empty.description')}
@@ -279,7 +279,7 @@ export function ViewDispatcher({
         )
       }
       return (
-        <FeatureErrorBoundary name="PageEditor">
+        <FeatureErrorBoundary name="PageEditor" nameKey="errorBoundary.section.pageEditor">
           <Suspense fallback={<ViewFallback />}>
             <PageEditor
               pageId={activePage.pageId}

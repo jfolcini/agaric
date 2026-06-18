@@ -10,9 +10,12 @@ use std::sync::LazyLock;
 
 /// Maximum block-tree depth permitted by the import parser.  Blocks
 /// nested below this level are flattened to this depth and a warning is
-/// emitted.  The cap matches the recursive-CTE depth bound enforced
-/// throughout the materialiser (see AGENTS.md "Recursive CTEs over
-/// `blocks`") and prevents pathologically deep imports from triggering
+/// emitted.  This is a deliberately conservative, import-specific limit:
+/// it sits well under the recursive-CTE depth bound of `depth < 100`
+/// enforced throughout the materialiser (Invariant #9; see AGENTS.md
+/// "Recursive CTEs over `blocks`").  It is *not* the same value as the
+/// CTE bound — clamping imports far earlier keeps real-world documents
+/// shallow and prevents pathologically deep imports from approaching
 /// query-time recursion limits.
 const MAX_IMPORT_DEPTH: usize = 20;
 

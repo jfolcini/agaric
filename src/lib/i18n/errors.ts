@@ -17,6 +17,23 @@ export const errors: Record<string, string> = {
   'error.sectionCrashed': '{{section}} encountered an error',
   'error.unexpected': 'An unexpected error occurred',
   'errorBoundary.dataSafe': 'Your data is safe — Retry reloads this panel.',
+  // #1700: localized section names for FeatureErrorBoundary fallbacks. View
+  // sections reuse the `sidebar.*` labels; the App-shell boundaries below have
+  // no sidebar entry, so they get dedicated `errorBoundary.section.*` keys.
+  'errorBoundary.section.pageEditor': 'Page editor',
+  'errorBoundary.section.tabBar': 'Tab bar',
+  'errorBoundary.section.quickAccess': 'Quick access',
+  'errorBoundary.section.findInPage': 'Find in page',
+  'errorBoundary.section.commandPalette': 'Command palette',
+  'errorBoundary.section.searchSheet': 'Search sheet',
+  'errorBoundary.section.keyboardShortcuts': 'Keyboard shortcuts',
+  'errorBoundary.section.welcome': 'Welcome',
+  'errorBoundary.section.gestureCoachMark': 'Gesture coach-mark',
+  'errorBoundary.section.bugReport': 'Bug report',
+  'errorBoundary.section.quickCaptureButton': 'Quick capture button',
+  'errorBoundary.section.quickCapture': 'Quick capture',
+  'errorBoundary.section.syncSetup': 'Sync setup',
+  'errorBoundary.section.notifications': 'Notifications',
   'error.loadBlocksFailed': 'Failed to load blocks',
   'error.deleteBlockFailed': 'Failed to delete block',
   'error.reorderBlockFailed': 'Failed to reorder block',
