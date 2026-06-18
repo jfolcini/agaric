@@ -27,6 +27,7 @@ import type {
   HorizontalRuleNode,
   InlineNode,
   ListItemNode,
+  MathBlockNode,
   OrderedListNode,
   ParagraphNode,
   PMMark,
@@ -35,6 +36,17 @@ import type {
 } from './types'
 
 // -- Serialize (PM doc → Markdown) --------------------------------------------
+
+/**
+ * Whether a literal `$` at index `i` in `s` would open an inline-math span on
+ * the next parse (#1437) — i.e. the following char is a non-space, non-digit
+ * (a digit is currency like `$5`, which the parser leaves literal). Such a `$`
+ * is escaped to `\$` so it survives the round-trip as text, never math.
+ */
+function dollarOpensMath(s: string, i: number): boolean {
+  const next = i + 1 < s.length ? (s[i + 1] as string) : ''
+  return next !== '' && next !== ' ' && next !== '\t' && !/[0-9]/.test(next)
+}
 
 function escapeText(s: string): string {
   let out = ''
@@ -65,6 +77,17 @@ function escapeText(s: string): string {
     // on reparse (#710-4).
     if (ch === '*' || ch === '`' || ch === '~' || ch === '=' || ch === '|') {
       out += `\\${ch}`
+      continue
+    }
+    // `$` is the inline-math delimiter (#1437). Escape a literal `$` exactly
+    // when the parser's inline-math OPEN rule could fire — i.e. the next char
+    // is a non-space, non-digit (a digit means currency like `$5`, which the
+    // parser already leaves literal, so it needs no escape and stays readable).
+    // `\$` round-trips back to `$` via the parser's backslash escape, so this
+    // is lossless and stops a literal `$x … $` in plain text from re-parsing
+    // as math.
+    if (ch === '$') {
+      out += dollarOpensMath(s, i) ? '\\$' : ch
       continue
     }
     // `_` is an emphasis delimiter (GFM) — escape exactly the runs the
@@ -340,6 +363,12 @@ function serializeInlineChild(
   if (child.type === 'block_ref') {
     return serializeInlineAtom(`((${child.attrs.id}))`, activeMarks)
   }
+  // Inline math (#1437): emit the raw LaTeX wrapped in `$…$`. The LaTeX is not
+  // escaped (it is verbatim math source, taken raw by the parser between the
+  // delimiters); a math node never carries text marks, so it behaves as an atom.
+  if (child.type === 'math_inline') {
+    return serializeInlineAtom(`$${child.attrs.latex}$`, activeMarks)
+  }
   // #710-5: a CommonMark backslash hard break (`\` + newline) — distinct from
   // the bare `\n` block separator, so a Shift+Enter line break round-trips as
   // ONE paragraph instead of being split into two blocks on blur. The parser
@@ -474,6 +503,15 @@ function serializeCodeBlock(node: CodeBlockNode): string {
   return `${fence}${lang}\n${code}\n${fence}`
 }
 
+/**
+ * Block (display) math (#1437): emit the LaTeX as a `$$`-fenced block. The
+ * multi-line form (`$$` / body / `$$`) is canonical and round-trips through
+ * `parseMathBlock`. The LaTeX body is emitted verbatim (it is raw math source).
+ */
+function serializeMathBlock(node: MathBlockNode): string {
+  return `$$\n${node.attrs.latex}\n$$`
+}
+
 function serializeBlockquote(node: BlockquoteNode, onUnknownNode?: (type: string) => void): string {
   if (!node.content || node.content.length === 0) {
     if (node.attrs?.calloutType) {
@@ -492,6 +530,7 @@ function serializeBlockquote(node: BlockquoteNode, onUnknownNode?: (type: string
       if (child.type === 'orderedList') return serializeOrderedList(child, onUnknownNode)
       if (child.type === 'bulletList') return serializeBulletList(child, onUnknownNode)
       if (child.type === 'horizontalRule') return serializeHorizontalRule(child)
+      if (child.type === 'math_block') return serializeMathBlock(child)
       return ''
     })
     .join('\n')
@@ -616,6 +655,7 @@ export function serialize(doc: DocNode, onUnknownNode?: (type: string) => void):
       if (node.type === 'orderedList') return serializeOrderedList(node, onUnknownNode)
       if (node.type === 'bulletList') return serializeBulletList(node, onUnknownNode)
       if (node.type === 'horizontalRule') return serializeHorizontalRule(node)
+      if (node.type === 'math_block') return serializeMathBlock(node)
       const unknownType = (node as { type: string }).type
       onUnknownNode?.(unknownType)
       return ''

@@ -24,6 +24,7 @@ import type {
   HorizontalRuleNode,
   InlineNode,
   ListItemNode,
+  MathBlockNode,
   OrderedListNode,
   ParagraphNode,
   PMMark,
@@ -288,6 +289,55 @@ export function parseCodeBlock(lines: readonly string[], i: number): BlockParseR
   const code = codeLines.join('\n')
   const attrs = language ? { language } : undefined
   const block: CodeBlockNode = buildCodeBlock(code, attrs)
+  return { blocks: [block], consumed: j - i }
+}
+
+/**
+ * Block (display) math (#1437): a `$$`-fenced block, rendered via KaTeX in
+ * display mode. Two accepted forms (both round-trip; the serializer emits the
+ * multi-line form):
+ *
+ *   - single line:  `$$ E = mc^2 $$`  (opening `$$` and closing `$$` share a line)
+ *   - multi line:   a line of exactly `$$`, the LaTeX body lines, then a line
+ *                   of exactly `$$`.
+ *
+ * The body is taken raw (the LaTeX source). An opening `$$` with no closing
+ * fence falls through to `null` so the lines are parsed as ordinary text rather
+ * than being silently swallowed.
+ */
+export function parseMathBlock(lines: readonly string[], i: number): BlockParseResult | null {
+  const line = lines[i] as string
+  if (!line.startsWith('$$')) return null
+
+  // Single-line form: `$$ … $$` (closing `$$` is on the same line, after at
+  // least the opening one — and the line is not the bare opening fence `$$`).
+  const rest = line.slice(2)
+  const closeIdx = rest.lastIndexOf('$$')
+  if (closeIdx >= 0 && rest.slice(closeIdx + 2).trim() === '') {
+    const latex = rest.slice(0, closeIdx).trim()
+    if (latex.length > 0) {
+      const block: MathBlockNode = { type: 'math_block', attrs: { latex } }
+      return { blocks: [block], consumed: 1 }
+    }
+  }
+
+  // Multi-line form: the opening line must be exactly `$$` (allowing trailing
+  // whitespace). Anything after `$$` on the opening line that wasn't a valid
+  // single-line close is treated as the first body char only if the line is the
+  // bare fence — otherwise reject so we don't swallow e.g. `$$x` text.
+  if (line.trim() !== '$$') return null
+  const bodyLines: string[] = []
+  let j = i + 1
+  while (j < lines.length && (lines[j] as string).trim() !== '$$') {
+    bodyLines.push(lines[j] as string)
+    j++
+  }
+  // No closing fence found → not a math block (let the lines parse as text).
+  if (j >= lines.length) return null
+  j++ // consume the closing `$$`
+  const latex = bodyLines.join('\n').trim()
+  if (latex.length === 0) return null
+  const block: MathBlockNode = { type: 'math_block', attrs: { latex } }
   return { blocks: [block], consumed: j - i }
 }
 
@@ -622,6 +672,7 @@ function dispatchBlockProduction(
 ): BlockParseResult {
   return (
     parseCodeBlock(lines, i) ??
+    parseMathBlock(lines, i) ??
     parseBlockquote(lines, i, depth) ??
     parseHeading(lines, i, depth) ??
     parseTable(lines, i, depth) ??
@@ -787,6 +838,68 @@ export function scanCodeSpan(st: InlineState): boolean {
   return true
 }
 
+/**
+ * Inline math (#1437): a `$…$` span whose content is raw LaTeX, rendered via
+ * KaTeX. Follows the common CommonMark-math (pandoc / remark-math) inline rule
+ * so a currency amount is NOT mistaken for math:
+ *
+ *   - the opening `$` must be IMMEDIATELY followed by a non-space char
+ *     (`$ x$` is not math) and not by a digit (`$5` is currency, not math);
+ *   - the closing `$` must be IMMEDIATELY preceded by a non-space char
+ *     (`$x $` is not math);
+ *   - a closing `$` that is immediately followed by a digit is rejected
+ *     (so `cost is $5 and $10` stays literal — the `$` between `5 and $1` is
+ *     not treated as a closer);
+ *   - no newline inside (line-scoped — inline parsing is per-line anyway);
+ *   - an escaped `\$` inside the span does NOT close it (and `\$` outside is
+ *     handled by `scanEscape`, which runs first, so a literal `\$` never
+ *     reaches here).
+ *
+ * Empty math (`$$` with nothing between) is not inline math (it is the start of
+ * a `$$` block when alone on a line; mid-line it falls through to literal text).
+ * A `$` with no valid closer on the line is emitted as a literal `$`.
+ */
+export function scanMathInline(st: InlineState): boolean {
+  const s = st.scanner
+  if (peek(s) !== '$') return false
+  const src = s.src
+  const openNext = src[s.pos + 1] ?? ''
+  // Opening `$` must be followed by a non-space, non-digit char (digit ⇒ currency).
+  if (openNext === '' || openNext === ' ' || openNext === '\t' || /[0-9]/.test(openNext)) {
+    return false
+  }
+  // Find the closing `$`, honouring `\$` escapes inside the span.
+  let i = s.pos + 1
+  while (i < src.length) {
+    const ch = src[i]
+    if (ch === '\\') {
+      i += 2 // skip the escaped char (e.g. `\$`, `\\`)
+      continue
+    }
+    if (ch === '$') {
+      const prev = src[i - 1] ?? ''
+      const after = src[i + 1] ?? ''
+      // Closing `$` must be preceded by a non-space and NOT followed by a digit
+      // (so `$5 and $10` does not treat the 2nd `$` as a closer).
+      if (prev !== ' ' && prev !== '\t' && !/[0-9]/.test(after)) {
+        const latex = src.slice(s.pos + 1, i)
+        if (latex.length > 0) {
+          flushBuf(st, currentMarks(st))
+          st.nodes.push({ type: 'math_inline', attrs: { latex } })
+          s.pos = i + 1
+          return true
+        }
+      }
+      // Not a valid closer — keep scanning for a later `$`.
+    }
+    i++
+  }
+  // No valid closer on this line: emit the `$` as literal text.
+  st.buf += '$'
+  s.pos += 1
+  return true
+}
+
 /** Backslash escape for any parser-significant char. */
 export function scanEscape(st: InlineState): boolean {
   if (peek(st.scanner) !== '\\' || st.scanner.pos + 1 >= st.scanner.src.length) return false
@@ -807,6 +920,10 @@ function isEscapableChar(ch: string): boolean {
     ch === ']' ||
     ch === '~' ||
     ch === '=' ||
+    // `$` is escapable so a literal dollar sign round-trips as text (`\$`)
+    // instead of opening an inline-math span (#1437) — this is what keeps a
+    // currency amount like `$5` literal once the serializer has escaped it.
+    ch === '$' ||
     // `_`/`|` are escapable so literal underscores and pipes round-trip
     // (#710-1, #710-4) — escapeText emits `\_` / `\|` and this accepts them.
     ch === '_' ||
@@ -1116,6 +1233,7 @@ function parseLine(line: string, depth = 0): InlineNode[] {
   while (st.scanner.pos < st.scanner.src.length) {
     if (scanCodeSpan(st)) continue
     if (scanEscape(st)) continue
+    if (scanMathInline(st)) continue
     if (scanTokenRef(st)) continue
     if (scanExternalLinkToken(st)) continue
     if (scanAutolink(st)) continue
@@ -1144,6 +1262,8 @@ function nodeToPlainText(node: InlineNode): string {
       return `[[${node.attrs.id}]]`
     case 'block_ref':
       return `((${node.attrs.id}))`
+    case 'math_inline':
+      return `$${node.attrs.latex}$`
     /* v8 ignore start -- hardBreak never appears during line parsing; default is type guard */
     case 'hardBreak':
       return '\n'

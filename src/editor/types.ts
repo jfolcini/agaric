@@ -74,6 +74,29 @@ export interface HardBreakNode {
 }
 
 /**
+ * Inline math (#1437): a `$…$` span rendered via KaTeX. The LaTeX source is
+ * stored verbatim in `attrs.latex` and serializes back to `$…$`. Atomic inline
+ * node (the LaTeX is never directly editable as inline text — it is edited
+ * through the node view's raw-source affordance).
+ */
+export interface MathInlineNode {
+  readonly type: 'math_inline'
+  readonly attrs: { readonly latex: string }
+}
+
+/**
+ * Block (display) math (#1437): a `$$…$$` fenced block rendered via KaTeX in
+ * display mode. The LaTeX source is stored verbatim in `attrs.latex` and
+ * serializes back to a `$$…$$` fence.
+ */
+export interface MathBlockNode {
+  readonly type: 'math_block'
+  readonly attrs: { readonly latex: string }
+  /** Math blocks are atomic — never any child content (mirrors HorizontalRuleNode). */
+  readonly content?: undefined
+}
+
+/**
  * Task state carried on a paragraph block so a GFM task list item
  * (`- [ ]` / `- [x]`) round-trips through markdown (#1435).
  *
@@ -114,7 +137,13 @@ export interface BlockquoteNode {
   readonly content?: readonly BlockLevelNode[]
 }
 
-export type InlineNode = TextNode | TagRefNode | BlockLinkNode | BlockRefNode | HardBreakNode
+export type InlineNode =
+  | TextNode
+  | TagRefNode
+  | BlockLinkNode
+  | BlockRefNode
+  | HardBreakNode
+  | MathInlineNode
 
 export interface TableCellNode {
   readonly type: 'tableCell'
@@ -165,6 +194,7 @@ export type BlockLevelNode =
   | OrderedListNode
   | BulletListNode
   | HorizontalRuleNode
+  | MathBlockNode
 
 export interface DocNode {
   readonly type: 'doc'
