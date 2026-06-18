@@ -16,6 +16,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useFocusedRowEffect } from '../useFocusedRowEffect'
 
 const FOCUS_CLASSES = ['ring-2', 'ring-ring/50', 'bg-accent/30']
+/** Stable default rows so the harness prop keeps referential equality across renders. */
+const DEFAULT_ROWS = ['A', 'B', 'C']
 
 interface HarnessProps {
   focusedRowId: string | null
@@ -32,7 +34,7 @@ function Harness({
   focusClasses = FOCUS_CLASSES,
   setFocusedIndex,
   resetDeps,
-  rows = ['A', 'B', 'C'],
+  rows = DEFAULT_ROWS,
 }: HarnessProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   useFocusedRowEffect({

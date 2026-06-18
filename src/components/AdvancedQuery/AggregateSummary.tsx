@@ -48,10 +48,9 @@ export function AggregateSummary({
       aria-label={label}
       data-testid={testId}
     >
-      {results.map((result, index) => (
+      {results.map((result) => (
         <Badge
-          // biome-ignore lint/suspicious/noArrayIndexKey: aggregate results are an ordered list keyed by request order
-          key={index}
+          key={`${result.op}:${result.value ?? ''}:${result.count ?? ''}`}
           tone="default"
           size="sm"
           data-testid="advanced-query-aggregate-chip"

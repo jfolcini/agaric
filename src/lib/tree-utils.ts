@@ -257,7 +257,7 @@ export function getProjection(
     // Walk backwards to find parent at endDepth - 1
     let endParentId = rootParentId
     if (endDepth > 0) {
-      const ancestor = [...items].reverse().find((item) => item.depth === endDepth - 1)
+      const ancestor = [...items].toReversed().find((item) => item.depth === endDepth - 1)
       endParentId = ancestor?.id ?? rootParentId
     }
 
@@ -315,7 +315,7 @@ export function getProjection(
     // Shallower → walk backwards to find ancestor at (depth - 1)
     const ancestor = clonedItems
       .slice(0, projectedIndex)
-      .reverse()
+      .toReversed()
       .find((item) => item.depth === depth - 1)
 
     return ancestor?.id ?? rootParentId

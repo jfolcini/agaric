@@ -60,12 +60,15 @@ const sampleTags = [
   { tag_id: 'tag-2', name: 'Home' },
 ]
 
+/** Stable empty default so the harness prop keeps referential equality across renders. */
+const EMPTY_FILTERS: GraphFilter[] = []
+
 // UX-270: stateful harness mirroring the parent contract in `GraphView` —
 // holds the controlled `filters` state so the persistence effects can dispatch
 // through `onFiltersChange` and re-render the component with the hydrated
 // value.
 function StatefulHarness({
-  initialFilters = [],
+  initialFilters = EMPTY_FILTERS,
   onChange,
   allTags = sampleTags,
 }: {

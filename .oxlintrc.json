@@ -39,7 +39,14 @@
     "jsx-a11y/no-static-element-interactions": "error",
     "jsx-a11y/click-events-have-key-events": "error",
     "unicorn/no-thenable": "error",
-    "react/no-children-prop": "error"
+    "react/no-children-prop": "error",
+    "react/no-array-index-key": "error",
+    "unicorn/prefer-add-event-listener": "error",
+    "react/no-object-type-as-default-prop": "error",
+    "react/no-unstable-nested-components": "error",
+    "eslint/no-unneeded-ternary": "error",
+    "eslint/no-unexpected-multiline": "error",
+    "unicorn/no-array-reverse": "error"
   },
   "overrides": [
     {

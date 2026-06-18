@@ -952,7 +952,7 @@ export function BlockContextMenu({
         const subgroupLabel = indentedItems[0]?.disclosureLabel
         return (
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- menu-item group inside a custom menu; <fieldset>/<optgroup> etc. would inject form/list semantics that conflict with the menu role
-          <div key={groupIdx} role="group">
+          <div key={group[0]?.label ?? `group-${groupIdx}`} role="group">
             {groupIdx > 0 && <hr className="my-1 h-px border-0 bg-border" />}
             {flatItems.map(renderItem)}
             {indentedItems.length > 0 && (

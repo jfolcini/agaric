@@ -1860,6 +1860,7 @@ export async function startSync(
   onProgress?: (update: SyncProgressUpdate) => void,
 ): Promise<SyncSessionInfo> {
   const channel = new Channel<SyncProgressUpdate>()
+  // oxlint-disable-next-line unicorn/prefer-add-event-listener -- Tauri `Channel` is an IPC primitive, not a DOM EventTarget; it only exposes an `onmessage` setter (no `addEventListener`)
   if (onProgress) channel.onmessage = onProgress
   return unwrap(await commands.startSync(peerId, channel))
 }
@@ -2134,6 +2135,7 @@ export async function importMarkdown(
   onProgress?: (update: ImportProgressUpdate) => void,
 ): Promise<ImportResult> {
   const channel = new Channel<ImportProgressUpdate>()
+  // oxlint-disable-next-line unicorn/prefer-add-event-listener -- Tauri `Channel` is an IPC primitive, not a DOM EventTarget; it only exposes an `onmessage` setter (no `addEventListener`)
   if (onProgress) channel.onmessage = onProgress
   return unwrap(await commands.importMarkdown(content, filename ?? null, spaceId, channel))
 }

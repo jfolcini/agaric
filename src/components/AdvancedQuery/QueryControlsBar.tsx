@@ -206,8 +206,8 @@ export function QueryControlsBar({
           {sort.map((key, index) => {
             const sourceVal = sortSourceValue(key.source)
             return (
-              // biome-ignore lint/suspicious/noArrayIndexKey: sort keys are an ordered list with no stable id; index is the order
               <li
+                // oxlint-disable-next-line react/no-array-index-key -- engine-typed `SortKey[]` (no id, can hold duplicate source/dir pairs); rows are positional and the whole array is replaced on edit, so index is the stable identity here
                 key={index}
                 className="flex items-center gap-2"
                 data-testid="advanced-query-sort-row"
@@ -288,8 +288,8 @@ export function QueryControlsBar({
         </div>
         <ul aria-labelledby={`${fulltextId}-aggregates`} className="flex flex-col gap-1">
           {aggregates.map((spec, index) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: aggregate specs are an ordered list with no stable id
             <li
+              // oxlint-disable-next-line react/no-array-index-key -- engine-typed `AggregateSpec[]` (no id, can hold duplicate op/target pairs); rows are positional and the whole array is replaced on edit, so index is the stable identity here
               key={index}
               className="flex items-center gap-2"
               data-testid="advanced-query-aggregate-row"

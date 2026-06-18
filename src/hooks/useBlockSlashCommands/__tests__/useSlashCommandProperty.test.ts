@@ -4,7 +4,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { renderHook } from '@testing-library/react'
+import { renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -385,13 +385,15 @@ describe('useSlashCommandProperty — attach', () => {
       // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(el).not.toBeNull() above
       Object.defineProperty(el!, 'files', { value: [file] })
       // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded above
-      await el!.onchange?.(new Event('change'))
+      el!.dispatchEvent(new Event('change'))
 
-      expect(mockedInvoke).toHaveBeenCalledWith('add_attachment_with_bytes', {
-        blockId: 'BLOCK_1',
-        filename: 'photo.png',
-        mimeType: 'image/png',
-        bytes: [1, 2, 3, 4],
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('add_attachment_with_bytes', {
+          blockId: 'BLOCK_1',
+          filename: 'photo.png',
+          mimeType: 'image/png',
+          bytes: [1, 2, 3, 4],
+        })
       })
     } finally {
       input.restore()
@@ -412,12 +414,14 @@ describe('useSlashCommandProperty — attach', () => {
       // oxlint-disable-next-line typescript/no-non-null-assertion -- input is created by the handler
       Object.defineProperty(el!, 'files', { value: [file] })
       // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded above
-      await el!.onchange?.(new Event('change'))
+      el!.dispatchEvent(new Event('change'))
 
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+          'blockTree.attachmentTypeNotAllowed:{"type":"application/x-msdownload"}',
+        )
+      })
       expect(mockedInvoke).not.toHaveBeenCalledWith('add_attachment_with_bytes', expect.anything())
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
-        'blockTree.attachmentTypeNotAllowed:{"type":"application/x-msdownload"}',
-      )
     } finally {
       input.restore()
     }

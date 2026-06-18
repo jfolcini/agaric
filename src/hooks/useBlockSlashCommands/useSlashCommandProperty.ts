@@ -202,7 +202,7 @@ async function handleRepeat(ctx: SlashCommandContext, value: string): Promise<vo
 function handleAttach(ctx: SlashCommandContext): void {
   const input = document.createElement('input')
   input.type = 'file'
-  input.onchange = async () => {
+  input.addEventListener('change', async () => {
     const file = input.files?.[0]
     if (!file) return
     const filename = file.name
@@ -231,7 +231,7 @@ function handleAttach(ctx: SlashCommandContext): void {
       if (progressToastId !== undefined) notify.dismiss(progressToastId)
       notify.error(ctx.t('blockTree.attachFileFailed'))
     }
-  }
+  })
   // FE-M-6: `input.click()` can throw on some platforms (e.g. when the user
   // gesture has been lost or the browser/webview blocks programmatic file
   // dialogs). Surface the failure instead of letting it bubble as an

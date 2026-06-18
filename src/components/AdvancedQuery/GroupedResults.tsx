@@ -79,12 +79,13 @@ export function GroupedResults({
       data-testid="advanced-query-groups"
       aria-label={t('advancedQuery.group.summaryLabel')}
     >
-      {groups.map((group, index) => {
+      {groups.map((group) => {
         const members = group.members as unknown as BlockRow[]
         return (
           <section
-            // biome-ignore lint/suspicious/noArrayIndexKey: group keys can repeat across pages; index is the stable position
-            key={`${group.key}-${index}`}
+            // One section per distinct group bucket — `group.key` is unique within a
+            // single grouped response (pagination concerns don't apply to one render).
+            key={group.key}
             className="advanced-query-group flex flex-col gap-1.5"
             data-testid="advanced-query-group-section"
           >
