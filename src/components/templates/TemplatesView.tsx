@@ -50,14 +50,19 @@ interface TemplateItem {
  * `expandTemplateVariables` (`template-utils.ts`). Surfaced as a low-chrome
  * hint row beneath the create form so users discover them without reading
  * source comments. `token` is the literal syntax; `descKey` names the i18n
- * description shown in the tooltip. Keep in sync with the `.replace(…)`
- * chain in `expandTemplateVariables`.
+ * description shown in the tooltip. Keep in sync with the `LEGACY_RESOLVERS`
+ * token → resolver map in `expandTemplateVariables` (#1450 Phase 1).
  */
 const TEMPLATE_VARIABLES: ReadonlyArray<{ token: string; descKey: string }> = [
   { token: '<% today %>', descKey: 'templates.variableToday' },
   { token: '<% time %>', descKey: 'templates.variableTime' },
   { token: '<% datetime %>', descKey: 'templates.variableDatetime' },
   { token: '<% page title %>', descKey: 'templates.variablePageTitle' },
+  { token: '<% today:DD/MM/YYYY %>', descKey: 'templates.variableTodayFormat' },
+  { token: '<% date+7 %>', descKey: 'templates.variableDateMath' },
+  { token: '<% weekday %>', descKey: 'templates.variableWeekday' },
+  { token: '<% month %>', descKey: 'templates.variableMonth' },
+  { token: '<% isoweek %>', descKey: 'templates.variableIsoweek' },
 ]
 
 export function TemplatesView(): React.ReactElement {
@@ -204,7 +209,10 @@ export function TemplatesView(): React.ReactElement {
             <TooltipTrigger asChild>
               <code
                 className="rounded bg-muted px-1 py-0.5 font-mono text-[0.7rem] cursor-help"
-                data-testid={`template-variable-${token.replace(/[^a-z]+/g, '-').replace(/^-|-$/g, '')}`}
+                data-testid={`template-variable-${token
+                  .toLowerCase()
+                  .replace(/[^a-z0-9]+/g, '-')
+                  .replace(/^-|-$/g, '')}`}
               >
                 {token}
               </code>

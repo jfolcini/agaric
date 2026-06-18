@@ -549,6 +549,127 @@ describe('expandTemplateVariables', () => {
   })
 })
 
+describe('expandTemplateVariables — resolver map (#1450 Phase 1)', () => {
+  // A fixed clock so date/time assertions are deterministic.
+  // 2026-03-07 09:05 local time — a Saturday, ISO week 10.
+  const NOW = new Date(2026, 2, 7, 9, 5, 0)
+
+  describe('existing tokens are byte-unchanged under a fixed clock', () => {
+    it('<% today %> → YYYY-MM-DD (local)', () => {
+      expect(expandTemplateVariables('<% today %>', { now: NOW })).toBe('2026-03-07')
+    })
+
+    it('<% time %> → HH:MM (local)', () => {
+      expect(expandTemplateVariables('<% time %>', { now: NOW })).toBe('09:05')
+    })
+
+    it('<% datetime %> → YYYY-MM-DD HH:MM (local)', () => {
+      expect(expandTemplateVariables('<% datetime %>', { now: NOW })).toBe('2026-03-07 09:05')
+    })
+
+    it('<% page title %> → context title', () => {
+      expect(expandTemplateVariables('<% page title %>', { now: NOW, pageTitle: 'Notes' })).toBe(
+        'Notes',
+      )
+    })
+
+    it('<% page title %> → empty string when no title', () => {
+      expect(expandTemplateVariables('<% page title %>', { now: NOW })).toBe('')
+    })
+
+    it('collapses internal whitespace in page title token', () => {
+      expect(expandTemplateVariables('<%  page   title  %>', { now: NOW, pageTitle: 'X' })).toBe(
+        'X',
+      )
+    })
+  })
+
+  describe('configurable date/time formats', () => {
+    it('<% today:DD/MM/YYYY %> maps user tokens onto date-fns', () => {
+      expect(expandTemplateVariables('<% today:DD/MM/YYYY %>', { now: NOW })).toBe('07/03/2026')
+    })
+
+    it('<% time:HH:mm %> tolerates colons inside the format', () => {
+      expect(expandTemplateVariables('<% time:HH:mm %>', { now: NOW })).toBe('09:05')
+    })
+
+    it('<% datetime:FORMAT %> formats a raw date-fns pattern', () => {
+      expect(expandTemplateVariables('<% datetime:yyyy-MM-dd %>', { now: NOW })).toBe('2026-03-07')
+    })
+
+    it('<% today:YYYY %> for the year alone', () => {
+      expect(expandTemplateVariables('<% today:YYYY %>', { now: NOW })).toBe('2026')
+    })
+
+    it('falls back to the default (no throw) on an invalid format', () => {
+      // `ooooo` is an unescaped-latin token that date-fns rejects with a
+      // RangeError — the resolver must swallow it and fall back to the default.
+      expect(expandTemplateVariables('<% today:ooooo %>', { now: NOW })).toBe('2026-03-07')
+    })
+  })
+
+  describe('date math', () => {
+    it('<% date+7 %> → today plus 7 days (default format)', () => {
+      expect(expandTemplateVariables('<% date+7 %>', { now: NOW })).toBe('2026-03-14')
+    })
+
+    it('<% date-1 %> → today minus 1 day (default format)', () => {
+      expect(expandTemplateVariables('<% date-1 %>', { now: NOW })).toBe('2026-03-06')
+    })
+
+    it('<% date+7:YYYY-MM-DD %> combines date math with a format', () => {
+      expect(expandTemplateVariables('<% date+7:YYYY-MM-DD %>', { now: NOW })).toBe('2026-03-14')
+    })
+
+    it('crosses a month boundary correctly', () => {
+      expect(expandTemplateVariables('<% date+30 %>', { now: NOW })).toBe('2026-04-06')
+    })
+  })
+
+  describe('new built-ins', () => {
+    it('<% weekday %> → full day name', () => {
+      expect(expandTemplateVariables('<% weekday %>', { now: NOW })).toBe('Saturday')
+    })
+
+    it('<% month %> → full month name', () => {
+      expect(expandTemplateVariables('<% month %>', { now: NOW })).toBe('March')
+    })
+
+    it('<% isoweek %> → ISO week number', () => {
+      expect(expandTemplateVariables('<% isoweek %>', { now: NOW })).toBe('10')
+    })
+
+    it('built-ins accept a format argument (weekday:EEE)', () => {
+      expect(expandTemplateVariables('<% weekday:EEE %>', { now: NOW })).toBe('Sat')
+    })
+  })
+
+  it('is case-insensitive for new tokens too', () => {
+    expect(expandTemplateVariables('<% WEEKDAY %> <% Month %>', { now: NOW })).toBe(
+      'Saturday March',
+    )
+  })
+
+  it('leaves unknown tokens verbatim (does not drop them)', () => {
+    expect(expandTemplateVariables('<% unknown %> <% foo:bar %>', { now: NOW })).toBe(
+      '<% unknown %> <% foo:bar %>',
+    )
+  })
+
+  it('expands multiple tokens in one string', () => {
+    expect(
+      expandTemplateVariables('<% today %> — <% weekday %> (<% page title %>)', {
+        now: NOW,
+        pageTitle: 'Standup',
+      }),
+    ).toBe('2026-03-07 — Saturday (Standup)')
+  })
+
+  it('uses the live clock by default when no now is supplied', () => {
+    expect(expandTemplateVariables('<% today %>', {})).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+})
+
 describe('loadJournalTemplateForSpace', () => {
   it('returns null when the journal_template property is absent', async () => {
     // PEND-35 Tier 2.4c — backend returns `null` for the missing row
