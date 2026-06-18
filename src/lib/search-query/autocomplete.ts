@@ -32,6 +32,13 @@ export type AutocompleteAnchor =
   // PEND-53 — state: / priority: value autocomplete.
   | { active: 'state'; query: string; anchor: number }
   | { active: 'priority'; query: string; anchor: number }
+  // #1682 — negated state:/priority: get distinct kinds so the anchor
+  // carries the negation signal (symmetry with not-path: → pathExclude),
+  // rather than collapsing into the positive 'state'/'priority' kinds.
+  // The value vocabulary is shared (consumers route both to the same
+  // option list), so this is purely an information-preserving change.
+  | { active: 'notState'; query: string; anchor: number }
+  | { active: 'notPriority'; query: string; anchor: number }
   // PEND-53 — due: / scheduled: bucket-keyword + ISO-date autocomplete.
   | { active: 'due'; query: string; anchor: number }
   | { active: 'scheduled'; query: string; anchor: number }
@@ -121,7 +128,7 @@ export function detectAutocompleteAnchor(input: string, caret: number): Autocomp
   // PEND-53 — state / priority / due / scheduled value autocomplete.
   if (slice.startsWith('not-state:')) {
     return {
-      active: 'state',
+      active: 'notState',
       query: slice.slice('not-state:'.length),
       anchor: start + 'not-state:'.length,
     }
@@ -135,7 +142,7 @@ export function detectAutocompleteAnchor(input: string, caret: number): Autocomp
   }
   if (slice.startsWith('not-priority:')) {
     return {
-      active: 'priority',
+      active: 'notPriority',
       query: slice.slice('not-priority:'.length),
       anchor: start + 'not-priority:'.length,
     }

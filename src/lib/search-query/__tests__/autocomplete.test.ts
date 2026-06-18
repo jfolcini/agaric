@@ -66,14 +66,49 @@ describe('detectAutocompleteAnchor', () => {
     expect(a).toMatchObject({ active: 'state', query: 'TO' })
   })
 
-  it('opens on not-state: (longer prefix wins)', () => {
+  // #1682 — negated state:/priority: must carry a distinct anchor kind
+  // (`notState`/`notPriority`) so the negation signal is preserved, rather
+  // than collapsing into the positive 'state'/'priority' kinds.
+  it('opens on not-state: with notState kind (longer prefix wins)', () => {
     const a = detectAutocompleteAnchor('not-state:DO', 12)
-    expect(a).toMatchObject({ active: 'state', query: 'DO' })
+    expect(a).toMatchObject({ active: 'notState', query: 'DO' })
+  })
+
+  it('anchors not-state: value portion just after the prefix', () => {
+    const a = detectAutocompleteAnchor('not-state:DO', 12)
+    expect(a).toEqual({ active: 'notState', query: 'DO', anchor: 'not-state:'.length })
+  })
+
+  it('opens on not-state: with empty query', () => {
+    const a = detectAutocompleteAnchor('not-state:', 10)
+    expect(a).toEqual({ active: 'notState', query: '', anchor: 10 })
   })
 
   it('opens on priority:', () => {
     const a = detectAutocompleteAnchor('priority:1', 10)
     expect(a).toMatchObject({ active: 'priority', query: '1' })
+  })
+
+  // #1682 — not-priority: parallels not-state:.
+  it('opens on not-priority: with notPriority kind (longer prefix wins)', () => {
+    const a = detectAutocompleteAnchor('not-priority:1', 14)
+    expect(a).toMatchObject({ active: 'notPriority', query: '1' })
+  })
+
+  it('anchors not-priority: value portion just after the prefix', () => {
+    const a = detectAutocompleteAnchor('not-priority:1', 14)
+    expect(a).toEqual({ active: 'notPriority', query: '1', anchor: 'not-priority:'.length })
+  })
+
+  // #1682 — positive cases must still report the un-negated kind (regression).
+  it('keeps state: on the positive state kind', () => {
+    const a = detectAutocompleteAnchor('state:TO', 8)
+    expect(a).toMatchObject({ active: 'state', query: 'TO' })
+  })
+
+  it('keeps priority: on the positive priority kind', () => {
+    const a = detectAutocompleteAnchor('priority:2', 10)
+    expect(a).toMatchObject({ active: 'priority', query: '2' })
   })
 
   it('opens on due:', () => {

@@ -47,7 +47,7 @@ export function DailyView({
   })
 
   return (
-    <div key={entry.dateStr} className="space-y-4 animate-in fade-in-0 duration-150">
+    <div key={entry.dateStr} className="space-y-4 animate-in fade-in-0 duration-normal">
       {isToday && <UnfinishedTasks onNavigateToPage={onNavigateToPage} />}
       <DaySection
         entry={entry}

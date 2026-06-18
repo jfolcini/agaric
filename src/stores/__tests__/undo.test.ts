@@ -104,6 +104,41 @@ describe('useUndoStore', () => {
       expect(pageState?.undoDepth).toBe(1)
     })
 
+    it('optimistic increment derives from current state, preserving pre-existing fields (#1675)', async () => {
+      // Seed an existing page entry with non-default fields. The optimistic
+      // increment must read from the functional-updater `current` and spread
+      // it (not a snapshot that would clobber these), so redoStack and
+      // redoGroupSizes survive the increment.
+      const priorOp = { device_id: 'devPrior', seq: 99 }
+      useUndoStore.setState({
+        pages: new Map([['page1', { redoStack: [priorOp], undoDepth: 2, redoGroupSizes: [3] }]]),
+      })
+
+      // Pend the backend so we can inspect state mid-flight (after the
+      // optimistic increment, before success).
+      let resolveUndo: (r: ReturnType<typeof makeUndoResult>) => void = () => {}
+      mockedUndoPageOp.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveUndo = resolve
+          }),
+      )
+
+      const undoPromise = useUndoStore.getState().undo('page1')
+      await Promise.resolve()
+      await Promise.resolve()
+
+      const midFlight = useUndoStore.getState().pages.get('page1')
+      expect(midFlight?.undoDepth).toBe(3) // 2 -> 3 derived from current
+      expect(midFlight?.redoStack).toEqual([priorOp]) // preserved, not clobbered
+      expect(midFlight?.redoGroupSizes).toEqual([3]) // preserved, not clobbered
+      // Backend received the pre-increment depth.
+      expect(mockedUndoPageOp).toHaveBeenCalledWith({ pageId: 'page1', undoDepth: 2 })
+
+      resolveUndo(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+      await undoPromise
+    })
+
     it('pushes reversed_op onto redoStack after undo', async () => {
       const result = makeUndoResult({ deviceId: 'dev1', seq: 5 })
       mockedUndoPageOp.mockResolvedValueOnce(result)
@@ -408,6 +443,47 @@ describe('useUndoStore', () => {
     it('is safe to call on a page with no state', () => {
       useUndoStore.getState().clearPage('nonexistent')
       expect(useUndoStore.getState().pages.has('nonexistent')).toBe(false)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // #1677 — undo result for a page cleared mid-flight must be DROPPED, not
+  // re-seeded. If clearPage runs during the undoPageOp await (provider
+  // unmounts mid-undo), the success updater must not fabricate a fresh entry
+  // and re-grow the pages Map after an explicit clear (#753 memory-growth).
+  // ---------------------------------------------------------------------------
+  describe('clearPage mid-flight (#1677)', () => {
+    it('does not re-seed a page entry when clearPage runs during the undo await', async () => {
+      // findUndoGroup resolves so the undo proceeds to a single undo.
+      mockedFindUndoGroup.mockResolvedValueOnce(1)
+
+      // undoPageOp stays pending until we resolve it; clearPage fires while it
+      // is in flight to simulate the provider unmounting mid-undo.
+      let resolveUndo: (r: ReturnType<typeof makeUndoResult>) => void = () => {}
+      mockedUndoPageOp.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveUndo = resolve
+          }),
+      )
+
+      // Kick off the undo and let the optimistic increment apply (it happens
+      // after the `await findUndoGroup`, so flush microtasks first).
+      const undoPromise = useUndoStore.getState().undo('page1')
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(useUndoStore.getState().pages.has('page1')).toBe(true)
+
+      // Provider unmounts mid-undo → page state cleared.
+      useUndoStore.getState().clearPage('page1')
+      expect(useUndoStore.getState().pages.has('page1')).toBe(false)
+
+      // Backend now resolves successfully — the success updater must NOT
+      // recreate the cleared entry (#1677).
+      resolveUndo(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+      await undoPromise
+
+      expect(useUndoStore.getState().pages.has('page1')).toBe(false)
     })
   })
 

@@ -253,7 +253,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
   // has no animation classes; subsequent count changes set it to the new
   // count, which (a) re-keys the badge to force a remount and replay the
   // CSS animation, and (b) flips the className to include `animate-in
-  // fade-in-0 zoom-in-95 duration-150`. `prefers-reduced-motion` collapses
+  // fade-in-0 zoom-in-95 duration-normal`. `prefers-reduced-motion` collapses
   // the duration tokens to 0ms in `index.css`.
   const prevAttachmentCountRef = React.useRef(attachmentCount)
   const [animKey, setAnimKey] = React.useState<number | null>(null)
@@ -563,7 +563,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
               type="button"
               className={cn(
                 'attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-2.5 max-sm:py-1 touch-target',
-                animKey !== null && 'animate-in fade-in-0 zoom-in-95 duration-150',
+                animKey !== null && 'animate-in fade-in-0 zoom-in-95 duration-normal',
               )}
               data-testid="attachment-badge"
               aria-label={t('block.attachments', { count: attachmentCount })}

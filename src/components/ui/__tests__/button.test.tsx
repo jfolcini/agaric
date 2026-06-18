@@ -179,6 +179,15 @@ describe('Button', () => {
     expect(results).toHaveNoViolations()
   })
 
+  // #1680: destructive surface uses the semantic --destructive-foreground
+  // token (per-theme) rather than a hardcoded text-white literal.
+  it('destructive variant uses the destructive-foreground token, not text-white', () => {
+    render(<Button variant="destructive">Delete</Button>)
+    const btn = screen.getByRole('button', { name: 'Delete' })
+    expect(btn.className).toContain('text-destructive-foreground')
+    expect(btn.className).not.toContain('text-white')
+  })
+
   it('has no a11y violations with destructive variant', async () => {
     const { container } = render(<Button variant="destructive">Delete</Button>)
     const results = await axe(container)

@@ -165,13 +165,19 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       const pageState = getOrCreatePage(state.pages, pageId)
       const depth = pageState.undoDepth
 
-      // Optimistic update: increment immediately
-      set({
-        pages: setPageState(state.pages, pageId, () => ({
-          ...pageState,
-          undoDepth: depth + 1,
-        })),
-      })
+      // Optimistic update: increment immediately. Read from the functional
+      // updater's `current` so the write derives from the live state rather
+      // than the snapshot captured above (consistent with the success/rollback
+      // paths below).
+      set((s) => ({
+        pages: setPageState(s.pages, pageId, (current) => {
+          const base = current ?? pageState
+          return {
+            ...base,
+            undoDepth: base.undoDepth + 1,
+          }
+        }),
+      }))
 
       return depth
     })()
@@ -182,19 +188,20 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         undoDepth: currentDepth,
       })
 
-      // On success: add to redo stack
+      // On success: add to redo stack. If the page entry was cleared while the
+      // undo was in flight (e.g. clearPage during the await when the provider
+      // unmounts mid-undo), drop the result rather than re-seeding a fabricated
+      // entry — re-growing the pages Map after an explicit clear contradicts
+      // clearPage's intent and the #753 memory-growth fix.
       set((state) => ({
-        pages: setPageState(state.pages, pageId, (current) => {
-          const base = current ?? {
-            redoStack: [],
-            undoDepth: currentDepth + 1,
-            redoGroupSizes: [],
-          }
-          return {
-            ...base,
-            redoStack: [result.reversed_op, ...base.redoStack].slice(0, MAX_REDO_STACK),
-          }
-        }),
+        pages: setPageState(state.pages, pageId, (current) =>
+          current
+            ? {
+                ...current,
+                redoStack: [result.reversed_op, ...current.redoStack].slice(0, MAX_REDO_STACK),
+              }
+            : current,
+        ),
       }))
 
       return result
@@ -225,14 +232,19 @@ export const useUndoStore = create<UndoStore>((set, get) => {
 
       const [first, ...remainingStack] = pageState.redoStack
 
-      // Optimistic update: pop from redo stack and decrement undoDepth
-      set({
-        pages: setPageState(state.pages, pageId, () => ({
-          ...pageState,
-          redoStack: remainingStack,
-          undoDepth: pageState.undoDepth - 1,
-        })),
-      })
+      // Optimistic update: pop from redo stack and decrement undoDepth. Read
+      // from the functional updater's `current` for consistency with the
+      // success/rollback paths (derive from live state, not the snapshot).
+      set((s) => ({
+        pages: setPageState(s.pages, pageId, (current) => {
+          const base = current ?? pageState
+          return {
+            ...base,
+            redoStack: remainingStack,
+            undoDepth: base.undoDepth - 1,
+          }
+        }),
+      }))
 
       return first as OpRef
     })()

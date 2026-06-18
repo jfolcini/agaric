@@ -36,6 +36,16 @@ describe('Badge', () => {
     expect(badge.className).toContain('bg-secondary')
   })
 
+  // #1680: destructive surface uses the semantic --destructive-foreground
+  // token (per-theme) rather than a hardcoded text-white literal.
+  it('destructive tone uses the destructive-foreground token, not text-white', () => {
+    render(<Badge tone="destructive">Danger</Badge>)
+    const badge = screen.getByText('Danger')
+    expect(badge.className).toContain('bg-destructive')
+    expect(badge.className).toContain('text-destructive-foreground')
+    expect(badge.className).not.toContain('text-white')
+  })
+
   it('merges custom className', () => {
     render(<Badge className="my-class">Custom</Badge>)
     const badge = screen.getByText('Custom')

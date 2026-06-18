@@ -316,7 +316,7 @@ export function UnfinishedTasks({
       </CollapsiblePanelHeader>
 
       {!collapsed && (
-        <div className="mt-1 space-y-3 animate-in fade-in-0 duration-150">
+        <div className="mt-1 space-y-3 animate-in fade-in-0 duration-normal">
           {groups.map((group) => {
             const isGroupCollapsed = groupCollapsed[group.key] ?? false
             return (
