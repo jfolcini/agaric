@@ -37,6 +37,35 @@ describe('PropertyChip', () => {
     expect(chip?.className).toContain('text-muted-foreground')
   })
 
+  // #1678: the wrapper composes the shared Badge primitive's pill chrome via
+  // badgeVariants() (rounded-full shape + base flex layout) so it stays in the
+  // pill family, while keeping the chip-specific muted tone and tighter padding.
+  it('composes the shared Badge pill chrome (rounded-full + base layout)', () => {
+    const { container } = render(<PropertyChip propKey="effort" value="2h" />)
+
+    const chip = container.querySelector('.property-chip')
+    // Pill shape comes from the Badge `shape="pill"` recipe.
+    expect(chip?.className).toContain('rounded-full')
+    // Base flex layout from the Badge primitive.
+    expect(chip?.className).toContain('inline-flex')
+    expect(chip?.className).toContain('items-center')
+    expect(chip?.className).toContain('font-medium')
+    expect(chip?.className).toContain('text-xs')
+  })
+
+  // #1678: PropertyChip overrides the Badge default padding/gap with its own
+  // tighter tokens (twMerge resolves the conflict so only the override remains).
+  it('keeps the chip-specific tighter padding and gap', () => {
+    const { container } = render(<PropertyChip propKey="effort" value="2h" />)
+
+    const chip = container.querySelector('.property-chip')
+    expect(chip?.className).toContain('px-1.5')
+    expect(chip?.className).toContain('gap-0.5')
+    // The Badge default `px-2`/`gap-1` must not survive the twMerge override.
+    expect(chip?.className).not.toMatch(/(^|\s)px-2(\s|$)/)
+    expect(chip?.className).not.toMatch(/(^|\s)gap-1(\s|$)/)
+  })
+
   it('does not have mt-1 (alignment handled by parent container pt-1)', () => {
     const { container } = render(<PropertyChip propKey="effort" value="1h" />)
 

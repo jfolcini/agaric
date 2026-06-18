@@ -1498,15 +1498,17 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     },
 
     appendBlock: (row: BlockRow) => {
-      const { blocks } = get()
       // Depth 0 — the caller (PageEditor empty-page first-block-create)
       // creates directly under this page's `rootParentId`, which is the
       // top-level depth in the flat tree.
       const newBlock: FlatBlock = { ...row, depth: 0 }
-      const newBlocks = [...blocks, newBlock]
+      // Recompute the next blocks array INSIDE the updater (#714 discipline) so
+      // the array and the `blocksById` Map are both derived from the same
+      // commit-time state, never mixing a pre-set snapshot array with a
+      // commit-time Map.
       // Single-block append (perf invariant): touch only the new key.
       set((state) => ({
-        blocks: newBlocks,
+        blocks: [...state.blocks, newBlock],
         blocksById: cloneBlocksByIdWith(state.blocksById, [newBlock]),
       }))
     },

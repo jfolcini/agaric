@@ -146,7 +146,7 @@ describe('DailyView', () => {
     const wrapper = container.firstElementChild as HTMLElement
     expect(wrapper.className).toContain('animate-in')
     expect(wrapper.className).toContain('fade-in-0')
-    expect(wrapper.className).toContain('duration-150')
+    expect(wrapper.className).toContain('duration-normal')
   })
 
   it('has no a11y violations', async () => {

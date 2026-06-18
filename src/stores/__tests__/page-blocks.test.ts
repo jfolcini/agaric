@@ -2924,6 +2924,28 @@ describe('PageBlockStore', () => {
       const blocks = store.getState().blocks
       expect(blocks.map((b) => b.id)).toEqual(['A', 'B'])
     })
+
+    it('derives the blocks array and blocksById Map from the same commit-time state (#1676)', () => {
+      const existing = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0, depth: 0 })
+      store.setState({ blocks: [existing] })
+
+      const row = makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 1 })
+      const { depth: _depth, ...rowWithoutDepth } = row
+
+      store.getState().appendBlock(rowWithoutDepth)
+
+      // The next blocks array is recomputed inside the updater from
+      // state.blocks (not a pre-set snapshot), so the array and the Map are
+      // derived from the same commit-time state and cannot diverge: same
+      // length, every array entry present AND identical in the Map.
+      const s = store.getState()
+      expect(s.blocksById.size).toBe(s.blocks.length)
+      for (const b of s.blocks) {
+        expect(s.blocksById.get(b.id)).toBe(b)
+      }
+      // Prior entry preserved by identity (clone touched only the new key).
+      expect(s.blocksById.get('A')).toBe(existing)
+    })
   })
 
   // ---------------------------------------------------------------------------

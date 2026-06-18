@@ -1,6 +1,7 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { badgeVariants } from '@/components/ui/badge'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 import { cn } from '@/lib/utils'
 
@@ -28,6 +29,11 @@ interface PropertyChipProps {
  * Focus ring: the wrapper carries a `focus-within` ring so tabbing into
  * either inner button lights up the whole pill instead of two overlapping
  * rings.
+ *
+ * Chrome: the pill shares the design-system Badge primitive's chrome via
+ * `badgeVariants()` (#1678) — base flex/shape/size tokens come from Badge so
+ * the chip stays in the pill family; the muted tone and tighter padding/gap
+ * are PropertyChip-specific overrides (Badge has no `muted` tone).
  */
 export function PropertyChip({
   propKey,
@@ -94,7 +100,15 @@ export function PropertyChip({
       role="group"
       aria-label={chipLabel}
       className={cn(
-        'property-chip inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none touch-target [@media(pointer:coarse)]:px-2 [@media(pointer:coarse)]:py-0.5',
+        // Compose the shared Badge primitive's pill chrome (base flex layout,
+        // rounded-full shape, font-medium, text-xs size, transition) so the
+        // chip stays in sync with the rest of the pill family (#1678).
+        badgeVariants({ size: 'default', shape: 'pill' }),
+        'property-chip',
+        // PropertyChip overrides: Badge has no `muted` tone, and the chip uses a
+        // tighter gap/padding than the default Badge. twMerge (via `cn`) resolves
+        // these against the recipe's tokens deterministically (last wins).
+        'gap-0.5 px-1.5 leading-none select-none touch-target [@media(pointer:coarse)]:px-2 [@media(pointer:coarse)]:py-0.5',
         'bg-muted text-muted-foreground',
         'focus-within:ring-[3px] focus-within:ring-ring/50',
         onClick && 'hover:bg-accent/50 active:bg-accent/70 transition-colors',

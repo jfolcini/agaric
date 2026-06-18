@@ -225,9 +225,14 @@ export function useAutocompleteSources(
   }
 
   switch (anchor.active) {
+    // #1682 — negated kinds (`notState`/`notPriority`) share the positive
+    // value vocabulary; they carry a distinct anchor kind only so the
+    // negation signal is preserved should negated-chip UX ever diverge.
     case 'state':
+    case 'notState':
       return { items: projectStatic(STATE_VALUES, anchor.query), loading: false }
     case 'priority':
+    case 'notPriority':
       return { items: projectStatic(priorityValues, anchor.query), loading: false }
     case 'due':
     case 'scheduled':

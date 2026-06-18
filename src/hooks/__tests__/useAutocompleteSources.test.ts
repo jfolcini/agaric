@@ -96,6 +96,22 @@ describe('useAutocompleteSources', () => {
     expect(result.current.loading).toBe(false)
   })
 
+  // #1682 — negated kinds carry the negation signal but share the positive
+  // value vocabulary, so the popover options must be identical.
+  it('notState anchor filters STATE_VALUES like the positive state kind', () => {
+    const anchor: AutocompleteAnchor = { active: 'notState', query: 'T', anchor: 0 }
+    const { result } = renderHook(() => useAutocompleteSources({ anchor, spaceId: 'S1' }))
+    expect(result.current.items).toEqual([{ value: 'TODO' }])
+    expect(result.current.loading).toBe(false)
+  })
+
+  it('notPriority anchor projects the same numeric levels as priority', () => {
+    const anchor: AutocompleteAnchor = { active: 'notPriority', query: '', anchor: 0 }
+    const { result } = renderHook(() => useAutocompleteSources({ anchor, spaceId: 'S1' }))
+    expect(result.current.items.map((i) => i.value)).toEqual(['1', '2', '3', 'none'])
+    expect(result.current.loading).toBe(false)
+  })
+
   it('priority anchor projects the default numeric levels + none', () => {
     // DOC-A7 follow-up — autocomplete must offer the real numeric priority
     // values (`DEFAULT_PRIORITY_LEVELS`), not the stale hardcoded `A/B/C`

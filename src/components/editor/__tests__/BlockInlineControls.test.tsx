@@ -808,7 +808,7 @@ describe('BlockInlineControls', () => {
         expect(badge.className).toContain('animate-in')
         expect(badge.className).toContain('fade-in-0')
         expect(badge.className).toContain('zoom-in-95')
-        expect(badge.className).toContain('duration-150')
+        expect(badge.className).toContain('duration-normal')
       })
     })
 
