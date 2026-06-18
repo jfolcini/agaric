@@ -2,6 +2,8 @@ import { Editor } from '@tiptap/core'
 import CodeBlock from '@tiptap/extension-code-block'
 import Document from '@tiptap/extension-document'
 import History from '@tiptap/extension-history'
+import { BulletList } from '@tiptap/extension-list'
+import ListItem from '@tiptap/extension-list-item'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -81,10 +83,10 @@ describe('Checkbox regex patterns', () => {
 })
 
 describe('CheckboxInputRule input rules', () => {
-  it('extension has exactly 2 input rules', () => {
+  it('extension has exactly 4 input rules (2 direct `- [ ] ` + 2 bullet-unwrap `[ ] `)', () => {
     const ext = CheckboxInputRule.configure({ onCheckbox: null })
     const rules = ext.config.addInputRules?.call({ options: ext.options } as any)
-    expect(rules).toHaveLength(2)
+    expect(rules).toHaveLength(4)
   })
 
   it('TODO handler calls onCheckbox with TODO', () => {
@@ -353,5 +355,143 @@ describe('CheckboxInputRule real-editor integration', () => {
     await flushInputRule()
     // A single matching insert must produce exactly one onCheckbox call.
     expect(onCheckbox).toHaveBeenCalledTimes(1)
+  })
+})
+
+// #1494 — when BulletList is registered, its `- ` rule fires on the space
+// after the dash and wraps the line in a bulletList before `- [ ] ` can
+// match. These tests drive the realistic char-by-char typed path (each
+// character a separate input) with BulletList + ListItem present, asserting
+// the bullet-unwrap rules recover the task and don't fire spuriously.
+describe('CheckboxInputRule — typed path under BulletList shadowing (#1494)', () => {
+  let editor: Editor | null = null
+
+  afterEach(() => {
+    editor?.destroy()
+    editor = null
+  })
+
+  function buildEditor(
+    onCheckbox: ((state: 'TODO' | 'DONE') => void) | null,
+    content: Array<Record<string, unknown>> = [{ type: 'paragraph' }],
+  ): Editor {
+    return new Editor({
+      element: document.createElement('div'),
+      extensions: [
+        Document,
+        Paragraph,
+        Text,
+        History,
+        BulletList,
+        ListItem,
+        CheckboxInputRule.configure({ onCheckbox }),
+      ],
+      content: { type: 'doc', content },
+    })
+  }
+
+  // Type one character at a time through the SAME synchronous path real
+  // keystrokes take: ProseMirror calls `handleTextInput` per character and
+  // returns on the first plugin that handles it (`view.someProp` short-
+  // circuits). We replicate that here instead of `insertContent(ch, {
+  // applyInputRules: true })`.
+  //
+  // The `applyInputRules` meta path is NOT equivalent: it defers each input-
+  // rule plugin's `run()` to an independent `setTimeout(0)` with NO cross-
+  // plugin short-circuit. With BulletList + CheckboxInputRule both present,
+  // the trigger space queues two timers; the first fires the unwrap and
+  // collapses the one-item list, then the second resolves the now-stale
+  // cursor position against the shrunken doc and throws an unhandled
+  // `RangeError: Position N out of range`. That escapes into the timer queue
+  // and fails the whole suite (vitest exits 1) even though every assertion
+  // passes. Production never hits it because `handleTextInput` short-circuits
+  // synchronously — so we drive that path and keep the test honest.
+  function typeChars(ed: Editor, s: string): void {
+    const { view } = ed
+    for (const ch of s) {
+      const { from, to } = view.state.selection
+      // Insert the literal character first (mirrors the DOM mutation), then
+      // run the input-rule handlers synchronously over it.
+      const handled = view.someProp('handleTextInput', (f) =>
+        f(view, from, to, ch, () => view.state.tr.insertText(ch, from, to)),
+      )
+      if (!handled) {
+        view.dispatch(view.state.tr.insertText(ch, from, to))
+      }
+    }
+  }
+
+  async function flush(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
+  it('typing "- [ ] " char-by-char fires onCheckbox(TODO) and leaves a single empty paragraph', async () => {
+    const onCheckbox = vi.fn()
+    editor = buildEditor(onCheckbox)
+    typeChars(editor, '- [ ] ')
+    await flush()
+    expect(onCheckbox).toHaveBeenCalledTimes(1)
+    expect(onCheckbox).toHaveBeenCalledWith('TODO')
+    expect(editor.getJSON()).toEqual({ type: 'doc', content: [{ type: 'paragraph' }] })
+  })
+
+  it('typing "- [x] " char-by-char fires onCheckbox(DONE)', async () => {
+    const onCheckbox = vi.fn()
+    editor = buildEditor(onCheckbox)
+    typeChars(editor, '- [x] ')
+    await flush()
+    expect(onCheckbox).toHaveBeenCalledTimes(1)
+    expect(onCheckbox).toHaveBeenCalledWith('DONE')
+    expect(editor.getJSON()).toEqual({ type: 'doc', content: [{ type: 'paragraph' }] })
+  })
+
+  it('typing "- [X] " (uppercase) char-by-char fires onCheckbox(DONE)', async () => {
+    const onCheckbox = vi.fn()
+    editor = buildEditor(onCheckbox)
+    typeChars(editor, '- [X] ')
+    await flush()
+    expect(onCheckbox).toHaveBeenCalledWith('DONE')
+  })
+
+  it('bulk-inserted "- [ ] " still hits the direct rule with BulletList present', async () => {
+    const onCheckbox = vi.fn()
+    editor = buildEditor(onCheckbox)
+    editor.commands.insertContent('- [ ] ', { applyInputRules: true })
+    await flush()
+    expect(onCheckbox).toHaveBeenCalledTimes(1)
+    expect(onCheckbox).toHaveBeenCalledWith('TODO')
+    expect(editor.getJSON()).toEqual({ type: 'doc', content: [{ type: 'paragraph' }] })
+  })
+
+  it('bare "[ ] " (no dash) in a plain paragraph stays literal and does not fire', async () => {
+    const onCheckbox = vi.fn()
+    editor = buildEditor(onCheckbox)
+    typeChars(editor, '[ ] ')
+    await flush()
+    expect(onCheckbox).not.toHaveBeenCalled()
+    expect(editor.state.doc.child(0).textContent).toBe('[ ] ')
+  })
+
+  it('"[ ] " typed inside a real multi-item bullet list does NOT unwrap or fire', async () => {
+    const onCheckbox = vi.fn()
+    editor = buildEditor(onCheckbox, [
+      {
+        type: 'bulletList',
+        content: [
+          {
+            type: 'listItem',
+            content: [{ type: 'paragraph', content: [{ type: 'text', text: 'one' }] }],
+          },
+          { type: 'listItem', content: [{ type: 'paragraph' }] },
+        ],
+      },
+    ])
+    editor.commands.focus('end')
+    typeChars(editor, '[ ] ')
+    await flush()
+    expect(onCheckbox).not.toHaveBeenCalled()
+    // Structure stays a bulletList; the second item keeps the literal text.
+    expect(editor.state.doc.child(0).type.name).toBe('bulletList')
   })
 })
