@@ -10,14 +10,16 @@ use crate::op_log::OpRecord;
 /// Restore a soft-deleted block and the connected same-cohort subtree
 /// descending from it.
 ///
-/// **Currently exercised only by tests.** As of #386 this primitive has
-/// no non-test callers — the production restore paths are
+/// **Test/bench-only primitive — not a production path.** As of #386/#1656
+/// this function has no production callers: the live restore paths are
 /// `loro::engine::apply_restore_block` /
-/// `materializer::handlers::project_restore_block_to_sql`, and every call
-/// site of `soft_delete::restore_block` lives in a `#[cfg(test)]` module.
-/// The `&Materializer` / op-dispatch contract documented below describes
-/// the behaviour those tests assert; it is not, today, a load-bearing
-/// production path.
+/// `materializer::handlers::project_restore_block_to_sql`. The only
+/// consumers are `#[cfg(test)]` modules and the `soft_delete_bench` perf
+/// harness. It exists to exercise — and let those tests assert — the
+/// materializer cache-rebuild fan-out for a `restore_block` op end-to-end;
+/// the `&Materializer` parameter and op-dispatch wiring below are there to
+/// make that fan-out observable in tests, not as guidance for a production
+/// caller. Do NOT wire this into production.
 ///
 /// #1119: cohort filter uses the shared [`crate::descendants_cte_cohort`]
 /// walk (the same primitive #1055 adopted in
@@ -31,16 +33,15 @@ use crate::op_log::OpRecord;
 /// with `depth < 100` (invariant #9). Three binds: seed id, then the
 /// cohort timestamp twice (recursive arm + outer filter).
 ///
-/// SQL-review M-3: takes `materializer: &Materializer` so the cache-
-/// invalidation fan-out is enforced by the type system. Any caller of
-/// this primitive **must** hold a `&Materializer` and post-commit the
-/// fan-out fires automatically. The fan-out is routed through the
-/// canonical `restore_block` op-type dispatch (a synthesized minimal
-/// [`OpRecord`] enqueued on the [`CommandTx`]), so the dispatched task
-/// set is *exactly* what `materializer::dispatch::invalidations_for_op`
-/// produces for a `restore_block` op (FULL_CACHE_REBUILD_TASKS, incl.
-/// `RebuildPageLinkCache`, + `UpdateFtsBlock`) and can never drift from
-/// it. See [`synthesize_restore_op`].
+/// SQL-review M-3: takes `materializer: &Materializer` so the test-only
+/// cache-rebuild fan-out is wired through the type system rather than left
+/// to each test caller. The fan-out is routed through the canonical
+/// `restore_block` op-type dispatch (a synthesized minimal [`OpRecord`]
+/// enqueued on the [`CommandTx`]), so the dispatched task set is *exactly*
+/// what `materializer::dispatch::invalidations_for_op` produces for a
+/// `restore_block` op (FULL_CACHE_REBUILD_TASKS, incl. `RebuildPageLinkCache`
+/// and `UpdateFtsBlock`) and can never drift from it. See
+/// [`synthesize_restore_op`].
 pub async fn restore_block(
     pool: &SqlitePool,
     materializer: &Materializer,
@@ -127,7 +128,8 @@ pub async fn restore_block(
 
 /// Build a minimal `restore_block` [`OpRecord`] purely to drive the
 /// canonical cache-rebuild fan-out via
-/// [`crate::materializer::dispatch::invalidations_for_op`].
+/// [`crate::materializer::dispatch::invalidations_for_op`] from the
+/// test/bench-only [`restore_block`].
 ///
 /// MAINT-112 / decision-b: this primitive is *not* a command — it does
 /// not append to `op_log`, so it has no real `OpRecord`. The

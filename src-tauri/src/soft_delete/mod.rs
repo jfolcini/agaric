@@ -1,12 +1,17 @@
 //! Soft-delete with cascade, restore, and purge operations.
 //!
-//! NOTE (#386): the `cascade_soft_delete` and `restore_block` primitives
-//! re-exported below currently have **no non-test callers**. Production
+//! NOTE (#386/#1656): the `cascade_soft_delete` and `restore_block`
+//! primitives re-exported below have **no production callers**. Production
 //! deletes go through `commands::blocks::crud::delete_block_inner`, and
 //! production restores through `loro::engine::apply_restore_block` /
-//! `materializer::handlers::project_restore_block_to_sql`. These
-//! primitives are presently exercised only by `#[cfg(test)]` modules; the
-//! `is_deleted` helper below is the one item here on a production path.
+//! `materializer::handlers::project_restore_block_to_sql`. These primitives
+//! exist solely to exercise the materializer cache-rebuild fan-out in tests;
+//! their only consumers are `#[cfg(test)]` modules plus the
+//! `soft_delete_bench` perf harness (a public-API bench, which is why they
+//! cannot simply be `#[cfg(test)]`-gated). Treat their `&Materializer` /
+//! op-dispatch wiring as test scaffolding, NOT production guidance — see the
+//! per-function docs. The `is_deleted` helper below is the one item here on a
+//! production path.
 
 mod restore;
 mod trash;
