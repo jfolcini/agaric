@@ -68,11 +68,11 @@ prek run --all-files         # Full local gate (mirror of CI's `validate` job)
 The pre-commit hooks split formatting by language. If a hook fails:
 
 ```bash
-npm run format        # oxfmt — fixes JS/TS/JSON (the oxfmt hook also auto-fixes + re-stages)
-npm run format:toml   # taplo — fixes TOML (a `taplo fmt --check` failure is NOT fixed by `npm run format`)
+git diff --name-only | xargs oxfmt --write   # oxfmt — fixes JS/TS/JSON in CHANGED files only (matches the staged-files hook)
+npm run format:toml                           # taplo — fixes TOML (a `taplo fmt --check` failure is NOT fixed by oxfmt)
 ```
 
-`npm run format` (oxfmt) only touches JS/TS/JSON and never reformats TOML, so a `taplo fmt --check` hook failure must be fixed with `npm run format:toml`. The `format:toml` script needs the `taplo` binary on `PATH` (`cargo install taplo-cli --locked`).
+Prefer formatting only the files you changed (as above), since `npm run format` is `oxfmt --write .` — a whole-repo reformat that can produce large unrelated diffs; reserve it for intentional repo-wide passes. Either way, oxfmt only touches JS/TS/JSON and never reformats TOML, so a `taplo fmt --check` hook failure must be fixed with `npm run format:toml`. The `format:toml` script needs the `taplo` binary on `PATH` (`cargo install taplo-cli --locked`).
 
 Every change must:
 
