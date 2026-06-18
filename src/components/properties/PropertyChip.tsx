@@ -49,6 +49,11 @@ export function PropertyChip({
         'focus-ring-visible',
         Icon && 'inline-flex items-center gap-0.5',
       )}
+      // #1498: the chip lives outside the contenteditable. With the block's
+      // editor focused, a plain click would blur it first (flush →
+      // re-render/remount) and swallow the click. preventDefault on mousedown
+      // retains editor focus so the edit-key flow opens and the caret stays put.
+      onMouseDown={(e) => e.preventDefault()}
       onClick={onKeyClick}
       aria-label={t('property.editKeyLabel', { key: displayName })}
     >
@@ -71,6 +76,9 @@ export function PropertyChip({
         'property-chip-value cursor-pointer hover:underline rounded-sm',
         'focus-ring-visible',
       )}
+      // #1498: keep editor focus on click so the value-edit flow opens (see the
+      // key-label note above for the blur/flush rationale).
+      onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
       aria-label={chipLabel}
     >

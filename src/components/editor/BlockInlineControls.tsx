@@ -62,6 +62,10 @@ export function DateChip({
       )}
       title={t(i18nKey, { date: formatCompactDate(date) })}
       aria-label={t(i18nKey, { date: formatCompactDate(date) })}
+      // #1498: keep editor focus on click so the date-picker event fires (a
+      // blur would flush/remount the block and swallow the click). See the
+      // collapse-toggle note in BlockInlineControls for the full rationale.
+      onMouseDown={(e) => e.preventDefault()}
       onClick={() => {
         dispatchBlockEvent(eventName)
       }}
@@ -295,6 +299,13 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
               )}
               data-testid="collapse-toggle"
               data-collapsed={isCollapsed}
+              // #1498: the gutter controls live OUTSIDE the contenteditable. With
+              // the block's ProseMirror editor focused, a plain click would first
+              // blur the editor (flush → re-render/remount) and the pending click
+              // gets swallowed — the control does nothing. preventDefault on
+              // mousedown retains editor focus (no blur → no flush) so the click
+              // fires and the caret stays put. Mirrors the Mermaid toggle (#1438).
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => onToggleCollapse?.(blockId)}
               aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}
               aria-expanded={!isCollapsed}
@@ -354,6 +365,8 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
                   ? t('block.zoomBulletParent')
                   : t('block.zoomBullet')
             }
+            // #1498: keep editor focus on click (see collapse-toggle note).
+            onMouseDown={(e) => e.preventDefault()}
             onClick={(e) => {
               e.stopPropagation()
               zoomIn?.(blockId)
@@ -400,6 +413,8 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
                   'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100 [.block-active_&]:opacity-100',
               )}
               data-testid="task-marker"
+              // #1498: keep editor focus on click (see collapse-toggle note).
+              onMouseDown={(e) => e.preventDefault()}
               onClick={(e) => {
                 e.stopPropagation()
                 onToggleTodo?.(blockId)
@@ -432,6 +447,8 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
               // priority is set, so this is always `true` here, but it makes the
               // toggle semantics explicit for AT.
               aria-pressed={priority !== undefined && priority !== null}
+              // #1498: keep editor focus on click (see collapse-toggle note).
+              onMouseDown={(e) => e.preventDefault()}
               onClick={(e) => {
                 e.stopPropagation()
                 onTogglePriority?.(blockId)
@@ -519,6 +536,8 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
                   aria-label={t('block.showAllProperties', {
                     count: filteredProperties.length,
                   })}
+                  // #1498: keep editor focus on click (see collapse-toggle note).
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={(e) => {
                     e.stopPropagation()
                     dispatchBlockEvent('OPEN_BLOCK_PROPERTIES')
@@ -549,6 +568,8 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
               data-testid="attachment-badge"
               aria-label={t('block.attachments', { count: attachmentCount })}
               aria-expanded={showAttachments}
+              // #1498: keep editor focus on click (see collapse-toggle note).
+              onMouseDown={(e) => e.preventDefault()}
               onClick={onToggleAttachments}
             >
               <Paperclip className="h-3 w-3 flex-shrink-0" />
