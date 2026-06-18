@@ -291,6 +291,14 @@ fn gate_leaf_keys(expr: &FilterExpr) -> Result<(), AppError> {
                     "InvalidFilter: `{key}` is not a valid filter on the advanced-query surface"
                 )));
             }
+            // #1455 — `has-parent-matching` carries a nested FilterExpr (the
+            // parent matcher); its leaves must be gated too, or an unsupported
+            // key could slip in via the sub-expression.
+            if let crate::filters::primitive::FilterPrimitive::HasParentMatching { matcher } =
+                primitive
+            {
+                gate_leaf_keys(matcher)?;
+            }
             Ok(())
         }
         FilterExpr::And { children } | FilterExpr::Or { children } => {
