@@ -112,7 +112,7 @@ export function CommandPalette(): React.ReactElement | null {
   const closeStore = useCommandPaletteStore((s) => s.close)
 
   const parts = useDialogOrSheet('dialog')
-  const { Root, Content, Title } = parts
+  const { Root, Content, Title, Description } = parts
 
   // Radix attaches its Escape handler at `document` with `capture: true`,
   // so it fires BEFORE the action menu's React bubble-phase keydown
@@ -148,6 +148,7 @@ export function CommandPalette(): React.ReactElement | null {
         aria-label={t('palette.dialogLabel')}
       >
         <Title className="sr-only">{t('palette.dialogTitle')}</Title>
+        <Description className="sr-only">{t('palette.dialogDescription')}</Description>
         <PaletteBody onClose={closeStore} actionMenuOpenRef={actionMenuOpenRef} />
       </Content>
     </Root>

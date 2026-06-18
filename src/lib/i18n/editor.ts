@@ -175,6 +175,7 @@ export const editor: Record<string, string> = {
   'imageAlign.saveFailed': 'Could not save image alignment',
   // #286 — emoji picker dialog (browse grid)
   'emojiPicker.title': 'Insert emoji',
+  'emojiPicker.dialogDescription': 'Search and pick an emoji to insert.',
   'emojiPicker.search': 'Search emoji',
   'emojiPicker.grid': 'Emoji',
   'emojiPicker.recents': 'Recents',

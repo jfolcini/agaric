@@ -334,6 +334,7 @@ export const references: Record<string, string> = {
   // PEND-51 — Cmd+K palette dialog.
   'palette.dialogLabel': 'Quick search',
   'palette.dialogTitle': 'Search palette',
+  'palette.dialogDescription': 'Search for pages and blocks, then run a command.',
   'palette.placeholder': 'Type to search a page or a block…',
   'palette.inputLabel': 'Search pages and blocks',
   'palette.resultsLabel': 'Palette results',
