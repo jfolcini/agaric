@@ -68,6 +68,13 @@ large_futures = "warn"
 default_trait_access = "warn"
 cloned_instead_of_copied = "warn"
 flat_map_option = "warn"
+# Leftover-debug / unfinished-code guards (zero current hits). The pre-push and
+# CI clippy run with `-D warnings`, so these block at push. `print_stdout`/
+# `print_stderr` are intentionally NOT enabled — the `agaric-mcp` bin speaks the
+# MCP protocol over stdio and the CLI prints to the console.
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
 
 [features]
 # Opt-in feature for end-to-end smoke tests that require the
