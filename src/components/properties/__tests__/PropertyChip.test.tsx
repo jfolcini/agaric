@@ -119,6 +119,39 @@ describe('PropertyChip', () => {
     expect(handleClick).toHaveBeenCalledOnce()
   })
 
+  // #1498: the chip lives outside the contenteditable. With the block's editor
+  // focused, an un-prevented mousedown on either inner button blurs the editor
+  // first (flush → re-mount) and swallows the click. preventDefault on mousedown
+  // keeps the editor focused so the edit flow opens and the caret stays put.
+  describe('focus retention (#1498)', () => {
+    function fireMouseDownAndAssertPrevented(el: HTMLElement) {
+      const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+      const prevented = vi.spyOn(ev, 'preventDefault')
+      el.dispatchEvent(ev)
+      expect(prevented).toHaveBeenCalled()
+    }
+
+    it('value button: prevents default on mousedown and still fires onClick', async () => {
+      const user = userEvent.setup()
+      const handleClick = vi.fn()
+      render(<PropertyChip propKey="effort" value="2h" onClick={handleClick} />)
+      const valueButton = screen.getByRole('button', { name: 'Effort: 2h' })
+      fireMouseDownAndAssertPrevented(valueButton)
+      await user.click(valueButton)
+      expect(handleClick).toHaveBeenCalledOnce()
+    })
+
+    it('key button: prevents default on mousedown and still fires onKeyClick', async () => {
+      const user = userEvent.setup()
+      const handleKeyClick = vi.fn()
+      render(<PropertyChip propKey="effort" value="2h" onKeyClick={handleKeyClick} />)
+      const keyButton = screen.getByRole('button', { name: /Edit property/ })
+      fireMouseDownAndAssertPrevented(keyButton)
+      await user.click(keyButton)
+      expect(handleKeyClick).toHaveBeenCalledOnce()
+    })
+  })
+
   it('adds hover styles on the wrapper only when onClick is provided', () => {
     const { container: withClick } = render(
       <PropertyChip propKey="effort" value="2h" onClick={() => {}} />,

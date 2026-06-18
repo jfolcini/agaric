@@ -416,6 +416,14 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
           ariaLabel={t('block.history')}
           className={GUTTER_HOVER_NEUTRAL}
           delayDuration={tooltipDelayDuration}
+          // #1498: the gutter controls live OUTSIDE the contenteditable. With the
+          // block's editor focused, a plain click blurs it first (flush →
+          // re-render/remount) and the pending click gets swallowed. preventDefault
+          // on mousedown retains editor focus so the click fires. (The delete
+          // button already prevents this via its own onPointerDown handler; the
+          // drag handle and select-checkbox INTENTIONALLY keep their pointerdown
+          // behaviour for drag activation / selection.)
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => onShowHistory(blockId)}
         />
       )}

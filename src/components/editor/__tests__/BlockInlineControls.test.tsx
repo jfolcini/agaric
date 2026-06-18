@@ -882,6 +882,112 @@ describe('BlockInlineControls', () => {
   })
 })
 
+/* ── #1498: gutter controls retain editor focus (preventDefault on mousedown) ── */
+
+describe('BlockInlineControls focus retention (#1498)', () => {
+  beforeEach(() => {
+    useBlockStore.setState({ selectedBlockIds: [] })
+  })
+  afterEach(() => {
+    useBlockStore.setState({ selectedBlockIds: [] })
+  })
+
+  // Dispatch a real mousedown and assert preventDefault was called. With the
+  // block's ProseMirror editor focused, an un-prevented mousedown on a control
+  // OUTSIDE the contenteditable blurs the editor first → the block flushes and
+  // re-mounts → the pending click is swallowed and the control does nothing.
+  // preventDefault on mousedown keeps the editor focused so the click fires.
+  function fireMouseDownAndAssertPrevented(el: HTMLElement) {
+    const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+    const prevented = vi.spyOn(ev, 'preventDefault')
+    el.dispatchEvent(ev)
+    expect(prevented).toHaveBeenCalled()
+  }
+
+  it('collapse-toggle: prevents default on mousedown and still fires onClick', async () => {
+    const user = userEvent.setup()
+    const onToggleCollapse = vi.fn()
+    renderControls(makeProps({ hasChildren: true, onToggleCollapse }))
+    const btn = screen.getByTestId('collapse-toggle')
+    fireMouseDownAndAssertPrevented(btn)
+    await user.click(btn)
+    expect(onToggleCollapse).toHaveBeenCalledWith('BLOCK_1')
+  })
+
+  it('zoom bullet: prevents default on mousedown and still fires onZoomIn', async () => {
+    const user = userEvent.setup()
+    const onZoomIn = vi.fn()
+    renderControls(makeProps({ blockId: 'BLOCK_7', onZoomIn }))
+    const btn = screen.getByTestId('block-bullet')
+    fireMouseDownAndAssertPrevented(btn)
+    await user.click(btn)
+    expect(onZoomIn).toHaveBeenCalledWith('BLOCK_7')
+  })
+
+  it('task-marker: prevents default on mousedown and still fires onToggleTodo', async () => {
+    const user = userEvent.setup()
+    const onToggleTodo = vi.fn()
+    renderControls(makeProps({ todoState: 'TODO', onToggleTodo }))
+    const btn = screen.getByTestId('task-marker')
+    fireMouseDownAndAssertPrevented(btn)
+    await user.click(btn)
+    expect(onToggleTodo).toHaveBeenCalledWith('BLOCK_1')
+  })
+
+  it('priority-badge: prevents default on mousedown and still fires onTogglePriority', async () => {
+    const user = userEvent.setup()
+    const onTogglePriority = vi.fn()
+    renderControls(makeProps({ priority: '1', onTogglePriority }))
+    const btn = screen.getByTestId('priority-badge')
+    fireMouseDownAndAssertPrevented(btn)
+    await user.click(btn)
+    expect(onTogglePriority).toHaveBeenCalledWith('BLOCK_1')
+  })
+
+  it('attachment-badge: prevents default on mousedown and still fires onToggleAttachments', async () => {
+    const user = userEvent.setup()
+    const onToggleAttachments = vi.fn()
+    renderControls(makeProps({ attachmentCount: 2, onToggleAttachments }))
+    const btn = screen.getByTestId('attachment-badge')
+    fireMouseDownAndAssertPrevented(btn)
+    await user.click(btn)
+    expect(onToggleAttachments).toHaveBeenCalledOnce()
+  })
+
+  it('property-overflow: prevents default on mousedown and still dispatches the open event', async () => {
+    const user = userEvent.setup()
+    const handler = vi.fn()
+    document.addEventListener('open-block-properties', handler)
+    renderControls(
+      makeProps({
+        filteredProperties: [
+          { key: 'a', value: 'v1' },
+          { key: 'b', value: 'v2' },
+          { key: 'c', value: 'v3' },
+          { key: 'd', value: 'v4' },
+        ],
+      }),
+    )
+    const btn = screen.getByTestId('property-overflow')
+    fireMouseDownAndAssertPrevented(btn)
+    await user.click(btn)
+    expect(handler).toHaveBeenCalledOnce()
+    document.removeEventListener('open-block-properties', handler)
+  })
+
+  it('DateChip: prevents default on mousedown and still dispatches its picker event', async () => {
+    const user = userEvent.setup()
+    const handler = vi.fn()
+    document.addEventListener(BLOCK_EVENTS.OPEN_DUE_DATE_PICKER, handler)
+    renderControls(makeProps({ dueDate: '2099-03-15' }))
+    const btn = screen.getByRole('button', { name: /due/i })
+    fireMouseDownAndAssertPrevented(btn)
+    await user.click(btn)
+    expect(handler).toHaveBeenCalledOnce()
+    document.removeEventListener(BLOCK_EVENTS.OPEN_DUE_DATE_PICKER, handler)
+  })
+})
+
 /* ── Fix 5/6: empty-checkbox gating + multiselect suppression ───────── */
 
 describe('BlockInlineControls empty-checkbox gating (Fix 5)', () => {

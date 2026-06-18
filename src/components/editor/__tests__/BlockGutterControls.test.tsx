@@ -176,6 +176,27 @@ describe('BlockGutterControls', () => {
     expect(onShowHistory).toHaveBeenCalledWith('B42')
   })
 
+  // #1498: the history button lives outside the contenteditable. With the
+  // block's editor focused, an un-prevented mousedown would blur it first
+  // (flush → re-mount) and swallow the click. preventDefault on mousedown keeps
+  // the editor focused so the click fires. (Delete already prevents this via its
+  // own onPointerDown; the drag handle / select checkbox intentionally keep
+  // their pointerdown behaviour for drag / selection.)
+  it('history button prevents default on mousedown and still fires onShowHistory', async () => {
+    const user = userEvent.setup()
+    const onShowHistory = vi.fn()
+    renderWithTooltip(<BlockGutterControls blockId="B7" onShowHistory={onShowHistory} />)
+
+    const historyBtn = screen.getByRole('button', { name: /block history/i })
+    const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+    const prevented = vi.spyOn(ev, 'preventDefault')
+    historyBtn.dispatchEvent(ev)
+    expect(prevented).toHaveBeenCalled()
+
+    await user.click(historyBtn)
+    expect(onShowHistory).toHaveBeenCalledWith('B7')
+  })
+
   it('does not render delete button when onDelete is not provided', () => {
     renderWithTooltip(<BlockGutterControls blockId="B1" />)
 
