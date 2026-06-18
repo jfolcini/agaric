@@ -26,6 +26,16 @@ export const settings: Record<string, string> = {
   'settings.editor.tabIndentLabel': 'Tab indents blocks',
   'settings.editor.tabIndentHelp':
     'Use Tab and Shift+Tab to indent and outdent blocks (like Logseq and Notion). Turn off for accessibility to keep Tab as the focus-navigation key — block indenting then stays on Ctrl/Cmd+Shift+Arrow. Press Escape any time to leave the editor.',
+  // #1492 — external-image load policy (privacy-first default: Click).
+  'settings.editor.externalImageLabel': 'External images',
+  'settings.editor.externalImageHelp':
+    'Controls whether images hosted on external websites are loaded. Loading an external image tells that website you opened the page. In Click mode, choosing Load remembers that domain so its images load automatically next time. Local, pasted, and attachment images are never affected.',
+  'settings.editor.externalImageAlways': 'Always load',
+  'settings.editor.externalImageClick': 'Ask each time (recommended)',
+  'settings.editor.externalImageNever': 'Never load',
+  'settings.editor.externalImageUpdated': 'External image policy updated',
+  'settings.editor.externalImageAllowedHosts': 'Allowed image domains',
+  'settings.editor.externalImageRemoveHost': 'Remove {{host}}',
   'settings.tabSync': 'Sync & Devices',
   'settings.tabData': 'Data',
   'settings.themeLabel': 'Theme',
