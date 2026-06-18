@@ -20,7 +20,6 @@
     "src/lib/bindings.ts",
     "src/editor/emoji-data.generated.ts",
     "**/coverage",
-    "**/*.css",
     "**/*.md",
     "docs/**",
     "public/pdf.worker.min.mjs"

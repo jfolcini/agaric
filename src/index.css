@@ -1,6 +1,6 @@
-@import "tailwindcss";
-@import "tw-animate-css";
-@import "highlight.js/styles/github.css";
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'highlight.js/styles/github.css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -139,11 +139,13 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji",
-    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-    "Courier New", monospace;
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+    'Segoe UI Symbol', 'Noto Color Emoji';
+  --font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+    monospace;
 }
 
 /* ── Agaric light theme ────────────────────────────────────────────── */
@@ -1552,7 +1554,7 @@
 
 /* ── Fallback: browsers without container query support ────────────── */
 @supports not (container-type: inline-size) {
-  [data-slot="card-header"]:has([data-slot="card-action"]) {
+  [data-slot='card-header']:has([data-slot='card-action']) {
     display: flex;
     flex-wrap: wrap;
     justify-content: space-between;
@@ -1692,13 +1694,34 @@
 }
 
 /* ── Typography scale utilities (UX-80) ────────────────────────────── */
-@utility text-scale-xs { font-size: var(--text-xs); line-height: var(--leading-normal); }
-@utility text-scale-sm { font-size: var(--text-sm); line-height: var(--leading-normal); }
-@utility text-scale-base { font-size: var(--text-base); line-height: var(--leading-normal); }
-@utility text-scale-lg { font-size: var(--text-lg); line-height: var(--leading-tight); }
-@utility text-scale-xl { font-size: var(--text-xl); line-height: var(--leading-tight); }
-@utility text-scale-2xl { font-size: var(--text-2xl); line-height: var(--leading-tight); }
-@utility text-scale-3xl { font-size: var(--text-3xl); line-height: var(--leading-tight); }
+@utility text-scale-xs {
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+@utility text-scale-sm {
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+@utility text-scale-base {
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+}
+@utility text-scale-lg {
+  font-size: var(--text-lg);
+  line-height: var(--leading-tight);
+}
+@utility text-scale-xl {
+  font-size: var(--text-xl);
+  line-height: var(--leading-tight);
+}
+@utility text-scale-2xl {
+  font-size: var(--text-2xl);
+  line-height: var(--leading-tight);
+}
+@utility text-scale-3xl {
+  font-size: var(--text-3xl);
+  line-height: var(--leading-tight);
+}
 
 /* ── Suggestion popup animation (UX-66) ────────────────────────────── */
 .suggestion-list {
@@ -1781,7 +1804,7 @@
  * Other ScrollArea instances (TabBar horizontal, PageOutline, page
  * browser list) are untouched by this rule.
  */
-[data-slot="main-content"] > [data-slot="scroll-area-viewport"] > div:first-child {
+[data-slot='main-content'] > [data-slot='scroll-area-viewport'] > div:first-child {
   display: flex !important;
   flex-direction: column !important;
   min-height: 100% !important;
