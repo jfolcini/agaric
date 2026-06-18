@@ -28,8 +28,15 @@ import {
   PROPERTY_KEYS_GLOBAL_KEY,
   subscribeToPropertyKeysCache,
 } from '@/lib/property-keys-cache'
+import {
+  ensurePropertyValuesInvalidationListener,
+  fetchPropertyValuesOnce,
+  getCachedPropertyValues,
+  PROPERTY_VALUES_EMPTY,
+  subscribeToPropertyValuesCache,
+} from '@/lib/property-values-cache'
 import type { AutocompleteAnchor } from '@/lib/search-query/autocomplete'
-import { listTagsByPrefix, paginationLimit } from '@/lib/tauri'
+import { getPropertyDef, listTagsByPrefix, paginationLimit } from '@/lib/tauri'
 
 export const STATE_VALUES = ['TODO', 'DOING', 'DONE', 'WAITING', 'CANCELLED', 'none'] as const
 export const DATE_BUCKET_VALUES = [
@@ -81,6 +88,24 @@ export function useAutocompleteSources(
   const getPropKeysSnapshot = useCallback(() => getCachedPropertyKeys(spaceKey), [spaceKey])
   const propKeys = useSyncExternalStore(subscribeToPropertyKeysCache, getPropKeysSnapshot)
 
+  // #1425 — property-VALUE suggestions for the value side of
+  // `prop:key=value`. The candidate list is the union of (a) the live
+  // usage-ranked `value_text` values from the backend (key-scoped cache,
+  // invalidated on `block:properties-changed`) and (b) for a `select`-typed
+  // definition, the definition's configured options. The select options
+  // are *preferred*: they lead the list so the canonical vocabulary surfaces
+  // first even before any block has recorded that value yet.
+  const propValueKey = anchor?.active === 'propValue' ? anchor.key : null
+  const getPropValuesSnapshot = useCallback(
+    () => (propValueKey == null ? PROPERTY_VALUES_EMPTY : getCachedPropertyValues(propValueKey)),
+    [propValueKey],
+  )
+  const propValues = useSyncExternalStore(subscribeToPropertyValuesCache, getPropValuesSnapshot)
+  // Select-definition options keyed by property key. Fetched once per key
+  // on first propValue activation; a `null` entry records "fetched, not a
+  // select / no options" so we don't refetch.
+  const [selectOptions, setSelectOptions] = useState<Record<string, string[] | null>>({})
+
   // PEND-73 Phase 4.M3 — shared race-discard hook. The guard bumps on
   // every tag-anchor activation AND on every keystroke while active;
   // stale resolutions check it before writing state. Leaving the
@@ -109,6 +134,47 @@ export function useAutocompleteSources(
     ensurePropertyKeysInvalidationListener()
     void fetchPropertyKeysOnce(spaceKey)
   }, [active, spaceKey])
+
+  // ── PropValue lazy fetch (#1425) ──────────────────────────────────
+  // On propValue activation: (1) start a key-scoped values fetch (shared
+  // cache, invalidated on property change), and (2) one-shot resolve the
+  // key's definition so a `select` type can seed its options. Both are
+  // keyed on `propValueKey`, so switching keys re-resolves cleanly.
+  useEffect(() => {
+    if (active !== 'propValue' || propValueKey == null || propValueKey === '') return
+    ensurePropertyValuesInvalidationListener()
+    void fetchPropertyValuesOnce(propValueKey)
+    // Resolve the definition once per key. `undefined` in the map means
+    // "not yet fetched"; we record `string[]` for select options or `null`
+    // otherwise so the fetch never repeats for the same key.
+    if (selectOptions[propValueKey] === undefined) {
+      let cancelled = false
+      getPropertyDef(propValueKey)
+        .then((def) => {
+          if (cancelled) return
+          let opts: string[] | null = null
+          if (def?.value_type === 'select' && def.options != null) {
+            try {
+              const parsed: unknown = JSON.parse(def.options)
+              if (Array.isArray(parsed)) {
+                opts = parsed.filter((o): o is string => typeof o === 'string')
+              }
+            } catch {
+              opts = null
+            }
+          }
+          setSelectOptions((prev) => ({ ...prev, [propValueKey]: opts }))
+        })
+        .catch(() => {
+          if (cancelled) return
+          setSelectOptions((prev) => ({ ...prev, [propValueKey]: null }))
+        })
+      return () => {
+        cancelled = true
+      }
+    }
+    return undefined
+  }, [active, propValueKey, selectOptions])
 
   // ── Tag IPC (debounced, stale-while-loading) ──────────────────────
   useEffect(() => {
@@ -178,10 +244,25 @@ export function useAutocompleteSources(
       // first fetch resolves; `loading: false` because the cache is
       // shared with the rest of the app and we don't own its lifecycle.
       return { items: projectStatic(propKeys, anchor.query), loading: false }
-    case 'propValue':
-      // PEND-60 defers propValue (the value side of `prop:key=value`)
-      // past Phase 2.
-      return { items: [], loading: false }
+    case 'propValue': {
+      // #1425 — merge the `select` definition's options (preferred, so the
+      // canonical vocabulary leads) with the live usage-ranked values,
+      // de-duplicated, then prefix-filter by the typed query. Select
+      // options come first; usage-ranked values follow in backend order.
+      const opts = (propValueKey != null ? selectOptions[propValueKey] : null) ?? []
+      const merged: string[] = []
+      const seen = new Set<string>()
+      for (const v of [...opts, ...propValues]) {
+        if (seen.has(v)) continue
+        seen.add(v)
+        merged.push(v)
+      }
+      const lowered = anchor.query.toLowerCase()
+      return {
+        items: merged.filter((v) => v.toLowerCase().startsWith(lowered)).map((v) => ({ value: v })),
+        loading: false,
+      }
+    }
     default:
       return { items: [], loading: false }
   }

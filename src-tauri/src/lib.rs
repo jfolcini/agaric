@@ -176,6 +176,7 @@ macro_rules! agaric_commands {
             $crate::commands::queries::list_backlinks_grouped,
             $crate::commands::queries::list_unlinked_references,
             $crate::commands::properties::list_property_keys,
+            $crate::commands::properties::list_property_values,
             $crate::commands::properties::create_property_def,
             $crate::commands::properties::get_property_def,
             $crate::commands::properties::list_property_defs,

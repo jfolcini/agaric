@@ -345,6 +345,11 @@ export const commands = {
 	listUnlinkedReferences: (pageId: PageId, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<GroupedBacklinkResponse, AppError>(__TAURI_INVOKE("list_unlinked_references", { pageId, filters, sort, cursor, limit, scope })),
 	/**  Tauri command: list distinct property keys. Delegates to [`list_property_keys_inner`]. */
 	listPropertyKeys: () => typedError<string[], AppError>(__TAURI_INVOKE("list_property_keys")),
+	/**
+	 *  Tauri command: list distinct text values for a property key
+	 *  (#1425). Delegates to [`list_property_values_inner`].
+	 */
+	listPropertyValues: (key: string) => typedError<string[], AppError>(__TAURI_INVOKE("list_property_values", { key })),
 	/**  Tauri command: create a property definition. Delegates to [`create_property_def_inner`]. */
 	createPropertyDef: (key: string, valueType: string, options: string | null) => typedError<PropertyDefinition, AppError>(__TAURI_INVOKE("create_property_def", { key, valueType, options })),
 	/**

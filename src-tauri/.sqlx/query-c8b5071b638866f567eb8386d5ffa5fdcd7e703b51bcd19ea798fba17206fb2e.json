@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_text FROM block_properties WHERE key = ?1 AND value_text IS NOT NULL GROUP BY value_text ORDER BY COUNT(*) DESC, value_text ASC LIMIT 1001",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_text",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_text"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "c8b5071b638866f567eb8386d5ffa5fdcd7e703b51bcd19ea798fba17206fb2e"
+}

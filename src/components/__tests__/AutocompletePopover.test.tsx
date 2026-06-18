@@ -205,6 +205,38 @@ describe('AutocompletePopover', () => {
     })
   })
 
+  it('passes a vitest-axe scan rendering property-value suggestions (#1425)', async () => {
+    // The property-VALUE editor surfaces its suggestions through this same
+    // popover; audit the value-list rendering for a11y violations.
+    const PROP_VALUES: ReadonlyArray<AutocompleteItem> = [
+      { value: 'todo' },
+      { value: 'doing' },
+      { value: 'done' },
+      { value: 'archived' },
+    ]
+    render(
+      <AutocompletePopover
+        open
+        anchorRect={SAMPLE_RECT}
+        items={PROP_VALUES}
+        selectedValue="todo"
+        onSelectedValueChange={vi.fn()}
+        onSelect={vi.fn()}
+        label="Property values"
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('listbox', { name: 'Property values' })).toBeInTheDocument()
+    })
+    expect(screen.getAllByRole('option')).toHaveLength(4)
+    await waitFor(
+      async () => {
+        expect(await axe(document.body)).toHaveNoViolations()
+      },
+      { timeout: 8000 },
+    )
+  }, 15000)
+
   it('passes a vitest-axe scan with the popover open', async () => {
     render(
       <AutocompletePopover

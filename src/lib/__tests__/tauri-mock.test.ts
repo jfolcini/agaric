@@ -1118,6 +1118,56 @@ describe('list_property_keys', () => {
 })
 
 // ---------------------------------------------------------------------------
+// list_property_values (#1425)
+// ---------------------------------------------------------------------------
+
+describe('list_property_values', () => {
+  function setStatus(blockId: string, value: string): void {
+    invoke('set_property', {
+      blockId,
+      key: 'status',
+      value: {
+        value_text: value,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+  }
+
+  it('returns distinct values for a key, usage-ranked then value ASC', () => {
+    setStatus(SEED_IDS.BLOCK_GS_1, 'done')
+    setStatus(SEED_IDS.BLOCK_GS_2, 'done')
+    setStatus(SEED_IDS.BLOCK_GS_3, 'blocked')
+    const result = invoke('list_property_values', { key: 'status' }) as string[]
+    // `done` used twice (leads), `blocked` once.
+    expect(result).toEqual(['done', 'blocked'])
+  })
+
+  it('scopes values to the requested key', () => {
+    setStatus(SEED_IDS.BLOCK_GS_1, 'done')
+    invoke('set_property', {
+      blockId: SEED_IDS.BLOCK_GS_2,
+      key: 'category',
+      value: {
+        value_text: 'work',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    expect(invoke('list_property_values', { key: 'status' })).toEqual(['done'])
+    expect(invoke('list_property_values', { key: 'category' })).toEqual(['work'])
+  })
+
+  it('returns an empty array for an unknown key', () => {
+    expect(invoke('list_property_values', { key: 'nonexistent' })).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // revert_ops
 // ---------------------------------------------------------------------------
 

@@ -1693,6 +1693,14 @@ export async function listPropertyKeys(): Promise<string[]> {
   return unwrap(await commands.listPropertyKeys())
 }
 
+/**
+ * List the distinct text values in use for a property `key`, usage-ranked
+ * (most-used first). Powers the property-VALUE autocomplete (#1425).
+ */
+export async function listPropertyValues(key: string): Promise<string[]> {
+  return unwrap(await commands.listPropertyValues(key))
+}
+
 // ---------------------------------------------------------------------------
 // Property definition commands
 // ---------------------------------------------------------------------------

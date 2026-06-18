@@ -689,6 +689,51 @@ pub async fn list_property_keys(pool: &SqlitePool) -> Result<Vec<String>, AppErr
     Ok(rows)
 }
 
+/// List the distinct text values currently in use for a single property
+/// `key`, usage-ranked (most-used first) with `value ASC` as a stable
+/// tiebreaker.
+///
+/// #1425: powers the property-VALUE autocomplete — the value side of a
+/// `prop:key=value` editor — mirroring the usage-ranked ordering shipped
+/// for keys in #1424. Only the text channel (`value_text`) is surfaced:
+/// numeric / date / ref / bool channels are typed and don't benefit from
+/// a free-text typeahead, and `value_text` is also the channel that
+/// `select`-type definitions store their option values in.
+///
+/// The same `PROPERTY_KEY_CAP` insurance applies: a single key carrying
+/// more than the cap distinct values is well beyond any realistic
+/// typeahead render budget. We over-fetch by one row and `warn!` when
+/// the result is actually truncated so a runaway cardinality surfaces in
+/// logs rather than silently dropping values.
+pub async fn list_property_values(pool: &SqlitePool, key: &str) -> Result<Vec<String>, AppError> {
+    // Distinct non-NULL `value_text` for the given key, ranked by usage
+    // (most-used first) with `value_text ASC` as a deterministic
+    // tiebreaker for equal-count values. `value_text IS NOT NULL` filters
+    // out rows whose value lives in a non-text channel.
+    let mut rows = sqlx::query_scalar!(
+        "SELECT value_text FROM block_properties \
+         WHERE key = ?1 AND value_text IS NOT NULL \
+         GROUP BY value_text ORDER BY COUNT(*) DESC, value_text ASC LIMIT 1001",
+        key,
+    )
+    .fetch_all(pool)
+    .await?;
+    // `value_text` is nullable in the schema, so the scalar comes back as
+    // `Option<String>`; the `IS NOT NULL` filter guarantees `Some`, but
+    // flatten defensively rather than unwrap.
+    let mut values: Vec<String> = rows.drain(..).flatten().collect();
+    if values.len() > PROPERTY_KEY_CAP {
+        tracing::warn!(
+            target: "agaric::list_property_values",
+            cap = PROPERTY_KEY_CAP,
+            key = %key,
+            "distinct property values for key exceed the typeahead cap; result truncated"
+        );
+        values.truncate(PROPERTY_KEY_CAP);
+    }
+    Ok(values)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -845,5 +890,78 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let keys = list_property_keys(&pool).await.unwrap();
         assert!(keys.is_empty(), "no properties means no keys");
+    }
+
+    async fn insert_property_value(pool: &SqlitePool, block_id: &str, key: &str, value: &str) {
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
+            .bind(block_id)
+            .bind(key)
+            .bind(value)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// #1425: the property-VALUE picker must surface the most-used value
+    /// first and fall back to `value ASC` as a stable tiebreaker for
+    /// values with equal usage counts, scoped to the requested key.
+    #[tokio::test]
+    async fn list_property_values_orders_by_usage_then_value() {
+        let (pool, _dir) = test_pool().await;
+        for id in ["B1", "B2", "B3", "B4"] {
+            insert_block(&pool, id, "content", id).await;
+        }
+        // For key `status`: "done" used 3x (most), "todo"/"blocked" 1x
+        // each (tie → value ASC: blocked before todo).
+        insert_property_value(&pool, "B1", "status", "done").await;
+        insert_property_value(&pool, "B2", "status", "done").await;
+        insert_property_value(&pool, "B3", "status", "done").await;
+        insert_property_value(&pool, "B4", "status", "todo").await;
+        // `blocked` lives on a block that also carries `status=done`? No —
+        // PK is (block_id, key), so put it on a distinct key-free block.
+        insert_block(&pool, "B5", "content", "B5").await;
+        insert_property_value(&pool, "B5", "status", "blocked").await;
+
+        let values = list_property_values(&pool, "status").await.unwrap();
+        assert_eq!(
+            values,
+            vec![
+                "done".to_string(),
+                "blocked".to_string(),
+                "todo".to_string()
+            ],
+            "values must order by usage DESC, then value ASC"
+        );
+    }
+
+    /// #1425: values are scoped to the requested key — a different key's
+    /// values must not leak in.
+    #[tokio::test]
+    async fn list_property_values_scoped_to_key() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "B1", "content", "one").await;
+        insert_block(&pool, "B2", "content", "two").await;
+        // Same block can't carry two values for the same key (PK), so use
+        // two distinct keys on two blocks.
+        insert_property_value(&pool, "B1", "status", "done").await;
+        insert_property_value(&pool, "B2", "category", "work").await;
+
+        let status_values = list_property_values(&pool, "status").await.unwrap();
+        assert_eq!(
+            status_values,
+            vec!["done".to_string()],
+            "only `status` values returned, not `category`"
+        );
+        let category_values = list_property_values(&pool, "category").await.unwrap();
+        assert_eq!(category_values, vec!["work".to_string()]);
+    }
+
+    /// #1425: a key with no recorded values (or an unknown key) yields an
+    /// empty list rather than an error.
+    #[tokio::test]
+    async fn list_property_values_empty() {
+        let (pool, _dir) = test_pool().await;
+        let values = list_property_values(&pool, "nonexistent").await.unwrap();
+        assert!(values.is_empty(), "unknown key means no values");
     }
 }
