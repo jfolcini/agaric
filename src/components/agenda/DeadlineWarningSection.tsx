@@ -31,6 +31,10 @@ export function DeadlineWarningSection(): React.ReactElement {
 
   const handleChange = useCallback(
     (value: number) => {
+      // Treat a blank/invalid entry (e.g. mid-edit field clear → NaN) as
+      // "no change" rather than silently coercing to 0, which would disable
+      // the warning and discard the user's setting without feedback.
+      if (!Number.isFinite(value)) return
       const clamped = Math.max(DEADLINE_WARNING_MIN, Math.min(DEADLINE_WARNING_MAX, value))
       setDays(clamped)
     },
@@ -68,7 +72,7 @@ export function DeadlineWarningSection(): React.ReactElement {
           max={DEADLINE_WARNING_MAX}
           value={days}
           aria-label={t('propertiesView.deadlineWarning')}
-          onChange={(e) => handleChange(Number.parseInt(e.target.value, 10) || 0)}
+          onChange={(e) => handleChange(Number.parseInt(e.target.value, 10))}
           onBlur={handleBlur}
         />
         <span className="text-xs text-muted-foreground">{t('block.daysDisabledHint')}</span>

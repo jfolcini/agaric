@@ -236,6 +236,7 @@ export const common: Record<string, string> = {
   'sidebar.mobileDescription': 'Displays the mobile sidebar.',
   'breadcrumb.showHidden': 'Show hidden breadcrumbs',
   'ui.close': 'Close',
+  'ui.loading': 'Loading…',
   'sidebar.toggleTheme': 'Toggle theme',
   'sidebar.toggleThemeWithCurrent': 'Theme: {{current}} — click to cycle',
   'sidebar.themeName.auto': 'Auto',
