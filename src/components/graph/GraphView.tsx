@@ -24,16 +24,22 @@ import {
   type GraphEdge,
   type GraphNode,
 } from '@/components/graph/GraphView.helpers'
+import { LocalGraphControl } from '@/components/graph/LocalGraphControl'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { IconButton } from '@/components/ui/icon-button'
 import { useGraphSimulation } from '@/hooks/useGraphSimulation'
 import { applyGraphFilters, type GraphFilter } from '@/lib/graph-filters'
+import {
+  computeLocalGraph,
+  DEFAULT_LOCAL_GRAPH_HOPS,
+  type LocalGraphHops,
+} from '@/lib/graph-neighborhood'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { listTagsByPrefix } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
-import { useTabsStore } from '@/stores/tabs'
+import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
 // ── Module-level cache for stale-while-revalidate (UX-113) ────────────
 const GRAPH_CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
@@ -130,6 +136,19 @@ export function GraphView(): React.ReactElement {
   const [tags, setTags] = useState<Array<{ tag_id: string; name: string }>>([])
   const [filters, setFilters] = useState<GraphFilter[]>([])
 
+  // Local-graph mode (#1429): when active, the graph is filtered to the
+  // `localHops`-neighborhood of the page open in the active tab. Defaults to
+  // OFF so the global graph's behavior is unchanged.
+  const [localMode, setLocalMode] = useState(false)
+  const [localHops, setLocalHops] = useState<LocalGraphHops>(DEFAULT_LOCAL_GRAPH_HOPS)
+
+  // The "current page" = the top of the active tab's page stack. `null` when
+  // the active tab has no page open (e.g. a view tab), which disables the
+  // focus toggle.
+  const pageStack = useTabsStore(selectPageStack)
+  const seedEntry = pageStack.length > 0 ? pageStack[pageStack.length - 1] : null
+  const seedPageId = seedEntry?.pageId ?? null
+
   // Extract the tag filter's tagIds — these drive server-side fetching.
   // Every other filter is applied client-side via `applyGraphFilters`.
   const tagFilterIds = useMemo((): string[] => {
@@ -216,11 +235,30 @@ export function GraphView(): React.ReactElement {
     })
   }, [edges, filteredNodes, nodes.length])
 
+  // Local-graph layer (#1429): when focus mode is active and a page is open,
+  // narrow the (already filter-applied) graph to the seed's N-hop neighborhood.
+  // Reuses the same node/edge shapes so the renderer is untouched. Falls back
+  // to the full filtered graph whenever the seed page isn't a visible node.
+  const seedLabel = useMemo(() => {
+    if (seedPageId === null) return null
+    return nodes.find((n) => n.id === seedPageId)?.label ?? seedEntry?.title ?? null
+  }, [nodes, seedPageId, seedEntry])
+
+  const localActive = localMode && seedPageId !== null
+
+  const { displayNodes, displayEdges } = useMemo(() => {
+    if (!localActive || seedPageId === null) {
+      return { displayNodes: filteredNodes, displayEdges: filteredEdges }
+    }
+    const local = computeLocalGraph(filteredNodes, filteredEdges, seedPageId, localHops)
+    return { displayNodes: local.nodes, displayEdges: local.edges }
+  }, [localActive, seedPageId, localHops, filteredNodes, filteredEdges])
+
   // d3-force simulation + worker lifecycle + zoom handlers.
   const { zoomIn, zoomOut, zoomReset } = useGraphSimulation({
     svgRef,
-    nodes: filteredNodes,
-    edges: filteredEdges,
+    nodes: displayNodes,
+    edges: displayEdges,
     navigateToPage,
   })
 
@@ -266,7 +304,7 @@ export function GraphView(): React.ReactElement {
             Wrapped in FeatureErrorBoundary so a crash in the filter / cytoscape
             integration doesn't blank the entire GraphView (UX Tier 3). */}
         <div
-          className="absolute top-2 left-2 right-2 z-10 max-w-[calc(100%-1rem)]"
+          className="absolute top-2 left-2 right-2 z-10 flex max-w-[calc(100%-1rem)] flex-wrap items-start gap-1.5"
           data-testid="graph-tag-filter"
         >
           <FeatureErrorBoundary name="GraphFilterBar">
@@ -278,6 +316,14 @@ export function GraphView(): React.ReactElement {
               filteredCount={filteredNodes.length}
             />
           </FeatureErrorBoundary>
+          {/* #1429 — per-page local-graph toggle + hop-depth control. */}
+          <LocalGraphControl
+            active={localMode}
+            onToggle={setLocalMode}
+            hops={localHops}
+            onHopsChange={setLocalHops}
+            seedLabel={seedLabel}
+          />
         </div>
         {/*
          * UX-244: `position: absolute; inset: 0` is required for the SVG to fill
@@ -324,12 +370,15 @@ export function GraphView(): React.ReactElement {
          * the top-level branch above already handles) so it fires precisely
          * for the "filtered to zero" case.
          */}
-        {filteredNodes.length === 0 && (
+        {displayNodes.length === 0 && (
           <div
             className="pointer-events-none absolute inset-0 flex items-center justify-center"
             data-testid="graph-no-matches"
           >
-            <EmptyState icon={Network} message={t('graph.noMatches')} />
+            <EmptyState
+              icon={Network}
+              message={localActive ? t('graph.local.noNeighbors') : t('graph.noMatches')}
+            />
           </div>
         )}
         <div className="absolute bottom-3 right-3 flex flex-col gap-1">
