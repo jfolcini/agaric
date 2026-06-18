@@ -703,6 +703,26 @@ describe('executeAgendaFilters', () => {
       expect(propertyFilters[0]?.['valueText']).toBeNull()
       expect(propertyFilters[0]?.['valueTextIn']).toEqual([])
     })
+
+    it('bare key subsumes MANY valued entries regardless of order (#1746)', async () => {
+      // #1746 guard: an is-set entry sharing a key with one or more valued
+      // entries must collapse to a single bare-key filter. Emitting the
+      // valued entries as additional same-key PropertyFilters would AND in
+      // the EXISTS composition (queries.rs) and produce a strictly NARROWER
+      // result than the intended OR-within-dimension (#720) — the inverse of
+      // the desired union. Order of values must not change the outcome.
+      await executeAgendaFilters(
+        [{ dimension: 'property', values: ['assignee:Alice', 'assignee', 'assignee:Bob'] }],
+        null,
+      )
+
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters).toHaveLength(1)
+      expect(propertyFilters[0]).toMatchObject({ key: 'assignee' })
+      expect(propertyFilters[0]?.['valueText']).toBeNull()
+      expect(propertyFilters[0]?.['valueTextIn']).toEqual([])
+    })
   })
 
   describe('scheduledDate filter translation', () => {

@@ -42,6 +42,19 @@ describe('QuickCaptureFab', () => {
     expect(screen.queryByTestId('quick-capture-fab')).toBeNull()
   })
 
+  it('sits 5rem above the inset to clear the bottom-fixed FormattingToolbar', () => {
+    // The touch FormattingToolbar pins `fixed inset-x-0 bottom-0` (~47px tall)
+    // when a block is focused, and its right-aligned "More" button shares the
+    // bottom-right column with this FAB. A ~1rem offset (the value #1747 tried)
+    // floats the size-14 FAB over that toolbar and swallows the "More" tap
+    // (caught by the `formatting-toolbar-mobile` e2e). The offset must stay at
+    // 5rem (80px) so the FAB clears the 47px toolbar, stacked on the iOS
+    // home-indicator inset.
+    render(<QuickCaptureFab setQuickCaptureOpen={vi.fn()} />)
+    const fab = screen.getByTestId('quick-capture-fab')
+    expect(fab.className).toContain('bottom-[calc(5rem+env(safe-area-inset-bottom))]')
+  })
+
   it('is an accessible, labelled button', () => {
     render(<QuickCaptureFab setQuickCaptureOpen={vi.fn()} />)
     // The aria-label comes from i18n; assert the resolved English string so

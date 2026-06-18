@@ -151,7 +151,7 @@ function RefPageRow({ content, saving, disabled, onClick }: RefPageRowProps) {
       disabled={disabled}
       aria-busy={saving}
     >
-      {saving && <Spinner size="sm" aria-label={t('properties.savingRefValue')} />}
+      {saving && <Spinner size="sm" label={t('properties.savingRefValue')} />}
       <span className="truncate">{content || t('block.untitled')}</span>
     </button>
   )

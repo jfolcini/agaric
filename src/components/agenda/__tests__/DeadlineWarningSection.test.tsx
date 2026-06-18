@@ -61,6 +61,23 @@ describe('DeadlineWarningSection', () => {
     expect(localStorage.getItem('agaric:deadlineWarningDays')).toBe('90')
   })
 
+  it('clearing the field does not coerce the stored value to 0', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem('agaric:deadlineWarningDays', '14')
+
+    render(<DeadlineWarningSection />)
+
+    const input = screen.getByRole('spinbutton', { name: /Deadline warning/i })
+    expect(input).toHaveValue(14)
+
+    // Clearing the field mid-edit yields a blank/NaN entry. The previously
+    // persisted value must NOT be silently overwritten with 0 (which would
+    // disable the warning without feedback).
+    await user.clear(input)
+
+    expect(localStorage.getItem('agaric:deadlineWarningDays')).toBe('14')
+  })
+
   it('renders description text', () => {
     render(<DeadlineWarningSection />)
 

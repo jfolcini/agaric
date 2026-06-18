@@ -23,10 +23,17 @@
  */
 
 import type React from 'react'
-import { useEffect, useRef } from 'react'
+import { useLayoutEffect, useEffect, useRef, useState } from 'react'
 
 import { Kbd } from '@/components/ui/kbd'
 import { cn } from '@/lib/utils'
+
+/** Gap between the anchor row and the menu edge, in px. */
+const GAP = 4
+/** Minimum breathing room kept between the menu and the viewport edge, in px. */
+const VIEWPORT_MARGIN = 16
+/** Floor for a clamped (scrolling) menu so it never collapses to a sliver. */
+const MIN_MAX_HEIGHT = 88
 
 export interface PaletteAction {
   /** Stable id passed back to `onAction`. */
@@ -57,11 +64,51 @@ export function PaletteActionMenu({
   const menuRef = useRef<HTMLDivElement>(null)
   const buttonRefs = useRef<HTMLButtonElement[]>([])
 
+  // Vertical placement. Default is "below the anchor" (`anchor.bottom + 4`);
+  // after mount we measure the rendered menu and flip above the anchor when
+  // it would overflow the viewport bottom. `maxHeight` caps a menu that is
+  // taller than the available space in either direction (then it scrolls).
+  const [placement, setPlacement] = useState<{
+    top: number
+    maxHeight: number | undefined
+  }>(() => ({ top: anchor.bottom + GAP, maxHeight: undefined }))
+
   // Focus the first action on mount so keyboard users can press
   // Enter immediately.
   useEffect(() => {
     buttonRefs.current[0]?.focus()
   }, [])
+
+  // Collision handling (mirrors Radix Popper): measure the menu's rendered
+  // height, then choose below / above / clamp so the body stays on-screen.
+  // Runs before paint (useLayoutEffect) to avoid a visible jump.
+  useLayoutEffect(() => {
+    const el = menuRef.current
+    if (el == null) return
+    const viewportH = window.innerHeight
+    const height = el.offsetHeight
+    const spaceBelow = viewportH - anchor.bottom - GAP - VIEWPORT_MARGIN
+    const spaceAbove = anchor.top - GAP - VIEWPORT_MARGIN
+
+    if (height <= spaceBelow) {
+      // Fits below as-is.
+      setPlacement({ top: anchor.bottom + GAP, maxHeight: undefined })
+    } else if (height <= spaceAbove) {
+      // Flip above the anchor.
+      setPlacement({ top: anchor.top - GAP - height, maxHeight: undefined })
+    } else if (spaceBelow >= spaceAbove) {
+      // Doesn't fully fit either way → use the larger side and scroll.
+      setPlacement({
+        top: anchor.bottom + GAP,
+        maxHeight: Math.max(spaceBelow, MIN_MAX_HEIGHT),
+      })
+    } else {
+      setPlacement({
+        top: VIEWPORT_MARGIN,
+        maxHeight: Math.max(spaceAbove, MIN_MAX_HEIGHT),
+      })
+    }
+  }, [anchor.bottom, anchor.top])
 
   // Click-outside closes the menu. Uses pointerdown rather than click
   // so the close fires before any focus-shift the click would cause.
@@ -113,9 +160,11 @@ export function PaletteActionMenu({
       // we sit on top at 60.
       style={{
         position: 'fixed',
-        top: Math.min(anchor.bottom + 4, window.innerHeight - 16),
+        top: placement.top,
         left: Math.min(anchor.left, window.innerWidth - 220),
         minWidth: 200,
+        maxHeight: placement.maxHeight,
+        overflowY: placement.maxHeight != null ? 'auto' : undefined,
         zIndex: 60,
       }}
       className="rounded-md border border-border bg-popover p-1 shadow-md"

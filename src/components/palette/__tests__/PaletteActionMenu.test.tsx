@@ -220,6 +220,98 @@ describe('PaletteActionMenu', () => {
     expect(props.onClose).not.toHaveBeenCalled()
   })
 
+  // ── Positioning / viewport collision (#1751) ─────────────────────────
+  // jsdom does not lay out, so `offsetHeight` is 0 by default — the height
+  // collision logic never triggers without help. These tests stub the
+  // rendered menu height (via the HTMLElement.offsetHeight prototype) and a
+  // small viewport so the flip / clamp branches actually run.
+  describe('positioning', () => {
+    function stubMenuHeight(height: number) {
+      const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')
+      Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+        configurable: true,
+        get() {
+          return height
+        },
+      })
+      return () => {
+        if (original != null) {
+          Object.defineProperty(HTMLElement.prototype, 'offsetHeight', original)
+        } else {
+          delete (HTMLElement.prototype as { offsetHeight?: number }).offsetHeight
+        }
+      }
+    }
+
+    function setViewportHeight(height: number) {
+      const original = window.innerHeight
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: height,
+        writable: true,
+      })
+      return () => {
+        Object.defineProperty(window, 'innerHeight', {
+          configurable: true,
+          value: original,
+          writable: true,
+        })
+      }
+    }
+
+    it('places the menu below the anchor when it fits', () => {
+      const restoreH = stubMenuHeight(120)
+      const restoreV = setViewportHeight(800)
+      try {
+        // anchor.bottom = 100 → top should be 100 + GAP(4) = 104.
+        renderMenu()
+        const menu = screen.getByTestId('palette-action-menu')
+        expect(menu.style.top).toBe('104px')
+        expect(menu.style.maxHeight).toBe('')
+      } finally {
+        restoreV()
+        restoreH()
+      }
+    })
+
+    it('flips above the anchor when it would overflow the bottom', () => {
+      // Viewport 200px tall, menu 120px: below the anchor (bottom 100) there
+      // is only 200-100-4-16 = 80px, not enough. Above the anchor (top 80)
+      // there is 80-4-16 = 60px... also tight; widen the gap above instead.
+      const restoreH = stubMenuHeight(50)
+      const restoreV = setViewportHeight(140)
+      try {
+        // spaceBelow = 140-100-4-16 = 20 (< 50). spaceAbove = 80-4-16 = 60
+        // (>= 50) → flip above: top = anchor.top(80) - GAP(4) - height(50) = 26.
+        renderMenu()
+        const menu = screen.getByTestId('palette-action-menu')
+        expect(menu.style.top).toBe('26px')
+        expect(menu.style.maxHeight).toBe('')
+      } finally {
+        restoreV()
+        restoreH()
+      }
+    })
+
+    it('clamps height and scrolls when it fits neither side', () => {
+      // Tall menu, short viewport: neither side has room → clamp + scroll.
+      const restoreH = stubMenuHeight(2000)
+      const restoreV = setViewportHeight(300)
+      try {
+        renderMenu()
+        const menu = screen.getByTestId('palette-action-menu')
+        // spaceBelow = 300-100-4-16 = 180; spaceAbove = 80-4-16 = 60.
+        // below is larger → keep below, clamp to 180, enable scroll.
+        expect(menu.style.top).toBe('104px')
+        expect(menu.style.maxHeight).toBe('180px')
+        expect(menu.style.overflowY).toBe('auto')
+      } finally {
+        restoreV()
+        restoreH()
+      }
+    })
+  })
+
   // ── a11y ───────────────────────────────────────────────────────────
   it('has no a11y violations', async () => {
     const { container } = renderMenu()

@@ -98,13 +98,54 @@ describe('Spinner', () => {
     expect(el).toHaveAttribute('aria-hidden', 'true')
   })
 
-  it('has no a11y violations', async () => {
+  // #1753: decorative by default — silent to assistive tech so a caller that
+  // supplies its own loading text isn't double-announced.
+  it('is aria-hidden and exposes no role by default (decorative)', () => {
+    const { container } = render(<Spinner />)
+    const el = q(container, '[data-slot="spinner"]')
+    expect(el).toHaveAttribute('aria-hidden', 'true')
+    expect(el).not.toHaveAttribute('role')
+    expect(el).not.toHaveAttribute('aria-label')
+  })
+
+  // #1753: opt-in announced mode via `label` → role="status" + accessible name.
+  it('exposes role="status" with the default loading label when label is true', () => {
+    render(<Spinner label />)
+    const status = screen.getByRole('status')
+    expect(status).toHaveAttribute('data-slot', 'spinner')
+    expect(status).toHaveAccessibleName('Loading…')
+    expect(status).not.toHaveAttribute('aria-hidden')
+  })
+
+  // #1753: keep it a primitive — callers can override the label text.
+  it('uses a custom label string as the accessible name', () => {
+    render(<Spinner label="Saving changes" />)
+    const status = screen.getByRole('status', { name: 'Saving changes' })
+    expect(status).toBeInTheDocument()
+    expect(status).not.toHaveAttribute('aria-hidden')
+  })
+
+  // Caller-supplied a11y props still win over the computed defaults.
+  it('lets callers override role/aria props', () => {
+    const { container } = render(<Spinner role="alert" aria-label="Custom" />)
+    const el = q(container, '[data-slot="spinner"]')
+    expect(el).toHaveAttribute('role', 'alert')
+    expect(el).toHaveAttribute('aria-label', 'Custom')
+  })
+
+  it('has no a11y violations (decorative, default)', async () => {
     const { container } = render(
       <output aria-busy="true">
-        <Spinner aria-hidden="true" />
+        <Spinner />
         <span className="sr-only">Loading</span>
       </output>,
     )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  it('has no a11y violations (announced status mode)', async () => {
+    const { container } = render(<Spinner label />)
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
