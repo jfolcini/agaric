@@ -91,6 +91,35 @@ describe('useIsMobile', () => {
     expect(result.current).toBe(false)
   })
 
+  it('derives the initial value from window.innerWidth without matchMedia', () => {
+    // Initializer must not depend on matchMedia: even if matchMedia is absent,
+    // the first render reflects the current viewport width.
+    delete (window as { matchMedia?: typeof window.matchMedia }).matchMedia
+    Object.defineProperty(window, 'innerWidth', {
+      writable: true,
+      configurable: true,
+      value: 375,
+    })
+
+    const { result } = renderHook(() => useIsMobile())
+    expect(result.current).toBe(true)
+  })
+
+  it('does not throw and returns false when matchMedia is unavailable', () => {
+    // A non-browser/worker-like context: window exists but matchMedia does not.
+    // The effect must early-return instead of throwing, and the initial value
+    // still reflects the viewport width.
+    delete (window as { matchMedia?: typeof window.matchMedia }).matchMedia
+    Object.defineProperty(window, 'innerWidth', {
+      writable: true,
+      configurable: true,
+      value: 1024,
+    })
+
+    const { result } = renderHook(() => useIsMobile())
+    expect(result.current).toBe(false)
+  })
+
   it('responds to matchMedia change events', () => {
     Object.defineProperty(window, 'innerWidth', {
       writable: true,

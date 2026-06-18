@@ -37,6 +37,44 @@ import type { PeerRefRow } from '@/lib/tauri'
 import { deletePeerRef, getDeviceId, listPeerRefs, startSync, updatePeerName } from '@/lib/tauri'
 import { useSyncStore } from '@/stores/sync'
 
+/**
+ * #1673: Total-order comparator for the paired-peer list.
+ *
+ * Sort intent: named devices first (alphabetical by name), then unnamed
+ * devices ordered by most-recently-synced first. Every branch returns a
+ * consistent numeric -1/0/1 and the keys are layered so the relation is
+ * total and transitive (no comparator returns 0 unless two rows are truly
+ * indistinguishable on all keys), which keeps the sort well-defined and
+ * stable across engines.
+ *
+ * Keys, in priority order:
+ *  1. has-name  (named before unnamed)
+ *  2. device_name, localeCompare (named only — both unnamed skip this)
+ *  3. synced_at desc (never-synced => -Infinity, sorts last)
+ *  4. peer_id, localeCompare (stable, deterministic final tiebreak)
+ */
+export function comparePeers(a: PeerRefRow, b: PeerRefRow): number {
+  const aHasName = a.device_name != null && a.device_name !== ''
+  const bHasName = b.device_name != null && b.device_name !== ''
+
+  // 1. named devices before unnamed
+  if (aHasName !== bHasName) return aHasName ? -1 : 1
+
+  // 2. both named: alphabetical by name
+  if (aHasName && bHasName) {
+    const byName = (a.device_name as string).localeCompare(b.device_name as string)
+    if (byName !== 0) return byName
+  }
+
+  // 3. most-recently-synced first (null => never synced => last)
+  const aSynced = a.synced_at ?? Number.NEGATIVE_INFINITY
+  const bSynced = b.synced_at ?? Number.NEGATIVE_INFINITY
+  if (aSynced !== bSynced) return aSynced > bSynced ? -1 : 1
+
+  // 4. deterministic final tiebreak so the order is total
+  return a.peer_id.localeCompare(b.peer_id)
+}
+
 export function DeviceManagement(): React.ReactElement {
   const { t } = useTranslation()
   const [deviceId, setDeviceId] = useState<string | null>(null)
@@ -73,18 +111,15 @@ export function DeviceManagement(): React.ReactElement {
     errorLogMessage: 'Failed to load device info',
     onSuccess: ([id, peerList]) => {
       setDeviceId(id)
-      // Sort: named devices first (alphabetical), then unnamed by synced_at
-      peerList.sort((a, b) => {
-        if (a.device_name && !b.device_name) return -1
-        if (!a.device_name && b.device_name) return 1
-        if (a.device_name && b.device_name) return a.device_name.localeCompare(b.device_name)
-        return 0 // preserve backend synced_at ordering for unnamed peers
-      })
-      setPeers(peerList)
+      // #1673: Sort a COPY (don't mutate the IPC payload) with a total-order
+      // comparator: named devices first (alphabetical), then unnamed by
+      // synced_at desc, with peer_id as the final stable tiebreak.
+      const sorted = [...peerList].sort(comparePeers)
+      setPeers(sorted)
       // #1076: mirror the backend peer list into the shared sync store so
       // the StatusPanel Sync panel and the sidebar status dot reflect the
       // actual paired devices (they read `useSyncStore.peers`).
-      useSyncStore.getState().setPeers(peerList.map(mapPeerRefToInfo))
+      useSyncStore.getState().setPeers(sorted.map(mapPeerRefToInfo))
     },
     onError: () => {
       setError('Failed to load device info')

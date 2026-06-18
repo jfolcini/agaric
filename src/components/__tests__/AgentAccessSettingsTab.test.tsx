@@ -104,11 +104,7 @@ interface McpStatus {
   active_connections: number
 }
 
-interface McpRwStatus {
-  enabled: boolean
-  socket_path: string
-  active_connections: number
-}
+type McpRwStatus = McpStatus
 
 function makeStatus(overrides: Partial<McpStatus> = {}): McpStatus {
   return {

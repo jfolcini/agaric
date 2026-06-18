@@ -30,21 +30,6 @@ interface SearchHelpDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-interface HelpSection {
-  /** Stable id used for the heading `id` attribute (anchor-friendly). */
-  id: string
-  /** Heading text. */
-  title: string
-  /** Placeholder body — replaced by follow-up plans, never deleted. */
-  placeholder: string
-}
-
-// PEND-54 sees its content rendered inline (see `FilterSyntaxBody`).
-// PEND-55 populates Toggles / Regex syntax / Boolean operators / Tips
-// the same way — each section's body is rendered as its own component
-// so the help dialog stays an additive scroll surface.
-const HELP_SECTIONS: ReadonlyArray<HelpSection> = []
-
 /** PEND-54 — Filter syntax section body. */
 function FilterSyntaxBody() {
   const { t } = useTranslation()
@@ -373,18 +358,6 @@ export function SearchHelpDialog({ open, onOpenChange }: SearchHelpDialogProps) 
             </h3>
             <TipsBody />
           </section>
-          {/* Backfill from `HELP_SECTIONS` for any deferred section. */}
-          {HELP_SECTIONS.map((section) => (
-            <section key={section.id} aria-labelledby={`search-help-${section.id}`}>
-              <h3
-                id={`search-help-${section.id}`}
-                className="text-base font-semibold leading-tight"
-              >
-                {section.title}
-              </h3>
-              <p className="text-muted-foreground text-sm">{section.placeholder}</p>
-            </section>
-          ))}
         </DialogBody>
       </DialogContent>
     </Dialog>
