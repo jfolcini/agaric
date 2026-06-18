@@ -12,7 +12,7 @@
  * menu in `src/components/BlockContextMenu.tsx`.
  */
 
-import { Trash2, X } from 'lucide-react'
+import { Signal, Trash2, X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -33,6 +33,13 @@ interface BlockBatchActionMenuProps {
   batchInProgress: boolean
   batchDeleteConfirm: boolean
   onBatchSetTodo: (state: string | null) => void
+  /**
+   * #1734 — cycle priority across the whole selection. Mirrors the bulk
+   * priority path already in the right-click context menu so the discoverable
+   * toolbar doesn't teach a lower capability ceiling. Optional: omitted callers
+   * (e.g. tests / surfaces without a priority handler) simply hide the button.
+   */
+  onBatchSetPriority?: (() => void) | undefined
   onBatchDelete: () => void
   onSetBatchDeleteConfirm: (open: boolean) => void
   onClearSelection: () => void
@@ -43,6 +50,7 @@ export function BlockBatchActionMenu({
   batchInProgress,
   batchDeleteConfirm,
   onBatchSetTodo,
+  onBatchSetPriority,
   onBatchDelete,
   onSetBatchDeleteConfirm,
   onClearSelection,
@@ -81,6 +89,21 @@ export function BlockBatchActionMenu({
             </Button>
           ))}
         </div>
+
+        {/* #1734 — Priority parity with the bulk context menu: cycle priority
+            across the whole selection from the discoverable toolbar. */}
+        {onBatchSetPriority ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            disabled={batchInProgress}
+            onClick={() => onBatchSetPriority()}
+          >
+            <Signal className="h-3.5 w-3.5 mr-1" />
+            {t('contextMenu.cyclePrioritySelected')}
+          </Button>
+        ) : null}
 
         <Button
           variant="destructive"

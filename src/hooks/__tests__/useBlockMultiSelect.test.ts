@@ -37,6 +37,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockMultiSe
     rootParentId: 'PAGE_1' as string | null,
     pageStore,
     t: vi.fn((key: string) => key) as unknown as TFunction,
+    handleTogglePriority: vi.fn(),
     ...overrides,
   }
 }
@@ -174,6 +175,46 @@ describe('useBlockMultiSelect handleBatchSetTodo', () => {
       blockIds: ['BLOCK_1', 'BLOCK_2'],
       state: null,
     })
+  })
+})
+
+describe('useBlockMultiSelect handleBatchSetPriority (#1734)', () => {
+  // No dedicated single-IPC batch priority endpoint exists, so the toolbar
+  // fans out the canonical per-block cycle (the same path the bulk context
+  // menu uses) — one `handleTogglePriority` call per selected block.
+  it('fans out handleTogglePriority across the whole selection', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchSetPriority()
+    })
+
+    expect(params.handleTogglePriority).toHaveBeenCalledTimes(2)
+    expect(params.handleTogglePriority).toHaveBeenCalledWith('BLOCK_1')
+    expect(params.handleTogglePriority).toHaveBeenCalledWith('BLOCK_2')
+  })
+
+  it('clears selection after success', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchSetPriority()
+    })
+
+    expect(params.clearSelected).toHaveBeenCalled()
+  })
+
+  it('resets batchInProgress after completion', async () => {
+    const params = makeDefaultParams({ selectedBlockIds: ['BLOCK_1'] })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchSetPriority()
+    })
+
+    expect(result.current.batchInProgress).toBe(false)
   })
 })
 

@@ -63,7 +63,10 @@ export interface IconButtonProps extends Omit<
 }
 
 const IconButton = ({ tooltip, ariaLabel, size = 'icon', children, ...rest }: IconButtonProps) => (
-  <Tooltip>
+  // #1735: opt into the press-and-hold tooltip fallback. Radix hover tooltips
+  // never open on a coarse-pointer tap, so this is the only way the visible
+  // label surfaces to a sighted touch user (the `aria-label` covers AT only).
+  <Tooltip openOnLongPress>
     <TooltipTrigger asChild>
       <Button size={size} aria-label={ariaLabel} data-slot="icon-button" {...rest}>
         {children}

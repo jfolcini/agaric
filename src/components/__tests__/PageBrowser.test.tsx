@@ -99,8 +99,10 @@ beforeEach(() => {
   localStorage.removeItem('page-browser-sort')
   localStorage.removeItem('page-browser-density')
   localStorage.removeItem('starred-pages')
-  // Compound-filter chips now live in a module-global per-space store; reset it
-  // so chips added in one test don't leak into the next.
+  // Compound-filter chips now live in a module-global per-space store that
+  // persists to localStorage (#1750); reset both the in-memory slice and the
+  // persisted key so chips added in one test don't leak into the next.
+  localStorage.removeItem('agaric:page-browser-filters')
   usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
   // FEAT-3 Phase 2 — PageBrowser now gates its render and page query
   // on `useSpaceStore.isReady`. Seed the store so tests exercise the

@@ -47,6 +47,11 @@ export const block: Record<string, string> = {
   // aria descriptions so assistive tech announces the available gestures.
   'block.swipe.indented': 'Block indented',
   'block.swipe.outdented': 'Block outdented',
+  // #1748/#1732: labels for the non-destructive structural-swipe backdrops, so
+  // the indent (right) and outdent (short-left) gestures get a cue that matches
+  // their action instead of the destructive delete backdrop (or no cue at all).
+  'block.swipe.indentHint': 'Indent',
+  'block.swipe.outdentHint': 'Outdent',
   'block.setTodo': 'Set as TODO',
   'block.taskCycle': 'Task: {{state}}. Click to cycle.',
   'block.setTodoTip': 'Set as TODO (Ctrl+Enter)',

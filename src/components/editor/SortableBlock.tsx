@@ -14,7 +14,7 @@
 
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Trash2 } from 'lucide-react'
+import { IndentDecrease, IndentIncrease, Trash2 } from 'lucide-react'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -217,8 +217,8 @@ function SortableBlockInner({
 
   const {
     translateX: swipeTranslateX,
-    isRevealed: swipeRevealed,
     thresholdCrossed: swipeThresholdCrossed,
+    gestureIntent: swipeGestureIntent,
     handlers: swipeHandlers,
     reset: swipeReset,
   } = useBlockSwipeActions(handleSwipeDelete, {
@@ -310,8 +310,11 @@ function SortableBlockInner({
       {/* UX-304: progressive cue — the backdrop is a muted destructive
             tint while the gesture only reveals the action, then flips to
             the solid destructive variant + t('block.swipe.releaseToDelete') label
-            once the auto-delete threshold is crossed mid-drag. */}
-      {isTouchDevice && onDelete && (swipeRevealed || swipeTranslateX < 0) && (
+            once the auto-delete threshold is crossed mid-drag.
+            #1732: gate on the hook's gestureIntent === 'delete' rather than
+            "any left translate", so a left swipe that's actually an outdent no
+            longer flashes the destructive delete backdrop before outdenting. */}
+      {isTouchDevice && onDelete && swipeGestureIntent === 'delete' && (
         <div
           className={cn(
             'absolute right-0 top-0 bottom-0 flex items-center justify-center gap-2 px-3',
@@ -344,6 +347,53 @@ function SortableBlockInner({
               {t('block.swipe.releaseToDelete')}
             </span>
           )}
+        </div>
+      )}
+      {/* ── Swipe-to-indent affordance (mobile only) ────────────── */}
+      {/* #1748: a right swipe past the indent threshold previously slid the row
+            over a blank gutter with no cue. Mirror the delete backdrop with a
+            non-destructive accent one on the LEFT edge (the side the content
+            slides away from) so the indent gesture is discoverable/confirmed. */}
+      {isTouchDevice && onIndent && swipeGestureIntent === 'indent' && (
+        <div
+          className={cn(
+            'absolute left-0 top-0 bottom-0 flex items-center justify-center gap-2 px-3',
+            'transition-colors duration-normal',
+            'bg-primary/10 text-primary',
+          )}
+          style={{ width: 80 }}
+          data-testid="swipe-indent-action"
+        >
+          <IndentIncrease className="h-5 w-5" />
+          <span
+            className="hidden text-sm font-medium [@media(pointer:coarse)]:inline"
+            data-testid="swipe-indent-hint"
+          >
+            {t('block.swipe.indentHint')}
+          </span>
+        </div>
+      )}
+      {/* ── Swipe-to-outdent affordance (mobile only) ───────────── */}
+      {/* #1732: a short left swipe in the outdent band is non-destructive, so it
+            gets the same neutral accent backdrop as indent (on the RIGHT edge,
+            mirroring the delete side) instead of the red delete cue. */}
+      {isTouchDevice && onDedent && swipeGestureIntent === 'outdent' && (
+        <div
+          className={cn(
+            'absolute right-0 top-0 bottom-0 flex items-center justify-center gap-2 px-3',
+            'transition-colors duration-normal',
+            'bg-primary/10 text-primary',
+          )}
+          style={{ width: 80 }}
+          data-testid="swipe-outdent-action"
+        >
+          <IndentDecrease className="h-5 w-5" />
+          <span
+            className="hidden text-sm font-medium [@media(pointer:coarse)]:inline"
+            data-testid="swipe-outdent-hint"
+          >
+            {t('block.swipe.outdentHint')}
+          </span>
         </div>
       )}
 

@@ -698,4 +698,191 @@ describe('useBlockSwipeActions', () => {
       unmount()
     })
   })
+
+  // ── #1732/#1748: gestureIntent drives the direction-correct backdrop ─────
+  describe('gestureIntent (#1732/#1748)', () => {
+    it('starts as null with no drag in progress', () => {
+      mockCoarsePointer()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(vi.fn()))
+
+      expect(result.current.gestureIntent).toBeNull()
+
+      unmount()
+    })
+
+    it("arms 'delete' once a left swipe reaches the reveal floor", () => {
+      mockCoarsePointer()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(vi.fn()))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(300, 100))
+      })
+      // 100 px left — past REVEAL_THRESHOLD (80), well below OUTDENT band (no
+      // outdent handler here so the floor is REVEAL_THRESHOLD).
+      act(() => {
+        result.current.handlers.onTouchMove(touch(200, 100))
+      })
+
+      expect(result.current.gestureIntent).toBe('delete')
+
+      unmount()
+    })
+
+    it('stays null for a short left swipe below the reveal floor (no false delete cue)', () => {
+      mockCoarsePointer()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(vi.fn()))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(300, 100))
+      })
+      // 40 px left — below REVEAL_THRESHOLD (80): no destructive intent yet.
+      act(() => {
+        result.current.handlers.onTouchMove(touch(260, 100))
+      })
+
+      expect(result.current.gestureIntent).toBeNull()
+
+      unmount()
+    })
+
+    it("arms 'outdent' (not 'delete') for a short left swipe in the outdent band (#1732)", () => {
+      mockCoarsePointer()
+      const onOutdent = vi.fn()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(vi.fn(), { onOutdent }))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(300, 100))
+      })
+      // 90 px left — inside the outdent band [60, 110). The destructive delete
+      // backdrop must NOT be implied here; the intent is structural.
+      act(() => {
+        result.current.handlers.onTouchMove(touch(210, 100))
+      })
+
+      expect(result.current.gestureIntent).toBe('outdent')
+
+      unmount()
+    })
+
+    it("arms 'delete' for a long left swipe past OUTDENT_MAX even when outdent is wired", () => {
+      mockCoarsePointer()
+      const onOutdent = vi.fn()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(vi.fn(), { onOutdent }))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(400, 100))
+      })
+      // 130 px left — above OUTDENT_MAX (110), so the reveal floor (OUTDENT_MAX
+      // when outdent is active) is crossed: this is a delete-band drag.
+      act(() => {
+        result.current.handlers.onTouchMove(touch(270, 100))
+      })
+
+      expect(result.current.gestureIntent).toBe('delete')
+
+      unmount()
+    })
+
+    it("arms 'indent' once a right swipe reaches the indent threshold (#1748)", () => {
+      mockCoarsePointer()
+      const onIndent = vi.fn()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(vi.fn(), { onIndent }))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(100, 100))
+      })
+      // 70 px right — past INDENT_THRESHOLD (60).
+      act(() => {
+        result.current.handlers.onTouchMove(touch(170, 100))
+      })
+
+      expect(result.current.gestureIntent).toBe('indent')
+
+      unmount()
+    })
+
+    it('stays null for a right swipe below the indent threshold (no premature cue)', () => {
+      mockCoarsePointer()
+      const onIndent = vi.fn()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(vi.fn(), { onIndent }))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(100, 100))
+      })
+      // 40 px right — below INDENT_THRESHOLD (60).
+      act(() => {
+        result.current.handlers.onTouchMove(touch(140, 100))
+      })
+
+      expect(result.current.gestureIntent).toBeNull()
+
+      unmount()
+    })
+
+    it("keeps 'delete' armed after a partial left swipe leaves the delete button revealed", () => {
+      mockCoarsePointer()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(vi.fn()))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(300, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchMove(touch(200, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchEnd()
+      })
+
+      // The row stays revealed showing the delete button, so the destructive
+      // backdrop must remain visible (intent stays 'delete').
+      expect(result.current.isRevealed).toBe(true)
+      expect(result.current.gestureIntent).toBe('delete')
+
+      unmount()
+    })
+
+    it('clears the intent when a fired gesture or snap-back ends the drag', () => {
+      mockCoarsePointer()
+      const onIndent = vi.fn()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(vi.fn(), { onIndent }))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(100, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchMove(touch(170, 100))
+      })
+      expect(result.current.gestureIntent).toBe('indent')
+
+      act(() => {
+        result.current.handlers.onTouchEnd()
+      })
+
+      expect(onIndent).toHaveBeenCalledOnce()
+      expect(result.current.gestureIntent).toBeNull()
+
+      unmount()
+    })
+
+    it('reset() clears the intent alongside the other swipe state', () => {
+      mockCoarsePointer()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(vi.fn()))
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(300, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchMove(touch(200, 100))
+      })
+      expect(result.current.gestureIntent).toBe('delete')
+
+      act(() => {
+        result.current.reset()
+      })
+
+      expect(result.current.gestureIntent).toBeNull()
+
+      unmount()
+    })
+  })
 })

@@ -14,6 +14,13 @@ export interface UseBlockMultiSelectParams {
   rootParentId: string | null
   pageStore: StoreApi<PageBlockState>
   t: TFunction
+  /**
+   * #1734 — single-block priority cycle, fanned out across the selection by
+   * `handleBatchSetPriority`. Mirrors the bulk priority path the context menu
+   * already exposes; passed in so the hook reuses the canonical cycle logic
+   * (configurable level set, optimistic update, undo bookkeeping).
+   */
+  handleTogglePriority: (blockId: string) => void | Promise<void>
 }
 
 export interface UseBlockMultiSelectReturn {
@@ -21,6 +28,7 @@ export interface UseBlockMultiSelectReturn {
   batchInProgress: boolean
   setBatchDeleteConfirm: (v: boolean) => void
   handleBatchSetTodo: (state: string | null) => Promise<void>
+  handleBatchSetPriority: () => Promise<void>
   handleBatchDelete: () => Promise<void>
 }
 
@@ -30,6 +38,7 @@ export function useBlockMultiSelect({
   rootParentId,
   pageStore,
   t,
+  handleTogglePriority,
 }: UseBlockMultiSelectParams): UseBlockMultiSelectReturn {
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false)
   // `batchInProgress` (state) is surfaced to the UI (disables buttons in
@@ -94,6 +103,28 @@ export function useBlockMultiSelect({
     },
     [selectedBlockIds, clearSelected, rootParentId, t, pageStore],
   )
+
+  // #1734 — cycle priority across the whole selection. Unlike TODO/delete there
+  // is no dedicated single-IPC batch priority endpoint, so this fans out the
+  // canonical per-block cycle (the exact path the bulk context menu uses),
+  // awaiting each in turn so one failure surfaces a toast (raised inside
+  // `handleTogglePriority`) without aborting the rest. Selection is cleared
+  // afterwards, matching the toolbar's other batch actions.
+  const handleBatchSetPriority = useCallback(async () => {
+    if (batchInProgressRef.current) return
+    batchInProgressRef.current = true
+    setBatchInProgress(true)
+    try {
+      const ids = [...selectedBlockIds]
+      for (const id of ids) {
+        await Promise.resolve(handleTogglePriority(id))
+      }
+      clearSelected()
+    } finally {
+      batchInProgressRef.current = false
+      setBatchInProgress(false)
+    }
+  }, [selectedBlockIds, handleTogglePriority, clearSelected])
 
   const handleBatchDelete = useCallback(async () => {
     if (batchInProgressRef.current) return
@@ -171,6 +202,7 @@ export function useBlockMultiSelect({
     batchInProgress,
     setBatchDeleteConfirm,
     handleBatchSetTodo,
+    handleBatchSetPriority,
     handleBatchDelete,
   }
 }

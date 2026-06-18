@@ -64,6 +64,62 @@ describe('useBlockStore', () => {
       expect(useBlockStore.getState().selectedBlockIds).toEqual(['B'])
     })
 
+    // #1729 — Shift+Click adopts the anchor/focus REPLACE model (matches
+    // Shift+Arrow in the same tree and Shift+Click in the list views) so the
+    // gesture can SHRINK as well as grow, instead of the old union-only path.
+    describe('rangeSelect anchor/focus model (#1729)', () => {
+      const visible = ['A', 'B', 'C', 'D', 'E']
+
+      it('seeds the anchor on a first click into an empty selection', () => {
+        useBlockStore.getState().rangeSelect('C', visible)
+        expect(useBlockStore.getState().selectedBlockIds).toEqual(['C'])
+        expect(useBlockStore.getState().selectionAnchorId).toBe('C')
+        expect(useBlockStore.getState().selectionFocusId).toBe('C')
+      })
+
+      it('SHRINKS the range when a second click lands nearer the anchor', () => {
+        useBlockStore.getState().rangeSelect('A', visible) // anchor A
+        useBlockStore.getState().rangeSelect('D', visible) // A..D
+        expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B', 'C', 'D'])
+        useBlockStore.getState().rangeSelect('B', visible) // shrink to A..B
+        expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B'])
+        // Anchor stays fixed; focus follows the click.
+        expect(useBlockStore.getState().selectionAnchorId).toBe('A')
+        expect(useBlockStore.getState().selectionFocusId).toBe('B')
+      })
+
+      it('REPLACES rather than unions a prior range (clicking the other side of the anchor)', () => {
+        useBlockStore.getState().rangeSelect('C', visible) // anchor C
+        useBlockStore.getState().rangeSelect('E', visible) // C..E
+        expect(useBlockStore.getState().selectedBlockIds).toEqual(['C', 'D', 'E'])
+        useBlockStore.getState().rangeSelect('A', visible) // flip below anchor
+        // Union-only would have kept C,D,E; replace model yields A..C only.
+        expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B', 'C'])
+        expect(useBlockStore.getState().selectionAnchorId).toBe('C')
+      })
+
+      it('persists anchor + focus so a following Shift+Arrow continues from the click', () => {
+        useBlockStore.getState().rangeSelect('B', visible) // anchor B
+        useBlockStore.getState().rangeSelect('D', visible) // B..D, focus D
+        useBlockStore.getState().extendSelection('down', visible) // → B..E
+        expect(useBlockStore.getState().selectedBlockIds).toEqual(['B', 'C', 'D', 'E'])
+        expect(useBlockStore.getState().selectionAnchorId).toBe('B')
+        expect(useBlockStore.getState().selectionFocusId).toBe('E')
+      })
+
+      it('falls back to the last selected block when no anchor is set (legacy state)', () => {
+        // No selectionAnchorId (e.g. selection seeded via toggle/Ctrl+Click).
+        useBlockStore.setState({
+          selectedBlockIds: ['A'],
+          selectionAnchorId: null,
+          selectionFocusId: null,
+        })
+        useBlockStore.getState().rangeSelect('C', visible)
+        expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B', 'C'])
+        expect(useBlockStore.getState().selectionAnchorId).toBe('A')
+      })
+    })
+
     it('selectAll selects all blocks', () => {
       useBlockStore.getState().selectAll(['A', 'B', 'C'])
       expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B', 'C'])

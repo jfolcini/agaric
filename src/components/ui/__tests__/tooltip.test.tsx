@@ -7,9 +7,9 @@
  *  - Render output and a11y compliance
  */
 
-import { render } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import * as React from 'react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../tooltip'
@@ -90,5 +90,62 @@ describe('TooltipContent', () => {
       rules: { region: { enabled: false } },
     })
     expect(results).toHaveNoViolations()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Press-and-hold fallback (#1735) — Radix hover tooltips never open on a
+// coarse-pointer tap, so icon-only controls can opt into `openOnLongPress` to
+// surface their label to sighted touch users on a press-and-hold.
+// ---------------------------------------------------------------------------
+
+describe('Tooltip openOnLongPress (#1735)', () => {
+  it('opens on a press-and-hold when openOnLongPress is set', async () => {
+    vi.useFakeTimers()
+    try {
+      render(
+        <TooltipProvider delayDuration={0}>
+          <Tooltip openOnLongPress>
+            <TooltipTrigger asChild>
+              <button type="button" data-testid="lp" aria-label="Search" />
+            </TooltipTrigger>
+            <TooltipContent>Search</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>,
+      )
+      expect(screen.queryAllByRole('tooltip')).toHaveLength(0)
+      fireEvent.pointerDown(screen.getByTestId('lp'), { clientX: 5, clientY: 5 })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600)
+      })
+      const tooltips = screen.getAllByRole('tooltip')
+      expect(tooltips.length).toBeGreaterThan(0)
+      expect(tooltips[0]).toHaveTextContent('Search')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does NOT open on a press-and-hold without the opt-in (other call sites unaffected)', async () => {
+    vi.useFakeTimers()
+    try {
+      render(
+        <TooltipProvider delayDuration={0}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button type="button" data-testid="plain" aria-label="Plain" />
+            </TooltipTrigger>
+            <TooltipContent>Plain</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>,
+      )
+      fireEvent.pointerDown(screen.getByTestId('plain'), { clientX: 5, clientY: 5 })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600)
+      })
+      expect(screen.queryAllByRole('tooltip')).toHaveLength(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
