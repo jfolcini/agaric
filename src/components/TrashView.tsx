@@ -115,7 +115,6 @@ export function TrashView(): React.ReactElement {
   })
 
   // Reset focused index when filter changes
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional — reset on filter change
   useEffect(() => {
     setFocusedIndex(0)
   }, [debouncedFilter, setFocusedIndex])

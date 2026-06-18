@@ -253,7 +253,6 @@ function SortableBlockInner({
   }
 
   return (
-    /* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- touch handlers for long-press context menu */
     <div
       ref={(node) => {
         setNodeRef(node)

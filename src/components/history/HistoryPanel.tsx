@@ -105,7 +105,6 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     [blockId, opTypeFilter, t],
   )
 
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- reset and reload when blockId or opTypeFilter changes
   useEffect(() => {
     setEntries([])
     setNextCursor(null)
@@ -207,7 +206,6 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   }, [filteredEntries])
 
   const handlePanelKeyDown = useCallback(
-    // oxlint-disable-next-line eslint/complexity -- refactor deferred to follow-up
     (e: React.KeyboardEvent<HTMLUListElement>) => {
       if (restorableEntries.length === 0) return
       const currentIdx = restorableEntries.findIndex((entry) => entry.seq === expandedSeq)

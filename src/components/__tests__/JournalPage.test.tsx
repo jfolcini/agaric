@@ -2653,7 +2653,6 @@ describe('JournalPage', () => {
       perSpaceTemplate: string | null
       legacyTemplatePage: boolean
     }) {
-      // oxlint-disable-next-line eslint/complexity -- per-space template test mock fans out across 7 distinct Tauri commands (list_blocks / get_properties / get_block_property_def / list_blocks_lite / list_pages / create_block / create_page_in_space) to pin the FEAT-3p5b template-seeding flow; flattening into one switch keeps the cause-effect chain in one place. Score 32 vs default 25.
       return async (cmd: string, args?: unknown): Promise<unknown> => {
         const bug48 = bug48EmptyResponse(cmd)
         if (bug48 !== BUG48_NOT_HANDLED) return bug48

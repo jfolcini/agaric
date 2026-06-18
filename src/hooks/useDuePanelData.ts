@@ -221,7 +221,6 @@ export function useDuePanelData({
   const isToday = date === todayStr
 
   // Fetch overdue blocks when showing today
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional — refetch on property change (B-50/F-39)
   useEffect(() => {
     if (!isToday) {
       setOverdueBlocks([])
@@ -291,7 +290,6 @@ export function useDuePanelData({
   }, [isToday, date, invalidationKey, currentSpaceId])
 
   // Fetch upcoming blocks (deadline approaching within warningDays)
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional — refetch on property change (B-50/F-39)
   useEffect(() => {
     if (!isToday || warningDays <= 0) {
       setUpcomingBlocks([])
@@ -419,7 +417,6 @@ export function useDuePanelData({
   )
 
   // Fetch on mount and when date or sourceFilter changes
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional — refetch on property change (B-50/F-39)
   useEffect(() => {
     setLoading(true)
     setBlocks([])

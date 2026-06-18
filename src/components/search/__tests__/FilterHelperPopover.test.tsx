@@ -421,7 +421,6 @@ describe('FilterHelperPopover — state filter (UX-A5)', () => {
     await openCategory('search.filterCategory.state')
     await waitFor(
       async () => {
-        // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
         expect(await axe(document.body as any)).toHaveNoViolations()
       },
       { timeout: 5000 },
@@ -461,7 +460,6 @@ describe('FilterHelperPopover — priority filter (UX-A5)', () => {
     await openCategory('search.filterCategory.priority')
     await waitFor(
       async () => {
-        // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
         expect(await axe(document.body as any)).toHaveNoViolations()
       },
       { timeout: 5000 },
@@ -524,7 +522,6 @@ describe('FilterHelperPopover — due / scheduled filter (UX-A5)', () => {
     await openCategory('search.filterCategory.due')
     await waitFor(
       async () => {
-        // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
         expect(await axe(document.body as any)).toHaveNoViolations()
       },
       { timeout: 5000 },
@@ -576,7 +573,6 @@ describe('FilterHelperPopover — property filter (UX-A5)', () => {
     await openCategory('search.filterCategory.prop')
     await waitFor(
       async () => {
-        // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
         expect(await axe(document.body as any)).toHaveNoViolations()
       },
       { timeout: 5000 },
@@ -596,7 +592,6 @@ describe('FilterHelperPopover — a11y', () => {
     await screen.findByRole('menu')
     await waitFor(
       async () => {
-        // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
         expect(await axe(document.body as any)).toHaveNoViolations()
       },
       { timeout: 5000 },
@@ -612,7 +607,6 @@ describe('FilterHelperPopover — a11y', () => {
     await screen.findByRole('option', { name: '#alpha' })
     await waitFor(
       async () => {
-        // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
         expect(await axe(document.body as any)).toHaveNoViolations()
       },
       { timeout: 5000 },

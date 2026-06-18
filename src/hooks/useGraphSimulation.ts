@@ -317,8 +317,9 @@ export function useGraphSimulation({
   // Runs only when the simulation *kind* changes (mount, worker
   // failure flip, or a zoom/runner callback identity change). Reads
   // the latest data + renderElements via refs so filter toggles do
-  // not re-fire this effect.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- nodes/edges/navigateToPage/renderElements are intentionally consumed via refs. Listing them here would re-fire setup on every filter toggle, defeating PERF-Tier2 item 8.
+  // not re-fire this effect. (nodes/edges/navigateToPage/renderElements
+  // are intentionally consumed via refs; the exhaustive-deps directive
+  // lives on the deps array below where oxlint anchors the diagnostic.)
   useEffect(() => {
     if (nodesRef.current.length === 0 || !svgRef.current) return
     const svg = svgRef.current
@@ -400,8 +401,8 @@ export function useGraphSimulation({
   // but intentionally NOT listed in this effect's deps — when they flip,
   // the setup effect re-fires and rebuilds everything, so the patch
   // effect must not also fire on those changes. (The functional
-  // oxlint-disable for that omission lives on the deps array below, where
-  // oxlint anchors the exhaustive-deps diagnostic.)
+  // exhaustive-deps directive for that omission lives on the deps array
+  // below, where oxlint anchors the diagnostic.)
   useEffect(() => {
     const state = stateRef.current
     if (!svgRef.current) return

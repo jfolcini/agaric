@@ -56,7 +56,6 @@ beforeEach(() => {
 
 afterEach(() => {
   if (!hadTauriInternals) {
-    // oxlint-disable-next-line typescript/no-explicit-any -- test cleanup of window property
     delete (window as any).__TAURI_INTERNALS__
   }
 })
@@ -159,7 +158,6 @@ describe('useRecoveryStatus — mount backfill', () => {
 
 describe('useRecoveryStatus — browser mode', () => {
   it('no-ops when __TAURI_INTERNALS__ is absent', async () => {
-    // oxlint-disable-next-line typescript/no-explicit-any -- test setup
     delete (window as any).__TAURI_INTERNALS__
     renderHook(() => useRecoveryStatus())
     expect(mockListen).not.toHaveBeenCalled()

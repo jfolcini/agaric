@@ -128,7 +128,6 @@ beforeEach(() => {
 
 afterEach(() => {
   if (!hadTauriInternals) {
-    // oxlint-disable-next-line typescript/no-explicit-any -- test cleanup of window property
     delete (window as any).__TAURI_INTERNALS__
   }
 })
@@ -485,7 +484,6 @@ describe('useDeepLinkRouter', () => {
     })
 
     it('no-ops when __TAURI_INTERNALS__ is absent (browser mode)', async () => {
-      // oxlint-disable-next-line typescript/no-explicit-any -- test cleanup of window property
       delete (window as any).__TAURI_INTERNALS__
 
       const { unmount } = renderHook(() => useDeepLinkRouter())

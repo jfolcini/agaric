@@ -244,7 +244,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // given scroll offset — keeping `focusedIndex` stable across the
   // toggle would land the focus ring on a row that's no longer where
   // the user is looking.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- filterText, sortOption, density, and the compound-filter set intentionally trigger reset
   useEffect(() => {
     setFocusedIndex(0)
   }, [filterText, sortOption, density, wireFiltersKey, setFocusedIndex])
@@ -600,9 +599,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                 never carries an empty trailing row once everything is
                 loaded (`LoadMoreButton` itself also returns null then). */}
             {hasMore && (
-              // oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- row focus is delegated to the inner load-more button; CSS-grid row would break as a <tr> without a <table>
+              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- row focus is delegated to the inner load-more button; CSS-grid row would break as a <tr> without a <table>
               <div role="row" className="page-browser-load-more-row">
-                {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to the inner load-more button; CSS-grid cell would break as a <td> without a <table> */}
+                {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to the inner load-more button; CSS-grid cell would break as a <td> without a <table> */}
                 <div role="gridcell">
                   <LoadMoreButton
                     hasMore={hasMore}

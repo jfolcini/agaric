@@ -134,7 +134,6 @@ describe('DateFilterForm — Back', () => {
 describe('DateFilterForm — a11y', () => {
   it('has no axe violations in bucket shape', async () => {
     const { container } = setup('due')
-    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     expect(await axe(container as any)).toHaveNoViolations()
   })
 
@@ -142,7 +141,6 @@ describe('DateFilterForm — a11y', () => {
     const user = userEvent.setup()
     const { container } = setup('scheduled')
     await user.selectOptions(shapeSelect(), 'op')
-    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     expect(await axe(container as any)).toHaveNoViolations()
   })
 })

@@ -37,17 +37,14 @@ vi.mock('d3-drag', () => ({
 }))
 
 // ── MockWorker ───────────────────────────────────────────────────────
-// oxlint-disable-next-line typescript/no-explicit-any -- test mock
 type Handler = (evt: { data?: any; type?: string; error?: any; message?: any }) => void
 
 class MockWorker {
   static instances: MockWorker[] = []
-  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   postMessageCalls: any[] = []
   terminated = false
   private listeners = new Map<string, Handler[]>()
 
-  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   constructor(_url: any, _opts?: any) {
     MockWorker.instances.push(this)
   }
@@ -66,7 +63,6 @@ class MockWorker {
     )
   }
 
-  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   postMessage(data: any): void {
     this.postMessageCalls.push(data)
   }
@@ -75,7 +71,6 @@ class MockWorker {
     this.terminated = true
   }
 
-  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   dispatch(type: string, event: any): void {
     const list = this.listeners.get(type) ?? []
     for (const handler of list) handler(event)
@@ -107,7 +102,6 @@ function makeCtx(): SimulationCtx {
   const nodes = makeNodes()
   const edges = makeEdges()
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
-  // oxlint-disable-next-line typescript/no-explicit-any -- NodeSel chain — test stub
   const node = { call: vi.fn().mockReturnThis() } as any
   return {
     simNodes: nodes,

@@ -105,7 +105,6 @@ vi.mock('@/editor/use-roving-editor', () => ({
 // `editor.chain().focus().toggleCodeBlock(...)` were called directly.
 vi.mock('@/editor/toggle-code-block-safely', () => ({
   toggleCodeBlockSafely: (editor: { chain: () => unknown }, attributes?: unknown) => {
-    // oxlint-disable-next-line typescript/no-explicit-any -- traversing the test's mock chain
     const c = editor.chain() as any
     c.focus().toggleCodeBlock(attributes).focus('end').run()
   },
@@ -2173,7 +2172,6 @@ describe('BlockTree resolve cache preload', () => {
           deleted: false,
         }))
     }
-    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'load_page_subtree') {
         const a = args as Record<string, unknown> | undefined
@@ -2228,7 +2226,6 @@ describe('BlockTree handleNavigate', () => {
     const PAGE_ID = '01TESTPAGE00000000000NAV01'
     const onNav = vi.fn()
 
-    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block' && args?.blockId === PAGE_ID) {
         return {
@@ -2272,7 +2269,6 @@ describe('BlockTree handleNavigate', () => {
     const PARENT_ID = '01TESTPAGE00000000000NAV03'
     const onNav = vi.fn()
 
-    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block' && args?.blockId === CONTENT_ID) {
         return {
@@ -2332,7 +2328,6 @@ describe('BlockTree handleNavigate', () => {
   it('handles missing/deleted block without crashing', async () => {
     const onNav = vi.fn()
 
-    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block') throw new Error('Block not found')
       if (cmd === 'get_batch_properties') {
@@ -3852,7 +3847,6 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
     const BLOCK_ID = '01TESTLOCAL0000000000NAV01'
     const onNav = vi.fn()
 
-    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block' && args?.blockId === BLOCK_ID) {
         return {
@@ -3899,7 +3893,6 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
     const PARENT_ID = '01TESTPAGE00000000000NAV05'
     const onNav = vi.fn()
 
-    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block' && args?.blockId === CONTENT_ID) {
         return {
@@ -5333,7 +5326,6 @@ describe('BlockTree Enter creates new sibling block', () => {
     // Mock create_block to return a new block.  Throw from
     // load_page_subtree so load() falls into its catch branch and the
     // seeded tree survives.
-    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
       if (cmd === 'create_block') {
@@ -5390,7 +5382,6 @@ describe('BlockTree Enter creates new sibling block', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'create_block') {
         return {
@@ -5444,7 +5435,6 @@ describe('BlockTree Enter creates new sibling block', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'create_block') {
         return {

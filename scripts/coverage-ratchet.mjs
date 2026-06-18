@@ -105,7 +105,6 @@ function writeBaseline(baseline) {
 function appendStepSummary(md) {
   const out = process.env['GITHUB_STEP_SUMMARY']
   if (out) {
-    // eslint-disable-next-line no-sync
     writeFileSync(out, md + '\n', { flag: 'a' })
   } else {
     process.stdout.write(md + '\n')

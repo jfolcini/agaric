@@ -99,7 +99,6 @@ export function DonePanel({
     [date, blocks, totalCount, t, excludePageId, currentSpaceId],
   )
 
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- invalidationKey triggers refetch on property changes (F-39)
   useEffect(() => {
     setBlocks([])
     setNextCursor(null)

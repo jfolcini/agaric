@@ -355,12 +355,10 @@ export function TagFilterPanel(): React.ReactElement {
   })
 
   // Reset focused index when items change
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional — reset on results change
   useEffect(() => {
     setResultsFocusedIndex(0)
   }, [results.length, setResultsFocusedIndex])
 
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional — reset on matching tags change
   useEffect(() => {
     setMatchingFocusedIndex(0)
   }, [filteredMatching.length, setMatchingFocusedIndex])
@@ -543,12 +541,10 @@ export function TagFilterPanel(): React.ReactElement {
                     isFocused && 'ring-2 ring-inset ring-ring/50 bg-accent/30',
                   )}
                 >
-                  {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- text-only gridcell, focus stays on the row */}
                   {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell inside aria grid widget; <td> requires table ancestry and breaks the flex layout */}
                   <span role="gridcell">
                     <HighlightPrefix text={tag.name} prefix={prefix} /> ({tag.usage_count})
                   </span>
-                  {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner Button */}
                   {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell inside aria grid widget; <td> requires table ancestry and breaks the flex layout */}
                   <span role="gridcell">
                     <Button
@@ -620,7 +616,6 @@ export function TagFilterPanel(): React.ReactElement {
                   tabIndex={-1}
                   className={cn(isFocused && 'ring-2 ring-inset ring-ring/50 rounded-lg')}
                 >
-                  {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner ResultCard */}
                   {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell in aria grid widget; <td> requires table ancestry and breaks the layout */}
                   <div role="gridcell">
                     <ResultCard

@@ -340,7 +340,6 @@ function OverflowPopover({ items, ariaLabel }: OverflowPopoverProps): React.Reac
           aria-label={ariaLabel}
           onOpenAutoFocus={handleOpenAutoFocus}
         >
-          {/* oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- keyboard activation of the inner <button>s dispatches a synthetic click that bubbles to this delegated handler */}
           <div
             ref={listRef}
             data-slot="breadcrumb-overflow-list"

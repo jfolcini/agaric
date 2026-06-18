@@ -72,7 +72,6 @@ export function LoadingSkeleton({
   return (
     <div className={cn('space-y-2', className)} {...wrapperA11y} {...rest}>
       {Array.from({ length: count }).map((_, i) => (
-        // oxlint-disable-next-line react/no-array-index-key -- static list of identical skeletons
         <Skeleton key={i} className={cn(heightClass, 'w-full rounded-lg')} />
       ))}
     </div>

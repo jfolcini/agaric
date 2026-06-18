@@ -88,7 +88,6 @@ export function TablePicker({ editor, onClose }: TablePickerProps): React.ReactE
       */}
       <div
         className="flex flex-col gap-0.5 p-1 focus-outline rounded"
-        // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- the grid is a keyboard-driven composite (roving R×C highlight); tabIndex lets it receive arrow/Enter input
         tabIndex={0}
         role="grid"
         aria-label={t('toolbar.insertTable')}

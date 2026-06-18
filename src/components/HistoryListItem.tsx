@@ -119,7 +119,6 @@ function HistoryListItemInner({
       tabIndex={isFocused ? 0 : -1}
       aria-disabled={isNonReversible || undefined}
     >
-      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner controls */}
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell in an aria grid; <td> requires table ancestry and breaks the flex layout */}
       <div role="gridcell" className="flex items-center gap-3 w-full">
         {/* Checkbox.

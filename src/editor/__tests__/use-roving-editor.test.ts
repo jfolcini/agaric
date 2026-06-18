@@ -363,7 +363,6 @@ describe('unmount error boundary', () => {
 
 // -- Real TipTap Editor helpers -----------------------------------------------
 
-// oxlint-disable-next-line typescript/no-explicit-any -- TipTap extensions have complex union types
 function createEditor(extensions: any[]): Editor {
   return new Editor({
     element: document.createElement('div'),

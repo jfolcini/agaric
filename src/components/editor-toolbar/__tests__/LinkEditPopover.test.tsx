@@ -46,7 +46,6 @@ vi.mock('@/components/ui/label', () => ({
     children,
     ...props
   }: React.LabelHTMLAttributes<HTMLLabelElement> & { size?: string }) => (
-    // oxlint-disable-next-line jsx-a11y/label-has-associated-control -- htmlFor is passed via ...props from the real component
     <label {...props}>{children}</label>
   ),
 }))

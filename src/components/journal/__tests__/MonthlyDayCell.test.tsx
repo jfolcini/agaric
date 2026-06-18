@@ -189,7 +189,7 @@ describe('MonthlyDayCell', () => {
     try {
       const { container } = render(
         <div role="grid">
-          {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- test wrapper; row children provide focus targets; row role mirrors MonthlyView's grid inside role="grid" */}
+          {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- test wrapper; row children provide focus targets; row role mirrors MonthlyView's grid inside role="grid" */}
           <div role="row">
             <MonthlyDayCell
               {...defaultProps}
@@ -276,7 +276,7 @@ describe('MonthlyDayCell', () => {
   it('has no a11y violations', async () => {
     const { container } = render(
       <div role="grid">
-        {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- test wrapper; row role mirrors MonthlyView's grid inside role="grid" */}
+        {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- test wrapper; row role mirrors MonthlyView's grid inside role="grid" */}
         <div role="row">
           <MonthlyDayCell {...defaultProps} />
         </div>
@@ -294,7 +294,7 @@ describe('MonthlyDayCell', () => {
   it('has no a11y violations when gridcell is focused', async () => {
     const { container } = render(
       <div role="grid">
-        {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- test wrapper; row role mirrors MonthlyView's grid inside role="grid" */}
+        {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- test wrapper; row role mirrors MonthlyView's grid inside role="grid" */}
         <div role="row">
           <MonthlyDayCell {...defaultProps} />
         </div>

@@ -55,7 +55,6 @@ function setup(options?: { onCommand?: ReturnType<typeof vi.fn> }) {
     editor: { view: { isDestroyed: false } },
     options: { items: () => [], onCommand },
   }
-  // oxlint-disable-next-line typescript/no-explicit-any -- test helper — call with mock context
   ;(SlashCommand as any).addProseMirrorPlugins.call(ctx)
   const render = capturedPickerConfig['render'] as () => Lifecycle
   const command = capturedPickerConfig['command'] as (args: {

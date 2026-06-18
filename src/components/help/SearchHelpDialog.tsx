@@ -253,7 +253,6 @@ function RegexSyntaxBody() {
             mono,
             // `lnk`, not `link`: `<link>` is a void element the Trans parser self-closes.
             lnk: (
-              // oxlint-disable-next-line jsx-a11y/anchor-has-content -- text supplied by Trans children
               <a
                 className="underline"
                 href="https://docs.rs/regex/latest/regex/#syntax"

@@ -63,7 +63,6 @@ export function usePageBrowserScrollRestoration({
   // this, switching to space B and back to space A would skip
   // restoration for A because `restoredRef.current` was set during
   // A's first mount in this session.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- re-arm only on key change
   useEffect(() => {
     restoredRef.current = false
   }, [scrollStorageKey])

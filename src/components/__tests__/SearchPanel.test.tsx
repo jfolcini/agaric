@@ -2263,7 +2263,6 @@ describe('SearchPanel', () => {
       await screen.findByTestId('search-history-list')
       await user.keyboard('{ArrowUp}')
 
-      // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
       const results = await axe(container as any)
       expect(results).toHaveNoViolations()
     })
@@ -2359,7 +2358,6 @@ describe('SearchPanel', () => {
         expect(screen.getByTestId('search-no-results-clear-filters')).toBeInTheDocument()
       })
 
-      // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
       const results = await axe(container as any)
       expect(results).toHaveNoViolations()
     })

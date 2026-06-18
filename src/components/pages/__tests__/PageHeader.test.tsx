@@ -147,7 +147,6 @@ beforeEach(() => {
 
 /** Helper to set up invoke mock with tags */
 function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) {
-  // oxlint-disable-next-line typescript/no-explicit-any -- test mock needs flexible arg access
   mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
     if (cmd === 'list_blocks') {
       return {
@@ -432,7 +431,6 @@ describe('PageHeader tag management', () => {
   // German / accented tag names via `matchesSearchFolded`.
   it('tag picker search matches accented tag when query is ASCII', async () => {
     const user = userEvent.setup()
-    // oxlint-disable-next-line typescript/no-explicit-any -- test mock needs flexible arg access
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_blocks') {
         return {

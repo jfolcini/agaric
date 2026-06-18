@@ -1366,7 +1366,6 @@ describe('PageBrowser', () => {
           })
         }
         if (cmd === 'resolve_page_by_alias') {
-          // oxlint-disable-next-line typescript/no-explicit-any -- dynamic IPC args
           const query = (args as any)?.alias as string | undefined
           aliasCalls.push(query ?? '')
           if (query === 'App') {

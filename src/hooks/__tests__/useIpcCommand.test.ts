@@ -146,7 +146,6 @@ describe('useIpcCommand — error path', () => {
   it('passes non-Error rejections through to onError verbatim', async () => {
     const onError = vi.fn()
     const call = vi.fn(async () => {
-      // oxlint-disable-next-line typescript/only-throw-error -- non-Error rejection is the case under test
       throw 'plain string'
     })
     const { result } = renderHook(() =>

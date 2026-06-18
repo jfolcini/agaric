@@ -151,7 +151,6 @@ export function TrashListView({
             viewportClassName="trash-view-scroll max-h-[calc(100dvh-260px)]"
             viewportProps={{
               className: 'trash-view-list',
-              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- aria grid over a flex/CSS-grid layout; a <table> would break the card layout
               role: 'grid',
               'aria-label': t('trash.listLabel'),
               tabIndex: 0,

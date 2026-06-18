@@ -174,7 +174,6 @@ function renderHook(hookFn: () => void): { unmount: () => void } {
 let hadTauriInternals: boolean
 
 beforeEach(() => {
-  // oxlint-disable-next-line typescript/no-explicit-any -- React test env global
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   vi.clearAllMocks()
 
@@ -198,7 +197,6 @@ beforeEach(() => {
 afterEach(() => {
   // Clean up __TAURI_INTERNALS__ if we added it
   if (!hadTauriInternals) {
-    // oxlint-disable-next-line typescript/no-explicit-any -- test cleanup of window property
     delete (window as any).__TAURI_INTERNALS__
   }
 })
@@ -293,7 +291,6 @@ describe('useSyncEvents', () => {
     })
 
     it('no-ops when __TAURI_INTERNALS__ is absent (browser mode)', async () => {
-      // oxlint-disable-next-line typescript/no-explicit-any -- test cleanup of window property
       delete (window as any).__TAURI_INTERNALS__
 
       const { unmount } = renderHook(() => useSyncEvents())

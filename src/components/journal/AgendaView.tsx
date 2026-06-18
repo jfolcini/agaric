@@ -66,7 +66,6 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   } = useAgendaPreferences()
 
   // ── Agenda filter execution ────────────────────────────────────────
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- refreshKey forces re-fetch after inline date edits
   useEffect(() => {
     let cancelled = false
     setAgendaLoading(true)

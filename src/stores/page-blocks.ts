@@ -1289,7 +1289,6 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         }
       }),
 
-    // oxlint-disable-next-line eslint/complexity -- pre-existing
     moveDown: (blockId: string) =>
       enqueueMove(blockId, async (): Promise<boolean> => {
         const { blocks, blocksById, rootParentId } = get()

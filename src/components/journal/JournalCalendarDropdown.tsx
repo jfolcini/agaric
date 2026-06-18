@@ -209,7 +209,6 @@ export function JournalCalendarDropdown({
 
   return (
     <>
-      {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- backdrop dismiss */}
       <div role="presentation" className="fixed inset-0 z-40" onClick={onClose} />
       <div
         ref={calRef}

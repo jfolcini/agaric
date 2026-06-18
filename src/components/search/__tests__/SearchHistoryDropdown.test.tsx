@@ -133,21 +133,18 @@ describe('SearchHistoryDropdown', () => {
 
   it('has no axe violations when disabled with no entries', async () => {
     const { container } = renderDropdown({ entries: [], historyEnabled: false })
-    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     const results = await axe(container as any)
     expect(results).toHaveNoViolations()
   })
 
   it('has no axe violations with entries', async () => {
     const { container } = renderDropdown({ entries: ['alpha', 'beta'] })
-    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     const results = await axe(container as any)
     expect(results).toHaveNoViolations()
   })
 
   it('has no axe violations in empty state', async () => {
     const { container } = renderDropdown({ entries: [] })
-    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     const results = await axe(container as any)
     expect(results).toHaveNoViolations()
   })

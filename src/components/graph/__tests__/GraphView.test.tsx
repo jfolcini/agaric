@@ -141,17 +141,14 @@ vi.mock('d3-drag', () => ({
 
 // ── MockWorker for WebWorker tests (PERF-9b) ──────────────────────────
 
-// oxlint-disable-next-line typescript/no-explicit-any -- test mock
 type MessageHandler = (event: { data: any }) => void
 
 class MockWorker {
   static instances: MockWorker[] = []
-  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   postMessageCalls: any[] = []
   terminated = false
   private listeners: Map<string, MessageHandler[]> = new Map()
 
-  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   constructor(_url: any, _opts?: any) {
     MockWorker.instances.push(this)
   }
@@ -170,7 +167,6 @@ class MockWorker {
     )
   }
 
-  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   postMessage(data: any) {
     this.postMessageCalls.push(data)
 
@@ -194,12 +190,10 @@ class MockWorker {
     this.terminated = true
   }
 
-  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   simulateError(type: 'error' | 'messageerror', event: any) {
     this.emit(type, event)
   }
 
-  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   private emit(type: string, event: any) {
     const list = this.listeners.get(type) ?? []
     for (const handler of list) {
@@ -886,9 +880,7 @@ describe('GraphView', () => {
       })
 
       // Access the d3 mock chain to extract the keydown handler on node groups
-      // oxlint-disable-next-line typescript/no-explicit-any -- d3 mock chain access in test
       const svgSel = vi.mocked(select).mock.results[0]?.value as any
-      // oxlint-disable-next-line typescript/no-explicit-any -- d3 mock chain access in test
       const g = svgSel.append.mock.results[0]?.value as any
       const keydownCall = g.on.mock.calls.find((c: unknown[]) => c[0] === 'keydown')
       expect(keydownCall).toBeDefined()
@@ -926,7 +918,6 @@ describe('GraphView', () => {
       const svg = screen.getByTestId('graph-svg')
       fireEvent.keyDown(svg, { key: '+' })
 
-      // oxlint-disable-next-line typescript/no-explicit-any -- d3 zoom mock access in test
       const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
       expect(zoomInstance.scaleBy).toHaveBeenCalledWith(expect.anything(), 1.3)
     })
@@ -955,7 +946,6 @@ describe('GraphView', () => {
       const svg = screen.getByTestId('graph-svg')
       fireEvent.keyDown(svg, { key: '-' })
 
-      // oxlint-disable-next-line typescript/no-explicit-any -- d3 zoom mock access in test
       const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
       expect(zoomInstance.scaleBy).toHaveBeenCalledWith(expect.anything(), 1 / 1.3)
     })
@@ -984,7 +974,6 @@ describe('GraphView', () => {
       const svg = screen.getByTestId('graph-svg')
       fireEvent.keyDown(svg, { key: '0' })
 
-      // oxlint-disable-next-line typescript/no-explicit-any -- d3 zoom mock access in test
       const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
       // Production calls zoomBehavior.transform(svgSelection.transition()..., zoomIdentity).
       // zoomIdentity is mocked as { k: 1, x: 0, y: 0 } at module top.
@@ -1025,7 +1014,6 @@ describe('GraphView', () => {
 
         // Old `+` should NOT fire zoom-in after rebinding
         fireEvent.keyDown(svg, { key: '+' })
-        // oxlint-disable-next-line typescript/no-explicit-any -- d3 zoom mock access in test
         const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
         expect(zoomInstance.scaleBy).not.toHaveBeenCalled()
 
@@ -1194,10 +1182,7 @@ describe('GraphView', () => {
 
       expect(MockWorker.instances).toHaveLength(1)
       const worker = MockWorker.instances[0] as InstanceType<typeof MockWorker>
-      const startMsg = worker.postMessageCalls.find(
-        // oxlint-disable-next-line typescript/no-explicit-any -- test mock
-        (m: any) => m.type === 'start',
-      )
+      const startMsg = worker.postMessageCalls.find((m: any) => m.type === 'start')
       expect(startMsg).toBeDefined()
       expect(startMsg.nodes).toHaveLength(2)
       expect(startMsg.edges).toHaveLength(1)
@@ -1527,10 +1512,7 @@ describe('GraphView', () => {
       const latestWorker = MockWorker.instances[MockWorker.instances.length - 1] as InstanceType<
         typeof MockWorker
       >
-      const startMsg = latestWorker?.postMessageCalls.find(
-        // oxlint-disable-next-line typescript/no-explicit-any -- test mock
-        (m: any) => m.type === 'start',
-      )
+      const startMsg = latestWorker?.postMessageCalls.find((m: any) => m.type === 'start')
       expect(startMsg).toBeDefined()
     })
 

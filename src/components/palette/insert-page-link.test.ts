@@ -23,7 +23,6 @@ afterEach(() => {
 
 function makeChainSpy(isDestroyed = false) {
   const calls = { focus: vi.fn(), insertContent: vi.fn(), run: vi.fn() }
-  // oxlint-disable-next-line typescript/no-explicit-any -- minimal fluent chain stub.
   const chainObj: any = {
     focus: (...a: unknown[]) => {
       calls.focus(...a)

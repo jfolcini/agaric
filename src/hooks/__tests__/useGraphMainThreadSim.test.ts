@@ -19,7 +19,6 @@ import type { SimulationCtx } from '../../lib/graph-sim-helpers'
 import { useGraphMainThreadSim } from '../useGraphMainThreadSim'
 
 // Capture the simulation mock so individual tests can assert on it.
-// oxlint-disable-next-line typescript/no-explicit-any -- shared mock shape
 let lastSim: any = null
 
 vi.mock('d3-force', () => {
@@ -77,7 +76,6 @@ function makeCtx(prefersReducedMotion = false): SimulationCtx {
   const nodes = makeNodes()
   const edges = makeEdges()
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
-  // oxlint-disable-next-line typescript/no-explicit-any -- NodeSel chain — test stub
   const node = { call: vi.fn().mockReturnThis() } as any
   return {
     simNodes: nodes,
