@@ -1,5 +1,6 @@
 /**
- * QuickAccessBar — desktop-only recents strip (PEND-68 Part B; #83 recents-only).
+ * QuickAccessBar — recents strip, rendered on desktop AND mobile
+ * (PEND-68 Part B; #83 recents-only; #927 f6 mobile page-switch affordance).
  *
  * A single `<nav>` holding the MRU **recents scroller**: the existing PEND-32
  * recents list — `<ScrollArea orientation="horizontal">`, wheel-to-horizontal

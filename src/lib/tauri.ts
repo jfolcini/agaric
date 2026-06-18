@@ -1241,7 +1241,7 @@ export async function setScheduledDate(blockId: string, date: string | null): Pr
  *
  * FEAT-3 Phase 8 — `spaceId` narrows the global (`pageId === '__all__'`)
  * query to ops whose `payload.block_id` belongs to the requested space.
- * Pass `undefined` to disable the space filter (cross-space t('history.allSpacesToggle')
+ * Pass `undefined` to disable the space filter (cross-space all-spaces
  * mode). Ignored in per-page mode — a real ULID `pageId` is already
  * space-bound. */
 export async function listPageHistory(params: {
@@ -1346,7 +1346,7 @@ export async function listUnfinishedTasks(params: {
  *
  * `excludeParentId` / `contentNonEmpty` (PEND-35 Tier 1.5) push the
  * DonePanel's two post-filters down into SQL so cursor pagination,
- * `total_count`, and t('donePanel.loadMore') reflect the visible set instead of
+ * `total_count`, and load-more reflect the visible set instead of
  * the unfiltered raw page. `undefined` / `false` preserves the legacy
  * unfiltered behaviour.
  *
@@ -2339,7 +2339,7 @@ export async function listSpaces(): Promise<SpaceRow[]> {
  * FEAT-3 Phase 2 — the backend wraps both the `CreateBlock` op and the
  * `SetProperty(space = <spaceId>)` op in a single transaction so a page
  * never exists without its space property. Callers that create
- * top-level pages (PageBrowser t('pageBrowser.newPage'), App new-page actions, the
+ * top-level pages (PageBrowser new-page, App new-page actions, the
  * link-picker create-new-page affordance) must route through this
  * command rather than `createBlock({ blockType: 'page' })` — the latter
  * leaves the new page unscoped and violates the "nothing outside of

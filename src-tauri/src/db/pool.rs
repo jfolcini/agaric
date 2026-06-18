@@ -59,10 +59,11 @@ pub const MAX_SQL_PARAMS: usize = 999;
 ///   this encoding; this helper formalises what was previously a
 ///   per-callsite `chrono::Utc::now().timestamp_millis()` open-code.
 ///
-/// The legacy TEXT ISO-8601 tables (`blocks.deleted_at`, `op_log.created_at`,
-/// `materializer_retry_queue.created_at`, etc.) keep
-/// [`crate::now_rfc3339`] for their writes — migrating those columns to
-/// INTEGER ms is Phase 2 of #109 and ships per-table.
+/// The former TEXT ISO-8601 columns (`materializer_retry_queue.created_at`,
+/// `op_log.created_at`, `blocks.deleted_at`) have now been migrated to
+/// INTEGER ms and write via this helper (migrations 0077 / 0079 / 0080,
+/// Phase 2 of #109). [`crate::now_rfc3339`] remains only for columns that
+/// were never milliseconds-encoded (e.g. genuinely TEXT/display uses).
 ///
 /// Returns `i64` so the value lands directly in `sqlx`'s `INTEGER`
 /// binding without a `try_from` step. `i64` covers ±292M years around

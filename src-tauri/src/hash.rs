@@ -31,8 +31,15 @@
 ///
 /// - `parent_seqs`: The raw JSON string from the `parent_seqs` column, or `None`
 ///   for the genesis op (seq 1). When `None`, the empty string is used in the
-///   hash input. When `Some`, the JSON array should already have entries sorted
-///   lexicographically by `[device_id, seq]`.
+///   hash input. When `Some`, the JSON array MUST already be **canonicalized**:
+///   entries sorted lexicographically by `[device_id, seq]`, **deduplicated**
+///   (no repeated `(device_id, seq)` pairs), and serialized as **compact JSON
+///   with no insignificant whitespace** (i.e. `serde_json::to_string`, not the
+///   pretty/spaced form). `append_merge_op` (`dag.rs`) produces exactly this
+///   shape via `sort()` + `dedup()` + `serde_json::to_string`; any second
+///   implementation that spaces the JSON or skips the dedup would compute a
+///   different hash for the same logical parents. See the byte-identical
+///   I-Core-11 conformance anchor in `op_log/mod.rs`.
 /// - `payload`: The canonical JSON string of the op payload (keys ordered
 ///   alphabetically via `serde_json::to_value` → BTreeMap). **All ULID fields in the payload MUST be
 ///   uppercase Crockford base32 before hashing** — call

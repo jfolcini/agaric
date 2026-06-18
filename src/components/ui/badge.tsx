@@ -11,9 +11,11 @@ import { cn } from '@/lib/utils'
  * Axes:
  *  - `tone`:  visual intent (`default | secondary | destructive | outline |
  *             ghost | link | priority | status`).
- *  - `size`:  `xs | sm | default` — `default` matches the original `text-xs`
- *             pill, `sm` is the dense `PriorityBadge` md size, `xs` is the
- *             very-dense priority-badge sm size.
+ *  - `size`:  `xs | sm | compact | default | lg` — `default` matches the
+ *             original `text-xs` pill, `sm` is the dense `PriorityBadge` md
+ *             size, `xs` is the very-dense priority-badge sm size, `compact`
+ *             matches the legacy `StatusBadge` chrome (no fixed height), and
+ *             `lg` mirrors the priority-badge `lg` header chip.
  *  - `shape`: `pill` (rounded-full, the original Badge shape) or `rounded`
  *             (square-corner rounded, matching the old `StatusBadge` /
  *             `PriorityBadge` chrome).

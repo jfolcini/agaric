@@ -9,7 +9,7 @@
  * Validation surface intentionally narrow:
  *   - unbalanced `[` → `InvalidGlob: unbalanced bracket`
  *   - nested `{` → `InvalidGlob: brace nesting not supported`
- *   - escape characters (`\{`, `\}`, `\[`) → `InvalidGlob: escapes not supported`
+ *   - escape characters (`\{`, `\}`, `\[`, `\]`) → `InvalidGlob: escapes not supported`
  *
  * Empty values are surfaced separately by the caller (the prefix
  * parser) as the more user-friendly "path: value required".
