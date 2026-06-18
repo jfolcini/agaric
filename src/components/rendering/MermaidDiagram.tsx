@@ -54,8 +54,11 @@ export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElemen
     setSvg(null)
     setError(null)
 
-    // Re-read the theme on every render so a light/dark toggle since the
-    // last render is picked up (mermaid bakes the theme in at render time).
+    // Re-read the theme before each render. Mermaid bakes the theme in at
+    // render time, but this effect only re-runs when the source `code`
+    // changes (deps are [code, renderId]) — NOT on a light/dark toggle. So an
+    // already-rendered diagram keeps its old theme until its source text next
+    // changes; the theme is only re-applied on that next render.
     initializeMermaid()
 
     mermaid

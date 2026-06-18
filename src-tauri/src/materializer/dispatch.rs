@@ -43,10 +43,13 @@ fn sender_or_closed(
 ///
 /// Each arm is enqueued in this order via `try_enqueue_background`, then
 /// the background queue's [`super::dedup::dedup_tasks`] pass collapses
-/// adjacent duplicates (e.g. two `delete_block` mutations in the same
-/// drain only run each rebuild once). The materializer then processes
-/// the deduped batch FIFO, so the order observed at the handler is the
-/// order shown here.
+/// duplicate rebuild tasks across the *entire* drained batch — not just
+/// adjacent ones (the per-key sets are allocated once before the loop, so
+/// the first occurrence of each key wins and later duplicates anywhere in
+/// the drain are dropped; e.g. two `delete_block` mutations in the same
+/// drain only run each rebuild once). Relative order is preserved. The
+/// materializer then processes the deduped batch FIFO, so the order
+/// observed at the handler is the order shown here.
 ///
 /// **The arms are *independent transactions*** — each rebuild owns its
 /// own transaction, so a failure in arm `n` does not roll back arm
@@ -585,6 +588,11 @@ fn invalidations_for_op(
             tasks.push(MaterializeTask::RebuildTagInheritanceCache);
         }
         OpType::SetProperty | OpType::DeleteProperty => {
+            // Narrow invalidation by design: only the agenda caches depend on
+            // property values. Property values live in
+            // `block_properties.value_text` / `value_ref` and are never scanned
+            // for link tokens, FTS text, or tag refs — that graph derives solely
+            // from `blocks.content` — so no link/FTS/tag-ref rebuild is enqueued.
             tasks.push(MaterializeTask::RebuildAgendaCache);
             tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
         }
