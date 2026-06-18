@@ -89,13 +89,11 @@ describe('IncludeExcludeToggle — interaction', () => {
 describe('IncludeExcludeToggle — a11y', () => {
   it('has no axe violations with include selected', async () => {
     const { container } = setup(false)
-    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     expect(await axe(container as any)).toHaveNoViolations()
   })
 
   it('has no axe violations with exclude selected', async () => {
     const { container } = setup(true)
-    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     expect(await axe(container as any)).toHaveNoViolations()
   })
 })

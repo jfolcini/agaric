@@ -188,7 +188,6 @@ export function LinkedReferences({
   // Reset filter state when navigating to a different page
   // Uses functional updaters to avoid no-op state updates on initial mount
   // (which would re-create fetchGroups and trigger a duplicate fetch).
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- pageId is the intentional trigger for resetting filter state on navigation
   useEffect(() => {
     setFilters((prev) => (prev.length > 0 ? [] : prev))
     setSort((prev) => (prev !== null ? null : prev))

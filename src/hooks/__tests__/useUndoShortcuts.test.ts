@@ -139,7 +139,6 @@ function renderHook(hookFn: () => void): { unmount: () => void } {
 // -- Setup / teardown ---------------------------------------------------------
 
 beforeEach(() => {
-  // oxlint-disable-next-line typescript/no-explicit-any -- React test env global
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   vi.clearAllMocks()
   useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })

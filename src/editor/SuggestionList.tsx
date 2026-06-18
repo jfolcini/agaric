@@ -148,7 +148,6 @@ export const SuggestionList = ({
   const activeDescendantId = activeItem ? `suggestion-${activeItem.id}` : null
 
   // Scroll selected item into view on keyboard navigation
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- selectedIndex IS the trigger — we scroll when selection changes
   useEffect(() => {
     const list = listRef.current
     if (!list) return

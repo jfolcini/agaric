@@ -273,7 +273,6 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
                 const showSessionHeader = isFirstSeenOfSession && sessionOps.length >= 2
                 const isRevertingSession = revertingSessions.has(entry.sessionId)
                 return (
-                  // oxlint-disable-next-line react/no-array-index-key -- append-only ring, idx stable per-entry
                   <Fragment key={`${entry.timestamp}-${idx}-${entry.toolName}`}>
                     {showSessionHeader && (
                       <SessionRevertControls

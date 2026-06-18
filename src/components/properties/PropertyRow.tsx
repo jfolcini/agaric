@@ -48,7 +48,6 @@ export interface PropertyRowProps {
   removeAriaLabel?: string
 }
 
-// oxlint-disable-next-line eslint/complexity -- refactor deferred to follow-up
 export function PropertyRow({
   propKey,
   icon: Icon,

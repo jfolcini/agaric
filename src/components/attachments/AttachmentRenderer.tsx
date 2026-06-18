@@ -431,7 +431,6 @@ function AttachmentImage({
             snaps to the same presets as the toolbar. Keyboard users resize via
             the toolbar, so the handle is aria-hidden. Pointer capture keeps the
             drag on the handle and stopPropagation prevents the lightbox click. */}
-        {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- pointer-only resize affordance; keyboard parity is provided by the preset toolbar */}
         <span
           data-testid="image-resize-handle"
           aria-hidden="true"

@@ -62,7 +62,6 @@ export function useJournalBlockCreation({
   const [createdPages, setCreatedPages] = useState<Map<string, string>>(new Map())
 
   const handleAddBlock = useCallback(
-    // oxlint-disable-next-line eslint/complexity -- orchestrates atomic create-page-then-block flow with optimistic state, error rollback, retry, and per-space template seeding; splitting it would scatter the rollback paths across helpers and obscure ordering.
     async (dateStr: string) => {
       try {
         let pageId = createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null

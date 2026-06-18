@@ -877,7 +877,6 @@ describe('CommandPalette — [[page]] autocomplete', () => {
     // `execCommand`). We register a fluent-chain mock and assert it is
     // driven with the link payload.
     const chainCalls = { focus: vi.fn(), insertContent: vi.fn(), run: vi.fn() }
-    // oxlint-disable-next-line typescript/no-explicit-any -- minimal fluent chain stub.
     const chainObj: any = {
       focus: (...a: unknown[]) => {
         chainCalls.focus(...a)

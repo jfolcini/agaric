@@ -119,7 +119,6 @@ export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElemen
         aria-label={t('mermaid.label')}
         className="p-3"
         data-testid="mermaid-diagram"
-        // oxlint-disable-next-line react/no-danger -- mermaid renders with securityLevel 'strict' (DOMPurify-sanitized SVG) — see mermaid.initialize above
         dangerouslySetInnerHTML={{ __html: svg ?? '' }}
       />
     </ScrollArea>

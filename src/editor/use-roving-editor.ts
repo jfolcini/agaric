@@ -414,7 +414,6 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   // genuine. Every configured option already reads from a ref (`*.current`), so
   // the instances have no reactive inputs and an empty dep list is correct: the
   // placeholder, callbacks and resolvers all stay live via their refs.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- refs are provider-lifetime stable; every configured instance reads live values via `*.current`, so an empty dep list keeps the array identity stable without ever staling
   const extensions = useMemo(
     () => [
       Document,

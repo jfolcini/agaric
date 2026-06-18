@@ -135,10 +135,7 @@ describe('Underline extension — renderHTML round-trip', () => {
       schema.text('round', [markType.create()]),
     ])
     expect(para).not.toBeNull()
-    const fragmentDom = DOMSerializer.fromSchema(schema).serializeFragment(
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      (para as PmNode).content,
-    )
+    const fragmentDom = DOMSerializer.fromSchema(schema).serializeFragment((para as PmNode).content)
     const wrapper = document.createElement('div')
     wrapper.appendChild(fragmentDom)
     expect(wrapper.querySelector('u')).not.toBeNull()

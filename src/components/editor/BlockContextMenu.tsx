@@ -812,7 +812,6 @@ export function BlockContextMenu({
   // Items are conditional (zoom-in only when `hasChildren`, history only when
   // `onShowHistory` is passed, etc.) — refire whenever the count changes so
   // focus lands on the current first item rather than a stale reference.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- visibleItems.length IS the trigger — we refocus when the conditional item set toggles, even though the effect body doesn't read it
   useEffect(() => {
     itemRefs.current[0]?.focus()
   }, [visibleItems.length])
@@ -952,7 +951,6 @@ export function BlockContextMenu({
         const subgroupId = indentedItems[0]?.disclosureId
         const subgroupLabel = indentedItems[0]?.disclosureLabel
         return (
-          // oxlint-disable-next-line react/no-array-index-key -- groups are static per render, never reorder
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- menu-item group inside a custom menu; <fieldset>/<optgroup> etc. would inject form/list semantics that conflict with the menu role
           <div key={groupIdx} role="group">
             {groupIdx > 0 && <hr className="my-1 h-px border-0 bg-border" />}

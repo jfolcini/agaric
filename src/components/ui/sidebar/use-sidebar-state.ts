@@ -93,7 +93,6 @@ export function useSidebarState({
       }
 
       // This sets the cookie to keep the sidebar state.
-      // oxlint-disable-next-line unicorn/no-document-cookie -- shadcn/ui sidebar state persistence
       document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`
     },
     [setOpenProp, open],

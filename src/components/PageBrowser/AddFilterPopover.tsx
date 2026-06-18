@@ -765,7 +765,6 @@ function PathEditor({
         placeholder={t('pageBrowser.filter.pathPlaceholder')}
         aria-label={t('pageBrowser.filter.pathPlaceholder')}
       />
-      {/* oxlint-disable-next-line jsx-a11y/label-has-associated-control -- the Radix Checkbox (a button) is the control and carries its own aria-label; oxlint can't see it through the component boundary */}
       <label className="flex items-center gap-2 px-1 text-xs">
         <Checkbox
           checked={exclude}
@@ -954,7 +953,6 @@ function MultiSelectGroup({
       {options.map((value) => {
         const label = optionLabel(value)
         return (
-          // oxlint-disable-next-line jsx-a11y/label-has-associated-control -- the Radix Checkbox (a button) is the control and carries its own aria-label; oxlint can't see it through the component boundary
           <label key={value} className="flex items-center gap-2 text-xs">
             <Checkbox
               checked={selected.includes(value)}
@@ -1007,7 +1005,6 @@ function StateEditor({
         optionLabel={(v) => v}
         onToggle={onToggleValue}
       />
-      {/* oxlint-disable-next-line jsx-a11y/label-has-associated-control -- the Radix Checkbox (a button) is the control and carries its own aria-label */}
       <label className="flex items-center gap-2 px-1 text-xs">
         <Checkbox
           checked={isNull}
@@ -1016,7 +1013,6 @@ function StateEditor({
         />
         {t('pageBrowser.filter.stateIsNullLabel')}
       </label>
-      {/* oxlint-disable-next-line jsx-a11y/label-has-associated-control -- the Radix Checkbox (a button) is the control and carries its own aria-label */}
       <label className="flex items-center gap-2 px-1 text-xs">
         <Checkbox
           checked={exclude}
@@ -1062,7 +1058,6 @@ function BlockTypeEditor({
         optionLabel={(v) => t(`pageBrowser.filter.blockType.${v}`)}
         onToggle={onToggleValue}
       />
-      {/* oxlint-disable-next-line jsx-a11y/label-has-associated-control -- the Radix Checkbox (a button) is the control and carries its own aria-label */}
       <label className="flex items-center gap-2 px-1 text-xs">
         <Checkbox
           checked={exclude}

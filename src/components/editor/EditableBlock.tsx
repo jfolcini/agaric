@@ -340,7 +340,6 @@ function EditableBlockInner({
   }
 
   return (
-    // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- wrapper div catches blur from TipTap contenteditable
     <section
       ref={wrapperRef}
       id={`editor-${blockId}`}

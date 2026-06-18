@@ -120,7 +120,6 @@ describe('PropFilterForm — round-trip validation (PEND-70 CR8 MAJOR-1)', () =>
 
   it('has no axe violations', async () => {
     const { container } = setup()
-    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     expect(await axe(container as any)).toHaveNoViolations()
   })
 })

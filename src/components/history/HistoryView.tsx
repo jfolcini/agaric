@@ -141,7 +141,6 @@ export function HistoryView(): React.ReactElement {
   // by the paginated query). FEAT-3 Phase 8 — also resets when the
   // space scope flips so a stale selection from the previous scope
   // doesn't leak into the new one.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- reset UI state when filter changes
   useEffect(() => {
     clearSelection()
     setFocusedIndex(0)

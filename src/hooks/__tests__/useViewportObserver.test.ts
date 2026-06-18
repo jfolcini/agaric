@@ -89,7 +89,6 @@ function renderHook<T>(hookFn: () => T): {
 
 beforeEach(() => {
   // Suppress "The current testing environment is not configured to support act(...)"
-  // oxlint-disable-next-line typescript/no-explicit-any -- React test env global
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   MockIntersectionObserver.instances = []
   vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)

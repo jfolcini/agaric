@@ -24,7 +24,6 @@ beforeEach(() => {
   })
   localStorage.removeItem('sidebar_width')
   // Clear cookies set by previous tests.
-  // oxlint-disable-next-line unicorn/no-document-cookie -- test cleanup
   document.cookie = 'sidebar_state=; path=/; max-age=0'
 })
 

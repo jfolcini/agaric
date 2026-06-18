@@ -160,7 +160,6 @@ describe('FilterChipRow', () => {
     const { container } = render(
       <FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />,
     )
-    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     const results = await axe(container as any)
     expect(results).toHaveNoViolations()
   })
@@ -178,7 +177,6 @@ describe('FilterChipRow', () => {
     const { container } = render(
       <FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />,
     )
-    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     const results = await axe(container as any)
     expect(results).toHaveNoViolations()
   })

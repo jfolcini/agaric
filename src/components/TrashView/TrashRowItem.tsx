@@ -91,7 +91,6 @@ export function TrashRowItem({
       }}
       tabIndex={isFocused ? 0 : -1}
     >
-      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner controls */}
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell in a CSS-grid aria grid; <td> requires table ancestry and breaks the flex layout */}
       <div role="gridcell" className="trash-item-content flex min-w-0 items-center gap-3 flex-wrap">
         <input

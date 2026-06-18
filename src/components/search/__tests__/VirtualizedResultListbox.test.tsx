@@ -172,7 +172,6 @@ describe('VirtualizedResultListbox', () => {
 
   it('has no a11y violations', async () => {
     const { container } = setup()
-    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     const results = await axe(container as any)
     expect(results).toHaveNoViolations()
   })

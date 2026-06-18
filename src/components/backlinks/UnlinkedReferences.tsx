@@ -163,7 +163,6 @@ export function UnlinkedReferences({
   }, [fetchGroups])
 
   // Reset collapsed state when pageId changes
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- pageId is the intentional trigger for resetting collapse state on navigation
   useEffect(() => {
     setCollapsed(true)
   }, [pageId])

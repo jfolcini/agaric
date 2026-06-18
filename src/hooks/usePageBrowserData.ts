@@ -197,7 +197,6 @@ export function usePageBrowserData({
   // Reset the retained total when the query basis changes (space / sort /
   // chip set) so a stale count never lingers against a fresh result set
   // before the new first page resolves.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- the query-basis tuple drives the reset; `wireFiltersKey` is the chip-set trigger
   useEffect(() => {
     setDisplayTotalCount(undefined)
   }, [currentSpaceId, sortOption, wireFiltersKey])

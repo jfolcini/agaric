@@ -456,7 +456,6 @@ describe('KeyboardSettingsTab', () => {
     vi.resetModules()
     const original = Object.getOwnPropertyDescriptor(navigator, 'platform')
     Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
-    // oxlint-disable-next-line typescript/no-explicit-any -- test-only helper
     ;(navigator as any).userAgentData = undefined
 
     try {
@@ -480,7 +479,6 @@ describe('KeyboardSettingsTab', () => {
     vi.resetModules()
     const original = Object.getOwnPropertyDescriptor(navigator, 'platform')
     Object.defineProperty(navigator, 'platform', { value: 'Linux x86_64', configurable: true })
-    // oxlint-disable-next-line typescript/no-explicit-any -- test-only helper
     ;(navigator as any).userAgentData = undefined
 
     try {

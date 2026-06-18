@@ -272,7 +272,6 @@ export function ImageLightbox({
           {t('lightbox.description', { filename: current.alt })}
         </DialogDescription>
 
-        {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- when zoomed the image is the pan surface (pointer drag) and wheel zoom target; activation stays on the close/nav buttons */}
         <img
           key={current.src}
           ref={imgRef}

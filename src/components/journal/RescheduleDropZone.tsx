@@ -95,7 +95,6 @@ export function RescheduleDropZone({
   )
 
   return (
-    // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- passive HTML5 drop target — drag events are not keyboard-interactive
     <div
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}

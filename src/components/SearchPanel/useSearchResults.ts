@@ -292,7 +292,6 @@ export function useSearchResults({
   const handleToggleGroup = useCallback((pageId: string) => {
     setExpandedGroups((prev) => ({ ...prev, [pageId]: !(prev[pageId] ?? true) }))
   }, [])
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- `debouncedQuery` is the trigger, not a body-read dep — we intentionally reset on every new query.
   useEffect(() => {
     // Reset collapse state on each new query so the UX always starts
     // fully expanded.

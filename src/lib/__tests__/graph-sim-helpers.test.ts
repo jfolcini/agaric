@@ -124,7 +124,6 @@ describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
   it('graphZoomIn (`+`) scales by the zoom step', () => {
     const svg = makeSvg()
     const zb = makeZoomBehavior()
-    // oxlint-disable-next-line @typescript-eslint/no-explicit-any -- minimal d3 stub
     const handler = createZoomKeyHandler(svg, zb as any)
 
     press(handler, { key: '+' })
@@ -136,7 +135,6 @@ describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
   it('graphZoomIn also fires on the `=` alternative (`+ / =`)', () => {
     const svg = makeSvg()
     const zb = makeZoomBehavior()
-    // oxlint-disable-next-line @typescript-eslint/no-explicit-any -- minimal d3 stub
     const handler = createZoomKeyHandler(svg, zb as any)
 
     press(handler, { key: '=' })
@@ -148,7 +146,6 @@ describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
   it('graphZoomOut (`-`) scales by the inverse step', () => {
     const svg = makeSvg()
     const zb = makeZoomBehavior()
-    // oxlint-disable-next-line @typescript-eslint/no-explicit-any -- minimal d3 stub
     const handler = createZoomKeyHandler(svg, zb as any)
 
     press(handler, { key: '-' })
@@ -161,7 +158,6 @@ describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
   it('graphZoomReset (`0`) transforms to the identity zoom', () => {
     const svg = makeSvg()
     const zb = makeZoomBehavior()
-    // oxlint-disable-next-line @typescript-eslint/no-explicit-any -- minimal d3 stub
     const handler = createZoomKeyHandler(svg, zb as any)
 
     press(handler, { key: '0' })
@@ -174,7 +170,6 @@ describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
   it('ignores the zoom keys when focus is in an editable target', () => {
     const svg = makeSvg()
     const zb = makeZoomBehavior()
-    // oxlint-disable-next-line @typescript-eslint/no-explicit-any -- minimal d3 stub
     const handler = createZoomKeyHandler(svg, zb as any)
 
     const input = document.createElement('input')
@@ -194,7 +189,6 @@ describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
   it('ignores unrelated keys', () => {
     const svg = makeSvg()
     const zb = makeZoomBehavior()
-    // oxlint-disable-next-line @typescript-eslint/no-explicit-any -- minimal d3 stub
     const handler = createZoomKeyHandler(svg, zb as any)
 
     press(handler, { key: 'x' })

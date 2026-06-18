@@ -1252,7 +1252,6 @@ describe('StaticBlock', () => {
 
   describe('blockquote rendering', () => {
     /** Helper: mock parse to return a doc containing a blockquote node. */
-    // oxlint-disable-next-line typescript/no-explicit-any -- test helper — mock data doesn't need strict typing
     function mockBlockquoteDoc(content: any[]) {
       mockedParse.mockReturnValueOnce({
         type: 'doc',

@@ -102,7 +102,6 @@ describe('PriorityFilterForm — interaction', () => {
 describe('PriorityFilterForm — a11y', () => {
   it('has no axe violations', async () => {
     const { container } = setup()
-    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     expect(await axe(container as any)).toHaveNoViolations()
   })
 })

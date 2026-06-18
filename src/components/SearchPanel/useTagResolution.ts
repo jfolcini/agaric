@@ -108,7 +108,6 @@ export function useTagResolution(
     // microtask gap where an in-flight OLD-space lookup can land and
     // write old-space ids / null settles into the new space's cache —
     // entries that count as settled and would never be re-resolved.
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- see above: space switch must cancel the in-flight lookup in the same flush.
   }, [tagNames, tagNameMap, currentSpaceId])
 
   // FE-5 — drop the space-scoped cache on space switch. The functional
@@ -116,7 +115,6 @@ export function useTagResolution(
   // mount-time run of this effect doesn't replace the initial empty map
   // with a fresh one (which would re-trigger the resolve effect above and
   // fire a duplicate lookup + cancellation on every mount).
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional fire-on-change — the body doesn't read currentSpaceId, it invalidates the cache when the space switches.
   useEffect(() => {
     setTagNameMap((prev) => (prev.size === 0 ? prev : new Map()))
   }, [currentSpaceId])

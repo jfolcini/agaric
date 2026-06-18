@@ -99,7 +99,6 @@ function HeaderRow({
   // an extra DOM node.
   const showDivider = !isStarredHeader && hasStarred
   return (
-    // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- section header row is not interactive
     <div
       key={virtualRow.key}
       data-index={virtualRow.index}
@@ -111,7 +110,6 @@ function HeaderRow({
       className={cn('page-browser-section', showDivider && 'border-t border-border mt-1')}
       style={rowStyle(virtualRow.start)}
     >
-      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell carries the section label — not interactive */}
       <div
         // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- CSS-grid cell inside role="row"; a real <td> needs a <table> and breaks the flex layout
         role="gridcell"
@@ -159,7 +157,6 @@ function TreePageRow({
   // index — `aria-selected` is intentionally omitted because the
   // wrapper isn't a single selectable option.
   return (
-    // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- row focus is delegated to inner button controls
     <div
       key={virtualRow.key}
       // UX-331 — stable id so the grid container's `aria-activedescendant`
@@ -176,7 +173,7 @@ function TreePageRow({
       )}
       style={rowStyle(virtualRow.start)}
     >
-      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner button controls; CSS-grid cell would break as a <td> without a <table> */}
+      {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner button controls; CSS-grid cell would break as a <td> without a <table> */}
       <div role="gridcell">
         <PageTreeItem
           node={node}

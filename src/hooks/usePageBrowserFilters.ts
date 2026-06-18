@@ -192,7 +192,6 @@ export function usePageBrowserFilters(currentSpaceId: string | null): UsePageBro
   // emit the polite prefix immediately, and arm a flag so the result
   // count gets appended once the refetch settles (effect below). Keyed on
   // `wireFiltersKey` so it only fires on a real chip add/remove.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- the compound-filter set drives this; `filters`/`t` are read but `wireFiltersKey` is the change trigger
   useEffect(() => {
     const prev = prevFiltersRef.current
     prevFiltersRef.current = filters

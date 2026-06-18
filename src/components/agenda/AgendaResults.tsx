@@ -167,7 +167,6 @@ export function AgendaResults({
   })
 
   // Reset focused index when blocks / sort / group change
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional reset
   useEffect(() => {
     setFocusedIndex(0)
   }, [blocks, sortBy, groupBy, setFocusedIndex])

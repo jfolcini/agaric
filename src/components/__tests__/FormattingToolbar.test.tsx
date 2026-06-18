@@ -63,7 +63,6 @@ vi.mock('@/hooks/useIsTouch', () => ({
 // `src/editor/__tests__/use-roving-editor.test.ts`.
 vi.mock('@/editor/toggle-code-block-safely', () => ({
   toggleCodeBlockSafely: (editor: { chain: () => unknown }, attributes?: unknown) => {
-    // oxlint-disable-next-line typescript/no-explicit-any -- traversing the test's mock chain
     const c = editor.chain() as any
     if (attributes) {
       c.focus().toggleCodeBlock().updateAttributes('codeBlock', attributes).run()
@@ -488,7 +487,6 @@ describe('FormattingToolbar', () => {
 
     it('calls resolveBlockLinkFromSelection when text is selected', () => {
       const editor = makeEditor()
-      // oxlint-disable-next-line typescript/no-explicit-any -- test mock mutation
       ;(editor as any).state.selection = { from: 5, to: 15 }
 
       render(<FormattingToolbar editor={editor} />)

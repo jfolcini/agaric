@@ -97,17 +97,14 @@ vi.mock('d3-drag', () => ({
 }))
 
 // ── MockWorker ───────────────────────────────────────────────────────
-// oxlint-disable-next-line typescript/no-explicit-any -- test mock
 type Handler = (evt: { data?: any; type?: string; error?: any; message?: any }) => void
 
 class MockWorker {
   static instances: MockWorker[] = []
-  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   postMessageCalls: any[] = []
   terminated = false
   private listeners = new Map<string, Handler[]>()
 
-  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   constructor(_url: any, _opts?: any) {
     MockWorker.instances.push(this)
   }
@@ -126,7 +123,6 @@ class MockWorker {
     )
   }
 
-  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   postMessage(data: any) {
     this.postMessageCalls.push(data)
   }
@@ -135,7 +131,6 @@ class MockWorker {
     this.terminated = true
   }
 
-  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   dispatch(type: string, event: any) {
     const list = this.listeners.get(type) ?? []
     for (const handler of list) handler(event)
@@ -214,7 +209,6 @@ function makeEdges(): GraphEdge[] {
 interface HarnessProps {
   nodes: GraphNode[]
   edges: GraphEdge[]
-  // oxlint-disable-next-line typescript/no-explicit-any -- test harness
   onResult: (result: any) => void
   navigateToPage?: (id: string, label: string) => void
 }
@@ -305,7 +299,6 @@ describe('useGraphSimulation', () => {
   })
 
   it('exposes zoom handlers that call d3-zoom scaleBy / transform', () => {
-    // oxlint-disable-next-line typescript/no-explicit-any -- test harness receives any shape
     let latest: any
     render(
       React.createElement(Harness, {
@@ -321,7 +314,6 @@ describe('useGraphSimulation', () => {
     latest.zoomOut()
     latest.zoomReset()
 
-    // oxlint-disable-next-line typescript/no-explicit-any -- d3 zoom mock access in test
     const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
     expect(zoomInstance.scaleBy).toHaveBeenCalledTimes(2)
     expect(zoomInstance.transform).toHaveBeenCalledTimes(1)
@@ -563,7 +555,6 @@ describe('useGraphSimulation', () => {
       // The d3-selection mock records every `.data(...)` call. The clear
       // path patches the persistent `g` with empty arrays, so the last
       // node/edge data joins are bound to empty arrays.
-      // oxlint-disable-next-line typescript/no-explicit-any -- mock chain
       const selectResult = vi.mocked(select).mock.results[0]?.value as any
       const dataCallsBefore = selectResult.append.mock.results[0]?.value?.data?.mock?.calls?.length
 
@@ -670,13 +661,11 @@ describe('useGraphSimulation', () => {
   //   1. node `<g>` elements get `tabindex='0'` and `role='button'`
   //   2. both 'click' and 'keydown' handlers are registered on every node
   describe('keyboard navigation pattern (UX-270)', () => {
-    // oxlint-disable-next-line typescript/no-explicit-any -- drilling into the mocked d3-selection chain
     function getNodeSelectionMock(): any {
       // The select(svg) chain → append('g') returns the parent group, on
       // which selectAll('g.node').data(simNodes).join('g').attr(...) etc.
       // chains return the same mock via mockReturnThis. Every .attr / .on
       // call on the node selection lands on that returned object.
-      // oxlint-disable-next-line typescript/no-explicit-any -- mock results shape
       const selectResult = vi.mocked(select).mock.results[0]?.value as any
       // The inner `.append('g')` returns the chainable node-selection mock.
       return selectResult.append.mock.results[0]?.value

@@ -74,7 +74,6 @@ export function PairingQrDisplay({
         role="img"
         aria-label={t('pairing.qrCodeLabel')}
         data-testid="pairing-qr-code"
-        // oxlint-disable-next-line react/no-danger -- SVG from our own Rust backend, not user input
         dangerouslySetInnerHTML={{ __html: qrSvg }}
       />
       <div className="flex flex-col gap-1">

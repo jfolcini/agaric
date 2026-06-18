@@ -288,7 +288,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
       {/* #81 / PEND-57 — batch-selection checkbox. Always present (it is
           the entry point into selection mode); visible on hover / focus /
           when checked, mirroring the star + delete affordances. */}
-      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to the inner checkbox; CSS-grid cell would break as a <td> without a <table> */}
+      {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to the inner checkbox; CSS-grid cell would break as a <td> without a <table> */}
       <div role="gridcell" className="shrink-0">
         <Checkbox
           checked={multiSelected}
@@ -304,7 +304,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
           )}
         />
       </div>
-      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner controls; CSS-grid cell would break as a <td> without a <table> */}
+      {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner controls; CSS-grid cell would break as a <td> without a <table> */}
       <div role="gridcell" className="flex flex-1 items-center gap-3 min-w-0">
         <Button
           variant="ghost"
@@ -377,7 +377,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
           )}
         </button>
       </div>
-      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner action buttons; CSS-grid cell would break as a <td> without a <table> */}
+      {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner action buttons; CSS-grid cell would break as a <td> without a <table> */}
       <div role="gridcell" className="shrink-0">
         <Button
           variant="ghost"

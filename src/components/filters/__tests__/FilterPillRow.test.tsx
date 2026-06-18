@@ -238,7 +238,6 @@ describe('FilterPillRow', () => {
     })
 
     it('returns "filter" for unknown filter type', () => {
-      // oxlint-disable-next-line typescript/no-explicit-any -- testing unknown filter type fallback
       expect(filterSummary({ type: 'Unknown' } as any)).toBe('filter')
     })
   })

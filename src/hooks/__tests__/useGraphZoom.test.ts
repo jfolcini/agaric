@@ -94,7 +94,6 @@ describe('useGraphZoom', () => {
     const { result } = renderHook(() => useGraphZoom(ref))
 
     const fakeSvg = makeFakeSvg() as unknown as SVGSVGElement
-    // oxlint-disable-next-line typescript/no-explicit-any -- GSel is not constructable in tests
     const fakeG = {} as any
 
     const cleanup = result.current.attach(fakeSvg, fakeG)
@@ -113,12 +112,10 @@ describe('useGraphZoom', () => {
     const { result } = renderHook(() => useGraphZoom(ref))
 
     const fakeSvg = makeFakeSvg() as unknown as SVGSVGElement
-    // oxlint-disable-next-line typescript/no-explicit-any -- GSel is not constructable in tests
     const fakeG = {} as any
     result.current.attach(fakeSvg, fakeG)
     result.current.zoomIn()
 
-    // oxlint-disable-next-line typescript/no-explicit-any -- d3-zoom mock value access
     const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
     expect(zoomInstance.scaleBy).toHaveBeenCalledTimes(1)
     // Second arg is the zoom step (1.3) — the in/out parity is tested below.
@@ -131,14 +128,12 @@ describe('useGraphZoom', () => {
     const { result } = renderHook(() => useGraphZoom(ref))
 
     const fakeSvg = makeFakeSvg() as unknown as SVGSVGElement
-    // oxlint-disable-next-line typescript/no-explicit-any -- GSel is not constructable in tests
     const fakeG = {} as any
     result.current.attach(fakeSvg, fakeG)
 
     result.current.zoomOut()
     result.current.zoomReset()
 
-    // oxlint-disable-next-line typescript/no-explicit-any -- d3-zoom mock value access
     const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
     // zoomOut: scaleBy(transition, 1/1.3)
     expect(zoomInstance.scaleBy).toHaveBeenCalledTimes(1)

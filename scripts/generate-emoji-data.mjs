@@ -157,5 +157,4 @@ export const EMOJI_DATA: readonly GeneratedEmojiGroup[] = `
 
 const body = JSON.stringify(groups, null, 0)
 writeFileSync(OUT, `${banner}${body} as const\n`)
-// eslint-disable-next-line no-console
 console.log(`Wrote ${total} emoji (${groups.length} groups) to ${OUT}`)

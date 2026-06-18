@@ -281,7 +281,6 @@ describe('dual-write IPC bridge', () => {
 
   it('handles circular references in data gracefully', () => {
     enableTauri()
-    // oxlint-disable-next-line typescript/no-explicit-any -- test needs circular ref
     const circular: any = { a: 1 }
     circular.self = circular
     expect(() => logger.error('M', 'msg', circular)).not.toThrow()

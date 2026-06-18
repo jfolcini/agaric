@@ -118,7 +118,6 @@ describe('SearchToggleRow', () => {
 
   it('has no axe violations', async () => {
     const { container } = render(<SearchToggleRow toggles={OFF} onChange={vi.fn()} />)
-    // oxlint-disable-next-line typescript/no-explicit-any -- axe types loose in vitest-axe.
     const results = await axe(container as any)
     expect(results).toHaveNoViolations()
   })

@@ -938,7 +938,6 @@ export const HANDLERS: Record<string, Handler> = {
   // mock here is sequential (good enough for the FE shape — atomicity
   // is exercised by the Rust tests). Returns the created BlockRows in
   // INPUT ORDER so callers can map template-line index → block id.
-  // oxlint-disable-next-line eslint/complexity -- pre-existing
   create_blocks_batch: (args) => {
     const a = args as Record<string, unknown>
     const specs = (a['specs'] as Array<Record<string, unknown>>) ?? []
@@ -1901,7 +1900,6 @@ export const HANDLERS: Record<string, Handler> = {
     const propertyFilterMatches = (
       b: Record<string, unknown>,
       pf: Record<string, unknown>,
-      // oxlint-disable-next-line eslint/complexity -- pre-existing
     ): boolean => {
       const key = pf['key'] as string
       const valueText = (pf['valueText'] as string | null) ?? null
@@ -2554,7 +2552,6 @@ export const HANDLERS: Record<string, Handler> = {
     return result
   },
 
-  // oxlint-disable-next-line eslint/complexity -- MAINT-226 — scope filter added to a nested per-date / per-source / per-block loop. Splitting helpers would obscure the SQL→TS correspondence with `count_agenda_batch_by_source_inner`.
   count_agenda_batch_by_source: (args) => {
     const a = args as Record<string, unknown>
     const dates = a['dates'] as string[]
