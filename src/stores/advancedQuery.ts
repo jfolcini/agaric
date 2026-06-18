@@ -293,6 +293,74 @@ function updateNodeAt(
   })
 }
 
+/**
+ * #1478 — pure tree-edit operations, shared between the store actions (which
+ * apply them to a per-space slice + the global `nextAddId` counter) and the
+ * self-contained `has-parent-matching` mini-builder (which holds a local
+ * `BuilderGroupNode` in React state with its OWN id counter, so its node ids
+ * never need to coordinate with the global one — they compile away anyway, since
+ * `compileNode` drops the `id`).
+ *
+ * Each takes the explicit `id` to stamp on the new node so the caller owns id
+ * allocation (the store passes `nextAddId + 1`; the mini-builder passes a local
+ * monotonic counter).
+ */
+export function addLeafToTree(
+  root: BuilderGroupNode,
+  path: BuilderPath,
+  primitive: FilterPrimitive,
+  id: number,
+): BuilderGroupNode {
+  const leaf: BuilderLeafNode = { kind: 'leaf', id, primitive, negated: false }
+  return updateGroupAt(root, path, (group) => ({
+    ...group,
+    children: [...group.children, leaf],
+  }))
+}
+
+export function addGroupToTree(
+  root: BuilderGroupNode,
+  path: BuilderPath,
+  id: number,
+): BuilderGroupNode {
+  const group: BuilderGroupNode = { kind: 'group', id, op: 'And', negated: false, children: [] }
+  return updateGroupAt(root, path, (parent) => ({
+    ...parent,
+    children: [...parent.children, group],
+  }))
+}
+
+export function removeNodeFromTree(root: BuilderGroupNode, path: BuilderPath): BuilderGroupNode {
+  if (path.length === 0) return root
+  const parentPath = path.slice(0, -1)
+  const index = path[path.length - 1] as number
+  return updateGroupAt(root, parentPath, (parent) => ({
+    ...parent,
+    children: parent.children.filter((_, i) => i !== index),
+  }))
+}
+
+export function setGroupOpInTree(
+  root: BuilderGroupNode,
+  path: BuilderPath,
+  op: 'And' | 'Or',
+): BuilderGroupNode {
+  return updateGroupAt(root, path, (group) => (group.op === op ? group : { ...group, op }))
+}
+
+export function toggleNegateInTree(root: BuilderGroupNode, path: BuilderPath): BuilderGroupNode {
+  return updateNodeAt(root, path, (node) => ({ ...node, negated: !node.negated }))
+}
+
+/**
+ * #1478 — a fresh empty root `And` group with the given id, for the mini-builder's
+ * initial local state (a NON-frozen copy of `EMPTY_BUILDER`, so the local id
+ * counter can seed a distinct root id and the tree is freely re-`set`).
+ */
+export function makeEmptyRoot(id = 0): BuilderGroupNode {
+  return { kind: 'group', id, op: 'And', negated: false, children: [] }
+}
+
 /** Merge a partial controls patch into a space's slice (defaulting from EMPTY). */
 function patchControls(
   state: AdvancedQueryState,
@@ -353,11 +421,7 @@ export const useAdvancedQueryStore = create<AdvancedQueryState>()((set) => ({
     set((state) => {
       const root = state.buildersBySpace[spaceKey] ?? EMPTY_BUILDER
       const id = state.nextAddId + 1
-      const leaf: BuilderLeafNode = { kind: 'leaf', id, primitive, negated: false }
-      const next = updateGroupAt(root, path, (group) => ({
-        ...group,
-        children: [...group.children, leaf],
-      }))
+      const next = addLeafToTree(root, path, primitive, id)
       return {
         nextAddId: id,
         buildersBySpace: { ...state.buildersBySpace, [spaceKey]: next },
@@ -367,17 +431,7 @@ export const useAdvancedQueryStore = create<AdvancedQueryState>()((set) => ({
     set((state) => {
       const root = state.buildersBySpace[spaceKey] ?? EMPTY_BUILDER
       const id = state.nextAddId + 1
-      const group: BuilderGroupNode = {
-        kind: 'group',
-        id,
-        op: 'And',
-        negated: false,
-        children: [],
-      }
-      const next = updateGroupAt(root, path, (parent) => ({
-        ...parent,
-        children: [...parent.children, group],
-      }))
+      const next = addGroupToTree(root, path, id)
       return {
         nextAddId: id,
         buildersBySpace: { ...state.buildersBySpace, [spaceKey]: next },
@@ -388,27 +442,20 @@ export const useAdvancedQueryStore = create<AdvancedQueryState>()((set) => ({
       // The root is never removed (it's the container); use `clearBuilder`.
       if (path.length === 0) return state
       const root = state.buildersBySpace[spaceKey] ?? EMPTY_BUILDER
-      const parentPath = path.slice(0, -1)
-      const index = path[path.length - 1] as number
-      const next = updateGroupAt(root, parentPath, (parent) => ({
-        ...parent,
-        children: parent.children.filter((_, i) => i !== index),
-      }))
+      const next = removeNodeFromTree(root, path)
       return { buildersBySpace: { ...state.buildersBySpace, [spaceKey]: next } }
     }),
   setGroupOp: (spaceKey, path, op) =>
     set((state) => {
       const root = state.buildersBySpace[spaceKey] ?? EMPTY_BUILDER
-      const next = updateGroupAt(root, path, (group) =>
-        group.op === op ? group : { ...group, op },
-      )
+      const next = setGroupOpInTree(root, path, op)
       if (next === root) return state
       return { buildersBySpace: { ...state.buildersBySpace, [spaceKey]: next } }
     }),
   toggleNegate: (spaceKey, path) =>
     set((state) => {
       const root = state.buildersBySpace[spaceKey] ?? EMPTY_BUILDER
-      const next = updateNodeAt(root, path, (node) => ({ ...node, negated: !node.negated }))
+      const next = toggleNegateInTree(root, path)
       return { buildersBySpace: { ...state.buildersBySpace, [spaceKey]: next } }
     }),
   clearBuilder: (spaceKey) =>

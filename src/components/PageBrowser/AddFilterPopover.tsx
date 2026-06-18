@@ -17,18 +17,26 @@
  * the affordance they opened.
  */
 
-import { Plus } from 'lucide-react'
+import { FileSearch, Plus } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EmptyState } from '@/components/common/EmptyState'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Spinner } from '@/components/ui/spinner'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import type { DatePredicate, PropertyPredicate } from '@/lib/bindings'
-import type { FilterPrimitive } from '@/lib/tauri'
+import { matchesSearchFolded } from '@/lib/fold-for-search'
+import { logger } from '@/lib/logger'
+import type { FilterExpr, FilterPrimitive, PageHeading } from '@/lib/tauri'
+import { listAllPagesInSpace } from '@/lib/tauri'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 export interface AddFilterPopoverProps {
   /** Emits the chosen primitive. The parent appends it to its chip set. */
@@ -52,6 +60,22 @@ export interface AddFilterPopoverProps {
    * `showAdvancedFacets` (and keeps `hidePagesFacets`).
    */
   showAdvancedFacets?: boolean
+  /**
+   * #1478 — renders the `HasParentMatching` editor (the nested mini-builder).
+   * Dependency-INJECTED rather than imported so this popover imports neither
+   * `HasParentMatchingEditor` nor `FilterGroup`; importing either would close an
+   * import cycle (both reach back here via `advancedQuery.ts` /
+   * `PageBrowserFilterRow.tsx`, and through `FilterGroup`'s own "+ Filter"
+   * popover). `FilterGroup` passes a closure that renders the editor (wiring
+   * `FilterGroup` itself in as the editor's recursive sub-builder). The
+   * Pages-surface usages pass nothing, so the has-parent facet is not offered
+   * there. The popover only knows the editor's two callbacks; the editor compiles
+   * the matcher and hands it back via `onApply`.
+   */
+  renderHasParentEditor?: (props: {
+    onApply: (matcher: FilterExpr) => void
+    onBack: () => void
+  }) => React.ReactNode
 }
 
 /** Which inline value-editor is open inside the popover (null = category menu). */
@@ -64,6 +88,9 @@ type EditorKey =
   | 'due'
   | 'scheduled'
   | 'created'
+  | 'linksTo'
+  | 'linkedFrom'
+  | 'hasParent'
   | null
 
 /** D24 — the four property predicate kinds the popover can emit. */
@@ -112,6 +139,7 @@ export function AddFilterPopover({
   warnManyFilters,
   hidePagesFacets,
   showAdvancedFacets,
+  renderHasParentEditor,
 }: AddFilterPopoverProps): React.ReactElement {
   const { t } = useTranslation()
   // E1 — the offered Priority values must mirror the user-configured priority
@@ -142,6 +170,9 @@ export function AddFilterPopover({
   const [dateValue2, setDateValue2] = useState('')
   const [createdAfter, setCreatedAfter] = useState('')
   const [createdBefore, setCreatedBefore] = useState('')
+  // #1478 — relational link picker state (shared by the links-to / linked-from
+  // editors; `linkKind` says which primitive the open editor emits).
+  const [linkKind, setLinkKind] = useState<'LinksTo' | 'LinkedFrom'>('LinksTo')
   const triggerRef = useRef<HTMLButtonElement>(null)
 
   const reset = useCallback(() => {
@@ -163,6 +194,7 @@ export function AddFilterPopover({
     setDateValue2('')
     setCreatedAfter('')
     setCreatedBefore('')
+    setLinkKind('LinksTo')
   }, [])
 
   const close = useCallback(() => {
@@ -403,6 +435,36 @@ export function AddFilterPopover({
                 >
                   {t('pageBrowser.filter.facetCreated')}
                 </FilterMenuItem>
+                {/* #1478 — relational predicates (engine landed in #1455). */}
+                <FilterMenuItem
+                  onClick={() => {
+                    setLinkKind('LinksTo')
+                    setEditor('linksTo')
+                  }}
+                  description={t('pageBrowser.filter.facetLinksToDesc')}
+                >
+                  {t('pageBrowser.filter.facetLinksTo')}
+                </FilterMenuItem>
+                <FilterMenuItem
+                  onClick={() => {
+                    setLinkKind('LinkedFrom')
+                    setEditor('linkedFrom')
+                  }}
+                  description={t('pageBrowser.filter.facetLinkedFromDesc')}
+                >
+                  {t('pageBrowser.filter.facetLinkedFrom')}
+                </FilterMenuItem>
+                {/* The has-parent facet needs an injected editor (the popover
+                    imports neither the editor nor `FilterGroup`); offer it only
+                    when the caller supplies one. */}
+                {renderHasParentEditor && (
+                  <FilterMenuItem
+                    onClick={() => setEditor('hasParent')}
+                    description={t('pageBrowser.filter.facetHasParentMatchingDesc')}
+                  >
+                    {t('pageBrowser.filter.facetHasParentMatching')}
+                  </FilterMenuItem>
+                )}
               </FilterCategoryGroup>
             )}
 
@@ -534,6 +596,30 @@ export function AddFilterPopover({
             onApply={applyCreated}
           />
         )}
+
+        {(editor === 'linksTo' || editor === 'linkedFrom') && (
+          <LinkTargetEditor
+            label={
+              linkKind === 'LinksTo'
+                ? t('pageBrowser.filter.linkTargetLabel')
+                : t('pageBrowser.filter.linkSourceLabel')
+            }
+            onBack={() => setEditor(null)}
+            onSelect={(id) =>
+              emit(
+                linkKind === 'LinksTo'
+                  ? { type: 'LinksTo', target: id }
+                  : { type: 'LinkedFrom', source: id },
+              )
+            }
+          />
+        )}
+
+        {editor === 'hasParent' &&
+          renderHasParentEditor?.({
+            onBack: () => setEditor(null),
+            onApply: (matcher) => emit({ type: 'HasParentMatching', matcher }),
+          })}
       </PopoverContent>
     </Popover>
   )
@@ -1107,6 +1193,105 @@ function CreatedEditor({
         />
       </label>
       <EditorFooter canApply={canApply} onBack={onBack} onApply={onApply} />
+    </div>
+  )
+}
+
+/**
+ * #1478 — page picker for the `LinksTo` / `LinkedFrom` relational facets. The
+ * value the user picks is a page/block ULID, but the user chooses it BY TITLE,
+ * so this mirrors the shared ref-picker UX (`RefEditor`): a search box over the
+ * space's page list (`listAllPagesInSpace`, filtered client-side with the
+ * Unicode-aware fold), each row showing the resolved title. On click it hands
+ * the page's ULID to `onSelect`; the parent emits the leaf with the id stored.
+ * The chip then resolves the id BACK to a title via the same resolver.
+ */
+function LinkTargetEditor({
+  label,
+  onSelect,
+  onBack,
+}: {
+  label: string
+  onSelect: (id: string) => void
+  onBack: () => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const resolveTitle = useResolveStore((s) => s.resolveTitle)
+  const [search, setSearch] = useState('')
+  const [pages, setPages] = useState<PageHeading[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    // FEAT-3 Phase 4 — `listAllPagesInSpace` requires a space id; the `?? ''`
+    // pre-bootstrap fallback forces an empty (no-match) result rather than a
+    // runtime null-deref, matching the property ref picker.
+    listAllPagesInSpace(currentSpaceId ?? '')
+      .then((res) => {
+        if (!cancelled) setPages(res)
+      })
+      .catch((err: unknown) => {
+        logger.error('AddFilterPopover', 'Failed to load pages for link picker', undefined, err)
+        if (!cancelled) setPages([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [currentSpaceId])
+
+  const filtered = useMemo(() => {
+    if (!search) return pages
+    return pages.filter((p) => matchesSearchFolded(p.content || '', search))
+  }, [pages, search])
+
+  return (
+    <div className="flex flex-col gap-2" data-testid="link-target-editor">
+      <span className="px-1 text-xs font-medium">{label}</span>
+      <Input
+        className="h-8 text-xs"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder={t('pageBrowser.filter.linkSearchPages')}
+        aria-label={t('pageBrowser.filter.linkSearchPages')}
+        // oxlint-disable-next-line jsx-a11y/no-autofocus -- this picker renders only after the user opens it from the filter menu; focusing the search input lets them filter pages immediately without an extra click/tab
+        autoFocus
+      />
+      <ScrollArea className="max-h-48">
+        <div className="flex flex-col gap-0.5" aria-busy={loading}>
+          {loading ? (
+            <div className="flex justify-center py-3">
+              <Spinner size="sm" />
+            </div>
+          ) : filtered.length === 0 ? (
+            <EmptyState icon={FileSearch} message={t('pageBrowser.filter.linkNoPages')} compact />
+          ) : (
+            filtered.map((page) => (
+              <button
+                key={page.id}
+                type="button"
+                className="rounded px-2 py-1 text-left text-xs transition-colors hover:bg-accent focus-ring-visible truncate"
+                onClick={() => onSelect(page.id)}
+              >
+                {/* `PageHeading.content` IS the page title; prefer it. Fall back
+                    to the resolver (so a content-less row still shows something),
+                    then to "Untitled". The chip resolves the stored id→title via
+                    the SAME resolver after selection. */}
+                {page.content || resolveTitle(page.id) || t('block.untitled')}
+              </button>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+      <div className="flex justify-start">
+        <Button type="button" variant="ghost" size="xs" onClick={onBack}>
+          {t('pageBrowser.filter.back')}
+        </Button>
+      </div>
     </div>
   )
 }
