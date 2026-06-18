@@ -49,6 +49,7 @@ import { CalloutBlockquote } from './extensions/callout-blockquote'
 import { CheckboxInputRule } from './extensions/checkbox-input-rule'
 import { EmojiPicker, emojiPickerPluginKey } from './extensions/emoji-picker'
 import { ExternalLink } from './extensions/external-link'
+import { Image } from './extensions/image'
 import { MathBlock, MathInline } from './extensions/math'
 import { MermaidCodeBlockView } from './extensions/MermaidCodeBlockView'
 import { PropertyPicker, propertyPickerPluginKey } from './extensions/property-picker'
@@ -443,6 +444,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // #1437 — KaTeX math: inline `$…$` and block `$$…$$` atoms (lazy KaTeX).
       MathInline,
       MathBlock,
+      // #1434 — markdown `![alt](url)` image (inline atom, broken-image fallback).
+      Image,
       PriorityShortcuts,
       Placeholder.configure({ placeholder: () => placeholderRef.current }),
       TagRef.configure({

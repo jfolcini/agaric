@@ -85,6 +85,22 @@ export interface MathInlineNode {
 }
 
 /**
+ * Image (#1434): a markdown `![alt](url)` image. An atomic INLINE node whose
+ * `attrs.alt` holds the alt text and `attrs.src` the image URL. Serializes back
+ * to `![alt](url)` (loss-free, escaping `]` in alt and unbalanced parens in the
+ * URL exactly as the link serializer does). The leading `!` is what
+ * distinguishes it from a `[text](url)` link on parse.
+ *
+ * SCOPE (#1434 slice): markdown round-trip + render only. Binary image paste /
+ * drag-drop → attachment and attachment-ref ↔ export-path resolution are
+ * explicit FOLLOW-UPs handled elsewhere; `src` is treated as an opaque URL here.
+ */
+export interface ImageNode {
+  readonly type: 'image'
+  readonly attrs: { readonly alt: string; readonly src: string }
+}
+
+/**
  * Block (display) math (#1437): a `$$…$$` fenced block rendered via KaTeX in
  * display mode. The LaTeX source is stored verbatim in `attrs.latex` and
  * serializes back to a `$$…$$` fence.
@@ -144,6 +160,7 @@ export type InlineNode =
   | BlockRefNode
   | HardBreakNode
   | MathInlineNode
+  | ImageNode
 
 export interface TableCellNode {
   readonly type: 'tableCell'

@@ -115,6 +115,17 @@ function escapeText(s: string): string {
       out += '\\#'
       continue
     }
+    // `!` before `[` is the image discriminator (#1434): `![…](…)` parses as an
+    // image, so a LITERAL `!` that precedes a `[` inside this text node must be
+    // escaped or it would turn `!` + a literal `[…]` into an image on reparse.
+    // (`\!` always decodes back to a literal `!`, so the escape is lossless; an
+    // interior `!` NOT before `[` stays readable — a sentence-final `!` is not
+    // over-escaped.) The cross-NODE case (a `!` ending one node, a `[`-leading
+    // link/ref node next) is defused at the node join in `serializeInlineNodes`.
+    if (ch === '!' && i + 1 < s.length && s[i + 1] === '[') {
+      out += '\\!'
+      continue
+    }
     // [ could start a link or block_link — escape as \[
     if (ch === '[') {
       out += '\\['
@@ -264,6 +275,23 @@ function escapeUrl(url: string): string {
   return result
 }
 
+/**
+ * Escape the alt text of an `![alt](url)` image (#1434). The alt is an opaque
+ * string (not parsed for marks on the way back in), so only the chars that would
+ * break the `![…]` label shape on reparse are escaped: a literal `\` is doubled
+ * (so it does not consume the next char as an escape on parse) and a literal `]`
+ * is backslash-escaped (so it does not close the alt label early). `scanEscape`
+ * / `scanBalancedClose` honour both, so the alt round-trips exactly.
+ */
+function escapeImageAlt(alt: string): string {
+  let out = ''
+  for (const ch of alt) {
+    if (ch === '\\' || ch === ']') out += `\\${ch}`
+    else out += ch
+  }
+  return out
+}
+
 // -- Serialize inline nodes (with mark coalescing) ----------------------------
 
 /**
@@ -369,6 +397,14 @@ function serializeInlineChild(
   if (child.type === 'math_inline') {
     return serializeInlineAtom(`$${child.attrs.latex}$`, activeMarks)
   }
+  // Image (#1434): emit `![alt](url)`. The alt is escaped for the chars that
+  // could break the `![…](…)` shape on reparse (`\` and `]`); the URL reuses the
+  // link serializer's `escapeUrl` (unbalanced-paren backslash escaping). An
+  // image is an atom and never carries text marks, so it serializes as an atom.
+  if (child.type === 'image') {
+    const alt = escapeImageAlt(child.attrs.alt)
+    return serializeInlineAtom(`![${alt}](${escapeUrl(child.attrs.src)})`, activeMarks)
+  }
   // #710-5: a CommonMark backslash hard break (`\` + newline) — distinct from
   // the bare `\n` block separator, so a Shift+Enter line break round-trips as
   // ONE paragraph instead of being split into two blocks on blur. The parser
@@ -400,13 +436,46 @@ function serializeInlineNodes(
   const activeMarks = new Set<string>()
 
   for (const child of nodes) {
-    result += serializeInlineChild(child, activeMarks, onUnknownNode)
+    const piece = serializeInlineChild(child, activeMarks, onUnknownNode)
+    // Cross-node image-discriminator guard (#1434): if the running output ends
+    // with a LITERAL `!` and the next node serializes to a `[`-leading token
+    // (a link group never reaches here, but a `block_link` `[[ULID]]` does), the
+    // concatenation `!` + `[…` would reparse as an image. `escapeText` already
+    // handles `![` within a single text node; this defuses the seam between
+    // nodes. A trailing `\!` (already escaped) ends in `!` too but is preceded
+    // by a backslash, so it is left alone.
+    result = defuseImageSeam(result, piece)
   }
 
   // Close any remaining open marks
   result += emitCloseAll(activeMarks)
 
   return result
+}
+
+/**
+ * Append `piece` to `result`, escaping a trailing literal `!` on `result` when
+ * `piece` starts with `[` so the seam cannot reparse as an `![…](…)` image
+ * (#1434). A `!` already part of a `\!` escape (preceded by an odd backslash
+ * run) is left untouched.
+ */
+function defuseImageSeam(result: string, piece: string): string {
+  if (result.endsWith('!') && piece.startsWith('[') && !endsWithEscapedBang(result)) {
+    return `${result.slice(0, -1)}\\!${piece}`
+  }
+  return result + piece
+}
+
+/** Whether `result` ends with a `\!` escape (odd run of backslashes before the `!`). */
+function endsWithEscapedBang(result: string): boolean {
+  if (!result.endsWith('!')) return false
+  let n = 0
+  let i = result.length - 2
+  while (i >= 0 && result[i] === '\\') {
+    n++
+    i--
+  }
+  return n % 2 === 1
 }
 
 /**
@@ -451,13 +520,15 @@ function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) 
       // require the span to be a single plain text node (no other marks).
       const rawText = linkSpanPlainText(stripped)
       if (rawText !== null && rawText === group.href && isAutolinkableUrl(group.href)) {
-        result += group.href
+        result = defuseImageSeam(result, group.href)
       } else {
         const inner = serializeInlineNodes(stripped, onUnknownNode)
-        result += `[${inner}](${escapeUrl(group.href)})`
+        // A link group leads with `[`, so a literal `!` ending the previous
+        // group would reparse as an image (#1434) — defuse the seam.
+        result = defuseImageSeam(result, `[${inner}](${escapeUrl(group.href)})`)
       }
     } else {
-      result += serializeInlineNodes(group.nodes, onUnknownNode)
+      result = defuseImageSeam(result, serializeInlineNodes(group.nodes, onUnknownNode))
     }
   }
 
