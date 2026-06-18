@@ -41,7 +41,12 @@ export default defineConfig({
       origins: [
         {
           origin: 'http://localhost:5173',
-          localStorage: [{ name: 'agaric-onboarding-done', value: 'true' }],
+          localStorage: [
+            { name: 'agaric-onboarding-done', value: 'true' },
+            // #1422: pre-dismiss the first-run mobile gesture coach-mark so its
+            // overlay doesn't intercept taps in the mobile-viewport e2e specs.
+            { name: 'agaric-gesture-coachmark-seen', value: 'true' },
+          ],
         },
       ],
     },
