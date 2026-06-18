@@ -180,7 +180,11 @@ jobs:
     runs-on: ubuntu-24.04
     # PEND-41 R1 — observed wall-clock 11.2 min (run 25966040732, 2026-05-16,
     # n=1 post-PEND-39-split). +50% headroom + round up to nearest 5 → 20 min.
-    timeout-minutes: 20
+    # 20 → 30 (#1458): the `Install system dependencies` apt step can crawl to
+    # ~12 min on a slow Ubuntu mirror (same root cause as the playwright cap
+    # bump), which ran this job out the 20-min budget mid-clippy. The deb
+    # re-download itself is tracked as #1464; 30 min absorbs the variance.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -1033,7 +1037,10 @@ jobs:
     # run on cargo-tests. 20 min covers the cold-cache compile of
     # `src-tauri` for the `agaric-mcp` bin + smoke test + the release-
     # mode rebuild that prepare-external-bins.mjs runs.
-    timeout-minutes: 20
+    # 20 → 30 (#1458): a slow-mirror apt `Install system dependencies` step
+    # (~12 min, same root cause as the playwright/lint cap bumps) ran this job
+    # out the 20-min budget. Deb re-download tracked as #1464; 30 min absorbs it.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
