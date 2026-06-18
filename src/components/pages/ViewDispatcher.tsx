@@ -23,10 +23,12 @@
 import { lazy, type ReactElement, Suspense, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EmptyState } from '@/components/common/EmptyState'
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { NAV_ITEMS } from '@/components/common/nav-items'
 import { JournalPage } from '@/components/JournalPage'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
+import { Button } from '@/components/ui/button'
 import { useItemCount } from '@/hooks/useItemCount'
 import { countTrash } from '@/lib/tauri'
 import { useNavigationStore, type View } from '@/stores/navigation'
@@ -151,6 +153,8 @@ export function ViewDispatcher({
   // reference is stable across renders, so the cost of subscribing at
   // this level is zero re-renders.
   const goBack = useTabsStore((s) => s.goBack)
+  const { t } = useTranslation()
+  const setView = useNavigationStore((s) => s.setView)
   switch (currentView) {
     case 'journal':
       return (
@@ -249,7 +253,31 @@ export function ViewDispatcher({
         </FeatureErrorBoundary>
       )
     case 'page-editor':
-      if (!activePage) return null
+      // #1723: a fresh-space switch can force currentView='page-editor'
+      // while the empty tab list leaves activePage null. Returning null
+      // here paints a blank content region (a routed view returning null
+      // is a bug). Render an EmptyState with a CTA back to the Journal
+      // (which always has a today/daily fallback) instead.
+      if (!activePage) {
+        return (
+          <FeatureErrorBoundary name="PageEditor">
+            <EmptyState
+              message={t('pageEditor.empty.message')}
+              description={t('pageEditor.empty.description')}
+              action={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-3 mx-auto flex items-center gap-1"
+                  onClick={() => setView('journal')}
+                >
+                  {t('pageEditor.empty.goToJournal')}
+                </Button>
+              }
+            />
+          </FeatureErrorBoundary>
+        )
+      }
       return (
         <FeatureErrorBoundary name="PageEditor">
           <Suspense fallback={<ViewFallback />}>

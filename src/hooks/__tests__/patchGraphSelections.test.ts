@@ -17,7 +17,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { GraphEdge, GraphNode } from '@/components/graph/GraphView.helpers'
 import { patchGraphSelections } from '@/hooks/useGraphSimulation'
-import { renderGraphElements } from '@/lib/graph-sim-helpers'
+import { applyRovingTabindex, renderGraphElements } from '@/lib/graph-sim-helpers'
 
 function makeSvg(): SVGSVGElement {
   return document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement
@@ -96,5 +96,37 @@ describe('patchGraphSelections — edge z-order (#758 item 4)', () => {
     expect(svg.querySelectorAll('g.node')).toHaveLength(2)
     // The stale edge EXITed with the patch's empty edge data.
     expect(svg.querySelectorAll('line')).toHaveLength(0)
+  })
+})
+
+describe('patchGraphSelections — #1725 accessible name on the filter-toggle path', () => {
+  it('sets aria-label on ENTERing nodes and applyRovingTabindex yields one tab stop', () => {
+    const svg = makeSvg()
+    const rendered = renderGraphElements(svg, [makeNode('a', 'Alpha')], [], () => {})
+
+    // Filter toggle reveals two more pages.
+    const patchedNodes = [makeNode('a', 'Alpha'), makeNode('b', 'Beta'), makeNode('c', 'Gamma')]
+    const { node } = patchGraphSelections(rendered.g, patchedNodes, [], () => {})
+
+    const labels = Array.from(svg.querySelectorAll('g.node')).map((g) =>
+      g.getAttribute('aria-label'),
+    )
+    expect(labels).toEqual(['Alpha', 'Beta', 'Gamma'])
+
+    // The patch effect re-establishes roving tabindex on the merged selection.
+    applyRovingTabindex(node)
+    const tabindexes = Array.from(svg.querySelectorAll('g.node')).map((g) =>
+      g.getAttribute('tabindex'),
+    )
+    expect(tabindexes.filter((t) => t === '0')).toHaveLength(1)
+  })
+
+  it('refreshes aria-label for renamed pages on UPDATE', () => {
+    const svg = makeSvg()
+    const rendered = renderGraphElements(svg, [makeNode('a', 'Old name')], [], () => {})
+
+    patchGraphSelections(rendered.g, [makeNode('a', 'New name')], [], () => {})
+
+    expect(svg.querySelector('g.node')?.getAttribute('aria-label')).toBe('New name')
   })
 })

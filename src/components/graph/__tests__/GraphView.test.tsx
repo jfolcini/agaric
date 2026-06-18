@@ -95,6 +95,8 @@ vi.mock('d3-selection', () => ({
     text: vi.fn().mockReturnThis(),
     on: vi.fn().mockReturnThis(),
     call: vi.fn().mockReturnThis(),
+    // #1725 — applyRovingTabindex calls `selection.nodes()`.
+    nodes: vi.fn(() => []),
     append: vi.fn(() => ({
       selectAll: vi.fn().mockReturnThis(),
       data: vi.fn().mockReturnThis(),
@@ -111,6 +113,8 @@ vi.mock('d3-selection', () => ({
       datum: vi.fn().mockReturnThis(),
       select: vi.fn().mockReturnThis(),
       node: vi.fn().mockReturnValue(null),
+      // #1725 — applyRovingTabindex calls `selection.nodes()`.
+      nodes: vi.fn(() => []),
     })),
     remove: vi.fn().mockReturnThis(),
     style: vi.fn().mockReturnThis(),

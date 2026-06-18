@@ -251,6 +251,105 @@ describe('ImageResizeToolbar', () => {
     expect(results).toHaveNoViolations()
   })
 
+  // ---- #1724: WAI-ARIA toolbar roving-tabindex model ----
+  describe('roving tabindex (WAI-ARIA toolbar pattern)', () => {
+    /** All seven toolbar buttons in DOM order (4 width presets + 3 alignments). */
+    const TEST_IDS = [
+      'image-resize-25',
+      'image-resize-50',
+      'image-resize-75',
+      'image-resize-100',
+      'image-align-left',
+      'image-align-center',
+      'image-align-right',
+    ]
+    const first = () => screen.getByTestId('image-resize-25')
+    const last = () => screen.getByTestId('image-align-right')
+    const allButtons = () => TEST_IDS.map((id) => screen.getByTestId(id))
+
+    it('exposes exactly ONE tab stop (first button tabindex 0, rest -1)', () => {
+      renderToolbar()
+      const buttons = allButtons()
+      expect(first()).toHaveAttribute('tabindex', '0')
+      for (const btn of buttons.slice(1)) {
+        expect(btn).toHaveAttribute('tabindex', '-1')
+      }
+      const zeroStops = buttons.filter((b) => b.getAttribute('tabindex') === '0')
+      expect(zeroStops).toHaveLength(1)
+    })
+
+    it('ArrowRight moves focus + the tab stop to the next button', async () => {
+      const user = userEvent.setup()
+      renderToolbar()
+      const b0 = screen.getByTestId('image-resize-25')
+      const b1 = screen.getByTestId('image-resize-50')
+
+      b0.focus()
+      await user.keyboard('{ArrowRight}')
+
+      expect(b1).toHaveFocus()
+      expect(b1).toHaveAttribute('tabindex', '0')
+      expect(b0).toHaveAttribute('tabindex', '-1')
+    })
+
+    it('ArrowLeft moves focus to the previous button', async () => {
+      const user = userEvent.setup()
+      renderToolbar()
+      const b1 = screen.getByTestId('image-resize-50')
+      const b2 = screen.getByTestId('image-resize-75')
+
+      b2.focus()
+      await user.keyboard('{ArrowLeft}')
+
+      expect(b1).toHaveFocus()
+      expect(b1).toHaveAttribute('tabindex', '0')
+    })
+
+    it('ArrowRight wraps from the last button to the first', async () => {
+      const user = userEvent.setup()
+      renderToolbar()
+
+      last().focus()
+      await user.keyboard('{ArrowRight}')
+
+      expect(first()).toHaveFocus()
+    })
+
+    it('ArrowLeft wraps from the first button to the last', async () => {
+      const user = userEvent.setup()
+      renderToolbar()
+
+      first().focus()
+      await user.keyboard('{ArrowLeft}')
+
+      expect(last()).toHaveFocus()
+    })
+
+    it('Home / End jump to the first / last button', async () => {
+      const user = userEvent.setup()
+      renderToolbar()
+
+      screen.getByTestId('image-resize-100').focus()
+      await user.keyboard('{End}')
+      expect(last()).toHaveFocus()
+
+      await user.keyboard('{Home}')
+      expect(first()).toHaveFocus()
+    })
+
+    it('focusing a button (e.g. via click) moves the single tab stop to it', async () => {
+      const user = userEvent.setup()
+      renderToolbar()
+      const target = screen.getByTestId('image-align-left')
+
+      await user.click(target)
+
+      expect(target).toHaveAttribute('tabindex', '0')
+      const zeroStops = allButtons().filter((b) => b.getAttribute('tabindex') === '0')
+      expect(zeroStops).toHaveLength(1)
+    })
+  })
+
   // ---- #294 item 6: drag-to-resize snapping ----
 
   describe('snapToPreset', () => {

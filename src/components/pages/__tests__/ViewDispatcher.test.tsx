@@ -9,6 +9,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ReactElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -136,11 +137,29 @@ describe('ViewDispatcher — routing', () => {
     expect(node).toHaveTextContent('page-editor:Hello')
   })
 
-  it('renders nothing for page-editor without an active page', () => {
+  // #1723: a fresh-space switch can force currentView='page-editor' with a
+  // null activePage (empty tab list). The branch must render an EmptyState
+  // with a CTA, NOT return null (which painted a blank content region).
+  it('renders an empty state (not null) for page-editor without an active page', () => {
     const { container } = render(
       <ViewDispatcher {...defaultProps({ currentView: 'page-editor', activePage: null })} />,
     )
-    expect(container).toBeEmptyDOMElement()
+    expect(container).not.toBeEmptyDOMElement()
+    expect(screen.getByText(t('pageEditor.empty.message'))).toBeInTheDocument()
+    // The page editor itself must NOT mount when there is no active page.
+    expect(screen.queryByTestId('page-editor-mock')).not.toBeInTheDocument()
+  })
+
+  it('offers a Go to Journal CTA that switches the view when there is no active page', async () => {
+    const user = userEvent.setup()
+    useNavigationStore.setState({ currentView: 'page-editor' })
+    render(<ViewDispatcher {...defaultProps({ currentView: 'page-editor', activePage: null })} />)
+
+    const cta = screen.getByRole('button', { name: t('pageEditor.empty.goToJournal') })
+    expect(cta).toBeInTheDocument()
+
+    await user.click(cta)
+    expect(useNavigationStore.getState().currentView).toBe('journal')
   })
 })
 
@@ -297,6 +316,15 @@ describe('ViewDispatcher — a11y', () => {
   it('has no a11y violations when rendering a routed view', async () => {
     const { container } = render(<ViewDispatcher {...defaultProps({ currentView: 'pages' })} />)
     await screen.findByTestId('page-browser-mock')
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  it('has no a11y violations rendering the page-editor empty state (#1723)', async () => {
+    const { container } = render(
+      <ViewDispatcher {...defaultProps({ currentView: 'page-editor', activePage: null })} />,
+    )
+    await screen.findByText(t('pageEditor.empty.message'))
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })

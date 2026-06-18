@@ -92,6 +92,70 @@ describe('renderGraphElements — UX-357 native SVG <title> tooltip', () => {
   })
 })
 
+describe('renderGraphElements \u2014 #1725 accessible name + roving tabindex', () => {
+  it('sets an explicit aria-label per node (not only the child <title>)', () => {
+    const svg = makeSvg()
+    const nodes: GraphNode[] = [makeNode('a', 'Alpha'), makeNode('b', 'Beta')]
+
+    renderGraphElements(svg, nodes, [], () => {})
+
+    const labels = Array.from(svg.querySelectorAll('g.node')).map((g) =>
+      g.getAttribute('aria-label'),
+    )
+    expect(labels).toEqual(['Alpha', 'Beta'])
+  })
+
+  it('makes exactly one node tabbable (roving tabindex), the rest -1', () => {
+    const svg = makeSvg()
+    const nodes: GraphNode[] = [makeNode('a', 'A'), makeNode('b', 'B'), makeNode('c', 'C')]
+
+    renderGraphElements(svg, nodes, [], () => {})
+
+    const tabindexes = Array.from(svg.querySelectorAll('g.node')).map((g) =>
+      g.getAttribute('tabindex'),
+    )
+    expect(tabindexes.filter((t) => t === '0')).toHaveLength(1)
+    expect(tabindexes).toEqual(['0', '-1', '-1'])
+  })
+
+  it('ArrowDown moves the roving tabindex to the next node', () => {
+    const svg = makeSvg()
+    // Attach to the document so .focus() / dispatchEvent behave.
+    document.body.append(svg)
+    const nodes: GraphNode[] = [makeNode('a', 'A'), makeNode('b', 'B'), makeNode('c', 'C')]
+
+    renderGraphElements(svg, nodes, [], () => {})
+
+    const groups = Array.from(svg.querySelectorAll('g.node')) as SVGGElement[]
+    groups[0]?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+    )
+
+    expect(groups.map((g) => g.getAttribute('tabindex'))).toEqual(['-1', '0', '-1'])
+    expect(document.activeElement).toBe(groups[1])
+
+    svg.remove()
+  })
+
+  it('ArrowUp from the first node wraps to the last (roving)', () => {
+    const svg = makeSvg()
+    document.body.append(svg)
+    const nodes: GraphNode[] = [makeNode('a', 'A'), makeNode('b', 'B'), makeNode('c', 'C')]
+
+    renderGraphElements(svg, nodes, [], () => {})
+
+    const groups = Array.from(svg.querySelectorAll('g.node')) as SVGGElement[]
+    groups[0]?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }),
+    )
+
+    expect(groups.map((g) => g.getAttribute('tabindex'))).toEqual(['-1', '-1', '0'])
+    expect(document.activeElement).toBe(groups[2])
+
+    svg.remove()
+  })
+})
+
 // \u2500\u2500 createZoomKeyHandler \u2014 keyboard zoom (graphZoomIn/Out/Reset, #1172) \u2500\u2500\u2500\u2500\u2500\u2500
 //
 // BUG-18 moved the graph zoom chords out of GraphView into rebindable catalog

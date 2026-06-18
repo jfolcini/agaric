@@ -115,6 +115,21 @@ describe('BlockDndOverlay', () => {
     expect(srRegion).toHaveClass('sr-only')
   })
 
+  it('announces a subtree drag via i18n (pluralised) — #1727', () => {
+    render(
+      <BlockDndOverlay
+        activeBlock={{ content: 'Parent' }}
+        projected={{ depth: 3 }}
+        activeId="BLK001"
+        count={4}
+      />,
+    )
+
+    // Routed through t('blockTree.dnd.movingSubtree', { count, depth }); the
+    // en plural form is "Moving {{count}} blocks to depth {{depth}}".
+    expect(screen.getByRole('status')).toHaveTextContent('Moving 4 blocks to depth 3')
+  })
+
   it('shows the count badge for a subtree drag (count > 1)', () => {
     render(
       <BlockDndOverlay

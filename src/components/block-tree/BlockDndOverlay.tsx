@@ -14,6 +14,7 @@
 
 import { type DropAnimation, DragOverlay } from '@dnd-kit/core'
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 
 interface BlockDndOverlayProps {
   activeBlock: { content?: string | null } | null
@@ -44,6 +45,7 @@ export function BlockDndOverlay({
   activeId,
   count = 1,
 }: BlockDndOverlayProps): React.ReactElement {
+  const { t } = useTranslation()
   const isSubtree = count > 1
   const depth = projected?.depth ?? 0
   return (
@@ -54,8 +56,8 @@ export function BlockDndOverlay({
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- intentional SR-only live region (aria-live/atomic); native <output> has implicit aria-live differences and an "Output" semantic role
           <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
             {isSubtree
-              ? `Moving ${count} blocks to depth ${projected.depth}`
-              : `Moving to depth ${projected.depth}`}
+              ? t('blockTree.dnd.movingSubtree', { count, depth: projected.depth })
+              : t('blockTree.dnd.moving', { depth: projected.depth })}
           </div>
         )}
       {/* Drag overlay: a translucent ghost of the dragged row follows the

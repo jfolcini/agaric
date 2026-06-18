@@ -1782,6 +1782,22 @@
     transition-duration: 0.01ms;
     scroll-behavior: auto;
   }
+
+  /* #1722: The `*` rule above is non-`!important` (specificity 0,0,0), so the
+     Tailwind / tw-animate-css `animation`-shorthand utilities — `.animate-spin`
+     et al. (specificity 0,1,0) — re-apply their full duration + infinite
+     iteration count and keep animating under reduced motion. The app's primary
+     loading indicator (Spinner → `.animate-spin`, used in ~35 files) was
+     spinning at full speed. Hard-kill the animation-shorthand utilities so they
+     come to rest instead of spinning. `!important` beats the utilities'
+     specificity. (Skeleton already self-guards via `motion-safe:animate-pulse`,
+     so its pulse is never applied under reduced motion regardless.) */
+  .animate-spin,
+  .animate-pulse,
+  .animate-bounce,
+  .animate-ping {
+    animation: none !important;
+  }
 }
 
 /* ── UX-238: main-content ScrollArea viewport wrapper height ──────────
