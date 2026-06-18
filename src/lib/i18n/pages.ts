@@ -117,6 +117,12 @@ export const pages: Record<string, string> = {
   'templates.variableTime': 'Current time (HH:MM)',
   'templates.variableDatetime': 'Current date and time',
   'templates.variablePageTitle': 'Title of the page you insert into',
+  // #1450 Phase 1 — configurable formats, date math, and extra built-ins.
+  'templates.variableTodayFormat': 'Date with a custom format (also time:/datetime:)',
+  'templates.variableDateMath': 'Today ± N days (e.g. date+7, date-1)',
+  'templates.variableWeekday': 'Current day name (e.g. Monday)',
+  'templates.variableMonth': 'Current month name (e.g. June)',
+  'templates.variableIsoweek': 'ISO week number',
   'pageHeader.exportMarkdown': 'Export as Markdown',
   'pageHeader.deletePage': 'Delete page',
   'pageHeader.deletePageTitle': 'Delete page',

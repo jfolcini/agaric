@@ -1,3 +1,5 @@
+import { format as formatDateFns, addDays, getISOWeek } from 'date-fns'
+
 import { substituteTemplateVariables } from '@/editor/template-variables'
 
 import { logger } from './logger'
@@ -110,27 +112,162 @@ export async function loadTemplatePagesWithPreview(
 }
 
 /**
- * Expand template variables in content.
+ * #1450 Phase 1 — context handed to every legacy `<% %>` resolver.
  *
- * Supported variables:
- * - `<% today %>` → current date in YYYY-MM-DD format
- * - `<% time %>` → current time in HH:MM format
- * - `<% datetime %>` → current date+time in YYYY-MM-DD HH:MM format
- * - `<% page title %>` → title of the target page (where template is being inserted)
+ * `now` is injectable purely for deterministic tests (mirrors the #1442
+ * `{{ }}` `TemplateVariableContext.now`); production always omits it so each
+ * insertion reflects the real clock.
  */
-export function expandTemplateVariables(content: string, context: { pageTitle?: string }): string {
-  const now = new Date()
+export interface LegacyTemplateContext {
+  /** Title of the page the template is being inserted into. */
+  pageTitle?: string
+  /** Injectable "now" for tests. Defaults to `new Date()` at call time. */
+  now?: Date
+}
+
+/** A resolver turns the matched `<% %>` body's argument into its substitution. */
+type LegacyResolver = (arg: string | null, now: Date, ctx: LegacyTemplateContext) => string
+
+/**
+ * Map the user-facing date-format tokens (`YYYY`/`DD`) onto the `date-fns`
+ * pattern tokens (`yyyy`/`dd`). `date-fns` already uses `MM` for the
+ * zero-padded month, so only year/day need translating. Mirrors the #1442
+ * `{{date:FORMAT}}` mapping (`template-variables.ts#toDateFnsPattern`) — kept
+ * as a local copy because that helper is module-private there and the `{{ }}`
+ * system is intentionally NOT unified with the legacy `<% %>` one.
+ */
+function legacyToDateFnsPattern(userFormat: string): string {
+  return userFormat.replace(/YYYY/g, 'yyyy').replace(/DD/g, 'dd')
+}
+
+/**
+ * Format `date` with a user-supplied format string, falling back to
+ * `fallback` (verbatim, never throwing) when the format is empty or invalid.
+ */
+function formatWithFallback(date: Date, userFormat: string | null, fallback: string): string {
+  if (userFormat == null || userFormat.length === 0) return fallback
+  try {
+    const out = formatDateFns(date, legacyToDateFnsPattern(userFormat))
+    // `date-fns/format` can return '' for a pathological pattern; treat that
+    // as a failure and fall back so a token never silently vanishes.
+    return out.length > 0 ? out : fallback
+  } catch {
+    return fallback
+  }
+}
+
+/**
+ * Build the legacy default-format strings exactly as the original
+ * `.replace()` chain did (raw local-time string building — NOT `date-fns`)
+ * so the four pre-existing tokens stay byte-for-byte unchanged.
+ */
+function legacyDefaults(now: Date): {
+  today: string
+  time: string
+  datetime: string
+} {
   const yyyy = now.getFullYear()
   const mm = String(now.getMonth() + 1).padStart(2, '0')
   const dd = String(now.getDate()).padStart(2, '0')
   const hh = String(now.getHours()).padStart(2, '0')
   const min = String(now.getMinutes()).padStart(2, '0')
+  return {
+    today: `${yyyy}-${mm}-${dd}`,
+    time: `${hh}:${min}`,
+    datetime: `${yyyy}-${mm}-${dd} ${hh}:${min}`,
+  }
+}
 
-  return content
-    .replace(/<%\s*today\s*%>/gi, `${yyyy}-${mm}-${dd}`)
-    .replace(/<%\s*time\s*%>/gi, `${hh}:${min}`)
-    .replace(/<%\s*datetime\s*%>/gi, `${yyyy}-${mm}-${dd} ${hh}:${min}`)
-    .replace(/<%\s*page\s*title\s*%>/gi, context.pageTitle ?? '')
+/**
+ * Token → resolver map for the legacy `<% %>` template system (#1450 Phase 1).
+ *
+ * Each entry's key is the lower-cased token name (whitespace inside the
+ * token name is collapsed to a single space before lookup, so `<% page  title %>`
+ * still matches `page title`). The resolver receives the optional `:FORMAT`
+ * argument (or `null`), the resolved `now`, and the insertion context.
+ *
+ * Phase 1 deliberately leaves the separate `{{ }}` grammar
+ * (`substituteTemplateVariables`) untouched — the two systems coexist by
+ * design.
+ */
+const LEGACY_RESOLVERS: Readonly<Record<string, LegacyResolver>> = {
+  // --- The four pre-existing tokens. Bare form is byte-unchanged. ---
+  today: (arg, now) => formatWithFallback(now, arg, legacyDefaults(now).today),
+  time: (arg, now) => formatWithFallback(now, arg, legacyDefaults(now).time),
+  datetime: (arg, now) => formatWithFallback(now, arg, legacyDefaults(now).datetime),
+  'page title': (_arg, _now, ctx) => ctx.pageTitle ?? '',
+
+  // --- New built-ins (#1450 Phase 1). ---
+  weekday: (arg, now) => formatWithFallback(now, arg, formatDateFns(now, 'EEEE')),
+  month: (arg, now) => formatWithFallback(now, arg, formatDateFns(now, 'MMMM')),
+  isoweek: (_arg, now) => String(getISOWeek(now)),
+}
+
+/**
+ * Resolve a single `<% %>` token body to its substitution, or `null` when the
+ * token is unknown (so the caller passes it through verbatim).
+ *
+ * Handles three families:
+ *  - `name` / `name:FORMAT` — looked up in `LEGACY_RESOLVERS`.
+ *  - `date+N` / `date-N` (optionally `:FORMAT`) — date math relative to today.
+ */
+function resolveLegacyToken(body: string, now: Date, ctx: LegacyTemplateContext): string | null {
+  // Collapse internal whitespace so `page  title` === `page title`.
+  const normalized = body.trim().replace(/\s+/g, ' ')
+
+  // Split off an optional `:FORMAT` on the FIRST colon so the format may
+  // itself contain colons (e.g. a `HH:mm` time format).
+  const colonIdx = normalized.indexOf(':')
+  const head = (colonIdx === -1 ? normalized : normalized.slice(0, colonIdx)).trim()
+  const arg = colonIdx === -1 ? null : normalized.slice(colonIdx + 1).trim()
+
+  // Date math: `date+N` / `date-N` (days relative to today), optionally
+  // combined with a `:FORMAT`. Invalid offset → not a date-math token.
+  const mathMatch = /^date([+-])(\d+)$/i.exec(head)
+  if (mathMatch) {
+    const sign = mathMatch[1] === '-' ? -1 : 1
+    const days = sign * Number.parseInt(mathMatch[2] as string, 10)
+    const target = addDays(now, days)
+    return formatWithFallback(target, arg, legacyDefaults(target).today)
+  }
+
+  const resolver = LEGACY_RESOLVERS[head.toLowerCase()]
+  if (resolver) return resolver(arg, now, ctx)
+
+  return null
+}
+
+/**
+ * Expand template variables in content (legacy `<% %>` system, #1450 Phase 1).
+ *
+ * Built on a token → resolver map (`LEGACY_RESOLVERS` + `resolveLegacyToken`)
+ * rather than a hardcoded `.replace()` chain.
+ *
+ * Supported variables:
+ * - `<% today %>` / `<% today:FORMAT %>` → current date (default `YYYY-MM-DD`)
+ * - `<% time %>` / `<% time:FORMAT %>` → current time (default `HH:MM`)
+ * - `<% datetime %>` / `<% datetime:FORMAT %>` → date+time (default `YYYY-MM-DD HH:MM`)
+ * - `<% page title %>` → title of the target page
+ * - `<% date+N %>` / `<% date-N %>` (optionally `:FORMAT`) → today ± N days
+ * - `<% weekday %>` → full day name (e.g. `Monday`)
+ * - `<% month %>` → full month name (e.g. `June`)
+ * - `<% isoweek %>` → ISO week number
+ *
+ * `FORMAT` uses `date-fns` tokens with the `{{date:FORMAT}}` `YYYY`/`DD`
+ * convenience mapping (see `legacyToDateFnsPattern`). An invalid format falls
+ * back to the default and never throws. Unknown tokens pass through verbatim.
+ *
+ * NOTE: this is the LEGACY system; the `{{ }}` grammar
+ * (`substituteTemplateVariables`) is separate and intentionally not unified.
+ */
+export function expandTemplateVariables(content: string, context: LegacyTemplateContext): string {
+  const now = context.now ?? new Date()
+  // Match `<% ... %>`; the body is lazy so adjacent tokens don't merge.
+  return content.replace(/<%([^]*?)%>/g, (whole, body: string) => {
+    const resolved = resolveLegacyToken(body, now, context)
+    // Unknown token → passthrough verbatim (don't drop it).
+    return resolved === null ? whole : resolved
+  })
 }
 
 /**
