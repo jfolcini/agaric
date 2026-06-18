@@ -6,8 +6,19 @@ import 'vitest-axe/extend-expect'
 import * as matchers from 'vitest-axe/matchers'
 
 import './lib/i18n'
+import { setLogLevel } from './lib/logger'
 
 expect.extend(matchers)
+
+// Quiet the app logger in tests. It defaults to `debug` under
+// `import.meta.env.DEV` (which vitest sets), so every `logger.debug`/`info`
+// call leaked structured output into the test console — ~900 lines per run,
+// drowning real failures. Pin it to `warn`: this removes the debug/info spam
+// while preserving `warn`/`error`, which several suites legitimately assert on
+// (e.g. markdown-serializer's "emits logger.warn on unknown node"). Tests that
+// exercise debug/info logging (logger.test.ts) set their own level per-test,
+// and module state is isolated per test file, so this default does not leak.
+setLogLevel('warn')
 
 // The a11y convention across the suite runs `axe(container)` inside a
 // `waitFor(async …)` block. `axe` is CPU-heavy, and the pre-push gate
