@@ -104,13 +104,11 @@ describe('routePrefixToMode', () => {
     expect(routePrefixToMode('')).toBeNull()
   })
 
-  it('detects the mode after leading whitespace, but strips from the raw input', () => {
+  it('detects the mode after leading whitespace and strips the prefix from the trimmed input', () => {
     // Detection trims leading whitespace (`trimStart`) so the mode is
-    // recognised; the stripped query is computed from the RAW input,
-    // so a leading space before `>` shifts the slice and leaves the
-    // `>` in place. The palette body only routes through this for
-    // empty/whitespace queries in practice, so the leading-space case
-    // is documented here rather than treated as a supported entry.
-    expect(routePrefixToMode('  >set')).toEqual({ next: 'commands', q: '>set' })
+    // recognised, and the prefix strip runs on the same trimmed input — so a
+    // leading space before `>` no longer shifts the slice and leak the `>`
+    // into the mode query (#1554).
+    expect(routePrefixToMode('  >set')).toEqual({ next: 'commands', q: 'set' })
   })
 })
