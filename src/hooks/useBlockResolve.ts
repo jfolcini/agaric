@@ -439,17 +439,19 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // forces a no-match SQL filter rather than a runtime null deref.
       const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
       const resp = await searchBlocks({ query: q, limit: searchBlocksLimit(20), spaceId })
+      // Show parent page title as breadcrumb when available.
+      // FEAT-3p7 — compose against current space so a foreign-space
+      // parent (which shouldn't appear in the picker anyway, but
+      // could leak via stale cache) doesn't surface its title.
+      // Read once before the per-row map (#1637) — the active space can't
+      // change mid-map (synchronous transform), so one read is exact.
+      const parentSpaceId = useSpaceStore.getState().currentSpaceId
       const results: PickerItem[] = resp.items
         .filter((b) => b.deleted_at === null)
         .map((b) => {
           const content = b.content ?? 'Untitled'
           const firstLine = content.split('\n')[0] as string
           const label = firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine
-          // Show parent page title as breadcrumb when available.
-          // FEAT-3p7 — compose against current space so a foreign-space
-          // parent (which shouldn't appear in the picker anyway, but
-          // could leak via stale cache) doesn't surface its title.
-          const parentSpaceId = useSpaceStore.getState().currentSpaceId
           const parentTitle = b.parent_id
             ? cacheRef.current.get(keyFor(parentSpaceId, b.parent_id))?.title
             : undefined

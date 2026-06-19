@@ -45,7 +45,13 @@ fn run_integration(
 
     match integrate(&appimage, &appdir, &data_home) {
         Ok(changed) if changed => {
-            refresh_caches(&data_home);
+            // The `.desktop`/icon files are already written above; the cache
+            // refresh only re-reads those paths, so it is safe to detach.
+            // `update-desktop-database`/`gtk-update-icon-cache` can be slow on
+            // some desktops, and on first run / Exec-path drift this runs inside
+            // the Tauri setup closure before pool init and recovery — so spawn
+            // it off the boot critical path instead of blocking window setup.
+            std::thread::spawn(move || refresh_caches(&data_home));
             tracing::info!("AppImage desktop integration installed/updated");
         }
         Ok(_) => {}

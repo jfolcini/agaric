@@ -273,12 +273,19 @@ export function LinkedReferences({
     [handleListKeyDown],
   )
 
-  // Derive sourcePages from groups for SourcePageFilter
-  const sourcePages = groups.map((g) => ({
-    pageId: g.page_id,
-    pageTitle: g.page_title,
-    blockCount: g.blocks.length,
-  }))
+  // Derive sourcePages from groups for SourcePageFilter.
+  // Memoized on [groups] (matching pageTitles above) so its identity is stable
+  // across focus-driven re-renders (focusedIndex is state; useFocusedRowEffect
+  // fires on keyboard navigation) -- avoids rebuilding this array each focus move.
+  const sourcePages = useMemo(
+    () =>
+      groups.map((g) => ({
+        pageId: g.page_id,
+        pageTitle: g.page_title,
+        blockCount: g.blocks.length,
+      })),
+    [groups],
+  )
 
   const headerLabel =
     totalCount === 1 ? t('references.headerOne') : t('references.header', { count: totalCount })
