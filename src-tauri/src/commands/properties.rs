@@ -13,7 +13,7 @@ use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::pagination;
 use crate::pagination::ActiveBlockRow;
-use crate::ulid::{ActiveBlockId, BlockId, verify_active};
+use crate::ulid::{ActiveBlockId, BlockId};
 
 use super::sanitize_internal_error;
 use super::*;
@@ -1165,9 +1165,11 @@ pub async fn set_property(
 ) -> Result<BlockRow, AppError> {
     let block_id_clone = block_id.clone().into_string();
     let key_clone = key.clone();
-    let active_id = verify_active(ctx.pool(), &block_id)
-        .await
-        .map_err(sanitize_internal_error)?;
+    // #1627: mint the type-state newtype without a pre-tx round-trip.
+    // The activeness gate (existence + soft-deleted discrimination, with
+    // identical NotFound/Validation errors) now runs inside the write
+    // transaction's existing re-validation (`set_property_in_tx`).
+    let active_id = ActiveBlockId::from_trusted_active(block_id.as_str());
     let result = set_property_inner(
         ctx.pool(),
         ctx.device_id(),
@@ -1197,9 +1199,8 @@ pub async fn set_todo_state(
     state: Option<String>,
 ) -> Result<BlockRow, AppError> {
     let block_id_clone = block_id.clone().into_string();
-    let active_id = verify_active(ctx.pool(), &block_id)
-        .await
-        .map_err(sanitize_internal_error)?;
+    // #1627: see `set_property` — activeness gate folded into the tx.
+    let active_id = ActiveBlockId::from_trusted_active(block_id.as_str());
     let result = set_todo_state_inner(
         ctx.pool(),
         ctx.device_id(),
@@ -1270,9 +1271,8 @@ pub async fn set_priority(
     level: Option<String>,
 ) -> Result<BlockRow, AppError> {
     let block_id_clone = block_id.clone().into_string();
-    let active_id = verify_active(ctx.pool(), &block_id)
-        .await
-        .map_err(sanitize_internal_error)?;
+    // #1627: see `set_property` — activeness gate folded into the tx.
+    let active_id = ActiveBlockId::from_trusted_active(block_id.as_str());
     let result = set_priority_inner(
         ctx.pool(),
         ctx.device_id(),
@@ -1296,9 +1296,8 @@ pub async fn set_due_date(
     date: Option<String>,
 ) -> Result<BlockRow, AppError> {
     let block_id_clone = block_id.clone().into_string();
-    let active_id = verify_active(ctx.pool(), &block_id)
-        .await
-        .map_err(sanitize_internal_error)?;
+    // #1627: see `set_property` — activeness gate folded into the tx.
+    let active_id = ActiveBlockId::from_trusted_active(block_id.as_str());
     let result = set_due_date_inner(
         ctx.pool(),
         ctx.device_id(),
@@ -1322,9 +1321,8 @@ pub async fn set_scheduled_date(
     date: Option<String>,
 ) -> Result<BlockRow, AppError> {
     let block_id_clone = block_id.clone().into_string();
-    let active_id = verify_active(ctx.pool(), &block_id)
-        .await
-        .map_err(sanitize_internal_error)?;
+    // #1627: see `set_property` — activeness gate folded into the tx.
+    let active_id = ActiveBlockId::from_trusted_active(block_id.as_str());
     let result = set_scheduled_date_inner(
         ctx.pool(),
         ctx.device_id(),
@@ -1349,9 +1347,11 @@ pub async fn delete_property(
 ) -> Result<(), AppError> {
     let block_id_clone = block_id.clone().into_string();
     let key_clone = key.clone();
-    let active_id = verify_active(ctx.pool(), &block_id)
-        .await
-        .map_err(sanitize_internal_error)?;
+    // #1627: mint the type-state newtype without a pre-tx round-trip.
+    // The activeness gate (existence + soft-deleted discrimination, with
+    // identical NotFound/Validation errors) now runs inside the write
+    // transaction's existing re-validation (`delete_property_core`).
+    let active_id = ActiveBlockId::from_trusted_active(block_id.as_str());
     delete_property_inner(
         ctx.pool(),
         ctx.device_id(),

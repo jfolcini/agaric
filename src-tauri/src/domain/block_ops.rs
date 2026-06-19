@@ -672,17 +672,29 @@ pub(crate) async fn set_property_in_tx(
     };
     validate_property_value(&prop_payload, declaration.as_ref())?;
 
-    // 2. Validate block exists and is not deleted (TOCTOU-safe inside tx)
+    // 2. Validate block exists and is not deleted (TOCTOU-safe inside tx).
+    //    #1627: this single in-tx read is also the authoritative
+    //    activeness gate now that the redundant pre-tx `verify_active`
+    //    round-trip on the pool has been dropped from the command
+    //    wrappers. The `deleted_at IS NULL` filter is removed from the
+    //    WHERE clause so the fetched `deleted_at` lets us reproduce
+    //    `verify_active`'s EXACT discrimination (distinct NotFound vs
+    //    soft-deleted errors) from this one query.
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE id = ?"#,
         block_id
     )
     .fetch_optional(&mut **tx)
     .await?;
 
-    let existing = existing
-        .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
+    let existing =
+        existing.ok_or_else(|| AppError::NotFound(format!("block '{block_id}' does not exist")))?;
+    if existing.deleted_at.is_some() {
+        return Err(AppError::Validation(format!(
+            "block '{block_id}' has been soft-deleted"
+        )));
+    }
 
     // PEND-76 F5 — referential cross-space integrity (PEND-15 Phase 2):
     // reject a ref-type property whose target lives in a different space

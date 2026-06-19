@@ -664,6 +664,106 @@ async fn list_children_sentinel_positions_sort_after_positioned() {
     assert_eq!(r2.items[1].id, "TAG00002", "second sentinel-position item");
 }
 
+/// #1555 — a genuine `NULL` position must not be mis-ordered or dropped
+/// across a pagination boundary.
+///
+/// `list_children`'s keyset and `ORDER BY` wrap `position` in
+/// `COALESCE(position, NULL_POSITION_SENTINEL)` (mirroring `get_page_inner`).
+/// Without the COALESCE, a row whose `position` is a genuine SQL `NULL`
+/// breaks the keyset: `NULL > ?` and `NULL = ?` both evaluate to `NULL`
+/// (falsey), so the row is silently **dropped** from every cursor-driven
+/// page, and the bare `ORDER BY position` mis-sorts it. Unlike
+/// `list_children_sentinel_positions_sort_after_positioned` (which inserts the
+/// *explicit* sentinel), this inserts `position = NULL`, paginates across the
+/// boundary at limit=2, and asserts the NULL row sorts at the sentinel (after
+/// all positioned siblings) and survives the walk.
+#[tokio::test]
+async fn list_children_null_position_sorts_at_sentinel_across_boundary_1555() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "PARENT01", "page", "parent", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "CHILD001",
+        "content",
+        "c1",
+        Some("PARENT01"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "CHILD002",
+        "content",
+        "c2",
+        Some("PARENT01"),
+        Some(2),
+    )
+    .await;
+    // Genuine NULL position (None) — must COALESCE to the sentinel and sort
+    // last, NOT be dropped across the page boundary below.
+    insert_block(
+        &pool,
+        "NULLPOS1",
+        "content",
+        "null pos",
+        Some("PARENT01"),
+        None,
+    )
+    .await;
+
+    // Page 1: the two positioned children, with more remaining.
+    let p1 = PageRequest::new(None, Some(2)).unwrap();
+    let r1 = list_children(&pool, Some("PARENT01"), &p1, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        r1.items.len(),
+        2,
+        "page 1 returns the 2 positioned children"
+    );
+    assert!(
+        r1.has_more,
+        "the NULL-position child must remain → has_more"
+    );
+    assert_eq!(r1.items[0].id, "CHILD001", "positioned child first");
+    assert_eq!(r1.items[1].id, "CHILD002", "positioned child second");
+
+    // Page 2: the NULL-position child must appear (not be dropped) and sort
+    // last, at the sentinel.
+    let p2 = PageRequest::new(r1.next_cursor, Some(2)).unwrap();
+    let r2 = list_children(&pool, Some("PARENT01"), &p2, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        r2.items.len(),
+        1,
+        "page 2 returns the NULL-position child — it must NOT be dropped"
+    );
+    assert!(!r2.has_more, "page 2 is the last page");
+    assert!(r2.next_cursor.is_none(), "last page carries no cursor");
+    assert_eq!(
+        r2.items[0].id, "NULLPOS1",
+        "NULL-position child sorts at the sentinel, after positioned siblings"
+    );
+
+    // Exhaustive single-page sanity: all three appear in sentinel order.
+    let all = list_children(
+        &pool,
+        Some("PARENT01"),
+        &PageRequest::new(None, Some(10)).unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    let ids: Vec<&str> = all.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["CHILD001", "CHILD002", "NULLPOS1"],
+        "NULL position sorts last via COALESCE(position, sentinel)"
+    );
+}
+
 #[tokio::test]
 async fn list_children_same_position_tiebreaks_by_id() {
     let (pool, _dir) = test_pool().await;

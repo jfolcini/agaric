@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id as \"id: crate::ulid::ActiveBlockId\", block_type, content, parent_id as \"parent_id: crate::ulid::BlockId\", position,\n                deleted_at,\n                 todo_state, priority, due_date, scheduled_date,\n                page_id as \"page_id: crate::ulid::BlockId\"\n         FROM blocks b\n         WHERE parent_id IS ?1 AND deleted_at IS NULL\n           AND (?2 IS NULL OR (\n                position > ?3\n                OR (position = ?3 AND id > ?4)))\n           AND (?6 IS NULL OR b.space_id = ?6)\n         ORDER BY position ASC, id ASC\n         LIMIT ?5",
+  "query": "SELECT id as \"id: crate::ulid::ActiveBlockId\", block_type, content, parent_id as \"parent_id: crate::ulid::BlockId\", position,\n                deleted_at,\n                 todo_state, priority, due_date, scheduled_date,\n                page_id as \"page_id: crate::ulid::BlockId\"\n         FROM blocks b\n         WHERE parent_id IS ?1 AND deleted_at IS NULL\n           AND (?2 IS NULL OR (\n                COALESCE(position, ?7) > ?3\n                OR (COALESCE(position, ?7) = ?3 AND id > ?4)))\n           AND (?6 IS NULL OR b.space_id = ?6)\n         ORDER BY COALESCE(position, ?7) ASC, id ASC\n         LIMIT ?5",
   "describe": {
     "columns": [
       {
@@ -126,7 +126,7 @@
       }
     ],
     "parameters": {
-      "Right": 6
+      "Right": 7
     },
     "nullable": [
       false,
@@ -142,5 +142,5 @@
       true
     ]
   },
-  "hash": "bc66b65b497e741a8047f3cf55ebe66a1ef15044b0457ed991ed62d29554a5d9"
+  "hash": "3ed1db973f47628a1736b978bdf0c49c1677d22d0c1ff8d742806eb01998613b"
 }
