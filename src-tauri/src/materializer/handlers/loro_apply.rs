@@ -614,6 +614,29 @@ pub(super) async fn purge_block_sql_cascade(
     )
     .execute(&mut *conn)
     .await?;
+    // block_tag_refs / page_link_cache: both columns of each table FK
+    // into blocks(id) ON DELETE CASCADE, so the final `DELETE FROM blocks`
+    // under `defer_foreign_keys = ON` would clean these up implicitly.
+    // We delete them explicitly anyway (issue #1583): the explicit list
+    // above is the canonical record of every derived table PURGE touches,
+    // and relying on the cascade silently leaks stale rows if a future
+    // migration alters the FK or adds a block-referencing cache without
+    // CASCADE. Delete rows referencing the purged subtree on EITHER FK
+    // column.
+    sqlx::query(
+        "DELETE FROM block_tag_refs \
+         WHERE source_id IN (SELECT id FROM _purge_descendants) \
+            OR tag_id IN (SELECT id FROM _purge_descendants)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM page_link_cache \
+         WHERE source_page_id IN (SELECT id FROM _purge_descendants) \
+            OR target_page_id IN (SELECT id FROM _purge_descendants)",
+    )
+    .execute(&mut *conn)
+    .await?;
     sqlx::query(
         "DELETE FROM blocks \
          WHERE id IN (SELECT id FROM _purge_descendants)",
@@ -775,3 +798,121 @@ pub(crate) async fn apply_delete_property_via_loro(
 // synthetic ops through `apply_op` against bare-block fixtures with
 // no space chain.
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod purge_derived_tables_tests {
+    use crate::db::init_pool;
+    use crate::op::PurgeBlockPayload;
+    use crate::ulid::BlockId;
+
+    /// #1583: `purge_block_sql_cascade` must EXPLICITLY clear
+    /// `block_tag_refs` and `page_link_cache` for the purged subtree
+    /// rather than relying on FK `ON DELETE CASCADE`. Seed a block with
+    /// an inline tag-ref row and a page-link edge, purge it, and assert
+    /// both derived tables hold zero rows referencing the purged block.
+    #[tokio::test]
+    async fn purge_clears_block_tag_refs_and_page_link_cache() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let db_path = dir.path().join("purge_derived.db");
+        let pool = init_pool(&db_path).await.expect("init_pool");
+
+        const SRC: &str = "01HZ00000000000000000000S1";
+        const TAG: &str = "01HZ00000000000000000000T1";
+        const TGT: &str = "01HZ00000000000000000000P2";
+
+        // Seed three plain blocks: the source we will purge, a tag block
+        // it inline-references, and a target page it links to.
+        for id in [SRC, TAG, TGT] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+                 VALUES (?, 'content', 'seed', NULL, 0)",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .expect("insert block");
+        }
+
+        // Inline tag reference: SRC content references TAG.
+        sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)")
+            .bind(SRC)
+            .bind(TAG)
+            .execute(&pool)
+            .await
+            .expect("insert block_tag_refs");
+        // Page-link edge: SRC -> TGT.
+        sqlx::query(
+            "INSERT INTO page_link_cache (source_page_id, target_page_id, edge_count) \
+             VALUES (?, ?, 1)",
+        )
+        .bind(SRC)
+        .bind(TGT)
+        .execute(&pool)
+        .await
+        .expect("insert page_link_cache");
+
+        // Sanity: both derived rows exist pre-purge.
+        let pre_refs: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM block_tag_refs WHERE source_id = ?")
+                .bind(SRC)
+                .fetch_one(&pool)
+                .await
+                .expect("pre count refs");
+        let pre_links: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM page_link_cache WHERE source_page_id = ?")
+                .bind(SRC)
+                .fetch_one(&pool)
+                .await
+                .expect("pre count links");
+        assert_eq!(pre_refs.0, 1, "seed: block_tag_refs row must exist");
+        assert_eq!(pre_links.0, 1, "seed: page_link_cache row must exist");
+
+        // Purge the source block via the SQL cascade under test.
+        //
+        // GUARD STRENGTH: `block_tag_refs` and `page_link_cache` both carry
+        // FK `ON DELETE CASCADE` into `blocks(id)`, and `init_pool` enables
+        // `PRAGMA foreign_keys = ON`. If we left FK enforcement on, the
+        // final `DELETE FROM blocks` would clean these rows via the cascade
+        // EVEN IF the explicit DELETEs in `purge_block_sql_cascade` were
+        // removed — making this test a non-guard (it passed under a mutation
+        // that deleted both explicit statements). Disable FK enforcement on
+        // THIS connection so the cascade cannot fire: the only path that can
+        // clear the rows is the explicit `DELETE FROM block_tag_refs` /
+        // `DELETE FROM page_link_cache` under test. (`defer_foreign_keys`,
+        // set inside the cascade, is a no-op when `foreign_keys = OFF`.)
+        let mut conn = pool.acquire().await.expect("acquire");
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
+            .await
+            .expect("disable fk enforcement on purge connection");
+        let payload = PurgeBlockPayload {
+            block_id: BlockId::from_trusted(SRC),
+        };
+        super::purge_block_sql_cascade(&mut conn, &payload)
+            .await
+            .expect("purge_block_sql_cascade");
+        drop(conn);
+
+        // Both derived tables must be empty for the purged block —
+        // proving the EXPLICIT DELETEs ran (not just an implicit FK
+        // cascade).
+        let post_refs: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM block_tag_refs WHERE source_id = ? OR tag_id = ?")
+                .bind(SRC)
+                .bind(SRC)
+                .fetch_one(&pool)
+                .await
+                .expect("post count refs");
+        let post_links: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM page_link_cache \
+             WHERE source_page_id = ? OR target_page_id = ?",
+        )
+        .bind(SRC)
+        .bind(SRC)
+        .fetch_one(&pool)
+        .await
+        .expect("post count links");
+        assert_eq!(post_refs.0, 0, "purge must clear block_tag_refs rows");
+        assert_eq!(post_links.0, 0, "purge must clear page_link_cache rows");
+    }
+}
