@@ -837,17 +837,82 @@ pub async fn search_blocks_partitioned(
 
     let result = match join.await {
         Ok(inner) => inner,
-        Err(join_err) if join_err.is_cancelled() => Err(AppError::Cancelled),
-        // Task panicked. Route through `AppError::Channel` so
-        // `sanitize_internal_error` collapses it to InvalidOperation
-        // on the wire while the real cause is logged via the warn
-        // path. (No `Internal` variant in this codebase; see
-        // `error.rs`.)
-        Err(join_err) => Err(AppError::Channel(format!(
-            "search task join failed: {join_err}"
-        ))),
+        Err(join_err) => Err(map_search_join_error(&join_err)),
     };
     result.map_err(sanitize_internal_error)
+}
+
+/// Map a `tokio::task::JoinError` from the spawned search task onto an
+/// [`AppError`].
+///
+/// A cancelled task (wrapper future dropped → guard fired) becomes
+/// [`AppError::Cancelled`]; a panicked worker becomes
+/// [`AppError::Internal`] (#1664) so `sanitize_internal_error` collapses
+/// it to InvalidOperation on the wire while the real cause is logged via
+/// the warn path. A panic is an internal/unexpected failure, not a
+/// dropped channel/receiver, so it must NOT be misrouted through
+/// [`AppError::Channel`] (which would muddy `kind=channel` log triage).
+fn map_search_join_error(join_err: &tokio::task::JoinError) -> AppError {
+    if join_err.is_cancelled() {
+        AppError::Cancelled
+    } else {
+        AppError::Internal(format!("search task join failed: {join_err}"))
+    }
+}
+
+#[cfg(test)]
+mod join_error_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn panicked_search_task_maps_to_internal_not_channel() {
+        // #1664 — a panicked worker task must surface as
+        // `AppError::Internal`, not `AppError::Channel`, so log triage
+        // keyed on `kind=channel` is not polluted by worker panics.
+        let join_err = tokio::spawn(async { panic!("boom") })
+            .await
+            .expect_err("panicked task must yield a JoinError");
+        assert!(
+            !join_err.is_cancelled(),
+            "panic JoinError is not cancellation"
+        );
+
+        let mapped = map_search_join_error(&join_err);
+        assert!(
+            matches!(mapped, AppError::Internal(_)),
+            "panicked task must map to AppError::Internal, got: {mapped:?}"
+        );
+        assert!(
+            !matches!(mapped, AppError::Channel(_)),
+            "panicked task must NOT map to AppError::Channel"
+        );
+        let json = serde_json::to_value(&mapped).expect("Internal should serialize");
+        assert_eq!(
+            json["kind"], "internal",
+            "panic must serialize kind=internal"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_search_task_maps_to_cancelled() {
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        });
+        handle.abort();
+        let join_err = handle
+            .await
+            .expect_err("aborted task must yield a JoinError");
+        assert!(
+            join_err.is_cancelled(),
+            "abort yields a cancellation JoinError"
+        );
+
+        let mapped = map_search_join_error(&join_err);
+        assert!(
+            matches!(mapped, AppError::Cancelled),
+            "cancelled task must map to AppError::Cancelled, got: {mapped:?}"
+        );
+    }
 }
 
 /// Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].

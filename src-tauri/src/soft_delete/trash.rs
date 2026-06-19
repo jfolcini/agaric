@@ -27,14 +27,17 @@ pub async fn soft_delete_block(pool: &SqlitePool, block_id: &str) -> Result<Opti
 /// Cascade soft-delete: sets `deleted_at` on the block and all non-deleted
 /// descendants via recursive CTE.
 ///
-/// **Currently exercised only by tests.** As of #386 this primitive has
-/// no non-test callers — the production delete path is
+/// **Test/bench-only primitive — not a production path.** As of #386/#1656
+/// this function has no production callers: the live delete path is
 /// `commands::blocks::crud::delete_block_inner` (which uses the
-/// `descendants_cte_active!()` macro directly), and every call site of
-/// `cascade_soft_delete` lives in a `#[cfg(test)]` module. The
-/// `&Materializer` / op-dispatch contract documented below describes the
-/// behaviour those tests assert and the shape a future production caller
-/// would inherit; it is not, today, a load-bearing production path.
+/// `descendants_cte_active!()` macro directly). The only consumers are
+/// `#[cfg(test)]` modules and the `soft_delete_bench` perf harness. It
+/// exists to exercise — and let those tests assert — the materializer
+/// cache-rebuild fan-out for a `delete_block` op end-to-end; the
+/// `&Materializer` parameter and op-dispatch wiring below are there to make
+/// that fan-out observable in tests, not as guidance for a production caller.
+/// Do NOT wire this into production: doing so would double-dispatch
+/// alongside `crud.rs`'s own cohort fan-out.
 ///
 /// Recursive member filters `deleted_at IS NULL` so already-deleted
 /// subtrees keep their original tombstone timestamp. `depth < 100`
@@ -50,19 +53,16 @@ pub async fn soft_delete_block(pool: &SqlitePool, block_id: &str) -> Result<Opti
 /// triage has a log record of the seed block_id, the cascade size, and
 /// the timestamp.
 ///
-/// SQL-review M-3: takes `materializer: &Materializer` so the cache-
-/// invalidation fan-out is enforced by the type system. Any caller of
-/// this primitive **must** hold a `&Materializer` and post-commit the
-/// fan-out fires automatically. The previous convention — callers
-/// dispatch on the primitive's behalf — was a hidden coupling: a future
-/// caller that forgot the dispatch would leave caches stale (pages_cache,
-/// agenda_cache, block_tag_refs, etc.) silently. The fan-out is routed
-/// through the canonical `delete_block` op-type dispatch (a synthesized
-/// minimal [`OpRecord`] enqueued on the [`CommandTx`]), so the dispatched
-/// task set is *exactly* what `materializer::dispatch::invalidations_for_op`
-/// produces for a `delete_block` op (FULL_CACHE_REBUILD_TASKS, incl.
-/// `RebuildPageLinkCache`, + `RemoveFtsBlock`) and can never drift from
-/// it. See [`synthesize_delete_op`].
+/// SQL-review M-3: takes `materializer: &Materializer` so the test-only
+/// cache-rebuild fan-out is wired through the type system rather than left
+/// to each test caller. The fan-out is routed through the canonical
+/// `delete_block` op-type dispatch (a synthesized minimal [`OpRecord`]
+/// enqueued on the [`CommandTx`]), so the dispatched task set is *exactly*
+/// what `materializer::dispatch::invalidations_for_op` produces for a
+/// `delete_block` op (FULL_CACHE_REBUILD_TASKS, incl. `RebuildPageLinkCache`
+/// and `RemoveFtsBlock`) and can never drift from it — which is what the
+/// `cascade_soft_delete_dispatches_materializer` test asserts. See
+/// [`synthesize_delete_op`].
 pub async fn cascade_soft_delete(
     pool: &SqlitePool,
     materializer: &Materializer,
@@ -134,7 +134,8 @@ pub async fn cascade_soft_delete(
 
 /// Build a minimal `delete_block` [`OpRecord`] purely to drive the
 /// canonical cache-rebuild fan-out via
-/// [`crate::materializer::dispatch::invalidations_for_op`].
+/// [`crate::materializer::dispatch::invalidations_for_op`] from the
+/// test/bench-only [`cascade_soft_delete`].
 ///
 /// MAINT-112 / decision-b: this primitive is *not* a command — it does
 /// not append to `op_log`, so it has no real `OpRecord`. The

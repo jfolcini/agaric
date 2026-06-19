@@ -121,6 +121,17 @@ pub enum AppError {
     #[error("Channel error: {0}")]
     Channel(String),
 
+    /// #1664 — internal / unexpected invariant failure (e.g. a spawned
+    /// worker task panicked, surfacing as a `tokio::task::JoinError`).
+    /// Distinct from [`AppError::Channel`], which means a channel/receiver
+    /// was dropped, so log triage keyed on `kind` is not muddied by
+    /// overloading `channel` for "a worker thread panicked". Serializes
+    /// `kind: "internal"` and is collapsed by `sanitize_internal_error`
+    /// to the generic "an internal error occurred" message on the wire
+    /// while the real cause is logged via the warn path.
+    #[error("Internal error: {0}")]
+    Internal(String),
+
     #[error("Snapshot error: {0}")]
     Snapshot(String),
 
@@ -183,6 +194,7 @@ impl Serialize for AppError {
             AppError::Ulid(_) => "ulid",
             AppError::InvalidOperation(_) => "invalid_operation",
             AppError::Channel(_) => "channel",
+            AppError::Internal(_) => "internal",
             AppError::Snapshot(_) => "snapshot",
             AppError::Validation(_) => "validation",
             AppError::NonReversible { .. } => "non_reversible",
@@ -225,6 +237,7 @@ mod tests {
     const MSG_CHANNEL: &str = "receiver dropped";
     const MSG_INVALID_OP: &str = "cannot edit deleted block";
     const MSG_SNAPSHOT: &str = "CBOR encode failed";
+    const MSG_INTERNAL: &str = "search task join failed: panicked";
 
     // --- Display output per variant ---
 
@@ -275,6 +288,22 @@ mod tests {
     }
 
     #[test]
+    fn display_internal_prefixes_message() {
+        let err = AppError::Internal(MSG_INTERNAL.into());
+        assert_eq!(err.to_string(), format!("Internal error: {MSG_INTERNAL}"));
+    }
+
+    #[test]
+    fn serialize_internal_variant_has_internal_kind() {
+        // #1664 — a panicked worker must serialize as `kind: "internal"`,
+        // NOT `kind: "channel"`, so log triage keyed on `kind` is not
+        // muddied by overloading the channel/receiver-error variant.
+        let err = AppError::Internal(MSG_INTERNAL.into());
+        let json = serde_json::to_value(&err).expect("Internal should serialize");
+        assert_eq!(json["kind"], "internal", "Internal variant kind");
+    }
+
+    #[test]
     fn display_io_includes_inner_message() {
         let err = AppError::Io(std::io::Error::other("disk full"));
         let msg = err.to_string();
@@ -322,6 +351,11 @@ mod tests {
                 AppError::Snapshot(MSG_SNAPSHOT.into()),
                 "snapshot",
                 format!("Snapshot error: {MSG_SNAPSHOT}"),
+            ),
+            (
+                AppError::Internal(MSG_INTERNAL.into()),
+                "internal",
+                format!("Internal error: {MSG_INTERNAL}"),
             ),
             (
                 AppError::Validation(MSG_VALIDATION.into()),

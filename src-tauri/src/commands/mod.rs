@@ -887,6 +887,7 @@ pub(crate) fn sanitize_internal_error(err: AppError) -> AppError {
         | AppError::Io(_)
         | AppError::Json(_)
         | AppError::Channel(_)
+        | AppError::Internal(_)
         | AppError::Snapshot(_) => {
             tracing::warn!(error = %err, "internal error suppressed during sanitization");
             AppError::InvalidOperation("an internal error occurred".into())
