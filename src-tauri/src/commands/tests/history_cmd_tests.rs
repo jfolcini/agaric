@@ -878,38 +878,38 @@ async fn find_undo_group_returns_zero_when_seed_missing() {
     assert_eq!(group, 0, "depth beyond the page's op count should return 0");
 }
 
-/// `op_type LIKE 'undo_%'` / `'redo_%'` rows are NOT counted as
-/// undoable — they're reverse ops as recognised by the FE filter. The
-/// real backend `undo_page_op_inner` / `redo_page_op_inner` paths
-/// store the reverse using its bare `op_type` (e.g. `edit_block`), so
-/// production data does not actually contain `undo_*`-prefixed op
-/// types. This test inserts a synthetic `undo_edit_block` row directly
-/// so the SQL filter is exercised end-to-end — and adds a regression
-/// guard against a future change that DOES start writing prefixed
-/// op_types (e.g. for richer history-panel UX).
+/// Reverse ops (undo/redo output) are NOT counted as undoable. Production
+/// stores a reverse op with a PLAIN `op_type` (e.g. `edit_block`) plus
+/// `op_log.is_undo = 1` — it does NOT write an `undo_*`/`redo_*` op_type
+/// prefix (migration 0090; see `op_log::append_local_undo_op_in_tx`).
+/// This test inserts that production-realistic shape (plain `edit_block`
+/// op_type + `is_undo = 1`) so the SQL filter is exercised against the
+/// value production actually emits, not a synthetic prefix production
+/// never writes (#1688).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn find_undo_group_skips_undo_and_redo_ops() {
+async fn find_undo_group_skips_reverse_ops() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
     // Two consecutive same-device user edits forming a group of 2.
     let (page_id, child_id) = seed_page_with_ops(&pool, &mat, &[("dev1", 0), ("dev1", 100)]).await;
 
-    // Now insert a synthetic `undo_edit_block` row authored by `dev2`
-    // newer than both user edits. Without the SQL filter, depth=0 would
-    // seed at THIS row (op_type=undo_edit_block, device=dev2) and the
-    // group would collapse to 1 (the next op is dev1 → device break).
-    // With the filter, the synthetic row is excluded; depth=0 seeds at
-    // the dev1@100 user edit and the group is 2.
+    // Insert a reverse op in the REAL production shape: a plain
+    // `edit_block` op_type with `is_undo = 1`, authored by `dev2`, newer
+    // than both user edits. Without the `is_undo = 0` filter, depth=0
+    // would seed at THIS row (device=dev2) and the group would collapse
+    // to 1 (the next op is dev1 → device break). With the filter, the
+    // reverse op is excluded; depth=0 seeds at the dev1@100 user edit and
+    // the group is 2.
     sqlx::query(
         "INSERT INTO op_log \
-         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
-         VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, is_undo) \
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 1)",
     )
     .bind("dev2")
     .bind(1_i64)
     .bind("synthetic-hash")
-    .bind("undo_edit_block")
+    .bind("edit_block") // plain op_type, as production writes for reverse ops
     .bind(format!(r#"{{"block_id":"{child_id}","to_text":"x"}}"#))
     .bind(4_102_444_800_500_i64) // newer than both user edits
     .bind(&child_id)
@@ -922,7 +922,7 @@ async fn find_undo_group_skips_undo_and_redo_ops() {
         .unwrap();
     assert_eq!(
         group, 2,
-        "undo_*-prefixed rows must be filtered out — group should be \
-         the 2 user edits, not collapsed by the synthetic undo row"
+        "reverse ops (is_undo = 1) must be filtered out — group should \
+         be the 2 user edits, not collapsed by the reverse op"
     );
 }

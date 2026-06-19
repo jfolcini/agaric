@@ -850,10 +850,13 @@ pub async fn redo_page_op_inner(
 /// `list_page_history` re-fetches with a growing window after every
 /// Ctrl+Z:
 ///
-/// * "Undoable" excludes ops whose `op_type` starts with `undo_` or
-///   `redo_` (those are reverse ops appended by [`undo_page_op_inner`] /
-///   [`redo_page_op_inner`] and are not themselves undoable from the
-///   user's POV).
+/// * "Undoable" excludes reverse ops — those carry `op_log.is_undo = 1`
+///   (stamped by [`undo_page_op_inner`] via
+///   `op_log::append_local_undo_op_in_tx`, migration 0090). They use a
+///   plain `op_type` (e.g. `edit_block`), NOT an `undo_`/`redo_` prefix,
+///   so the filter must key on the `is_undo` flag, not the op_type. They
+///   are not themselves undoable from the user's POV (redo reverses them
+///   instead).
 /// * `depth = 0` seeds at the most-recent undoable op for the page.
 ///   `depth = N` seeds at the (N+1)-th most-recent.
 /// * Walking forward in newest-first order, the group extends to the
@@ -931,8 +934,7 @@ pub async fn find_undo_group_inner(
                      ) \
                  ) \
              ) \
-               AND ol.op_type NOT LIKE 'undo\\_%' ESCAPE '\\' \
-               AND ol.op_type NOT LIKE 'redo\\_%' ESCAPE '\\' \
+               AND ol.is_undo = 0 \
          ), \
          walk(rn, device_id, created_at, count_so_far) AS ( \
              SELECT rn, device_id, created_at, 1 \
