@@ -175,7 +175,11 @@ export function JournalPage({
     // (red, in-theme) outline around the ENTIRE journal whenever primary focus
     // landed here (#1243). A large panel taking keyboard focus shows no visible
     // ring — only the block the user actually edits gets a focus treatment.
-    <div ref={journalRef} tabIndex={-1} className="space-y-4">
+    // `outline-none` additionally suppresses the browser's DEFAULT UA focus
+    // outline (a blue box around the whole panel), which still painted on the
+    // programmatic `.focus()` App.tsx fires on view change / app start even
+    // after `focus-ring-visible` was removed.
+    <div ref={journalRef} tabIndex={-1} className="space-y-4 outline-none">
       {/* PEND-UX item 5 — `<h1>` landmark for the Journal view. The App-
           shell header renders `<JournalControls />` instead of a label
           for journal mode, so this title is purely additive (no visual
