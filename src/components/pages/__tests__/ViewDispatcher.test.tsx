@@ -62,11 +62,8 @@ vi.mock('../SettingsView', () => ({
 vi.mock('@/components/agenda/StatusPanel', () => ({
   StatusPanel: () => <div data-testid="status-panel-mock">status</div>,
 }))
-vi.mock('@/components/filters/TagFilterPanel', () => ({
-  TagFilterPanel: () => <div data-testid="tag-filter-panel-mock">tag-filter</div>,
-}))
-vi.mock('@/components/TagList', () => ({
-  TagList: () => <div data-testid="tag-list-mock">tag-list</div>,
+vi.mock('@/components/TagsView', () => ({
+  TagsView: () => <div data-testid="tags-view-mock">tags</div>,
 }))
 vi.mock('@/components/templates/TemplatesView', () => ({
   TemplatesView: () => <div data-testid="templates-view-mock">templates</div>,
@@ -111,7 +108,7 @@ describe('ViewDispatcher — routing', () => {
     ['journal', 'journal-mock'],
     ['search', 'search-panel-mock'],
     ['pages', 'page-browser-mock'],
-    ['tags', 'tag-list-mock'],
+    ['tags', 'tags-view-mock'],
     ['trash', 'trash-view-mock'],
     ['settings', 'settings-view-mock'],
     ['status', 'status-panel-mock'],

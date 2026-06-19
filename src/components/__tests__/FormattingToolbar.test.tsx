@@ -25,7 +25,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { t } from '../../lib/i18n'
+import { resetAllShortcuts, setCustomShortcut } from '../../lib/keyboard-config'
+import type { ToolbarButtonConfig } from '../../lib/toolbar-config'
 import { FormattingToolbar } from '../FormattingToolbar'
+import { renderConfigButton, TOOLBAR_SHORTCUT_IDS } from '../FormattingToolbar/shared'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
@@ -1253,6 +1256,83 @@ describe('FormattingToolbar', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const toolbar = screen.getByTestId('formatting-toolbar')
       expect(toolbar.style.bottom).toBe('300px')
+    })
+  })
+
+  // ── #1650 — config-button tooltips resolve shortcuts LIVE from the
+  // rebindable catalog (mirroring SelectionBubbleMenu), instead of freezing
+  // the chord inside the i18n tip string. ─────────────────────────────────
+  describe('#1650 — live shortcut resolution in config-button tooltips', () => {
+    // Minimal icon stub so `renderConfigButton` can render <btn.icon /> without
+    // pulling in lucide; the tooltip text is what we assert on here.
+    const IconStub = (): React.ReactElement => <span data-testid="icon" />
+
+    function makeConfig(label: string, tip: string): ToolbarButtonConfig {
+      return {
+        icon: IconStub as unknown as ToolbarButtonConfig['icon'],
+        label,
+        tip,
+        action: vi.fn(),
+      }
+    }
+
+    // The tooltip is mocked (top of file) to render <TooltipContent> inline as
+    // a `tooltip-content` testid, so we can read the resolved tooltip string.
+    function renderButton(config: ToolbarButtonConfig): string {
+      const { getByTestId } = render(
+        renderConfigButton(config, {}, 'inline', t) as React.ReactElement,
+      )
+      return getByTestId('tooltip-content').textContent ?? ''
+    }
+
+    beforeEach(() => {
+      localStorage.clear()
+      resetAllShortcuts()
+    })
+
+    afterEach(() => {
+      localStorage.clear()
+      resetAllShortcuts()
+    })
+
+    it('maps the same mark actions to the same catalog ids the bubble menu uses', () => {
+      // Mirror of SelectionBubbleMenu's BUBBLE_MENU_SHORTCUT_IDS. Bold/Italic
+      // are intentionally absent (TipTap StarterKit defaults, not catalogued).
+      expect(TOOLBAR_SHORTCUT_IDS).toEqual({
+        'toolbar.code': 'inlineCode',
+        'toolbar.strikethrough': 'strikethrough',
+        'toolbar.highlight': 'highlight',
+      })
+    })
+
+    it('renders the LIVE catalog chord (not a frozen i18n string) for a mapped button', () => {
+      // 'toolbar.code' → 'inlineCode' (catalog default 'Ctrl + E').
+      const tooltip = renderButton(makeConfig('toolbar.code', 'toolbar.codeTip'))
+      // Label + live chord, sourced from the catalog — NOT the tip string.
+      expect(tooltip).toBe(`${t('toolbar.code')} (Ctrl + E)`)
+    })
+
+    it('updates the tooltip when the shortcut is rebound (proves it derives from the catalog)', () => {
+      setCustomShortcut('inlineCode', 'Ctrl + Shift + E')
+      const tooltip = renderButton(makeConfig('toolbar.code', 'toolbar.codeTip'))
+      expect(tooltip).toBe(`${t('toolbar.code')} (Ctrl + Shift + E)`)
+      // And it is NOT the old hardcoded i18n chord.
+      expect(tooltip).not.toContain('Ctrl+E')
+    })
+
+    it('never doubles the chord — the tip string carries no parenthesised chord', () => {
+      const tooltip = renderButton(makeConfig('toolbar.code', 'toolbar.codeTip'))
+      // Exactly one "(...)" group; the i18n tip no longer embeds a chord.
+      expect(tooltip.match(/\(/g) ?? []).toHaveLength(1)
+      expect(t('toolbar.codeTip')).toBe('Inline code')
+      expect(t('toolbar.strikethroughTip')).toBe('Strikethrough')
+      expect(t('toolbar.highlightTip')).toBe('Highlight')
+    })
+
+    it('keeps the plain tip for a button without a rebindable shortcut', () => {
+      // 'toolbar.divider' is not in TOOLBAR_SHORTCUT_IDS → plain t(btn.tip).
+      const tooltip = renderButton(makeConfig('toolbar.divider', 'toolbar.dividerTip'))
+      expect(tooltip).toBe(t('toolbar.dividerTip'))
     })
   })
 })

@@ -205,6 +205,7 @@ export const properties: Record<string, string> = {
   'properties.moveOptionUp': 'Move option {{option}} up',
   'properties.moveOptionDown': 'Move option {{option}} down',
   'properties.savingRefValue': 'Saving\u2026',
+  'tagFilter.sectionLabel': 'Filter',
   'tagFilter.title': 'Tag Filter',
   'tagFilter.searchPlaceholder': 'Search tags by prefix...',
   'tagFilter.searchLabel': 'Search tags by prefix',

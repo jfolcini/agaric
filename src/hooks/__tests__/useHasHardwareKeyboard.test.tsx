@@ -41,6 +41,45 @@ describe('useHasHardwareKeyboard', () => {
     expect(result.current).toBe(false)
   })
 
+  // #1613 — soft-keyboard / synthetic keydowns must NOT latch the
+  // hardware-keyboard flag. On Android/iOS WebViews the on-screen
+  // keyboard can emit real keydown events; latching on one would
+  // wrongly demote a 768–1024px tablet out of mobile chrome mid-session.
+
+  it('ignores IME / soft-composition keydowns (keyCode 229)', () => {
+    const { result, rerender } = renderHook(() => useHasHardwareKeyboard())
+    fireEvent.keyDown(document, { key: 'a', keyCode: 229 })
+    rerender()
+    expect(result.current).toBe(false)
+  })
+
+  it('ignores the soft-keyboard Unidentified sentinel key', () => {
+    const { result, rerender } = renderHook(() => useHasHardwareKeyboard())
+    fireEvent.keyDown(document, { key: 'Unidentified' })
+    rerender()
+    expect(result.current).toBe(false)
+  })
+
+  it('ignores synthetic (untrusted) keydown events', () => {
+    const { result, rerender } = renderHook(() => useHasHardwareKeyboard())
+    const ev = new KeyboardEvent('keydown', { key: 'a', bubbles: true })
+    Object.defineProperty(ev, 'isTrusted', { value: false, configurable: true })
+    document.dispatchEvent(ev)
+    rerender()
+    expect(result.current).toBe(false)
+  })
+
+  it('still latches on a genuine hardware keydown after rejecting soft ones', () => {
+    const { result, rerender } = renderHook(() => useHasHardwareKeyboard())
+    fireEvent.keyDown(document, { key: 'a', keyCode: 229 })
+    fireEvent.keyDown(document, { key: 'Unidentified' })
+    rerender()
+    expect(result.current).toBe(false)
+    fireEvent.keyDown(document, { key: 'a' })
+    rerender()
+    expect(result.current).toBe(true)
+  })
+
   it('a modifier followed by a non-modifier still flips on the non-modifier', () => {
     const { result, rerender } = renderHook(() => useHasHardwareKeyboard())
     fireEvent.keyDown(document, { key: 'Shift' })

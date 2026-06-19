@@ -30,7 +30,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
-import { Switch } from '@/components/ui/switch'
+import { ToggleRow } from '@/components/ui/toggle-row'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -93,23 +93,14 @@ export function NotificationsTab(): React.ReactElement {
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Enable / disable preference */}
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1">
-              <Label htmlFor="notifications-enabled" muted={false}>
-                {t('notifications.enableLabel')}
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                {t('notifications.enableDescription')}
-              </p>
-            </div>
-            <Switch
-              id="notifications-enabled"
-              checked={enabled}
-              onCheckedChange={setEnabled}
-              aria-label={t('notifications.enableLabel')}
-              data-testid="notifications-enabled-switch"
-            />
-          </div>
+          <ToggleRow
+            id="notifications-enabled"
+            label={t('notifications.enableLabel')}
+            description={t('notifications.enableDescription')}
+            checked={enabled}
+            onCheckedChange={setEnabled}
+            data-testid="notifications-enabled-switch"
+          />
 
           {/* Permission + test affordances */}
           <div className="space-y-2">

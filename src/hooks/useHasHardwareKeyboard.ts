@@ -78,8 +78,20 @@ export function useHasHardwareKeyboard(): boolean {
     // with no following keystroke) don't count — a touch user can
     // briefly tap a physical modifier on an attached-but-passive
     // accessory and we should not treat that as "fully attached".
+    //
+    // Soft-keyboard / synthetic keydowns must NOT latch either. On
+    // Android/iOS WebViews the on-screen keyboard can emit real keydown
+    // events; in the 768–1024px tablet band a stray latch would demote
+    // the surface out of mobile chrome mid-session. We reject events
+    // that are not browser-trusted (`isTrusted === false`), IME/soft
+    // composition events (`keyCode === 229`), and the soft-keyboard
+    // `key === 'Unidentified'` sentinel. Only a genuine hardware
+    // keydown sets the latch.
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') {
+        return
+      }
+      if (e.isTrusted === false || e.keyCode === 229 || e.key === 'Unidentified') {
         return
       }
       setLatch()

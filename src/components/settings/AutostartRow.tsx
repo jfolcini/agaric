@@ -19,8 +19,7 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
+import { ToggleRow } from '@/components/ui/toggle-row'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { disableAutostart, enableAutostart, isAutostartEnabled } from '@/lib/tauri'
@@ -94,20 +93,13 @@ export function AutostartRow(): React.ReactElement | null {
   if (enabled === null) return null
 
   return (
-    <div className="flex items-start justify-between gap-4">
-      <div className="flex-1 space-y-1">
-        <Label htmlFor="autostart-toggle" muted={false}>
-          {t('settings.autostart.label')}
-        </Label>
-        <p className="text-xs text-muted-foreground">{t('settings.autostart.description')}</p>
-      </div>
-      <Switch
-        id="autostart-toggle"
-        checked={enabled}
-        onCheckedChange={handleToggle}
-        disabled={pending}
-        aria-label={t('settings.autostart.label')}
-      />
-    </div>
+    <ToggleRow
+      id="autostart-toggle"
+      label={t('settings.autostart.label')}
+      description={t('settings.autostart.description')}
+      checked={enabled}
+      onCheckedChange={handleToggle}
+      disabled={pending}
+    />
   )
 }
