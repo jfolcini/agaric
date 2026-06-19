@@ -2165,6 +2165,46 @@ describe('searchBlockRefs — icons (UX-65)', () => {
     expect(items).toHaveLength(1)
     expect(items[0]?.breadcrumb).toBe('My Page Title')
   })
+
+  it('resolves per-row parent breadcrumbs across multiple results (#1637)', async () => {
+    // #1637 — the active space is read once before the per-row map; each row
+    // must still resolve its own parent against that single space id.
+    useResolveStore.getState().set('PARENT_A', 'Page A', false)
+    useResolveStore.getState().set('PARENT_B', 'Page B', false)
+
+    const mkItem = (id: string, parent: string | null) => ({
+      id,
+      block_type: 'block' as const,
+      content: `block ${id}`,
+      parent_id: parent,
+      position: 0,
+      deleted_at: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+      page_id: null,
+    })
+
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [mkItem('BRA', 'PARENT_A'), mkItem('BRB', 'PARENT_B'), mkItem('BRC', null)],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchBlockRefs>> = []
+    await act(async () => {
+      items = await result.current.searchBlockRefs('block')
+    })
+
+    expect(items).toHaveLength(3)
+    expect(items[0]?.breadcrumb).toBe('Page A')
+    expect(items[1]?.breadcrumb).toBe('Page B')
+    expect(items[2]?.breadcrumb).toBeUndefined()
+  })
 })
 
 // ── UX-68: Fuzzy matching ───────────────────────────────────────────────

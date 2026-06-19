@@ -39,24 +39,32 @@ vi.mock('@/hooks/useBlockPropertyEvents', () => ({
   useBlockPropertyEvents: vi.fn(() => ({ invalidationKey: 0 })),
 }))
 
+// #1639: track the identity of the `sourcePages` array prop across renders so a
+// test can assert it stays referentially stable (memoized) across focus-driven
+// re-renders.
+const sourcePagesIdentities: unknown[] = []
+
 vi.mock('@/components/filters/SourcePageFilter', () => ({
   SourcePageFilter: (props: {
     sourcePages: unknown[]
     included: string[]
     excluded: string[]
     onChange: (inc: string[], exc: string[]) => void
-  }) => (
-    <div data-testid="source-page-filter">
-      <button
-        type="button"
-        data-testid="source-page-filter-trigger"
-        onClick={() => props.onChange(['P1'], [])}
-      >
-        Filter ({props.included.length} included, {props.excluded.length} excluded)
-      </button>
-      <span data-testid="source-page-filter-pages">{JSON.stringify(props.sourcePages)}</span>
-    </div>
-  ),
+  }) => {
+    sourcePagesIdentities.push(props.sourcePages)
+    return (
+      <div data-testid="source-page-filter">
+        <button
+          type="button"
+          data-testid="source-page-filter-trigger"
+          onClick={() => props.onChange(['P1'], [])}
+        >
+          Filter ({props.included.length} included, {props.excluded.length} excluded)
+        </button>
+        <span data-testid="source-page-filter-pages">{JSON.stringify(props.sourcePages)}</span>
+      </div>
+    )
+  },
 }))
 
 vi.mock('@/components/BacklinkFilterBuilder', () => ({
@@ -154,6 +162,8 @@ function mockInvokeWith(groupedResponse: unknown, extras?: Record<string, unknow
 beforeEach(() => {
   vi.clearAllMocks()
   mockNavigateToPage.mockClear()
+  // #1639: reset the captured sourcePages prop identities between tests.
+  sourcePagesIdentities.length = 0
   // MAINT-189: shared property-keys cache is module-level — flush it
   // between tests so each case fetches its own keys.
   _resetPropertyKeysCacheForTest()
@@ -508,6 +518,47 @@ describe('LinkedReferences', () => {
     await user.keyboard(' ')
 
     expect(onNavigate).toHaveBeenCalledWith('P1', 'Source Page', 'BLOCK_1')
+  })
+
+  // 12c. #1639: sourcePages passed to SourcePageFilter is memoized on [groups],
+  // so its reference stays stable across focus-driven re-renders (roving keyboard
+  // navigation bumps focusedIndex state without changing groups). Before the fix,
+  // `groups.map(...)` ran on every render and produced a fresh array each time.
+  it('keeps sourcePages reference stable across focus-driven re-renders (#1639)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [
+        makeGroup('P1', 'Page One', [
+          { id: 'B1', content: 'block 1' },
+          { id: 'B2', content: 'block 2' },
+        ]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 2,
+      filtered_count: 2,
+      truncated: false,
+    }
+    mockInvokeWith(resp)
+
+    renderLinkedReferences({ pageId: 'PAGE1' })
+
+    // Wait until the list has rendered (and SourcePageFilter has captured the
+    // initial sourcePages identity).
+    await screen.findByText('block 1')
+    const identityBeforeFocus = sourcePagesIdentities.at(-1)
+    expect(identityBeforeFocus).toBeDefined()
+
+    // Drive a focus-only re-render via roving keyboard navigation on the list
+    // container -- this changes focusedIndex state but never touches `groups`.
+    const container = screen.getByRole('group')
+    container.focus()
+    await user.keyboard('{ArrowDown}')
+
+    // A re-render must have occurred (new identity captured), and because the
+    // derivation is memoized on [groups], the reference must be unchanged.
+    expect(sourcePagesIdentities.length).toBeGreaterThan(1)
+    expect(sourcePagesIdentities.at(-1)).toBe(identityBeforeFocus)
   })
 
   // 13. pagination: shows load more when hasMore
