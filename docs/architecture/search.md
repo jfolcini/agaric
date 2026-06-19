@@ -45,7 +45,7 @@ The Tauri command `search_blocks` takes a typed request struct and returns a typ
 // Request — appended to, never re-shaped. Every field carries
 // #[serde(default)] so the tauri-specta-regenerated frontend wrappers stay
 // compatible when a follow-up field lands ahead of its consumer. Only the
-// base fields are shown; later plans (PEND-53/54/55/63) append more.
+// base fields are shown; later filter dimensions append more.
 pub struct SearchFilter {
     pub parent_id: Option<String>,
     pub tag_ids: Vec<String>,
@@ -68,9 +68,9 @@ pub struct SearchBlockRow {
     pub due_date: Option<String>,
     pub scheduled_date: Option<String>,
     pub page_id: Option<String>,
-    // Added in PEND-50:
+    // Snippet field:
     pub snippet: Option<String>,  // literal <mark>...</mark> boundaries, never HTML-parsed
-    // Added in PEND-55 — UTF-16 match offsets from the toggle/regex
+    // UTF-16 match offsets from the toggle/regex
     // post-filter pass; empty unless a toggle is on. Preferred over
     // `snippet` by the renderer when populated.
     pub match_offsets: Vec<MatchOffset>,
@@ -83,7 +83,7 @@ Two invariants ride on this contract:
 1. **`SearchFilter` is the canonical extension struct.** New filter dimensions land as additional fields on this struct — never as new positional arguments on the Tauri command. The `tauri-specta` 10-argument ceiling is already close on the search surface; the struct keeps the command signature at five arguments (`pool`, `query`, `cursor`, `limit`, `filter`) regardless of how many filter dimensions exist. The `ExtraQueryFilters` struct in `src-tauri/src/commands/mod.rs` is the same pattern applied to `query_by_property`.
 2. **`SearchBlockRow.snippet` carries literal `<mark>` boundaries.** The frontend never feeds this string to `dangerouslySetInnerHTML`. Instead the renderer at `src/components/search/SearchResultBlockRow.tsx` splits the string on the literal marker pairs and emits alternating React text nodes and `<mark>` elements. React escapes any stray `<`, `&`, `script`, etc. as text content — so the snippet path has no XSS surface, even though the FTS5 sanitiser is the only thing between user content and the rendered DOM.
 
-Errors propagate through the existing `AppError` shape — `{ kind: string, message: string }` per `src-tauri/src/error.rs`. Typed validation errors (e.g., invalid glob patterns added by PEND-54) use `AppError::Validation("InvalidGlob: …")` and rely on a stable message prefix the frontend parses. The shape is not a tagged union because the manual `Serialize` impl predates that pattern; do not retrofit it without a coordinated migration.
+Errors propagate through the existing `AppError` shape — `{ kind: string, message: string }` per `src-tauri/src/error.rs`. Typed validation errors (e.g., invalid glob patterns) use `AppError::Validation("InvalidGlob: …")` and rely on a stable message prefix the frontend parses. The shape is not a tagged union because the manual `Serialize` impl predates that pattern; do not retrofit it without a coordinated migration.
 
 ## Grouped-render layer
 
@@ -93,7 +93,7 @@ The result list reuses `src/components/common/CollapsibleGroupList.tsx` — the 
 - a `renderHeader` slot for the page-title + breadcrumb + match-count row,
 - a `renderBlock` slot the search panel parametrises with `<SearchResultBlockRow row={…} />`.
 
-The orchestration above `CollapsibleGroupList` is two FE-3 components (PEND-58f):
+The orchestration above `CollapsibleGroupList` is two orchestration components:
 
 - `src/components/search/SearchResultGroups.tsx` — wraps `CollapsibleGroupList` with the search a11y model (the `role="region"` container, per-group `aria-activedescendant` resolution from the parent's flat `focusedIndex`, and the page-name-only "1 match (in name)" counter rule). It also exports the pure `groupResultsByPage(rows, pageTitles)` helper that buckets the flat `SearchBlockRow[]` into `SearchResultGroup[]`, preserving relevance order at both group and row level. It supplies `CollapsibleGroupList`'s `renderGroupList` slot with the virtualizer below rather than letting the primitive mount every row eagerly.
 - `src/components/search/VirtualizedResultListbox.tsx` — one expanded page-group's `role="listbox"`, windowed with `@tanstack/react-virtual`. It is a drop-in for the single `<ul>` `CollapsibleGroupList` used to render, preserving the per-group listbox count, roles, `data-testid`s, and the roving `aria-activedescendant` contract. The load-bearing a11y detail: `scrollToIndex` mounts the focused row before `aria-activedescendant` points at it, so the active descendant id always resolves to a live DOM node even though only the visible window plus overscan is mounted; `measureElement` corrects the height estimate after first paint.
@@ -114,7 +114,7 @@ The search result tree uses a per-group listbox arrangement, not a single tree, 
 
 Cross-group keyboard traversal (arrow keys flowing from the last row of group N to the first row of group N+1) is an extension `useListKeyboardNavigation` carries; it flattens the visible-row set across listbox children. The flattening recomputes on every expand/collapse so a collapsed group's rows are not reachable by arrow-key.
 
-## Inline filter syntax (PEND-54)
+## Inline filter syntax
 
 The query string is the canonical model of search state. Chips and IPC fields are projections of a parsed AST. The pipeline is:
 
@@ -129,7 +129,7 @@ input string ──tokenize──▶ raw tokens ──classify──▶ SearchQu
 Three pure modules under `src/lib/search-query/`:
 
 - `tokenize.ts` — lexes whitespace-delimited words and `"…"` quoted phrases, attaching `[startCol, endCol)` spans. Mirrors the FTS5 sanitiser's quoting rules so the parser doesn't pre-process operator syntax.
-- `registry.ts` — token-prefix recogniser table. Each recogniser owns one prefix (`tag:`, `path:`, `not-path:`) and returns either a concrete `FilterToken` or an `invalid` token with a typed error string. The longest prefix wins; PEND-53 registered `state:`, `priority:`, `due:`, etc. on top of this table without touching the core parser.
+- `registry.ts` — token-prefix recogniser table. Each recogniser owns one prefix (`tag:`, `path:`, `not-path:`) and returns either a concrete `FilterToken` or an `invalid` token with a typed error string. The longest prefix wins; the property/metadata filters registered `state:`, `priority:`, `due:`, etc. on top of this table without touching the core parser.
 - `classify.ts` — walks the raw token stream, asks the registry, and stitches the surviving free-text spans into `freeText`.
 
 The round-trip invariant — `parse(serialize(parse(s))) === parse(s)` for any `s` — is enforced by `fast-check` property tests in `__tests__/serialize.test.ts`. Direct equality `serialize(parse(s)) === s` only holds for canonical inputs (the `#tag` bare alias normalises to `tag:#tag` on the way out, by design).
@@ -145,20 +145,20 @@ Page-name globs resolve against `pages_cache.title` (the dedicated title-lookup 
 
 Brace expansion is hand-rolled (no `glob` crate dependency) and capped at 64 patterns per token. Comma-separated values are split at top level (commas inside `{...}` belong to brace alternatives, not the separator).
 
-## PEND-55 — Toggle row pipeline
+## Toggle row pipeline
 
 The three search toggles (`case_sensitive`, `whole_word`, `is_regex`) all land as `#[serde(default)] bool` fields on `SearchFilter`. They drive a single new module — `src-tauri/src/fts/toggle_filter.rs` — that sits between `search_blocks_inner` and the candidate-set sources. A blank free-text query that carries at least one structural filter is handled first (see *Filter-only search* below); otherwise the dispatch is binary:
 
 - **`is_regex == false`** → `search_fts` (today's FTS5 path) is called first; if `case_sensitive` or `whole_word` is on, the result rows are passed through `apply_post_filter` with a literal-escaped regex. The filter narrows matches and attaches `match_offsets`; rows without a match are dropped.
 - **`is_regex == true`** → `search_fts` is **bypassed entirely** (FTS5 MATCH cannot accept a regex). A separate recency-ordered scan over `blocks` (filtered by tags / space / path globs and any structural metadata predicates) returns up to `REGEX_PRE_FILTER_CAP` candidates; each is matched against the user's regex. The numeric value of that cap lives only in the code constant — see `src-tauri/src/fts/toggle_filter.rs`.
 
-### Filter-only search (PEND-58g NEW-3)
+### Filter-only search
 
 A search whose free-text is blank/whitespace but which carries at least one structural filter (`tag:`, `path:`, `state:`, `prop:`, a parent, a block-type, …) is a **filter-only** query. FTS5 MATCH cannot express "match everything", so `search_with_toggles` / `search_with_toggles_partitioned` short-circuit BEFORE the FTS/regex dispatch and run `filter_only_scan` — a plain `b.id DESC` (recency-ordered) scan over `blocks` applying exactly the same structural filters the other paths apply, with no pattern match. It is **mode-independent**: with no pattern there is nothing for FTS or a regex to match, so the `is_regex` / `case_sensitive` / `whole_word` toggles don't change the result.
 
 - The cursor path (`fts_fetch_filter_only_page`) paginates on a strictly-less `b.id < ?cursor` predicate (id-only `Cursor::for_id`), derives `has_more` from a `limit + 1` probe, and keys `next_cursor` on the last *returned* (post-truncate) row.
 - The partitioned path (`fts_fetch_filter_only_partitioned`) runs the pages partition (`block_type = 'page'`) and the unrestricted blocks partition, each with its own `limit + 1` probe; the palette doesn't paginate, so no cursor is emitted.
-- `space_id` is always supplied (FEAT-3p4), so it does NOT count as a user filter — a blank query scoped only to a space still returns empty, never the whole space.
+- `space_id` is always supplied, so it does NOT count as a user filter — a blank query scoped only to a space still returns empty, never the whole space.
 
 ### Caps (all locked-in via module constants)
 
@@ -200,11 +200,11 @@ Changing the scanned column (stripped vs raw) is a deliberate out-of-scope behav
 
 ### History store
 
-Per-space MRU list at `agaric:search-history` (Zustand persist). Dedupes on insert; cap 20. Submission triggers `push`; the dropdown surfaces entries when the input is focused AND empty. The cycling hook (`useSearchHistoryCycling`) owns the `↑`/`↓` browse-mode state machine; precedence with PEND-54's autocomplete and the result-list nav is documented in AGENTS.md.
+Per-space MRU list at `agaric:search-history` (Zustand persist). Dedupes on insert; cap 20. Submission triggers `push`; the dropdown surfaces entries when the input is focused AND empty. The cycling hook (`useSearchHistoryCycling`) owns the `↑`/`↓` browse-mode state machine; precedence with the inline-filter autocomplete and the result-list nav is documented in AGENTS.md.
 
-## PEND-53 — Property / metadata filters
+## Property / metadata filters
 
-The `state:`, `priority:`, `due:`, `scheduled:`, `prop:` token family adds six fields to `SearchFilter`: `state_filter`, `priority_filter`, `due_filter`, `scheduled_filter`, `property_filters`, `excluded_property_filters`. PEND-63 appends two more for the `not-state:` / `not-priority:` inversion: `excluded_state_filter`, `excluded_priority_filter`. All carry `#[serde(default)]`. They compile to `EXISTS` sub-selects against `block_properties` and to direct comparisons on `blocks.todo_state` / `blocks.priority` / `blocks.due_date` / `blocks.scheduled_date`.
+The `state:`, `priority:`, `due:`, `scheduled:`, `prop:` token family adds six fields to `SearchFilter`: `state_filter`, `priority_filter`, `due_filter`, `scheduled_filter`, `property_filters`, `excluded_property_filters`. The exclusion filters append two more for the `not-state:` / `not-priority:` inversion: `excluded_state_filter`, `excluded_priority_filter`. All carry `#[serde(default)]`. They compile to `EXISTS` sub-selects against `block_properties` and to direct comparisons on `blocks.todo_state` / `blocks.priority` / `blocks.due_date` / `blocks.scheduled_date`.
 
 ### Date filter resolution
 
@@ -216,46 +216,46 @@ Bucket vocabulary is locked at: `today`, `yesterday`, `overdue`, `this-week`, `t
 
 A literal `none` value (case-insensitive) in `state_filter` / `priority_filter` is split out in `prepare_metadata` and emitted as a `column IS NULL` branch in the SQL disjunction. **A custom state literally named `"none"` would match the `IS NULL` shadow** — documented limitation; a real custom state must be named differently to avoid that overlap.
 
-### Property column mapping (PEND-64)
+### Property column mapping
 
 `prop:KEY=VALUE` matches across the four user-facing typed columns (`value_text`, `value_num`, `value_date`, `value_ref`) with type coercion at SQL bind time. The composer in `fts::metadata_filter::append_property_match` emits a four-way `OR` with `NULL`-bound branches for variants that don't parse — so `prop:priority=1` binds `value_num = 1.0` and `NULL` for the other three, while `prop:status=draft` binds `value_text = 'draft'` and `NULL` for the rest. The `exactly_one_value` CHECK on `block_properties` (migration `0062`) ensures at most one branch can ever fire per row. `value_bool` is internal (not user-typed) and remains out of scope.
 
 Property keys are case-sensitive (`block_properties` PK is `(block_id, key)` with no `COLLATE NOCASE`). ULID values matched against `value_ref` are normalised to uppercase at bind time per Agaric's storage convention.
 
-### Excluded states / priorities (PEND-63)
+### Excluded states / priorities
 
 `not-state:VALUE` / `not-priority:VALUE` chips project to `excluded_state_filter` / `excluded_priority_filter`. The SQL composer emits `(column IS NULL OR column NOT IN (…))` — **NULL-inclusive inversion by design**: a "blocks not in DONE" query returns blocks with no state set at all, not excludes them. The `not-state:none` sentinel flips to `column IS NOT NULL`.
 
-## PEND-54 — Path globs
+## Path globs
 
 `path:` filters resolve against `pages_cache.title` with `LOWER(...)` for case-insensitive matching. SQLite native `GLOB` (no regex extension), with brace expansion + substring-wrap applied in Rust before binding. Validation failures surface through `AppError::Validation` with an `InvalidGlob:` message prefix — the frontend keys on the prefix string rather than a new error variant (avoids reshaping the `{kind, message}` wire shape at `error.rs`).
 
 ### `↑` / `↓` precedence in the search input
 
-When ambiguity exists, autocomplete-open wins, then history recall (PEND-55), then result-list navigation. Document any new precedence-claiming surface here.
+When ambiguity exists, autocomplete-open wins, then history recall, then result-list navigation. Document any new precedence-claiming surface here.
 
 ## Related files
 
 - `src/components/SearchPanel.tsx` — orchestrator: input, debounce, IPC call, group + render.
-- `src/components/SearchPanel/useSearchResults.ts` — extracted results pipeline: AST→IPC projection, `usePaginatedQuery`, breadcrumbs, grouping, roving nav, navigation (PEND-58g FE-A18).
-- `src/components/SearchPanel/useSearchHistoryControls.ts` — extracted per-space history surface: store wiring, recall cycling, handlers (PEND-58g FE-A18).
-- `src/components/SearchPanel/searchFilterParams.ts` — pure AST→`searchBlocks` filter-param projection (PEND-58g FE-A18).
-- `src/components/search/filter-forms/` — `+ Filter` builder sub-forms (state / priority / due / scheduled / prop + include-exclude) (PEND-58g UX-A5).
-- `src/components/search/SearchResultGroups.tsx` — group orchestration over `CollapsibleGroupList` + `groupResultsByPage` (PEND-58f FE-3).
-- `src/components/search/VirtualizedResultListbox.tsx` — per-group virtualized `role="listbox"` (PEND-58f FE-3).
+- `src/components/SearchPanel/useSearchResults.ts` — extracted results pipeline: AST→IPC projection, `usePaginatedQuery`, breadcrumbs, grouping, roving nav, navigation.
+- `src/components/SearchPanel/useSearchHistoryControls.ts` — extracted per-space history surface: store wiring, recall cycling, handlers.
+- `src/components/SearchPanel/searchFilterParams.ts` — pure AST→`searchBlocks` filter-param projection.
+- `src/components/search/filter-forms/` — `+ Filter` builder sub-forms (state / priority / due / scheduled / prop + include-exclude).
+- `src/components/search/SearchResultGroups.tsx` — group orchestration over `CollapsibleGroupList` + `groupResultsByPage`.
+- `src/components/search/VirtualizedResultListbox.tsx` — per-group virtualized `role="listbox"`.
 - `src/components/search/SearchResultBlockRow.tsx` — snippet / offset → React-node renderer.
 - `src/components/search/ResultCountSummary.tsx` — "N matches in M pages" header.
-- `src/components/search/SearchToggleRow.tsx` — three toggle buttons (PEND-55).
-- `src/components/search/SearchHistoryDropdown.tsx` — recent-queries listbox (PEND-55).
+- `src/components/search/SearchToggleRow.tsx` — three toggle buttons.
+- `src/components/search/SearchHistoryDropdown.tsx` — recent-queries listbox.
 - `src/components/common/CollapsibleGroupList.tsx` — the grouped-list primitive (reused, never forked).
 - `src/components/help/SearchHelpDialog.tsx` — in-app `?` help.
-- `src/stores/search-history.ts` — Zustand-persisted per-space history (PEND-55).
-- `src/hooks/useSearchHistoryCycling.ts` — `↑`/`↓` browse state machine (PEND-55).
+- `src/stores/search-history.ts` — Zustand-persisted per-space history.
+- `src/hooks/useSearchHistoryCycling.ts` — `↑`/`↓` browse state machine.
 - `src-tauri/src/commands/queries.rs` — `SearchFilter`, `SearchBlockRow`, `MatchOffset`, `search_blocks_inner`.
 - `src-tauri/src/fts/search.rs` — FTS5 query construction + `snippet()` projection.
-- `src-tauri/src/fts/toggle_filter.rs` — `SearchToggles`, `search_with_toggles`, regex pipeline (PEND-55).
-- `src-tauri/src/fts/glob_filter.rs` — page-name glob parser + brace-expansion (PEND-54).
+- `src-tauri/src/fts/toggle_filter.rs` — `SearchToggles`, `search_with_toggles`, regex pipeline.
+- `src-tauri/src/fts/glob_filter.rs` — page-name glob parser + brace-expansion.
 - `src-tauri/migrations/0006_fts5_trigram.sql` — index definition + tokenizer config.
-- `src/lib/search-query/` — inline filter syntax parser, AST, serialiser, autocomplete (PEND-54).
-- `src/components/search/FilterChipRow.tsx` — AST → chip projection (PEND-54).
-- `src/components/search/FilterHelperPopover.tsx` — `+ Filter ▾` picker (PEND-54).
+- `src/lib/search-query/` — inline filter syntax parser, AST, serialiser, autocomplete.
+- `src/components/search/FilterChipRow.tsx` — AST → chip projection.
+- `src/components/search/FilterHelperPopover.tsx` — `+ Filter ▾` picker.

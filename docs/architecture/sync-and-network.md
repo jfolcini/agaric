@@ -61,9 +61,9 @@ If you re-install Agaric on a peer, its certificate hash changes — you'll need
 3. **Push.** Sender exports `LoroDoc::export(ExportMode::Snapshot | Updates(peer_vv))`, ships as `LoroSyncMessage`.
 4. **Apply.** Receiver imports into per-space `LoroEngine`. Materializer projects engine state into SQL primary state post-import.
 5. **`is_last: true`** transitions both sides to `SyncComplete`.
-6. **File-transfer phase** (PEND-06 Tier 2) ships attachment blobs in 5 MB binary frames after op convergence.
+6. **File-transfer phase** ships attachment blobs in 5 MB binary frames after op convergence.
 
-## Snapshot catch-up (FEAT-6)
+## Snapshot catch-up
 
 When the initiator's frontier is older than the responder's compaction point (the responder has GC'd the relevant op-log entries), the responder sends a full **snapshot** instead of replaying ops:
 
@@ -87,13 +87,13 @@ The snapshot atomicity is the cross-link to [`crdt-and-recovery.md § Snapshots`
 
 If no paired peers exist, the daemon defers mDNS browse + TLS listener entirely. Boot is cheaper on a fresh install; the daemon spawns a lightweight waiter that triggers full startup when the first pairing completes.
 
-### Lifecycle-aware (PERF-24)
+### Lifecycle-aware
 
 `LifecycleHooks` gates the periodic resync tick on `is_foreground`. Backgrounded → skip ticks until `wake.notified()` fires on foreground. This matters most on Android (battery + Doze) but also helps desktop laptops on battery.
 
 ## Dual-backoff
 
-Two independent schedules, **intentionally not coordinated** (MAINT-168):
+Two independent schedules, **intentionally not coordinated**:
 
 - **Backend** (`sync_scheduler.rs`): per-peer exponential 2 s → 4 s → 8 s → 16 s → 32 s → 60 s cap. ±10 % jitter so two devices don't lock-step on resync ticks. Per-peer mutex prevents concurrent connections to the same peer.
 - **Frontend** (`useSyncTrigger.ts`): coarse 60 s → 600 s cadence for the UI's "wake the scheduler" hint. Backend is authoritative; mid-backoff `startSync()` from the FE resolves as a quick no-op.

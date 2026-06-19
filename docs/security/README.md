@@ -22,7 +22,7 @@ enough churn that the diff-sweep is non-trivial.
 A `prek.toml` hook can be added to warn when the latest
 `review-YYYY-MM-DD.md`'s `mtime` is past the 12-month line; that
 hook is filed under "consider when cadence drifts in practice" and
-not pre-emptively added (per PEND-49 §5b open question 3).
+not pre-emptively added (a deliberate 'consider when cadence drifts' choice).
 
 ## Scope of each review
 

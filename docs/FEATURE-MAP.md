@@ -39,5 +39,5 @@ A handful of facts touch every feature; rather than repeat them in each file:
 
 Features that aren't yet shipped or that are intentionally deferred are tracked separately. The major outstanding items today:
 
-- **OS notifications** — _partial_ (FEAT-11). A fire-now `notify_task` command ships (`src-tauri/src/commands/notifier.rs`; Linux via notify-rust, macOS/Windows via `tauri-plugin-notification`), wired through `src/lib/tauri.ts`. The scheduler, dedupe ledger, snooze semantics, and Settings sub-tab that would auto-fire for due tasks / scheduled events (incl. Android-mobile parity) remain outstanding (#138).
+- **OS notifications** — _partial_. A fire-now `notify_task` command ships (`src-tauri/src/commands/notifier.rs`; Linux via notify-rust, macOS/Windows via `tauri-plugin-notification`), wired through `src/lib/tauri.ts`. The scheduler, dedupe ledger, snooze semantics, and Settings sub-tab that would auto-fire for due tasks / scheduled events (incl. Android-mobile parity) remain outstanding (#138).
 - **iroh transport** (replaces the current mDNS + WebSocket + TLS + TOFU stack) — scoped, not yet started.

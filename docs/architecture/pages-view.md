@@ -9,12 +9,12 @@ The Pages view is the canonical "show me every page in this space" surface. It f
 
 | Plan | Scope | Status |
 |------|-------|--------|
-| **PEND-56** | Density rows + 7 sort modes + per-page metadata IPC (`list_pages_with_metadata`) | Phase 1 (backend) + Phase 2 (frontend hooks) shipped. Phase 3 (orchestrator wiring + `DensityRow`) shipping now. |
-| **PEND-56b** | Materialise `inbound_link_count` + `child_block_count` into `pages_cache`; extract a `SortKeyset` descriptor | Shipped — closes the 20k-page scaling cliff (335 ms → 34 ms). See "Materialised counts" below. |
-| **PEND-57** | Multi-select + bulk ops + saved views (filter+sort+density snapshots in localStorage) | Pending — consumes the density-row primitive and the metadata columns this plan adds. |
-| **PEND-58** | Compound filters (`tag:` / `path:` / `has-property:` / `last-edited:` / Pages-only `orphan:` / `stub:` / `has-no-inbound-links:`) sharing the parser with Search | Phase 1 (`FilterPrimitive` extraction) shipped; builds on PEND-56's cursor + metadata columns. |
+| **Density rows + sort modes + metadata IPC** | Density rows + 7 sort modes + per-page metadata IPC (`list_pages_with_metadata`) | Phase 1 (backend) + Phase 2 (frontend hooks) shipped. Phase 3 (orchestrator wiring + `DensityRow`) shipping now. |
+| **Materialised counts** | Materialise `inbound_link_count` + `child_block_count` into `pages_cache`; extract a `SortKeyset` descriptor | Shipped — closes the 20k-page scaling cliff (335 ms → 34 ms). See "Materialised counts" below. |
+| **Multi-select + bulk ops + saved views** | Multi-select + bulk ops + saved views (filter+sort+density snapshots in localStorage) | Pending (#81) — consumes the density-row primitive and the metadata columns this plan adds. |
+| **Compound filters** | Compound filters (`tag:` / `path:` / `has-property:` / `last-edited:` / Pages-only `orphan:` / `stub:` / `has-no-inbound-links:`) sharing the parser with Search | Phase 1 (`FilterPrimitive` extraction) shipped; builds on the cursor + metadata columns. |
 
-The three follow-up plans intentionally compose: PEND-57's saved view is a `{filterSet, sort, density}` triple, where PEND-58 owns `filterSet`, PEND-56 owns `sort` + `density`, and PEND-57 owns the storage shape. **The metadata IPC introduced here is the seam that lets all three plans avoid re-querying for shared columns.**
+The three follow-up plans intentionally compose: the saved view is a `{filterSet, sort, density}` triple, where the compound-filter work owns `filterSet`, the sort/density work owns `sort` + `density`, and the saved-views work owns the storage shape (#81). **The metadata IPC introduced here is the seam that lets all three plans avoid re-querying for shared columns.**
 
 ## Data flow
 
@@ -67,7 +67,7 @@ Two side hooks orbit this pipeline without altering its shape:
 
 ## Sort modes
 
-Seven options. Three carried forward from the legacy three-mode list; four added by PEND-56:
+Seven options. Three carried forward from the legacy three-mode list; four added by the sort-modes work:
 
 | Sort option | Comparator type | Wire value | Cursor key | Notes |
 |-------------|-----------------|------------|------------|-------|
@@ -75,7 +75,7 @@ Seven options. Three carried forward from the legacy three-mode list; four added
 | `recent` | Frontend-only (`getRecentPages()` MRU lookup) | `default` | n/a — local visit history layered on top | Per-device localStorage history; never goes over the wire. |
 | `created` | Frontend-only (ULID DESC) | `default` | `id` | Treats the ULID timestamp prefix as creation order. |
 | `recently-modified` | Wire — backend `last_modified_at` DESC | `recently-modified` | `last_modified_at` (in `Cursor.deleted_at` slot) + `id` tiebreaker | NULL `last_modified_at` is COALESCE'd to `'0001-01-01'` so the keyset works uniformly across NULL + non-NULL rows. |
-| `most-linked` | Wire — `pages_cache.inbound_link_count` DESC | `most-linked` | `inbound_link_count` (in `Cursor.seq` slot) + `id` tiebreaker | Served by the materialised column (PEND-56b). ~34 ms at 20k pages. |
+| `most-linked` | Wire — `pages_cache.inbound_link_count` DESC | `most-linked` | `inbound_link_count` (in `Cursor.seq` slot) + `id` tiebreaker | Served by the materialised column. ~34 ms at 20k pages. |
 | `most-content` | Wire — `pages_cache.child_block_count` DESC | `most-content` | `child_block_count` (in `Cursor.seq` slot) + `id` tiebreaker | Same materialised path as `most-linked`. |
 | `default` | Wire — backend `id ASC` | `default` | `id` | Power-user / debug; also the wire shape the three frontend-only sorts reuse. |
 
@@ -83,7 +83,7 @@ Cursor implications:
 
 - Each wire-sort encodes its primary key into an **existing** `Cursor` slot (`deleted_at` for ISO timestamps and strings; `seq` for i64 counts). No new typed slot. Any future paginator introducing a non-id sort key must reuse those existing slots rather than growing the struct.
 - `Cursor.position` carries a sort-mode discriminator (i64 stamped by `sort_discriminator`). A cursor whose discriminator does not match the requested sort is rejected at decode — this is the recovery contract for "user changed sort mid-scroll" (see "Cursor recovery" below).
-- The three frontend-only sorts (`alphabetical`, `recent`, `created`) all map to wire value `default` and re-sort the loaded page in JS. They scroll past the loaded window in **id-ASC** order, not in comparator order — a known property of the implementation, preserved across the PEND-56 rewrite.
+- The three frontend-only sorts (`alphabetical`, `recent`, `created`) all map to wire value `default` and re-sort the loaded page in JS. They scroll past the loaded window in **id-ASC** order, not in comparator order — a known property of the implementation, preserved across the sort-modes rewrite.
 
 Sort comparators must not allocate per-comparison. The `sortPages` callback in `usePageBrowserSort` materialises any expensive lookup (the `getRecentPages()` `Map`, the metadata `lookupMeta` closure) **once** before `Array.sort`. The comparator body reads scalars off rows and returns an integer; no `.map`, no `new Date()`, no closure-over-row inside the comparator. Adding a sort mode follows this pattern.
 
@@ -127,12 +127,12 @@ A cursor whose `position` slot does not match the requested sort is rejected by 
 
 | Column | Definition | Index |
 |--------|------------|-------|
-| `last_modified_at` | `MAX(op_log.created_at)` for the page itself (not subtree-aware in v1 — the recursive-CTE variant is deferred per PEND-56 open question #1). | `idx_op_log_block_id` (migration 0030) |
+| `last_modified_at` | `MAX(op_log.created_at)` for the page itself (not subtree-aware in v1 — the recursive-CTE variant is deferred (open question)). | `idx_op_log_block_id` (migration 0030) |
 | `inbound_link_count` | `COUNT(DISTINCT block_links.source_id)` where the target is the page or any of its descendants (walked via `blocks.page_id`). | `idx_block_links_target` (migration 0001) |
 | `child_block_count` | `COUNT(*)` non-deleted descendants where `page_id = page.id AND id != page.id`. | `idx_blocks_page_id` |
 | `flags: PagePropertyFlags` | Typed struct with `has_tags` / `has_todo` / `has_scheduled` / `has_due` — each an `EXISTS` subquery that short-circuits on first match. Replaces the original bitmask shape (Round 1 review). | `idx_block_tags_block_id`, `idx_blocks_page_id` |
 
-### Materialised counts (PEND-56b)
+### Materialised counts
 
 `inbound_link_count` and `child_block_count` are **materialised into `pages_cache`** (migration `0069`). The IPC's SELECT LEFT JOINs `pages_cache` and reads the cached columns directly; the previous per-page `COUNT(DISTINCT bl.source_id)` / `COUNT(*)` correlated subqueries are gone.
 
@@ -146,7 +146,7 @@ Materialised columns turn the `most-linked` first-page query from a per-page cor
 
 ## Open extension points
 
-- **PEND-57** (multi-select + bulk ops + saved views). Consumes `<DensityRow>` (extends it with a select checkbox), reads the metadata columns to drive bulk operations, and snapshots the `{filterSet, sort, density}` triple to `agaric:pages:savedViews:v1` in localStorage. Backend graduation of saved views is out of scope; the per-device storage shape is the long-term contract.
-- **PEND-58** (compound filters). Extends `ListPagesWithMetadataFilter` with a `Vec<FilterPrimitive>` field, shared with `SearchFilter` via the `FilterPrimitive` enum + per-surface `Projection` trait. The Pages-only `orphan:` / `stub:` / `has-no-inbound-links:` primitives ride the same metadata columns this plan introduces; the materialised counts shipped in PEND-56b are the prerequisite for those facets at scale.
-- **MCP exposure of `list_pages_with_metadata`** — deferred. Today's MCP `list_pages` serves the simpler shape; the richer surface lands only if a tool-side need emerges in PEND-57 / PEND-58.
-- **Subtree-aware `last_modified_at`** — deferred per PEND-56 open question #1. The recursive-CTE variant is a single SELECT change once benchmark evidence justifies it.
+- **Multi-select + bulk ops + saved views** (#81, pending). Consumes `<DensityRow>` (extends it with a select checkbox), reads the metadata columns to drive bulk operations, and snapshots the `{filterSet, sort, density}` triple to `agaric:pages:savedViews:v1` in localStorage. Backend graduation of saved views is out of scope; the per-device storage shape is the long-term contract.
+- **Compound filters**. Extends `ListPagesWithMetadataFilter` with a `Vec<FilterPrimitive>` field, shared with `SearchFilter` via the `FilterPrimitive` enum + per-surface `Projection` trait. The Pages-only `orphan:` / `stub:` / `has-no-inbound-links:` primitives ride the same metadata columns this plan introduces; the materialised counts shipped in the materialised-counts work are the prerequisite for those facets at scale.
+- **MCP exposure of `list_pages_with_metadata`** — deferred. Today's MCP `list_pages` serves the simpler shape; the richer surface lands only if a tool-side need emerges in the saved-views or compound-filter work.
+- **Subtree-aware `last_modified_at`** — deferred (open question). The recursive-CTE variant is a single SELECT change once benchmark evidence justifies it.

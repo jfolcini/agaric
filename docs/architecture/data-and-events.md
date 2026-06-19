@@ -27,7 +27,7 @@ One `blocks` table covers every entity. The `block_type` column discriminates:
 | `page` | A page (also nestable; pages may contain pages). |
 | `tag` | A tag (a first-class entity with its own page). |
 
-Tree shape: `parent_id` + 1-based integer `position` among siblings. Batch-renumber on insert; **fractional indexing was rejected** (precision drift, lack of stable comparator across devices) — the SQL `position` stays an `i64`. Since PEND-80 Phase 3 the mergeable hierarchy lives in the Loro engine as a `LoroTree` (convergent moves, cycle-safety); the SQL `parent_id` / `position` columns are *derived* from it (`parent_id` = the tree parent's `block_id`, `position` = the node's `i64` sort key) and keep the same shape, so pagination cursors and the frontend's position arithmetic are unchanged. See [crdt-and-recovery.md](crdt-and-recovery.md) § CRDT convergence.
+Tree shape: `parent_id` + 1-based integer `position` among siblings. Batch-renumber on insert; **fractional indexing was rejected** (precision drift, lack of stable comparator across devices) — the SQL `position` stays an `i64`. The mergeable hierarchy lives in the Loro engine as a `LoroTree` (convergent moves, cycle-safety); the SQL `parent_id` / `position` columns are *derived* from it (`parent_id` = the tree parent's `block_id`, `position` = the node's `i64` sort key) and keep the same shape, so pagination cursors and the frontend's position arithmetic are unchanged. See [crdt-and-recovery.md](crdt-and-recovery.md) § CRDT convergence.
 
 All inter-block references are ULID-keyed:
 
@@ -43,7 +43,7 @@ A tag is a `blocks` row with `block_type = 'tag'`. Hierarchy is naming-conventio
 
 Inheritance is **materialized**, not a recursive CTE — `block_tag_inherited` is maintained incrementally by the materializer. This collapses cross-page tag-query latency from O(depth) to O(1) lookup. Tag-to-tag inheritance (chains across tags) will not ship — it complicates the model without enough payoff.
 
-Inline tag references (`#[ULID]`) are tracked separately in `block_tag_refs` (UX-250 cache). They contribute to chip counts but do **not** participate in inheritance — the inline ref is a per-block usage, not a category membership.
+Inline tag references (`#[ULID]`) are tracked separately in `block_tag_refs`. They contribute to chip counts but do **not** participate in inheritance — the inline ref is a per-block usage, not a category membership.
 
 ## Pages
 
@@ -70,7 +70,7 @@ If a property type is ever introduced that is *semantically* a large exact integ
 
 ## Concurrent edits
 
-There is **one op-application path**, and that path always fans out into the per-space `LoroEngine` (`src-tauri/src/loro/`). Concurrent writes from peers converge deterministically; same op inputs produce identical state on every replica. The legacy three-way merge / `is_conflict` model is gone (PEND-09 cutover).
+There is **one op-application path**, and that path always fans out into the per-space `LoroEngine` (`src-tauri/src/loro/`). Concurrent writes from peers converge deterministically; same op inputs produce identical state on every replica. The legacy three-way merge / `is_conflict` model is gone.
 
 ## Database
 
@@ -140,7 +140,7 @@ Apply-and-advance share one transaction → crash never advances the cursor past
 Two-tier retry:
 
 - **In-memory**: foreground retries once at ~100 ms; background retries up to twice at 150 ms → 300 ms.
-- **Persistent**: foreground apply path **persists exhausted ops** into `materializer_retry_queue` (PEND-24 H1) and warns; background global rebuilds (`RebuildTagsCache`, `RebuildPagesCache`, …) also persist (PEND-03) using the `'__GLOBAL__'` sentinel for `block_id`. Drained on the next boot.
+- **Persistent**: foreground apply path **persists exhausted ops** into `materializer_retry_queue` and warns; background global rebuilds (`RebuildTagsCache`, `RebuildPagesCache`, …) also persist using the `'__GLOBAL__'` sentinel for `block_id`. Drained on the next boot.
 
 `Barrier` and `Panic` tasks never retry. Truly non-retryable tasks (full FTS rebuild, FTS optimize, attachment GC) are silently counted on failure.
 
@@ -152,7 +152,7 @@ Rebuilt by the materializer; never read-through:
 | --- | --- | --- |
 | `block_links` | `[[ULID]]` (page-link) and `((ULID))` (block-ref) tokens parsed out of block content. `#[ULID]` inline tag refs are NOT here — they go to `block_tag_refs`. | `edit_block`, `create_block` (content scan) |
 | `page_link_cache` | Page-level rollup `(source_page, target_page, edge_count)` | derived from `block_links` |
-| `block_tag_refs` | Inline `#[ULID]` references (UX-250) | content scan, separate from explicit tag membership |
+| `block_tag_refs` | Inline `#[ULID]` references | content scan, separate from explicit tag membership |
 | `block_tag_inherited` | Materialized ancestor-tag inheritance | `add_tag` / `remove_tag` + tree moves |
 | `tags_cache` | Per-tag aggregate (usage, descendant count) | tag-touching ops |
 | `pages_cache` | Per-page aggregate | page-touching ops |
