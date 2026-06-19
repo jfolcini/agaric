@@ -1020,4 +1020,76 @@ describe('ConfirmDialog', () => {
       expect(onOpenChange).toHaveBeenCalledWith(false)
     })
   })
+
+  // ─── #1784: Confirm respects the isPending guard ─────────────────────────────
+  //
+  // runConfirm previously early-returned on the raw internal `pending` only, so
+  // an external `loading` prop did not gate it. Buttons + handleCancel use
+  // `isPending = pending || loading`; runConfirm now does too. So even a confirm
+  // invocation that bypasses the `disabled` attribute (jsdom blocks clicks on a
+  // disabled button, so we invoke the button's real React `onClick` prop — the
+  // handler-level path) must NOT fire onConfirm or close while loading. This is
+  // the Confirm-side cousin of #1611.
+
+  // Reads the live React `onClick` prop off the rendered DOM node so we can
+  // drive `handleConfirmClick` directly — a faithful stand-in for "any path
+  // bypassing the disabled attribute". A plain fireEvent.click is a no-op on a
+  // disabled button in jsdom and would pass even without the guard.
+  function getReactOnClick(
+    node: HTMLElement,
+  ): ((e: { preventDefault(): void }) => unknown) | undefined {
+    const key = Object.keys(node).find((k) => k.startsWith('__reactProps$'))
+    return key
+      ? (
+          node as unknown as Record<
+            string,
+            { onClick?: (e: { preventDefault(): void }) => unknown }
+          >
+        )[key]?.onClick
+      : undefined
+  }
+
+  describe('Confirm honors isPending guard (#1784)', () => {
+    it('does not invoke onConfirm while pending (external loading prop)', async () => {
+      const onConfirm = vi.fn()
+
+      render(<ConfirmDialog {...defaultProps} loading onConfirm={onConfirm} />)
+
+      const actionBtn = screen.getByRole('button', { name: /Confirm/ })
+      expect(actionBtn).toBeDisabled()
+
+      // Bypass the `disabled` attribute by invoking the handler directly. With
+      // the raw-`pending` guard this fires onConfirm and closes; with the
+      // isPending guard it early-returns.
+      const onClick = getReactOnClick(actionBtn)
+      expect(onClick).toBeDefined()
+      await onClick?.({ preventDefault() {} })
+
+      // onConfirm is the discriminating signal: with the raw-`pending` guard it
+      // fires here; with the isPending guard runConfirm early-returns. (We do
+      // not assert on onOpenChange — Radix AlertDialogAction emits its own close
+      // independent of runConfirm, so it is not a guard signal.)
+      expect(onConfirm).not.toHaveBeenCalled()
+    })
+
+    it('invokes onConfirm exactly once when not pending/loading', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn()
+
+      render(<ConfirmDialog {...defaultProps} onConfirm={onConfirm} />)
+
+      await user.click(screen.getByRole('button', { name: /Confirm/ }))
+
+      expect(onConfirm).toHaveBeenCalledTimes(1)
+    })
+
+    it('has no a11y violations while loading (guard regression coverage)', async () => {
+      const { container } = render(<ConfirmDialog {...defaultProps} loading onConfirm={vi.fn()} />)
+
+      await waitFor(async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
+    })
+  })
 })

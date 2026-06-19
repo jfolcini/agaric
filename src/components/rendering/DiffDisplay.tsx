@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import type { DiffSpan } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
+import { useResolveStore } from '@/stores/resolve'
 
 interface DiffDisplayProps {
   spans: DiffSpan[]
@@ -78,6 +79,45 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
 
   const visibleSpans = isLarge && !expanded ? spans.slice(0, COLLAPSED_SPAN_COUNT) : spans
   const hiddenCount = spans.length - visibleSpans.length
+
+  // #1623 — memoize the recursive-descent parse of each visible span so a
+  // hunk-nav click (which only flips the active-hunk ring) doesn't re-run
+  // `renderRichContent` → `parse` for every span on the screen. The parse
+  // depends solely on `span.value` + the resolve callbacks (which are stable
+  // identities from `useRichContentCallbacks`), so the only legitimate
+  // recompute triggers are: the visible span set changes (expand/collapse or
+  // a new entry), a resolve callback identity churns, or the resolve cache
+  // updates. Mirrors the `StaticBlock`/`BlockListItem` at-rest memo (keyed on
+  // source content + resolve version). The active-hunk ring / data attributes
+  // stay out of this memo and are computed per-render below.
+  const { resolveBlockTitle, resolveBlockStatus, resolveTagName, resolveTagStatus } = richCallbacks
+  const resolveVersion = useResolveStore((s) => s.version)
+  const renderedSpans = useMemo(
+    () =>
+      visibleSpans.map((span) => {
+        return (
+          renderRichContent(span.value, {
+            interactive: false,
+            // Diff spans render inside inline <del>/<ins>/<span> within a
+            // <p>; inline mode avoids invalid block-in-inline nesting (#1533).
+            inline: true,
+            resolveBlockTitle,
+            resolveBlockStatus,
+            resolveTagName,
+            resolveTagStatus,
+          }) ?? span.value
+        )
+      }),
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion is intentionally load-bearing — the resolve callbacks read a mutable cache via refs that oxlint cannot see through, so the version is the only trigger for re-resolution when the resolve store updates.
+    [
+      visibleSpans,
+      resolveBlockTitle,
+      resolveBlockStatus,
+      resolveTagName,
+      resolveTagStatus,
+      resolveVersion,
+    ],
+  )
 
   // Group consecutive non-Equal spans into hunks. `hunkStarts[i]` is the
   // index of the first span of hunk `i` in `visibleSpans`. `hunkOfSpan[j]`
@@ -153,14 +193,9 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
         <p className="diff-display text-sm leading-relaxed whitespace-pre-wrap break-words m-0">
           {visibleSpans.map((span, i) => {
             const key = `${i}-${span.tag}`
-            const content =
-              renderRichContent(span.value, {
-                interactive: false,
-                // Diff spans render inside inline <del>/<ins>/<span> within a
-                // <p>; inline mode avoids invalid block-in-inline nesting (#1533).
-                inline: true,
-                ...richCallbacks,
-              }) ?? span.value
+            // #1623 — reuse the memoized parse so the active-hunk ring update
+            // on prev/next nav doesn't re-parse every span.
+            const content = renderedSpans[i] ?? span.value
             const hunkIdx = hunkOfSpan[i]
             const isHunkStart = hunkIdx != null && hunkStarts[hunkIdx] === i
             const isActiveHunk = hunkIdx != null && hunkIdx === currentHunk && hasNav

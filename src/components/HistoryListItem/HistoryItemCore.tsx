@@ -26,6 +26,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import type * as React from 'react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
@@ -40,6 +41,7 @@ import { formatRelativeTime } from '../../lib/format-relative-time'
 import { getPayloadRawContent, getPropertyPayload } from '../../lib/history-utils'
 import { formatPropertyName } from '../../lib/property-utils'
 import type { HistoryEntry } from '../../lib/tauri'
+import { useResolveStore } from '../../stores/resolve'
 import { renderRichContent } from '../RichContentRenderer'
 
 // ---------------------------------------------------------------------------
@@ -114,6 +116,45 @@ export function HistoryItemCore({
   const richCallbacks = useRichContentCallbacks()
   const onTagClick = useTagClickHandler()
 
+  // #1623 — memoize the recursive-descent parse of the content preview so a
+  // parent re-render (selection/focus churn in the history list) doesn't
+  // re-run `renderRichContent` → `parse` on every render. The parse depends
+  // only on `rawContent` + the resolve callbacks (stable identities from
+  // `useRichContentCallbacks`/`useTagClickHandler`); `resolveVersion` drives
+  // re-resolution when the cache updates. Mirrors the at-rest
+  // `StaticBlock`/`BlockListItem` memo. Skipped entirely for property-payload
+  // rows (they render plain formatted text, not rich content).
+  const { resolveBlockTitle, resolveBlockStatus, resolveTagName, resolveTagStatus } = richCallbacks
+  const resolveVersion = useResolveStore((s) => s.version)
+  const previewContent = useMemo(
+    () =>
+      !propPayload && rawContent
+        ? renderRichContent(rawContent, {
+            interactive: true,
+            // Preview lives inside an inline, clamping <span>; inline mode
+            // keeps block nodes (headings, lists, tables…) from producing
+            // invalid block-in-span nesting that also defeats line-clamp (#1533).
+            inline: true,
+            onTagClick,
+            resolveBlockTitle,
+            resolveBlockStatus,
+            resolveTagName,
+            resolveTagStatus,
+          })
+        : null,
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion is intentionally load-bearing — the resolve callbacks read a mutable cache via refs that oxlint cannot see through, so the version is the only trigger for re-resolution when the resolve store updates.
+    [
+      rawContent,
+      propPayload,
+      onTagClick,
+      resolveBlockTitle,
+      resolveBlockStatus,
+      resolveTagName,
+      resolveTagStatus,
+      resolveVersion,
+    ],
+  )
+
   return (
     <>
       <div className="flex flex-col gap-0.5 min-w-0 flex-1">
@@ -156,17 +197,7 @@ export function HistoryItemCore({
           </span>
         )}
         {!propPayload && rawContent && (
-          <span className="history-item-preview text-sm line-clamp-2">
-            {renderRichContent(rawContent, {
-              interactive: true,
-              // Preview lives inside an inline, clamping <span>; inline mode
-              // keeps block nodes (headings, lists, tables…) from producing
-              // invalid block-in-span nesting that also defeats line-clamp (#1533).
-              inline: true,
-              onTagClick,
-              ...richCallbacks,
-            })}
-          </span>
+          <span className="history-item-preview text-sm line-clamp-2">{previewContent}</span>
         )}
       </div>
       {/* Diff toggle — only when the parent supplies an `onToggleDiff`
