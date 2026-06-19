@@ -375,12 +375,90 @@ pub async fn apply_snapshot<R: std::io::Read>(
         bind: |q, bt| { q.bind(&bt.block_id).bind(&bt.tag_id) },
     );
 
+    // #1567: defensively repair `block_properties`, `block_links`, and
+    // `page_aliases` BEFORE inserting them so a single bad row cannot abort the
+    // whole COMMIT with an opaque, offending-row-less FK / CHECK error and wedge
+    // snapshot catch-up.
+    //
+    // The RESET path binds snapshot rows verbatim into the live post-0088
+    // schema. Two classes of bad row exist in legacy / foreign snapshots:
+    //
+    //   1. A `block_properties` row whose `key` is column-backed
+    //      (`todo_state`/`priority`/`due_date`/`scheduled_date`/`space`). Those
+    //      keys live in their dedicated `blocks` column, never as a property
+    //      row, and migration 0088's `key_not_reserved` CHECK rejects them. The
+    //      CHECK is IMMEDIATE (not deferred like the FKs), so such a row aborts
+    //      at INSERT time — it must be filtered out, not inserted-then-deleted.
+    //   2. A dangling reference: `block_properties.value_ref`,
+    //      `block_links.{source_id,target_id}`, or `page_aliases.page_id`
+    //      pointing at a block id absent from this snapshot's `blocks` set.
+    //      Under `defer_foreign_keys = ON` these don't fail until COMMIT, where
+    //      SQLite reports one opaque `FOREIGN KEY constraint failed` with no
+    //      offending row — failing the entire restore over one stale edge.
+    //
+    // The set of valid block ids is exactly the snapshot's `blocks` rows (the
+    // sole parent for every FK repaired here). We pre-filter against it rather
+    // than mutating `data` so the returned `SnapshotData` still reflects the
+    // snapshot as received. `block_tags` is intentionally NOT repaired — a
+    // dangling tag edge is a harder corruption signal and the existing
+    // `apply_snapshot_rejects_fk_violation` contract pins that it still aborts.
+    use std::collections::HashSet;
+    let known_block_ids: HashSet<&str> = data.tables.blocks.iter().map(|b| b.id.as_str()).collect();
+
+    // (1) reserved-key + (2) dangling-value_ref repair for block_properties.
+    let mut dropped_reserved_key = 0usize;
+    let mut nulled_value_ref = 0usize;
+    let repaired_block_properties: Vec<_> = data
+        .tables
+        .block_properties
+        .iter()
+        .filter(|bp| {
+            // Mirror 0088's `key_not_reserved` CHECK via the canonical
+            // predicate (the four reserved keys + `space`). Drop offenders.
+            if crate::op::is_column_backed_property_key(&bp.key) {
+                dropped_reserved_key += 1;
+                return false;
+            }
+            true
+        })
+        .filter(|bp| {
+            // A `value_ref`-typed row whose target block is absent from the
+            // snapshot set is a dangling FK. A property row carries exactly one
+            // non-NULL value (the `exactly_one_value` CHECK), so NULLing the
+            // ref would leave zero values and violate that CHECK — drop the
+            // whole row instead. Only value_ref rows are affected.
+            match &bp.value_ref {
+                Some(target) if !known_block_ids.contains(target.as_str()) => {
+                    nulled_value_ref += 1;
+                    false
+                }
+                _ => true,
+            }
+        })
+        .collect();
+    if dropped_reserved_key > 0 {
+        tracing::warn!(
+            rows = dropped_reserved_key,
+            "apply_snapshot: dropped block_properties rows with column-backed \
+             reserved keys (#1567); migration 0088's key_not_reserved CHECK \
+             would otherwise abort the whole restore"
+        );
+    }
+    if nulled_value_ref > 0 {
+        tracing::warn!(
+            rows = nulled_value_ref,
+            "apply_snapshot: dropped block_properties rows whose value_ref \
+             pointed at a block absent from the snapshot (#1567); the dangling \
+             FK would otherwise abort the whole restore at COMMIT"
+        );
+    }
+
     batch_insert_snapshot_rows!(
         table: "block_properties",
         columns: [
             "block_id", "key", "value_text", "value_num", "value_date", "value_ref", "value_bool",
         ],
-        rows: data.tables.block_properties,
+        rows: repaired_block_properties,
         bind: |q, bp| {
             q.bind(&bp.block_id)
                 .bind(&bp.key)
@@ -417,10 +495,36 @@ pub async fn apply_snapshot<R: std::io::Read>(
         );
     }
 
+    // #1567: drop `block_links` edges whose source OR target block is absent
+    // from the snapshot set. Both columns carry `REFERENCES blocks(id)`
+    // (migration 0061), so a single dangling edge would fail the deferred-FK
+    // COMMIT for the whole restore.
+    let mut dropped_block_links = 0usize;
+    let repaired_block_links: Vec<_> = data
+        .tables
+        .block_links
+        .iter()
+        .filter(|bl| {
+            let ok = known_block_ids.contains(bl.source_id.as_str())
+                && known_block_ids.contains(bl.target_id.as_str());
+            if !ok {
+                dropped_block_links += 1;
+            }
+            ok
+        })
+        .collect();
+    if dropped_block_links > 0 {
+        tracing::warn!(
+            rows = dropped_block_links,
+            "apply_snapshot: dropped block_links edges referencing a block \
+             absent from the snapshot (#1567); the dangling FK would otherwise \
+             abort the whole restore at COMMIT"
+        );
+    }
     batch_insert_snapshot_rows!(
         table: "block_links",
         columns: ["source_id", "target_id"],
-        rows: data.tables.block_links,
+        rows: repaired_block_links,
         bind: |q, bl| { q.bind(&bl.source_id).bind(&bl.target_id) },
     );
 
@@ -461,12 +565,72 @@ pub async fn apply_snapshot<R: std::io::Read>(
         },
     );
 
+    // #1567: drop `page_aliases` rows whose `page_id` is absent from the
+    // snapshot set. `page_aliases.page_id REFERENCES blocks(id)` (migration
+    // 0015), so a single dangling alias would fail the deferred-FK COMMIT for
+    // the whole restore.
+    let mut dropped_page_aliases = 0usize;
+    let repaired_page_aliases: Vec<_> = data
+        .tables
+        .page_aliases
+        .iter()
+        .filter(|pa| {
+            let ok = known_block_ids.contains(pa.page_id.as_str());
+            if !ok {
+                dropped_page_aliases += 1;
+            }
+            ok
+        })
+        .collect();
+    if dropped_page_aliases > 0 {
+        tracing::warn!(
+            rows = dropped_page_aliases,
+            "apply_snapshot: dropped page_aliases rows referencing a page block \
+             absent from the snapshot (#1567); the dangling FK would otherwise \
+             abort the whole restore at COMMIT"
+        );
+    }
     batch_insert_snapshot_rows!(
         table: "page_aliases",
         columns: ["page_id", "alias"],
-        rows: data.tables.page_aliases,
+        rows: repaired_page_aliases,
         bind: |q, pa| { q.bind(&pa.page_id).bind(&pa.alias) },
     );
+
+    // #1567: final safety net. After the targeted repairs above, run
+    // `PRAGMA foreign_key_check` while still inside the tx (before COMMIT) so
+    // any residual deferred-FK violation is DIAGNOSABLE — SQLite's COMMIT-time
+    // failure is a single opaque "FOREIGN KEY constraint failed" with no
+    // offending row. `foreign_key_check` instead enumerates each violation as
+    // `(table, rowid, parent, fkid)`. We log every offender at `warn!` and let
+    // the COMMIT proceed: the targeted repairs cover the known classes
+    // (reserved-key block_properties + dangling value_ref/block_links/
+    // page_aliases), and `block_tags` is intentionally left to fail the COMMIT
+    // (its FK contract is asserted by `apply_snapshot_rejects_fk_violation`).
+    // The log lines turn a future opaque COMMIT abort into a specific
+    // "table X rowid Y -> parent Z" trail for support.
+    // dynamic-sql: PRAGMA foreign_key_check has no macro form (#646).
+    let fk_violations = sqlx::query("PRAGMA foreign_key_check")
+        .fetch_all(&mut *tx)
+        .await?;
+    if !fk_violations.is_empty() {
+        use sqlx::Row;
+        for row in &fk_violations {
+            // Columns: "table" (TEXT), "rowid" (INTEGER, NULL for WITHOUT
+            // ROWID tables), "parent" (TEXT), "fkid" (INTEGER).
+            let table: String = row.try_get("table").unwrap_or_default();
+            let rowid: Option<i64> = row.try_get("rowid").ok();
+            let parent: String = row.try_get("parent").unwrap_or_default();
+            tracing::warn!(
+                table = %table,
+                rowid = ?rowid,
+                parent = %parent,
+                "apply_snapshot: residual foreign-key violation survives the \
+                 defensive repairs (#1567); the COMMIT below will abort with an \
+                 opaque FK error — this row identifies the offender"
+            );
+        }
+    }
 
     tx.commit().await?;
 

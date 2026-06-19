@@ -272,7 +272,18 @@ const SIBLING_ORDER_VERSION: i64 = 1;
 /// [`LoroEngine::reject_legacy_v1_snapshot`] instead of migrating it. A future
 /// protocol-version handshake (PEND-81) may gate raw-byte merges across
 /// formats; the maintainer does not sync today.
+///
+/// #1584: this version is now *stamped* into [`ENGINE_META_ROOT`] under
+/// [`FIELD_FORMAT_VERSION`] on export and *checked* on import, so a
+/// well-formed-but-newer-than-supported Loro blob is rejected up front rather
+/// than trusted and left to fail downstream on the projection path. See
+/// [`LoroEngine::stamp_format_version`] / [`LoroEngine::reject_unknown_format_version`].
 pub const ENGINE_FORMAT_VERSION: u32 = 2;
+/// Key under [`ENGINE_META_ROOT`] recording the engine format version a doc was
+/// written under (#1584). Stored as a Loro `I64`. Absent ⇒ a pre-#1584 export
+/// (legacy-unstamped); such docs are *accepted* — see
+/// [`LoroEngine::reject_unknown_format_version`] for the backward-compat reasoning.
+const FIELD_FORMAT_VERSION: &str = "format_version";
 
 /// Read-back projection of a block's state from the Loro doc.
 ///

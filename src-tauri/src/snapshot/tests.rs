@@ -5281,3 +5281,176 @@ async fn failed_apply_snapshot_keeps_log_snapshots_793() {
 
     mat.shutdown();
 }
+
+// =======================================================================
+// #1567: defensive RESET repair of block_properties + dangling refs
+// =======================================================================
+
+/// #1567(a): a snapshot carrying a `block_properties` row with a
+/// column-backed reserved key (`space` / `todo_state` / …) must restore
+/// successfully with that offending row DROPPED — not abort the whole
+/// COMMIT on migration 0088's `key_not_reserved` CHECK (which is immediate,
+/// so the bad row would otherwise fail at INSERT time and wedge catch-up).
+#[tokio::test]
+async fn apply_snapshot_drops_reserved_key_property_1567() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let mut data = sample_snapshot_data();
+    // Append a reserved-key property row alongside the clean `due` row.
+    // `space` is in COLUMN_BACKED_PROPERTY_KEYS → forbidden by the CHECK.
+    data.tables.block_properties.push(BlockPropertySnapshot {
+        block_id: BlockId::test_id("BLOCK-1"),
+        key: "space".to_string(),
+        value_text: Some("some-space-id".to_string()),
+        value_num: None,
+        value_date: None,
+        value_ref: None,
+        value_bool: None,
+    });
+    let encoded = encode_snapshot(&data).unwrap();
+
+    // Must succeed (pre-fix: aborts on the key_not_reserved CHECK).
+    apply_snapshot(&pool, &mat, &encoded[..])
+        .await
+        .expect("reserved-key property must be dropped, not abort the restore");
+
+    // The clean `due` row survives; the reserved-key row is gone.
+    let total: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_properties")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(total, 1, "only the non-reserved `due` property must remain");
+
+    let reserved: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM block_properties WHERE key = 'space'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        reserved, 0,
+        "the column-backed `space` property must be dropped"
+    );
+
+    mat.shutdown();
+}
+
+/// #1567(b): a snapshot whose `block_properties.value_ref` points at a block
+/// absent from the snapshot's `blocks` set must restore with that dangling
+/// row DROPPED — not abort the whole deferred-FK COMMIT with an opaque
+/// `FOREIGN KEY constraint failed` (no offending row). Also exercises
+/// `block_links` and `page_aliases` dangling-ref repair in the same restore.
+#[tokio::test]
+async fn apply_snapshot_drops_dangling_refs_1567() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let mut data = sample_snapshot_data();
+    // Dangling value_ref: target block id is NOT in the snapshot's blocks.
+    data.tables.block_properties.push(BlockPropertySnapshot {
+        block_id: BlockId::test_id("BLOCK-1"),
+        key: "related".to_string(),
+        value_text: None,
+        value_num: None,
+        value_date: None,
+        value_ref: Some(BlockId::test_id("GHOST-BLOCK").to_string()),
+        value_bool: None,
+    });
+    // Dangling block_links edge: target absent from the snapshot.
+    data.tables.block_links.push(BlockLinkSnapshot {
+        source_id: BlockId::test_id("BLOCK-1"),
+        target_id: BlockId::test_id("GHOST-BLOCK"),
+    });
+    // Dangling page_aliases row: page_id absent from the snapshot.
+    data.tables
+        .page_aliases
+        .push(crate::snapshot::types::PageAliasSnapshot {
+            page_id: BlockId::test_id("GHOST-BLOCK").to_string(),
+            alias: "ghost-alias".to_string(),
+        });
+    let encoded = encode_snapshot(&data).unwrap();
+
+    // Must succeed (pre-fix: the dangling FKs abort the COMMIT).
+    apply_snapshot(&pool, &mat, &encoded[..])
+        .await
+        .expect("dangling refs must be repaired, not abort the restore");
+
+    // The dangling value_ref row is gone; the clean `due` row survives.
+    let prop_refs: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM block_properties WHERE key = 'related'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        prop_refs, 0,
+        "the dangling value_ref property must be dropped"
+    );
+
+    // Only the clean BLOCK-1 -> BLOCK-2 edge remains; the ghost edge is gone.
+    let links: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_links")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        links, 1,
+        "only the in-set BLOCK-1 -> BLOCK-2 edge must remain"
+    );
+
+    let ghost_alias: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM page_aliases WHERE alias = 'ghost-alias'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(ghost_alias, 0, "the dangling page alias must be dropped");
+
+    mat.shutdown();
+}
+
+/// #1567(c): a CLEAN snapshot (no reserved keys, no dangling refs) must
+/// restore byte-identically — the defensive repairs only fire on actually
+/// bad rows. Reuses the canonical self-consistent fixture and asserts every
+/// satellite row lands intact.
+#[tokio::test]
+async fn apply_snapshot_clean_unchanged_by_repairs_1567() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let data = sample_snapshot_data();
+    let encoded = encode_snapshot(&data).unwrap();
+
+    apply_snapshot(&pool, &mat, &encoded[..])
+        .await
+        .expect("clean snapshot must restore unchanged");
+
+    let blocks: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(blocks, 3, "all three fixture blocks must restore");
+
+    let props: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_properties")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        props, 1,
+        "the single clean `due` property must restore unchanged"
+    );
+
+    let links: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_links")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        links, 1,
+        "the clean block_links edge must restore unchanged"
+    );
+
+    let tags: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_tags")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(tags, 1, "the clean block_tags edge must restore unchanged");
+
+    mat.shutdown();
+}

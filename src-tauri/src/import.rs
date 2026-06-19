@@ -163,6 +163,14 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     // ancestor block, mirroring the depth-clamp `clamped_count` pattern so the
     // lossy case is surfaced in `warnings` rather than silently swallowed.
     let mut orphan_property_count: usize = 0;
+    // #1568: count body-property lines whose key is a reserved/exporter-managed
+    // key (`FRONTMATTER_RESERVED_KEYS`, e.g. `space`). Such keys are
+    // column-backed / lifecycle-managed and would make `set_property_in_tx`
+    // return a Validation error, aborting the whole import chunk. We filter them
+    // here — exactly as the frontmatter path does (`parse_frontmatter`) — so a
+    // hand-crafted/untrusted body bullet like `space:: X` is skipped instead of
+    // failing an otherwise-valid import.
+    let mut reserved_property_count: usize = 0;
 
     // Normalize line endings BEFORE any other parsing. The frontmatter strip
     // below uses `find("\n---")`, which is fragile against CRLF (works only
@@ -238,6 +246,23 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
             // the content-block branch when the LHS is not a valid key.
             let key = key_candidate.trim().to_string();
             let value = value.trim().to_string();
+            // #1568: skip reserved/exporter-managed keys before attaching them
+            // to an owning block. These mirror the frontmatter filter
+            // (`FRONTMATTER_RESERVED_KEYS`): `space` is column-backed and
+            // requires a `value_ref`, so a body bullet `space:: X` (text value,
+            // no ref) makes `set_property_in_tx` return a Validation error that
+            // `?`-aborts the entire import chunk. Filtering here matches the
+            // frontmatter round-trip semantics: a reserved body property is
+            // dropped, never written, and the surrounding good content imports.
+            if FRONTMATTER_RESERVED_KEYS.contains(&key.as_str()) {
+                tracing::debug!(
+                    key = %key,
+                    "skipping reserved/column-backed body property during import (#1568)"
+                );
+                reserved_property_count += 1;
+                i += 1;
+                continue;
+            }
             // #682: attach to the block that *indentation* says owns this
             // property, not just the most-recently-pushed block. Logseq emits
             // a property line indented one level under (or level with) its
@@ -303,6 +328,12 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         warnings.push(format!(
             "{orphan_property_count} property line(s) had no owning block at or above their \
              indentation and were dropped"
+        ));
+    }
+    if reserved_property_count > 0 {
+        warnings.push(format!(
+            "{reserved_property_count} reserved/exporter-managed property line(s) (e.g. `space`) \
+             were skipped during import"
         ));
     }
 
@@ -674,6 +705,75 @@ mod tests {
         assert_eq!(
             output.blocks[0].properties[0],
             ("priority".into(), "high".into())
+        );
+    }
+
+    #[test]
+    fn parse_skips_reserved_body_property_space_1568() {
+        // #1568: a body bullet carrying a reserved/column-backed key
+        // (`space::`) must be SKIPPED — never emitted as a block property —
+        // mirroring the frontmatter filter. Emitting it would make
+        // `set_property_in_tx` return a Validation error (`space` requires a
+        // value_ref) that `?`-aborts the entire import chunk. The surrounding
+        // good content and a non-reserved body property (`mykey::`) must still
+        // import correctly.
+        let md = "\
+- A real note
+  space:: MySpace
+  mykey:: bar
+- Another block";
+        let output = parse_logseq_markdown(md);
+
+        // Both content blocks survive.
+        assert_eq!(output.blocks.len(), 2, "good content must be preserved");
+        assert_eq!(output.blocks[0].content, "A real note");
+        assert_eq!(output.blocks[1].content, "Another block");
+
+        // The reserved `space` key is filtered out; only `mykey` remains.
+        assert_eq!(
+            output.blocks[0].properties,
+            vec![("mykey".to_string(), "bar".to_string())],
+            "reserved `space` must be skipped, non-reserved `mykey` kept"
+        );
+        assert!(
+            !output.blocks[0]
+                .properties
+                .iter()
+                .any(|(k, _)| k == "space"),
+            "reserved `space` property must NOT be written"
+        );
+
+        // The skip is surfaced as a warning (mirrors orphan/clamp counters).
+        assert!(
+            output
+                .warnings
+                .iter()
+                .any(|w| w.contains("reserved") && w.contains("skipped")),
+            "skipped reserved property should be surfaced via warnings: {:?}",
+            output.warnings
+        );
+    }
+
+    #[test]
+    fn parse_skips_multiple_reserved_body_properties_1568() {
+        // A second reserved/exporter-managed key (`template`, a lifecycle
+        // marker in `FRONTMATTER_RESERVED_KEYS`) is likewise skipped, while the
+        // importable reserved date/state keys (`priority`) are preserved —
+        // matching frontmatter semantics exactly.
+        let md = "\
+- Task
+  space:: Work
+  template:: t1
+  priority:: high";
+        let output = parse_logseq_markdown(md);
+
+        assert_eq!(output.blocks.len(), 1);
+        // `priority` is column-routable on import (typed args) and stays;
+        // `space` and `template` are filtered.
+        assert_eq!(
+            output.blocks[0].properties,
+            vec![("priority".to_string(), "high".to_string())],
+            "only the importable reserved key survives; space/template filtered"
         );
     }
 
