@@ -178,10 +178,10 @@ describe('coerceBySpace', () => {
   })
 })
 
-// FE-14 — `migrate` hydration seam. The persist `migrate` callback runs
-// before merge on every load; it must coerce `bySpace` *and* fall back to
-// `historyEnabled: true` for corrupt / missing persisted toggle values
-// (and preserve a legitimate `false`).
+// FE-14 — `migrate` hydration seam. zustand only invokes `migrate` on a
+// version MISMATCH (not on every load); when it does run it must coerce
+// `bySpace` *and* fall back to `historyEnabled: true` for corrupt / missing
+// persisted toggle values (and preserve a legitimate `false`).
 describe('persist migrate — historyEnabled fallback', () => {
   // `migrate` is wired into the persist middleware (not exported), so we
   // reach it through the same public seam zustand uses on rehydrate.
@@ -208,5 +208,109 @@ describe('persist migrate — historyEnabled fallback', () => {
       historyEnabled: boolean
     }
     expect(result.historyEnabled).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// CR-PERSIST (#1609) — coercing `merge`. zustand's persist middleware only
+// invokes `migrate` when the stored version DIFFERS from `options.version`.
+// A corrupt blob that still carries the CURRENT `version: 1` (or a
+// non-numeric version) bypasses `migrate` entirely and is handed RAW to the
+// default shallow `merge`, letting a malformed `bySpace` / non-boolean
+// `historyEnabled` poison the store. The coercion therefore also lives in a
+// custom `merge` — this block pins that seam (mirrors journal.test.ts).
+// ---------------------------------------------------------------------------
+describe('persist merge (#1609 — same-version blobs bypass migrate)', () => {
+  const options = useSearchHistoryStore.persist.getOptions()
+  const defaults = {
+    bySpace: {},
+    historyEnabled: true,
+  } as unknown as Parameters<NonNullable<typeof options.merge>>[1]
+
+  type MergedSearchHistory = {
+    bySpace: Record<string, string[]>
+    historyEnabled: boolean
+  }
+  function mergeRun(blob: unknown): MergedSearchHistory {
+    return options.merge?.(blob, defaults) as unknown as MergedSearchHistory
+  }
+
+  it('is wired into the persist options', () => {
+    expect(typeof options.merge).toBe('function')
+  })
+
+  // The headline #1609 case: a same-version (v1) blob carrying a malformed
+  // bySpace. Previously this flowed raw through the default shallow merge.
+  it('coerces a malformed bySpace instead of passing it through', () => {
+    const result = mergeRun({
+      bySpace: {
+        OK: ['keep', 1, '', ' ', 'keep', 'second'],
+        BAD: 'not-an-array',
+        EMPTY: [42, null],
+      },
+      historyEnabled: true,
+    })
+    expect(result.bySpace).toEqual({ OK: ['keep', 'second'] })
+  })
+
+  it('coerces a non-object bySpace to {}', () => {
+    const result = mergeRun({ bySpace: ['a', 'b'], historyEnabled: true })
+    expect(result.bySpace).toEqual({})
+  })
+
+  it('coerces a non-boolean historyEnabled to true', () => {
+    const result = mergeRun({ bySpace: {}, historyEnabled: 'yes' })
+    expect(result.historyEnabled).toBe(true)
+  })
+
+  it('falls back to true when historyEnabled is missing from the blob', () => {
+    const result = mergeRun({ bySpace: {} })
+    expect(result.historyEnabled).toBe(true)
+  })
+
+  it('preserves a legitimately-persisted historyEnabled: false', () => {
+    const result = mergeRun({ bySpace: {}, historyEnabled: false })
+    expect(result.historyEnabled).toBe(false)
+  })
+
+  it('passes a well-formed blob through unchanged', () => {
+    const result = mergeRun({ bySpace: { SPACE_A: ['alpha', 'beta'] }, historyEnabled: false })
+    expect(result.bySpace).toEqual({ SPACE_A: ['alpha', 'beta'] })
+    expect(result.historyEnabled).toBe(false)
+  })
+
+  it('does not throw on a wholly non-object blob', () => {
+    expect(() => mergeRun('corrupt')).not.toThrow()
+    expect(mergeRun('corrupt')).toMatchObject({ bySpace: {}, historyEnabled: true })
+  })
+
+  it('falls back to empty slices when storage is empty (undefined persisted)', () => {
+    const result = mergeRun(undefined)
+    expect(result.bySpace).toEqual({})
+    expect(result.historyEnabled).toBe(true)
+  })
+
+  // The corrupt-blob path actually demonstrated end-to-end: seed
+  // localStorage with a same-version blob and rehydrate the live store.
+  it('end-to-end: rehydrating a same-version corrupt blob repairs the store', () => {
+    const STORAGE_KEY = 'agaric:search-history'
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          bySpace: { OK: ['keep', 1, 'keep'], BAD: 'not-an-array' },
+          historyEnabled: 'yes',
+        },
+        version: 1,
+      }),
+    )
+
+    expect(() => useSearchHistoryStore.persist.rehydrate()).not.toThrow()
+
+    const state = useSearchHistoryStore.getState()
+    expect(state.bySpace).toEqual({ OK: ['keep'] })
+    expect(state.historyEnabled).toBe(true)
+
+    localStorage.removeItem(STORAGE_KEY)
   })
 })

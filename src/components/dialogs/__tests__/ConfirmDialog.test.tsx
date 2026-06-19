@@ -14,7 +14,7 @@
  *    hold (see `describe('mobile path …')` block).
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -865,6 +865,159 @@ describe('ConfirmDialog', () => {
 
       // pairing.confirmCloseKeep resolves to "Keep pairing"
       expect(screen.getByRole('button', { name: 'Keep pairing' })).toBeInTheDocument()
+    })
+  })
+
+  // ─── #1612: empty accessible name fallback ───────────────────────────────────
+  //
+  // Both `title` and `titleKey` are optional. A caller omitting both must still
+  // get a dialog with a non-empty accessible name (axe aria-dialog-name).
+
+  describe('accessible name fallback (#1612)', () => {
+    it('renders a non-empty accessible name when neither title nor titleKey is given', () => {
+      render(
+        <ConfirmDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          onConfirm={vi.fn()}
+          description="Something will happen."
+        />,
+      )
+
+      const dialog = screen.getByRole('alertdialog')
+      // The dialog's accessible name comes from its (required) Title node; the
+      // fallback resolves dialog.confirm → "Confirm".
+      expect(dialog).toHaveAccessibleName('Confirm')
+      expect(dialog).toHaveAccessibleName(/\S/)
+    })
+
+    it('passes axe with no title/titleKey (no aria-dialog-name violation)', async () => {
+      const { container } = render(
+        <ConfirmDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          onConfirm={vi.fn()}
+          description="Something will happen."
+        />,
+      )
+
+      await waitFor(
+        async () => {
+          const results = await axe(container)
+          expect(results).toHaveNoViolations()
+        },
+        { timeout: 5000 },
+      )
+    })
+
+    it('still honors an explicit title over the fallback', () => {
+      render(
+        <ConfirmDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          onConfirm={vi.fn()}
+          title="Real title"
+          description="Desc"
+        />,
+      )
+
+      expect(screen.getByRole('alertdialog')).toHaveAccessibleName('Real title')
+    })
+
+    it('falls back when an explicit title is whitespace-only (trimmed empty)', () => {
+      render(
+        <ConfirmDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          onConfirm={vi.fn()}
+          title="   "
+          description="Desc"
+        />,
+      )
+
+      // A whitespace-only title is not a usable accessible name; the trim()
+      // check must treat it as empty and fall back to dialog.confirm.
+      expect(screen.getByRole('alertdialog')).toHaveAccessibleName('Confirm')
+    })
+
+    it('warns in dev when no usable title is provided (gated on import.meta.env.DEV)', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      render(
+        <ConfirmDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          onConfirm={vi.fn()}
+          description="Something will happen."
+        />,
+      )
+
+      // Vitest runs with import.meta.env.DEV === true, so the dev-only guard
+      // fires exactly one warning pointing at the empty accessible name.
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(warn.mock.calls[0]?.[0]).toMatch(/aria-dialog-name/)
+
+      warn.mockRestore()
+    })
+
+    it('does not warn when a usable title is provided', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      render(
+        <ConfirmDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          onConfirm={vi.fn()}
+          title="Real title"
+          description="Desc"
+        />,
+      )
+
+      expect(warn).not.toHaveBeenCalled()
+
+      warn.mockRestore()
+    })
+  })
+
+  // ─── #1611: desktop Cancel respects the isPending guard ──────────────────────
+  //
+  // The desktop AlertDialogCancel previously bound the raw `onCancel` and relied
+  // solely on `disabled={isPending}`. It now binds `handleCancel`, which
+  // early-returns while pending — so even a click that bypasses `disabled`
+  // (fireEvent on a disabled button) must NOT invoke onCancel or close.
+
+  describe('Cancel honors isPending guard (#1611)', () => {
+    it('desktop Cancel does not invoke onCancel while pending (loading)', () => {
+      const onCancel = vi.fn()
+      const onOpenChange = vi.fn()
+
+      render(
+        <ConfirmDialog {...defaultProps} loading onCancel={onCancel} onOpenChange={onOpenChange} />,
+      )
+
+      const cancelBtn = screen.getByRole('button', { name: /Cancel/ })
+      expect(cancelBtn).toBeDisabled()
+
+      // fireEvent dispatches a raw click that bypasses the `disabled` gate, so
+      // this asserts the handler-level guard (handleCancel early-returns), not
+      // just the disabled attribute.
+      fireEvent.click(cancelBtn)
+
+      expect(onCancel).not.toHaveBeenCalled()
+      expect(onOpenChange).not.toHaveBeenCalled()
+    })
+
+    it('desktop Cancel invokes onCancel and closes when not pending', async () => {
+      const user = userEvent.setup()
+      const onCancel = vi.fn()
+      const onOpenChange = vi.fn()
+
+      render(<ConfirmDialog {...defaultProps} onCancel={onCancel} onOpenChange={onOpenChange} />)
+
+      await user.click(screen.getByRole('button', { name: /Cancel/ }))
+
+      expect(onCancel).toHaveBeenCalledTimes(1)
+      expect(onOpenChange).toHaveBeenCalledWith(false)
     })
   })
 })

@@ -166,7 +166,10 @@ function parseDateTitleToLocalDate(title: string): Date | null {
  */
 function readActiveSlice(state: TabsState): { tabs: Tab[]; activeTabIndex: number } {
   const tabs = state.tabs ?? emptyTabList()
-  const activeTabIndex = state.activeTabIndex ?? 0
+  // #1608 — clamp on read so a persisted index past the end of `tabs` (e.g.
+  // from a corrupt blob, or after tabs shrank) self-heals instead of leaving
+  // `navigateToPage`'s `tabs[activeTabIndex]` resolving to undefined forever.
+  const activeTabIndex = clampIndex(state.activeTabIndex ?? 0, tabs.length)
   return { tabs, activeTabIndex }
 }
 
@@ -260,6 +263,20 @@ function coerceIndex(raw: unknown): number {
   return typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 ? raw : 0
 }
 
+/**
+ * CR-PERSIST (#1608) — clamp a tab index into the valid `[0, length - 1]` range.
+ * A corrupt blob can persist an `activeTabIndex` that is `>= 0` (so `coerceIndex`
+ * accepts it) yet points past the end of `tabs`. `navigateToPage` reads
+ * `tabs[activeTabIndex]` and bails on `undefined`, turning every page click into a
+ * silent no-op. Clamping at the persist boundary (and on read) lets a stale index
+ * self-heal. Empty slices clamp to 0 (never the `-1` that `length - 1` would give).
+ */
+function clampIndex(idx: number, length: number): number {
+  if (length <= 0) return 0
+  if (idx < 0) return 0
+  return Math.min(idx, length - 1)
+}
+
 /** CR-PERSIST — coerce a persisted value into a `Record<string, number>`. */
 function coerceIndexBySpace(raw: unknown): Record<string, number> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
@@ -287,11 +304,23 @@ function coercePersistedTabs(
     string,
     unknown
   >
+  const tabs = coerceTabList(blob['tabs'])
+  const tabsBySpace = coerceTabsBySpace(blob['tabsBySpace'])
+  // #1608 — clamp each per-space index against its own slice; spaces with no
+  // dedicated slice fall back to the flat `tabs` list (mirrors selectTabsForSpace).
+  const rawIndexBySpace = coerceIndexBySpace(blob['activeTabIndexBySpace'])
+  const activeTabIndexBySpace: Record<string, number> = {}
+  for (const [space, idx] of Object.entries(rawIndexBySpace)) {
+    const slice = tabsBySpace[space] ?? tabs
+    activeTabIndexBySpace[space] = clampIndex(idx, slice.length)
+  }
   return {
-    tabs: coerceTabList(blob['tabs']),
-    activeTabIndex: coerceIndex(blob['activeTabIndex']),
-    tabsBySpace: coerceTabsBySpace(blob['tabsBySpace']),
-    activeTabIndexBySpace: coerceIndexBySpace(blob['activeTabIndexBySpace']),
+    tabs,
+    // #1608 — clamp the flat index past-end into range so navigateToPage's
+    // `tabs[activeTabIndex]` read can't silently resolve to undefined.
+    activeTabIndex: clampIndex(coerceIndex(blob['activeTabIndex']), tabs.length),
+    tabsBySpace,
+    activeTabIndexBySpace,
   }
 }
 
