@@ -28,6 +28,7 @@ import { LocalGraphControl } from '@/components/graph/LocalGraphControl'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { IconButton } from '@/components/ui/icon-button'
+import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useGraphSimulation } from '@/hooks/useGraphSimulation'
 import { applyGraphFilters, type GraphFilter } from '@/lib/graph-filters'
 import {
@@ -126,9 +127,14 @@ const EMPTY_TAG_IDS: string[] = []
 
 export function GraphView(): React.ReactElement {
   const { t } = useTranslation()
+  const { invalidationKey } = useBlockPropertyEvents()
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const svgRef = useRef<SVGSVGElement>(null)
+  // #1530: remember the last `invalidationKey` applied to a fetch so a block/
+  // link mutation can force a stale-while-revalidate refetch (bypass the
+  // fresh-cache early-exit) without changing the cache key, TTL, or eviction.
+  const lastInvalidationRef = useRef(invalidationKey)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [nodes, setNodes] = useState<GraphNode[]>([])
@@ -183,14 +189,22 @@ export function GraphView(): React.ReactElement {
 
     const graphCache = getGraphCacheEntry(tagCacheKey)
 
+    // #1530: a block/link mutation (e.g. creating a page or a [[link]]) bumps
+    // `invalidationKey`. When it changed since the last fetch, force a
+    // refetch — but keep serving the cached nodes/edges immediately
+    // (stale-while-revalidate). Record the new value so subsequent renders
+    // for the same mutation don't keep bypassing the freshness guard.
+    const mutated = invalidationKey !== lastInvalidationRef.current
+    lastInvalidationRef.current = invalidationKey
+
     // Serve cached data immediately if available
     if (graphCache) {
       setNodes(graphCache.nodes)
       setEdges(graphCache.edges)
       setLoading(false)
 
-      // If cache is still fresh, skip refetch
-      if (Date.now() - graphCache.timestamp < GRAPH_CACHE_TTL_MS) return
+      // If cache is still fresh AND no mutation fired, skip refetch.
+      if (!mutated && Date.now() - graphCache.timestamp < GRAPH_CACHE_TTL_MS) return
     }
 
     async function run() {
@@ -219,7 +233,10 @@ export function GraphView(): React.ReactElement {
     return () => {
       cancelled = true
     }
-  }, [t, tagCacheKey, tagFilterIds, currentSpaceId])
+    // #1530: `invalidationKey` is a real dependency — the `mutated` check above
+    // reads it to bypass the fresh-cache early-exit so block/link mutations
+    // refetch the graph (stale-while-revalidate).
+  }, [t, tagCacheKey, tagFilterIds, currentSpaceId, invalidationKey])
 
   // Client-side filtering (status, priority, has-date, has-backlinks, exclude-templates).
   // Tag filter is pass-through here because tag_ids is not populated on nodes
