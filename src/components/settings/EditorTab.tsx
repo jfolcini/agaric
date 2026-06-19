@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
+import { ToggleRow } from '@/components/ui/toggle-row'
 import { useExternalImageAllowlist, useExternalImagePolicy } from '@/hooks/useExternalImagePolicy'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { EMOJI_PICKER_ENABLED_KEY, TAB_INDENTS_BLOCKS_KEY } from '@/lib/editor-preferences'
@@ -57,41 +57,25 @@ export function EditorTab(): React.ReactElement {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1">
-          <Label htmlFor="emoji-picker-toggle" muted={false}>
-            {t('settings.editor.emojiPickerLabel')}
-          </Label>
-          <p className="text-xs text-muted-foreground mt-1">
-            {t('settings.editor.emojiPickerHelp')}
-          </p>
-        </div>
-        <Switch
-          id="emoji-picker-toggle"
-          checked={emojiEnabled}
-          onCheckedChange={setEmojiEnabled}
-          aria-label={t('settings.editor.emojiPickerLabel')}
-          data-testid="emoji-picker-toggle"
-        />
-      </div>
+      <ToggleRow
+        id="emoji-picker-toggle"
+        label={t('settings.editor.emojiPickerLabel')}
+        description={t('settings.editor.emojiPickerHelp')}
+        checked={emojiEnabled}
+        onCheckedChange={setEmojiEnabled}
+        data-testid="emoji-picker-toggle"
+      />
 
       {/* #912 — accessibility opt-out: turn off Tab-indent to restore Tab as
           the focus-navigation key. Block indent stays on Ctrl/Cmd+Shift+Arrow. */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1">
-          <Label htmlFor="tab-indent-toggle" muted={false}>
-            {t('settings.editor.tabIndentLabel')}
-          </Label>
-          <p className="text-xs text-muted-foreground mt-1">{t('settings.editor.tabIndentHelp')}</p>
-        </div>
-        <Switch
-          id="tab-indent-toggle"
-          checked={tabIndents}
-          onCheckedChange={setTabIndents}
-          aria-label={t('settings.editor.tabIndentLabel')}
-          data-testid="tab-indent-toggle"
-        />
-      </div>
+      <ToggleRow
+        id="tab-indent-toggle"
+        label={t('settings.editor.tabIndentLabel')}
+        description={t('settings.editor.tabIndentHelp')}
+        checked={tabIndents}
+        onCheckedChange={setTabIndents}
+        data-testid="tab-indent-toggle"
+      />
 
       {/* #1492 — external-image load policy (Always / Ask each time / Never).
           Privacy-first default is "click" (ask each time): external http(s)

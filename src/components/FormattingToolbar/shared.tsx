@@ -27,7 +27,16 @@ export type RenderMode = 'inline' | 'overflow' | 'sentinel'
  * via `tooltipWithShortcut`, picking up any user customisation. Buttons
  * absent from this map keep their existing `tip` i18n string.
  */
-export const TOOLBAR_SHORTCUT_IDS: Record<string, string> = {}
+export const TOOLBAR_SHORTCUT_IDS: Record<string, string> = {
+  // Mirror SelectionBubbleMenu's BUBBLE_MENU_SHORTCUT_IDS exactly: the same
+  // mark actions resolve their chord from the rebindable catalog, so the tip
+  // tracks user customisation instead of a frozen i18n string. Bold/Italic are
+  // intentionally absent — they use TipTap StarterKit defaults and are not in
+  // the configurable catalog (matching the bubble menu).
+  'toolbar.code': 'inlineCode',
+  'toolbar.strikethrough': 'strikethrough',
+  'toolbar.highlight': 'highlight',
+}
 
 /**
  * Append the current keyboard binding for `shortcutId` to `label` so the

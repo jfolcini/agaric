@@ -70,10 +70,7 @@ const SettingsView = lazy(() => import('./SettingsView').then((m) => ({ default:
 const StatusPanel = lazy(() =>
   import('@/components/agenda/StatusPanel').then((m) => ({ default: m.StatusPanel })),
 )
-const TagFilterPanel = lazy(() =>
-  import('@/components/filters/TagFilterPanel').then((m) => ({ default: m.TagFilterPanel })),
-)
-const TagList = lazy(() => import('@/components/TagList').then((m) => ({ default: m.TagList })))
+const TagsView = lazy(() => import('@/components/TagsView').then((m) => ({ default: m.TagsView })))
 const TemplatesView = lazy(() =>
   import('@/components/templates/TemplatesView').then((m) => ({ default: m.TemplatesView })),
 )
@@ -182,17 +179,7 @@ export function ViewDispatcher({
       return (
         <FeatureErrorBoundary name="Tags" nameKey="sidebar.tags">
           <Suspense fallback={<ViewFallback />}>
-            <div className="space-y-8">
-              <TagList onTagClick={(tagId, tagName) => navigateToPage(tagId, tagName)} />
-              <div className="flex items-center gap-4">
-                <div className="flex-1 border-t border-border" />
-                <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Filter
-                </span>
-                <div className="flex-1 border-t border-border" />
-              </div>
-              <TagFilterPanel />
-            </div>
+            <TagsView onTagClick={(tagId, tagName) => navigateToPage(tagId, tagName)} />
           </Suspense>
         </FeatureErrorBoundary>
       )
