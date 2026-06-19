@@ -956,4 +956,63 @@ describe('cache eviction', () => {
       expect(state.cache.has(keyFor(TEST_SPACE_ID, `batch-${i}`))).toBe(true)
     }
   })
+
+  // #1640 — eviction is LRU, not insertion-order FIFO. A frequently-read
+  // entry must survive eviction even if it was inserted early; the truly
+  // least-recently-used entry is the one that gets dropped.
+  it('resolveTitle marks an entry as recently used so it survives eviction (#1640)', () => {
+    // Fill the cache exactly to capacity. id-0 is the oldest by insertion.
+    const cache = new Map<string, { title: string; deleted: boolean }>()
+    for (let i = 0; i < 10_000; i++) {
+      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), { title: `T${i}`, deleted: false })
+    }
+    useResolveStore.setState({ cache })
+
+    // Read the oldest-inserted entry — under LRU this moves it to the tail
+    // (most-recently-used), so it must NOT be the next one evicted.
+    expect(useResolveStore.getState().resolveTitle('id-0')).toBe('T0')
+
+    // Add a new entry, pushing the cache 1 over capacity.
+    useResolveStore.getState().set('new-id', 'Title', false)
+
+    const state = useResolveStore.getState()
+    expect(state.cache.size).toBe(10_000)
+    // The hot (recently-read) early entry survives...
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'id-0'))).toBe(true)
+    // ...while the genuine least-recently-used entry (id-1, the new front)
+    // is the one evicted.
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'id-1'))).toBe(false)
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'new-id'))).toBe(true)
+  })
+
+  // A pure read that refreshes LRU recency must not trigger a re-render:
+  // the Map reference and `version` are unchanged on a cache-hit read.
+  it('resolveTitle does not clone the Map or bump version on a hit (#1640)', () => {
+    useResolveStore.getState().set('ID_HOT', 'Hot Page', false)
+    const versionBefore = useResolveStore.getState().version
+    const cacheBefore = useResolveStore.getState().cache
+
+    expect(useResolveStore.getState().resolveTitle('ID_HOT')).toBe('Hot Page')
+
+    const state = useResolveStore.getState()
+    expect(state.version).toBe(versionBefore)
+    expect(state.cache).toBe(cacheBefore)
+  })
+
+  // resolveStatus is the second read path; it must also refresh recency.
+  it('resolveStatus marks an entry as recently used so it survives eviction (#1640)', () => {
+    const cache = new Map<string, { title: string; deleted: boolean }>()
+    for (let i = 0; i < 10_000; i++) {
+      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), { title: `T${i}`, deleted: false })
+    }
+    useResolveStore.setState({ cache })
+
+    expect(useResolveStore.getState().resolveStatus('id-0')).toBe('active')
+
+    useResolveStore.getState().set('new-id', 'Title', false)
+
+    const state = useResolveStore.getState()
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'id-0'))).toBe(true)
+    expect(state.cache.has(keyFor(TEST_SPACE_ID, 'id-1'))).toBe(false)
+  })
 })

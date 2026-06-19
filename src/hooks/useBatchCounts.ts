@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { notify } from '@/lib/notify'
@@ -17,10 +17,24 @@ export function useBatchCounts(entries: DayEntry[]) {
   >({})
   const [backlinkCounts, setBacklinkCounts] = useState<Record<string, number>>({})
 
-  useEffect(() => {
-    const dates = entries.map((e) => e.dateStr)
-    const pageIds = entries.filter((e) => e.pageId).map((e) => e.pageId as string)
+  // PERF #1632 — the `entries` array reference churns whenever the parent's
+  // `makeDayEntry` callback gets a new identity (e.g. on journal page
+  // creation, which recreates the `createdPages` Map). Keying the fetch effect
+  // directly on `entries` would then re-fire the batch-count IPC on unrelated
+  // renders even though the actual inputs are unchanged. Derive the REAL
+  // inputs (the date range + the set of page ids) and key the effect on their
+  // serialized values so the IPC fires only when a date or a pageId actually
+  // changes — which still correctly includes the case where page creation
+  // surfaces a NEW pageId for backlink counting.
+  const dates = useMemo(() => entries.map((e) => e.dateStr), [entries])
+  const pageIds = useMemo(
+    () => entries.filter((e) => e.pageId).map((e) => e.pageId as string),
+    [entries],
+  )
+  const datesKey = dates.join(',')
+  const pageIdsKey = pageIds.join(',')
 
+  useEffect(() => {
     let cancelled = false
     async function fetchCounts() {
       const [bySource, backlinks] = await Promise.all([
@@ -50,7 +64,11 @@ export function useBatchCounts(entries: DayEntry[]) {
     return () => {
       cancelled = true
     }
-  }, [entries, t, currentSpaceId])
+    // `dates`/`pageIds` are intentionally consumed via their serialized keys so
+    // the effect re-runs only when the date range or page-id set actually
+    // changes, not when `entries` merely gets a new array identity (#1632).
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [datesKey, pageIdsKey, t, currentSpaceId])
 
   return { agendaCounts, agendaCountsBySource, backlinkCounts }
 }

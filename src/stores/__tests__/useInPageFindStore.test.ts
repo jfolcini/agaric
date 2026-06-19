@@ -107,6 +107,49 @@ describe('useInPageFindStore — setContainer', () => {
 
     // View unmount → setContainer(null).
     useInPageFindStore.getState().setContainer(null)
+    const s = useInPageFindStore.getState()
+    expect(s.open).toBe(false)
+    expect(s.container).toBeNull()
+    expect(s.totalMatches).toBe(0)
+    expect(s.currentIndex).toBe(-1)
+    expect(s.regexError).toBeNull()
+    expect(s.skippedLongNodes).toBe(0)
+  })
+
+  it('coalesces the unmount-while-open transition into a single notification', () => {
+    const host = document.createElement('div')
+    useInPageFindStore.getState().setContainer(host)
+    useInPageFindStore.getState().open$('alpha')
+    useInPageFindStore.setState({ totalMatches: 5, currentIndex: 2 })
+
+    let notifications = 0
+    const unsubscribe = useInPageFindStore.subscribe(() => {
+      notifications += 1
+    })
+    // View unmount → setContainer(null) detaches the container *and* closes
+    // the toolbar, but emits only one store notification.
+    useInPageFindStore.getState().setContainer(null)
+    unsubscribe()
+
+    expect(notifications).toBe(1)
+    const s = useInPageFindStore.getState()
+    expect(s.open).toBe(false)
+    expect(s.container).toBeNull()
+    expect(s.totalMatches).toBe(0)
+    expect(s.currentIndex).toBe(-1)
+  })
+
+  it('emits a single notification when setting a container while closed', () => {
+    let notifications = 0
+    const unsubscribe = useInPageFindStore.subscribe(() => {
+      notifications += 1
+    })
+    const host = document.createElement('div')
+    useInPageFindStore.getState().setContainer(host)
+    unsubscribe()
+
+    expect(notifications).toBe(1)
+    expect(useInPageFindStore.getState().container).toBe(host)
     expect(useInPageFindStore.getState().open).toBe(false)
   })
 })
