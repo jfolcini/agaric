@@ -85,10 +85,17 @@ export function KbdChord({ keys, size, className }: KbdChordProps): React.ReactE
       {alternatives.map((alt, i) => {
         const parts = alt.split(' + ').map((part) => (part === 'Ctrl' ? mod : part))
         return (
-          <Fragment key={alt}>
+          // Tokens are positional and never reordered, so an index-based key is
+          // correct. It also avoids duplicate-key collisions when a chord
+          // repeats a token (e.g. `G + G`) or an alternative — keying by the
+          // token text alone produced duplicate React keys (#1562). The token
+          // text is appended only to keep keys human-readable.
+          // oxlint-disable-next-line react/no-array-index-key -- tokens are positional and never reordered, so the index uniquely + stably identifies each Fragment; keying by token text alone produced duplicate keys for repeated tokens (#1562)
+          <Fragment key={`${i}-${alt}`}>
             {i > 0 && <span className="mx-1 font-normal text-muted-foreground">/</span>}
             {parts.map((part, j) => (
-              <Fragment key={part}>
+              // oxlint-disable-next-line react/no-array-index-key -- tokens are positional and never reordered, so the index uniquely + stably identifies each Fragment; keying by token text alone produced duplicate keys for repeated tokens (#1562)
+              <Fragment key={`${i}-${j}-${part}`}>
                 {j > 0 && <span className="mx-0.5 font-normal text-muted-foreground">+</span>}
                 <Kbd size={size}>{part}</Kbd>
               </Fragment>

@@ -48,6 +48,30 @@ describe('isAllowedUrl', () => {
     expect(isAllowedUrl('  javascript:alert(1)  ')).toBe(false)
     expect(isAllowedUrl('  https://example.com  ')).toBe(true)
   })
+
+  // Regression: interior control / whitespace chars must not let a blocked
+  // scheme slip past the denylist. Browsers ignore these when resolving a
+  // scheme (e.g. `java\tscript:` resolves to `javascript:`), so we strip
+  // ASCII control chars (0x00-0x1F, 0x7F) and whitespace before the check.
+  it.each([
+    ['java\tscript:alert(1)'],
+    ['java\nscript:alert(1)'],
+    ['java\rscript:alert(1)'],
+    ['java\x00script:alert(1)'],
+    ['\x00javascript:alert(1)'],
+    ['\tjavascript:alert(1)'],
+    ['java\x01script:alert(1)'],
+    ['java\x7fscript:alert(1)'],
+    ['j\ta\nv\ra\x00script:alert(1)'],
+  ])('rejects control-char obfuscated blocked scheme %j', (url) => {
+    expect(isAllowedUrl(url)).toBe(false)
+  })
+
+  it('still allows legitimate URLs with no scheme obfuscation', () => {
+    expect(isAllowedUrl('https://example.com')).toBe(true)
+    expect(isAllowedUrl('mailto:user@example.com')).toBe(true)
+    expect(isAllowedUrl('https://example.com/path?q=a+b')).toBe(true)
+  })
 })
 
 describe('normalizeUrl', () => {

@@ -14,7 +14,7 @@
  */
 
 import { render } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { __resetPlatformCacheForTests } from '../../../lib/platform'
 import { Kbd, KbdChord } from '../kbd'
@@ -118,6 +118,43 @@ describe('KbdChord', () => {
     const { container } = render(<KbdChord keys="Ctrl + K" size="md" />)
     for (const kbd of container.querySelectorAll('kbd')) {
       expect(kbd.className).toContain('font-semibold')
+    }
+  })
+
+  // #1562: keying the inner Fragments by token text produced duplicate React
+  // keys when a chord repeated a token (e.g. `G + G`) or an alternative,
+  // emitting a dev-only "Encountered two children with the same key" warning and
+  // risking incorrect reconciliation. Index-based keys are correct because the
+  // tokens are positional and never reordered.
+  it('renders a chord with a REPEATED token without duplicate-key warnings (#1562)', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const { container } = render(<KbdChord keys="G + G" />)
+      const kbds = Array.from(container.querySelectorAll('kbd')).map((k) => k.textContent)
+      // Both repeated tokens still render in order.
+      expect(kbds).toEqual(['G', 'G'])
+      // No React duplicate-key warning was emitted.
+      const sawDuplicateKeyWarning = errorSpy.mock.calls.some((args) =>
+        args.some((a) => typeof a === 'string' && /same key/i.test(a)),
+      )
+      expect(sawDuplicateKeyWarning).toBe(false)
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
+  it('renders duplicate alternatives without duplicate-key warnings (#1562)', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const { container } = render(<KbdChord keys="Esc / Esc" />)
+      const kbds = Array.from(container.querySelectorAll('kbd')).map((k) => k.textContent)
+      expect(kbds).toEqual(['Esc', 'Esc'])
+      const sawDuplicateKeyWarning = errorSpy.mock.calls.some((args) =>
+        args.some((a) => typeof a === 'string' && /same key/i.test(a)),
+      )
+      expect(sawDuplicateKeyWarning).toBe(false)
+    } finally {
+      errorSpy.mockRestore()
     }
   })
 })
