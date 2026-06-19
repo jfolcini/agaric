@@ -122,6 +122,8 @@ const TESTS_DIR = path.join(ROOT, 'src/components/__tests__')
 // error-path tests in the #1270 PR rather than allowlisted.
 const NO_TEST_ALLOWLIST = Object.freeze({
   // 'src/components/<sub>/Foo.tsx': 'Rejection of bar() exercised via Baz.test.tsx',
+  'src/components/PageBrowser/add-filter/editors.tsx':
+    'Internal editor sub-components of AddFilterPopover, only ever mounted through it. The single IPC call (listAllPagesInSpace in LinkTargetEditor) and its picker are driven via AddFilterPopover.test.tsx (relational-facets suite, #1478). Pure extraction in #1648 — no new IPC surface, the parent suite is the integration point.',
 })
 
 if (!fs.existsSync(COMPONENTS_DIR) || !fs.existsSync(TESTS_DIR)) {
