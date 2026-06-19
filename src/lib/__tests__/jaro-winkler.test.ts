@@ -50,6 +50,54 @@ describe('jaroWinkler — typo tolerance (the palette use-case)', () => {
   })
 })
 
+describe('jaroWinkler — astral / non-BMP characters (#1564)', () => {
+  it('scores an astral prefix identically to a BMP-equivalent char', () => {
+    // 📌 is a single code point but two UTF-16 units. Indexing by code
+    // point means '📌abc' vs '📌abz' must score exactly like the
+    // single-BMP-char analogue 'xabc' vs 'xabz' (one trailing typo).
+    const astral = jaroWinkler('📌abc', '📌abz')
+    const bmp = jaroWinkler('xabc', 'xabz')
+    expect(astral).toBe(bmp)
+  })
+
+  it('does not surrogate-inflate length when strings differ only by an emoji', () => {
+    // Both strings are 4 code points; only the leading emoji differs.
+    // A code-unit implementation would see 5 units and compare lone
+    // surrogates, mis-scoring. Equivalent BMP analogue: 'xabc' vs 'yabc'.
+    const astral = jaroWinkler('📌abc', '📍abc')
+    const bmp = jaroWinkler('xabc', 'yabc')
+    expect(astral).toBe(bmp)
+  })
+
+  it('scores two distinct emojis as fully disjoint single chars', () => {
+    // '📌' vs '📍' share no code point → Jaro 0, no prefix boost.
+    expect(jaroWinkler('📌', '📍')).toBe(0)
+  })
+
+  it('returns 1 for identical astral strings', () => {
+    expect(jaroWinkler('📌📍🚀', '📌📍🚀')).toBe(1)
+  })
+
+  it('counts a shared astral prefix as one unit for the Winkler boost', () => {
+    // Shared leading 📌 then a single trailing typo, mirrored against a
+    // BMP analogue. Prefix length must be counted in code points so the
+    // boost is identical, not doubled by the surrogate pair.
+    const astral = jaroWinkler('📌pha', '📌phb')
+    const bmp = jaroWinkler('xpha', 'xphb')
+    expect(astral).toBe(bmp)
+  })
+})
+
+describe('jaroWinkler — pure-ASCII regression (BMP path unchanged)', () => {
+  it('keeps the canonical alfa→alpha score', () => {
+    // Frozen pre-#1564 value: the BMP path must be byte-for-byte identical.
+    expect(jaroWinkler('alfa', 'alpha')).toBeCloseTo(0.8266666666666667, 12)
+  })
+  it('keeps the alpa→alpha prefix-boosted score', () => {
+    expect(jaroWinkler('alpa', 'alpha')).toBeCloseTo(0.9533333333333333, 12)
+  })
+})
+
 describe('blendFtsFuzzy — 0.7 FTS / 0.3 fuzzy', () => {
   it('returns the FTS score verbatim when fuzzy is 0', () => {
     expect(blendFtsFuzzy(1, 0)).toBeCloseTo(0.7, 6)

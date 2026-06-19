@@ -164,6 +164,8 @@ export const shortcuts: Record<string, string> = {
   'keyboard.condition.tabFocused': 'When a tab is focused',
   'keyboard.condition.desktopOnly': 'Desktop only',
   'keyboard.category.editorFormatting': 'Editor Formatting',
+  'keyboard.bold': 'Toggle bold',
+  'keyboard.italic': 'Toggle italic',
   'keyboard.inlineCode': 'Toggle inline code',
   'keyboard.strikethrough': 'Toggle strikethrough',
   'keyboard.highlight': 'Toggle highlight',

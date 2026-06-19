@@ -112,8 +112,9 @@ describe('KeyboardShortcuts', () => {
     // 4 tab shortcuts (openInNewTab, closeActiveTab, nextTab, previousTab)
     // from the `inEditor` condition to `desktopOnly` so they fire shell-wide
     // on desktop. inEditor count dropped 8 → 4; #213 PR4 added blockRefPicker
-    // (inEditor) → 5. desktopOnly count is now 4.
-    expect(screen.getAllByText(t('keyboard.condition.inEditor')).length).toBe(5)
+    // (inEditor) → 5. #1576 added the bold/italic editor built-ins
+    // (inEditor) → 7. desktopOnly count is now 4.
+    expect(screen.getAllByText(t('keyboard.condition.inEditor')).length).toBe(7)
     expect(screen.getAllByText(t('keyboard.condition.desktopOnly')).length).toBe(4)
     expect(screen.getByText(t('keyboard.condition.atStart'))).toBeInTheDocument()
     expect(screen.getByText(t('keyboard.condition.atEnd'))).toBeInTheDocument()
@@ -239,8 +240,9 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getByText(t('keyboard.condition.atStart'))).toBeInTheDocument()
     expect(screen.getByText(t('keyboard.condition.atEnd'))).toBeInTheDocument()
     // FEAT-7: inEditor 8 → 4, desktopOnly 0 → 4; #213 PR4 added blockRefPicker
-    // (inEditor) → 5 (see "shows all shortcut entries" above for the rationale).
-    expect(screen.getAllByText(t('keyboard.condition.inEditor'))).toHaveLength(5)
+    // (inEditor) → 5; #1576 added bold/italic editor built-ins (inEditor) → 7
+    // (see "shows all shortcut entries" above for the rationale).
+    expect(screen.getAllByText(t('keyboard.condition.inEditor'))).toHaveLength(7)
     expect(screen.getAllByText(t('keyboard.condition.desktopOnly'))).toHaveLength(4)
   })
 

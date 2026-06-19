@@ -643,6 +643,77 @@ describe('useUndoStore', () => {
         expect(after?.redoGroupSizes).toEqual([1])
       })
 
+      // -----------------------------------------------------------------------
+      // #1561 — reanchor during a BATCH undo must not strand an orphan
+      // `redoGroupSizes` entry that leads a wiped/short `redoStack`.
+      //
+      // A batch undo pushes one redoStack entry per op as each undoPageOp
+      // resolves, then records the loop's group size AFTER the loop. If
+      // reanchorAfterRemoteOps fires mid-loop it empties the live entry, so the
+      // re-appended reversed ops number FEWER than the loop's group size.
+      // Recording the loop size verbatim would leave `redoGroupSizes` leading a
+      // short `redoStack` — `redo` would bail on the stack-length guard before
+      // the pop guard could reclaim the orphan, so the size entry strands
+      // forever and the invariant `sum(redoGroupSizes) <= redoStack.length`
+      // breaks. The append must clamp the recorded size to the backing stack.
+      // -----------------------------------------------------------------------
+      it('reanchor mid batch-undo clamps the recorded group size to the surviving redoStack (#1561)', async () => {
+        // Batch of 3. The first two undoPageOps resolve immediately (their
+        // reversed ops land on redoStack); the third stays pending so we can
+        // fire reanchor — which wipes those two — before it resolves.
+        mockedFindUndoGroup.mockReset()
+        mockedFindUndoGroup.mockResolvedValueOnce(3)
+
+        let resolveThird: (r: ReturnType<typeof makeUndoResult>) => void = () => {}
+        mockedUndoPageOp
+          .mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 3, newSeq: 4 }))
+          .mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 2, newSeq: 5 }))
+          .mockImplementationOnce(
+            () =>
+              new Promise((resolve) => {
+                resolveThird = resolve
+              }),
+          )
+
+        const undoPromise = useUndoStore.getState().undo('page1')
+
+        // Flush past findUndoGroup + the first two single undos so their
+        // reversed ops are on the redoStack and the loop is parked on the third.
+        for (let i = 0; i < 8; i++) await Promise.resolve()
+        expect(useUndoStore.getState().pages.get('page1')?.redoStack).toHaveLength(2)
+
+        // Remote ops land mid batch-undo → reanchor wipes the live entry.
+        useUndoStore.getState().reanchorAfterRemoteOps('page1')
+        expect(useUndoStore.getState().pages.get('page1')?.redoStack).toEqual([])
+        expect(useUndoStore.getState().pages.get('page1')?.redoGroupSizes).toEqual([])
+
+        // Third undo resolves: its reversed op re-appends (redoStack length 1),
+        // then the loop records the group size. Without the clamp this records
+        // [3] leading a length-1 stack — the orphan. With the clamp it records
+        // [1], matching the single surviving backing entry.
+        resolveThird(makeUndoResult({ deviceId: 'dev1', seq: 1, newSeq: 6 }))
+        await undoPromise
+
+        const after = useUndoStore.getState().pages.get('page1')
+        expect(after?.redoStack).toHaveLength(1)
+        // Invariant: redoGroupSizes never leads the redoStack.
+        const summed = (after?.redoGroupSizes ?? []).reduce((s, n) => s + n, 0)
+        expect(summed).toBeLessThanOrEqual(after?.redoStack.length ?? 0)
+        expect(after?.redoGroupSizes).toEqual([1])
+
+        // The redo path must NOT bail on an orphan: with a backing entry it
+        // pops exactly the surviving op and leaves both arrays empty (no
+        // stranded size entry).
+        mockedRedoPageOp.mockResolvedValueOnce(makeUndoResult({ isRedo: true, seq: 1 }))
+        const redone = await useUndoStore.getState().redo('page1')
+        expect(redone).not.toBeNull()
+        expect(mockedRedoPageOp).toHaveBeenCalledTimes(1)
+
+        const settled = useUndoStore.getState().pages.get('page1')
+        expect(settled?.redoStack).toEqual([])
+        expect(settled?.redoGroupSizes).toEqual([])
+      })
+
       it('reanchor fired during an in-flight redo: redo result leaves the reanchored entry empty', async () => {
         // Seed a redo entry: one resolved undo gives redoStack length 1.
         mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))

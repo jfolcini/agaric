@@ -521,6 +521,14 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     keys: 'Ctrl + B',
     category: 'keyboard.category.global',
     description: 'keyboard.toggleSidebar',
+    // #1576 — the window-level handler (`use-sidebar-keyboard.ts`) bails out
+    // while the user is editing in an input/textarea/contenteditable, exactly
+    // because TipTap maps Ctrl+B to Bold. Modelling that guard as the
+    // `outsideEditor` condition makes it disjoint from the editor-scoped `bold`
+    // entry (condition `inEditor`), so `findConflicts` does NOT flag the default
+    // Ctrl+B pair (they never co-fire) while still flagging a wildcard global
+    // action rebound onto Ctrl+B.
+    condition: 'keyboard.condition.outsideEditor',
   },
   {
     id: 'createNewPage',
@@ -634,6 +642,37 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
   },
 
   // Editor Formatting
+  // #1576 — Bold (Ctrl+B) and Italic (Ctrl+I) are TipTap StarterKit defaults
+  // (the `Bold`/`Italic` extensions in `use-roving-editor.ts`). Their keymaps
+  // live inside the ProseMirror extensions, NOT routed through
+  // `matchesShortcutBinding`/`getShortcutKeys`, so they are documentation-only
+  // (`rebindable: false`) like `insertLineBreak`. Before this entry existed
+  // they were invisible to `findConflicts`, so Settings advertised Ctrl+B /
+  // Ctrl+I as "free" even though TipTap already owns them. They are flagged
+  // `documentLevel` so the cross-category pass (#1592) reserves the chord
+  // against an always-on listener rebound onto it (e.g. a global wildcard
+  // dropped onto Ctrl+B): the editor keymap fires on the bubbling keydown the
+  // window-level listeners also see. `toggleSidebar` itself carries the
+  // disjoint `outsideEditor` condition (its handler bails while editing — see
+  // `use-sidebar-keyboard.ts`), so the default Ctrl+B pair stays unflagged.
+  {
+    id: 'bold',
+    keys: 'Ctrl + B',
+    category: 'keyboard.category.editorFormatting',
+    description: 'keyboard.bold',
+    condition: 'keyboard.condition.inEditor',
+    rebindable: false,
+    documentLevel: true,
+  },
+  {
+    id: 'italic',
+    keys: 'Ctrl + I',
+    category: 'keyboard.category.editorFormatting',
+    description: 'keyboard.italic',
+    condition: 'keyboard.condition.inEditor',
+    rebindable: false,
+    documentLevel: true,
+  },
   {
     id: 'inlineCode',
     keys: 'Ctrl + E',
