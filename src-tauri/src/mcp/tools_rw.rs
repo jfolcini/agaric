@@ -398,11 +398,27 @@ async fn handle_append_block(
     // PEND-24 C2 — refuse cross-space writes at the MCP boundary
     // before opening the BEGIN IMMEDIATE in `create_block_inner`.
     validate_block_in_space(pool, &parent_id, &space_id).await?;
+    // #1606: the JSON schema declares `position` `minimum: 1`, but serde does
+    // not enforce JSON-Schema constraints, so an out-of-range `position` (0 or
+    // negative) used to be silently clamped to the first child. That violated
+    // the loud-rejection posture the MCP boundary takes elsewhere (see
+    // `validate_limit` in tools_ro.rs), hiding agent typos. Reject `position < 1`
+    // with a Validation error (→ JSON-RPC -32602) instead.
+    if let Some(p) = args.position
+        && p < 1
+    {
+        return Err(AppError::Validation(format!(
+            "tool `{TOOL_APPEND_BLOCK}`: position must be >= 1 (1-based), got {p}"
+        )));
+    }
     // #400: the MCP tool keeps its stable agent-facing **1-based** `position`
     // contract; `create_block_inner` now takes a 0-based sibling `index`, so
     // convert here (position 1 → index 0 = first child). `None` still appends.
-    // Clamp the 1-based input to >=1 BEFORE subtracting so an extreme/hostile
-    // negative position (e.g. i64::MIN from an LLM agent) can't underflow.
+    // The `position < 1` rejection above is the primary guard; the
+    // `max(1).saturating_sub(1)` here is retained as a defense-in-depth
+    // underflow backstop so an extreme/hostile negative position (e.g.
+    // i64::MIN from an LLM agent) can never underflow even if a future caller
+    // bypasses the check above.
     let index = args.position.map(|p| p.max(1).saturating_sub(1));
     let resp = create_block_inner(
         pool,

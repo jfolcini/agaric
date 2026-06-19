@@ -45,6 +45,9 @@ pub async fn list_pages_inner(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     // limit-clamp-followup Phase 1: reject limits outside
     // `[1, MCP_PAGE_LIMIT_CAP]` loudly (was silently clamped).
+    // #1665: on the MCP path `validate_limit` (mcp/tools_ro.rs) runs first
+    // and short-circuits, so this message never reaches an MCP agent; this
+    // check is the non-MCP (direct command/IPC) backstop — keep both.
     if let Some(l) = limit
         && !(1..=MCP_PAGE_LIMIT_CAP).contains(&l)
     {
@@ -162,6 +165,9 @@ pub async fn get_page_inner(
 
     // limit-clamp-followup Phase 1: reject limits outside
     // `[1, MCP_PAGE_LIMIT_CAP]` loudly (was silently clamped).
+    // #1665: on the MCP path `validate_limit` (mcp/tools_ro.rs) runs first
+    // and short-circuits, so this message never reaches an MCP agent; this
+    // check is the non-MCP (direct command/IPC) backstop — keep both.
     if let Some(l) = limit
         && !(1..=MCP_PAGE_LIMIT_CAP).contains(&l)
     {

@@ -439,4 +439,54 @@ mod engine_apply_unit_tests {
              legacy new_position breadcrumb would keep/append B last)"
         );
     }
+
+    /// #1571: when a swallowed `engine_apply` failure occurs in a
+    /// post-commit cohort fan-out (the SQL tx already committed, so the
+    /// failure cannot be rolled back), `engine_apply` must bump the
+    /// dedicated, machine-detectable divergence counter — not only emit a
+    /// free-text warn.
+    ///
+    /// We drive a cohort-shaped op (`op_id` carries the `#cohort/<id>`
+    /// suffix the fan-out helpers synthesise) through the SAME
+    /// `engine_apply` entry point the fan-out helpers call, and force the
+    /// engine dispatch to fail deterministically with a `MoveBlock` on a
+    /// block id that was never created (`apply_move_block` returns
+    /// "block not found"). The swallow path must advance
+    /// `crate::merge::divergence::count()`.
+    #[test]
+    fn swallowed_cohort_fanout_failure_increments_divergence_counter() {
+        use crate::merge::divergence;
+
+        let state = fresh_state();
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // A MoveBlock targeting a never-created block id forces
+        // `engine.apply_move_block` to return Err, which engine_apply
+        // swallows (warn + skip). `new_index: None` routes through the
+        // legacy `apply_move_block` arm whose `node_for` miss is the
+        // deterministic error.
+        let missing = "01HZ00000000000000000000ZZ";
+        let mv = OpPayload::MoveBlock(crate::op::MoveBlockPayload {
+            block_id: BlockId::from_trusted(missing),
+            new_parent_id: None,
+            new_position: 0,
+            new_index: None,
+        });
+        // `op_id` mirrors the cohort fan-out shape:
+        // `<device>/<seq>#cohort/<block_id>`.
+        let cohort_op_id = format!("{DEVICE_ID}/7#cohort/{missing}");
+
+        // Monotonic counter: capture the baseline, then assert it strictly
+        // advances. Robust under nextest parallelism (the counter is never
+        // reset, so other tests can only push it higher).
+        let before = divergence::count();
+        dispatch(&state, &space, &cohort_op_id, &mv);
+        let after = divergence::count();
+
+        assert!(
+            after > before,
+            "a swallowed cohort fan-out engine_apply failure must bump the \
+             divergence counter (before={before}, after={after})"
+        );
+    }
 }

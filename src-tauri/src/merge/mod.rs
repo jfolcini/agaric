@@ -17,6 +17,7 @@
 //! at a time.
 
 mod apply;
+pub(crate) mod divergence;
 
 // ---------------------------------------------------------------------------
 // engine_apply — the call site that runs every applied op through the
@@ -67,6 +68,14 @@ pub(crate) fn engine_apply(
                 device_id,
                 error = %e,
                 "engine_apply: registry.for_space failed; skipping",
+            );
+            // #1571: the SQL apply tx already committed; failing to reach
+            // the engine here silently diverges the LoroDoc mirror from
+            // the SQL source of truth. Emit the dedicated, durable signal.
+            divergence::record(
+                op_id,
+                op.op_type_str(),
+                &format!("registry.for_space failed: {e}"),
             );
             return;
         }
@@ -201,5 +210,12 @@ pub(crate) fn engine_apply(
             error = %e,
             "engine_apply: engine apply failed; skipping",
         );
+        // #1571: the SQL apply tx already committed by the time the
+        // post-commit cohort fan-out reaches here, so a swallowed engine
+        // apply failure leaves the per-space LoroDoc diverged from the
+        // op-log / SQL source of truth with no rollback possible. Emit a
+        // durable, machine-detectable signal (counter + stable marker) so
+        // a health check can observe the drift, not just a free-text warn.
+        divergence::record(op_id, op.op_type_str(), &e.to_string());
     }
 }
