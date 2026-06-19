@@ -1,6 +1,7 @@
 use super::super::*;
 use super::common::*;
 use crate::op_log;
+use crate::ulid::ActiveBlockId;
 use chrono::Datelike;
 
 // ======================================================================
@@ -333,10 +334,20 @@ async fn set_property_on_deleted_block_fails() {
     )
     .await;
 
-    assert!(
-        matches!(result, Err(AppError::NotFound(_))),
-        "setting property on deleted block should return NotFound, got: {result:?}"
-    );
+    // #1627: the activeness gate moved into the write tx, which now
+    // discriminates soft-deleted from missing — a soft-deleted block
+    // yields the distinct `Validation("soft-deleted")` (the same error
+    // the command wrapper has always surfaced via `verify_active`),
+    // not the old collapsed `NotFound`.
+    match result {
+        Err(AppError::Validation(msg)) => assert!(
+            msg.contains("soft-deleted"),
+            "setting property on a soft-deleted block must report Validation 'soft-deleted', got: {msg}"
+        ),
+        other => {
+            panic!("expected Validation('soft-deleted') for a soft-deleted block, got {other:?}")
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2197,11 +2208,19 @@ async fn set_due_date_nonexistent_block_returns_not_found() {
 }
 
 // ======================================================================
-// Deleted block returns NotFound for all three thin commands
+// Soft-deleted block returns the distinct soft-deleted Validation error
+// for all three thin commands.
+//
+// #1627: the pre-tx `verify_active` round-trip was removed from the
+// command wrappers; the activeness gate (existence + soft-deleted-vs-
+// missing discrimination) now runs inside the write transaction. A
+// soft-deleted block therefore yields `Validation("soft-deleted")` — the
+// SAME error the wrapper has always surfaced via `verify_active` — rather
+// than the inner fallback's old collapsed `NotFound`.
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn set_todo_state_deleted_block_returns_not_found() {
+async fn set_todo_state_deleted_block_returns_soft_deleted() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -2234,16 +2253,21 @@ async fn set_todo_state_deleted_block_returns_not_found() {
     )
     .await;
 
-    assert!(
-        matches!(result, Err(AppError::NotFound(_))),
-        "set_todo_state on deleted block should return NotFound, got: {result:?}"
-    );
+    match result {
+        Err(AppError::Validation(msg)) => assert!(
+            msg.contains("soft-deleted"),
+            "set_todo_state on a soft-deleted block must report Validation 'soft-deleted', got: {msg}"
+        ),
+        other => {
+            panic!("expected Validation('soft-deleted') for a soft-deleted block, got {other:?}")
+        }
+    }
 
     mat.shutdown();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn set_priority_deleted_block_returns_not_found() {
+async fn set_priority_deleted_block_returns_soft_deleted() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -2270,16 +2294,21 @@ async fn set_priority_deleted_block_returns_not_found() {
     let result =
         set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("2".into())).await;
 
-    assert!(
-        matches!(result, Err(AppError::NotFound(_))),
-        "set_priority on deleted block should return NotFound, got: {result:?}"
-    );
+    match result {
+        Err(AppError::Validation(msg)) => assert!(
+            msg.contains("soft-deleted"),
+            "set_priority on a soft-deleted block must report Validation 'soft-deleted', got: {msg}"
+        ),
+        other => {
+            panic!("expected Validation('soft-deleted') for a soft-deleted block, got {other:?}")
+        }
+    }
 
     mat.shutdown();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn set_due_date_deleted_block_returns_not_found() {
+async fn set_due_date_deleted_block_returns_soft_deleted() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -2312,10 +2341,15 @@ async fn set_due_date_deleted_block_returns_not_found() {
     )
     .await;
 
-    assert!(
-        matches!(result, Err(AppError::NotFound(_))),
-        "set_due_date on deleted block should return NotFound, got: {result:?}"
-    );
+    match result {
+        Err(AppError::Validation(msg)) => assert!(
+            msg.contains("soft-deleted"),
+            "set_due_date on a soft-deleted block must report Validation 'soft-deleted', got: {msg}"
+        ),
+        other => {
+            panic!("expected Validation('soft-deleted') for a soft-deleted block, got {other:?}")
+        }
+    }
 
     mat.shutdown();
 }
@@ -6112,4 +6146,198 @@ async fn set_property_ref_cross_space_rejected() {
         matches!(result, Err(AppError::Validation(_))),
         "cross-space ref property must be rejected, got {result:?}"
     );
+}
+
+// ─── #1627: in-tx activeness discrimination ──────────────────────────
+//
+// The redundant pre-tx `verify_active` round-trip on the pool was
+// removed from the write-command wrappers (`set_property` /
+// `set_todo_state` / `set_priority` / `set_due_date` /
+// `set_scheduled_date` / `delete_property`). The existence /
+// soft-deleted-vs-missing discrimination — and its two DISTINCT error
+// variants — now lives inside the write transaction's own re-validation
+// (`set_property_in_tx` step 2 for the set-paths; `delete_property_core`
+// step 2 for the delete-path). These tests drive the `_inner` functions
+// with a `from_trusted_active` id (the cheap mint the wrappers now use)
+// against a MISSING and a SOFT-DELETED block, proving the discrimination
+// survived the move:
+//   - active block            → write succeeds
+//   - missing block           → AppError::NotFound ("does not exist")
+//   - soft-deleted block      → AppError::Validation ("soft-deleted")
+
+/// Soft-delete a block row directly (stamp `deleted_at`).
+async fn soft_delete_block(pool: &SqlitePool, id: &str) {
+    sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
+        .bind(1_735_689_600_000_i64)
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_inner_succeeds_on_active_block_in_tx() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "active".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Mint the ActiveBlockId the cheap way the wrapper now uses — no
+    // pre-tx verify. The in-tx gate must accept the live block.
+    let active = ActiveBlockId::from_trusted_active(block.id.as_str());
+    let result = set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        active,
+        "importance".into(),
+        Some("high".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "write on an active block must succeed, got {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_inner_missing_block_yields_not_found_in_tx() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // No block inserted. The wrapper would have minted this id without a
+    // pre-tx check; the in-tx re-validation must reject it as NotFound.
+    let active = ActiveBlockId::from_trusted_active("NOPEBLK10000000000000000000");
+    let err = set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        active,
+        "importance".into(),
+        Some("high".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect_err("missing block must be rejected");
+    match err {
+        AppError::NotFound(msg) => assert!(
+            msg.contains("does not exist"),
+            "missing block must report NotFound 'does not exist', got: {msg}"
+        ),
+        other => panic!("expected NotFound for a missing block, got {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_inner_soft_deleted_block_yields_validation_in_tx() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "doomed".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    soft_delete_block(&pool, block.id.as_str()).await;
+
+    let active = ActiveBlockId::from_trusted_active(block.id.as_str());
+    let err = set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        active,
+        "importance".into(),
+        Some("high".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect_err("soft-deleted block must be rejected");
+    match err {
+        AppError::Validation(msg) => assert!(
+            msg.contains("soft-deleted"),
+            "soft-deleted block must report Validation 'soft-deleted', got: {msg}"
+        ),
+        other => panic!("expected Validation for a soft-deleted block, got {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_inner_missing_block_yields_not_found_in_tx() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let active = ActiveBlockId::from_trusted_active("NOPEBLK20000000000000000000");
+    let err = delete_property_inner(&pool, DEV, &mat, active, "importance".into())
+        .await
+        .expect_err("missing block must be rejected");
+    match err {
+        AppError::NotFound(msg) => assert!(
+            msg.contains("does not exist"),
+            "missing block must report NotFound 'does not exist', got: {msg}"
+        ),
+        other => panic!("expected NotFound for a missing block, got {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_inner_soft_deleted_block_yields_validation_in_tx() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "doomed2".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    soft_delete_block(&pool, block.id.as_str()).await;
+
+    let active = ActiveBlockId::from_trusted_active(block.id.as_str());
+    let err = delete_property_inner(&pool, DEV, &mat, active, "importance".into())
+        .await
+        .expect_err("soft-deleted block must be rejected");
+    match err {
+        AppError::Validation(msg) => assert!(
+            msg.contains("soft-deleted"),
+            "soft-deleted block must report Validation 'soft-deleted', got: {msg}"
+        ),
+        other => panic!("expected Validation for a soft-deleted block, got {other:?}"),
+    }
 }

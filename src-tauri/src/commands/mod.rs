@@ -731,16 +731,20 @@ async fn delete_property_core(
     //    an op_record to the materializer).
     let mut tx = CommandTx::begin_immediate(pool, "delete_property_core").await?;
 
-    // 2. Validate block exists and is not deleted (TOCTOU-safe)
-    let exists = sqlx::query!(
-        r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
-        block_id
-    )
-    .fetch_optional(&mut **tx)
-    .await?;
-    if exists.is_none() {
-        return Err(AppError::NotFound(format!(
-            "block '{block_id}' (not found or deleted)"
+    // 2. Validate block exists and is not deleted (TOCTOU-safe).
+    //    #1627: authoritative activeness gate now that the redundant
+    //    pre-tx `verify_active` round-trip on the pool has been dropped
+    //    from the command wrappers. Fetch `deleted_at` (no WHERE filter)
+    //    so this one read reproduces `verify_active`'s EXACT distinct
+    //    NotFound vs soft-deleted errors.
+    let row = sqlx::query!(r#"SELECT deleted_at FROM blocks WHERE id = ?"#, block_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+    let row =
+        row.ok_or_else(|| AppError::NotFound(format!("block '{block_id}' does not exist")))?;
+    if row.deleted_at.is_some() {
+        return Err(AppError::Validation(format!(
+            "block '{block_id}' has been soft-deleted"
         )));
     }
 

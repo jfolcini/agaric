@@ -46,7 +46,11 @@ pub async fn list_children(
     };
 
     // FEAT-3 Phase 2 — ?6 (space_id) drives the shared space-filter
-    // clause. The literal is mirrored (modulo ?N) by
+    // clause. ?7 is `NULL_POSITION_SENTINEL`: the keyset comparison and
+    // `ORDER BY` wrap `position` in `COALESCE(position, ?7)` so a genuine
+    // NULL position sorts at the sentinel rather than mis-ordering or being
+    // dropped across a pagination boundary — mirroring `get_page_inner`.
+    // The literal is mirrored (modulo ?N) by
     // [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] — kept
     // inline here because `sqlx::query_as!` requires a string literal
     // directly and does not accept `concat!()`. Any change to the filter
@@ -61,17 +65,18 @@ pub async fn list_children(
          FROM blocks b
          WHERE parent_id IS ?1 AND deleted_at IS NULL
            AND (?2 IS NULL OR (
-                position > ?3
-                OR (position = ?3 AND id > ?4)))
+                COALESCE(position, ?7) > ?3
+                OR (COALESCE(position, ?7) = ?3 AND id > ?4)))
            AND (?6 IS NULL OR b.space_id = ?6)
-         ORDER BY position ASC, id ASC
+         ORDER BY COALESCE(position, ?7) ASC, id ASC
          LIMIT ?5"#,
-        parent_id,   // ?1
-        cursor_flag, // ?2
-        cursor_pos,  // ?3
-        cursor_id,   // ?4
-        fetch_limit, // ?5
-        space_id,    // ?6
+        parent_id,              // ?1
+        cursor_flag,            // ?2
+        cursor_pos,             // ?3
+        cursor_id,              // ?4
+        fetch_limit,            // ?5
+        space_id,               // ?6
+        NULL_POSITION_SENTINEL, // ?7
     )
     .fetch_all(pool)
     .await?;

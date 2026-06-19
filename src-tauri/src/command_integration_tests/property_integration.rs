@@ -125,7 +125,7 @@ async fn delete_property_writes_op_log_entry() {
 // TEST-11 — Pre-fix `set_property_inner` had only the
 // `set_property_writes_op_log_entry` happy-path test in this file.
 // Validation/NotFound coverage for the broader properties surface
-// existed (e.g. `delete_property_on_deleted_block_returns_not_found`,
+// existed (e.g. `delete_property_on_deleted_block_returns_soft_deleted`,
 // `create_property_def_*_returns_validation`) but `set_property_inner`
 // itself had no direct error pins.  The three tests below close that
 // gap, each pinning a specific error variant via `matches!()` per
@@ -454,7 +454,7 @@ async fn boolean_property_type_mismatch_returns_validation() {
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn delete_property_on_deleted_block_returns_not_found() {
+async fn delete_property_on_deleted_block_returns_soft_deleted() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
@@ -493,14 +493,24 @@ async fn delete_property_on_deleted_block_returns_not_found() {
         .unwrap();
     settle(&mat).await;
 
-    // Attempt to delete property on the now-deleted block
+    // Attempt to delete property on the now-soft-deleted block. #1627:
+    // the activeness gate moved into the write tx, which discriminates a
+    // soft-deleted block from a missing one — yielding the distinct
+    // `Validation("soft-deleted")` (the same error the command wrapper
+    // has always surfaced via `verify_active`) rather than the inner
+    // fallback's old collapsed `NotFound`.
     let result =
         delete_property_inner(&pool, DEV, &mat, block.id.as_str().into(), "status".into()).await;
 
-    assert!(
-        matches!(result, Err(AppError::NotFound(_))),
-        "delete_property on deleted block must return AppError::NotFound"
-    );
+    match result {
+        Err(AppError::Validation(msg)) => assert!(
+            msg.contains("soft-deleted"),
+            "delete_property on a soft-deleted block must report Validation 'soft-deleted', got: {msg}"
+        ),
+        other => {
+            panic!("expected Validation('soft-deleted') for a soft-deleted block, got {other:?}")
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
