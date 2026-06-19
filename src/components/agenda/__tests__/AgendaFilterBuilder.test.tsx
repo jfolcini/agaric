@@ -804,6 +804,79 @@ describe('AgendaFilterBuilder', () => {
   })
 
   // -----------------------------------------------------------------------
+  // #1746 — UI affordance for OR-within-dimension subsumption. A valued
+  // property chip whose key also has a bare is-set chip is inert (the query
+  // layer drops it), so it renders greyed/disabled while staying removable.
+  // -----------------------------------------------------------------------
+  describe('subsumed valued property chips (#1746)', () => {
+    const subsumedTitle = t('agendaFilter.valuedSubsumedByIsSet')
+
+    it('greys/disables a valued chip subsumed by a same-key is-set chip', () => {
+      const filters: AgendaFilter[] = [
+        { dimension: 'property', values: ['project'] }, // is-set
+        { dimension: 'property', values: ['project:alpha'] }, // subsumed valued
+      ]
+      renderBuilder({ filters })
+
+      const valuedBtn = screen.getByText('project = alpha').closest('button') as HTMLButtonElement
+      expect(valuedBtn).toHaveAttribute('aria-disabled', 'true')
+      expect(valuedBtn).toHaveAttribute('title', subsumedTitle)
+      expect(valuedBtn.getAttribute('aria-label')).toContain(subsumedTitle)
+
+      // The pill chrome is visibly de-emphasised.
+      const pill = valuedBtn.closest('[data-slot="filter-pill"]') as HTMLElement
+      expect(pill).toHaveAttribute('data-subsumed', 'true')
+      expect(pill.className).toContain('opacity-50')
+    })
+
+    it('leaves a non-subsumed valued chip normal (no is-set on its key)', () => {
+      const filters: AgendaFilter[] = [
+        { dimension: 'property', values: ['project'] }, // is-set on project
+        { dimension: 'property', values: ['effort:high'] }, // different key — not subsumed
+      ]
+      renderBuilder({ filters })
+
+      const valuedBtn = screen.getByText('effort = high').closest('button') as HTMLButtonElement
+      expect(valuedBtn).not.toHaveAttribute('aria-disabled')
+      expect(valuedBtn).toHaveAttribute('title', 'effort = high')
+      expect(valuedBtn.getAttribute('aria-label')).not.toContain(subsumedTitle)
+
+      const pill = valuedBtn.closest('[data-slot="filter-pill"]') as HTMLElement
+      expect(pill).not.toHaveAttribute('data-subsumed')
+      expect(pill.className).not.toContain('opacity-50')
+    })
+
+    it('keeps a subsumed valued chip removable', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      const filters: AgendaFilter[] = [
+        { dimension: 'property', values: ['project'] },
+        { dimension: 'property', values: ['project:alpha'] },
+      ]
+      renderBuilder({ filters, onFiltersChange })
+
+      await user.click(
+        screen.getByLabelText(t('agendaFilter.removeFilterLabel', { label: 'project = alpha' })),
+      )
+
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        expect.objectContaining({ dimension: 'property', values: ['project'] }),
+      ])
+    })
+
+    it('has no a11y violations with a subsumed valued chip', async () => {
+      const { container } = renderBuilder({
+        filters: [
+          { dimension: 'property', values: ['project'] },
+          { dimension: 'property', values: ['project:alpha'] },
+        ],
+      })
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  // -----------------------------------------------------------------------
   // Error paths
   // -----------------------------------------------------------------------
 

@@ -94,6 +94,7 @@ export const agenda: Record<string, string> = {
   'agendaFilter.optionsLabel': '{{label}} options',
   'agendaFilter.editFilter': 'Edit {{label}} filter',
   'agendaFilter.removeFilterLabel': 'Remove {{label}} filter',
+  'agendaFilter.valuedSubsumedByIsSet': "No effect — the property is already filtered as 'is set'",
   'duePanel.headerOne': '1 Agenda',
   'duePanel.header': '{{count}} Agenda',
   'duePanel.groupDoing': 'DOING',

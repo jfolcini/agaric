@@ -50,6 +50,39 @@ function formatPropertyPill(values: string[]): string {
   return key
 }
 
+/**
+ * Parse a property filter chip's first value into its key and whether it
+ * carries a value (key:value) or is a bare is-set entry (key). Mirrors
+ * the `key`/value split in `formatPropertyPill` and `agenda-filters.ts`.
+ */
+function parsePropertyEntry(values: string[]): { key: string; isSet: boolean } | null {
+  const [first] = values
+  if (!first) return null
+  const colonIdx = first.indexOf(':')
+  const key = colonIdx > 0 ? first.slice(0, colonIdx) : first
+  return { key, isSet: colonIdx <= 0 }
+}
+
+/**
+ * #1746 — UI affordance for the OR-within-dimension subsumption the query
+ * layer applies (agenda-filters.ts:387-396): when a property key has a bare
+ * is-set entry, any same-key *valued* entry is subsumed (is-set is the strict
+ * superset) and has no effect on results. The query side is already correct
+ * and is NOT changed here; this only computes which property keys have an
+ * is-set chip so the inert valued chips can be greyed/disabled in the UI.
+ *
+ * Returns the set of property keys that have at least one bare is-set chip.
+ */
+function collectIsSetPropertyKeys(filters: AgendaFilter[]): Set<string> {
+  const keys = new Set<string>()
+  for (const filter of filters) {
+    if (filter.dimension !== 'property') continue
+    const parsed = parsePropertyEntry(filter.values)
+    if (parsed?.isSet) keys.add(parsed.key)
+  }
+  return keys
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -325,6 +358,14 @@ export function AgendaFilterBuilder({
   const { t } = useTranslation()
   const existingDimensions = new Set(filters.map((f) => f.dimension))
 
+  // #1746 — property keys that carry a bare is-set chip. A same-key *valued*
+  // chip is then subsumed by that is-set chip (OR-within-dimension) and has
+  // no effect on results; it is greyed/disabled below so the user can see the
+  // narrower selection is folded in rather than silently no-op'ing. The query
+  // layer already applies this subsumption (agenda-filters.ts); this is
+  // presentation-only.
+  const isSetPropertyKeys = collectIsSetPropertyKeys(filters)
+
   const handleAdd = useCallback(
     (filter: AgendaFilter) => {
       // Stamp a per-add monotonic React key (#757) so the chip list's
@@ -387,6 +428,14 @@ export function AgendaFilterBuilder({
                 ? formatPropertyPill(filter.values)
                 : `${dimensionLabel(filter.dimension)}: ${filter.values.join(', ')}`
 
+              // #1746 — a valued property chip is subsumed (and inert) when a
+              // bare is-set chip exists for the same key. Grey/disable it so
+              // the user sees it has no effect; it stays removable.
+              const propEntry = isProperty ? parsePropertyEntry(filter.values) : null
+              const isSubsumed =
+                propEntry !== null && !propEntry.isSet && isSetPropertyKeys.has(propEntry.key)
+              const subsumedTitle = t('agendaFilter.valuedSubsumedByIsSet')
+
               return (
                 <li key={filter._addId} className="contents">
                   {/* UX review Tier 1 item 7 — chip visual chrome aligned
@@ -398,7 +447,8 @@ export function AgendaFilterBuilder({
                   <Badge
                     tone="secondary"
                     data-slot="filter-pill"
-                    className="filter-pill shrink-0 gap-0 p-0 text-xs"
+                    data-subsumed={isSubsumed ? 'true' : undefined}
+                    className={`filter-pill shrink-0 gap-0 p-0 text-xs${isSubsumed ? ' opacity-50' : ''}`}
                     // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- Badge is a styled inline pill; the suggested fieldset/details/optgroup tags would break its layout and are wrong grouping primitives for an edit-filter pill
                     role="group"
                     aria-label={t('agendaFilter.editFilter', { label: pillLabel })}
@@ -411,10 +461,15 @@ export function AgendaFilterBuilder({
                       <button
                         type="button"
                         className="flex items-center gap-1 rounded-l-full px-2 py-0.5 hover:bg-accent cursor-pointer focus-ring-visible"
-                        title={pillLabel}
-                        aria-label={t('agendaFilter.editFilter', {
-                          label: pillLabel,
-                        })}
+                        // #1746 — keep the chip clickable/removable, but flag it
+                        // as inert to AT and surface a tooltip explaining why.
+                        aria-disabled={isSubsumed || undefined}
+                        title={isSubsumed ? subsumedTitle : pillLabel}
+                        aria-label={
+                          isSubsumed
+                            ? `${t('agendaFilter.editFilter', { label: pillLabel })} — ${subsumedTitle}`
+                            : t('agendaFilter.editFilter', { label: pillLabel })
+                        }
                       >
                         {isProperty ? (
                           <span>{pillLabel}</span>
