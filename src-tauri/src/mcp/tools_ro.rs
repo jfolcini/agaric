@@ -799,6 +799,17 @@ fn tool_desc_list_spaces() -> ToolDescription {
 /// out-of-range typos and let agents request pages that quietly
 /// exceeded the documented cap. Returns the value unchanged so the
 /// caller can pass it straight through to `*_inner`.
+///
+/// #1665: on the MCP path this check *shadows* the equivalent range
+/// checks inside the backing `*_inner` functions (e.g.
+/// `list_pages_inner` / `get_page_inner` in `commands/pages/listing.rs`).
+/// Because `validate_limit` runs first and short-circuits, the `*_inner`
+/// message is never observed on the wire by an MCP agent — what they see
+/// is the message produced here. The inner checks are intentional
+/// defense-in-depth for *non-MCP* callers (e.g. direct command/IPC
+/// callers that bypass this boundary), so do NOT "fix" the inner message
+/// expecting it to surface to MCP agents, and do NOT delete the inner
+/// checks as redundant — they guard the non-MCP entry path.
 fn validate_limit(tool: &str, limit: Option<i64>, cap: i64) -> Result<Option<i64>, AppError> {
     if let Some(l) = limit
         && !(1..=cap).contains(&l)

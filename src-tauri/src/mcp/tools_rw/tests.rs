@@ -156,6 +156,106 @@ async fn append_block_missing_parent_id_returns_not_found() {
     );
 }
 
+/// #1606: the schema declares `position` `minimum: 1`, but serde does not
+/// honour JSON-Schema constraints. `position: 0` must now be rejected loudly
+/// with a Validation error (→ -32602) instead of being silently clamped to
+/// the first child.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_block_position_zero_rejected() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let parent = create_block_inner_with_space(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Parent".into(),
+        None,
+        Some(1),
+        &SpaceScope::Active(SpaceId::from_trusted(&space)),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "append_block",
+            json!({"parent_id": parent.id.clone(), "content": "x", "position": 0, "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("position 0 must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "position 0 must surface as Validation (→ -32602), got {err:?}",
+    );
+}
+
+/// #1606: a negative `position` (e.g. an LLM agent emitting -5) must also be
+/// rejected loudly rather than clamped, and never reaches the `saturating_sub`
+/// underflow backstop.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_block_negative_position_rejected() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let parent = create_block_inner_with_space(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Parent".into(),
+        None,
+        Some(1),
+        &SpaceScope::Active(SpaceId::from_trusted(&space)),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "append_block",
+            json!({"parent_id": parent.id.clone(), "content": "x", "position": -5, "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("negative position must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "negative position must surface as Validation (→ -32602), got {err:?}",
+    );
+}
+
+/// #1606: `position: 1` is the smallest valid 1-based position and must still
+/// succeed, mapping to index 0 (the first child).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_block_position_one_maps_to_first_child() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let parent = create_block_inner_with_space(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Parent".into(),
+        None,
+        Some(1),
+        &SpaceScope::Active(SpaceId::from_trusted(&space)),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let result = tools
+        .call_tool(
+            "append_block",
+            json!({"parent_id": parent.id.clone(), "content": "first", "position": 1, "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("position 1 must succeed");
+    assert_eq!(result["parent_id"], parent.id.as_str());
+    assert_eq!(result["content"], "first");
+}
+
 // -------------------------------------------------------------------
 // update_block_content
 // -------------------------------------------------------------------
