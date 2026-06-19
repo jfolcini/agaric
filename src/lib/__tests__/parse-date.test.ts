@@ -108,6 +108,63 @@ describe('parseDate', () => {
     expect(parseDate('Jan 5')).toBe('2027-01-05')
   })
 
+  // #1565: no-year numeric MM-DD / DD-MM
+  it('parses no-year "5/13" as MM-DD (precedence unchanged)', () => {
+    // May 13 is after Apr 10 → same year
+    expect(parseDate('5/13')).toBe('2026-05-13')
+  })
+
+  it('parses no-year "13/5" via DD-MM fallback (first number > 12)', () => {
+    // day=13, month=5 → May 13, after Apr 10 → same year
+    expect(parseDate('13/5')).toBe('2026-05-13')
+  })
+
+  it('parses no-year "13-5" (dash separator) via DD-MM fallback', () => {
+    expect(parseDate('13-5')).toBe('2026-05-13')
+  })
+
+  it('rejects no-year numeric where neither order is valid', () => {
+    // 13 as month is invalid, and 99 as day is invalid in either order
+    expect(parseDate('13/99')).toBeNull()
+  })
+
+  // #1565: leap-day default-year guard — Feb 29 in a non-leap current year
+  // must not overflow to Mar 1; it resolves to the nearest future leap year.
+  it('parses no-year "2/29" to nearest future leap year (not Mar 1)', () => {
+    // FAKE_NOW = Apr 10, 2026 (non-leap). 2026/2027 non-leap → 2028 leap.
+    expect(parseDate('2/29')).toBe('2028-02-29')
+  })
+
+  it('parses no-year "29/2" (DD-MM) to nearest future leap year', () => {
+    expect(parseDate('29/2')).toBe('2028-02-29')
+  })
+
+  // #1565: loop-termination guard. Feb 30/31 and Apr 31 pass the (day<=31)
+  // plausibility gate but hold in NO year — the default-year scan must be
+  // bounded and fall through to rejection rather than spin forever.
+  it('returns null for impossible "2/30" without hanging (Feb has no 30th)', () => {
+    expect(parseDate('2/30')).toBeNull()
+  })
+
+  it('returns null for impossible "2/31" without hanging', () => {
+    expect(parseDate('2/31')).toBeNull()
+  })
+
+  it('returns null for impossible "4/31" without hanging (Apr has 30 days)', () => {
+    expect(parseDate('4/31')).toBeNull()
+  })
+
+  // #1565: non-edge dates keep ordinary default-year semantics (guard must not
+  // hijack them). Mar 15 is before Apr 10 → rolls to next year (unchanged
+  // behavior); May 13 is after → stays current year.
+  it('rolls a past no-year date "3/15" to next year (unchanged)', () => {
+    expect(parseDate('3/15')).toBe('2027-03-15')
+  })
+
+  it('keeps current year for a future no-year date "5/1" (unchanged)', () => {
+    expect(parseDate('5/1')).toBe('2026-05-01')
+  })
+
   // ---- Invalid inputs ----
   it('returns null for non-date string', () => {
     expect(parseDate('not a date')).toBeNull()

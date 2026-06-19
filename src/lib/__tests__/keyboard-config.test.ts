@@ -425,6 +425,85 @@ describe('keyboard-config', () => {
     expect(c).toBeUndefined()
   })
 
+  // ── #1576: editor built-in chords (Bold Ctrl+B / Italic Ctrl+I) ────────
+  // TipTap StarterKit owns Ctrl+B (Bold) and Ctrl+I (Italic). They now have
+  // `rebindable: false` reservation entries (editorFormatting, condition
+  // inEditor, documentLevel) so they are known-as-taken to conflict detection
+  // and the Settings "is this chord free?" check — previously they were
+  // invisible and Settings advertised the chords as free.
+  describe('editor built-in Bold/Italic reservations (#1576)', () => {
+    it('bold/italic exist as documentation-only editorFormatting entries', () => {
+      const bold = DEFAULT_SHORTCUTS.find((s) => s.id === 'bold')
+      const italic = DEFAULT_SHORTCUTS.find((s) => s.id === 'italic')
+      expect(bold).toBeDefined()
+      expect(bold?.keys).toBe('Ctrl + B')
+      expect(bold?.category).toBe('keyboard.category.editorFormatting')
+      expect(bold?.condition).toBe('keyboard.condition.inEditor')
+      expect(bold?.rebindable).toBe(false)
+      expect(bold?.documentLevel).toBe(true)
+      expect(italic).toBeDefined()
+      expect(italic?.keys).toBe('Ctrl + I')
+      expect(italic?.category).toBe('keyboard.category.editorFormatting')
+      expect(italic?.condition).toBe('keyboard.condition.inEditor')
+      expect(italic?.rebindable).toBe(false)
+      expect(italic?.documentLevel).toBe(true)
+    })
+
+    it('the default catalog stays conflict-free with Bold/Italic added', () => {
+      // toggleSidebar (global, Ctrl+B) carries the disjoint `outsideEditor`
+      // condition (its window listener bails while editing), so the default
+      // Ctrl+B pair never co-fires and must not be flagged.
+      expect(findConflicts()).toHaveLength(0)
+    })
+
+    it('rebinding a global action onto Ctrl+B now reports a conflict with Bold', () => {
+      // paletteOpen (global, wildcard) rebound onto Ctrl+B fires
+      // unconditionally — including while the editor is focused, where it races
+      // TipTap's Bold keymap. The cross-category pass must surface the pair.
+      setCustomShortcut('paletteOpen', 'Ctrl + B')
+
+      const c = findConflicts().find((x) => x.ids.includes('paletteOpen') && x.ids.includes('bold'))
+      expect(c).toBeDefined()
+      expect(c?.keys).toBe('Ctrl + B')
+    })
+
+    it('rebinding a global action onto Ctrl+I now reports a conflict with Italic', () => {
+      setCustomShortcut('paletteOpen', 'Ctrl + I')
+
+      const c = findConflicts().find(
+        (x) => x.ids.includes('paletteOpen') && x.ids.includes('italic'),
+      )
+      expect(c).toBeDefined()
+      expect(c?.keys).toBe('Ctrl + I')
+    })
+
+    it('does NOT spuriously flag toggleSidebar (editor-aware) rebound onto Ctrl+I', () => {
+      // The issue's second example. toggleSidebar's handler bails while editing
+      // (modelled as the `outsideEditor` condition), and Italic only fires
+      // inside the editor (`inEditor`) — the two conditions are disjoint, so
+      // they genuinely never co-fire and Pass 3 must not flag the pair. The
+      // reservation still makes Ctrl+I visible: a *wildcard* global rebound onto
+      // it IS flagged (see the paletteOpen test above).
+      setCustomShortcut('toggleSidebar', 'Ctrl + I')
+
+      const c = findConflicts().find(
+        (x) => x.ids.includes('toggleSidebar') && x.ids.includes('italic'),
+      )
+      expect(c).toBeUndefined()
+    })
+
+    it('does NOT over-report a genuinely free control chord rebound onto a global action', () => {
+      // A fresh chord owned by nothing must stay conflict-free — guard against
+      // the reservation entries widening Pass 3 into false positives.
+      setCustomShortcut('paletteOpen', 'Ctrl + Alt + B')
+
+      const conflicts = findConflicts()
+      expect(conflicts.filter((c) => c.keys === 'Ctrl + Alt + B')).toHaveLength(0)
+      // And the Bold/Italic reservations themselves are not dragged in.
+      expect(conflicts.some((c) => c.ids.includes('bold') || c.ids.includes('italic'))).toBe(false)
+    })
+  })
+
   it('findConflicts leaves the default catalog Escape chain unflagged (#1592)', () => {
     // The layered document-level Escape listeners (closeOverlays / zoomOut /
     // clearSelection / listClearSelection) coexist by design under disjoint

@@ -1566,8 +1566,21 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
  * {@link forEachPageStore} rather than reading the map directly.
  */
 interface PageBlockRegistrySlot {
+  /**
+   * Canonical store consumers see — the most-recently-mounted live provider's
+   * store. Always references an entry in {@link liveStores} (never an
+   * unmounted store while any provider for the pageId remains).
+   */
   store: StoreApi<PageBlockState>
   refCount: number
+  /**
+   * #1560 — every still-mounted provider's store for this pageId, in mount
+   * order (newest last). Lets `unregisterPageStore` re-point `store` to a
+   * surviving provider when the slot owner unmounts out of order, instead of
+   * stranding the slot on an unmounted store. Length stays in lockstep with
+   * `refCount`.
+   */
+  liveStores: StoreApi<PageBlockState>[]
 }
 
 const pageBlockSlots = new Map<string, PageBlockRegistrySlot>()
@@ -1587,8 +1600,9 @@ function registerPageStore(pageId: string, store: StoreApi<PageBlockState>): voi
   if (slot) {
     slot.store = store
     slot.refCount += 1
+    slot.liveStores.push(store)
   } else {
-    pageBlockSlots.set(pageId, { store, refCount: 1 })
+    pageBlockSlots.set(pageId, { store, refCount: 1, liveStores: [store] })
   }
 }
 
@@ -1597,12 +1611,28 @@ function registerPageStore(pageId: string, store: StoreApi<PageBlockState>): voi
  * Deletes the slot — and clears the page's session undo state (#753) — only
  * when the LAST reference drops, so a stale unmount cannot clobber a slot a
  * newer mount still holds.
+ *
+ * #1560 — providers for the same pageId can unmount out of order (the
+ * slot-owning newest provider first). The caller passes the unmounting
+ * provider's `store` so we can drop exactly that entry and, when it was the
+ * canonical `slot.store`, re-point the slot at a still-live provider instead
+ * of leaving `slot.store` dangling at an unmounted store.
  */
-function unregisterPageStore(pageId: string): void {
+function unregisterPageStore(pageId: string, store: StoreApi<PageBlockState>): void {
   const slot = pageBlockSlots.get(pageId)
   if (!slot) return
+  const idx = slot.liveStores.lastIndexOf(store)
+  if (idx !== -1) slot.liveStores.splice(idx, 1)
   slot.refCount -= 1
-  if (slot.refCount > 0) return
+  if (slot.refCount > 0) {
+    // If the slot owner just unmounted out of order, adopt the newest
+    // surviving provider so the slot never references an unmounted store.
+    const newest = slot.liveStores[slot.liveStores.length - 1]
+    if (slot.store === store && newest !== undefined) {
+      slot.store = newest
+    }
+    return
+  }
   pageBlockSlots.delete(pageId)
   // #753 — drop the page's session undo state alongside the registry slot.
   // PageEditor already clears on navigation away, but journal day pages
@@ -1667,7 +1697,7 @@ export function PageBlockStoreProvider({
   // in the deps adds no extra runs.
   useEffect(() => {
     registerPageStore(pageId, store)
-    return () => unregisterPageStore(pageId)
+    return () => unregisterPageStore(pageId, store)
   }, [pageId, store])
 
   return createElement(PageBlockContext.Provider, { value: store }, children)

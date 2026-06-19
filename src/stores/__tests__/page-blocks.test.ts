@@ -3095,6 +3095,37 @@ describe('PageBlockStore', () => {
       expect(getPageStore(pageId)).toBeUndefined()
     })
 
+    it('#1560 — out-of-order unmount (slot owner first) re-points to a live store, never strands an orphan', () => {
+      const pageId = 'ORPHAN_GUARD_PAGE'
+      expect(getPageStore(pageId)).toBeUndefined()
+
+      // Mount provider A → registers store A (refCount 1, slot.store = A).
+      const a = render(createElement(Provider, { pageId }, 'a'))
+      const storeA = getPageStore(pageId)
+      expect(storeA).toBeDefined()
+
+      // Mount provider B for the same pageId → shares the slot (refCount 2);
+      // the slot ADOPTS B's store so getPageStore now tracks B.
+      const b = render(createElement(Provider, { pageId }, 'b'))
+      const storeB = getPageStore(pageId)
+      expect(storeB).toBeDefined()
+      // Each provider creates its own store instance, so the two differ — that
+      // is what makes a dangling pointer observable.
+      expect(storeB).not.toBe(storeA)
+
+      // Unmount the slot OWNER (B, the newer provider) FIRST — the out-of-order
+      // case. Without the re-point fallback the slot would still point at B's
+      // now-unmounted store; with it the slot adopts the surviving provider A.
+      b.unmount()
+      expect(getPageStore(pageId)).toBe(storeA)
+      // And never the orphaned (unmounted) store.
+      expect(getPageStore(pageId)).not.toBe(storeB)
+
+      // Final unmount of A cleans the slot entirely.
+      a.unmount()
+      expect(getPageStore(pageId)).toBeUndefined()
+    })
+
     it('forEachPageStore iterates only currently-mounted stores', () => {
       const p1 = 'EACH_PAGE_1'
       const p2 = 'EACH_PAGE_2'

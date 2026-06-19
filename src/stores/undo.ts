@@ -330,13 +330,29 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         }
         if (!firstResult) return null
 
-        // Record actual group size for redo (always, even for single ops)
+        // Record actual group size for redo (always, even for single ops).
+        //
+        // #1561 — guard against `redoGroupSizes` leading an empty/short
+        // `redoStack`. If `reanchorAfterRemoteOps` (or `onNewAction`) fired
+        // while this undo's await loop was in flight, it reset the live entry
+        // to pristine baseline (empty stacks). The reversed ops re-appended on
+        // each success path may number FEWER than `actualGroupSize` (reanchor
+        // wiped the earlier ones). Recording the loop's `actualGroupSize`
+        // verbatim would strand an orphan size entry that no backing redoStack
+        // entries support: `redo` bails on the empty/short stack before the pop
+        // guard reclaims it. Clamp the recorded size to what the stack can back
+        // (`redoStack.length - sum(existing redoGroupSizes)`) so the invariant
+        // `sum(redoGroupSizes) <= redoStack.length` always holds. A clamp to 0
+        // records nothing — there is no group left to redo.
         set((state) => ({
-          pages: setPageState(state.pages, pageId, (current) =>
-            current
-              ? { ...current, redoGroupSizes: [...current.redoGroupSizes, actualGroupSize] }
-              : current,
-          ),
+          pages: setPageState(state.pages, pageId, (current) => {
+            if (!current) return current
+            const alreadyGrouped = current.redoGroupSizes.reduce((sum, n) => sum + n, 0)
+            const backing = current.redoStack.length - alreadyGrouped
+            const recordedSize = Math.min(actualGroupSize, Math.max(backing, 0))
+            if (recordedSize <= 0) return current
+            return { ...current, redoGroupSizes: [...current.redoGroupSizes, recordedSize] }
+          }),
         }))
 
         return firstResult

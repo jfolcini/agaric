@@ -43,19 +43,29 @@ function jaro(a: string, b: string): number {
   if (a.length === 0 || b.length === 0) return 0
   if (a === b) return 1
 
-  // Match window: floor(max(|a|, |b|) / 2) - 1, clamped at 0.
-  const matchWindow = Math.max(0, Math.floor(Math.max(a.length, b.length) / 2) - 1)
+  // Index by Unicode code points, not UTF-16 code units, so astral chars
+  // (e.g. 📌, two surrogate units) count as a single character. Converting
+  // once per string keeps the inner loops surrogate-safe without per-iteration
+  // decoding (issue #1564).
+  const aCp = Array.from(a)
+  const bCp = Array.from(b)
+  const aLen = aCp.length
+  const bLen = bCp.length
+  if (aLen === 0 || bLen === 0) return 0
 
-  const aMatched = new Uint8Array(a.length)
-  const bMatched = new Uint8Array(b.length)
+  // Match window: floor(max(|a|, |b|) / 2) - 1, clamped at 0.
+  const matchWindow = Math.max(0, Math.floor(Math.max(aLen, bLen) / 2) - 1)
+
+  const aMatched = new Uint8Array(aLen)
+  const bMatched = new Uint8Array(bLen)
 
   let matches = 0
-  for (let i = 0; i < a.length; i++) {
+  for (let i = 0; i < aLen; i++) {
     const start = Math.max(0, i - matchWindow)
-    const end = Math.min(b.length, i + matchWindow + 1)
+    const end = Math.min(bLen, i + matchWindow + 1)
     for (let j = start; j < end; j++) {
       if (bMatched[j]) continue
-      if (a[i] !== b[j]) continue
+      if (aCp[i] !== bCp[j]) continue
       aMatched[i] = 1
       bMatched[j] = 1
       matches++
@@ -68,16 +78,16 @@ function jaro(a: string, b: string): number {
   // visit order. Divide by 2 (canonical Jaro definition).
   let transpositions = 0
   let k = 0
-  for (let i = 0; i < a.length; i++) {
+  for (let i = 0; i < aLen; i++) {
     if (!aMatched[i]) continue
     while (!bMatched[k]) k++
-    if (a[i] !== b[k]) transpositions++
+    if (aCp[i] !== bCp[k]) transpositions++
     k++
   }
   const t = transpositions / 2
 
   const m = matches
-  return (m / a.length + m / b.length + (m - t) / m) / 3
+  return (m / aLen + m / bLen + (m - t) / m) / 3
 }
 
 /**
@@ -93,10 +103,13 @@ export function jaroWinkler(a: string, b: string): number {
   const bLow = b.toLowerCase()
   if (aLow === bLow) return 1
   const j = jaro(aLow, bLow)
-  // Common prefix length capped at WINKLER_PREFIX_MAX.
+  // Common prefix length capped at WINKLER_PREFIX_MAX, counted in code
+  // points (not UTF-16 units) so astral chars contribute one unit (#1564).
+  const aCp = Array.from(aLow)
+  const bCp = Array.from(bLow)
   let p = 0
-  const maxP = Math.min(WINKLER_PREFIX_MAX, aLow.length, bLow.length)
-  while (p < maxP && aLow[p] === bLow[p]) p++
+  const maxP = Math.min(WINKLER_PREFIX_MAX, aCp.length, bCp.length)
+  while (p < maxP && aCp[p] === bCp[p]) p++
   return j + p * WINKLER_PREFIX_SCALE * (1 - j)
 }
 
