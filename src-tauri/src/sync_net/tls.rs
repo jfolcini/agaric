@@ -10,13 +10,28 @@ use crate::error::AppError;
 // =========================================================================
 
 /// A self-signed TLS certificate for sync transport.
-#[derive(Debug, Clone)]
+///
+/// `Debug` is implemented manually to **redact the private key** (`key_pem`)
+/// so it can never leak into logs/traces via `error!("{cert:?}")` or an
+/// `#[instrument]` that forgets `skip(cert)`. Non-secret fields stay visible
+/// for diagnostics.
+#[derive(Clone)]
 pub struct SyncCert {
     pub cert_pem: String,
     pub key_pem: String,
     /// SHA-256 of the DER-encoded certificate, hex-encoded.
     /// Used for certificate pinning in `peer_refs`.
     pub cert_hash: String,
+}
+
+impl std::fmt::Debug for SyncCert {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SyncCert")
+            .field("cert_pem", &self.cert_pem)
+            .field("key_pem", &"[REDACTED]")
+            .field("cert_hash", &self.cert_hash)
+            .finish()
+    }
 }
 
 /// Generate a self-signed ECDSA P-256 certificate for the given device.
@@ -240,15 +255,21 @@ impl rustls::client::danger::ServerCertVerifier for PinningCertVerifier {
                 .next()
                 .and_then(|attr| attr.as_str().ok());
             match cn {
-                Some(name) if name.starts_with("agaric-") => {
-                    if let Some(ref expected_id) = self.expected_remote_id {
-                        let observed_id = &name["agaric-".len()..];
-                        if observed_id != expected_id {
-                            return Err(rustls::Error::General(format!(
-                                "certificate CN device id mismatch: expected \
-                                 agaric-{expected_id}, got agaric-{observed_id}"
-                            )));
-                        }
+                // The remainder after `agaric-` is the device id; reject an
+                // empty id (e.g. CN exactly `agaric-`) at the source (#1604).
+                Some(name)
+                    if name
+                        .strip_prefix("agaric-")
+                        .is_some_and(|id| !id.is_empty()) =>
+                {
+                    let observed_id = &name["agaric-".len()..];
+                    if let Some(ref expected_id) = self.expected_remote_id
+                        && observed_id != expected_id
+                    {
+                        return Err(rustls::Error::General(format!(
+                            "certificate CN device id mismatch: expected \
+                             agaric-{expected_id}, got agaric-{observed_id}"
+                        )));
                     }
                 }
                 _ => {

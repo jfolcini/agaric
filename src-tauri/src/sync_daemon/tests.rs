@@ -1903,8 +1903,8 @@ async fn inmem_handle_incoming_sync_rejects_cert_hash_mismatch() {
     let scheduler = Arc::new(SyncScheduler::new());
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    // Insert peer ref WITH a stored cert hash
-    peer_refs::upsert_peer_ref_with_cert(&pool, "REMOTE_PAIRED", "stored_hash_abc")
+    // Insert peer ref WITH a stored cert hash (#1602: must be 64-char hex).
+    peer_refs::upsert_peer_ref_with_cert(&pool, "REMOTE_PAIRED", &"a".repeat(64))
         .await
         .unwrap();
 
@@ -2001,7 +2001,7 @@ async fn inmem_handle_incoming_sync_rejects_certless_claim_of_pinned_peer_800() 
 
     // The victim peer is fully paired AND cert-pinned (a stored cert_hash
     // exists from a prior authenticated connection).
-    peer_refs::upsert_peer_ref_with_cert(&pool, "REMOTE_PAIRED", "victim_pinned_hash")
+    peer_refs::upsert_peer_ref_with_cert(&pool, "REMOTE_PAIRED", &"b".repeat(64))
         .await
         .unwrap();
 

@@ -733,6 +733,54 @@ fn cn_verification_rejects_non_agaric_cn() {
 }
 
 #[test]
+fn cn_verification_rejects_empty_device_id() {
+    // #1604: a CN of exactly `agaric-` (empty device id) must be rejected at
+    // the source rather than parsed into an empty id.
+    install_crypto_provider();
+    use rcgen::{CertificateParams, DnType, KeyPair};
+
+    let key_pair = KeyPair::generate().unwrap();
+    let mut params = CertificateParams::new(vec!["localhost".to_string()]).unwrap();
+    params
+        .distinguished_name
+        .push(DnType::CommonName, "agaric-".to_string());
+    let bad_cert = params.self_signed(&key_pair).unwrap();
+    let bad_der = bad_cert.der().to_vec();
+
+    // Compute hash so the pin check passes — isolating the CN check.
+    let hash = Sha256::digest(&bad_der);
+    let hex_hash: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+
+    let verifier = PinningCertVerifier {
+        expected_hash: Some(hex_hash),
+        expected_remote_id: None,
+        observed_hash: Arc::new(std::sync::OnceLock::new()),
+    };
+
+    let ee = rustls::pki_types::CertificateDer::from(bad_der);
+    let server_name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+    let now = rustls::pki_types::UnixTime::now();
+
+    let result = rustls::client::danger::ServerCertVerifier::verify_server_cert(
+        &verifier,
+        &ee,
+        &[],
+        &server_name,
+        &[],
+        now,
+    );
+    assert!(
+        result.is_err(),
+        "CN `agaric-` with an empty device id should be rejected"
+    );
+    let err_msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        err_msg.contains("CN does not match"),
+        "error should mention CN mismatch, got: {err_msg}"
+    );
+}
+
+#[test]
 fn cn_verification_rejects_unparseable_cert() {
     install_crypto_provider();
 
@@ -991,6 +1039,48 @@ async fn mtls_server_extracts_peer_cert_cn() {
         server_observed_cn.as_deref(),
         Some("my-client-id"),
         "server should extract device ID from client cert CN (agaric-my-client-id → my-client-id)"
+    );
+
+    conn.close().await.ok();
+    server.shutdown().await;
+}
+
+/// #1604: a client cert whose CN is exactly `agaric-` (empty device id)
+/// must NOT be surfaced as a peer identity. The websocket accept path
+/// filters the empty post-`agaric-` remainder so `peer_cert_cn()` reports
+/// `None` — the same negative result as a cert-less or non-`agaric-`
+/// peer — rather than an empty-string identity.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mtls_server_rejects_empty_device_id_cn() {
+    install_crypto_provider();
+    let server_cert = generate_self_signed_cert("server-device").unwrap();
+    // CN becomes exactly `agaric-` (empty device id).
+    let client_cert = generate_self_signed_cert("").unwrap();
+
+    let (cn_tx, cn_rx) = tokio::sync::oneshot::channel::<Option<String>>();
+    let cn_tx = std::sync::Mutex::new(Some(cn_tx));
+
+    let (server, port) = SyncServer::start(&server_cert, move |conn| {
+        if let Some(tx) = cn_tx.lock().unwrap().take() {
+            let _ = tx.send(conn.peer_cert_cn().map(String::from));
+        }
+    })
+    .await
+    .unwrap();
+
+    let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert)
+        .await
+        .unwrap();
+
+    let server_observed_cn = tokio::time::timeout(std::time::Duration::from_secs(5), cn_rx)
+        .await
+        .expect("timeout waiting for server")
+        .expect("channel closed");
+
+    assert_eq!(
+        server_observed_cn, None,
+        "server must report None for a CN of exactly `agaric-` (empty device id), \
+         not an empty-string identity"
     );
 
     conn.close().await.ok();

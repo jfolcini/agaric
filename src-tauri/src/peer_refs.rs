@@ -121,6 +121,17 @@ pub async fn upsert_peer_ref_with_cert(
     peer_id: &str,
     cert_hash: &str,
 ) -> Result<(), AppError> {
+    // #1602 — symmetric with `sync_cert::read_existing_cert`: never persist a
+    // TOFU pin that isn't exactly 64 chars of hex (a SHA-256 hex digest).
+    // Callers derive `cert_hash` from the presented TLS cert (well-formed
+    // today), but rejecting a malformed pin keeps the write path from
+    // silently storing garbage that the read/pin path would later reject.
+    if cert_hash.len() != 64 || !cert_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(AppError::Validation(format!(
+            "invalid cert_hash: expected 64-char hex SHA-256, got {} chars",
+            cert_hash.len()
+        )));
+    }
     sqlx::query!(
         "INSERT INTO peer_refs (peer_id, cert_hash)
          VALUES (?, ?)
@@ -678,6 +689,58 @@ mod tests {
             Some(hash2.as_str()),
             "cert_hash must be updated to second hash"
         );
+    }
+
+    #[tokio::test]
+    async fn upsert_with_cert_accepts_uppercase_hex() {
+        // #1602 — `is_ascii_hexdigit` (matching read_existing_cert) accepts
+        // either case, so an uppercase 64-char hex pin must upsert cleanly.
+        let (pool, _dir) = test_pool().await;
+        let hash = "A".repeat(64);
+
+        upsert_peer_ref_with_cert(&pool, "peer-upper", &hash)
+            .await
+            .unwrap();
+
+        let peer = get_peer_ref(&pool, "peer-upper")
+            .await
+            .unwrap()
+            .expect("peer must exist after upsert_with_cert");
+        assert_eq!(peer.cert_hash.as_deref(), Some(hash.as_str()));
+    }
+
+    #[tokio::test]
+    async fn upsert_with_cert_rejects_malformed_hash_and_persists_nothing() {
+        // #1602 — a too-short, too-long, or non-hex pin must be rejected with
+        // an AppError::Validation, and the row must not be written at all
+        // (symmetric with sync_cert::read_existing_cert's hash guard).
+        let (pool, _dir) = test_pool().await;
+
+        let bad_hashes = [
+            "a".repeat(63),                 // too short
+            "a".repeat(65),                 // too long
+            String::new(),                  // empty
+            "g".repeat(64),                 // 64 chars but non-hex ('g')
+            format!("{}z", "a".repeat(63)), // 64 chars, trailing non-hex
+        ];
+
+        for (i, bad) in bad_hashes.iter().enumerate() {
+            let peer_id = format!("peer-bad-{i}");
+            let err = upsert_peer_ref_with_cert(&pool, &peer_id, bad)
+                .await
+                .expect_err("malformed cert_hash must be rejected");
+            assert!(
+                matches!(err, AppError::Validation(_)),
+                "expected AppError::Validation for {bad:?}, got {err:?}"
+            );
+
+            // Nothing must have been persisted for this peer.
+            let row = get_peer_ref(&pool, &peer_id).await.unwrap();
+            assert!(
+                row.is_none(),
+                "no peer_refs row may be written for malformed hash {bad:?}"
+            );
+        }
     }
 
     #[tokio::test]

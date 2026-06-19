@@ -386,6 +386,13 @@ impl SyncServer {
                                                             .and_then(|cn| {
                                                                 cn.strip_prefix("agaric-")
                                                             })
+                                                            // Reject an empty
+                                                            // device id, e.g.
+                                                            // CN `agaric-`
+                                                            // (#1604).
+                                                            .filter(|id| {
+                                                                !id.is_empty()
+                                                            })
                                                             .map(String::from)
                                                     })
                                             })
