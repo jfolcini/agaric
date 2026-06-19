@@ -214,6 +214,10 @@ pub(crate) async fn daemon_loop(
     let mut resync_interval = tokio::time::interval(std::time::Duration::from_secs(30));
     resync_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+    // L-56: counter driving the coarse (~hourly) peer-lock GC cadence; see
+    // `maybe_gc_peer_locks` and `RESYNC_TICKS_PER_GC`.
+    let mut resync_ticks_since_gc: u64 = 0;
+
     // 7. Main event-driven loop
     loop {
         tokio::select! {
@@ -336,6 +340,10 @@ pub(crate) async fn daemon_loop(
                     continue;
                 }
 
+                // L-56: prune the scheduler's monotonically-growing
+                // `peer_locks` map on a coarse (~hourly) cadence.
+                maybe_gc_peer_locks(&scheduler, &mut resync_ticks_since_gc);
+
                 // Evict stale mDNS peers not seen in last 5 minutes
                 let stale_threshold = tokio::time::Instant::now() - std::time::Duration::from_secs(300);
                 discovered.retain(|_, (_, last_seen)| *last_seen > stale_threshold);
@@ -421,6 +429,35 @@ pub(crate) async fn daemon_loop(
     }
     tracing::info!("SyncDaemon shut down cleanly");
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// maybe_gc_peer_locks — coarse-cadence peer-lock garbage collection (L-56)
+// ---------------------------------------------------------------------------
+
+/// Number of resync ticks between [`SyncScheduler::gc_unused_peer_locks`]
+/// sweeps. The resync interval fires every 30 s, so 120 ticks ≈ 1 h — the
+/// "hourly is more than sufficient" cadence the scheduler's GC doc asks for.
+const RESYNC_TICKS_PER_GC: u64 = 120;
+
+/// Advance the resync-tick counter and, once it reaches
+/// [`RESYNC_TICKS_PER_GC`], prune the scheduler's monotonically-growing
+/// `peer_locks` map.
+///
+/// `peer_locks` only ever grows in `try_lock_peer` (one entry per peer ever
+/// seen). The sweep is a single brief lock + `retain` over a tiny map and
+/// only removes entries with no live `PeerSyncGuard`, so it never changes
+/// locking semantics. Factored out of the daemon loop so the cadence gate is
+/// directly unit-testable without driving the full async loop.
+fn maybe_gc_peer_locks(scheduler: &SyncScheduler, ticks_since_gc: &mut u64) {
+    *ticks_since_gc += 1;
+    if *ticks_since_gc >= RESYNC_TICKS_PER_GC {
+        *ticks_since_gc = 0;
+        let removed = scheduler.gc_unused_peer_locks();
+        if removed > 0 {
+            tracing::debug!(removed, "gc_unused_peer_locks pruned idle peer locks");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1116,6 +1153,65 @@ mod tests {
             }
             other => panic!("expected MdnsDisabled, got {other:?}"),
         }
+    }
+
+    /// L-56: the production cadence gate (`maybe_gc_peer_locks`, the exact
+    /// function the daemon resync tick calls) must NOT sweep before
+    /// `RESYNC_TICKS_PER_GC` ticks, and MUST sweep the idle peer lock once
+    /// the threshold is reached. This proves GC actually runs in the
+    /// production path on the coarse cadence, not just in isolation.
+    #[test]
+    fn maybe_gc_peer_locks_sweeps_on_cadence() {
+        let scheduler = SyncScheduler::new();
+
+        // Seed one idle entry the way production does: take and immediately
+        // drop a per-peer guard so the Arc strong-count falls back to 1.
+        drop(scheduler.try_lock_peer("peer-a"));
+        assert_eq!(
+            scheduler.peer_locks_len(),
+            1,
+            "try_lock_peer must leave one (now-idle) entry behind"
+        );
+
+        let mut ticks_since_gc: u64 = 0;
+
+        // Below the threshold: every tick advances the counter but no sweep.
+        for _ in 0..(RESYNC_TICKS_PER_GC - 1) {
+            maybe_gc_peer_locks(&scheduler, &mut ticks_since_gc);
+        }
+        assert_eq!(
+            scheduler.peer_locks_len(),
+            1,
+            "no GC should run before RESYNC_TICKS_PER_GC ticks"
+        );
+        assert_eq!(ticks_since_gc, RESYNC_TICKS_PER_GC - 1);
+
+        // The threshold tick sweeps the idle entry and resets the counter.
+        maybe_gc_peer_locks(&scheduler, &mut ticks_since_gc);
+        assert_eq!(
+            scheduler.peer_locks_len(),
+            0,
+            "GC must prune the idle peer lock on the cadence tick"
+        );
+        assert_eq!(ticks_since_gc, 0, "counter resets after a sweep");
+    }
+
+    /// A live `PeerSyncGuard` must survive the cadence sweep — GC only
+    /// reclaims idle entries, so an in-progress sync is never disturbed.
+    #[test]
+    fn maybe_gc_peer_locks_keeps_held_entry() {
+        let scheduler = SyncScheduler::new();
+        let _held = scheduler.try_lock_peer("peer-busy");
+        assert_eq!(scheduler.peer_locks_len(), 1);
+
+        let mut ticks_since_gc: u64 = RESYNC_TICKS_PER_GC - 1;
+        maybe_gc_peer_locks(&scheduler, &mut ticks_since_gc); // triggers a sweep
+        assert_eq!(
+            scheduler.peer_locks_len(),
+            1,
+            "a held peer lock must NOT be reclaimed by GC"
+        );
+        assert_eq!(ticks_since_gc, 0);
     }
 
     /// The helper must not emit any event on the happy path. We can't
