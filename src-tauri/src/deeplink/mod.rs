@@ -63,6 +63,18 @@ pub const APP_LINK_HOST: &str = "agaric.app";
 /// route host (`block` / `page` / `settings`) and identifier follow it.
 pub const APP_LINK_PREFIX: &str = "o";
 
+/// Upper bound on the length (in bytes) of the `settings/<tab>` segment.
+///
+/// Unlike the `block` / `page` arms — bounded to 26 chars by ULID validation
+/// (`BlockId::from_string`) — the settings tab is passed verbatim into
+/// [`OpenSettingsPayload`] (the `SettingsTab` union is enforced on the
+/// frontend, which falls back to `'general'` for unknown tabs).  Without a
+/// bound an attacker-supplied deep link could carry an arbitrarily long first
+/// segment.  The longest legitimate tab identifier is `"notifications"` (13
+/// chars); 64 leaves generous headroom for new tabs while keeping the segment
+/// small and constant-bounded.
+pub const MAX_SETTINGS_TAB_LEN: usize = 64;
+
 // ---------------------------------------------------------------------------
 // Routes + payloads
 // ---------------------------------------------------------------------------
@@ -96,6 +108,8 @@ pub enum DeepLinkError {
     InvalidUlid(String),
     /// Settings tab name was empty after trimming.
     EmptySettingsTab,
+    /// Settings tab name exceeded [`MAX_SETTINGS_TAB_LEN`] after trimming.
+    SettingsTabTooLong(usize),
 }
 
 /// Payload emitted on [`EVENT_NAVIGATE_TO_BLOCK`] / [`EVENT_NAVIGATE_TO_PAGE`].
@@ -202,6 +216,12 @@ pub fn parse_deep_link(raw: &str) -> Result<DeepLinkRoute, DeepLinkError> {
             let tab = identifier.trim();
             if tab.is_empty() {
                 return Err(DeepLinkError::EmptySettingsTab);
+            }
+            // Bound the verbatim tab segment (block/page arms are bounded by
+            // ULID validation; settings validation is deferred to the
+            // frontend union, so enforce a length cap here).
+            if tab.len() > MAX_SETTINGS_TAB_LEN {
+                return Err(DeepLinkError::SettingsTabTooLong(tab.len()));
             }
             Ok(DeepLinkRoute::Settings(tab.to_string()))
         }
@@ -567,6 +587,48 @@ mod tests {
     fn rejects_settings_url_with_empty_tab() {
         let err = parse_deep_link("agaric://settings/").expect_err("empty tab");
         assert!(matches!(err, DeepLinkError::MissingIdentifier));
+    }
+
+    #[test]
+    fn parses_settings_url_with_longest_real_tab() {
+        // `notifications` is the longest legitimate `SettingsTab` (13 chars);
+        // it must comfortably parse under the length cap.
+        let route = parse_deep_link("agaric://settings/notifications").expect("valid settings tab");
+        assert_eq!(route, DeepLinkRoute::Settings("notifications".into()));
+    }
+
+    #[test]
+    fn parses_settings_url_at_length_bound() {
+        // A tab exactly at the cap is still accepted (boundary inclusive).
+        let tab = "a".repeat(MAX_SETTINGS_TAB_LEN);
+        let url = format!("agaric://settings/{tab}");
+        let route = parse_deep_link(&url).expect("tab at the bound is accepted");
+        assert_eq!(route, DeepLinkRoute::Settings(tab));
+    }
+
+    #[test]
+    fn rejects_settings_url_with_overlong_tab() {
+        // An attacker-supplied tab longer than the cap is rejected rather
+        // than passed verbatim into the payload (block/page arms are bounded
+        // by ULID validation; the settings arm is bounded here).
+        let tab = "a".repeat(MAX_SETTINGS_TAB_LEN + 1);
+        let url = format!("agaric://settings/{tab}");
+        let err = parse_deep_link(&url).expect_err("over-long tab rejected");
+        match err {
+            DeepLinkError::SettingsTabTooLong(len) => {
+                assert_eq!(len, MAX_SETTINGS_TAB_LEN + 1);
+            }
+            other => panic!("expected SettingsTabTooLong, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_applink_settings_url_with_overlong_tab() {
+        // Same bound applies on the Android App Link shape.
+        let tab = "b".repeat(MAX_SETTINGS_TAB_LEN + 50);
+        let url = format!("https://agaric.app/o/settings/{tab}");
+        let err = parse_deep_link(&url).expect_err("over-long App Link tab rejected");
+        assert!(matches!(err, DeepLinkError::SettingsTabTooLong(_)));
     }
 
     #[test]

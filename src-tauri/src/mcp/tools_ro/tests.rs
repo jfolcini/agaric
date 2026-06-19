@@ -1662,6 +1662,227 @@ async fn search_accepts_in_budget_filter_vectors_699() {
 }
 
 // -------------------------------------------------------------------
+// #1607 — per-term and aggregate byte caps on search terms
+//
+// The #699 count cap bounds how *many* terms arrive but not how *large*
+// each is. These cover the byte-size guard that rejects multi-megabyte
+// term strings before they reach glob / regex / SQL.
+// -------------------------------------------------------------------
+
+/// #1607: a single `query` string larger than `SEARCH_TERM_BYTES_CAP`
+/// is rejected at the boundary with an actionable Validation error
+/// naming the offending dimension.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_rejects_oversized_query_string_1607() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    let huge = "a".repeat(SEARCH_TERM_BYTES_CAP + 1);
+    let err = tools
+        .call_tool(
+            "search",
+            json!({"query": huge, "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("an over-byte-cap query must be rejected");
+    match err {
+        AppError::Validation(msg) => {
+            assert!(msg.contains("query"), "message names the dimension: {msg}");
+            assert!(
+                msg.contains(&SEARCH_TERM_BYTES_CAP.to_string()),
+                "message names the per-term cap: {msg}"
+            );
+        }
+        other => panic!("expected Validation, got {other:?}"),
+    }
+}
+
+/// #1607: an oversized page glob is rejected (the glob vectors flow
+/// straight into glob matching, so they need the same per-term guard).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_rejects_oversized_page_glob_1607() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    let huge = "g".repeat(SEARCH_TERM_BYTES_CAP + 1);
+    let err = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "x",
+                "space_id": TEST_SPACE_ID,
+                "filter": { "include_page_globs": [huge] },
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("an over-byte-cap page glob must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(ref msg) if msg.contains("include_page_globs")),
+        "got {err:?}",
+    );
+}
+
+/// #1607: an oversized property-filter value is rejected (property
+/// values are matched against `block_properties.value_text`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_rejects_oversized_property_value_1607() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    let huge = "v".repeat(SEARCH_TERM_BYTES_CAP + 1);
+    let err = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "x",
+                "space_id": TEST_SPACE_ID,
+                "filter": { "property_filters": [{ "key": "status", "value": huge }] },
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("an over-byte-cap property value must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(ref msg) if msg.contains("property_filters value")),
+        "got {err:?}",
+    );
+}
+
+/// #1607 (review): the state/priority/block-type filter strings are NOT
+/// enum-validated — `prepare_metadata_with_today` binds them verbatim
+/// into the `IN (…)` predicate — so a single multi-MB `state_filter`
+/// entry (one term, under the #699 count cap) must still trip the
+/// per-term byte guard.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_rejects_oversized_state_filter_1607() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    let huge = "s".repeat(SEARCH_TERM_BYTES_CAP + 1);
+    let err = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "x",
+                "space_id": TEST_SPACE_ID,
+                "filter": { "state_filter": [huge] },
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("an over-byte-cap state_filter entry must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(ref msg) if msg.contains("state/priority")),
+        "got {err:?}",
+    );
+}
+
+/// #1607 (review): the `block_type_filter` string flows straight into
+/// the FTS query as a bound `&str`; bound it by bytes too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_rejects_oversized_block_type_filter_1607() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    let huge = "b".repeat(SEARCH_TERM_BYTES_CAP + 1);
+    let err = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "x",
+                "space_id": TEST_SPACE_ID,
+                "filter": { "block_type_filter": huge },
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("an over-byte-cap block_type_filter must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(ref msg) if msg.contains("block_type_filter")),
+        "got {err:?}",
+    );
+}
+
+/// #1607: many individually-in-cap strings whose combined size exceeds
+/// `SEARCH_TERM_TOTAL_BYTES_CAP` are rejected by the aggregate guard,
+/// even though no single string trips the per-term cap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_rejects_aggregate_byte_overflow_1607() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    // Each glob is well under the per-term cap, but together they exceed
+    // the aggregate cap.
+    let chunk = SEARCH_TERM_BYTES_CAP / 4;
+    let count = SEARCH_TERM_TOTAL_BYTES_CAP / chunk + 2;
+    let globs: Vec<String> = (0..count).map(|_| "g".repeat(chunk)).collect();
+    assert!(
+        count <= SEARCH_FILTER_TERMS_CAP,
+        "test must stay under the #699 count cap to exercise the byte cap",
+    );
+    let err = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "x",
+                "space_id": TEST_SPACE_ID,
+                "filter": { "include_page_globs": globs },
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("combined term bytes over the aggregate cap must be rejected");
+    match err {
+        AppError::Validation(msg) => {
+            assert!(
+                msg.contains("combined search-term length"),
+                "message names the aggregate violation: {msg}"
+            );
+            assert!(
+                msg.contains(&SEARCH_TERM_TOTAL_BYTES_CAP.to_string()),
+                "message names the aggregate cap: {msg}"
+            );
+        }
+        other => panic!("expected Validation, got {other:?}"),
+    }
+}
+
+/// #1607 boundary sanity: terms comfortably under both byte caps still
+/// run — the byte guard must not reject legitimate calls.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_accepts_in_byte_budget_terms_1607() {
+    let (tools, mat, _dir) = mk_tools().await;
+    create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "needle row".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
+
+    // Modest free-text terms well under both byte caps must pass the
+    // #1607 guard and execute the query. We assert only that the call
+    // succeeds and returns a well-formed result — the globs / property
+    // filter legitimately narrow the hit set, so the exact item count is
+    // not what this test pins down.
+    let result = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "needle",
+                "space_id": TEST_SPACE_ID,
+                "filter": {
+                    "include_page_globs": ["*.md", "notes/**"],
+                    "property_filters": [{ "key": "status", "value": "open" }],
+                },
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect("modest in-byte-budget terms must not trip the #1607 cap");
+    assert!(
+        result["items"].is_array(),
+        "search must return a well-formed items array: {result}"
+    );
+}
+
+// -------------------------------------------------------------------
 // Unknown tool name → NotFound (→ -32001)
 // -------------------------------------------------------------------
 

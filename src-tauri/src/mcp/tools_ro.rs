@@ -123,6 +123,30 @@ pub const AGENDA_RESULT_CAP: i64 = 500;
 /// `-32602 invalid params`.
 pub const SEARCH_FILTER_TERMS_CAP: usize = crate::db::MAX_SQL_PARAMS;
 
+/// #1607 — upper bound on the byte length of any single `search` term
+/// string (the `query`, each page glob, and each property-filter key /
+/// value). `SEARCH_FILTER_TERMS_CAP` caps how *many* terms a request
+/// may carry but never how *large* each one is, so a handful of
+/// multi-megabyte strings slip under the count cap and force large
+/// allocations plus expensive glob / regex matching downstream.
+///
+/// Not an invented number: this is the same
+/// [`crate::commands::MAX_CONTENT_LENGTH`] (256 KiB) the `set_property`
+/// MCP tool already enforces on `value_text`, and search property
+/// values are matched against the very same `block_properties.value_text`
+/// column. Reusing it keeps the per-string ceiling consistent across the
+/// MCP boundary.
+pub const SEARCH_TERM_BYTES_CAP: usize = crate::commands::MAX_CONTENT_LENGTH;
+
+/// #1607 — upper bound on the *combined* byte length of every `search`
+/// term string in one request. Even with each individual string under
+/// [`SEARCH_TERM_BYTES_CAP`], a request packed with up to
+/// [`SEARCH_FILTER_TERMS_CAP`] near-cap strings could still total
+/// hundreds of megabytes. We bound the aggregate at the same
+/// `MAX_CONTENT_LENGTH` (one block's worth of content) so the total
+/// search-term payload can never exceed a single block body.
+pub const SEARCH_TERM_TOTAL_BYTES_CAP: usize = crate::commands::MAX_CONTENT_LENGTH;
+
 // ---------------------------------------------------------------------------
 // Typed argument structs (one per tool)
 //
@@ -808,11 +832,6 @@ async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppErr
     to_tool_result(&resp)
 }
 
-/// #699 — reject a `search` call whose combined filter-term count
-/// exceeds [`SEARCH_FILTER_TERMS_CAP`]. Counts every element of
-/// `tag_ids` plus every element of each PEND-65 `filter` vector; each
-/// term binds at least one SQL parameter downstream, so anything past
-/// the SQLite bind-parameter limit could never execute anyway.
 fn validate_search_term_budget(args: &SearchArgs) -> Result<(), AppError> {
     let f = args.filter.as_ref();
     let total = args.tag_ids.as_ref().map_or(0, Vec::len)
@@ -831,6 +850,76 @@ fn validate_search_term_budget(args: &SearchArgs) -> Result<(), AppError> {
             "{TOOL_SEARCH}: too many filter terms — tag_ids plus filter vectors total {total}, \
              max {SEARCH_FILTER_TERMS_CAP} (SQLite bind-parameter limit)"
         )));
+    }
+
+    // #1607 — the count cap above bounds how *many* terms arrive but not
+    // how *large* each is. Cap every free-text term string by bytes (and
+    // their combined size) so a handful of multi-megabyte strings can't
+    // slip under the count cap and force huge allocations / expensive
+    // glob / regex / SQL matching. `tag_ids`, `parent_id` and `space_id`
+    // are ULID tokens normalised/validated elsewhere, but the
+    // state/priority/block-type filter strings are NOT enum-validated —
+    // `prepare_metadata_with_today` clones them verbatim and binds them
+    // into the `IN (…)` predicate (`metadata_filter.rs`), so a single
+    // multi-MB entry would otherwise sail past every cap. Cover the
+    // `query`, both glob lists, the property-filter keys/values, the
+    // block-type filter, the four state/priority vectors, and the
+    // due/scheduled date strings.
+    let mut aggregate = 0usize;
+    let mut check = |dimension: &str, s: &str| -> Result<(), AppError> {
+        let len = s.len();
+        if len > SEARCH_TERM_BYTES_CAP {
+            return Err(AppError::Validation(format!(
+                "{TOOL_SEARCH}: {dimension} length {len} bytes exceeds maximum \
+                 {SEARCH_TERM_BYTES_CAP} bytes per term"
+            )));
+        }
+        aggregate += len;
+        if aggregate > SEARCH_TERM_TOTAL_BYTES_CAP {
+            return Err(AppError::Validation(format!(
+                "{TOOL_SEARCH}: combined search-term length exceeds maximum \
+                 {SEARCH_TERM_TOTAL_BYTES_CAP} bytes across all terms"
+            )));
+        }
+        Ok(())
+    };
+    check("query", &args.query)?;
+    if let Some(f) = f {
+        for g in &f.include_page_globs {
+            check("include_page_globs entry", g)?;
+        }
+        for g in &f.exclude_page_globs {
+            check("exclude_page_globs entry", g)?;
+        }
+        for pf in f
+            .property_filters
+            .iter()
+            .chain(&f.excluded_property_filters)
+        {
+            check("property_filters key", &pf.key)?;
+            check("property_filters value", &pf.value)?;
+        }
+        if let Some(bt) = &f.block_type_filter {
+            check("block_type_filter", bt)?;
+        }
+        // state/priority vectors are free-text values bound into the SQL
+        // `IN (…)` predicate (no enum allowlist), so byte-bound them too.
+        for s in f
+            .state_filter
+            .iter()
+            .chain(&f.priority_filter)
+            .chain(&f.excluded_state_filter)
+            .chain(&f.excluded_priority_filter)
+        {
+            check("state/priority filter entry", s)?;
+        }
+        // The explicit-operator date variant carries a user `date` string
+        // (calendar-validated only later, after this budget gate).
+        for df in f.due_filter.iter().chain(&f.scheduled_filter) {
+            if let crate::commands::queries::DateFilter::Op { date, .. } = df {
+                check("date filter", date)?;
+            }
+        }
     }
     Ok(())
 }
