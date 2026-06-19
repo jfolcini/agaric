@@ -161,6 +161,30 @@ pub fn generate_qr_svg(data: &str) -> Result<String, AppError> {
 // Pairing Session
 // ---------------------------------------------------------------------------
 
+/// Lifetime of a pairing session / the pending-pairing activation marker.
+///
+/// A pairing session is short-lived: the host shows a QR, the joiner scans
+/// and confirms within a few minutes. 5 minutes is the long-standing value
+/// used by [`PairingSession::is_expired`] and is reused here so the
+/// pending-pairing marker (see [`crate::peer_refs::is_pending_pairing`])
+/// expires on the same clock — once the interactive window has elapsed an
+/// abandoned pairing must stop driving the daemon into pairing-mode.
+pub const PAIRING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300); // 5 minutes
+
+/// Maximum number of failed passphrase attempts permitted within a single
+/// pairing session before it is invalidated and the user must re-initiate
+/// pairing (regenerate the QR / restart the flow).
+///
+/// #1603: previously the *only* bound on retries was the session time limit
+/// ([`PAIRING_TIMEOUT`]), so guesses could be sprayed for the whole window.
+/// The passphrase has ~51.7 bits of entropy, so a handful of guesses is
+/// statistically harmless; the cap exists to convert "unbounded within the
+/// window" into "bounded", not to defend a low-entropy secret. 5 mirrors the
+/// common lock-screen / PIN-entry convention — small enough to be obviously
+/// safe, large enough to absorb a couple of genuine typos before forcing a
+/// restart.
+pub const MAX_PASSPHRASE_ATTEMPTS: u32 = 5;
+
 /// Short-lived pairing session that tracks the generated passphrase.
 ///
 /// Confidentiality and authenticity of the pairing exchange come from
@@ -169,6 +193,10 @@ pub fn generate_qr_svg(data: &str) -> Result<String, AppError> {
 pub struct PairingSession {
     pub passphrase: String,
     pub created_at: std::time::Instant,
+    /// #1603: count of failed passphrase verifications observed for this
+    /// session. Bounded by [`MAX_PASSPHRASE_ATTEMPTS`]; once the cap is hit
+    /// the session refuses further attempts until re-initiated.
+    pub failed_attempts: u32,
 }
 
 impl PairingSession {
@@ -182,6 +210,7 @@ impl PairingSession {
         Self {
             passphrase: generate_passphrase(),
             created_at: std::time::Instant::now(),
+            failed_attempts: 0,
         }
     }
 
@@ -199,7 +228,23 @@ impl PairingSession {
         Self {
             passphrase: passphrase.to_owned(),
             created_at: std::time::Instant::now(),
+            failed_attempts: 0,
         }
+    }
+
+    /// #1603: `true` once the session has burned through
+    /// [`MAX_PASSPHRASE_ATTEMPTS`] failed passphrase verifications. The
+    /// caller must drop the session (refuse further confirms) when this
+    /// returns `true`.
+    pub fn attempts_exhausted(&self) -> bool {
+        self.failed_attempts >= MAX_PASSPHRASE_ATTEMPTS
+    }
+
+    /// #1603: record one failed passphrase attempt and report whether the
+    /// session is now exhausted. Saturates so the counter never wraps.
+    pub fn record_failed_attempt(&mut self) -> bool {
+        self.failed_attempts = self.failed_attempts.saturating_add(1);
+        self.attempts_exhausted()
     }
 }
 
@@ -304,17 +349,15 @@ pub fn verify_device_exchange(
 // Test-only helpers
 // ---------------------------------------------------------------------------
 
-/// Duration after which a pairing session is considered expired.
-#[cfg(test)]
-const PAIRING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300); // 5 minutes
-
 #[cfg(test)]
 impl PairingSession {
-    /// Returns `true` if the session has exceeded the 5-minute timeout.
+    /// Returns `true` if the session has exceeded [`PAIRING_TIMEOUT`].
     ///
-    /// **Not used in production** — pairings are permanent by design.
-    /// Retained for test coverage of timeout logic in case time-limited
-    /// sessions are needed in the future.
+    /// **Not used in production** for the in-memory session — the slot is
+    /// cleared on confirm/cancel. The same [`PAIRING_TIMEOUT`] *is* enforced
+    /// in production for the persisted pending-pairing marker
+    /// ([`crate::peer_refs::is_pending_pairing`]). Retained here for test
+    /// coverage of the session-timeout logic.
     pub fn is_expired(&self) -> bool {
         self.created_at.elapsed() >= PAIRING_TIMEOUT
     }
