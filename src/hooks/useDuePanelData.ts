@@ -196,6 +196,12 @@ export function useDuePanelData({
   // with the latest committed state.
   const blocksRef = useRef<BlockRow[]>(blocks)
   blocksRef.current = blocks
+  // #1531 — request token guarding `fetchBlocks` (loadMore) against a
+  // date/source/space/invalidation change that lands mid-pagination. The main
+  // fetch effect bumps it; `fetchBlocks` captures it at call time and discards
+  // its result (and skips the title merge) if it no longer matches, so a stale
+  // loadMore can't repopulate the just-cleared list with old-date blocks.
+  const requestIdRef = useRef(0)
   const [projectedEntries, setProjectedEntries] = useState<ProjectedAgendaEntry[]>([])
   const [projectedLoading, setProjectedLoading] = useState(false)
   // #738 sub-3 — track the previous `invalidationKey` so the projected
@@ -378,12 +384,18 @@ export function useDuePanelData({
   // order, the loop appends resolved entries in iteration order.
   const fetchBlocks = useCallback(
     async (cursor?: string) => {
+      // #1531 — capture the active request token. If the date/source/space/
+      // invalidation changes while this loadMore is in flight, the main effect
+      // bumps `requestIdRef`, so we drop this stale result instead of appending
+      // old-date blocks onto the just-cleared list.
+      const myReqId = requestIdRef.current
       setLoading(true)
       try {
         // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
         // fallback is intentional pre-bootstrap behaviour: empty string
         // forces a no-match SQL filter rather than a runtime null deref.
         const resp = await listBlocksForAgenda(date, sourceFilter, cursor, 50, currentSpaceId ?? '')
+        if (myReqId !== requestIdRef.current) return
         const nonEmptyItems = applySourceFilter(resp.items, date, sourceFilter)
         const newBlocks = cursor ? [...blocksRef.current, ...nonEmptyItems] : nonEmptyItems
         setBlocks(newBlocks)
@@ -396,7 +408,7 @@ export function useDuePanelData({
         ]
         await resolveAndMergeTitles(
           uniqueParentIds,
-          () => false,
+          () => myReqId !== requestIdRef.current,
           (resolved) => {
             setPageTitles((prev) => {
               const next = new Map(prev)
@@ -410,7 +422,10 @@ export function useDuePanelData({
       } catch (err) {
         logger.warn('useDuePanelData', 'fetchBlocks failed', { date }, err)
       } finally {
-        setLoading(false)
+        // Only the request that still owns the token clears the shared loading
+        // flag — a stale loadMore must not unset the loading state the newer
+        // fetch set.
+        if (myReqId === requestIdRef.current) setLoading(false)
       }
     },
     [date, sourceFilter, currentSpaceId],
@@ -418,6 +433,9 @@ export function useDuePanelData({
 
   // Fetch on mount and when date or sourceFilter changes
   useEffect(() => {
+    // #1531 — invalidate any in-flight `fetchBlocks` (loadMore) so its result
+    // can't repopulate the list we're about to clear with stale-date blocks.
+    requestIdRef.current += 1
     setLoading(true)
     setBlocks([])
     setNextCursor(null)
