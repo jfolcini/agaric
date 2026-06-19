@@ -103,6 +103,18 @@ export function useBlockAutoCreateFirstBlock({
           err,
         )
         notify.error(t('blockTree.createFirstBlockFailed'))
+        // #1566 — reset the idempotency ref so the guard no longer short-
+        // circuits and a later re-render retries. Without this the user is
+        // stranded on a permanently blank page (the create failed, but the
+        // ref still claims this page was seeded, so no block is ever made).
+        // Reset only if the ref still points at THIS page (a page switch
+        // mid-flight may have re-armed it for another rootParentId; clobbering
+        // that would let a stale retry fire there). A bare ref write does not
+        // trigger a re-render, so this cannot spin a hot loop — the retry only
+        // runs when React next re-renders for some other reason.
+        if (autoCreatedForRef.current === rootParentId) {
+          autoCreatedForRef.current = null
+        }
       })
   }, [enabled, loading, blocksLength, rootParentId, t, pageStore])
 }

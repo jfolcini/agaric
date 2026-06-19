@@ -138,4 +138,51 @@ describe('useBlockAutoCreateFirstBlock', () => {
     })
     expect(pageStore.getState().blocks).toHaveLength(0)
   })
+
+  it('resets the idempotency ref on failure so a re-render retries (#1566 recovery)', async () => {
+    // First create rejects; the second (on the next render) succeeds.
+    const newBlock = makeBlock({ id: 'NEW_1', content: '', parent_id: 'PAGE_1' })
+    mockedInvoke.mockRejectedValueOnce(new Error('DB error')).mockResolvedValueOnce(newBlock)
+
+    const { rerender } = renderHook((props) => useBlockAutoCreateFirstBlock(props), {
+      initialProps: makeParams(),
+    })
+
+    // The first attempt fails and surfaces the toast.
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.createFirstBlockFailed')
+    })
+    expect(pageStore.getState().blocks).toHaveLength(0)
+
+    // A subsequent render re-fires the effect (the ref was reset on failure),
+    // and the retry succeeds — the user is no longer stranded on a blank page.
+    rerender(makeParams())
+
+    await waitFor(() => {
+      expect(pageStore.getState().blocks).toHaveLength(1)
+    })
+    const createCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'create_block')
+    expect(createCalls).toHaveLength(2)
+    expect(pageStore.getState().blocks[0]).toEqual({ ...newBlock, depth: 0 })
+    expect(useBlockStore.getState().focusedBlockId).toBe('NEW_1')
+  })
+
+  it('does not re-create on success (idempotency preserved across re-renders)', async () => {
+    const newBlock = makeBlock({ id: 'NEW_1', content: '', parent_id: 'PAGE_1' })
+    mockedInvoke.mockResolvedValue(newBlock)
+
+    const { rerender } = renderHook((props) => useBlockAutoCreateFirstBlock(props), {
+      initialProps: makeParams(),
+    })
+    await waitFor(() => {
+      expect(pageStore.getState().blocks).toHaveLength(1)
+    })
+
+    // A re-render with the same page must not create a second block; the ref
+    // stays set on success.
+    rerender(makeParams())
+    await Promise.resolve()
+    const createCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'create_block')
+    expect(createCalls).toHaveLength(1)
+  })
 })

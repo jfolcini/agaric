@@ -122,6 +122,18 @@ export function useBlockZoomEmptySeed({
           err,
         )
         notify.error(t('blockTree.createFirstBlockFailed'))
+        // #1566 — reset the idempotency ref so the guard no longer short-
+        // circuits and a later re-render retries. Without this the user is
+        // stranded on a permanently blank zoom pane (the create failed, but the
+        // ref still claims this zoom root was seeded, so no child is ever made).
+        // Reset only if the ref still points at THIS zoom root (zooming
+        // elsewhere mid-flight may have re-armed it; clobbering that would let a
+        // stale retry fire there). A bare ref write does not trigger a re-render,
+        // so this cannot spin a hot loop — the retry only runs when React next
+        // re-renders for some other reason.
+        if (seededForRef.current === zoomedBlockId) {
+          seededForRef.current = null
+        }
       })
   }, [enabled, loading, zoomedBlockId, pageStore, t])
 }
