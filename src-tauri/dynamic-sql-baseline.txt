@@ -37,7 +37,7 @@
 1 src-tauri/src/domain/block_ops.rs
 3 src-tauri/src/draft.rs
 2 src-tauri/src/fts/index.rs
-1 src-tauri/src/fts/search.rs
+1 src-tauri/src/fts/search/fetch.rs
 2 src-tauri/src/fts/strip.rs
 2 src-tauri/src/fts/toggle_filter.rs
 4 src-tauri/src/lib.rs
