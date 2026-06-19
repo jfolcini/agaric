@@ -433,6 +433,16 @@ function BlockListItemInner({
     [blockId, onReschedule, reschedule, t],
   )
 
+  // #1520 — roving tabindex. When a consumer drives keyboard navigation it
+  // passes `isFocused`: the focused row is the single tab stop (`0`) and the
+  // rest rove out of the Tab order (`-1`), so the list has exactly one tab
+  // stop instead of one per row. Consumers WITHOUT a roving model omit
+  // `isFocused` entirely (e.g. UnfinishedTasks) — for those, absent
+  // `isFocused` keeps every row tab-reachable (`0`) so keyboard users aren't
+  // stranded. Only an explicit `isFocused === false` removes a row from the
+  // Tab order.
+  const rovingTabIndex = isFocused === false ? -1 : 0
+
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- this li is the focusable, keyboard-navigable list row itself (roving tabindex + Enter/Space activation via onKeyDown); the activation handlers belong on the row, and it can't become a <button> because it is a list item that contains nested interactive controls (date chip, reschedule button)
     <li
@@ -451,8 +461,7 @@ function BlockListItemInner({
       data-testid={testId}
       data-block-list-item
       id={testId || blockId ? `block-item-${blockId}` : undefined}
-      // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- li needs tabIndex for keyboard navigation
-      tabIndex={0}
+      tabIndex={rovingTabIndex}
       onClick={onClick}
       onKeyDown={onKeyDown}
       draggable={!!blockId}

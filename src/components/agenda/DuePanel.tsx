@@ -368,12 +368,16 @@ export function DuePanel({
             const groupedCount = grouped.reduce((sum, g) => sum + g.items.length, 0)
             let flatIndex = groupedCount
             return (
-              // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- keyboard nav container
+              // #1520 — roving tabindex: the focused `BlockListItem` row is the
+              // single tab stop (the rest are `tabIndex=-1`), so the container
+              // itself must NOT carry `tabIndex={0}` or the list would have a
+              // doubled keyboard model (one container stop + the roving row).
+              // The arrow-key handler stays on the container and still fires
+              // because keydown events bubble up from the focused row.
+              // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- keyboard nav container (events bubble from the roving row); not itself focusable
               <div
                 className="due-panel-content mt-1 space-y-2"
                 ref={listRef}
-                // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- keyboard nav container
-                tabIndex={0}
                 onKeyDown={(e) => {
                   if (navHandleKeyDown(e)) e.preventDefault()
                 }}
@@ -494,7 +498,11 @@ export function DuePanel({
                             key={`projected-${entry.block.id}-${entry.source}`}
                             data-block-list-item
                             data-testid="projected-entry"
-                            tabIndex={0}
+                            // #1520 — roving tabindex, mirroring the
+                            // `BlockListItem` rows above: only the keyboard-focused
+                            // projected entry is a tab stop so the list keeps a
+                            // single roving tab stop instead of one per row.
+                            tabIndex={projectedFocused ? 0 : -1}
                             className={cn(
                               // Override ListItem's `gap-3 rounded-lg px-3 py-2 hover:bg-accent/50` chrome
                               // with the muted dashed-border "projected" shape via tailwind-merge.

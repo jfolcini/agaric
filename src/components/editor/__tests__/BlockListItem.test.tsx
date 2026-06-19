@@ -406,8 +406,12 @@ describe('BlockListItem', () => {
     expect(screen.getByText('(empty)')).toBeInTheDocument()
   })
 
-  // 14. A11y: li has tabIndex=0 for keyboard navigation
-  it('li has tabIndex=0 for keyboard focus', () => {
+  // 14. A11y: li is tab-reachable (tabIndex=0) when `isFocused` is omitted.
+  // #1520 — consumers without a roving model (e.g. UnfinishedTasks) omit
+  // `isFocused`, and those rows MUST stay reachable so keyboard users aren't
+  // stranded. Only an explicit `isFocused === false` removes a row from the
+  // Tab order (the roving case — see the "roving tabindex" describe below).
+  it('li has tabIndex=0 for keyboard focus when isFocused is omitted', () => {
     render(
       <ul>
         <BlockListItem {...defaultProps()} />
@@ -569,6 +573,65 @@ describe('BlockListItem — isFocused prop', () => {
 
     const li = screen.getByRole('listitem')
     expect(li.className).not.toContain('block-selected')
+  })
+})
+
+// ─── roving tabindex (#1520) ────────────────────────────────────────────────
+describe('BlockListItem — roving tabindex (#1520)', () => {
+  // A focused roving row is the single tab stop.
+  it('is the tab stop (tabIndex=0) when isFocused is true', () => {
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ isFocused: true })} />
+      </ul>,
+    )
+
+    const li = screen.getByRole('listitem')
+    expect(li).toHaveAttribute('tabindex', '0')
+  })
+
+  // An explicitly-unfocused roving row roves OUT of the Tab order.
+  it('roves out of the Tab order (tabIndex=-1) when isFocused is false', () => {
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ isFocused: false })} />
+      </ul>,
+    )
+
+    const li = screen.getByRole('listitem')
+    expect(li).toHaveAttribute('tabindex', '-1')
+  })
+
+  // Non-roving consumers (omit isFocused) keep every row reachable so
+  // keyboard users aren't stranded.
+  it('stays tab-reachable (tabIndex=0) when isFocused is omitted', () => {
+    render(
+      <ul>
+        <BlockListItem {...defaultProps()} />
+      </ul>,
+    )
+
+    const li = screen.getByRole('listitem')
+    expect(li).toHaveAttribute('tabindex', '0')
+  })
+
+  // The core fix: in a roving list, exactly one row is the tab stop and the
+  // rest are -1 — no doubled keyboard model.
+  it('exposes exactly ONE tab stop across a roving list', () => {
+    render(
+      <ul>
+        <BlockListItem {...defaultProps({ content: 'row 0', isFocused: false })} />
+        <BlockListItem {...defaultProps({ content: 'row 1', isFocused: true })} />
+        <BlockListItem {...defaultProps({ content: 'row 2', isFocused: false })} />
+      </ul>,
+    )
+
+    const rows = screen.getAllByRole('listitem')
+    const tabStops = rows.filter((r) => r.getAttribute('tabindex') === '0')
+    const roved = rows.filter((r) => r.getAttribute('tabindex') === '-1')
+    expect(tabStops).toHaveLength(1)
+    expect(roved).toHaveLength(2)
+    expect(tabStops[0]).toHaveTextContent('row 1')
   })
 })
 

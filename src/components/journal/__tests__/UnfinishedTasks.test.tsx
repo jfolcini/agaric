@@ -201,6 +201,30 @@ describe('UnfinishedTasks', () => {
     expect(screen.getByTestId('unfinished-group-older')).toBeInTheDocument()
   })
 
+  // #1520 — UnfinishedTasks has NO roving model and does NOT pass `isFocused`
+  // to BlockListItem. Making rows roving must NOT strand keyboard users here:
+  // with `isFocused` absent every BlockListItem row stays tab-reachable
+  // (tabIndex=0).
+  it('keeps every row tab-reachable (tabIndex=0) — no roving model here (#1520)', async () => {
+    const blocks = [makeYesterdayBlock('Y1', 'task a'), makeYesterdayBlock('Y2', 'task b')]
+    mockInvokeForBlocks(blocks, [{ id: 'PAGE_1', title: 'Test Page' }])
+
+    render(<UnfinishedTasks />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+    })
+
+    const expandBtn = screen.getByRole('button', { expanded: false })
+    await userEvent.setup().click(expandBtn)
+
+    const rows = screen.getAllByRole('listitem')
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
+      expect(row).toHaveAttribute('tabindex', '0')
+    }
+  })
+
   it('hides groups with no items', async () => {
     // Only yesterday block
     const blocks = [makeYesterdayBlock()]

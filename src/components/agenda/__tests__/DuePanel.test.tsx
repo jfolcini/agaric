@@ -387,6 +387,102 @@ describe('DuePanel', () => {
     expect(onNavigate).toHaveBeenCalledWith('PAGE1', 'Source Page', 'BLOCK_1')
   })
 
+  // ─── roving tabindex (#1520) ──────────────────────────────────────────
+  // The doubled keyboard model (one container tab stop PLUS one native tab
+  // stop per row) is fixed: rows rove so only the focused row is tabbable,
+  // and the keyboard-nav container is no longer a tab stop of its own.
+  describe('roving tabindex (#1520)', () => {
+    it('exposes exactly ONE row tab stop (focused row 0); the rest rove to -1', async () => {
+      mockedListBlocks.mockResolvedValue({
+        items: [
+          makeBlock({ id: 'B1', todo_state: 'TODO', content: 'row one' }),
+          makeBlock({ id: 'B2', todo_state: 'TODO', content: 'row two' }),
+          makeBlock({ id: 'B3', todo_state: 'TODO', content: 'row three' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      render(<DuePanel date="2025-06-15" />)
+      await screen.findByText('row one')
+
+      const rows = screen.getAllByTestId('due-panel-item')
+      expect(rows).toHaveLength(3)
+      const tabStops = rows.filter((r) => r.getAttribute('tabindex') === '0')
+      const roved = rows.filter((r) => r.getAttribute('tabindex') === '-1')
+      // focusedIndex starts at 0 → only the first row is the tab stop.
+      expect(tabStops).toHaveLength(1)
+      expect(tabStops[0]).toHaveTextContent('row one')
+      expect(roved).toHaveLength(2)
+    })
+
+    it('the keyboard-nav container is NOT itself a tab stop', async () => {
+      mockedListBlocks.mockResolvedValue({
+        items: [makeBlock({ id: 'B1', todo_state: 'TODO', content: 'only row' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      render(<DuePanel date="2025-06-15" />)
+      await screen.findByText('only row')
+
+      const navContainer = document.querySelector('.due-panel-content') as HTMLElement
+      expect(navContainer).toBeInTheDocument()
+      // No tabindex on the container — the focused row is the single tab stop.
+      expect(navContainer.getAttribute('tabindex')).toBeNull()
+    })
+
+    it('ArrowDown moves the single tab stop to the next row (roving follows focus)', async () => {
+      const user = userEvent.setup()
+      mockedListBlocks.mockResolvedValue({
+        items: [
+          makeBlock({ id: 'B1', todo_state: 'TODO', content: 'row one' }),
+          makeBlock({ id: 'B2', todo_state: 'TODO', content: 'row two' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      render(<DuePanel date="2025-06-15" />)
+      await screen.findByText('row one')
+
+      const rowOne = screen.getByText('row one').closest('li') as HTMLElement
+      // Tab lands on the focused row 0; arrow keys bubble to the container handler.
+      rowOne.focus()
+      await user.keyboard('{ArrowDown}')
+
+      await waitFor(() => {
+        const rows = screen.getAllByTestId('due-panel-item')
+        const tabStops = rows.filter((r) => r.getAttribute('tabindex') === '0')
+        expect(tabStops).toHaveLength(1)
+        expect(tabStops[0]).toHaveTextContent('row two')
+        // The focus ring (`block-selected`) follows the roving tab stop.
+        expect(tabStops[0]?.className).toContain('block-selected')
+      })
+    })
+
+    it('a11y: no violations with the roving model', async () => {
+      mockedListBlocks.mockResolvedValue({
+        items: [
+          makeBlock({ id: 'B1', todo_state: 'TODO', content: 'row one' }),
+          makeBlock({ id: 'B2', todo_state: 'TODO', content: 'row two' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      const { container } = render(<DuePanel date="2025-06-15" />)
+      await screen.findByText('row one')
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
   // 8. Shows priority badge (P1/P2/P3)
   it('shows priority badges', async () => {
     mockedListBlocks.mockResolvedValue({
@@ -1134,7 +1230,9 @@ describe('DuePanel', () => {
       const projectedItem = screen.getByTestId('projected-entry')
       expect(projectedItem.hasAttribute('data-block-list-item')).toBe(true)
 
-      // The keyboard nav container is the .due-panel-content div with tabIndex=0
+      // The keyboard-nav handler lives on the .due-panel-content div (no
+      // tabindex since #1520 — the focused row is the single tab stop);
+      // ArrowDown events bubble from the focused row to this handler.
       const navContainer = document.querySelector('.due-panel-content') as HTMLElement
       expect(navContainer).toBeInTheDocument()
       navContainer.focus()

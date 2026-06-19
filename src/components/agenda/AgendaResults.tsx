@@ -401,12 +401,15 @@ export function AgendaResults({
 
   return (
     <BatchPropertiesProvider blockIds={allBlockIds} invalidationKey={batchInvalidationKey}>
-      {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- keyboard nav container */}
+      {/* #1520 — roving tabindex: the focused `BlockListItem` row is the
+          single tab stop (others are `tabIndex=-1`), so the container must NOT
+          carry `tabIndex={0}` or the list would have a doubled keyboard model.
+          The arrow-key handler stays here and fires via keydown bubbling from
+          the focused row. */}
+      {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- keyboard nav container (events bubble from the roving row); not itself focusable */}
       <div
         className="agenda-results space-y-2"
         ref={listRef}
-        // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- keyboard nav container
-        tabIndex={0}
         onKeyDown={(e) => {
           if (navHandleKeyDown(e)) e.preventDefault()
         }}
