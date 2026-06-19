@@ -171,7 +171,20 @@ export function ConfirmDialog({
   const tk = useCallback((key: string): string => (values ? t(key, values) : t(key)), [t, values])
 
   // ─── Resolve labels (explicit string > i18n key > default) ────────────
-  const resolvedTitle = title ?? (titleKey ? tk(titleKey) : '')
+  // #1612: AlertDialog/Sheet require a non-empty accessible name (axe
+  // aria-dialog-name). Both `title` and `titleKey` are optional, so a caller
+  // omitting both would otherwise ship an empty Title node. Fall back to a
+  // generic i18n "Confirm" string and warn in dev so the omission is caught.
+  const resolvedTitleRaw = title ?? (titleKey ? tk(titleKey) : '')
+  const hasTitle = resolvedTitleRaw.trim().length > 0
+  if (import.meta.env.DEV && !hasTitle) {
+    console.warn(
+      'ConfirmDialog: neither `title` nor `titleKey` resolved to a non-empty ' +
+        'string; falling back to a generic accessible name. Provide a title to ' +
+        'avoid an empty aria-dialog-name (a11y) violation.',
+    )
+  }
+  const resolvedTitle = hasTitle ? resolvedTitleRaw : t('dialog.confirm')
   const resolvedDescription = description ?? (descriptionKey ? tk(descriptionKey) : '')
   const resolvedCancelLabel = cancelLabel ?? (cancelKey ? t(cancelKey) : t('dialog.cancel'))
   const resolvedActionLabel = actionLabel ?? (confirmKey ? t(confirmKey) : t('dialog.confirm'))
@@ -320,7 +333,11 @@ export function ConfirmDialog({
             <>
               <AlertDialogCancel
                 disabled={isPending}
-                onClick={onCancel}
+                // #1611: bind `handleCancel` (which honors the isPending guard)
+                // rather than the raw `onCancel`, so cancellation can't slip
+                // through while a confirm is in flight even if `disabled` is
+                // bypassed. handleCancel calls onCancel?.() then onOpenChange.
+                onClick={handleCancel}
                 // UX-259: destructive dialogs auto-focus Cancel so reflex Enter dismisses.
                 // oxlint-disable-next-line jsx-a11y/no-autofocus -- destructive confirm dialog (desktop AlertDialog): focus the safe Cancel action on open so a reflexive Enter dismisses rather than confirms the destructive action
                 autoFocus={isDestructive}

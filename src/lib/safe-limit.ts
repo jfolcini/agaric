@@ -88,6 +88,14 @@ export const LIST_PROJECTED_AGENDA_MAX = 500
  * the value is in `[1, max]`.  Throws synchronously when out of range
  * so a bad literal fails at the call site, not at the IPC boundary
  * after a round trip.
+ *
+ * THROWS — use only for literal or known-valid inputs (the value is a
+ * constant in the source, so a violation is a programming error that
+ * SHOULD fail loudly at the call site).  For a value derived at runtime
+ * (restored/persisted state, config, or a computed page size) a bad
+ * value would throw a {@link RangeError} during render/effect and
+ * surface as an uncaught render error — reach for {@link clampLimit}
+ * instead, which degrades gracefully by clamping into range.
  */
 export function safeLimit(n: number, max: number): SafeLimit {
   if (!Number.isInteger(n) || n < 1 || n > max) {
@@ -96,6 +104,28 @@ export function safeLimit(n: number, max: number): SafeLimit {
     )
   }
   return n as SafeLimit
+}
+
+/**
+ * Build a {@link SafeLimit} from a runtime `number`, clamping (never
+ * throwing) into `[1, max]`.  Non-integers are floored; values below 1
+ * become 1, values above `max` become `max`, and non-finite inputs
+ * (`NaN`, `±Infinity`) degrade to 1.  Mirrors {@link safeLimit}'s max
+ * semantics and delegates to it once the value is known-valid.
+ *
+ * This is the non-throwing variant for DYNAMICALLY-derived limits
+ * (restored/persisted state, config, computed page sizes), where a bad
+ * value should degrade gracefully rather than throw during render and
+ * surface as an uncaught render error.  Use {@link safeLimit} for
+ * literal/known-valid inputs.
+ */
+export function clampLimit(n: number, max: number = PAGINATION_MAX): SafeLimit {
+  // `Math.floor(NaN)` is `NaN`, so the `|| 1` fallback also covers
+  // non-finite inputs (`NaN`, `±Infinity` floor to themselves and fail
+  // the `>= 1` clamp), guaranteeing a finite integer for safeLimit.
+  const floored = Math.floor(n)
+  const clamped = floored >= 1 ? Math.min(floored, max) : 1
+  return safeLimit(clamped, max)
 }
 
 /** Shorthand for {@link safeLimit}`(n, LIST_BLOCKS_MAX)`. */

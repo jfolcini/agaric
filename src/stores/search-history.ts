@@ -88,6 +88,29 @@ export function coerceBySpace(raw: unknown): Record<string, string[]> {
   return out
 }
 
+/**
+ * CR-PERSIST (#1609) — coerce an entire persisted search-history blob
+ * field-by-field. Shared by `migrate` (version-mismatched blobs) and `merge`
+ * (same-version blobs): zustand's persist middleware only calls `migrate`
+ * when the stored version DIFFERS from `options.version`, so a corrupt blob
+ * that still carries `version: 1` (or a non-numeric version) bypasses
+ * `migrate` entirely and reaches the default shallow `merge` raw — coercing
+ * in `merge` as well closes that path. The coercion is idempotent, so the
+ * migrate→merge double pass on version-mismatched blobs is harmless.
+ */
+function coercePersistedSearchHistory(
+  persisted: unknown,
+): Pick<SearchHistoryState, 'bySpace' | 'historyEnabled'> {
+  const blob = (persisted != null && typeof persisted === 'object' ? persisted : {}) as Record<
+    string,
+    unknown
+  >
+  return {
+    bySpace: coerceBySpace(blob['bySpace']),
+    historyEnabled: typeof blob['historyEnabled'] === 'boolean' ? blob['historyEnabled'] : true,
+  }
+}
+
 export const useSearchHistoryStore = create<SearchHistoryState>()(
   persist(
     (set) => ({
@@ -138,16 +161,23 @@ export const useSearchHistoryStore = create<SearchHistoryState>()(
       // mismatch and the user loses their MRU history.
       //
       // FE-14 — validate/coerce the persisted blob on read so a corrupt
-      // `localStorage` payload can't poison the store. `migrate` runs
-      // before merge for every load, so it's the right seam.
-      migrate: (persisted, _version): Pick<SearchHistoryState, 'bySpace' | 'historyEnabled'> => {
-        const blob = (persisted ?? {}) as Record<string, unknown>
-        return {
-          bySpace: coerceBySpace(blob['bySpace']),
-          historyEnabled:
-            typeof blob['historyEnabled'] === 'boolean' ? blob['historyEnabled'] : true,
-        }
-      },
+      // `localStorage` payload can't poison the store.
+      //
+      // CR-PERSIST (#1609): zustand only invokes `migrate` on a version
+      // MISMATCH — it is NOT run for every load. A corrupt blob still
+      // tagged `version: 1` bypasses `migrate` and reaches `merge` raw, so
+      // the field-by-field coercion is shared with `merge` below.
+      migrate: (persisted, _version) => coercePersistedSearchHistory(persisted),
+      // CR-PERSIST (#1609) — zustand skips `migrate` when the stored
+      // version equals `options.version` (or isn't a number), handing the
+      // raw blob straight to `merge`. Coerce here too so a corrupt
+      // `localStorage` payload that still says `version: 1` (e.g. a
+      // malformed `bySpace`, a non-boolean `historyEnabled`) can't poison
+      // the store on rehydrate.
+      merge: (persisted, current) => ({
+        ...current,
+        ...coercePersistedSearchHistory(persisted),
+      }),
     },
   ),
 )
