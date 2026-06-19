@@ -5,11 +5,13 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use super::connection::{InnerStream, SyncConnection};
 use super::sync_err;
 use super::tls::{SyncCert, build_server_tls_config};
 use crate::error::AppError;
+use crate::sync_constants::MAX_CONCURRENT_RESPONDER_SESSIONS;
 
 pub const MDNS_BROWSE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -307,12 +309,27 @@ impl SyncServer {
     ///
     /// For each incoming connection the server performs a TLS handshake
     /// using the certificate from `cert`, upgrades to WebSocket, and
-    /// invokes `on_connection` with the resulting `SyncConnection`.
+    /// invokes `on_connection` with the resulting `SyncConnection` plus an
+    /// [`OwnedSemaphorePermit`] that bounds in-flight responder sessions
+    /// (#1581).
+    ///
+    /// ## Concurrency cap (#1581)
+    ///
+    /// Sessions are gated by an `Arc<Semaphore>` of
+    /// [`MAX_CONCURRENT_RESPONDER_SESSIONS`] permits. A permit is acquired in
+    /// the accept loop **before** the per-connection TLS handshake task is
+    /// spawned; if the server is already at capacity the freshly accepted TCP
+    /// stream is dropped (closed) without performing a handshake, so a peer
+    /// retry-looping cannot pin an unbounded number of long-lived
+    /// (`RECV_TIMEOUT` = 180 s) handshakes/tasks. The permit is then moved into
+    /// the spawned task and handed to `on_connection`, which is expected to
+    /// keep it alive for the whole responder session so the slot is released
+    /// only on session completion.
     ///
     /// Returns the server handle together with the bound port.
     pub async fn start(
         cert: &SyncCert,
-        on_connection: impl Fn(SyncConnection) + Send + Sync + 'static,
+        on_connection: impl Fn(SyncConnection, OwnedSemaphorePermit) + Send + Sync + 'static,
     ) -> Result<(Self, u16), AppError> {
         let tls_config = build_server_tls_config(cert)?;
         let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls_config));
@@ -329,6 +346,12 @@ impl SyncServer {
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let on_connection = Arc::new(on_connection);
 
+        // #1581: bound the number of concurrent in-flight responder sessions.
+        // A permit is acquired *before* the TLS handshake spawn below, so a
+        // burst of connection attempts past the cap is rejected at the TCP
+        // layer (the stream is dropped) without spending handshake CPU/FDs.
+        let session_limiter = Arc::new(Semaphore::new(MAX_CONCURRENT_RESPONDER_SESSIONS));
+
         // M-53: track consecutive `accept()` failures so we back off
         // exponentially before retrying. Reset to 0 after every
         // successful accept so the loop never punishes a transient
@@ -342,6 +365,29 @@ impl SyncServer {
                         match result {
                             Ok((tcp_stream, _addr)) => {
                                 accept_failure_count = 0;
+
+                                // #1581: gate at the TCP layer *before* the TLS
+                                // handshake. `try_acquire_owned` never blocks
+                                // the accept loop: at capacity we drop
+                                // `tcp_stream` (closing the connection) and move
+                                // on, so excess peers cannot force a handshake
+                                // or a long-lived session task. The permit is
+                                // moved into the per-connection task and then
+                                // into `on_conn`, which holds it for the whole
+                                // responder session — releasing the slot only on
+                                // completion.
+                                let Ok(permit) =
+                                    Arc::clone(&session_limiter).try_acquire_owned()
+                                else {
+                                    tracing::warn!(
+                                        cap = MAX_CONCURRENT_RESPONDER_SESSIONS,
+                                        "sync_server.responder_at_capacity: rejecting \
+                                         connection before TLS handshake"
+                                    );
+                                    // `tcp_stream` drops here → TCP close.
+                                    continue;
+                                };
+
                                 let acceptor = acceptor.clone();
                                 let on_conn = on_connection.clone();
                                 tokio::spawn(async move {
@@ -420,7 +466,13 @@ impl SyncServer {
                                         peer_cert_hash_val: peer_cert_hash,
                                         peer_cert_cn_val: peer_cert_cn,
                                     };
-                                    on_conn(conn);
+                                    // Hand the permit to the callback so the
+                                    // session slot is held for the responder's
+                                    // whole lifetime, not just the handshake
+                                    // (#1581). If any `?`-early-return above
+                                    // fired, `permit` drops here, freeing the
+                                    // slot.
+                                    on_conn(conn, permit);
                                 });
                             }
                             Err(e) => {

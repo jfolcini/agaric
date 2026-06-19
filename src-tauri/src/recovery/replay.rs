@@ -31,7 +31,7 @@ use crate::op_log::OpRecord;
 /// replay does not load the entire op log into memory at once. The
 /// foreground queue is drained at the end via a Barrier task, so the
 /// per-chunk depth never exceeds `FOREGROUND_CAPACITY`.
-const REPLAY_CHUNK_SIZE: i64 = 200;
+pub(crate) const REPLAY_CHUNK_SIZE: i64 = 200;
 
 /// Summary of a single replay pass returned to the caller.
 ///

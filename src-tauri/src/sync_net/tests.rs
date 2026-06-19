@@ -491,7 +491,7 @@ async fn tls_roundtrip_json_exchange() {
     let client_cert = generate_self_signed_cert("client-device").unwrap();
 
     // Start server
-    let (server, port) = SyncServer::start(&cert, |mut conn| {
+    let (server, port) = SyncServer::start(&cert, |mut conn, _permit| {
         tokio::spawn(async move {
             // Server: receive a message and echo it back
             let msg: SyncMessage = conn.recv_json().await.unwrap();
@@ -533,7 +533,7 @@ async fn cert_pinning_correct_hash_succeeds() {
     let client_cert = generate_self_signed_cert("client-pin-test").unwrap();
     let expected_hash = cert.cert_hash.clone();
 
-    let (server, port) = SyncServer::start(&cert, |_conn| {}).await.unwrap();
+    let (server, port) = SyncServer::start(&cert, |_conn, _permit| {}).await.unwrap();
 
     // Connect with correct hash
     let conn = connect_to_peer(
@@ -566,7 +566,7 @@ async fn cert_pinning_wrong_hash_fails() {
     let cert = generate_self_signed_cert("pin-fail").unwrap();
     let client_cert = generate_self_signed_cert("client-pin-fail").unwrap();
 
-    let (server, port) = SyncServer::start(&cert, |_conn| {}).await.unwrap();
+    let (server, port) = SyncServer::start(&cert, |_conn, _permit| {}).await.unwrap();
 
     // Connect with wrong hash
     let wrong_hash = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -609,7 +609,7 @@ async fn binary_message_roundtrip() {
     let cert = generate_self_signed_cert("binary-test").unwrap();
     let client_cert = generate_self_signed_cert("client-binary-test").unwrap();
 
-    let (server, port) = SyncServer::start(&cert, |mut conn| {
+    let (server, port) = SyncServer::start(&cert, |mut conn, _permit| {
         tokio::spawn(async move {
             let data = conn.recv_binary().await.unwrap();
             conn.send_binary(&data).await.unwrap();
@@ -633,13 +633,138 @@ async fn binary_message_roundtrip() {
     server.shutdown().await;
 }
 
+/// #1581: the responder server bounds concurrent in-flight sessions with a
+/// `Semaphore` of [`MAX_CONCURRENT_RESPONDER_SESSIONS`] permits, and rejects
+/// excess connections at the TCP layer *before* performing a TLS handshake.
+///
+/// This drives more concurrent connection attempts than the cap and asserts:
+///   1. the peak number of simultaneously-active responder sessions never
+///      exceeds the cap, and
+///   2. the excess attempts are rejected promptly (the client `connect_to_peer`
+///      — which only resolves once the TLS handshake completes — fails) rather
+///      than running the full handshake and a 180 s session.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn responder_sessions_capped_by_semaphore() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Notify;
+
+    install_crypto_provider();
+    let cert = generate_self_signed_cert("cap-test").unwrap();
+
+    let cap = crate::sync_constants::MAX_CONCURRENT_RESPONDER_SESSIONS;
+
+    // Shared session bookkeeping: `active` is the current number of in-flight
+    // responder sessions, `peak` the high-water mark, `release` unblocks every
+    // held session so the server can drain at the end.
+    let active = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let release = Arc::new(Notify::new());
+
+    let active_cb = active.clone();
+    let peak_cb = peak.clone();
+    let release_cb = release.clone();
+
+    let (server, port) = SyncServer::start(&cert, move |conn, permit| {
+        let active = active_cb.clone();
+        let peak = peak_cb.clone();
+        let release = release_cb.clone();
+        // Model the production hold: the session task owns `permit` and `conn`
+        // for its whole lifetime, releasing the slot only when it ends.
+        tokio::spawn(async move {
+            let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+            peak.fetch_max(now, Ordering::SeqCst);
+            // Block until the test signals completion, holding the permit.
+            release.notified().await;
+            active.fetch_sub(1, Ordering::SeqCst);
+            drop(conn);
+            drop(permit);
+        });
+    })
+    .await
+    .unwrap();
+
+    let addr = format!("127.0.0.1:{port}");
+
+    // Saturate the cap with persistent connections. Each successful client
+    // keeps its connection (and thus the server session + permit) alive.
+    let mut held_clients = Vec::new();
+    for i in 0..cap {
+        let client_cert = generate_self_signed_cert(&format!("cap-client-{i}")).unwrap();
+        let client = connect_to_peer(&addr, None, None, &client_cert)
+            .await
+            .unwrap_or_else(|e| panic!("client {i} (within cap) should connect: {e}"));
+        held_clients.push(client);
+    }
+
+    // Wait for all `cap` sessions to register as active before probing excess.
+    let registered = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if active.load(Ordering::SeqCst) >= cap {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    assert!(
+        registered.is_ok(),
+        "all {cap} within-cap sessions should register as active"
+    );
+
+    // Now attempt several MORE connections than the cap allows. Each must be
+    // rejected before the TLS handshake completes, so `connect_to_peer` (which
+    // returns only after a successful handshake) fails within a short window —
+    // it does not hang for the full 180 s session.
+    let excess = 4;
+    for i in 0..excess {
+        let client_cert = generate_self_signed_cert(&format!("excess-client-{i}")).unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            connect_to_peer(&addr, None, None, &client_cert),
+        )
+        .await;
+        match result {
+            Ok(Ok(_)) => panic!(
+                "excess connection {i} should be rejected at capacity, but the \
+                 TLS handshake completed"
+            ),
+            Ok(Err(_)) => { /* rejected before/at handshake — expected */ }
+            Err(_) => panic!(
+                "excess connection {i} hung instead of being promptly rejected \
+                 (no fast TCP close before handshake)"
+            ),
+        }
+    }
+
+    // The peak number of concurrently-active sessions must never exceed the cap.
+    assert!(
+        peak.load(Ordering::SeqCst) <= cap,
+        "in-flight responder sessions ({}) exceeded the cap ({cap})",
+        peak.load(Ordering::SeqCst)
+    );
+    assert_eq!(
+        active.load(Ordering::SeqCst),
+        cap,
+        "exactly the cap's worth of sessions should be active while saturated"
+    );
+
+    // Drain: release all held sessions, close the held clients, and shut the
+    // server down. `notify_waiters` wakes every parked session task so each
+    // drops its permit and connection.
+    release.notify_waiters();
+    for client in held_clients {
+        client.close().await.ok();
+    }
+    server.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn peer_cert_hash_populated_on_client() {
     install_crypto_provider();
     let cert = generate_self_signed_cert("hash-capture").unwrap();
     let client_cert = generate_self_signed_cert("client-hash-capture").unwrap();
 
-    let (server, port) = SyncServer::start(&cert, |_conn| {}).await.unwrap();
+    let (server, port) = SyncServer::start(&cert, |_conn, _permit| {}).await.unwrap();
 
     let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert)
         .await
@@ -980,7 +1105,7 @@ async fn mtls_server_extracts_peer_cert_hash() {
     let (hash_tx, hash_rx) = tokio::sync::oneshot::channel::<Option<String>>();
     let hash_tx = std::sync::Mutex::new(Some(hash_tx));
 
-    let (server, port) = SyncServer::start(&server_cert, move |conn| {
+    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
         if let Some(tx) = hash_tx.lock().unwrap().take() {
             let _ = tx.send(conn.peer_cert_hash());
         }
@@ -1018,7 +1143,7 @@ async fn mtls_server_extracts_peer_cert_cn() {
     let (cn_tx, cn_rx) = tokio::sync::oneshot::channel::<Option<String>>();
     let cn_tx = std::sync::Mutex::new(Some(cn_tx));
 
-    let (server, port) = SyncServer::start(&server_cert, move |conn| {
+    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
         if let Some(tx) = cn_tx.lock().unwrap().take() {
             let _ = tx.send(conn.peer_cert_cn().map(String::from));
         }
@@ -1060,7 +1185,7 @@ async fn mtls_server_rejects_empty_device_id_cn() {
     let (cn_tx, cn_rx) = tokio::sync::oneshot::channel::<Option<String>>();
     let cn_tx = std::sync::Mutex::new(Some(cn_tx));
 
-    let (server, port) = SyncServer::start(&server_cert, move |conn| {
+    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
         if let Some(tx) = cn_tx.lock().unwrap().take() {
             let _ = tx.send(conn.peer_cert_cn().map(String::from));
         }
@@ -1105,7 +1230,7 @@ async fn issue800_certless_tls_connection_accepted_with_no_peer_identity() {
 
     let (tx, rx) = tokio::sync::oneshot::channel::<(Option<String>, Option<String>)>();
     let tx = std::sync::Mutex::new(Some(tx));
-    let (server, port) = SyncServer::start(&server_cert, move |conn| {
+    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
         if let Some(tx) = tx.lock().unwrap().take() {
             let _ = tx.send((conn.peer_cert_cn().map(String::from), conn.peer_cert_hash()));
         }
@@ -1209,7 +1334,7 @@ async fn mtls_full_handshake_both_sides_see_peer_identity() {
     let (server_conn_tx, server_conn_rx) = tokio::sync::oneshot::channel::<SyncConnection>();
     let server_conn_tx = std::sync::Mutex::new(Some(server_conn_tx));
 
-    let (server, port) = SyncServer::start(&cert_alice, move |conn| {
+    let (server, port) = SyncServer::start(&cert_alice, move |conn, _permit| {
         if let Some(tx) = server_conn_tx.lock().unwrap().take() {
             let _ = tx.send(conn);
         }
@@ -1317,7 +1442,7 @@ async fn mtls_reconnection_with_correct_cert_hash_succeeds() {
     // mpsc channel: we need two connections across the test.
     let (server_conn_tx, mut server_conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(2);
 
-    let (server, port) = SyncServer::start(&cert_alice, move |conn| {
+    let (server, port) = SyncServer::start(&cert_alice, move |conn, _permit| {
         let tx = server_conn_tx.clone();
         let _ = tx.try_send(conn);
     })
@@ -1387,7 +1512,9 @@ async fn mtls_reconnection_with_wrong_cert_hash_fails() {
     let cert_alice = generate_self_signed_cert("alice").unwrap();
     let cert_bob = generate_self_signed_cert("bob").unwrap();
 
-    let (server, port) = SyncServer::start(&cert_alice, |_conn| {}).await.unwrap();
+    let (server, port) = SyncServer::start(&cert_alice, |_conn, _permit| {})
+        .await
+        .unwrap();
 
     let addr = format!("127.0.0.1:{port}");
     let wrong_hash = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -1418,7 +1545,7 @@ async fn mtls_tofu_store_and_verify_round_trip() {
     let client_cert = generate_self_signed_cert("tofu-client").unwrap();
 
     // ── First connection: no pinning → learn the server's hash (TOFU) ──
-    let (server_v1, port_v1) = SyncServer::start(&cert_device_a_v1, |_conn| {})
+    let (server_v1, port_v1) = SyncServer::start(&cert_device_a_v1, |_conn, _permit| {})
         .await
         .unwrap();
 
@@ -1447,7 +1574,7 @@ async fn mtls_tofu_store_and_verify_round_trip() {
     );
 
     // Start server with the NEW cert
-    let (server_v2, port_v2) = SyncServer::start(&cert_device_a_v2, |_conn| {})
+    let (server_v2, port_v2) = SyncServer::start(&cert_device_a_v2, |_conn, _permit| {})
         .await
         .unwrap();
 
@@ -1683,7 +1810,7 @@ async fn accept_loop_handles_multiple_successive_connections() {
     let cert = generate_self_signed_cert("backoff-loop").unwrap();
     let client_cert = generate_self_signed_cert("backoff-client").unwrap();
 
-    let (server, port) = SyncServer::start(&cert, |_conn| {}).await.unwrap();
+    let (server, port) = SyncServer::start(&cert, |_conn, _permit| {}).await.unwrap();
 
     // Two back-to-back accepts: both should succeed without the loop
     // wedging or accumulating spurious failure counts.
