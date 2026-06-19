@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT op_type, is_undo as \"is_undo!: i64\" FROM op_log WHERE device_id = ? AND seq = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "op_type",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "op_type"
+          }
+        }
+      },
+      {
+        "name": "is_undo!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "is_undo"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "3776d1c2178e7b9f03e0f2baf2c3aecdee23dbb24cd17879392ec4f47db61acb"
+}

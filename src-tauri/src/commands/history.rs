@@ -771,11 +771,19 @@ pub async fn redo_page_op_inner(
 ) -> Result<UndoResult, AppError> {
     use crate::reverse;
 
-    // Fetch the undo op's op_type (the one we're reversing).
-    // Surfaces to the frontend as `reversed_op_type` for descriptive toasts.
-    // I-Core-8: wrap to typed read-pool — caller is in write context
-    let undo_record =
-        op_log::get_op_by_seq(&ReadPool(pool.clone()), &undo_device_id, undo_seq).await?;
+    // Fetch the undo op's op_type (surfaced to the frontend as
+    // `reversed_op_type` for descriptive toasts) and its `is_undo` flag in a
+    // SINGLE query — both come from the same `(device_id, seq)` row, so there
+    // is no need for a second round-trip (perf-redo-double-query-same-row).
+    let undo_row = sqlx::query!(
+        r#"SELECT op_type, is_undo as "is_undo!: i64" FROM op_log WHERE device_id = ? AND seq = ?"#,
+        undo_device_id,
+        undo_seq,
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("op_log ({undo_device_id}, {undo_seq})")))?;
+    let undo_op_type = undo_row.op_type;
 
     // #659: redo means "reverse an undo op" — verify the target's recorded
     // provenance before reversing anything. Without this check a buggy IPC
@@ -784,18 +792,11 @@ pub async fn redo_page_op_inner(
     // `undo_page_op_inner` (`op_log.is_undo`, migration 0090); pre-0090
     // undo ops backfill to 0 and are no longer redoable (the FE redo stack
     // is session-scoped, so no live ref can point at one).
-    let is_undo: i64 = sqlx::query_scalar!(
-        r#"SELECT is_undo as "is_undo!: i64" FROM op_log WHERE device_id = ? AND seq = ?"#,
-        undo_device_id,
-        undo_seq,
-    )
-    .fetch_one(pool)
-    .await?;
-    if is_undo == 0 {
+    if undo_row.is_undo == 0 {
         return Err(AppError::Validation(format!(
             "redo target ({undo_device_id}, {undo_seq}) is a '{}' op that was not \
              produced by undo — refusing to reverse a forward op via redo (#659)",
-            undo_record.op_type
+            undo_op_type
         )));
     }
 
@@ -832,7 +833,7 @@ pub async fn redo_page_op_inner(
             device_id: undo_device_id,
             seq: undo_seq,
         },
-        reversed_op_type: undo_record.op_type,
+        reversed_op_type: undo_op_type,
         new_op_ref: OpRef {
             device_id: new_op_device_id,
             seq: new_op_seq,
