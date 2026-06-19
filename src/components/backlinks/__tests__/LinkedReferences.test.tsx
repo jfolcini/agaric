@@ -39,6 +39,24 @@ vi.mock('@/hooks/useBlockPropertyEvents', () => ({
   useBlockPropertyEvents: vi.fn(() => ({ invalidationKey: 0 })),
 }))
 
+// #1529: capture the `groups` array (and its member group objects) handed to
+// BacklinkGroupRenderer on each render so a test can assert that load-more
+// pagination never mutates a prior-render group object in place. We wrap the
+// REAL component (via importOriginal) so DOM-based assertions in every other
+// test keep working unchanged.
+const renderedGroupsHistory: Array<readonly unknown[]> = []
+vi.mock('@/components/backlinks/BacklinkGroupRenderer', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/components/backlinks/BacklinkGroupRenderer')>()
+  return {
+    ...actual,
+    BacklinkGroupRenderer: (props: { groups: readonly unknown[] }) => {
+      renderedGroupsHistory.push(props.groups)
+      return actual.BacklinkGroupRenderer(props as never)
+    },
+  }
+})
+
 // #1639: track the identity of the `sourcePages` array prop across renders so a
 // test can assert it stays referentially stable (memoized) across focus-driven
 // re-renders.
@@ -164,6 +182,8 @@ beforeEach(() => {
   mockNavigateToPage.mockClear()
   // #1639: reset the captured sourcePages prop identities between tests.
   sourcePagesIdentities.length = 0
+  // #1529: reset the captured groups-prop render history between tests.
+  renderedGroupsHistory.length = 0
   // MAINT-189: shared property-keys cache is module-level — flush it
   // between tests so each case fetches its own keys.
   _resetPropertyKeysCacheForTest()
@@ -633,6 +653,92 @@ describe('LinkedReferences', () => {
     // Both groups should be rendered
     expect(await screen.findByText('block 1')).toBeInTheDocument()
     expect(screen.getByText('block 2')).toBeInTheDocument()
+  })
+
+  // 14b. (#1529) load-more merging the SAME page_id must NOT mutate the
+  // prior-render group object. The updater builds a fresh group via
+  // `{ ...existing, blocks: [...existing.blocks, ...newGroup.blocks] }`
+  // rather than `existing.blocks = ...`. We exercise the merge branch by
+  // returning the same page_id (P1) across both pages and assert the merged
+  // blocks render once each (no dup), in order, with no loss.
+  it('pagination: merging same page does not mutate prior group (no dup, ordered)', async () => {
+    const user = userEvent.setup()
+    const page1 = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block one' }])],
+      next_cursor: 'cursor_page2',
+      has_more: true,
+      total_count: 2,
+      filtered_count: 2,
+      truncated: false,
+    }
+    // Same page_id 'P1' in page 2 -> drives the `existing` merge branch.
+    const page2 = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B2', content: 'block two' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 2,
+      filtered_count: 2,
+      truncated: false,
+    }
+    let callCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'list_backlinks_grouped') {
+        callCount++
+        return callCount === 1 ? page1 : page2
+      }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'list_property_keys') return []
+      if (cmd === 'list_tags_by_prefix') return []
+      return emptyGrouped
+    })
+
+    renderLinkedReferences({ pageId: 'PAGE1' })
+
+    const loadMoreBtn = await screen.findByRole('button', {
+      name: /load more references/i,
+    })
+
+    // page1's block is present before load-more.
+    expect(await screen.findByText('block one')).toBeInTheDocument()
+
+    // Capture the prior-render P1 group object + its blocks array identity.
+    const priorGroups = renderedGroupsHistory.at(-1) as Array<{
+      page_id: string
+      blocks: unknown[]
+    }>
+    const priorP1 = priorGroups.find((g) => g.page_id === 'P1')
+    expect(priorP1).toBeDefined()
+    if (priorP1 == null) throw new Error('priorP1 missing')
+    const priorP1Blocks = priorP1.blocks
+    const priorP1BlocksLen = priorP1.blocks.length
+    expect(priorP1BlocksLen).toBe(1)
+
+    await user.click(loadMoreBtn)
+
+    // After merge: both blocks present exactly once (no duplication of the
+    // pre-existing block, which an in-place mutate-then-rebuild could cause),
+    // preserving append order one -> two.
+    expect(await screen.findByText('block two')).toBeInTheDocument()
+    expect(screen.getAllByText('block one')).toHaveLength(1)
+    expect(screen.getAllByText('block two')).toHaveLength(1)
+
+    // #1529 core assertion: the prior-render P1 group object was NOT mutated —
+    // its blocks array is the same reference with the same length it had
+    // before load-more (no `existing.blocks = [...]` write-through).
+    expect(priorP1.blocks).toBe(priorP1Blocks)
+    expect(priorP1.blocks.length).toBe(priorP1BlocksLen)
+
+    // The merged group handed to the latest render is a NEW object identity
+    // (not the same `priorP1` reference) and carries both blocks.
+    const latestGroups = renderedGroupsHistory.at(-1) as Array<{
+      page_id: string
+      blocks: unknown[]
+    }>
+    const mergedP1 = latestGroups.find((g) => g.page_id === 'P1')
+    expect(mergedP1).toBeDefined()
+    if (mergedP1 == null) throw new Error('mergedP1 missing')
+    expect(mergedP1).not.toBe(priorP1)
+    expect(mergedP1.blocks.length).toBe(2)
   })
 
   // 15. pagination: hides load more when no more

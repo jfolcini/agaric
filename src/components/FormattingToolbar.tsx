@@ -33,6 +33,7 @@ import { useTranslation } from 'react-i18next'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useRovingTabindex } from '@/hooks/useRovingTabindex'
 import { type ToolbarItem, useToolbarOverflow } from '@/hooks/useToolbarOverflow'
+import { computeKeyboardInset } from '@/lib/keyboard-inset'
 import {
   createHistoryButtons,
   createMetadataButtons,
@@ -69,25 +70,6 @@ function getHeadingLevel(editor: Editor): number {
     if (editor.isActive('heading', { level: lvl })) return lvl
   }
   return 0
-}
-
-/**
- * #925 f3 — compute the `bottom` (px) at which a viewport-pinned toolbar must
- * sit so it rests just above the on-screen keyboard.
- *
- * `window.visualViewport` is the layout viewport MINUS the soft keyboard. Its
- * `height + offsetTop` is the y of the visible-viewport bottom in layout-viewport
- * coordinates; `window.innerHeight` minus that is the keyboard's height. We pin
- * the bar `position: fixed` (anchored to the layout-viewport bottom) and push it
- * UP by that keyboard height so it hugs the top of the keyboard. Returns 0 when
- * no keyboard is up or when the API is unavailable (every test under happy-dom,
- * and desktop browsers we never take the touch path on).
- */
-export function computeKeyboardInset(): number {
-  const vv = (typeof window !== 'undefined' && window.visualViewport) || null
-  if (!vv) return 0
-  const inset = window.innerHeight - (vv.height + vv.offsetTop)
-  return inset > 0 ? inset : 0
 }
 
 export function FormattingToolbar({
@@ -132,13 +114,13 @@ export function FormattingToolbar({
   // (`scroll`). No-op on desktop (fine pointer) — the inline layout stays put.
   useEffect(() => {
     if (!isTouch) return
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null
     const apply = () => {
       const el = containerRef.current
       if (!el) return
-      el.style.bottom = `${computeKeyboardInset()}px`
+      el.style.bottom = `${vv ? computeKeyboardInset(vv) : 0}px`
     }
     apply()
-    const vv = typeof window !== 'undefined' ? window.visualViewport : null
     if (!vv) return
     vv.addEventListener('resize', apply)
     vv.addEventListener('scroll', apply)

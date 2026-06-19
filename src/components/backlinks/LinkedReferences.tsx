@@ -99,7 +99,14 @@ export function LinkedReferences({
             for (const newGroup of resp.groups) {
               const existing = byPageId.get(newGroup.page_id)
               if (existing) {
-                existing.blocks = [...existing.blocks, ...newGroup.blocks]
+                // Construct a fresh group object instead of mutating the
+                // prior-state object (#1529): in-place `existing.blocks = ...`
+                // violates React's immutable-state contract and is a latent
+                // footgun once a memoized child / equality check is added.
+                byPageId.set(newGroup.page_id, {
+                  ...existing,
+                  blocks: [...existing.blocks, ...newGroup.blocks],
+                })
               } else {
                 byPageId.set(newGroup.page_id, newGroup)
               }
