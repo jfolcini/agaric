@@ -500,7 +500,7 @@ async fn setup_tls_pair() -> (SyncConnection, SyncConnection, crate::sync_net::S
     let (tx, rx) = tokio::sync::oneshot::channel();
     let tx = std::sync::Mutex::new(Some(tx));
 
-    let (server, port) = SyncServer::start(&server_cert, move |conn| {
+    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
         if let Some(sender) = tx.lock().unwrap().take() {
             let _ = sender.send(conn);
         }

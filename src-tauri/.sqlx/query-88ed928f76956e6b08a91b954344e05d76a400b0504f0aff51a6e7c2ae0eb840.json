@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, space_id, bytes FROM loro_sync_inbox WHERE id > ? ORDER BY id ASC LIMIT ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_inbox",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "space_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_inbox",
+            "name": "space_id"
+          }
+        }
+      },
+      {
+        "name": "bytes",
+        "ordinal": 2,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_inbox",
+            "name": "bytes"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "88ed928f76956e6b08a91b954344e05d76a400b0504f0aff51a6e7c2ae0eb840"
+}

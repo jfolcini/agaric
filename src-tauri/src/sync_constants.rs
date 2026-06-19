@@ -58,3 +58,29 @@ pub const LORO_INLINE_MAX_BYTES: usize = 2_400_000;
 // the same order of magnitude as the compressed DB snapshot blob, and both
 // arrive over the identical chunked binary machinery.
 pub const MAX_LORO_SYNC_PAYLOAD_SIZE: u64 = 256 * 1024 * 1024;
+
+// ---------------------------------------------------------------------------
+// Responder connection concurrency (#1581)
+// ---------------------------------------------------------------------------
+
+// Upper bound on the number of *concurrent in-flight responder sessions* the
+// TLS WebSocket server (`sync_net::SyncServer`) will run at once. A permit is
+// acquired from an `Arc<Semaphore>` of this size in the accept loop *before*
+// the TLS handshake; when the server is already at capacity the freshly
+// accepted TCP stream is dropped (closed) without spending the CPU/FD cost of
+// a handshake, and the permit is held for the entire responder session
+// (handshake → WebSocket upgrade → `handle_incoming_sync`, which can live up
+// to `SyncConnection::RECV_TIMEOUT` = 180 s).
+//
+// This is a *stability* bound, not adversarial DoS hardening — per AGENTS.md
+// §"Threat Model" sync peers are the user's own paired devices and there is no
+// malicious actor. The value bounds task / file-descriptor fan-out so a flurry
+// of reconnect attempts (device wake, network flap, a peer retry-looping)
+// cannot pin an unbounded number of 180 s sessions and the DB connections they
+// contend for.
+//
+// Sizing: a single user pairs a handful of devices; 16 leaves generous
+// headroom over any realistic paired-device count and over the 6-connection DB
+// pool (2 writers + 4 readers) those sessions ultimately draw on, while still
+// being a hard, finite ceiling.
+pub const MAX_CONCURRENT_RESPONDER_SESSIONS: usize = 16;

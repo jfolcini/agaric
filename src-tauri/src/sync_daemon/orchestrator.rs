@@ -128,7 +128,7 @@ pub(crate) async fn daemon_loop(
     let resp_materializer = materializer.clone();
     let resp_scheduler = scheduler.clone();
     let resp_event_sink = event_sink.clone();
-    let (server, port) = SyncServer::start(&cert, move |conn| {
+    let (server, port) = SyncServer::start(&cert, move |conn, permit| {
         let pool = resp_pool.clone();
         let device_id = resp_device_id.clone();
         let mat = resp_materializer.clone();
@@ -139,9 +139,17 @@ pub(crate) async fn daemon_loop(
         // that awaits the handle. The watcher surfaces both graceful
         // `AppError` failures and fatal `JoinError` (panic / cancel)
         // outcomes — without it, a responder task could vanish silently.
-        let handle: tokio::task::JoinHandle<Result<(), AppError>> = tokio::spawn(
-            handle_incoming_sync(conn, pool, device_id, mat, sched, sink),
-        );
+        //
+        // #1581: `permit` (the concurrency-cap slot acquired before the TLS
+        // handshake) is moved into the responder task and dropped when
+        // `handle_incoming_sync` resolves, so the slot is held for the whole
+        // session lifetime (up to `RECV_TIMEOUT` = 180 s) and freed on
+        // completion — graceful, error, or panic.
+        let handle: tokio::task::JoinHandle<Result<(), AppError>> = tokio::spawn(async move {
+            let result = handle_incoming_sync(conn, pool, device_id, mat, sched, sink).await;
+            drop(permit);
+            result
+        });
         tokio::spawn(async move {
             match handle.await {
                 Ok(Ok(())) => {}

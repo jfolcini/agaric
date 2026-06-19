@@ -918,7 +918,7 @@ async fn handle_incoming_sync_rejects_sync_with_self() {
 
     // Start TLS WebSocket server; forward incoming connections via channel
     let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
-    let (server, port) = SyncServer::start(&server_cert, move |conn| {
+    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
         let _ = conn_tx.try_send(conn);
     })
     .await
@@ -1008,7 +1008,7 @@ async fn run_sync_session_respects_cancel_flag() {
 
     // Start server and connect
     let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
-    let (server, port) = SyncServer::start(&server_cert, move |conn| {
+    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
         let _ = conn_tx.try_send(conn);
     })
     .await
@@ -1173,7 +1173,7 @@ async fn handle_incoming_sync_rejects_unpaired_device() {
     let client_cert = sync_net::generate_self_signed_cert("UNKNOWN_DEV").unwrap();
 
     let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
-    let (server, port) = SyncServer::start(&server_cert, move |conn| {
+    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
         let _ = conn_tx.try_send(conn);
     })
     .await
@@ -4995,7 +4995,7 @@ async fn cancel_637_owns_path_clears_flag_after_real_session() {
     // function commits to a real session (sets `owns = true`).
     let server_cert = sync_net::generate_self_signed_cert("PEER_637_OWNS").unwrap();
     let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
-    let (server, port) = SyncServer::start(&server_cert, move |conn| {
+    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
         let _ = conn_tx.try_send(conn);
     })
     .await
@@ -5071,7 +5071,7 @@ async fn cancel_637_owns_path_normal_reset_leaves_flag_clear() {
     // which is still the owns-path. This is deterministic (the initiator's
     // recv returns an error promptly rather than blocking).
     let server_cert = sync_net::generate_self_signed_cert("PEER_637_NORM").unwrap();
-    let (server, port) = SyncServer::start(&server_cert, move |_conn| {
+    let (server, port) = SyncServer::start(&server_cert, move |_conn, _permit| {
         // drop `_conn` immediately → initiator's recv fails fast
     })
     .await
