@@ -784,46 +784,54 @@ pub async fn get_block_edit_heads(
 /// that the remote head has already been integrated by searching for
 /// that entry.
 ///
-/// **I-Core-9 — Substring-match invariants.** The `instr(parent_seqs, ?)`
-/// search is correct only because:
+/// **I-Core-9 — Structural membership test.** `parent_seqs` is serialised
+/// by `serde_json::to_string` over a `Vec<(String, i64)>`, so each element
+/// is itself a JSON 2-tuple `[device, seq]`. The query decomposes the
+/// array with `json_each` and compares each element's `[0]`/`[1]`
+/// components (device, seq) to `their_head` via `json_extract`:
 ///
-/// 1. `parent_seqs` is serialised by `serde_json::to_string` over a
-///    `Vec<(String, i64)>`, which always emits each entry as a 2-tuple
-///    closed by `]` (e.g. `["device-A",1]`). The closing `]` prevents
-///    `["device-A",1]` from matching the prefix of `["device-A",10]`.
-/// 2. `device_id` is a UUID v4 (`/^[0-9a-f-]+$/`), so it contains no
-///    JSON-special characters that could perturb the encoded bytes.
-/// 3. The integer `seq` has a single canonical decimal representation,
-///    so a needle for `1` will not match the `seq=10` substring inside
-///    `["device-A",10]` because the closing `]` follows immediately.
+/// ```sql
+/// EXISTS (
+///   SELECT 1 FROM json_each(parent_seqs)
+///   WHERE json_extract(value, '$[0]') = ?device
+///     AND json_extract(value, '$[1]') = ?seq
+/// )
+/// ```
 ///
-/// A future migration that stores a different identifier shape in
-/// `parent_seqs` (peer-id rename, alphabetic device names, structured
-/// hashes) would break invariant (2) and silently introduce false
-/// positives. Defence-in-depth alternative: replace the substring scan
-/// with `EXISTS (SELECT 1 FROM json_each(parent_seqs) WHERE value = ?)`,
-/// which removes the substring assumption entirely. Optimisation,
-/// not correctness — the current scan is fast on the existing UUID
-/// alphabet.
+/// This is a true structural membership test: it does not depend on the
+/// device-id being a JSON-safe UUID, on `seq` having a single decimal
+/// form, or on a closing `]` preventing prefix matches. A future
+/// identifier-format change (peer-id rename, alphabetic device names,
+/// structured hashes) therefore cannot introduce a false positive that
+/// silently suppresses a needed merge op.
 pub async fn has_merge_for_heads(
     pool: &SqlitePool,
     block_id: &str,
     their_head: &(String, i64),
 ) -> Result<bool, AppError> {
-    // Serialise their_head as a JSON tuple, e.g. `["device-B",1]`.  The
-    // closing `]` is what makes the `instr` substring match safe — see
-    // the function-level doc for the full invariant.
-    let needle = serde_json::to_string(their_head)?;
+    // Each element of `parent_seqs` is a JSON 2-tuple `[device, seq]` (see
+    // `append_merge_op`).  Instead of a substring scan over the serialised
+    // array — which relied on fragile invariants about identifier shape and
+    // the closing `]` preventing prefix matches — decompose the array with
+    // `json_each` and compare each element's components structurally.  A
+    // future identifier-format change can no longer introduce a false
+    // positive that suppresses a needed merge op.
+    let (their_device, their_seq) = their_head;
 
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM op_log \
          WHERE op_type = 'edit_block' \
            AND block_id = ? \
            AND parent_seqs IS NOT NULL \
-           AND instr(parent_seqs, ?) > 0",
+           AND EXISTS ( \
+             SELECT 1 FROM json_each(parent_seqs) \
+             WHERE json_extract(value, '$[0]') = ? \
+               AND json_extract(value, '$[1]') = ? \
+           )",
     )
     .bind(block_id)
-    .bind(&needle)
+    .bind(their_device)
+    .bind(their_seq)
     .fetch_one(pool)
     .await?;
 

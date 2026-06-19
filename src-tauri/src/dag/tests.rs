@@ -656,6 +656,92 @@ async fn append_merge_op_hash_verifies() {
     assert_eq!(record.hash, recomputed);
 }
 
+/// `has_merge_for_heads` must do a *structural* membership test over
+/// `parent_seqs`, not a substring scan. Regression guard for #1595: the
+/// old `instr(parent_seqs, ?)` form was vulnerable to prefix/substring
+/// false positives once identifiers stopped being JSON-safe UUIDs with a
+/// single decimal `seq`. With parent `["dev",5]` present:
+///   - (dev, 5)  → true  (exact structural match)
+///   - (dev, 50) → false (seq `5` is a digit-prefix of `50`)
+///   - (de,  5)  → false (device `de` is a prefix of `dev`)
+#[tokio::test]
+async fn has_merge_for_heads_is_structural_not_substring() {
+    let (pool, _dir) = test_pool().await;
+
+    // Merge op on block "B1" whose parent_seqs contains ["dev",5].
+    // The second parent only satisfies append_merge_op's >=2-entries rule.
+    let merge_payload = make_edit("B1", "merged", None);
+    let parents = vec![("dev".to_owned(), 5), ("other".to_owned(), 9)];
+    append_merge_op(&pool, DEV_A, merge_payload, parents)
+        .await
+        .unwrap();
+
+    // Exact structural match → true.
+    assert!(
+        has_merge_for_heads(&pool, "B1", &("dev".to_owned(), 5))
+            .await
+            .unwrap(),
+        "exact parent (dev, 5) must be found"
+    );
+
+    // seq 5 is a digit-prefix of 50 — the old instr() needle `[\"dev\",5]`
+    // would NOT match `[\"dev\",50]`, but a needle for (dev, 50) here must
+    // also be false because no such parent exists. The danger direction is
+    // the reverse: ensure (dev, 5) does not match an op that only contains
+    // (dev, 50). Verify both seq-substring directions are clean.
+    assert!(
+        !has_merge_for_heads(&pool, "B1", &("dev".to_owned(), 50))
+            .await
+            .unwrap(),
+        "(dev, 50) must NOT match parent (dev, 5)"
+    );
+
+    // device `de` is a string-prefix of `dev` — a substring scan for the
+    // tuple `[\"de\",5]` could be tricked by `[\"dev\",5...]` once device
+    // ids are no longer fixed-width UUIDs. Structurally it must be false.
+    assert!(
+        !has_merge_for_heads(&pool, "B1", &("de".to_owned(), 5))
+            .await
+            .unwrap(),
+        "device prefix (de, 5) must NOT match parent (dev, 5)"
+    );
+
+    // Sanity: a wholly absent head is false.
+    assert!(
+        !has_merge_for_heads(&pool, "B1", &("nope".to_owned(), 1))
+            .await
+            .unwrap(),
+        "absent head must be false"
+    );
+}
+
+/// Companion to the above covering the seq-substring direction where the
+/// stored parent is the *longer* number: parent `["dev",50]` must not be
+/// reported as a merge for head (dev, 5).
+#[tokio::test]
+async fn has_merge_for_heads_seq_is_not_substring_matched() {
+    let (pool, _dir) = test_pool().await;
+
+    let merge_payload = make_edit("B1", "merged", None);
+    let parents = vec![("dev".to_owned(), 50), ("other".to_owned(), 9)];
+    append_merge_op(&pool, DEV_A, merge_payload, parents)
+        .await
+        .unwrap();
+
+    assert!(
+        has_merge_for_heads(&pool, "B1", &("dev".to_owned(), 50))
+            .await
+            .unwrap(),
+        "exact parent (dev, 50) must be found"
+    );
+    assert!(
+        !has_merge_for_heads(&pool, "B1", &("dev".to_owned(), 5))
+            .await
+            .unwrap(),
+        "(dev, 5) must NOT match parent (dev, 50) — no substring scan"
+    );
+}
+
 // =====================================================================
 // 3. find_lca
 // =====================================================================
