@@ -117,24 +117,31 @@ pub(crate) async fn validate_block_in_space(
     block_id: &str,
     space_id: &str,
 ) -> Result<(), AppError> {
-    // `query_scalar` (non-macro) is used here because the LEFT JOIN
-    // result distinguishes three cases — no row vs. row-with-NULL vs.
-    // row-with-value — that the `query_scalar!` macro's `Option<T>`
-    // collapse would erase. The bound is one-row, indexed (the PK on
-    // `blocks.id` for both the input lookup and the page self-join),
-    // no scan.
-    let row: Option<Option<String>> = sqlx::query_scalar(
+    // #1666: the compile-time-checked `query_scalar!` macro is used so a
+    // future `blocks.space_id` / `blocks.page_id` schema change breaks
+    // the build here rather than silently altering this security guard.
+    // The three-state distinction the LEFT JOIN needs — no row vs.
+    // row-with-NULL vs. row-with-value — is preserved by combining the
+    // explicit-nullable column annotation (`"space?"` → `Option<String>`
+    // for the COALESCE) with `.fetch_optional` (→ `Option<_>` for the
+    // missing-row case), yielding `Option<Option<String>>`. The bound is
+    // one-row, indexed (the PK on `blocks.id` for both the input lookup
+    // and the page self-join), no scan.
+    let row: Option<Option<String>> = sqlx::query_scalar!(
         // #533: prefer the block's own `space_id`, falling back to its
         // (live) owning page — mirrors `resolve_block_space` exactly,
         // including the `pg.deleted_at IS NULL` guard so a soft-deleted
         // owning page doesn't authorize a write via its retained space.
-        "SELECT COALESCE(b.space_id, pg.space_id) \
-         FROM blocks b \
-         LEFT JOIN blocks pg \
-           ON pg.id = b.page_id AND pg.deleted_at IS NULL \
-         WHERE b.id = ?",
+        // The `"space?"` alias forces sqlx to type the COALESCE as
+        // nullable, so a row-with-NULL stays distinguishable from a
+        // row-with-value.
+        r#"SELECT COALESCE(b.space_id, pg.space_id) AS "space?"
+           FROM blocks b
+           LEFT JOIN blocks pg
+             ON pg.id = b.page_id AND pg.deleted_at IS NULL
+           WHERE b.id = ?"#,
+        block_id,
     )
-    .bind(block_id)
     .fetch_optional(pool)
     .await?;
 
@@ -266,5 +273,149 @@ mod tests {
         let mixed = "01HtEsT0000000000000000aBc";
         let upper = "01HTEST0000000000000000ABC";
         assert_eq!(normalize_ulid_arg(mixed), upper);
+    }
+
+    // ---------------------------------------------------------------
+    // #1666 / PEND-24 C2: validate_block_in_space three-state guard.
+    //
+    // The cross-space guard distinguishes three states off a single
+    // LEFT JOIN: no row (defer to downstream NotFound), row with a
+    // NULL resolved space (reject — unscoped target), and row with a
+    // concrete space (allow iff it matches, else reject). The full
+    // tool-level different-space coverage lives in
+    // `crate::mcp::tools_rw::tests`; these unit tests pin the helper
+    // directly, including the NULL-space rejection arm that the
+    // compile-time-checked query must keep distinguishable from a
+    // matching space.
+    // ---------------------------------------------------------------
+
+    use crate::commands::create_space_inner;
+    use crate::db::init_pool;
+    use crate::materializer::Materializer;
+
+    /// Insert a bare content block via direct SQL with an explicit
+    /// (possibly NULL) `space_id` and no owning page, so the guard's
+    /// `COALESCE(b.space_id, pg.space_id)` resolves to exactly that
+    /// value. Returns the block id.
+    async fn insert_content_block(pool: &sqlx::SqlitePool, id: &str, space_id: Option<&str>) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, space_id) \
+             VALUES (?, 'content', 'x', ?)",
+        )
+        .bind(id)
+        .bind(space_id)
+        .execute(pool)
+        .await
+        .expect("seed block insert must succeed");
+    }
+
+    /// A target block whose resolved space is NULL (no own space, no
+    /// owning page) must be REJECTED: a space-scoped write cannot be
+    /// authorised against an unscoped target.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn null_space_block_is_rejected() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        let space = create_space_inner(
+            &pool,
+            "test-handler-utils-dev",
+            &Materializer::new(pool.clone()),
+            "guard space".into(),
+            None,
+        )
+        .await
+        .unwrap()
+        .into_string();
+
+        // 26-char ULID-shaped id; space_id NULL, no page_id → COALESCE NULL.
+        let block_id = "01HTEST00000000000000NULLAA";
+        insert_content_block(&pool, block_id, None).await;
+
+        let err = validate_block_in_space(&pool, block_id, &space)
+            .await
+            .expect_err("NULL-space target must be denied");
+        match err {
+            AppError::Validation(msg) => assert!(
+                msg.contains("does not belong to any space"),
+                "NULL-space rejection message: {msg}"
+            ),
+            _ => panic!("expected Validation for NULL-space block, got {err:?}"),
+        }
+    }
+
+    /// A target block owned by a *different* space must be REJECTED.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn different_space_block_is_rejected() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        let mat = Materializer::new(pool.clone());
+        let space_a = create_space_inner(&pool, "d", &mat, "A".into(), None)
+            .await
+            .unwrap()
+            .into_string();
+        let space_b = create_space_inner(&pool, "d", &mat, "B".into(), None)
+            .await
+            .unwrap()
+            .into_string();
+
+        let block_id = "01HTEST0000000000000DIFFAA";
+        insert_content_block(&pool, block_id, Some(&space_b)).await;
+
+        let err = validate_block_in_space(&pool, block_id, &space_a)
+            .await
+            .expect_err("cross-space target must be denied");
+        match err {
+            AppError::Validation(msg) => assert!(
+                msg.contains(&space_b) && msg.contains("denied"),
+                "different-space rejection message: {msg}"
+            ),
+            _ => panic!("expected Validation for different-space block, got {err:?}"),
+        }
+    }
+
+    /// A target block in the *same* space must be ALLOWED.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn same_space_block_is_allowed() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        let space = create_space_inner(
+            &pool,
+            "d",
+            &Materializer::new(pool.clone()),
+            "S".into(),
+            None,
+        )
+        .await
+        .unwrap()
+        .into_string();
+
+        let block_id = "01HTEST0000000000000SAMEAA";
+        insert_content_block(&pool, block_id, Some(&space)).await;
+
+        validate_block_in_space(&pool, block_id, &space)
+            .await
+            .expect("same-space write must be allowed");
+    }
+
+    /// A non-existent block defers to the downstream `*_inner` (Ok),
+    /// rather than producing a guard-level error.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn missing_block_is_allowed_to_defer() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        let space = create_space_inner(
+            &pool,
+            "d",
+            &Materializer::new(pool.clone()),
+            "S".into(),
+            None,
+        )
+        .await
+        .unwrap()
+        .into_string();
+
+        validate_block_in_space(&pool, "01HTEST0000000000000MISSAA", &space)
+            .await
+            .expect("missing block must defer (Ok) to downstream NotFound");
     }
 }

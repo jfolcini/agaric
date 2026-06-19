@@ -307,6 +307,39 @@ pub(crate) fn base_connect_options(db_path: &Path) -> SqliteConnectOptions {
         .busy_timeout(std::time::Duration::from_secs(5))
 }
 
+/// #1575 — clear any leaked op-log bypass sentinel at write-pool boot.
+///
+/// `_op_log_mutation_allowed` is a shared (non-temp) table and the op_log
+/// immutability triggers (migration 0036) gate on a global
+/// `WHEN NOT EXISTS (SELECT 1 FROM _op_log_mutation_allowed)` predicate.
+/// Isolation relies entirely on the transactional discipline in
+/// `op_log::bypass` always removing the sentinel before the bypass
+/// transaction commits. If any caller ever commits with the sentinel still
+/// present (e.g. a crash mid-bypass, or a future bug), append-only
+/// enforcement is silently and permanently OFF for the whole database.
+///
+/// As a defense-in-depth backstop, delete any sentinel rows at boot after
+/// migrations run and before the pool serves traffic. Finding a row here
+/// means a latent bug leaked the sentinel, so surface it with a `warn`.
+async fn clear_leaked_bypass_sentinel(
+    write_pool: &SqlitePool,
+) -> Result<(), crate::error::AppError> {
+    let cleared = sqlx::query!("DELETE FROM _op_log_mutation_allowed")
+        .execute(write_pool)
+        .await?
+        .rows_affected();
+    if cleared > 0 {
+        tracing::warn!(
+            rows = cleared,
+            "cleared leaked op-log bypass sentinel at boot: a prior bypass \
+             transaction committed (or crashed) without removing the sentinel \
+             row, which had silently disabled op_log append-only enforcement \
+             DB-wide until now"
+        );
+    }
+    Ok(())
+}
+
 /// Initialize separated read/write SQLite pools with WAL mode.
 ///
 /// The write pool runs migrations on creation.  The read pool sets
@@ -349,6 +382,11 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
     // ANALYZE only where beneficial. Safe, idempotent, runs in <100ms
     // for typical personal databases.
     sqlx::query("PRAGMA optimize").execute(&write_pool).await?;
+
+    // #1575: defense-in-depth — clear any leaked op-log bypass sentinel that
+    // a prior bypass transaction may have committed without removing. Must
+    // run after migrations (the table exists) and before serving traffic.
+    clear_leaked_bypass_sentinel(&write_pool).await?;
 
     // --- Read pool: 4 concurrent readers, query_only enforced ---
     let read_opts = base_connect_options(db_path).pragma("query_only", "ON");
@@ -438,4 +476,60 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, crate::error::AppEr
     sqlx::query("PRAGMA optimize").execute(&pool).await?;
 
     Ok(pool)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        (pool, dir)
+    }
+
+    /// #1575 — the boot cleanup helper deletes a leaked bypass sentinel so
+    /// op_log append-only enforcement is restored. Revert-sensitive: if the
+    /// `DELETE FROM _op_log_mutation_allowed` is removed, the row survives and
+    /// this assertion fails.
+    #[tokio::test]
+    async fn clear_leaked_bypass_sentinel_deletes_leaked_row() {
+        let (pool, _dir) = test_pool().await;
+
+        // Simulate a leaked sentinel: a prior bypass transaction committed
+        // (or crashed) without removing its row, disabling enforcement DB-wide.
+        sqlx::query("INSERT INTO _op_log_mutation_allowed (token) VALUES (1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _op_log_mutation_allowed")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(before, 1, "sentinel row should be present before cleanup");
+
+        clear_leaked_bypass_sentinel(&pool).await.unwrap();
+
+        let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _op_log_mutation_allowed")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after, 0, "boot cleanup must clear the leaked sentinel");
+    }
+
+    /// No-op when there is nothing to clear — the common (healthy) case must
+    /// not error and must leave the table empty.
+    #[tokio::test]
+    async fn clear_leaked_bypass_sentinel_is_noop_when_absent() {
+        let (pool, _dir) = test_pool().await;
+
+        clear_leaked_bypass_sentinel(&pool).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _op_log_mutation_allowed")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
 }

@@ -403,6 +403,22 @@ pub async fn project_delete_block_to_sql(
     .bind(deleted_at)
     .execute(&mut *conn)
     .await?;
+    // #1582: surface deep-tree truncation on the op-replay / sql_only
+    // paths. The command path (`delete_block_inner`) already emits this
+    // warn, but this projection — driven by both the via-loro op-replay
+    // arm and the engine-less `sql_only` fallback — did not, so a >100-deep
+    // tree silently dropped its sub-cap descendants here with no breadcrumb.
+    // Detection only; the depth-100 cap itself is unchanged (invariant #9).
+    if crate::block_descendants::cascade_depth_saturated(&mut *conn, block_id).await? {
+        tracing::warn!(
+            block_id = %block_id,
+            op = "delete_block",
+            path = "projection",
+            "#1582: cascade-depth cap reached (>=99 levels) on op-replay/sql_only \
+             delete; descendants below depth 100 were not soft-deleted. \
+             Tree pathologically deep.",
+        );
+    }
     Ok(())
 }
 
@@ -487,6 +503,24 @@ pub async fn project_restore_block_to_sql(
     .bind(deleted_at_ref)
     .execute(&mut *conn)
     .await?;
+    // #1582: surface deep-tree truncation on the op-replay / sql_only
+    // paths. The command path (`restore_block_inner`) already emits this
+    // warn, but this projection — driven by both the via-loro op-replay
+    // arm and the engine-less `sql_only` fallback — did not, so a >100-deep
+    // cohort silently dropped its sub-cap descendants here with no
+    // breadcrumb. Detection only; the depth-100 cap is unchanged (invariant
+    // #9). `cascade_depth_saturated` walks the depth-only standard CTE, so
+    // it is invariant to which rows the cohort UPDATE actually cleared.
+    if crate::block_descendants::cascade_depth_saturated(&mut *conn, block_id).await? {
+        tracing::warn!(
+            block_id = %block_id,
+            op = "restore_block",
+            path = "projection",
+            "#1582: cascade-depth cap reached (>=99 levels) on op-replay/sql_only \
+             restore; descendants below depth 100 were not restored. \
+             Tree pathologically deep.",
+        );
+    }
     Ok(())
 }
 
@@ -1643,6 +1677,149 @@ mod tests {
             row.0,
             Some(first_ts),
             "WHERE deleted_at IS NULL filter must keep the first timestamp"
+        );
+    }
+
+    /// Build a linear `blocks` chain of `len` rows (depths 0..len-1) under
+    /// the given root id and return the root id. Each node is its own
+    /// `content` block with the previous node as `parent_id`.
+    async fn seed_chain(pool: &SqlitePool, root: &str, len: usize) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
+        )
+        .bind(root)
+        .execute(pool)
+        .await
+        .unwrap();
+        for i in 1..len {
+            let id = format!("{root}_{i}");
+            let parent = if i == 1 {
+                root.to_string()
+            } else {
+                format!("{root}_{}", i - 1)
+            };
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+                 VALUES (?, 'content', '', ?, 0)",
+            )
+            .bind(&id)
+            .bind(&parent)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    /// #1582: a >100-deep chain run through the op-replay / sql_only
+    /// projection delete path saturates the depth-100 cascade cap. The
+    /// projection now probes `cascade_depth_saturated` and emits a
+    /// `tracing::warn!` breadcrumb; assert the saturation predicate it
+    /// keys on reports `true` after the projection runs (warns themselves
+    /// are not directly assertable, but the helper is the warn's gate).
+    #[tokio::test]
+    async fn project_delete_block_saturation_detected_on_deep_tree() {
+        let (pool, _dir) = fresh_pool().await;
+        let root = "01HZ0000000000000000DEL_R1";
+        // 130 levels (depths 0..129) — well past the depth-100 cap.
+        seed_chain(&pool, root, 130).await;
+
+        let deleted_at: i64 = 1_778_414_400_000;
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_delete_block_to_sql(&mut conn, root, deleted_at)
+            .await
+            .expect("project delete");
+        // The standard depth-only CTE is invariant to the soft-delete
+        // having run, so it still detects the saturation post-UPDATE.
+        let saturated = crate::block_descendants::cascade_depth_saturated(&mut *conn, root)
+            .await
+            .expect("saturation probe");
+        drop(conn);
+        assert!(
+            saturated,
+            "#1582: a 130-deep chain MUST trip saturation on the projection \
+             delete path so the deep-tree truncation warn fires"
+        );
+    }
+
+    /// #1582: a shallow tree must NOT trip the projection delete-path
+    /// saturation probe, so the warn does not fire on legitimate trees.
+    #[tokio::test]
+    async fn project_delete_block_no_saturation_on_shallow_tree() {
+        let (pool, _dir) = fresh_pool().await;
+        let root = "01HZ0000000000000000DEL_R2";
+        seed_chain(&pool, root, 10).await;
+
+        let deleted_at: i64 = 1_778_414_400_000;
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_delete_block_to_sql(&mut conn, root, deleted_at)
+            .await
+            .expect("project delete");
+        let saturated = crate::block_descendants::cascade_depth_saturated(&mut *conn, root)
+            .await
+            .expect("saturation probe");
+        drop(conn);
+        assert!(
+            !saturated,
+            "#1582: a 10-deep chain MUST NOT trip saturation — no warn on \
+             legitimate trees"
+        );
+    }
+
+    /// #1582: a >100-deep cohort run through the op-replay / sql_only
+    /// projection RESTORE path saturates the depth-100 cascade cap. As with
+    /// the delete path, assert `cascade_depth_saturated` (the warn's gate)
+    /// reports `true`.
+    #[tokio::test]
+    async fn project_restore_block_saturation_detected_on_deep_tree() {
+        let (pool, _dir) = fresh_pool().await;
+        let root = "01HZ0000000000000000RES_R1";
+        seed_chain(&pool, root, 130).await;
+
+        // First soft-delete the whole chain at one cohort timestamp so the
+        // restore projection has a contiguous cohort to walk.
+        let cohort_ts: i64 = 1_778_414_400_000;
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_delete_block_to_sql(&mut conn, root, cohort_ts)
+            .await
+            .expect("project delete (seed cohort)");
+        project_restore_block_to_sql(&mut conn, root, cohort_ts)
+            .await
+            .expect("project restore");
+        let saturated = crate::block_descendants::cascade_depth_saturated(&mut *conn, root)
+            .await
+            .expect("saturation probe");
+        drop(conn);
+        assert!(
+            saturated,
+            "#1582: a 130-deep cohort MUST trip saturation on the projection \
+             restore path so the deep-tree truncation warn fires"
+        );
+    }
+
+    /// #1582: a shallow cohort must NOT trip the projection restore-path
+    /// saturation probe.
+    #[tokio::test]
+    async fn project_restore_block_no_saturation_on_shallow_tree() {
+        let (pool, _dir) = fresh_pool().await;
+        let root = "01HZ0000000000000000RES_R2";
+        seed_chain(&pool, root, 10).await;
+
+        let cohort_ts: i64 = 1_778_414_400_000;
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_delete_block_to_sql(&mut conn, root, cohort_ts)
+            .await
+            .expect("project delete (seed cohort)");
+        project_restore_block_to_sql(&mut conn, root, cohort_ts)
+            .await
+            .expect("project restore");
+        let saturated = crate::block_descendants::cascade_depth_saturated(&mut *conn, root)
+            .await
+            .expect("saturation probe");
+        drop(conn);
+        assert!(
+            !saturated,
+            "#1582: a 10-deep cohort MUST NOT trip saturation"
         );
     }
 
