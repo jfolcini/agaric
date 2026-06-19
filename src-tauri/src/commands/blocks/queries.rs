@@ -253,6 +253,8 @@ pub async fn get_active_block_inner(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `ids` is empty
+/// - [`AppError::Validation`] — `ids.len()` >
+///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
 ///
 /// `scope` (FEAT-3p7) — [`SpaceScope::Active`] restricts the result set
 /// to the named space (FEAT-3p7's broken-chip rendering for foreign-space
@@ -271,6 +273,7 @@ pub async fn batch_resolve_inner(
     if ids.is_empty() {
         return Err(AppError::Validation("ids list cannot be empty".into()));
     }
+    crate::commands::ensure_batch_within_cap("ids", ids.len())?;
 
     // #107: re-derive owned String form for the JSON membership probe below.
     let ids: Vec<String> = ids.into_iter().map(BlockId::into_string).collect();
@@ -462,6 +465,8 @@ pub async fn batch_resolve(
 ///
 /// # Errors
 ///
+/// - [`AppError::Validation`] — `root_ids.len()` >
+///   [`crate::commands::MAX_BATCH_BLOCK_IDS`].
 /// - [`AppError::Json`] — failed to serialize `root_ids`.
 /// - [`AppError::Database`] — propagated from sqlx.
 #[instrument(skip(pool, root_ids), err)]

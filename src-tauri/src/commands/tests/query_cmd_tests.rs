@@ -4121,6 +4121,68 @@ async fn first_child_for_blocks_rejects_oversize() {
     );
 }
 
+/// #1795 — `batch_resolve_inner` must share the
+/// [`crate::commands::MAX_BATCH_BLOCK_IDS`] cap with the rest of the batch
+/// family: an over-cap `ids` list rejects with Validation before reaching
+/// the unbounded `json_each(?1)` membership scan, while an under-cap list
+/// resolves normally (here an empty result, since no matching ids exist).
+/// Mirrors `first_child_for_blocks_rejects_oversize` (#1573).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_resolve_rejects_oversize() {
+    let (pool, _dir) = test_pool().await;
+
+    // Under-cap, non-empty: a single unknown id resolves to no rows.
+    let under = batch_resolve_inner(&pool, vec!["BR_MISSING".into()], &SpaceScope::Global)
+        .await
+        .unwrap();
+    assert!(under.is_empty(), "under-cap input must not error");
+
+    // Over-cap: one more than the shared cap rejects with Validation.
+    let oversize: Vec<String> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
+        .map(|i| format!("ID{i}"))
+        .collect();
+    let big = batch_resolve_inner(
+        &pool,
+        oversize.into_iter().map(Into::into).collect::<Vec<_>>(),
+        &SpaceScope::Global,
+    )
+    .await;
+    assert!(
+        matches!(big, Err(crate::error::AppError::Validation(_))),
+        "oversize input must reject with Validation"
+    );
+}
+
+/// #1795 — `trash_descendant_counts` (via `trash_descendant_counts_inner`)
+/// must share the [`crate::commands::MAX_BATCH_BLOCK_IDS`] cap: an over-cap
+/// `root_ids` list rejects with Validation before seeding the recursive-CTE
+/// root walk, while an under-cap list returns the (here empty) count map.
+/// Mirrors `first_child_for_blocks_rejects_oversize` (#1573).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn trash_descendant_counts_rejects_oversize() {
+    let (pool, _dir) = test_pool().await;
+
+    // Under-cap, empty: returns an empty map (not an error).
+    let empty = trash_descendant_counts_inner(&pool, vec![]).await.unwrap();
+    assert!(empty.is_empty(), "empty input returns an empty map");
+
+    // Under-cap, non-empty: an unknown / non-deleted id yields no entry.
+    let under = trash_descendant_counts_inner(&pool, vec!["TDC_MISSING".into()])
+        .await
+        .unwrap();
+    assert!(under.is_empty(), "under-cap input must not error");
+
+    // Over-cap: one more than the shared cap rejects with Validation.
+    let oversize: Vec<String> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
+        .map(|i| format!("ID{i}"))
+        .collect();
+    let big = trash_descendant_counts_inner(&pool, oversize).await;
+    assert!(
+        matches!(big, Err(crate::error::AppError::Validation(_))),
+        "oversize input must reject with Validation"
+    );
+}
+
 // ======================================================================
 // PEND-35 Tier 2.10b — filtered_blocks_query_inner
 // ======================================================================
