@@ -24,6 +24,7 @@ import { axe } from 'vitest-axe'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { clearProjectedCache } from '@/hooks/useDuePanelData'
 import { t } from '@/lib/i18n'
+import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 
 vi.mock('@/lib/tauri', () => ({
   listBlocks: vi.fn(),
@@ -259,6 +260,44 @@ describe('DuePanel', () => {
     expect(items[1]).toHaveTextContent('priority two')
     expect(items[2]).toHaveTextContent('priority three')
     expect(items[3]).toHaveTextContent('no priority')
+  })
+
+  // #1522 — DuePanel must sort within a group by the *configurable* priority
+  // rank (`priorityRank` from `@/lib/priority-levels`), not the hardcoded
+  // legacy 1/2/3 ordering. With custom levels configured as ['high','low'],
+  // a 'high' block must sort above a 'low' block. Under the old `priorityKey`
+  // helper both values were unknown → 4, so the original list order would have
+  // been preserved (here that would put 'low first' before 'high second').
+  describe('configurable priority sort (#1522)', () => {
+    afterEach(() => {
+      __resetPriorityLevelsForTests()
+    })
+
+    it('sorts within group by configurable priority rank, not legacy 1/2/3', async () => {
+      // Custom levels: 'high' (rank 0) outranks 'low' (rank 1).
+      setPriorityLevels(['high', 'low'])
+
+      mockedListBlocks.mockResolvedValue({
+        // Intentionally listed low-first so a no-op sort would keep that order.
+        items: [
+          makeBlock({ id: 'B1', todo_state: 'TODO', priority: 'low', content: 'low priority' }),
+          makeBlock({ id: 'B2', todo_state: 'TODO', priority: 'high', content: 'high priority' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      render(<DuePanel date="2025-06-15" />)
+
+      await screen.findByText(t('duePanel.header', { count: 2 }))
+
+      const items = screen.getAllByText(/(high|low) priority/)
+      expect(items).toHaveLength(2)
+      // Configurable rank: 'high' (rank 0) sorts above 'low' (rank 1).
+      expect(items[0]).toHaveTextContent('high priority')
+      expect(items[1]).toHaveTextContent('low priority')
+    })
   })
 
   // 5. Shows loading skeleton during initial load
