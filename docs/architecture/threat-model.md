@@ -174,7 +174,7 @@ A proposed change that shifts any of these items into scope (a server build, a m
 
 Reframes the STRIDE rows above as **top-level security claims + the arguments and evidence that justify them**. Satisfies the OpenSSF Best Practices Silver-tier [`assurance_case`](https://www.bestpractices.dev/en/criteria/2#2.assurance_case) criterion. Each claim cites the STRIDE row(s) that mitigate it and the CI evidence that verifies the mitigation in production.
 
-The shape is intentionally narrative, not GSN-formal: the threat model above is the load-bearing artefact, and a separate GSN-style document would just drift against it (see PEND-49 §5a recommendation). Anyone updating a claim here should update the cited STRIDE row in the same commit.
+The shape is intentionally narrative, not GSN-formal: the threat model above is the load-bearing artefact, and a separate GSN-style document would just drift against it (per the assurance-case design decision). Anyone updating a claim here should update the cited STRIDE row in the same commit.
 
 ### Claim 1 — User data stays on the user's device
 

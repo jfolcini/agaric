@@ -18,15 +18,15 @@ For an in-app reference, click the `?` button in the search toolbar — it opens
 Behaviour:
 
 - **Empty input** surfaces your recent pages (the same list `SearchPanel` shows). Selecting one navigates to it.
-- **Typed query** fires one `searchBlocksPartitioned` call per keystroke window. The backend runs two parallel scans server-side (PEND-69 F1) — a page-only partition (`page_limit + 1` probe, default 8) and an unrestricted partition (`block_limit + 1` probe, default 40) — and returns both in a single IPC round-trip with `pages.has_more` / `blocks.has_more` flags that signal per-partition exhaustion independently. The frontend merges by `page_id`, caps each group at 2 block matches, and caps the total to 8 page groups. Surplus matches inside a group surface as a "+N more in this page" pill; surplus pages do not render — the escalation footer is the user's path to more.
+- **Typed query** fires one `searchBlocksPartitioned` call per keystroke window. The backend runs two parallel scans server-side — a page-only partition (`page_limit + 1` probe, default 8) and an unrestricted partition (`block_limit + 1` probe, default 40) — and returns both in a single IPC round-trip with `pages.has_more` / `blocks.has_more` flags that signal per-partition exhaustion independently. The frontend merges by `page_id`, caps each group at 2 block matches, and caps the total to 8 page groups. Surplus matches inside a group surface as a "+N more in this page" pill; surplus pages do not render — the escalation footer is the user's path to more.
 - **Ranking** uses the FTS5 candidate set, then post-FTS reorders by a 4-band rule (exact title → prefix title → contains-in-title → content-only) blended with a hand-rolled Jaro-Winkler similarity on the page title (`0.7 * band + 0.3 * JW`). The JW boost forgives typos like `alfa` → `Alpha` without filtering anything out — fuzzy is additive.
 - **Click behaviour.** Plain click navigates the active tab; `Cmd/Ctrl+click` (or middle-click) opens the target in a new tab.
 - **Keyboard.** `↑` / `↓` walk the flattened result list (page header → its block hits → next page header). `Enter` activates; `Cmd/Ctrl+Enter` activates in a new tab. `Esc` closes.
 - **`[[page]]` autocomplete.** Typing `[[` followed by ≥ 1 character switches the palette into page-link mode: only the pages query fires, and `Enter` inserts `[[Page Title]]` into the **previously focused block** (the editor block that had focus when Cmd+K opened) and closes the palette. If there's no editor focus when the palette opens, the link-insertion path silently no-ops; you still get to navigate. If no page matches, the palette surfaces an inline "No page named …" hint.
 - **Debounce** is ~80 ms (palette UX is type-ahead — VSCode's `Cmd+P`, Linear, Raycast all run sub-100 ms). The find-across-pages view's 300 ms debounce is deliberately different — it's a deliberate-refinement surface, not a type-ahead one.
-- **Escalation footer.** "Search in all pages with toggles → Ctrl+Shift+F" — clicking opens the find-across-pages view with the current query pre-filled. Note that the binding is `Ctrl+Shift+F` (PEND-52 reclaimed `Ctrl+F` for in-page find).
+- **Escalation footer.** "Search in all pages with toggles → Ctrl+Shift+F" — clicking opens the find-across-pages view with the current query pre-filled. Note that the binding is `Ctrl+Shift+F` (`Ctrl+F` is reclaimed for in-page find).
 
-The palette does not surface tags, parentless blocks, or recent blocks (only recent **pages**). Future iterations may extend this — see PEND-51 §"Phase split" for the locked-in scope of v1.
+The palette does not surface tags, parentless blocks, or recent blocks (only recent **pages**). Future iterations may extend this beyond the locked-in v1 scope.
 
 ## In-page find
 
@@ -88,7 +88,7 @@ The in-page find toolbar and the find-across-pages view use different regex engi
   - Supports backreferences (`\1`, `\k<name>`).
   - `\b` / `\d` / `\w` are Unicode-aware by default (we set the `u` flag).
   - Backtracking-based — the caps above bound worst-case time.
-- **Find across pages** uses the Rust `regex` crate (PEND-55's regex mode):
+- **Find across pages** uses the Rust `regex` crate (regex mode):
   - Linear-time guaranteed (no catastrophic backtracking).
   - **No lookaround**, **no backreferences**.
   - `\b` is ASCII-only by default; use `(?u:\b)` for Unicode word boundaries.
@@ -179,7 +179,7 @@ The popover anchors at the start of the value portion (the character after the p
 
 Invalid dates surface as a red chip with the typed error `InvalidDateFilter: …`.
 
-### Property filter typing (PEND-64)
+### Property filter typing
 
 `prop:KEY=VALUE` matches across the four user-facing typed columns automatically (`value_text`, `value_num`, `value_date`, `value_ref`). The backend parses `VALUE` into each variant and binds `NULL` for the variants that don't parse, so only intentional matches fire:
 
@@ -325,12 +325,12 @@ Boolean operators **don't work inside regex mode** — there the free-text remai
 
 ## Mobile
 
-Desktop drives three search surfaces with three keybindings: `Ctrl+F` opens in-page find, `Cmd/Ctrl+K` opens the palette, `Ctrl+Shift+F` opens the find-in-files view. Touch devices can't reach any of those on their own. PEND-62 collapses all three into a single Sheet behind one icon (`<SearchSheetTrigger />`, magnifying-glass, top-right of the header). The icon only mounts when `useIsMobile()` is true (viewport `< 768 px`); desktop keeps its keybindings.
+Desktop drives three search surfaces with three keybindings: `Ctrl+F` opens in-page find, `Cmd/Ctrl+K` opens the palette, `Ctrl+Shift+F` opens the find-in-files view. Touch devices can't reach any of those on their own. The mobile search Sheet collapses all three into a single Sheet behind one icon (`<SearchSheetTrigger />`, magnifying-glass, top-right of the header). The icon only mounts when `useIsMobile()` is true (viewport `< 768 px`); desktop keeps its keybindings.
 
 The Sheet has two segments rendered as a Radix `ToggleGroup`:
 
-- **In this page** — embeds the PEND-52 find-in-page toolbar (`<InPageFind variant="embedded" />`). Same matcher, same highlight pipeline; only the chrome differs from the desktop overlay.
-- **Across all pages** — embeds the PEND-61 palette search via the inner `<PaletteBody>` component (the same body that mounts inside the overlay `<CommandPalette>` shell, exported from `src/components/common/CommandPalette.tsx`; no `variant` prop). Same cmdk surface, same partitioned IPC, same escalation footer. Tapping the footer fires `setPendingViewQuery(query)` → `onClose()` → `setView('search')`; the Sheet tears down, the find-in-files view picks up the query.
+- **In this page** — embeds the find-in-page toolbar (`<InPageFind variant="embedded" />`). Same matcher, same highlight pipeline; only the chrome differs from the desktop overlay.
+- **Across all pages** — embeds the palette search via the inner `<PaletteBody>` component (the same body that mounts inside the overlay `<CommandPalette>` shell, exported from `src/components/common/CommandPalette.tsx`; no `variant` prop). Same cmdk surface, same partitioned IPC, same escalation footer. Tapping the footer fires `setPendingViewQuery(query)` → `onClose()` → `setView('search')`; the Sheet tears down, the find-in-files view picks up the query.
 
 The default segment is context-aware: `defaultModeForView()` returns `'in-page'` for the Journal and page-editor views (the user is reading a page), `'all-pages'` everywhere else.
 
@@ -349,6 +349,6 @@ Two safety nets:
 
 ### Known limitations
 
-- **Tablet / hardware-keyboard detection (PEND-68 — follow-up).** The trigger is gated on the same `< 768 px` viewport check the rest of the app uses. An iPad in portrait without a keyboard sees the desktop UI by accident — they can't open Cmd+K but the touch icon doesn't render either. PEND-68 plans the `navigator.keyboard` + first-keydown probe.
+- **Tablet / hardware-keyboard detection.** The trigger also renders on a keyboard-less tablet: `useHasHardwareKeyboard` runs a `navigator.keyboard` + first-keydown probe, and `useShouldShowMobileChrome` shows the touch trigger when `isMobile || (isTablet && !hasKeyboard)`.
 
 [`regex`]: https://docs.rs/regex/latest/regex/

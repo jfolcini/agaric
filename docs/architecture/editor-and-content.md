@@ -63,7 +63,7 @@ Edge cases the contract acknowledges:
 - **Until you blur, your edits are not durable.** A hard kill mid-edit recovers from `block_drafts` on next boot (Recovery step 3). A power failure mid-keystroke can lose at most the typing since the last debounce.
 - **Typing during sync.** No pause-sync-while-typing lock; the FE editor and the sync daemon run independently. Remote ops applied during your edit are written to the underlying block; on blur, your FE markdown becomes the new committed content. The previous version persists in `op_log` for undo / history view.
 
-`useEditorBlur` enforces a five-step guard chain before unmount: (1) no active block → no-op; (2) blur from a stale element → no-op; (3) early-persist (debounced save); (4) portal + visible-element scan via the single `[data-editor-portal]` attribute selector (post-PEND-30 L-3 — replaces the legacy 8-class array); (5) unmount + save-or-split.
+`useEditorBlur` enforces a five-step guard chain before unmount: (1) no active block → no-op; (2) blur from a stale element → no-op; (3) early-persist (debounced save); (4) portal + visible-element scan via the single `[data-editor-portal]` attribute selector (replaces the legacy 8-class array); (5) unmount + save-or-split.
 
 ## Keyboard
 

@@ -333,7 +333,7 @@ refetch** (`page-blocks.ts:517-535`). The in-place `reorder()` splice path
 **effectively dead code for pointer drags**. Consequence: every drag triggers a
 full page reload — IPC round-trip + re-flatten + re-render of the whole tree —
 risking jank and focus/scroll jumps on large pages (the code even adds a
-`setFocused(blockId)` + `scrollIntoView` workaround for exactly this, UX-241,
+`setFocused(blockId)` + `scrollIntoView` workaround for exactly this,
 `useBlockDnD.ts:165-178`). The keyboard `moveUp`/`moveDown` paths, by contrast,
 splice locally and avoid the reload (`page-blocks.ts:626-676`, `695-743`),
 proving the optimistic path is feasible for drags too. **Recommend** restructuring

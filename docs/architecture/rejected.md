@@ -6,7 +6,7 @@ Why Agaric isn't built on the obvious off-the-shelf parts. Each entry exists to 
 Adjacent rejections that already have homes:
 
 - **No CRDT for in-editor cursors / operational-transform live merge.** Editor architecture rule, lives in [`editor-and-content.md § FE/BE authority boundary`](editor-and-content.md).
-- **No conflict-merge model** post-PEND-09. The Loro CRDT engine is now the sole convergence path. See [`crdt-and-recovery.md § CRDT convergence`](crdt-and-recovery.md).
+- **No conflict-merge model**. The Loro CRDT engine is now the sole convergence path. See [`crdt-and-recovery.md § CRDT convergence`](crdt-and-recovery.md).
 - **No tag-to-tag inheritance.** Data-model rule, lives in [`data-and-events.md § Tags & inheritance`](data-and-events.md).
 - **No fractional `TEXT` indexing.** Tree-shape rule, same file.
 - **No SQLCipher** (encryption at rest delegated to OS). Security rule, lives in [`tooling.md § Security § Storage`](tooling.md).

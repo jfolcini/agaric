@@ -18,7 +18,7 @@ it whenever the engine path cannot proceed:
   installs, dispatch.rs 17 / 0, lifecycle.rs 9 / 0, recovery/tests.rs 40 / 1,
   sync_daemon/tests.rs 69 / 2).
 - `crate::space::resolve_block_space(...)` misses — the block's space cannot be
-  resolved (orphan block, no `space` ancestor, pre-FEAT-3 row, fresh
+  resolved (orphan block, no `space` ancestor, a pre-spaces row, fresh
   page-create with no `SetProperty(space)` yet).
 
 **In production both arms are unreachable** — `init` runs at boot and space

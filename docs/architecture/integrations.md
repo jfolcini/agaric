@@ -32,9 +32,9 @@ Splitting by R/W lets users disable writes while keeping reads on.
 2. Implement the dispatch arm in the registry's `call_tool`.
 3. Register it in the per-registry `list_tools` enumeration.
 
-Every tool argument schema requires `space_id`; scope is enforced at the tool boundary (PEND-24).
+Every tool argument schema requires `space_id`; scope is enforced at the tool boundary.
 
-The MCP `search` tool accepts an optional structured `filter` arg (PEND-65) that mirrors the user-facing `SearchFilter`: `include_page_globs`, `exclude_page_globs`, `state_filter`, `priority_filter`, `excluded_state_filter`, `excluded_priority_filter`, `due_filter`, `scheduled_filter`, `property_filters`, `excluded_property_filters`, `block_type_filter`, `case_sensitive`, `whole_word`, `is_regex`. Inline filter syntax (`tag:` / `state:` / `prop:`…) is **not** re-parsed from `query` at the MCP boundary — agents pass structured arguments. Omitting `filter` preserves the pre-PEND-65 query-string-only behaviour.
+The MCP `search` tool accepts an optional structured `filter` arg that mirrors the user-facing `SearchFilter`: `include_page_globs`, `exclude_page_globs`, `state_filter`, `priority_filter`, `excluded_state_filter`, `excluded_priority_filter`, `due_filter`, `scheduled_filter`, `property_filters`, `excluded_property_filters`, `block_type_filter`, `case_sensitive`, `whole_word`, `is_regex`. Inline filter syntax (`tag:` / `state:` / `prop:`…) is **not** re-parsed from `query` at the MCP boundary — agents pass structured arguments. Omitting `filter` preserves the prior query-string-only behaviour.
 
 ### `ActorContext` plumbing
 
