@@ -333,7 +333,93 @@ fn deserialize_accepts_any_string_and_uppercases() {
     assert_eq!(
         result.as_str(),
         "NOT-A-ULID",
-        "deserialization is lenient — just uppercases, validation is at the API boundary"
+        "deserialization stays lenient for NON-ULID strings — just uppercases, \
+         so synthetic test/trusted ids still round-trip"
+    );
+}
+
+// --- #1558: untrusted Deserialize canonicalizes valid ULIDs ---
+
+/// #1558 — The genuinely-untrusted entry point (`Deserialize`, reached by
+/// remote op-log payloads / sync messages / IPC) must canonicalize a valid
+/// ULID through the SAME Crockford path as `from_string`, so the bytes fed to
+/// the blake3 hash preimage are identical no matter how the id was encoded on
+/// the wire. A lowercase valid ULID must deserialize to the exact canonical
+/// form `from_string` produces.
+#[test]
+fn deserialize_canonicalizes_valid_ulid_like_from_string() {
+    let json = format!("\"{FIXTURE_ULID_LOWER}\"");
+    let de: BlockId = serde_json::from_str(&json).expect("valid lowercase ULID must deserialize");
+    let canon = BlockId::from_string(FIXTURE_ULID_LOWER).expect("from_string canonicalizes");
+    assert_eq!(
+        de.as_str(),
+        canon.as_str(),
+        "Deserialize of a valid ULID must match from_string's canonical output"
+    );
+    assert_eq!(de.as_str(), FIXTURE_ULID);
+}
+
+/// #1558 — Two valid encodings of the *same* logical ULID (here: case
+/// variants) must deserialize to byte-identical `BlockId`s, so they hash
+/// identically in the op-log preimage. Untrusted input cannot inject a
+/// non-canonical id that would diverge from its canonical sibling.
+#[test]
+fn deserialize_case_variants_of_valid_ulid_hash_identically() {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let upper: BlockId = serde_json::from_str(&format!("\"{FIXTURE_ULID}\"")).unwrap();
+    let lower: BlockId = serde_json::from_str(&format!("\"{FIXTURE_ULID_LOWER}\"")).unwrap();
+    assert_eq!(
+        upper, lower,
+        "case-variant valid ULIDs must deserialize to equal BlockIds"
+    );
+
+    let h = |id: &BlockId| {
+        let mut hasher = DefaultHasher::new();
+        id.hash(&mut hasher);
+        hasher.finish()
+    };
+    assert_eq!(
+        h(&upper),
+        h(&lower),
+        "equal BlockIds must hash identically (canonical preimage)"
+    );
+
+    // The serialized (wire / hash-preimage) form is byte-identical too.
+    assert_eq!(
+        serde_json::to_string(&upper).unwrap(),
+        serde_json::to_string(&lower).unwrap(),
+        "canonical serialized form must be identical for decode-equivalent inputs"
+    );
+}
+
+/// #1558 — A round-tripped, already-canonical ULID is unchanged by
+/// `Deserialize` (idempotent canonicalization).
+#[test]
+fn deserialize_canonical_ulid_is_unchanged() {
+    let json = format!("\"{FIXTURE_ULID}\"");
+    let de: BlockId = serde_json::from_str(&json).unwrap();
+    assert_eq!(de.as_str(), FIXTURE_ULID);
+}
+
+/// #1558 — Test ergonomics preserved: `from_trusted` still accepts a synthetic
+/// (non-ULID) id without validating, and such an id still deserializes (lenient
+/// fallback) so the wire form a trusted path stored round-trips.
+#[test]
+fn from_trusted_and_deserialize_still_accept_synthetic_ids_1558() {
+    // from_trusted accepts synthetic ids verbatim (uppercased).
+    let trusted = BlockId::from_trusted("BLOCK_A");
+    assert_eq!(trusted.as_str(), "BLOCK_A");
+
+    // A synthetic (non-ULID) id still deserializes via the lenient fallback,
+    // and matches what from_trusted would store — the two non-ULID paths agree.
+    let de: BlockId = serde_json::from_str("\"block_a\"").unwrap();
+    assert_eq!(de.as_str(), "BLOCK_A");
+    assert_eq!(
+        de.as_str(),
+        trusted.as_str(),
+        "non-ULID inputs: from_trusted and Deserialize must still agree"
     );
 }
 
@@ -481,9 +567,19 @@ fn from_trusted_uses_ascii_only_uppercase_for_non_ascii() {
 proptest::proptest! {
     /// L-3 — Property test: for any `String s`, the result of
     /// `BlockId::from_trusted(&s)` must agree byte-for-byte with the
-    /// result of round-tripping `s` through serde JSON deserialization
-    /// (which uses `to_ascii_uppercase()`). Both paths normalize without
-    /// validating ULID format, so they must produce identical output.
+    /// result of round-tripping `s` through serde JSON deserialization.
+    ///
+    /// Both paths ASCII-uppercase, and for the overwhelming majority of
+    /// inputs that is the whole story. Post-#1558 the `Deserialize` path
+    /// additionally canonicalizes *valid* ULIDs through `ulid::Ulid::from_str`,
+    /// so the two paths can diverge only for the vanishingly rare input that
+    /// is a syntactically-valid 26-char ULID whose leading char carries the
+    /// discarded top-2 overflow bits (e.g. `"81ARZ…"` canonicalizes to
+    /// `"01ARZ…"` on Deserialize but is left as-is by the trusted path). A
+    /// random `.*` generator effectively never produces such a string, and
+    /// production `from_trusted` callers only ever pass canonical
+    /// `BlockId::new()` / `from_string()` output (leading char 0-7), so the
+    /// byte-for-byte agreement holds across the tested space.
     #[test]
     fn from_trusted_matches_deserialize_for_arbitrary_strings(s in ".*") {
         let trusted = BlockId::from_trusted(&s);
