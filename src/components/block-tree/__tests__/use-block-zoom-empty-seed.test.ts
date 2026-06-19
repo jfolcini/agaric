@@ -166,4 +166,56 @@ describe('useBlockZoomEmptySeed', () => {
     })
     expect(pageStore.getState().blocks).toHaveLength(1)
   })
+
+  it('resets the idempotency ref on failure so a re-render retries (#1566 recovery)', async () => {
+    const leaf = makeBlock({ id: 'LEAF', position: 0, parent_id: null, depth: 0 })
+    pageStore.setState({ blocks: [leaf] })
+
+    // First create rejects; the second (on the next render) succeeds.
+    const newChild = makeBlock({ id: 'CHILD', content: '', parent_id: 'LEAF' })
+    mockedInvoke.mockRejectedValueOnce(new Error('DB error')).mockResolvedValueOnce(newChild)
+
+    const { rerender } = renderHook((props) => useBlockZoomEmptySeed(props), {
+      initialProps: makeParams(),
+    })
+
+    // The first attempt fails and surfaces the toast — the zoom pane is blank.
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.createFirstBlockFailed')
+    })
+    expect(pageStore.getState().blocks).toHaveLength(1)
+
+    // A subsequent render re-fires the effect (the ref was reset on failure),
+    // and the retry succeeds — the user is no longer stranded on a blank pane.
+    rerender(makeParams())
+
+    await waitFor(() => {
+      expect(pageStore.getState().blocks).toHaveLength(2)
+    })
+    const createCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'create_block')
+    expect(createCalls).toHaveLength(2)
+    expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(['LEAF', 'CHILD'])
+    expect(useBlockStore.getState().focusedBlockId).toBe('CHILD')
+  })
+
+  it('does not re-seed on success (idempotency preserved across re-renders)', async () => {
+    const leaf = makeBlock({ id: 'LEAF', position: 0, parent_id: null, depth: 0 })
+    pageStore.setState({ blocks: [leaf] })
+    const newChild = makeBlock({ id: 'CHILD', content: '', parent_id: 'LEAF' })
+    mockedInvoke.mockResolvedValue(newChild)
+
+    const { rerender } = renderHook((props) => useBlockZoomEmptySeed(props), {
+      initialProps: makeParams(),
+    })
+    await waitFor(() => {
+      expect(pageStore.getState().blocks).toHaveLength(2)
+    })
+
+    // A re-render with the same zoom root must not seed a second child; the ref
+    // stays set on success.
+    rerender(makeParams())
+    await Promise.resolve()
+    const createCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'create_block')
+    expect(createCalls).toHaveLength(1)
+  })
 })
