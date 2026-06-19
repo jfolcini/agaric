@@ -61,6 +61,10 @@ pub async fn eval_tag_query(
             (build_projection_sql(candidate_clause), binds)
         }
         TagExpr::And(_) | TagExpr::Or(_) | TagExpr::Not(_) => {
+            // #1597 — reject pathologically deep trees before `resolve_expr`
+            // kicks off its unbounded `Box::pin` + `try_join_all` recursion,
+            // mirroring `FilterExpr::validate_depth`.
+            expr.validate_depth()?;
             let block_ids: FxHashSet<String> = resolve_expr(pool, expr, include_inherited).await?;
             if block_ids.is_empty() {
                 return Ok(PageResponse {
@@ -489,6 +493,82 @@ mod tests {
     ) {
         sqlx::query("INSERT INTO blocks (id, block_type, content, parent_id, position) VALUES (?, ?, ?, ?, 1)")
             .bind(id).bind(block_type).bind(content).bind(parent_id).execute(pool).await.unwrap();
+    }
+
+    /// Build a `Not`-nested chain wrapping a `Tag` leaf at the given
+    /// boolean-tree depth. `nots == 0` is the bare leaf; each `Not` adds one
+    /// to `TagExpr::validate_depth`'s frame count (the gate checks
+    /// `depth > MAX_DEPTH`, so `nots == MAX_DEPTH` is the last accepted depth
+    /// and `nots == MAX_DEPTH + 1` is the first rejected one).
+    fn nested_not(tag: &str, nots: usize) -> TagExpr {
+        let mut expr = TagExpr::Tag(tag.into());
+        for _ in 0..nots {
+            expr = TagExpr::Not(Box::new(expr));
+        }
+        expr
+    }
+
+    #[test]
+    fn validate_depth_accepts_at_limit_rejects_beyond() {
+        // At the boundary (`MAX_DEPTH` nested frames) validation passes.
+        assert!(
+            nested_not("TAG_A", TagExpr::MAX_DEPTH)
+                .validate_depth()
+                .is_ok()
+        );
+        // One frame deeper is rejected with a Validation error whose message
+        // names the bound (mirrors `FilterExpr::validate_depth`).
+        let err = nested_not("TAG_A", TagExpr::MAX_DEPTH + 1)
+            .validate_depth()
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(_)),
+            "over-limit TagExpr must be rejected with AppError::Validation, got {err:?}"
+        );
+        assert!(
+            err.to_string().contains(&TagExpr::MAX_DEPTH.to_string()),
+            "error message should name MAX_DEPTH: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn eval_tag_query_rejects_over_depth_tree() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "TAG_A", "tag", "alpha").await;
+        let expr = nested_not("TAG_A", TagExpr::MAX_DEPTH + 1);
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let result = eval_tag_query(&pool, &expr, &page, false, None, None).await;
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "over-depth tag query must be rejected before resolution, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn eval_tag_query_resolves_tree_at_depth_limit() {
+        // A tree exactly at the limit must validate and resolve normally.
+        // `Not(Not(Tag))` is an even number of negations, so the result is
+        // the set of blocks carrying the tag. Build the chain with an even
+        // depth at/under MAX_DEPTH so the leaf semantics are preserved.
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "TAG_A", "tag", "alpha").await;
+        insert_block(&pool, "BLK_1", "content", "hello").await;
+        insert_tag_assoc(&pool, "BLK_1", "TAG_A").await;
+        insert_block(&pool, "BLK_2", "content", "world").await;
+
+        let even_depth = TagExpr::MAX_DEPTH - (TagExpr::MAX_DEPTH % 2);
+        let expr = nested_not("TAG_A", even_depth);
+        assert!(expr.validate_depth().is_ok());
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = eval_tag_query(&pool, &expr, &page, false, None, None)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["BLK_1"],
+            "even-NOT chain resolves to the tagged block"
+        );
     }
 
     #[tokio::test]

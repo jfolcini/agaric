@@ -59,25 +59,32 @@ pub fn compute_op_hash(
 ) -> String {
     let parent_seqs_canonical = parent_seqs.unwrap_or("");
 
-    // L-4 — These four `\0` invariants are the wire-format contract
-    // for the hash preimage. They MUST hold in release builds too:
-    // a raw `\0` in any field would produce an ambiguous preimage and
-    // break cross-device hash determinism. The four `memchr`-style
-    // scans cost negligible compared to blake3 itself.
-    assert!(
+    // L-4 / #1600 — These four `\0` invariants are the wire-format
+    // contract for the hash preimage: a raw `\0` in any field would
+    // produce an ambiguous preimage and break cross-device hash
+    // determinism. They are checked here as **dev-time** invariants
+    // only — a plain `assert!` would turn a corrupt op into a release
+    // panic at the op-log ingest gate (`verify_op_hash` →
+    // `insert_remote_op`). Callers that ingest untrusted/remote content
+    // (`insert_remote_op`) MUST reject NUL bytes *gracefully* before
+    // reaching this function (see the `\0`-rejection gate at the top of
+    // `insert_remote_op` in `dag.rs`);
+    // this is a pure hash function and never panics in release on bad
+    // input — it simply hashes the (ambiguous) bytes it was given.
+    debug_assert!(
         !device_id.contains('\0'),
         "device_id must not contain null bytes"
     );
-    assert!(
+    debug_assert!(
         !parent_seqs_canonical.contains('\0'),
         "parent_seqs must not contain null bytes"
     );
-    assert!(
+    debug_assert!(
         !op_type.contains('\0'),
         "op_type must not contain null bytes"
     );
     // payload: serde_json serializes \0 as \\u0000, so raw \0 indicates corruption
-    assert!(
+    debug_assert!(
         !payload.contains('\0'),
         "serialized payload must not contain raw null bytes"
     );
@@ -489,27 +496,42 @@ mod tests {
         assert!(constant_time_eq(b"", b""));
     }
 
-    // ── assert: null-byte separator (release-build enforced, L-4) ─────
+    // ── debug_assert: null-byte separator (dev-time invariant, L-4) ────
+    //
+    // #1600 — these are `debug_assert!`s (not `assert!`): in release
+    // `compute_op_hash` never panics on a NUL byte. The
+    // production-facing rejection lives in `dag::insert_remote_op`,
+    // which returns `AppError::InvalidOperation` *before* reaching this
+    // function (see `null_byte_*` tests in `dag/tests.rs`). These tests
+    // only run under the debug `cfg`, where the `debug_assert!` fires.
+    // The `#[cfg(debug_assertions)]` gate is load-bearing: in a release
+    // test build `debug_assert!` is compiled out, so `compute_op_hash`
+    // would NOT panic and these `#[should_panic]` tests would FAIL.
+    // Compiling them out in release keeps the suite green either way.
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "device_id must not contain null bytes")]
     fn null_byte_assert_fires_for_device_id() {
         let _ = compute_op_hash("dev\0ice", 1, None, "create_block", "{}");
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "parent_seqs must not contain null bytes")]
     fn null_byte_assert_fires_for_parent_seqs() {
         let _ = compute_op_hash("dev", 1, Some("abc\0def"), "create_block", "{}");
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "op_type must not contain null bytes")]
     fn null_byte_assert_fires_for_op_type() {
         let _ = compute_op_hash("dev", 1, None, "create\0block", "{}");
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "serialized payload must not contain raw null bytes")]
     fn null_byte_assert_fires_for_payload() {
         let _ = compute_op_hash("dev", 1, None, "create_block", "abc\0def");
