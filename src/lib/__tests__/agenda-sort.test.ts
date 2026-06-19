@@ -147,6 +147,28 @@ describe('groupByDate', () => {
     expect(groups[0]?.blocks.length).toBe(2)
   })
 
+  it('orders a past-dated DONE group before Today (chronological monotonicity, #1524)', () => {
+    // A DONE task with a past effective date is NOT bucketed as Overdue, so it
+    // keeps its own raw past date key. It must still render BEFORE Today — the
+    // old code pinned Overdue/Today/Tomorrow ahead of the date groups, so the
+    // past-DONE group landed after Today/Tomorrow and broke monotonicity.
+    const blocks = [
+      makeBlock({ id: 'today', due_date: '2025-01-15', todo_state: 'TODO' }),
+      makeBlock({ id: 'pastDone', due_date: '2025-01-10', todo_state: 'DONE' }),
+      makeBlock({ id: 'overdue', due_date: '2020-01-01', todo_state: 'TODO' }),
+    ]
+    const groups = groupByDate(blocks)
+    const labels = groups.map((g) => g.label)
+    const overdueIdx = labels.indexOf('Overdue')
+    const todayIdx = labels.indexOf('Today')
+    const pastIdx = groups.findIndex((g) => g.blocks.some((b) => b.id === 'pastDone'))
+
+    expect(overdueIdx).toBe(0) // Overdue still pins to the front
+    expect(todayIdx).toBeGreaterThanOrEqual(0)
+    expect(pastIdx).toBeGreaterThan(overdueIdx) // after Overdue
+    expect(pastIdx).toBeLessThan(todayIdx) // …but BEFORE Today (the #1524 fix)
+  })
+
   it('Overdue group is always first', () => {
     // TEST-64: hardcoded `todayStr` aligned with the fake system time set in beforeEach.
     // Previously this constructed `todayStr` from `new Date()` and then groupByDate

@@ -90,40 +90,40 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
     groups.set(key, existing)
   }
 
-  // Sort group keys: Overdue first, then Today, Tomorrow, then chronological, No date last
-  const ORDER = ['Overdue', 'Today', 'Tomorrow']
-  const result: AgendaGroup[] = []
-
-  for (const key of ORDER) {
-    if (groups.has(key)) {
-      result.push({
-        label: key,
-        blocks: groups.get(key) ?? [],
-        className: key === 'Overdue' ? 'text-destructive' : undefined,
-      })
-      groups.delete(key)
-    }
+  // Order EVERY group by a chronological sort key, rather than pinning the
+  // three special groups ahead of an otherwise-sorted remainder. The old
+  // approach emitted Overdue/Today/Tomorrow first, then the raw-date groups —
+  // so a past-dated group (e.g. a completed task keyed by its own past
+  // YYYY-MM-DD, which is NOT bucketed as Overdue) rendered AFTER Today/Tomorrow
+  // and broke chronological monotonicity (#1524). Now each group maps to a
+  // sort key: `Overdue` (past, not-done) sorts before every real date, the
+  // special day groups sort by their actual date, raw-date keys sort by
+  // themselves (already chronological — #719), and `No date` sinks last.
+  // Labels are formatted only after ordering.
+  const SPECIAL_SORT_KEY: Record<string, string> = {
+    Overdue: '0000-00-00',
+    Today: todayStr,
+    Tomorrow: tomorrowStr,
+    'No date': '9999-99-99',
   }
+  const sortKeyFor = (key: string): string => SPECIAL_SORT_KEY[key] ?? key
 
-  // Remaining date groups, excluding the `No date` key. Keys are raw
-  // YYYY-MM-DD strings, so a plain string sort IS chronological (#719:
-  // sorting by formatted label compared weekday/month NAMES first —
-  // "Fri, Jun 19" rendered before "Mon, Jun 15"). Labels are formatted
-  // only after ordering.
-  const noDate = groups.get('No date')
-  groups.delete('No date')
-
-  const remaining = [...groups.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
-  for (const [date, blocks] of remaining) {
-    result.push({ label: formatGroupDate(date), blocks })
-  }
-
-  // No date group at the end
-  if (noDate) {
-    result.push({ label: 'No date', blocks: noDate, className: 'text-muted-foreground' })
-  }
-
-  return result
+  return [...groups.entries()]
+    .sort(([a], [b]) => {
+      const ka = sortKeyFor(a)
+      const kb = sortKeyFor(b)
+      return ka < kb ? -1 : ka > kb ? 1 : 0
+    })
+    .map(([key, blocks]) => ({
+      label: key in SPECIAL_SORT_KEY ? key : formatGroupDate(key),
+      blocks,
+      className:
+        key === 'Overdue'
+          ? 'text-destructive'
+          : key === 'No date'
+            ? 'text-muted-foreground'
+            : undefined,
+    }))
 }
 
 /**
