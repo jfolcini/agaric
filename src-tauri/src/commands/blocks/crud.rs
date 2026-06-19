@@ -1553,15 +1553,6 @@ pub async fn purge_all_deleted_inner(
     })
 }
 
-/// PEND-35 Tier 2.2 — cap on `restore_blocks_by_ids` / `purge_blocks_by_ids`
-/// input list. Reused from the multi-select task-ops batch (Tier 2.1) so
-/// every batch endpoint shares one knob. Each element binds to a
-/// `json_each(?)` parameter; SQLite's `SQLITE_MAX_VARIABLE_NUMBER` defaults
-/// to 32766 so we'd be nowhere near it at 1000, but the cap exists to
-/// protect against a runaway frontend selecting 100k rows and stalling a
-/// writer transaction.
-use crate::commands::MAX_BATCH_BLOCK_IDS;
-
 /// PEND-35 Tier 2.2 — restore N soft-deleted blocks (and their cascaded
 /// descendants) in a single IMMEDIATE transaction.
 ///
@@ -1590,7 +1581,7 @@ use crate::commands::MAX_BATCH_BLOCK_IDS;
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`] entries
+/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](crate::commands::MAX_BATCH_BLOCK_IDS) entries
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn restore_blocks_by_ids_inner(
     pool: &SqlitePool,
@@ -1603,13 +1594,7 @@ pub async fn restore_blocks_by_ids_inner(
             "block_ids list cannot be empty".into(),
         ));
     }
-    if block_ids.len() > MAX_BATCH_BLOCK_IDS {
-        return Err(AppError::Validation(format!(
-            "block_ids list too large: {} > {}",
-            block_ids.len(),
-            MAX_BATCH_BLOCK_IDS
-        )));
-    }
+    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
 
     // #107: BlockId normalises to uppercase on construction; re-derive owned
     // String form for the JSON membership probe below.
@@ -1775,7 +1760,7 @@ pub async fn restore_blocks_by_ids_inner(
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`] entries
+/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](crate::commands::MAX_BATCH_BLOCK_IDS) entries
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn purge_blocks_by_ids_inner(
     pool: &SqlitePool,
@@ -1788,13 +1773,7 @@ pub async fn purge_blocks_by_ids_inner(
             "block_ids list cannot be empty".into(),
         ));
     }
-    if block_ids.len() > MAX_BATCH_BLOCK_IDS {
-        return Err(AppError::Validation(format!(
-            "block_ids list too large: {} > {}",
-            block_ids.len(),
-            MAX_BATCH_BLOCK_IDS
-        )));
-    }
+    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
 
     // #107: BlockId normalises to uppercase on construction; re-derive owned
     // String form for the JSON membership probe below.
@@ -2288,7 +2267,7 @@ pub struct CreateBlockSpec {
 ///
 /// **Validation:**
 /// - Empty `specs` list → [`AppError::Validation`].
-/// - `specs.len()` > [`MAX_BATCH_BLOCK_IDS`] → [`AppError::Validation`].
+/// - `specs.len()` > [`MAX_BATCH_BLOCK_IDS`](crate::commands::MAX_BATCH_BLOCK_IDS) → [`AppError::Validation`].
 ///
 /// **Forward references:** a spec's `parent_id` may reference a block
 /// id created EARLIER in the same batch. `create_block_in_tx`'s parent

@@ -186,7 +186,10 @@ impl SyncScheduler {
     /// than sufficient) from the sync daemon's tick loop, or before
     /// allocating a fresh peer lock if the HashMap has crossed a heuristic
     /// size. The scheduler itself does not spawn a background task — it
-    /// stays a passive state machine per its existing convention.
+    /// stays a passive state machine per its existing convention. The
+    /// production caller is the daemon resync tick in
+    /// [`crate::sync_daemon::orchestrator`], which runs this on a coarse
+    /// (~hourly) cadence (`RESYNC_TICKS_PER_GC`).
     ///
     /// Returns the number of entries removed (0 if everything is in use).
     pub fn gc_unused_peer_locks(&self) -> usize {
