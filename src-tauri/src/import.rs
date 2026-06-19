@@ -382,39 +382,102 @@ fn strip_frontmatter(
     normalized.to_string()
 }
 
-/// Parse the body of a leading YAML frontmatter block into scalar
-/// `(key, value)` page-property pairs (#1432).
-///
-/// Scope is deliberately aligned with what Agaric's own markdown export
-/// emits (`export_page_markdown_inner`): one `key: value` scalar per line.
-/// This is intentionally a minimal, line-based parser rather than a full
-/// YAML engine — no YAML crate is in `Cargo.toml`, and the exporter never
-/// emits nested maps, anchors, or multi-line scalars. Round-tripping
-/// Agaric's own export is the contract here.
-///
-/// Handling, line by line:
-/// - Blank lines and `# comment` lines are skipped.
-/// - A line is split on the FIRST `:` into `key` / `value`; the value is
-///   trimmed of surrounding whitespace and a single layer of matching
-///   quotes (`"…"` or `'…'`).
-/// - Keys are validated against the same alphabet the property layer
-///   enforces (`^[A-Za-z0-9_-]{1,64}$`, via [`is_property_key`]); a line
-///   whose key fails validation is skipped with a warning.
-/// - Internal/reserved keys ([`FRONTMATTER_RESERVED_KEYS`]) are dropped
-///   silently — they are exporter-managed and must never re-import.
-/// - Array / block syntax (`key: [a, b]`, `key:` followed by `- item`
-///   lines, #1433 `aliases:` / `tags:`) is out of scope: a bracketed
-///   `[...]` value or a bare `- item` continuation is parse-and-ignored
-///   with a warning rather than mis-imported as a text scalar.
-/// - A duplicate key keeps the FIRST occurrence (matches `INSERT OR IGNORE`
-///   semantics elsewhere) and warns on the rest.
 fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, String)> {
     let mut pairs: Vec<(String, String)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut skipped_array = 0usize;
     let mut skipped_invalid = 0usize;
 
+    // Block-scalar state. When a key line ends with a `|` / `>` indicator
+    // (#1590), the subsequent MORE-INDENTED lines are continuation content
+    // belonging to that key — valid YAML, NOT invalid top-level lines. We
+    // capture them, join into a single scalar value, and commit on the first
+    // line that dedents out of the block (or at end of input).
+    struct BlockScalar {
+        key: String,
+        folded: bool,
+        chomp_strip: bool,
+        /// Indentation (in spaces) of the key line that opened the block.
+        /// Continuation lines must be indented MORE than this.
+        key_indent: usize,
+        /// Indentation of the first continuation line — the block's content
+        /// indentation, stripped uniformly from each captured line.
+        content_indent: Option<usize>,
+        lines: Vec<String>,
+    }
+
+    /// Leading-space count of a raw (untrimmed) line. Tabs are treated as a
+    /// single column; frontmatter is space-indented in practice (the exporter
+    /// emits spaces), and this is only used for relative indent comparisons.
+    fn indent_of(raw: &str) -> usize {
+        raw.chars().take_while(|c| *c == ' ' || *c == '\t').count()
+    }
+
+    let mut block: Option<BlockScalar> = None;
+
+    // Commit a finished block scalar into `pairs` (de-dup aware), joining its
+    // captured continuation lines. Literal (`|`) joins with newlines; folded
+    // (`>`) joins with spaces. Chomping `-` strips the trailing newline (we
+    // never append one, so `-` vs clip/keep only matters for an explicit
+    // final newline, which we omit either way — the captured text is the
+    // value). Returns nothing; mutates the shared collections.
+    macro_rules! commit_block {
+        ($b:expr) => {{
+            let b = $b;
+            let joined = if b.folded {
+                b.lines.join(" ")
+            } else {
+                b.lines.join("\n")
+            };
+            // Chomping is accepted/parsed; the joined value carries no
+            // trailing newline regardless, so `chomp_strip` is recorded for
+            // completeness without altering the (newline-free) result.
+            let _ = b.chomp_strip;
+            if seen.insert(b.key.clone()) {
+                pairs.push((b.key, joined));
+            } else {
+                warnings.push(format!(
+                    "frontmatter key '{}' appears more than once; keeping the first value",
+                    b.key
+                ));
+            }
+        }};
+    }
+
     for raw in yaml.lines() {
+        // While a block scalar is open, a MORE-INDENTED (or blank) line is
+        // continuation content and must NOT be mis-counted as invalid. A line
+        // indented at-or-below the opening key ends the block; it is then
+        // re-processed as a normal frontmatter line below.
+        if let Some(b) = block.as_mut() {
+            let raw_indent = indent_of(raw);
+            let is_blank = raw.trim().is_empty();
+            // Blank lines inside a block are part of the scalar (a blank line
+            // is only a terminator at-or-below the key indent — but a blank
+            // line carries no indent, so treat it as continuation while the
+            // block is open).
+            if is_blank || raw_indent > b.key_indent {
+                let content_indent = *b.content_indent.get_or_insert(raw_indent);
+                // Strip the uniform block indentation; never panic on a line
+                // that is shorter than the content indent (blank lines).
+                let stripped = if raw.len() >= content_indent {
+                    raw[raw
+                        .char_indices()
+                        .nth(content_indent)
+                        .map(|(i, _)| i)
+                        .unwrap_or(raw.len())..]
+                        .to_string()
+                } else {
+                    String::new()
+                };
+                b.lines.push(stripped);
+                continue;
+            }
+            // Dedent: the block is finished. Commit it, then fall through to
+            // process `raw` as an ordinary frontmatter line.
+            commit_block!(block.take().expect("block present"));
+        }
+
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
@@ -442,7 +505,24 @@ fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, Str
             // to round-trip as a user property).
             continue;
         }
-        let value = strip_yaml_quotes(value_raw.trim());
+        let value_trimmed = value_raw.trim();
+        // Block-scalar indicator (#1590): `key: |`, `key: >`, with optional
+        // chomping (`-`/`+`) and/or a one-digit indentation indicator, e.g.
+        // `|-`, `>+`, `|2`, `>2-`. The subsequent more-indented lines are the
+        // value and must not be mis-counted as invalid. Open a block instead
+        // of treating the (empty) inline value as a scalar.
+        if let Some(spec) = parse_block_scalar_indicator(value_trimmed) {
+            block = Some(BlockScalar {
+                key: key.to_string(),
+                folded: spec.folded,
+                chomp_strip: spec.chomp_strip,
+                key_indent: indent_of(raw),
+                content_indent: None,
+                lines: Vec::new(),
+            });
+            continue;
+        }
+        let value = strip_yaml_quotes(value_trimmed);
         // Inline array/flow-collection syntax (`[a, b]` / `{a: b}`): out of
         // scope (#1433). Parse-and-ignore with a warning rather than import
         // the literal bracketed text as a scalar.
@@ -461,6 +541,11 @@ fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, Str
         pairs.push((key.to_string(), value.to_string()));
     }
 
+    // Flush a block scalar still open at end of input.
+    if let Some(b) = block.take() {
+        commit_block!(b);
+    }
+
     if skipped_array > 0 {
         warnings.push(format!(
             "{skipped_array} frontmatter line(s) used array/collection syntax \
@@ -474,6 +559,47 @@ fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, Str
         ));
     }
     pairs
+}
+
+/// Parsed YAML block-scalar header (#1590): the `|` / `>` indicator after a
+/// `key:`, with optional chomping and indentation indicators.
+struct BlockScalarSpec {
+    /// `true` for a folded block (`>`); `false` for a literal block (`|`).
+    folded: bool,
+    /// `true` when the strip chomping indicator (`-`) is present.
+    chomp_strip: bool,
+}
+
+/// Recognise a YAML block-scalar indicator as the inline value of a `key:`
+/// line. Accepts `|`, `>`, optionally followed (in either order, per the YAML
+/// spec) by a chomping indicator (`-`/`+`) and/or a single indentation digit
+/// (`1`–`9`), e.g. `|`, `>-`, `|+`, `|2`, `>2-`. A trailing line comment
+/// (`# …`) is tolerated. Returns `None` for any other value (a normal scalar).
+fn parse_block_scalar_indicator(value: &str) -> Option<BlockScalarSpec> {
+    // Drop a trailing comment so `| # literal block` still parses.
+    let head = match value.split_once('#') {
+        Some((before, _)) => before.trim_end(),
+        None => value,
+    };
+    let mut chars = head.chars();
+    let folded = match chars.next()? {
+        '|' => false,
+        '>' => true,
+        _ => return None,
+    };
+    let mut chomp_strip = false;
+    for c in chars {
+        match c {
+            '-' => chomp_strip = true,
+            '+' => {}         // keep chomping — accepted, no effect here
+            '1'..='9' => {}   // explicit indentation indicator — accepted
+            _ => return None, // anything else: not a block-scalar header
+        }
+    }
+    Some(BlockScalarSpec {
+        folded,
+        chomp_strip,
+    })
 }
 
 /// Strip a single layer of matching surrounding quotes (`"…"` or `'…'`)
@@ -935,6 +1061,111 @@ mod tests {
         assert!(
             warns.iter().any(|w| w.contains("array/collection syntax")),
             "an array-syntax warning must be emitted; got {warns:?}"
+        );
+    }
+
+    /// #1590 — a `key: |` literal block scalar with indented continuation
+    /// lines parses without incrementing `skipped_invalid`, and the joined
+    /// (newline-separated) value is captured.
+    #[test]
+    fn parse_frontmatter_literal_block_scalar_captured_no_invalid_1590() {
+        let mut warns: Vec<String> = Vec::new();
+        let pairs = parse_frontmatter(
+            "summary: |\n  first line\n  second line\ncategory: notes",
+            &mut warns,
+        );
+        assert_eq!(
+            pairs,
+            vec![
+                ("summary".to_string(), "first line\nsecond line".to_string()),
+                ("category".to_string(), "notes".to_string()),
+            ],
+            "a literal block scalar must be captured (newline-joined) and the \
+             trailing scalar must still parse; got {pairs:?}"
+        );
+        assert!(
+            warns.is_empty(),
+            "block-scalar continuations must not warn as invalid; got {warns:?}"
+        );
+    }
+
+    /// #1590 — a `key: >` folded block scalar joins continuation lines with
+    /// spaces and does not warn.
+    #[test]
+    fn parse_frontmatter_folded_block_scalar_captured_no_invalid_1590() {
+        let mut warns: Vec<String> = Vec::new();
+        let pairs = parse_frontmatter("desc: >\n  one\n  two\n  three", &mut warns);
+        assert_eq!(
+            pairs,
+            vec![("desc".to_string(), "one two three".to_string())],
+            "a folded block scalar must be space-joined; got {pairs:?}"
+        );
+        assert!(
+            warns.is_empty(),
+            "folded block-scalar continuations must not warn; got {warns:?}"
+        );
+    }
+
+    /// #1590 — chomping indicators (`|-`, `>+`) on the block header are
+    /// accepted: the continuation lines are still consumed without warning.
+    #[test]
+    fn parse_frontmatter_block_scalar_chomping_indicators_1590() {
+        let mut warns: Vec<String> = Vec::new();
+        let pairs = parse_frontmatter(
+            "lit: |-\n  alpha\n  beta\nfold: >+\n  gamma\n  delta",
+            &mut warns,
+        );
+        assert_eq!(
+            pairs,
+            vec![
+                ("lit".to_string(), "alpha\nbeta".to_string()),
+                ("fold".to_string(), "gamma delta".to_string()),
+            ],
+            "chomping indicators must be parsed and the blocks captured; got {pairs:?}"
+        );
+        assert!(
+            warns.is_empty(),
+            "chomping-indicator block scalars must not warn; got {warns:?}"
+        );
+    }
+
+    /// #1590 — a genuinely invalid line (non-indented, no colon, not a
+    /// continuation of any block) is STILL counted as `skipped_invalid` and
+    /// surfaced via the aggregate warning.
+    #[test]
+    fn parse_frontmatter_invalid_non_indented_line_still_warns_1590() {
+        let mut warns: Vec<String> = Vec::new();
+        let pairs = parse_frontmatter("category: notes\nthis is not yaml", &mut warns);
+        assert_eq!(
+            pairs,
+            vec![("category".to_string(), "notes".to_string())],
+            "the scalar must parse; the stray line must be dropped; got {pairs:?}"
+        );
+        assert!(
+            warns
+                .iter()
+                .any(|w| w.contains("were not a valid `key: value` scalar")),
+            "a non-indented no-colon line must still be counted invalid; got {warns:?}"
+        );
+    }
+
+    /// #1590 — normal `key: value` scalars are unaffected by the block-scalar
+    /// handling (no false block detection, no warnings).
+    #[test]
+    fn parse_frontmatter_plain_scalars_unaffected_by_block_handling_1590() {
+        let mut warns: Vec<String> = Vec::new();
+        let pairs = parse_frontmatter("title: Hello\nstatus: draft", &mut warns);
+        assert_eq!(
+            pairs,
+            vec![
+                ("title".to_string(), "Hello".to_string()),
+                ("status".to_string(), "draft".to_string()),
+            ],
+            "plain scalars must be unaffected; got {pairs:?}"
+        );
+        assert!(
+            warns.is_empty(),
+            "plain scalars must not warn; got {warns:?}"
         );
     }
 
