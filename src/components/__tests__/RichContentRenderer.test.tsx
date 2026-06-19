@@ -1336,4 +1336,87 @@ describe('RichContentRenderer', () => {
     const { container } = render(renderRichContent('first\n', {}))
     expect(container.textContent).toContain('first')
   })
+
+  // -- Inline (preview) mode (#1533) -----------------------------------------
+  // Preview callers (HistoryItemCore's clamping <span>, DiffDisplay's <p>)
+  // wrap the output in an inline element, so block-level nodes are invalid
+  // nesting there. inline:true downgrades blocks to inline text only.
+
+  describe('inline (preview) mode (#1533)', () => {
+    /** Block tags that are invalid inside an inline <span>/<p> wrapper. */
+    const BLOCK_SELECTOR = 'h1,h2,h3,h4,h5,h6,ol,ul,li,table,pre,blockquote,div,p'
+
+    it('heading: emits no block element but keeps the text', () => {
+      // Default mode DOES emit a heading — this anchors the regression.
+      const def = render(renderRichContent('# Main Title', {}))
+      expect(def.container.querySelector('h1')).toBeInTheDocument()
+      def.unmount()
+
+      const { container } = render(renderRichContent('# Main Title', { inline: true }))
+      expect(container.querySelector('h1')).toBeNull()
+      expect(container.querySelector(BLOCK_SELECTOR)).toBeNull()
+      expect(container.textContent).toBe('Main Title')
+    })
+
+    it('ordered list: emits no <ol>/<li> but keeps item text', () => {
+      const def = render(renderRichContent('1. first\n2. second', {}))
+      expect(def.container.querySelector('ol')).toBeInTheDocument()
+      def.unmount()
+
+      const { container } = render(renderRichContent('1. first\n2. second', { inline: true }))
+      expect(container.querySelector('ol')).toBeNull()
+      expect(container.querySelector(BLOCK_SELECTOR)).toBeNull()
+      expect(container.textContent).toContain('first')
+      expect(container.textContent).toContain('second')
+    })
+
+    it('table: emits no <table> but keeps cell text', () => {
+      mockedParse.mockReturnValueOnce({
+        type: 'doc',
+        content: [
+          {
+            type: 'table',
+            content: [
+              {
+                type: 'tableRow',
+                content: [
+                  {
+                    type: 'tableHeader',
+                    content: [{ type: 'paragraph', content: [{ type: 'text', text: 'H' }] }],
+                  },
+                ],
+              },
+              {
+                type: 'tableRow',
+                content: [
+                  {
+                    type: 'tableCell',
+                    content: [{ type: 'paragraph', content: [{ type: 'text', text: 'cell' }] }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      } as ReturnType<typeof parse>)
+      const { container } = render(renderRichContent('ignored', { inline: true }))
+      expect(container.querySelector('table')).toBeNull()
+      expect(container.querySelector(BLOCK_SELECTOR)).toBeNull()
+      expect(container.textContent).toContain('H')
+      expect(container.textContent).toContain('cell')
+    })
+
+    it('code block: downgrades to inline <code>, no <pre>', () => {
+      const { container } = render(renderRichContent('```\nconst x = 1\n```', { inline: true }))
+      expect(container.querySelector('pre')).toBeNull()
+      expect(container.querySelector(BLOCK_SELECTOR)).toBeNull()
+      expect(container.textContent).toContain('const x = 1')
+    })
+
+    it('multiple blocks: never nest a block element, separated by inline space', () => {
+      const { container } = render(renderRichContent('# Title\n\nbody paragraph', { inline: true }))
+      expect(container.querySelector(BLOCK_SELECTOR)).toBeNull()
+      expect(container.textContent).toBe('Title body paragraph')
+    })
+  })
 })

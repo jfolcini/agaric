@@ -156,6 +156,35 @@ describe('groupBlocksByPage', () => {
     expect(ids).toEqual(['CCC', 'BBB', 'AAA'])
   })
 
+  it('sorts items by raw codepoint descending, not locale collation (#1539)', () => {
+    // The panel must order ids most-recent-first using a raw binary (codepoint)
+    // comparison, NOT `localeCompare` — locale collation is locale-sensitive and
+    // not guaranteed to follow codepoint order. These ids are chosen so the two
+    // comparators DIVERGE: in raw codepoint order uppercase (U+0041..) precedes
+    // lowercase (U+0061..), whereas ICU collation interleaves case. A regression
+    // back to `localeCompare` reorders this set, so the assertion is revert-
+    // sensitive across locales.
+    const blocks = [
+      makeBlock({ id: 'idZ', page_id: 'P1' }),
+      makeBlock({ id: 'idA', page_id: 'P1' }),
+      makeBlock({ id: 'idz', page_id: 'P1' }),
+      makeBlock({ id: 'ida', page_id: 'P1' }),
+    ]
+    const titles = new Map([['P1', 'Page One']])
+    const groups = groupBlocksByPage(blocks, titles, untitled)
+    const ids = groups[0]?.items.map((b) => b.id) ?? []
+    // Descending codepoint order: lowercase (97/122) outranks uppercase (65/90),
+    // so 'idz' > 'ida' > 'idZ' > 'idA'. `localeCompare` would NOT produce this.
+    expect(ids).toEqual(['idz', 'ida', 'idZ', 'idA'])
+    // Confirm we are not merely matching whatever `localeCompare` does — the
+    // expected order must differ from the descending-localeCompare order.
+    const localeOrder = [...blocks].map((b) => b.id).sort((a, b) => b.localeCompare(a))
+    expect(localeOrder).not.toEqual(ids)
+    // Strict total order: re-running on a different input permutation is stable.
+    const reSorted = groupBlocksByPage(blocks.toReversed(), titles, untitled)
+    expect(reSorted[0]?.items.map((b) => b.id)).toEqual(ids)
+  })
+
   it('falls back to untitledLabel for page_ids missing from the titles map', () => {
     const blocks = [makeBlock({ id: 'B1', page_id: 'P_UNKNOWN' })]
     const groups = groupBlocksByPage(blocks, new Map(), untitled)

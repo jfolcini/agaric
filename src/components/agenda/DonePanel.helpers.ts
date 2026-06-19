@@ -82,7 +82,10 @@ export function groupBlocksByPage(
   }
   const groups = [...groupMap.values()].sort((a, b) => a.title.localeCompare(b.title))
   for (const group of groups) {
-    group.items.sort((a, b) => b.id.localeCompare(a.id))
+    // ULID ids are codepoint-sortable: a binary comparison gives a deterministic
+    // most-recent-first order. `localeCompare` is locale/collation-sensitive and
+    // not guaranteed to follow codepoint order, so we compare raw strings.
+    group.items.sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
   }
   return groups
 }

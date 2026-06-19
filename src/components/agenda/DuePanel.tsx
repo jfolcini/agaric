@@ -129,7 +129,17 @@ export function DuePanel({
     [blocks, overdueBlocks, upcomingBlocks, projectedEntries],
   )
 
-  // Per-source breakdown counts (accurate when sourceFilter is null / 'property:')
+  // #1540 — Date-equality breakdown heuristic, NOT an authoritative per-source
+  // tally. The backend selects agenda blocks by `agendaSource` (due / scheduled
+  // / arbitrary date properties) and returns them as a flat array with no
+  // per-block source tag, so the panel cannot recover which source actually
+  // matched each block. We instead classify by date equality in priority order
+  // (due > scheduled > property): a block with `due_date === date` is bucketed
+  // as "due" even if it was selected by a date property, and a block with both
+  // dates equal to `date` counts once, as "due". The buckets are therefore an
+  // approximate breakdown of the visible set, not a reconstruction of the
+  // backend's selection — treat the three numbers as a date-based summary that
+  // always sums to `visibleBlocks.length`.
   const sourceCounts = useMemo(() => {
     const counts = { due: 0, scheduled: 0, property: 0 }
     for (const b of visibleBlocks) {

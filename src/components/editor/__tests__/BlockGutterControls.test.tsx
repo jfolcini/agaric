@@ -211,14 +211,36 @@ describe('BlockGutterControls', () => {
     expect(screen.getByTestId('trash-icon')).toBeInTheDocument()
   })
 
-  it('calls onDelete with blockId on pointerDown', () => {
+  // #1532: the action is bound to `onClick` ONLY (mirroring the history
+  // button). pointerDown must NOT fire onDelete — it exists purely for
+  // focus-retention (preventDefault) and to stop the press bubbling into block
+  // selection (stopPropagation). Binding the action there too made one mouse
+  // interaction (pointerdown → synthetic click) call onDelete twice.
+  it('does not call onDelete on pointerDown alone (action is click-bound)', () => {
     const onDelete = vi.fn()
     renderWithTooltip(<BlockGutterControls blockId="B99" onDelete={onDelete} />)
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
     fireEvent.pointerDown(deleteBtn)
 
-    expect(onDelete).toHaveBeenCalledOnce()
+    expect(onDelete).not.toHaveBeenCalled()
+  })
+
+  // #1532 (revert-sensitive): a single mouse interaction is a pointerdown
+  // followed by a synthetic click. `preventDefault` on pointerdown does NOT
+  // suppress that click, so binding onDelete to BOTH handlers fired it twice.
+  // Assert exactly ONE onDelete call across the whole sequence.
+  it('fires onDelete exactly once for a pointerdown+click mouse interaction (#1532)', () => {
+    const onDelete = vi.fn()
+    renderWithTooltip(<BlockGutterControls blockId="B99" onDelete={onDelete} />)
+
+    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+    // Reproduce a real mouse press: pointerdown then the click the browser
+    // synthesizes on release. preventDefault on pointerdown does not cancel it.
+    fireEvent.pointerDown(deleteBtn)
+    fireEvent.click(deleteBtn)
+
+    expect(onDelete).toHaveBeenCalledTimes(1)
     expect(onDelete).toHaveBeenCalledWith('B99')
   })
 
@@ -230,6 +252,43 @@ describe('BlockGutterControls', () => {
 
     await user.click(screen.getByRole('button', { name: /delete block/i }))
     expect(onDelete).toHaveBeenCalledWith('B_KB')
+  })
+
+  // #1532: keyboard activation (Enter / Space) must still trigger delete.
+  // Native buttons dispatch a `click` on Enter/Space, and the action lives on
+  // onClick, so focusing the button and pressing each key fires onDelete once.
+  it('triggers onDelete via keyboard Enter and Space (action stays on click)', async () => {
+    const user = userEvent.setup()
+    const onDelete = vi.fn()
+
+    renderWithTooltip(<BlockGutterControls blockId="B_ENTER" onDelete={onDelete} />)
+
+    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+    deleteBtn.focus()
+    await user.keyboard('{Enter}')
+    expect(onDelete).toHaveBeenCalledTimes(1)
+    expect(onDelete).toHaveBeenLastCalledWith('B_ENTER')
+
+    await user.keyboard(' ')
+    expect(onDelete).toHaveBeenCalledTimes(2)
+    expect(onDelete).toHaveBeenLastCalledWith('B_ENTER')
+  })
+
+  // #1532: pointerdown still keeps editor focus (preventDefault) so the
+  // following click isn't swallowed — same contract the history button relies
+  // on. Mirror the history button's focus-retention assertion for delete.
+  it('delete button prevents default on pointerDown to retain editor focus (#1532)', () => {
+    const onDelete = vi.fn()
+    renderWithTooltip(<BlockGutterControls blockId="B_FOCUS" onDelete={onDelete} />)
+
+    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+    const ev = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
+    const prevented = vi.spyOn(ev, 'preventDefault')
+    deleteBtn.dispatchEvent(ev)
+
+    expect(prevented).toHaveBeenCalled()
+    // ... and the action did NOT fire on pointerdown.
+    expect(onDelete).not.toHaveBeenCalled()
   })
 
   it('stopPropagation on delete pointerDown prevents parent activation', () => {

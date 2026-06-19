@@ -159,6 +159,10 @@ export function HistoryItemCore({
           <span className="history-item-preview text-sm line-clamp-2">
             {renderRichContent(rawContent, {
               interactive: true,
+              // Preview lives inside an inline, clamping <span>; inline mode
+              // keeps block nodes (headings, lists, tables…) from producing
+              // invalid block-in-span nesting that also defeats line-clamp (#1533).
+              inline: true,
               onTagClick,
               ...richCallbacks,
             })}
