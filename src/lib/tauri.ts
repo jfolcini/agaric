@@ -929,8 +929,8 @@ export async function searchBlocks(
  */
 export async function searchBlocksPartitioned(params: {
   query: string
-  pageLimit: number
-  blockLimit: number
+  pageLimit: SafeLimit
+  blockLimit: SafeLimit
   parentId?: string | undefined
   tagIds?: string[] | undefined
   spaceId: string

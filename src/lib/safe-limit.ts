@@ -138,6 +138,37 @@ export function searchBlocksLimit(n: number): SafeLimit {
   return safeLimit(n, SEARCH_BLOCKS_MAX)
 }
 
+/**
+ * Build a {@link SafeLimit} from a runtime `number`, validating that
+ * the value is in `[0, max]` — i.e. with an INCLUSIVE-zero lower bound,
+ * unlike {@link safeLimit} (`[1, max]`). Throws synchronously when out
+ * of range so a bad literal fails at the call site, not at the IPC
+ * boundary after a round trip.
+ *
+ * `0` is meaningful for a few IPCs (e.g. `searchBlocksPartitioned`'s
+ * `blockLimit: 0` means "link-mode: pages only, no blocks partition").
+ * For limits where `0` is NOT meaningful, use {@link safeLimit}.
+ */
+export function safeLimitZero(n: number, max: number): SafeLimit {
+  if (!Number.isInteger(n) || n < 0 || n > max) {
+    throw new RangeError(
+      `safeLimitZero: ${n} is outside [0, ${max}]. This limit must be in this range.`,
+    )
+  }
+  return n as SafeLimit
+}
+
+/**
+ * Shorthand for {@link safeLimitZero}`(n, SEARCH_BLOCKS_MAX)` — the
+ * per-partition limit for `searchBlocksPartitioned`. Allows `0`
+ * (`blockLimit: 0` = link-mode, pages only) up to the FTS scan ceiling
+ * (`MAX_SEARCH_RESULTS` = 100). A literal above 100 is a compile error
+ * once branded, instead of a runtime IPC-boundary rejection.
+ */
+export function partitionedSearchLimit(n: number): SafeLimit {
+  return safeLimitZero(n, SEARCH_BLOCKS_MAX)
+}
+
 /** Shorthand for {@link safeLimit}`(n, PAGINATION_MAX)`. */
 export function paginationLimit(n: number): SafeLimit {
   return safeLimit(n, PAGINATION_MAX)

@@ -11,7 +11,15 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
-import { LIST_BLOCKS_MAX, PAGINATION_MAX, clampLimit, safeLimit } from '../safe-limit'
+import {
+  LIST_BLOCKS_MAX,
+  PAGINATION_MAX,
+  SEARCH_BLOCKS_MAX,
+  clampLimit,
+  partitionedSearchLimit,
+  safeLimit,
+  safeLimitZero,
+} from '../safe-limit'
 
 describe('safeLimit', () => {
   it('returns the value unchanged when in range', () => {
@@ -96,5 +104,53 @@ describe('clampLimit', () => {
       ),
       { numRuns: 1000 },
     )
+  })
+})
+
+describe('safeLimitZero (inclusive-zero lower bound)', () => {
+  it('accepts 0 (the link-mode sentinel) unlike safeLimit', () => {
+    expect(safeLimitZero(0, 100)).toBe(0)
+    // The throwing [1, max] constructor rejects 0.
+    expect(() => safeLimit(0, 100)).toThrow(RangeError)
+  })
+
+  it('accepts an in-range integer and the max boundary', () => {
+    expect(safeLimitZero(40, 100)).toBe(40)
+    expect(safeLimitZero(100, 100)).toBe(100)
+  })
+
+  it('throws on a negative value', () => {
+    expect(() => safeLimitZero(-1, 100)).toThrow(RangeError)
+  })
+
+  it('throws when above the cap', () => {
+    expect(() => safeLimitZero(101, 100)).toThrow(RangeError)
+  })
+
+  it('throws on non-integers', () => {
+    expect(() => safeLimitZero(0.5, 100)).toThrow(RangeError)
+  })
+})
+
+describe('partitionedSearchLimit', () => {
+  it('accepts 0 (blockLimit: 0 = link-mode, pages only)', () => {
+    expect(partitionedSearchLimit(0)).toBe(0)
+  })
+
+  it('accepts valid in-range limits and the SEARCH_BLOCKS_MAX boundary', () => {
+    expect(partitionedSearchLimit(8)).toBe(8)
+    expect(partitionedSearchLimit(40)).toBe(40)
+    expect(partitionedSearchLimit(SEARCH_BLOCKS_MAX)).toBe(SEARCH_BLOCKS_MAX)
+  })
+
+  it('rejects an over-cap value (> SEARCH_BLOCKS_MAX) at the call site', () => {
+    // 500 compiled cleanly before branding, then the backend hard-rejected
+    // it at the IPC boundary (#1570). Now it throws here instead.
+    expect(() => partitionedSearchLimit(SEARCH_BLOCKS_MAX + 1)).toThrow(RangeError)
+    expect(() => partitionedSearchLimit(500)).toThrow(RangeError)
+  })
+
+  it('rejects negatives', () => {
+    expect(() => partitionedSearchLimit(-1)).toThrow(RangeError)
   })
 })
