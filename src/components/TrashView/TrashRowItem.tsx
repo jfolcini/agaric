@@ -10,6 +10,7 @@
 
 import { RotateCcw } from 'lucide-react'
 import type React from 'react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
@@ -20,6 +21,7 @@ import { cn } from '@/lib/utils'
 import type { RichContentCallbacks } from '../../hooks/useRichContentCallbacks'
 import { formatRelativeTime } from '../../lib/format-relative-time'
 import type { BlockRow } from '../../lib/tauri'
+import { useResolveStore } from '../../stores/resolve'
 import { renderRichContent } from '../RichContentRenderer'
 
 interface TrashRowItemProps {
@@ -65,6 +67,43 @@ export function TrashRowItem({
   style,
 }: TrashRowItemProps): React.ReactElement {
   const { t } = useTranslation()
+
+  // #1623 — memoize the recursive-descent parse of the row's windowed content
+  // so a selection/focus re-render (the virtualizer re-renders rows as the
+  // user clicks/keyboards through the list) doesn't re-run `renderRichContent`
+  // → `parse` for every row. The parse depends only on `block.content` + the
+  // resolve callbacks (stable identities threaded from `useRichContentCallbacks`
+  // /`useTagClickHandler` in the orchestrator); `resolveVersion` drives
+  // re-resolution when the cache updates. Mirrors the at-rest
+  // `StaticBlock`/`BlockListItem` memo: the cached parse survives the
+  // virtualizer's selection/focus re-renders of this same row instance.
+  const { resolveBlockTitle, resolveBlockStatus, resolveTagName, resolveTagStatus } = callbacks
+  const resolveVersion = useResolveStore((s) => s.version)
+  const renderedContent = useMemo(
+    () =>
+      block.content
+        ? renderRichContent(block.content, {
+            interactive: true,
+            onTagClick,
+            resolveBlockTitle,
+            resolveBlockStatus,
+            resolveTagName,
+            resolveTagStatus,
+          })
+        : t('trash.emptyContent'),
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion is intentionally load-bearing — the resolve callbacks read a mutable cache via refs that oxlint cannot see through, so the version is the only trigger for re-resolution when the resolve store updates.
+    [
+      block.content,
+      onTagClick,
+      resolveBlockTitle,
+      resolveBlockStatus,
+      resolveTagName,
+      resolveTagStatus,
+      resolveVersion,
+      t,
+    ],
+  )
+
   return (
     <div
       key={block.id}
@@ -118,15 +157,7 @@ export function TrashRowItem({
           </Badge>
         )}
         <div className="flex flex-col min-w-0">
-          <span className="trash-item-text text-sm truncate">
-            {block.content
-              ? renderRichContent(block.content, {
-                  interactive: true,
-                  onTagClick,
-                  ...callbacks,
-                })
-              : t('trash.emptyContent')}
-          </span>
+          <span className="trash-item-text text-sm truncate">{renderedContent}</span>
           <span className="trash-item-date text-xs text-muted-foreground">
             {t('trash.deletedPrefix')}{' '}
             {block.deleted_at ? formatRelativeTime(block.deleted_at, t) : ''}

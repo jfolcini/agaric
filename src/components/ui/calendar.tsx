@@ -57,8 +57,16 @@ const BASE_CLASS_NAMES = {
   weekday:
     'text-muted-foreground rounded-md w-8 font-normal text-[0.8rem] [@media(pointer:coarse)]:w-11',
   week: 'flex w-full mt-2',
+  // In react-day-picker v10 the `Day` component renders the `<td>` cell and
+  // sets `aria-selected` on that SAME `<td>` (verified against node_modules:
+  // components/Day.js renders a bare `<td>`; DayPicker.js line 368 sets
+  // `aria-selected: modifiers.selected || undefined` on it — NOT on the inner
+  // DayButton). A descendant `:has([aria-selected])` therefore never matches
+  // (the attribute lives on `&`, not a child), so the accent state was dead
+  // (#1793). Key the accent off the cell's OWN attribute `&[aria-selected]`,
+  // consistent with how #1563 fixed the `today` gate.
   day: cn(
-    'relative p-0 text-center text-sm focus-within:relative focus-within:z-20 [&:has([aria-selected])]:bg-accent [&:has([aria-selected].outside)]:bg-accent/50 first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md',
+    'relative p-0 text-center text-sm focus-within:relative focus-within:z-20 [&[aria-selected]]:bg-accent [&[aria-selected].outside]:bg-accent/50 first:[&[aria-selected]]:rounded-l-md last:[&[aria-selected]]:rounded-r-md',
     'h-8 w-8 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
   ),
   day_button: DAY_BUTTON_CLASS,

@@ -202,7 +202,7 @@ export function ConfirmDialog({
   // immediately to preserve the original ConfirmDialog behaviour.
   const runConfirm = useCallback(
     async (handler: ConfirmHandler) => {
-      if (pending) return
+      if (isPending) return
       let result: Promise<void> | void
       try {
         result = handler()
@@ -228,7 +228,7 @@ export function ConfirmDialog({
       // externally). Closing here too is idempotent.
       onOpenChange(false)
     },
-    [onOpenChange, pending],
+    [onOpenChange, isPending],
   )
 
   const handleCancel = useCallback(() => {
