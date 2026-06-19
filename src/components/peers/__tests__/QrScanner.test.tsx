@@ -14,9 +14,16 @@ let mockScanData = ''
 let mockScanFireCount = 1
 
 const mockStop = vi.fn().mockResolvedValue(undefined)
+// #1615: capture the element id each Html5Qrcode instance is constructed with
+// so tests can assert it matches the rendered region id and that two mounted
+// scanners get distinct (non-colliding) ids.
+const constructedIds: string[] = []
 
 vi.mock('html5-qrcode', () => ({
   Html5Qrcode: class MockHtml5Qrcode {
+    constructor(elementId: string) {
+      constructedIds.push(elementId)
+    }
     async start(
       _cameraConfig: unknown,
       _scanConfig: unknown,
@@ -45,6 +52,7 @@ beforeEach(() => {
   mockStartBehavior = 'error'
   mockScanData = ''
   mockScanFireCount = 1
+  constructedIds.length = 0
 })
 
 describe('QrScanner', () => {
@@ -66,10 +74,50 @@ describe('QrScanner', () => {
 
   it('scanner region has aria-label', () => {
     render(<QrScanner onScan={vi.fn()} />)
-    const region = document.getElementById('qr-scanner-region')
+    // #1615: the region id is now per-instance (useId-derived), so query by
+    // the stable aria-label instead of a hardcoded id.
+    const region = screen.getByLabelText('QR code scanner viewport')
     expect(region).toBeTruthy()
-    expect(region?.getAttribute('aria-label')).toBe('QR code scanner viewport')
-    expect(region?.tagName.toLowerCase()).toBe('section')
+    expect(region.getAttribute('aria-label')).toBe('QR code scanner viewport')
+    expect(region.tagName.toLowerCase()).toBe('section')
+  })
+
+  // #1615: the viewport id must be generated per-instance (useId) and the SAME
+  // value must be handed to the Html5Qrcode constructor, otherwise html5-qrcode
+  // (which keys its render target on element id) collides when two scanners are
+  // mounted at once.
+  it('passes the rendered region id to the Html5Qrcode constructor (#1615)', async () => {
+    const user = userEvent.setup()
+    mockStartBehavior = 'pending'
+
+    render(<QrScanner onScan={vi.fn()} />)
+
+    const region = screen.getByLabelText('QR code scanner viewport')
+    const regionId = region.getAttribute('id')
+    expect(regionId).toBeTruthy()
+    // Sanitized useId value: no colons (valid CSS selector / getElementById id).
+    expect(regionId).not.toContain(':')
+
+    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
+
+    await waitFor(() => {
+      expect(constructedIds).toHaveLength(1)
+    })
+    // The constructor receives exactly the rendered region id.
+    expect(constructedIds[0]).toBe(regionId)
+  })
+
+  it('gives two mounted scanners distinct region ids (#1615)', () => {
+    render(<QrScanner onScan={vi.fn()} />)
+    render(<QrScanner onScan={vi.fn()} />)
+
+    const regions = screen.getAllByLabelText('QR code scanner viewport')
+    expect(regions).toHaveLength(2)
+
+    const [idA, idB] = regions.map((r) => r.getAttribute('id'))
+    expect(idA).toBeTruthy()
+    expect(idB).toBeTruthy()
+    expect(idA).not.toBe(idB)
   })
 
   it('calls onError when camera access fails', async () => {

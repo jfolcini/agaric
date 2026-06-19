@@ -42,6 +42,30 @@ interface HistoryPanelProps {
   blockId: string | null
 }
 
+/**
+ * Parse an entry's payload and return its `to_text` string, or `null` if the
+ * entry is not restorable. Single source of truth for the restorability
+ * invariant: an entry is restorable iff it is an `edit_block` op whose payload
+ * carries a string `to_text` (the value `handleRestore` writes back via
+ * `editBlock`). Both the `restorableEntries` filter and the `handleRestore`
+ * guard derive from this, so the panel no longer relies on `BlockHistoryItem`
+ * to withhold the restore affordance for non-restorable rows.
+ */
+function getRestorableText(entry: HistoryEntry): string | null {
+  if (entry.op_type !== 'edit_block') return null
+  try {
+    const parsed = JSON.parse(entry.payload) as Record<string, unknown>
+    if (typeof parsed['to_text'] === 'string') return parsed['to_text']
+  } catch {
+    // Invalid JSON ⇒ not restorable.
+  }
+  return null
+}
+
+function isRestorable(entry: HistoryEntry): boolean {
+  return getRestorableText(entry) !== null
+}
+
 export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement {
   const { t } = useTranslation()
   const [entries, setEntries] = useState<HistoryEntry[]>([])
@@ -141,10 +165,22 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   const handleRestore = useCallback(
     async (entry: HistoryEntry) => {
       if (!blockId) return
+      // Own the restorability invariant here rather than trusting the child to
+      // withhold the restore affordance: guard with the SAME predicate that
+      // derives `restorableEntries`, and surface feedback instead of silently
+      // no-op'ing if invoked on a non-restorable entry (or one whose payload
+      // lacks `to_text`).
+      const toText = getRestorableText(entry)
+      if (toText == null) {
+        logger.warn('HistoryPanel', 'Restore invoked on a non-restorable entry — ignoring', {
+          blockId,
+          opId: entry.seq,
+          opType: entry.op_type,
+        })
+        notify.error(t('history.notRestorable'))
+        return
+      }
       try {
-        const parsed = JSON.parse(entry.payload) as { to_text?: string }
-        if (parsed.to_text == null) return
-
         // Snapshot the current block content for the toast's Undo action.
         // We tolerate a missing snapshot (e.g. fresh block, transient IPC
         // glitch) — the restore still proceeds, just without an Undo offer.
@@ -161,7 +197,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
           )
         }
 
-        await editBlock(blockId, parsed.to_text)
+        await editBlock(blockId, toText)
 
         if (previousContent != null) {
           const captured = previousContent
@@ -194,15 +230,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   // collapses. Skips non-restorable rows so the keyboard cursor never
   // gets "stuck" on a non-actionable entry.
   const restorableEntries = useMemo(() => {
-    return filteredEntries.filter((e) => {
-      if (e.op_type !== 'edit_block') return false
-      try {
-        const p = JSON.parse(e.payload) as Record<string, unknown>
-        return typeof p['to_text'] === 'string'
-      } catch {
-        return false
-      }
-    })
+    return filteredEntries.filter(isRestorable)
   }, [filteredEntries])
 
   const handlePanelKeyDown = useCallback(

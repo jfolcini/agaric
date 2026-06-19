@@ -312,21 +312,27 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
   })
 
   // -------------------------------------------------------------------------
-  // #1687 — structured error contract (graph-worker.ts:145-155)
+  // #1614 — single structured error channel (graph-worker.ts message-handler
+  // catch). The handler posts exactly ONE structured {type:'error'} and does
+  // NOT re-throw: re-throwing previously surfaced at the worker boundary as a
+  // global `error` event, which posted a SECOND error and fanned one failure
+  // into multiple signals. The global error/unhandledrejection listeners
+  // remain only as the fallback for errors that genuinely escape the handler.
   // -------------------------------------------------------------------------
 
-  it('posts a structured {type:"error"} message AND rethrows when the dispatcher throws', () => {
+  it('posts exactly one structured {type:"error"} and does NOT re-throw when the dispatcher throws', () => {
     // Force forceSimulation to throw inside the `start` handler so the
-    // try/catch fires. The handler must (1) post a structured error back to
-    // the main thread, then (2) re-throw so the worker `error` boundary still
-    // fires (preserving the onWorkerFailed fallback in runWorkerSimulation).
+    // try/catch fires. The handler must post a single structured error back to
+    // the main thread and swallow the throw — the main thread already routes
+    // this post through the same `reportFailure` fallback as a boundary error,
+    // so re-throwing would only produce a redundant second error post.
     forceSimulation.mockImplementationOnce(() => {
       throw new Error('boom in sim')
     })
 
-    // The dispatcher rethrows; dispatchEvent surfaces listener exceptions via
-    // the global onerror, which vitest turns into an unhandled error. Assert
-    // the throw rather than letting it escape the test.
+    // No re-throw: dispatching the event must NOT surface the listener
+    // exception (which dispatchEvent would otherwise route to the global
+    // onerror and vitest would turn into an unhandled error).
     expect(() =>
       send({
         type: 'start',
@@ -335,14 +341,14 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
         width: 800,
         height: 600,
       }),
-    ).toThrow('boom in sim')
+    ).not.toThrow()
 
     const errs = posted.filter((m) => m.type === 'error')
     expect(errs).toHaveLength(1)
     expect(errs[0]).toMatchObject({ type: 'error', message: 'boom in sim' })
   })
 
-  it('stringifies a non-Error throw value in the structured error message', () => {
+  it('stringifies a non-Error throw value in the single structured error message', () => {
     forceSimulation.mockImplementationOnce(() => {
       // biome-ignore lint/style/useThrowOnlyError: exercising the non-Error branch
       throw 'plain string failure'
@@ -356,10 +362,43 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
         width: 800,
         height: 600,
       }),
-    ).toThrow()
+    ).not.toThrow()
 
     const errs = posted.filter((m) => m.type === 'error')
     expect(errs).toHaveLength(1)
     expect(errs[0]?.['message']).toBe('plain string failure')
+  })
+
+  it('the global `error` listener remains a fallback for errors that genuinely escape the handler', () => {
+    // A failure that never reaches the dispatcher try/catch (e.g. a future
+    // async path, or an error thrown outside a `message` event) must still be
+    // reported via the worker's global `error` listener — the catch above does
+    // not weaken genuine-crash reporting.
+    self.dispatchEvent(new ErrorEvent('error', { message: 'uncaught worker crash' }))
+
+    const errs = posted.filter((m) => m.type === 'error')
+    expect(errs).toHaveLength(1)
+    expect(errs[0]).toMatchObject({ type: 'error', message: 'uncaught worker crash' })
+  })
+
+  it('a normal handler failure does NOT trigger the global `error` fallback (no double-post)', () => {
+    // End-to-end guard for #1614: when the dispatcher throws, the catch posts a
+    // single structured error and swallows the throw, so the global `error`
+    // listener never fires. Exactly one error post results.
+    forceSimulation.mockImplementationOnce(() => {
+      throw new Error('handler failure')
+    })
+
+    send({
+      type: 'start',
+      nodes: [{ id: 'a', label: 'A' }],
+      edges: [],
+      width: 800,
+      height: 600,
+    })
+
+    const errs = posted.filter((m) => m.type === 'error')
+    expect(errs).toHaveLength(1)
+    expect(errs[0]).toMatchObject({ type: 'error', message: 'handler failure' })
   })
 })

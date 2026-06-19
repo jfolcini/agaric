@@ -30,12 +30,15 @@ interface UsePollingQueryResult<T> {
   loading: boolean
   error: string | null
   /**
-   * Manually re-run the query. Respects `document.hidden` the same way the
-   * polling loop does — calls made while the page is hidden are a no-op.
-   * Callers that need a force-fetch regardless of visibility should avoid
-   * this hook or fire the underlying Tauri command directly.
+   * Manually re-run the query. By default this respects `document.hidden`
+   * the same way the polling loop does — calls made while the page is hidden
+   * are a no-op (#1596).
+   *
+   * Pass `{ force: true }` for an explicit, user-initiated refetch that must
+   * run regardless of visibility (e.g. a "Refresh" button). The automatic
+   * polling interval never forces, so background tabs stay quiet.
    */
-  refetch: () => Promise<void>
+  refetch: (opts?: { force?: boolean }) => Promise<void>
 }
 
 export function usePollingQuery<T>(
@@ -58,27 +61,35 @@ export function usePollingQuery<T>(
   // the latest claim may write state.
   const requestIdRef = useRef(0)
 
-  const load = useCallback(async () => {
-    // PERF-21: skip work when the page is hidden — we'll catch up via
-    // the visibilitychange handler once the user returns. Guarded via
-    // `typeof` so the hook still works in non-browser test environments
-    // that might not expose `document`.
-    if (typeof document !== 'undefined' && document.hidden) return
-    const rid = ++requestIdRef.current
-    setLoading(true)
-    try {
-      const resp = await queryFn()
-      if (requestIdRef.current !== rid) return
-      setData(resp)
-      setError(null)
-    } catch {
-      if (requestIdRef.current !== rid) return
-      setError(optionsRef.current.errorMessage ?? 'Request failed')
-    } finally {
-      // A superseded request must not clear the newer request's spinner.
-      if (requestIdRef.current === rid) setLoading(false)
-    }
-  }, [queryFn])
+  const load = useCallback(
+    async (loadOpts?: { force?: boolean }): Promise<void> => {
+      // PERF-21: skip work when the page is hidden — we'll catch up via
+      // the visibilitychange handler once the user returns. Guarded via
+      // `typeof` so the hook still works in non-browser test environments
+      // that might not expose `document`.
+      //
+      // #1596: an explicit, user-initiated `refetch({ force: true })` bypasses
+      // this guard so a "Refresh" action isn't a silent no-op while hidden.
+      // The automatic polling/interval path never forces, so background tabs
+      // stay quiet as before.
+      if (!loadOpts?.force && typeof document !== 'undefined' && document.hidden) return
+      const rid = ++requestIdRef.current
+      setLoading(true)
+      try {
+        const resp = await queryFn()
+        if (requestIdRef.current !== rid) return
+        setData(resp)
+        setError(null)
+      } catch {
+        if (requestIdRef.current !== rid) return
+        setError(optionsRef.current.errorMessage ?? 'Request failed')
+      } finally {
+        // A superseded request must not clear the newer request's spinner.
+        if (requestIdRef.current === rid) setLoading(false)
+      }
+    },
+    [queryFn],
+  )
 
   useEffect(() => {
     // Invalidate any in-flight request when deps change or `enabled`
@@ -93,8 +104,14 @@ export function usePollingQuery<T>(
       return
     }
     load()
-    const id = setInterval(load, intervalMs)
-    if (refetchOnFocus) window.addEventListener('focus', load)
+    // Wrap `load` for the interval/listeners so the auto-polling paths never
+    // pass `{ force }` (an Event arg would also be rejected by TS now that
+    // `load` takes a typed options param — #1596).
+    const tick = (): void => {
+      void load()
+    }
+    const id = setInterval(tick, intervalMs)
+    if (refetchOnFocus) window.addEventListener('focus', tick)
     // PERF-21: reload the moment the page becomes visible again so stale
     // state (conflict counts, badges) freshens without the user waiting
     // up to `intervalMs` for the next tick.
@@ -108,7 +125,7 @@ export function usePollingQuery<T>(
     }
     return () => {
       clearInterval(id)
-      if (refetchOnFocus) window.removeEventListener('focus', load)
+      if (refetchOnFocus) window.removeEventListener('focus', tick)
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', onVisibilityChange)
       }

@@ -322,8 +322,22 @@ export function useBlockDnD({
       // roots, relocate the WHOLE selection (contiguous, order-preserving) to
       // the projected slot instead of moving just the active block + its own
       // subtree. Requires a projection (drop position) and the `moveBlocks`
-      // action; otherwise fall through to single-block behaviour.
-      if (isMultiDrag && projected && activeBlock && moveBlocks) {
+      // action.
+      if (isMultiDrag && projected && activeBlock) {
+        // #1593 — `moveBlocks` is the only path that can relocate the whole
+        // selection. If it's not wired, do NOT fall through to the single-block
+        // path: that would silently move just the active block's subtree while
+        // the rest of the visible selection stays put — which looks like a bug.
+        // No-op the drop with a warning instead. (Latent: the live BlockTree
+        // always passes `moveBlocks`.)
+        if (!moveBlocks) {
+          logger.warn(
+            'useBlockDnD',
+            'multi-select drag dropped: `moveBlocks` is not wired, so the whole selection cannot be moved (refusing to relocate just the active block)',
+            { dragRoots },
+          )
+          return
+        }
         // The drop slot is computed for the active block as if it alone moved;
         // the other roots land contiguously after it (moveBlocks fans out the
         // consecutive slots). #400: 0-based sibling slot under projected parent.

@@ -59,6 +59,7 @@ vi.mock('@/lib/logger', () => ({
 // ── Imports ──────────────────────────────────────────────────────────────
 
 import { makeBlock } from '../../__tests__/fixtures'
+import { logger } from '../../lib/logger'
 import { capturePreDragFocus, consumePreDragFocus } from '../../lib/pre-drag-focus'
 import type { Projection } from '../../lib/tree-utils'
 import {
@@ -75,6 +76,7 @@ const mockedGetProjection = vi.mocked(getProjection)
 const mockedComputeDropIndex = vi.mocked(computeDropIndex)
 const mockedComputeSelectionRoots = vi.mocked(computeSelectionRoots)
 const mockedUseIsTouch = vi.mocked(useIsTouch)
+const mockedLoggerWarn = vi.mocked(logger.warn)
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -1417,6 +1419,50 @@ describe('useBlockDnD', () => {
       expect(params.moveBlocks).toHaveBeenCalledWith(['A', 'B'], null, 2)
       expect(params.reorder).not.toHaveBeenCalled()
       expect(params.moveToParent).not.toHaveBeenCalled()
+    })
+
+    // #1593 — when the drag IS a multi-select drag but `moveBlocks` is not wired,
+    // the only correct outcome is a no-op + warning. Falling through to the
+    // single-block path would silently relocate just the active block's subtree
+    // while the rest of the visible selection stays put (looks like a bug).
+    it('no-ops with a logger.warn when a multi-drag has no moveBlocks wired (does NOT move just the active block)', () => {
+      const params = makeDefaultParams({
+        blocks: threeBlocks,
+        collapsedVisible: threeBlocks,
+        selectedBlockIds: ['A', 'B'],
+      })
+      // `moveBlocks` omitted: a call site that never expected multi-select.
+      // Delete rather than override to `undefined` — under
+      // `exactOptionalPropertyTypes` the optional `moveBlocks?` prop cannot be
+      // assigned `undefined`, so we drop it to genuinely simulate "not wired".
+      delete (params as { moveBlocks?: unknown }).moveBlocks
+
+      mockedComputeSelectionRoots.mockReturnValue(['A', 'B'])
+      const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
+      mockedGetProjection.mockReturnValue(projection)
+      mockedComputeDropIndex.mockReturnValue(2)
+
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('A') as never)
+      })
+
+      expect(result.current.isMultiDrag).toBe(true)
+
+      act(() => {
+        result.current.handleDragEnd(makeDragEndEvent('A', 'D') as never)
+      })
+
+      // No single-block fallback: the active block is NOT relocated on its own.
+      expect(params.reorder).not.toHaveBeenCalled()
+      expect(params.moveToParent).not.toHaveBeenCalled()
+      // The drop is dropped with a warning explaining moveBlocks is not wired.
+      expect(mockedLoggerWarn).toHaveBeenCalledWith(
+        'useBlockDnD',
+        expect.stringContaining('moveBlocks'),
+        { dragRoots: ['A', 'B'] },
+      )
     })
 
     it('falls back to single-block drag when the dragged block is NOT in the selection', () => {
