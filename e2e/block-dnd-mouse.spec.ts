@@ -19,7 +19,7 @@ import {
  * `move_block` IPC payload — since #400 a 0-based `newIndex` slot (slot 0 =
  * "first child" / "top"). The four original bugs are fixed at the root, so the
  * specs assert the CORRECT slot (and faithful visual order where the mock
- * reproduces it). See docs/dnd-ux-review.md + src/lib/__tests__/dnd-pipeline.test.ts.
+ * reproduces it). See src/lib/__tests__/dnd-pipeline.test.ts.
  */
 
 const PAGE = 'Getting Started'
