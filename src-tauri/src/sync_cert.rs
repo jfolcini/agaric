@@ -40,9 +40,22 @@ use crate::error::AppError;
 use crate::sync_net::{SyncCert, generate_self_signed_cert};
 
 /// Wrapper for the persistent TLS certificate in Tauri managed state.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PersistedCert {
     pub cert: SyncCert,
+}
+
+// `Debug` is implemented manually (rather than derived) to make the
+// secret-redaction intent explicit and self-documenting: the wrapped
+// [`SyncCert`] already redacts its `key_pem` private key in its own `Debug`,
+// so delegating to it here keeps the private key out of logs/traces while
+// still surfacing the non-secret cert fields for diagnostics.
+impl std::fmt::Debug for PersistedCert {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PersistedCert")
+            .field("cert", &self.cert)
+            .finish()
+    }
 }
 
 impl PersistedCert {
@@ -612,6 +625,48 @@ mod tests {
         assert!(
             debug.contains(&hash),
             "Debug output should include the cert hash, got: {debug}"
+        );
+    }
+
+    #[test]
+    fn debug_redacts_private_key() {
+        const SENTINEL_KEY: &str = "SECRET-PRIVATE-KEY-DO-NOT-LOG-0xDEADBEEF";
+        let cert = SyncCert {
+            cert_pem: "-----BEGIN CERTIFICATE-----\nnonsecret\n-----END CERTIFICATE-----"
+                .to_string(),
+            key_pem: SENTINEL_KEY.to_string(),
+            cert_hash: "abc123def456".to_string(),
+        };
+
+        // Direct SyncCert Debug must redact the private key.
+        let cert_debug = format!("{cert:?}");
+        assert!(
+            !cert_debug.contains(SENTINEL_KEY),
+            "SyncCert Debug must NOT leak the private key, got: {cert_debug}"
+        );
+        assert!(
+            cert_debug.contains("[REDACTED]"),
+            "SyncCert Debug must mark the redacted key, got: {cert_debug}"
+        );
+        assert!(
+            cert_debug.contains("abc123def456"),
+            "SyncCert Debug must still show the non-secret cert_hash, got: {cert_debug}"
+        );
+
+        // The PersistedCert wrapper must inherit the redaction.
+        let persisted = PersistedCert::new(cert);
+        let wrapped_debug = format!("{persisted:?}");
+        assert!(
+            !wrapped_debug.contains(SENTINEL_KEY),
+            "PersistedCert Debug must NOT leak the private key, got: {wrapped_debug}"
+        );
+        assert!(
+            wrapped_debug.contains("[REDACTED]"),
+            "PersistedCert Debug must mark the redacted key, got: {wrapped_debug}"
+        );
+        assert!(
+            wrapped_debug.contains("abc123def456"),
+            "PersistedCert Debug must still show the non-secret cert_hash, got: {wrapped_debug}"
         );
     }
 
