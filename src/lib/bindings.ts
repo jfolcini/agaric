@@ -3072,6 +3072,17 @@ export type SpaceRow = {
  *
  *  Specta emits this as a TS discriminated union
  *  (`{ kind: "global" } | { kind: "active"; space_id: SpaceId }`).
+ *
+ *  # Deserialize validates the `Active` id shape (issue #1588)
+ *
+ *  The wire/SQL layers treat the inner `SpaceId` as a trusted-shape string —
+ *  [`SpaceId::Deserialize`] only uppercase-normalises (mirroring `BlockId`),
+ *  so without a guard a malformed `space_id` from the frontend / MCP / sync
+ *  would bind a never-matching SQL filter param and silently return empty
+ *  results. The hand-written `Deserialize` impl below deserialises through the
+ *  same adjacently-tagged shape and then runs the lightweight ULID-shape check
+ *  ([`SpaceScope::validate`]), so this IPC boundary rejects a malformed space
+ *  id up front. `Global` and the seeded sentinel spaces are unaffected.
  */
 export type SpaceScope = { kind: "global" } | { kind: "active"; space_id: SpaceId };
 

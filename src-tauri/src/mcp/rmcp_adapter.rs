@@ -56,6 +56,63 @@ use super::registry::ToolRegistry;
 use super::server::ERROR_CLIP_CAP;
 use crate::error::AppError;
 
+/// #1569 — upper bound on the number of Unicode scalar values (chars)
+/// kept from a self-reported MCP `clientInfo.name` before it becomes an
+/// [`Actor::Agent`] label and is stamped, verbatim, into the permanent,
+/// append-only, hash-chained `op_log.origin` column (see
+/// `op_log::append_local_op_in_tx`).
+///
+/// The handshake name is fully attacker-controlled by a local MCP client
+/// and was previously taken with no length cap, charset normalisation, or
+/// control-char rejection, letting a misbehaving client persist an
+/// arbitrarily large / malformed string into durable state on every RW
+/// tool call. 128 chars is generous for a human-meaningful client label
+/// (e.g. `"claude-desktop"`, `"Cursor 0.42 (macOS)"`) while bounding the
+/// per-op `origin` contribution to a small, predictable size. Truncation
+/// is on a char boundary so a multi-byte scalar is never split.
+const MAX_AGENT_NAME_LEN: usize = 128;
+
+/// Stable placeholder used when a self-reported MCP `clientInfo.name` is
+/// empty or becomes empty after control-char stripping. Mirrors the
+/// `"unknown"` fallback used when `peer_info()` is absent so the
+/// resulting `origin` is always a non-empty, well-formed `agent:<name>`.
+const AGENT_NAME_PLACEHOLDER: &str = "unknown";
+
+/// #1569 — normalise a self-reported MCP `clientInfo.name` at the trust
+/// boundary, before it is wrapped in [`Actor::Agent`] and durably stamped
+/// into `op_log.origin`.
+///
+/// Performed exactly once, here at the capture site, so the cleaned value
+/// flows through `Actor::Agent` → `Actor::origin_tag` → `op_log.origin`
+/// unchanged. The steps:
+///
+/// 1. Strip ASCII control characters (`\0`, `\t`, `\n`, `\r`, `\x1b`, …)
+///    and other Unicode control scalars (`char::is_control`) so no
+///    control bytes ever reach the append-only log.
+/// 2. Collapse / trim surrounding ASCII whitespace so a name that is all
+///    spaces (or padded) does not produce a blank-looking label.
+/// 3. Truncate to [`MAX_AGENT_NAME_LEN`] chars on a char boundary so a
+///    multi-KiB / multi-MiB name cannot bloat the durable row and a
+///    multi-byte scalar is never split mid-codepoint.
+/// 4. Fall back to [`AGENT_NAME_PLACEHOLDER`] when nothing printable
+///    remains, so the label is never empty.
+fn sanitize_agent_name(raw: &str) -> String {
+    let cleaned: String = raw
+        // Drop every control char (ASCII C0/C1 + Unicode controls).
+        .chars()
+        .filter(|c| !c.is_control())
+        // Bound length on a char boundary — `take` counts scalars, so a
+        // multi-byte char is kept whole or dropped, never split.
+        .take(MAX_AGENT_NAME_LEN)
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        AGENT_NAME_PLACEHOLDER.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// Production adapter that exposes a tool registry through `rmcp`'s
 /// [`ServerHandler`] trait.
 ///
@@ -157,11 +214,17 @@ impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
         // state. rmcp captures `InitializeRequestParams` during the
         // handshake automatically — `peer_info()` is the equivalent
         // of `super::server::ConnectionState::client_info`.
+        // #1569 — the handshake `clientInfo.name` is fully controlled by
+        // the local MCP client and is stamped, verbatim, into the
+        // permanent append-only `op_log.origin` column on every RW tool
+        // call. Cap + control-strip it ONCE here at the trust boundary so
+        // the cleaned value flows through `Actor::Agent` → `origin_tag()`
+        // → durable state; downstream code never sees the raw string.
         let agent_name = context
             .peer
             .peer_info()
-            .map(|info| info.client_info.name.clone())
-            .unwrap_or_else(|| "unknown".to_string());
+            .map(|info| sanitize_agent_name(&info.client_info.name))
+            .unwrap_or_else(|| AGENT_NAME_PLACEHOLDER.to_string());
 
         let actor_ctx = ActorContext {
             actor: Actor::Agent {
@@ -949,5 +1012,90 @@ mod tests {
         );
         let _ = client.cancel().await;
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), server_task).await;
+    }
+
+    // -----------------------------------------------------------------------
+    // #1569 — agent-name sanitisation at the op_log.origin trust boundary
+    // -----------------------------------------------------------------------
+
+    /// A multi-MiB self-reported `clientInfo.name` must be truncated to the
+    /// cap before it can become an `Actor::Agent` label / `op_log.origin`
+    /// string — a misbehaving client can otherwise persist an arbitrarily
+    /// large blob into the permanent append-only log on every RW call.
+    #[test]
+    fn sanitize_agent_name_caps_oversized_input() {
+        let huge = "a".repeat(4 * 1024 * 1024); // 4 MiB
+        let cleaned = sanitize_agent_name(&huge);
+        assert_eq!(
+            cleaned.chars().count(),
+            MAX_AGENT_NAME_LEN,
+            "oversized name must be truncated to exactly MAX_AGENT_NAME_LEN chars",
+        );
+        // And the resulting durable origin tag is correspondingly bounded.
+        let origin = Actor::Agent { name: cleaned }.origin_tag();
+        assert_eq!(
+            origin.chars().count(),
+            // "agent:" prefix (6 chars) + the capped name.
+            "agent:".chars().count() + MAX_AGENT_NAME_LEN,
+            "op_log.origin must be bounded by the agent-name cap",
+        );
+    }
+
+    /// Truncation must land on a char boundary — a multi-byte scalar is
+    /// kept whole or dropped, never split into invalid UTF-8.
+    #[test]
+    fn sanitize_agent_name_truncates_on_char_boundary() {
+        // Each '€' is 3 bytes; far more than the cap so truncation kicks in.
+        let multibyte = "€".repeat(MAX_AGENT_NAME_LEN + 50);
+        let cleaned = sanitize_agent_name(&multibyte);
+        assert_eq!(
+            cleaned.chars().count(),
+            MAX_AGENT_NAME_LEN,
+            "multibyte name truncated to MAX_AGENT_NAME_LEN scalars",
+        );
+        // Round-trips as valid UTF-8 (would panic on a byte split).
+        assert!(cleaned.chars().all(|c| c == '€'));
+    }
+
+    /// ASCII control characters (and other Unicode controls) must be
+    /// stripped so no control bytes ever reach the append-only log.
+    #[test]
+    fn sanitize_agent_name_strips_control_chars() {
+        let dirty = "cla\0ude\t-de\nsk\x1btop\r";
+        let cleaned = sanitize_agent_name(dirty);
+        assert_eq!(
+            cleaned, "claude-desktop",
+            "all control chars (\\0 \\t \\n \\x1b \\r) must be stripped",
+        );
+        assert!(
+            !cleaned.chars().any(|c| c.is_control()),
+            "no control char may survive sanitisation",
+        );
+    }
+
+    /// A normal, well-formed name must pass through unchanged.
+    #[test]
+    fn sanitize_agent_name_passes_normal_name_unchanged() {
+        let name = "claude-desktop";
+        assert_eq!(sanitize_agent_name(name), name);
+        assert_eq!(sanitize_agent_name("Cursor 0.42"), "Cursor 0.42");
+    }
+
+    /// An empty or whitespace-only name (incl. one that is empty *after*
+    /// control stripping) must yield the stable placeholder, never an
+    /// empty `agent:` label.
+    #[test]
+    fn sanitize_agent_name_empty_yields_placeholder() {
+        assert_eq!(sanitize_agent_name(""), AGENT_NAME_PLACEHOLDER);
+        assert_eq!(sanitize_agent_name("   "), AGENT_NAME_PLACEHOLDER);
+        // All-control input collapses to empty → placeholder, not "".
+        assert_eq!(sanitize_agent_name("\0\t\n\x1b"), AGENT_NAME_PLACEHOLDER);
+        // The durable origin is therefore well-formed, never "agent:".
+        let origin = Actor::Agent {
+            name: sanitize_agent_name(""),
+        }
+        .origin_tag();
+        assert_eq!(origin, format!("agent:{AGENT_NAME_PLACEHOLDER}"));
+        assert_ne!(origin, "agent:");
     }
 }

@@ -4087,6 +4087,40 @@ async fn get_blocks_rejects_empty_oversize() {
     );
 }
 
+/// #1573 — `first_child_for_blocks_inner` must share the
+/// [`crate::commands::MAX_BATCH_BLOCK_IDS`] cap with the rest of the batch
+/// family: an over-cap `block_ids` list rejects with Validation, while an
+/// under-cap list returns the first-child map (here an empty map, since no
+/// matching parents exist).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn first_child_for_blocks_rejects_oversize() {
+    let (pool, _dir) = test_pool().await;
+
+    // Under-cap happy path: empty input returns an empty map (not an error).
+    let empty = first_child_for_blocks_inner(&pool, vec![]).await.unwrap();
+    assert!(empty.is_empty(), "empty input returns an empty map");
+
+    // Under-cap, non-empty: a single unknown id resolves to no previews.
+    let under = first_child_for_blocks_inner(&pool, vec!["FC_MISSING".into()])
+        .await
+        .unwrap();
+    assert!(under.is_empty(), "under-cap input must not error");
+
+    // Over-cap: one more than the shared cap rejects with Validation.
+    let oversize: Vec<String> = (0..(crate::commands::MAX_BATCH_BLOCK_IDS + 1))
+        .map(|i| format!("ID{i}"))
+        .collect();
+    let big = first_child_for_blocks_inner(
+        &pool,
+        oversize.into_iter().map(Into::into).collect::<Vec<_>>(),
+    )
+    .await;
+    assert!(
+        matches!(big, Err(crate::error::AppError::Validation(_))),
+        "oversize input must reject with Validation"
+    );
+}
+
 // ======================================================================
 // PEND-35 Tier 2.10b — filtered_blocks_query_inner
 // ======================================================================

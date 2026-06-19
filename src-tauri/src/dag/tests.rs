@@ -131,6 +131,58 @@ async fn insert_remote_op_duplicate_is_ignored() {
     assert_eq!(fetched.hash, record.hash);
 }
 
+/// #1572 — a second op at the SAME `(device_id, seq)` but with a
+/// DIFFERENT hash (a fork, corruption, or device-id reuse) must be
+/// REJECTED with an integrity error, not silently dropped as if it were
+/// a benign idempotent re-delivery (which would return `Ok(false)`).
+#[tokio::test]
+async fn insert_remote_op_same_pk_different_hash_rejected() {
+    let (pool, _dir) = test_pool().await;
+
+    // First op lands cleanly.
+    let first = make_remote_record(
+        "remote-dev",
+        1,
+        None,
+        "create_block",
+        r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"hello"}"#,
+    );
+    insert_remote_op(&pool, &first).await.unwrap();
+
+    // A diverging op at the SAME (device_id, seq) — different content
+    // ⇒ different (still self-consistent) hash. This must NOT be treated
+    // as a duplicate.
+    let diverging = make_remote_record(
+        "remote-dev",
+        1,
+        None,
+        "create_block",
+        r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"GOODBYE"}"#,
+    );
+    assert_ne!(
+        first.hash, diverging.hash,
+        "test fixture sanity: diverging op must have a different hash"
+    );
+
+    let err = insert_remote_op(&pool, &diverging).await;
+    assert!(
+        err.is_err(),
+        "expected an integrity error on same-PK/different-hash, got Ok"
+    );
+    let msg = err.unwrap_err().to_string();
+    assert!(
+        msg.contains("divergence"),
+        "expected op_log divergence error, got: {msg}"
+    );
+
+    // The original row must be untouched (the diverging content was rejected,
+    // not written).
+    let fetched = get_op_by_seq(&ReadPool(pool.clone()), "remote-dev", 1)
+        .await
+        .unwrap();
+    assert_eq!(fetched.hash, first.hash);
+}
+
 #[tokio::test]
 async fn insert_remote_op_hash_mismatch_rejected() {
     let (pool, _dir) = test_pool().await;

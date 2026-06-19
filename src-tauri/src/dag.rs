@@ -439,6 +439,47 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
         }
     }
 
+    // #1572 — distinguish a benign idempotent re-delivery from a fork /
+    // corruption / device-id reuse at the same composite PK.
+    //
+    // The bare `INSERT OR IGNORE` below collapses BOTH cases into the same
+    // `rows_affected() == 0 -> Ok(false)`: a row that already exists with the
+    // SAME hash (genuine duplicate delivery, harmless) and a row that already
+    // exists with a DIFFERENT hash (the incoming op diverges from what we
+    // stored). The latter silently drops conflicting content with no error,
+    // log, or integrity signal. Probe the existing row first and reject the
+    // mismatch explicitly so divergence is observable.
+    //
+    // A `Some(h)` where `h == record.hash` is a genuine idempotent
+    // re-delivery: fall through to the `INSERT OR IGNORE`, which is a no-op
+    // and returns `Ok(false)`, keeping the pre-existing benign behaviour
+    // unchanged. Only the different-hash case is rejected.
+    let existing_hash = sqlx::query_scalar!(
+        "SELECT hash FROM op_log WHERE device_id = ? AND seq = ?",
+        record.device_id,
+        record.seq,
+    )
+    .fetch_optional(pool)
+    .await?;
+    if let Some(existing_hash) = existing_hash
+        && existing_hash != record.hash
+    {
+        tracing::error!(
+            device_id = %record.device_id,
+            seq = record.seq,
+            existing_hash = %existing_hash,
+            incoming_hash = %record.hash,
+            "op_log divergence: existing row at (device_id, seq) has a \
+             different hash than the incoming op (fork / corruption / \
+             device-id reuse); rejecting instead of silently dropping",
+        );
+        return Err(AppError::InvalidOperation(
+            "op_log divergence: existing row at (device_id, seq) has a \
+             different hash than the incoming op"
+                .into(),
+        ));
+    }
+
     // INSERT OR IGNORE — duplicate delivery is a no-op.
     // Returns true if a row was inserted, false if it was a duplicate.
     //
