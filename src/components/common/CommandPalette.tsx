@@ -48,6 +48,7 @@ import {
 import { CommandsModeBody } from '@/components/palette/CommandsModeBody'
 import {
   BLOCK_QUERY_LIMIT,
+  LINK_MODE_BLOCK_LIMIT,
   PAGE_QUERY_LIMIT,
   PALETTE_DEBOUNCE_MS,
 } from '@/components/palette/constants'
@@ -379,7 +380,7 @@ export function PaletteBody({
     const fetchPromise = searchBlocksPartitioned({
       query: effectiveQuery,
       pageLimit: PAGE_QUERY_LIMIT,
-      blockLimit: linkMode ? 0 : BLOCK_QUERY_LIMIT,
+      blockLimit: linkMode ? LINK_MODE_BLOCK_LIMIT : BLOCK_QUERY_LIMIT,
       spaceId,
     }).then((resp) => ({
       pages: { items: resp.pages.items },
