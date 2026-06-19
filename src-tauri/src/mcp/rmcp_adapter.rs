@@ -1068,7 +1068,7 @@ mod tests {
             "all control chars (\\0 \\t \\n \\x1b \\r) must be stripped",
         );
         assert!(
-            !cleaned.chars().any(|c| c.is_control()),
+            !cleaned.chars().any(char::is_control),
             "no control char may survive sanitisation",
         );
     }
