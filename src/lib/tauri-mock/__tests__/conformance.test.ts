@@ -162,10 +162,28 @@ const fixtures = loadFixtures()
 // fixtures where mirroring its behaviour in the mock is not a cheap/safe change
 // — file an issue instead. Each entry must have a `// DRIFT(#763): …` note.
 const DRIFT_SKIP = new Set<string>([
-  // (empty) — #891 fixed the Rust runner to author `expected` from the
-  // production ENGINE path (dense-reproject positions) instead of the SQL-only
-  // fallback (gapped provisional positions). `position_reproject_drift` now
-  // MATCHES the mock's dense renumber, so it is no longer skipped.
+  // #891 fixed the Rust runner to author `expected` from the production ENGINE
+  // path (dense-reproject positions) instead of the SQL-only fallback (gapped
+  // provisional positions). `position_reproject_drift` now MATCHES the mock's
+  // dense renumber, so it is no longer skipped.
+
+  // DRIFT(#763 / #1690): the mock's SINGLE-OP `delete_block` and `restore_block`
+  // handlers (handlers.ts) only touch the one target block — `delete_block` sets
+  // `deleted_at` on the block alone (`descendants_affected: 0`) and
+  // `restore_block` clears it unconditionally. The real backend's `delete_block`
+  // op CASCADES over the active descendant subtree (`descendants_cte_active`) and
+  // `restore_block` restores the SAME-COHORT descendant chain
+  // (`descendants_cte_cohort`, deleted_at_ref-keyed), preserving an
+  // independently-deleted descendant. These two fixtures exercise exactly that
+  // multi-level cascade / cohort-restore behaviour, which the mock does NOT
+  // mirror, so the mock snapshot diverges from the backend-authored `expected`.
+  // Mirroring the backend's recursive cascade/cohort walk in the single-op mock
+  // handlers is a non-trivial change to the 3.5k-line tauri-mock; per the #763
+  // policy the backend stays the source of truth and these are skipped on the
+  // mock side pending a mock-cascade fix (tracked in #1775). The Rust
+  // conformance runner still asserts the backend behaviour for both fixtures.
+  'cascade_delete_subtree',
+  'restore_after_cascade_independent_child',
 ])
 
 describe('tauri-mock ⇄ backend conformance (#763)', () => {
