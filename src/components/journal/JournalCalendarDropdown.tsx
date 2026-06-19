@@ -221,7 +221,7 @@ export function JournalCalendarDropdown({
         aria-busy={loading}
         aria-label={t('journal.datePickerLabel')}
         className={cn(
-          'absolute right-0 z-50 rounded-md border bg-popover p-2 shadow-md',
+          'absolute right-0 z-50 rounded-md border bg-popover p-2 shadow-(--shadow-floating)',
           flipAbove ? 'bottom-full mb-1' : 'top-full mt-1',
         )}
         style={shiftLeft > 0 ? { transform: `translateX(${shiftLeft}px)` } : undefined}

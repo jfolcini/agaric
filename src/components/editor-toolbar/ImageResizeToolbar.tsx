@@ -107,7 +107,7 @@ export function ImageResizeToolbar({
       ref={roving.containerRef}
       onKeyDown={roving.onKeyDown}
       onFocus={roving.onFocus}
-      className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 z-10 flex items-center gap-1 rounded-full bg-popover border border-border shadow-md px-2 py-1"
+      className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 z-10 flex items-center gap-1 rounded-full bg-popover border border-border shadow-(--shadow-floating) px-2 py-1"
       role="toolbar"
       aria-label={t('imageResize.toolbar')}
       data-testid="image-resize-toolbar"

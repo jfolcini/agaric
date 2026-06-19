@@ -312,7 +312,7 @@ export function BlockPropertyEditor({
     <div
       ref={propPopupRef}
       data-editor-portal=""
-      className="rounded-md border bg-popover p-1 shadow-lg max-w-[calc(100vw-2rem)]"
+      className="rounded-md border bg-popover p-1 shadow-(--shadow-floating) max-w-[calc(100vw-2rem)]"
       style={{ position: 'fixed', left: HIDDEN_LEFT, top: HIDDEN_TOP, zIndex: 50 }}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- fixed-position custom popover; native <dialog> brings top-layer/modal semantics and ::backdrop that conflict with this manually-positioned non-modal popup
       role="dialog"
@@ -484,7 +484,7 @@ export function BlockPropertyEditor({
     <div
       ref={keyPopupRef}
       data-editor-portal=""
-      className="property-key-editor rounded-md border bg-popover p-1 shadow-lg"
+      className="property-key-editor rounded-md border bg-popover p-1 shadow-(--shadow-floating)"
       style={{ position: 'fixed', left: HIDDEN_LEFT, top: HIDDEN_TOP, zIndex: 50 }}
     >
       <input

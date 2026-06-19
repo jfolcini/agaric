@@ -167,7 +167,7 @@ export function PaletteActionMenu({
         overflowY: placement.maxHeight != null ? 'auto' : undefined,
         zIndex: 60,
       }}
-      className="rounded-md border border-border bg-popover p-1 shadow-md"
+      className="rounded-md border border-border bg-popover p-1 shadow-(--shadow-floating)"
     >
       {actions.map((a, i) => (
         <button

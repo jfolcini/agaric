@@ -72,7 +72,7 @@ export function BlockDndOverlay({
             aria-hidden="true"
             style={{ paddingLeft: `calc(var(--indent-width) * ${depth})` }}
           >
-            <div className="relative max-w-md truncate rounded-md border bg-card px-3 py-1.5 text-sm opacity-70 shadow-lg">
+            <div className="relative max-w-md truncate rounded-md border bg-card px-3 py-1.5 text-sm opacity-70 shadow-(--shadow-overlay)">
               {activeBlock.content?.trim() || ' '}
               {isSubtree && (
                 <span

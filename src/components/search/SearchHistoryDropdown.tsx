@@ -89,7 +89,7 @@ export function SearchHistoryDropdown({
   return (
     <div
       data-testid="search-history-dropdown"
-      className="search-history-dropdown rounded-md border border-input bg-background shadow-sm"
+      className="search-history-dropdown rounded-md border border-input bg-background shadow-(--shadow-floating)"
     >
       <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-muted-foreground">
         <Clock className="h-3.5 w-3.5" aria-hidden="true" />

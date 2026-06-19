@@ -90,7 +90,7 @@ export function LinkPreviewTooltip({
       data-testid="link-preview-tooltip"
       role="tooltip"
       className={cn(
-        'fixed z-50 max-w-xs rounded-md border bg-popover p-2 text-popover-foreground shadow-md',
+        'fixed z-50 max-w-xs rounded-md border bg-popover p-2 text-popover-foreground shadow-(--shadow-floating)',
         'animate-in fade-in-0',
       )}
       style={
