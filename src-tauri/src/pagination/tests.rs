@@ -2348,6 +2348,90 @@ async fn list_agenda_range_cursor_uses_ac_date_not_block_dates_h8() {
     );
 }
 
+#[tokio::test]
+async fn list_agenda_range_same_date_tiebreak_splits_across_page_boundary() {
+    // #1662 regression: when a page boundary lands *inside* a same-date
+    // group, the next cursor encodes (ac.date, b.id). Page 2 must resume on
+    // the (date = SAME, id > last_id) tiebreak — returning the rest of that
+    // date's rows in id order without skipping or duplicating the boundary
+    // row. This exercises the cursor's id tiebreaker, not just the date key.
+    let (pool, _dir) = test_pool().await;
+
+    // Four rows all on the SAME ac.date, plus one on a later date. ULIDs are
+    // lexicographically ordered so (date ASC, id ASC) is A,B,C,D then E.
+    let entries = [
+        ("01J0000000000000000000000A", "2025-07-01"),
+        ("01J0000000000000000000000B", "2025-07-01"),
+        ("01J0000000000000000000000C", "2025-07-01"),
+        ("01J0000000000000000000000D", "2025-07-01"),
+        ("01J0000000000000000000000E", "2025-07-02"),
+    ];
+    for (id, date) in &entries {
+        insert_block(&pool, id, "content", &format!("ev {id}"), None, None).await;
+        insert_agenda_entry(&pool, date, id, "property:due_date").await;
+        sqlx::query("UPDATE blocks SET due_date = ? WHERE id = ?")
+            .bind(date)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    // Page 1 (limit 3): A, B, C — boundary splits the 2025-07-01 group.
+    let r1 = list_agenda_range(
+        &pool,
+        "2025-07-01",
+        "2025-07-31",
+        None,
+        &PageRequest::new(None, Some(3)).unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(r1.items.len(), 3, "page 1 holds the first 3 rows");
+    assert!(r1.has_more, "page 1 must indicate more");
+    assert_eq!(r1.items[0].id, "01J0000000000000000000000A");
+    assert_eq!(r1.items[1].id, "01J0000000000000000000000B");
+    assert_eq!(r1.items[2].id, "01J0000000000000000000000C");
+    let cursor_str = r1.next_cursor.expect("page 1 yields a cursor");
+
+    // Cursor must encode the boundary row's own date AND id tiebreaker.
+    let cursor = Cursor::decode(&cursor_str).expect("cursor decodes");
+    assert_eq!(
+        cursor.deleted_at.as_deref(),
+        Some("2025-07-01"),
+        "cursor date is the boundary row's ac.date"
+    );
+    assert_eq!(
+        cursor.id, "01J0000000000000000000000C",
+        "cursor id is the boundary row's id (the same-date tiebreaker)"
+    );
+
+    // Page 2: resume on (date = 2025-07-01, id > C) then the later date.
+    // Must return D (same date, greater id) and E — never re-returning C.
+    let r2 = list_agenda_range(
+        &pool,
+        "2025-07-01",
+        "2025-07-31",
+        None,
+        &PageRequest::new(Some(cursor_str), Some(3)).unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(r2.items.len(), 2, "page 2 holds the remaining 2 rows");
+    assert!(!r2.has_more, "page 2 is terminal");
+    assert!(r2.next_cursor.is_none(), "terminal page has no cursor");
+    assert_eq!(
+        r2.items[0].id, "01J0000000000000000000000D",
+        "same-date tiebreak: D follows C without re-returning C"
+    );
+    assert_eq!(
+        r2.items[1].id, "01J0000000000000000000000E",
+        "later date follows the same-date group"
+    );
+}
+
 // ====================================================================
 // insta snapshot tests — BlockRow and PageResponse
 // ====================================================================
