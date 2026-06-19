@@ -180,37 +180,62 @@ impl LoroEngine {
             })?
             .content;
 
-        // Common prefix + suffix in Unicode scalars.  Iterate over
-        // `chars()` for both strings in lockstep to get USV indices that
-        // match `LoroText::splice`'s expected coordinate system.
-        let cur_chars: Vec<char> = current.chars().collect();
-        let new_chars: Vec<char> = new_content.chars().collect();
+        // Common prefix + suffix in Unicode scalars.  Scan both strings
+        // with `char_indices()` in lockstep — no `Vec<char>` collection —
+        // tracking USV (scalar) counts and byte offsets together so we can
+        // slice the differing middle directly.  USV offsets match
+        // `LoroText::splice`'s expected coordinate system; byte offsets let
+        // us borrow the replacement slice without re-collecting chars.
+        let cur_len = current.chars().count();
+        let new_len = new_content.chars().count();
 
-        let mut prefix = 0usize;
-        while prefix < cur_chars.len()
-            && prefix < new_chars.len()
-            && cur_chars[prefix] == new_chars[prefix]
+        // Common prefix: walk chars of both strings together.
+        let mut prefix = 0usize; // scalar count
+        let mut prefix_byte_new = 0usize; // byte offset into `new_content`
         {
-            prefix += 1;
+            let mut cur_it = current.char_indices();
+            let mut new_it = new_content.char_indices();
+            loop {
+                match (cur_it.next(), new_it.next()) {
+                    (Some((_, a)), Some((nb, b))) if a == b => {
+                        prefix += 1;
+                        // Byte offset of the *next* new char (one past the
+                        // matched char) = current new byte + matched len.
+                        prefix_byte_new = nb + b.len_utf8();
+                    }
+                    _ => break,
+                }
+            }
         }
 
-        let mut suffix = 0usize;
-        while suffix < cur_chars.len() - prefix
-            && suffix < new_chars.len() - prefix
-            && cur_chars[cur_chars.len() - 1 - suffix] == new_chars[new_chars.len() - 1 - suffix]
+        // Common suffix: walk chars of both strings from the end together,
+        // but never past the already-matched prefix.
+        let max_suffix = (cur_len - prefix).min(new_len - prefix);
+        let mut suffix = 0usize; // scalar count
+        let mut suffix_byte_new = new_content.len(); // byte offset of suffix start in `new_content`
         {
-            suffix += 1;
+            let mut cur_it = current.char_indices().rev();
+            let mut new_it = new_content.char_indices().rev();
+            while suffix < max_suffix {
+                match (cur_it.next(), new_it.next()) {
+                    (Some((_, a)), Some((nb, b))) if a == b => {
+                        suffix += 1;
+                        suffix_byte_new = nb; // byte offset of this matched suffix char
+                    }
+                    _ => break,
+                }
+            }
         }
 
         let range_start = prefix;
-        let range_len = cur_chars.len() - prefix - suffix;
-        let replacement: String = new_chars[prefix..new_chars.len() - suffix].iter().collect();
+        let range_len = cur_len - prefix - suffix;
+        let replacement: &str = &new_content[prefix_byte_new..suffix_byte_new];
 
         if range_len == 0 && replacement.is_empty() {
             return Ok(()); // identical strings; no-op
         }
 
-        self.apply_edit_content(block_id, range_start, range_len, &replacement)
+        self.apply_edit_content(block_id, range_start, range_len, replacement)
     }
     /// Splice an edit into a block's `content` LoroText.
     ///

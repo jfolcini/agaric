@@ -17,7 +17,7 @@ import Text from '@tiptap/extension-text'
 import { TextSelection } from '@tiptap/pm/state'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { QueryHint } from '../extensions/query-hint'
+import { QueryHint, queryHintPluginKey } from '../extensions/query-hint'
 
 function createEditor(text: string): Editor {
   const editor = new Editor({
@@ -107,5 +107,52 @@ describe('QueryHint plugin', () => {
     editor = createEditor('{{query ta later')
     // Caret is at end (after "later"), outside the unterminated key word.
     expect(editor.view.dom.querySelector('.query-hint')).toBeNull()
+  })
+})
+
+describe('QueryHint plugin: recompute short-circuit (#1629)', () => {
+  let editor: Editor
+  afterEach(() => editor?.destroy())
+
+  it('skips recompute on a no-op (metadata-only) transaction', () => {
+    editor = createEditor('{{query ta')
+    const before = queryHintPluginKey.getState(editor.state)
+    expect(before?.hint).not.toBeNull()
+
+    // A metadata-only transaction: no doc change, selection unchanged. The
+    // plugin must reuse the previous state object (identity-equal), proving
+    // it did NOT re-run deriveState / textBetween / computeQueryHint.
+    editor.view.dispatch(editor.state.tr.setMeta('noop', true))
+
+    const after = queryHintPluginKey.getState(editor.state)
+    expect(after).toBe(before)
+  })
+
+  it('recomputes when content changes (correctness preserved)', () => {
+    editor = createEditor('{{query t')
+    const before = queryHintPluginKey.getState(editor.state)
+
+    // Insert a character at the caret: doc changes, so the hint must be
+    // recomputed (a fresh state object reflecting the new text).
+    editor.view.dispatch(editor.state.tr.insertText('a'))
+
+    const after = queryHintPluginKey.getState(editor.state)
+    expect(after).not.toBe(before)
+    expect(after?.hint).not.toBeNull()
+  })
+
+  it('recomputes on a selection-only move (caret is an input to the hint)', () => {
+    editor = createEditor('{{query ta')
+    const before = queryHintPluginKey.getState(editor.state)
+    expect(before?.hint).not.toBeNull()
+
+    // Move the caret to the document start without touching content. The
+    // selection changed, so the plugin must recompute — and the hint clears
+    // because the caret no longer sits inside the query token.
+    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 1)))
+
+    const after = queryHintPluginKey.getState(editor.state)
+    expect(after).not.toBe(before)
+    expect(after?.hint).toBeNull()
   })
 })
