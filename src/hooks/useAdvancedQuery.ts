@@ -23,6 +23,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { logger } from '@/lib/logger'
 import type {
+  AdvancedQueryRequest,
   AggregateResult,
   AggregateSpec,
   BlockRow,
@@ -124,6 +125,65 @@ async function resolvePageTitles(
   return titleMap
 }
 
+/**
+ * The live structural inputs read from `inputsRef` to assemble a wire request.
+ * Mirrors `UseAdvancedQueryOptions`' structural fields but with explicit
+ * `undefined` (the ref snapshot writes them verbatim) for `exactOptionalPropertyTypes`.
+ */
+interface QueryInputs {
+  filters: FilterPrimitive[]
+  filterExpr: FilterExpr | undefined
+  sort: SortKey[] | undefined
+  groupBy: GroupSpec | null | undefined
+  aggregates: AggregateSpec[] | undefined
+}
+
+/**
+ * Assemble the engine wire request from the live structural inputs (not the
+ * serialised change-detection keys — those only gate the fetch). Extracted from
+ * `fetchResults` to keep that callback under the complexity cap. Returns the
+ * `request` plus `groupBy` separately, since the post-response branching keys
+ * off whether grouping was requested.
+ */
+function buildQueryArgs(
+  inputs: QueryInputs,
+  currentSpaceId: string | null,
+  trimmedFulltext: string,
+  pageCursor: string | undefined,
+): { request: AdvancedQueryRequest; groupBy: GroupSpec | null } {
+  const { filters, filterExpr, sort, groupBy, aggregates } = inputs
+  const sortRaw = sort ?? []
+  const groupBySpec = groupBy ?? null
+  const aggregateSpecs = aggregates ?? []
+  // Sanitise the sort: `SortSource::Relevance` is ONLY valid when a full-text
+  // term is present (the engine REJECTS it otherwise with an `InvalidSort`
+  // validation error). The controls picker only OFFERS Relevance while a term is
+  // set, but a stale Relevance key survives the user clearing the term
+  // afterwards — drop it here so the wire request is always engine-valid.
+  const cleanSort =
+    trimmedFulltext !== '' ? sortRaw : sortRaw.filter((k) => k.source.type !== 'Relevance')
+  // #1280 D3 — when a pre-compiled boolean `FilterExpr` is supplied (the
+  // nested-builder surface) send it VERBATIM, bypassing the flat-`filters`
+  // conjunction entirely. Other callers pass only `filters`, so `filterExpr` is
+  // absent and we wrap the flat list as an `And` of Leaves.
+  const filter = filterExpr != null ? filterExpr : primitivesToFilterExpr(filters)
+  // FEAT-3 Phase 4 parity: the engine requires a space. The `?? ''` fallback is
+  // intentional pre-bootstrap behaviour — an empty string forces a no-match SQL
+  // filter rather than a runtime null deref. Optional engine inputs are omitted
+  // (not sent as empty) when unset so the request stays the minimal wire shape.
+  const request: AdvancedQueryRequest = {
+    spaceId: currentSpaceId ?? '',
+    filter,
+    limit: PAGE_SIZE,
+    ...(trimmedFulltext !== '' ? { fulltext: trimmedFulltext } : {}),
+    ...(cleanSort.length > 0 ? { sort: cleanSort } : {}),
+    ...(groupBySpec != null ? { groupBy: groupBySpec } : {}),
+    ...(aggregateSpecs.length > 0 ? { aggregates: aggregateSpecs } : {}),
+    ...(pageCursor != null ? { cursor: pageCursor } : {}),
+  }
+  return { request, groupBy: groupBySpec }
+}
+
 export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQueryResult {
   const { filters, filterExpr, fulltext, sort, groupBy, aggregates } = options
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
@@ -154,6 +214,14 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
   const sortKey = JSON.stringify(sort ?? [])
   const groupByKey = JSON.stringify(groupBy ?? null)
   const aggregatesKey = JSON.stringify(aggregates ?? [])
+
+  // The `*Key` strings above are the change-DETECTOR (value-stable across the
+  // parent's churning array/object identities). To USE the structures inside the
+  // fetch we read the live inputs via a render-synced ref instead of round-trip
+  // parsing the keys — same values, no per-fetch JSON.parse. The ref is written
+  // on every render so the key-gated fetch always reads the current inputs.
+  const inputsRef = useRef({ filters, filterExpr, sort, groupBy, aggregates })
+  inputsRef.current = { filters, filterExpr, sort, groupBy, aggregates }
 
   // Monotonic request-id guard (mirrors useQueryExecution): a stale fetch that
   // resolves after a newer one started bails out without touching state.
@@ -188,44 +256,16 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
         return true
       }
       try {
-        const parsedSortRaw = JSON.parse(sortKey) as SortKey[]
-        const parsedGroupBy = JSON.parse(groupByKey) as GroupSpec | null
-        const parsedAggregates = JSON.parse(aggregatesKey) as AggregateSpec[]
-        // Sanitise the sort: `SortSource::Relevance` is ONLY valid when a
-        // full-text term is present (the engine REJECTS it otherwise with a
-        // `InvalidSort` validation error). The controls picker only OFFERS
-        // Relevance while a term is set, but a stale Relevance key survives the
-        // user clearing the term afterwards — drop it here so the wire request
-        // is always engine-valid rather than erroring out.
-        const parsedSort =
-          trimmedFulltext !== ''
-            ? parsedSortRaw
-            : parsedSortRaw.filter((k) => k.source.type !== 'Relevance')
-        // FEAT-3 Phase 4 parity: the engine requires a space. The `?? ''`
-        // fallback is intentional pre-bootstrap behaviour — an empty string
-        // forces a no-match SQL filter rather than a runtime null deref.
-        // Optional engine inputs are omitted (not sent as empty) when unset so
-        // the request stays the minimal wire shape and the engine applies its
-        // documented defaults.
-        // #1280 D3 — when a pre-compiled boolean `FilterExpr` is supplied (the
-        // nested-builder surface) send it VERBATIM, bypassing the flat-`filters`
-        // conjunction entirely. Other callers pass only `filters`, so `filterExpr`
-        // is absent and we fall back to wrapping the flat list as an `And` of Leaves.
-        const parsedFilterExpr = JSON.parse(filterExprKey) as FilterExpr | null
-        const filter =
-          parsedFilterExpr != null
-            ? parsedFilterExpr
-            : primitivesToFilterExpr(JSON.parse(filtersKey) as FilterPrimitive[])
-        const response = await runAdvancedQuery({
-          spaceId: currentSpaceId ?? '',
-          filter,
-          limit: PAGE_SIZE,
-          ...(trimmedFulltext !== '' ? { fulltext: trimmedFulltext } : {}),
-          ...(parsedSort.length > 0 ? { sort: parsedSort } : {}),
-          ...(parsedGroupBy != null ? { groupBy: parsedGroupBy } : {}),
-          ...(parsedAggregates.length > 0 ? { aggregates: parsedAggregates } : {}),
-          ...(pageCursor != null ? { cursor: pageCursor } : {}),
-        })
+        // Assemble the wire request from the LIVE inputs (read via `inputsRef`,
+        // not by re-parsing the serialised keys). `parsedGroupBy` is returned
+        // separately because the post-response branching keys off it.
+        const { request, groupBy: parsedGroupBy } = buildQueryArgs(
+          inputsRef.current,
+          currentSpaceId,
+          trimmedFulltext,
+          pageCursor,
+        )
+        const response = await runAdvancedQuery(request)
         if (myReqId !== reqIdRef.current) return
 
         const isGrouped = parsedGroupBy != null
@@ -293,6 +333,15 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
         }
       }
     },
+    // Value-stable-key change detection: the serialised `*Key` deps are the
+    // legit change-detector — the parent churns array/object identity every
+    // render, so the serialised keys are what stop this callback re-firing each
+    // render. The callback BODY reads the live structures via `inputsRef.current`
+    // (no JSON.parse round-trip), so exhaustive-deps sees the keys as unused and
+    // flags them as unnecessary deps. They are intentional: removing them would
+    // stop the fetch effect from re-running on input changes. (`filtersKey` is
+    // also read in the catch logger, so only the others are "unused".)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       currentSpaceId,
       filtersKey,
