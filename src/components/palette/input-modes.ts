@@ -63,9 +63,13 @@ export function helpModeQuery(input: string): string {
  * budget as more prefixes are added.
  */
 export function routePrefixToMode(query: string): { next: PaletteMode; q: string } | null {
+  // Both the mode detection AND the prefix strip must run on the trimmed
+  // input: the extraction helpers `slice(1)` the first char, so feeding them
+  // the RAW query strips a leading whitespace char instead of the prefix and
+  // leaves the prefix in the mode query (`'  >set'` → `'>set'`). (#1554)
   const trimmed = query.trimStart()
-  if (isCommandsModeInput(trimmed)) return { next: 'commands', q: commandsModeQuery(query) }
-  if (isTagsModeInput(trimmed)) return { next: 'tags', q: tagsModeQuery(query) }
-  if (isHelpModeInput(trimmed)) return { next: 'help', q: helpModeQuery(query) }
+  if (isCommandsModeInput(trimmed)) return { next: 'commands', q: commandsModeQuery(trimmed) }
+  if (isTagsModeInput(trimmed)) return { next: 'tags', q: tagsModeQuery(trimmed) }
+  if (isHelpModeInput(trimmed)) return { next: 'help', q: helpModeQuery(trimmed) }
   return null
 }
