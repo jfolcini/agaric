@@ -76,6 +76,13 @@ export function useBlockCollapse(
   // ── Collapse state (persisted per page in localStorage, #752) ──────
   const [collapsedIds, setCollapsedIdsRaw] = useState<Set<string>>(() => loadCollapsedIds(pageKey))
 
+  // Latest collapsed ids for event-time membership reads, so toggleCollapse
+  // can check prior membership without depending on `collapsedIds` (which
+  // would re-create the callback on every collapse/expand and churn memoized
+  // consumers). Mirrors the blocksRef pattern below. (#1636)
+  const collapsedIdsRef = useRef(collapsedIds)
+  collapsedIdsRef.current = collapsedIds
+
   // BlockTree is NOT remounted on page switch (`rootParentId` just changes),
   // so reload the persisted state whenever the storage scope changes.
   const prevPageKeyRef = useRef(pageKey)
@@ -117,7 +124,9 @@ export function useBlockCollapse(
   // ── Toggle collapse ────────────────────────────────────────────────
   const toggleCollapse = useCallback(
     (blockId: string) => {
-      const wasCollapsed = collapsedIds.has(blockId)
+      // Read prior membership from the ref (not `collapsedIds`) so this
+      // callback stays referentially stable across collapse/expand. (#1636)
+      const wasCollapsed = collapsedIdsRef.current.has(blockId)
       if (!wasCollapsed) {
         onBeforeCollapse?.(blockId)
       }
@@ -129,7 +138,7 @@ export function useBlockCollapse(
         return next
       })
     },
-    [collapsedIds, onBeforeCollapse, setCollapsedIds],
+    [onBeforeCollapse, setCollapsedIds],
   )
 
   // ── hasChildren set ────────────────────────────────────────────────

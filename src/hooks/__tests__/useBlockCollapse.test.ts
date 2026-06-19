@@ -89,6 +89,27 @@ describe('useBlockCollapse', () => {
     expect(result.current.collapsedIds.has('A')).toBe(false)
   })
 
+  // #1636 — toggleCollapse must stay referentially stable across
+  // collapse/expand so memoized consumers aren't churned. It reads prior
+  // membership via a ref, not the `collapsedIds` dep.
+  it('keeps toggleCollapse referentially stable across collapse changes', () => {
+    const { result } = renderHook(() => useBlockCollapse(flatBlocks))
+
+    const initial = result.current.toggleCollapse
+
+    act(() => {
+      result.current.toggleCollapse('A')
+    })
+    expect(result.current.collapsedIds.has('A')).toBe(true)
+    expect(result.current.toggleCollapse).toBe(initial)
+
+    act(() => {
+      result.current.toggleCollapse('A')
+    })
+    expect(result.current.collapsedIds.has('A')).toBe(false)
+    expect(result.current.toggleCollapse).toBe(initial)
+  })
+
   it('filters descendants of collapsed blocks from visibleBlocks', () => {
     const { result } = renderHook(() => useBlockCollapse(flatBlocks))
 

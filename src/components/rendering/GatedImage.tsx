@@ -71,6 +71,11 @@ export function GatedImage({
         alt={alt}
         className={imgClassName}
         data-testid="image-rendered"
+        // Defer offscreen fetches + decode off the main thread to cut layout
+        // shift on image-heavy trees (#1642). Intrinsic dimensions aren't known
+        // here (ImageNode.attrs carry only { alt, src }), so none are reserved.
+        loading="lazy"
+        decoding="async"
         // #1434 broken-image fallback (alt/URL placeholder) on load error.
         onError={() => setFailed(true)}
       />

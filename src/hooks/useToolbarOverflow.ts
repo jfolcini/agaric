@@ -101,25 +101,39 @@ export function computeOverflow<T extends ToolbarItem>(
     return base
   }
 
-  /** Total width of items, treating separators as kept iff both adjacent
-   * groups have a kept button. */
-  const totalKeptWidth = (droppedKeys: Set<string>): number => {
+  /** Count of kept (non-dropped) buttons across the whole list. */
+  const countKeptButtons = (droppedKeys: Set<string>): number => {
+    let kept = 0
+    for (const item of items) {
+      if (item && item.kind === 'button' && !droppedKeys.has(item.key)) kept++
+    }
+    return kept
+  }
+
+  /**
+   * Total width of items, treating separators as kept iff both adjacent
+   * groups have a kept button.
+   *
+   * Single left-to-right pass: track `keptBefore` (kept buttons seen so
+   * far) and derive "any kept button after" as
+   * `totalKept - keptBefore > 0`. This avoids the per-separator
+   * `slice().some()` prefix/suffix rescans (previously O(n) each, making
+   * the whole call O(n²) and the greedy loop O(n³)).
+   */
+  const totalKeptWidth = (droppedKeys: Set<string>, totalKept: number): number => {
     let total = 0
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i]
+    let keptBefore = 0
+    for (const item of items) {
       if (!item) continue
       if (item.kind === 'button') {
-        if (!droppedKeys.has(item.key)) total += widthOf(item)
+        if (!droppedKeys.has(item.key)) {
+          total += widthOf(item)
+          keptBefore++
+        }
       } else {
-        // separator — include only if both sides have at least one kept
-        // button.
-        const hasBefore = items
-          .slice(0, i)
-          .some((b) => b.kind === 'button' && !droppedKeys.has(b.key))
-        const hasAfter = items
-          .slice(i + 1)
-          .some((b) => b.kind === 'button' && !droppedKeys.has(b.key))
-        if (hasBefore && hasAfter) total += widthOf(item)
+        // separator — include only if at least one kept button exists on
+        // each side (before: keptBefore; after: totalKept - keptBefore).
+        if (keptBefore > 0 && totalKept - keptBefore > 0) total += widthOf(item)
       }
     }
     return total
@@ -127,7 +141,8 @@ export function computeOverflow<T extends ToolbarItem>(
 
   // First pass: do all items fit without an overflow trigger?
   const noDrops = new Set<string>()
-  if (totalKeptWidth(noDrops) <= containerWidth) {
+  const allButtonsKept = countKeptButtons(noDrops)
+  if (totalKeptWidth(noDrops, allButtonsKept) <= containerWidth) {
     return { visible: items.slice(), overflowed: [] }
   }
 
@@ -146,27 +161,31 @@ export function computeOverflow<T extends ToolbarItem>(
   })
 
   const droppedKeys = new Set<string>()
+  // `keptButtons` tracks the live count as candidates drop, so each
+  // `totalKeptWidth` call is O(n) (no separate recount).
+  let keptButtons = allButtonsKept
   for (const candidate of dropOrder) {
-    if (totalKeptWidth(droppedKeys) <= budget) break
+    if (totalKeptWidth(droppedKeys, keptButtons) <= budget) break
     droppedKeys.add(candidate.item.key)
+    keptButtons--
   }
 
+  // Final assembly — single pass, same "kept button before/after"
+  // separator rule as `totalKeptWidth` (no per-separator slice rescans).
   const visible: T[] = []
   const overflowed: T[] = []
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i]
+  let keptBefore = 0
+  for (const item of items) {
     if (!item) continue
     if (item.kind === 'button') {
       if (droppedKeys.has(item.key)) overflowed.push(item)
-      else visible.push(item)
+      else {
+        visible.push(item)
+        keptBefore++
+      }
     } else {
-      const hasBefore = items
-        .slice(0, i)
-        .some((b) => b.kind === 'button' && !droppedKeys.has(b.key))
-      const hasAfter = items
-        .slice(i + 1)
-        .some((b) => b.kind === 'button' && !droppedKeys.has(b.key))
-      if (hasBefore && hasAfter) visible.push(item)
+      // separator: keep only if a kept button exists on each side.
+      if (keptBefore > 0 && keptButtons - keptBefore > 0) visible.push(item)
       // separators never go to overflowed
     }
   }
