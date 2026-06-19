@@ -1,0 +1,131 @@
+{
+  "description": "Restore-after-cascade preserving an INDEPENDENTLY-deleted descendant (#632/B3). Seed S1 (Home) > A > A1 > A1a. (1) delete_block A1a on its own (own tombstone cohort). (2) delete_block A — cascade tombstones A and A1; A1a is already deleted so the cascade's `deleted_at IS NULL` filter skips it and it KEEPS its independent tombstone. (3) restore_block A — the backend's descendants_cte_cohort restore (deleted_at_ref = A's cascade timestamp) clears exactly A + A1, but stops at A1a because A1a's deleted_at belongs to a DIFFERENT (earlier) cohort. Asserts the SETTLED state: A and A1 live again, A1a STAYS deleted (its own tombstone wins). Re-author `expected` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "A",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "A1",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B2",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "A1a",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 3,
+      "ops": [
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "restore_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "name": "restore_after_cascade_independent_child",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S4"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "restore_block"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "A",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "A1",
+        "id": "S3",
+        "parent_id": "S2",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "A1a",
+        "id": "S4",
+        "parent_id": "S3",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

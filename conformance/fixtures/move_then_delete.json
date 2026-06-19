@@ -1,0 +1,104 @@
+{
+  "description": "Move-then-delete multi-op sequence. Seed S1 (Home) > { A, B }. (1) move_block B under A at slot 0 (B re-parents to A, keeps page_id = Home, dense rank 1 under A). (2) delete_block B — B is now a leaf under A, so the cascade tombstones exactly B. Asserts the SETTLED state after both ops: Home and A live, B tombstoned under its new parent A. Exercises a multi-op (move + delete) sequence end-to-end through the engine pipeline. Re-author `expected` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "A",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "B",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B2",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 2,
+      "ops": [
+        {
+          "op_type": "move_block"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "name": "move_then_delete",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S3",
+        "newIndex": 0,
+        "newParentId": "S2"
+      },
+      "command": "move_block"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "A",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "B",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

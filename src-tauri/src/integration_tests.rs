@@ -30,18 +30,20 @@
 // Test helpers frequently cast small usize loop indices to i64 for SQL binds.
 #![allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
 
-use crate::commands::tests::common::{TEST_SPACE_ID, assign_all_to_test_space};
+use crate::commands::tests::common::{
+    TEST_SPACE_ID, assign_all_to_test_space, ensure_test_space, insert_block,
+};
 use crate::commands::*;
 use crate::db::{ReadPool, init_pool};
 use crate::draft;
 use crate::hash;
 use crate::materializer::Materializer;
-use crate::op::{EditBlockPayload, OpPayload};
+use crate::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
 use crate::op_log;
 use crate::pagination::BlockRow;
 use crate::recovery;
 use crate::snapshot;
-use crate::space::SpaceScope;
+use crate::space::{SpaceId, SpaceScope};
 use crate::ulid::BlockId;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
@@ -122,6 +124,123 @@ async fn create_content(
 /// race-condition-prone.
 async fn settle_bg_tasks(mat: &Materializer) {
     mat.flush_background().await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Engine-path helpers (#1689)
+// ---------------------------------------------------------------------------
+//
+// `create_block_inner` / the other `*_inner` command helpers write SQL inline
+// with a PROVISIONAL `index + 1` position and only enqueue background cache
+// rebuilds — they never run `apply_op_tx`, so they NEVER reproject sibling
+// positions to dense 1-based ranks. With no engine installed they are byte-for-
+// byte identical to the `apply_*_sql_only` FALLBACK (see
+// `materializer::handlers::sql_only_fallback`). Routing an op through
+// [`dispatch_via_engine`] instead exercises the PRODUCTION engine path
+// (`append_local_op` + `dispatch_op` → `apply_*_via_loro`), which reprojects.
+//
+// #891 lesson: a conformance/integration test that applies ops WITHOUT
+// `install_for_test` silently validates the fallback, not production.
+
+/// Install the process-global Loro engine and reset its registry so the
+/// calling test starts from a fresh per-space tree, regardless of sibling
+/// tests sharing the binary (the `OnceLock` is first-write-wins; only the
+/// registry is per-test resettable). Returns the shared `LoroState`.
+fn install_engine() -> &'static crate::loro::shared::LoroState {
+    let state = crate::loro::shared::install_for_test();
+    state.registry.clear();
+    state
+}
+
+/// Seed one pre-existing ROOT page into BOTH the SQL `blocks` table and the
+/// per-space Loro engine tree, then register it in [`TEST_SPACE_ID`].
+///
+/// A brand-new root page created via an op resolves no space yet and would
+/// take the SQL-only fallback, so — like the conformance/undo harnesses — a
+/// synthetic pre-existing root is replayed straight into the engine. This lets
+/// subsequent child `CreateBlock` ops resolve their space (via the parent) and
+/// route through the engine path.
+async fn seed_page_both(pool: &SqlitePool, state: &crate::loro::shared::LoroState, id: &str) {
+    insert_block(pool, id, TYPE_PAGE, "seed-page", None, Some(1)).await;
+    // Assign the page (and thus its future descendants) to the test space so
+    // `resolve_block_space` succeeds for child ops.
+    ensure_test_space(pool).await;
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ?")
+        .bind(TEST_SPACE_ID)
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+    let space = SpaceId::from_trusted(TEST_SPACE_ID);
+    let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+    guard
+        .engine_mut()
+        .apply_create_block(id, TYPE_PAGE, "seed-page", None, 1)
+        .expect("seed page into engine");
+    drop(guard);
+}
+
+/// Dispatch one op through the PRODUCTION engine path: append it to the op-log
+/// (`append_local_op`) then apply it via the materializer's foreground
+/// `dispatch_op` (`apply_op_tx` → `apply_*_via_loro`, the engine apply + dense
+/// reproject) and settle the background cache fan-out. This is the same
+/// pipeline production runs for op-log replay / inbound sync.
+async fn dispatch_via_engine(pool: &SqlitePool, mat: &Materializer, payload: OpPayload) {
+    let record = op_log::append_local_op(pool, DEV, payload)
+        .await
+        .expect("append_local_op");
+    mat.dispatch_op(&record).await.expect("dispatch_op");
+    settle_bg_tasks(mat).await;
+}
+
+/// Create a child content block at a 0-based sibling `slot` via the engine
+/// path. Returns the generated block id.
+async fn create_child_via_engine(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    parent_id: &str,
+    content: &str,
+    slot: i64,
+) -> String {
+    let block_id = BlockId::new();
+    let id_str = block_id.to_string();
+    dispatch_via_engine(
+        pool,
+        mat,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id,
+            block_type: TYPE_CONTENT.into(),
+            parent_id: Some(BlockId::from_trusted(parent_id)),
+            position: None,
+            index: Some(slot),
+            content: content.into(),
+        }),
+    )
+    .await;
+    id_str
+}
+
+/// ENGINE-PATH GUARD (#891/#1689): assert every `id` is present in the
+/// per-space Loro engine tree. The SQL-only fallback never touches the engine,
+/// so this proves the ops genuinely ran the production `apply_*_via_loro` path
+/// (dense reproject) — not the fallback whose provisional `index + 1`
+/// positions would only COINCIDENTALLY match dense ranks. A future regression
+/// that drops `install_for_test` / the space assignment fails here loudly.
+fn assert_blocks_in_engine(state: &crate::loro::shared::LoroState, ids: &[&str]) {
+    let space = SpaceId::from_trusted(TEST_SPACE_ID);
+    let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+    for id in ids {
+        assert!(
+            guard
+                .engine_mut()
+                .read_block(id)
+                .expect("read_block")
+                .is_some(),
+            "block {id} absent from the engine tree — the op took the SQL-only \
+             FALLBACK, not the production engine path (#891/#1689)",
+        );
+    }
+    drop(guard);
 }
 
 // ======================================================================
@@ -1163,31 +1282,58 @@ async fn list_by_type_filters_to_matching_block_type() {
 // Group 5: Position handling
 // ======================================================================
 
-/// Children created with out-of-order positions are returned sorted
-/// by position ascending.
+/// Children created via the PRODUCTION engine path are listed in dense
+/// 1-based `position` order after reprojection — even when every child is
+/// inserted at the SAME slot.
+///
+/// #1689: this test deliberately uses a case the SQL-only fallback would get
+/// WRONG. The fallback stamps a PROVISIONAL `index + 1` position and never
+/// reprojects, so inserting three children all at slot 0 would write position
+/// `0 + 1 = 1` for every one — three duplicate positions, and an order that
+/// does not reflect the actual sibling sequence. The production engine path
+/// (`apply_create_block_at` → dense reproject) instead pushes each prior
+/// sibling down by one, yielding distinct dense ranks 1, 2, 3 in
+/// reverse-insertion order (each new child lands at the FRONT).
+///
+/// The old version of this test routed creates through `create_block_inner`
+/// (the `*_inner` command layer) with DISTINCT, contiguous slots 2/0/1, so the
+/// fallback's `slot + 1` positions (3/1/2) only COINCIDENTALLY equalled the
+/// dense ranks — it never actually exercised reprojection and would not have
+/// caught a same-slot collision. Routing through `dispatch_via_engine` plus the
+/// engine-tree guard makes the test genuinely validate the engine path.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn children_listed_in_position_order() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let parent = create_content(&pool, &mat, "parent", None, Some(0)).await;
+    // #1689: install the engine + seed a real ROOT page so child CreateBlock
+    // ops resolve a space (`resolve_block_space`) and route through the
+    // production `apply_create_block_via_loro` path instead of the SQL-only
+    // fallback.
+    let state = install_engine();
+    const PARENT: &str = "01HZ1689000000000000000PAR";
+    seed_page_both(&pool, state, PARENT).await;
 
-    // #400: `index` is now a 0-based sibling slot. Create children at slots
-    // 2, 0, 1 (deliberately out of order) — the projected dense 1-based
-    // `position` is `slot + 1`, so they should read back as positions 3, 1, 2
-    // respectively and list in dense-rank order 1, 2, 3.
-    let c3 = create_content(&pool, &mat, "pos 3", Some(parent.id.to_string()), Some(2)).await;
-    let c1 = create_content(&pool, &mat, "pos 1", Some(parent.id.to_string()), Some(0)).await;
-    let c2 = create_content(&pool, &mat, "pos 2", Some(parent.id.to_string()), Some(1)).await;
+    // Insert all three children at slot 0 (the FRONT). The engine reprojects on
+    // each insert, so the final sibling order is reverse-insertion: the LAST
+    // inserted (`first_in`) ends at rank 1, then `second_in` at 2, `third_in`
+    // at 3. Under the fallback all three would share the provisional position
+    // 1 — a duplicate the dense-rank assertions below would catch.
+    let third_in = create_child_via_engine(&pool, &mat, PARENT, "inserted 1st", 0).await;
+    let second_in = create_child_via_engine(&pool, &mat, PARENT, "inserted 2nd", 0).await;
+    let first_in = create_child_via_engine(&pool, &mat, PARENT, "inserted 3rd", 0).await;
 
-    // Drain the materializer's background dispatches before reading: the
-    // children are indexed asynchronously, so without this the list query
-    // intermittently saw fewer than 3 (flaky "should list all 3 children").
     settle_bg_tasks(&mat).await;
     assign_all_to_test_space(&pool).await;
+
+    // ENGINE-PATH GUARD: prove the creates ran the production engine path, not
+    // the fallback (otherwise the dense-rank assertions below would be
+    // validating fallback behaviour, not reprojection).
+    assert_blocks_in_engine(state, &[PARENT, &first_in, &second_in, &third_in]);
+
     let children = list_blocks_inner(
         &pool,
-        Some(parent.id),
+        Some(BlockId::from_trusted(PARENT)),
         None,
         None,
         None,
@@ -1202,24 +1348,31 @@ async fn children_listed_in_position_order() {
     .unwrap();
 
     assert_eq!(children.items.len(), 3, "should list all 3 children");
+    // Reverse-insertion order: each insert-at-front pushes the others down, so
+    // the last-inserted child ends up first.
     assert_eq!(
         children.items[0].id.as_str(),
-        c1.id.as_str(),
-        "first by position"
+        first_in.as_str(),
+        "last-inserted child ends at the front (rank 1)"
     );
     assert_eq!(
         children.items[1].id.as_str(),
-        c2.id.as_str(),
-        "second by position"
+        second_in.as_str(),
+        "second-inserted child is in the middle (rank 2)"
     );
     assert_eq!(
         children.items[2].id.as_str(),
-        c3.id.as_str(),
-        "third by position"
+        third_in.as_str(),
+        "first-inserted child ends at the back (rank 3)"
     );
-    assert_eq!(children.items[0].position, Some(1));
-    assert_eq!(children.items[1].position, Some(2));
-    assert_eq!(children.items[2].position, Some(3));
+    // DENSE, DISTINCT 1-based ranks — the load-bearing reprojection assertion.
+    // The fallback would have produced position 1 for all three.
+    let positions: Vec<Option<i64>> = children.items.iter().map(|b| b.position).collect();
+    assert_eq!(
+        positions,
+        vec![Some(1), Some(2), Some(3)],
+        "engine reproject yields dense distinct 1-based ranks; got {positions:?}"
+    );
 }
 
 /// Editing a block's content does not change its position.
