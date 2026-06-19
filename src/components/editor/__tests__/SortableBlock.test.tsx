@@ -485,7 +485,7 @@ describe('SortableBlock', () => {
     expect(screen.getByTestId('trash-icon')).toBeInTheDocument()
   })
 
-  it('calls onDelete with blockId when delete button is pointer-downed', async () => {
+  it('calls onDelete on click, not on pointerDown alone (#1532)', async () => {
     mockUseSortable.mockReturnValue({
       attributes: {},
       listeners: {},
@@ -509,8 +509,12 @@ describe('SortableBlock', () => {
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+    // #1532: pointerDown only retains editor focus / stops propagation; it must
+    // not fire onDelete (that would double-fire alongside the synthetic click).
     fireEvent.pointerDown(deleteBtn)
+    expect(onDelete).not.toHaveBeenCalled()
 
+    fireEvent.click(deleteBtn)
     expect(onDelete).toHaveBeenCalledOnce()
     expect(onDelete).toHaveBeenCalledWith('BLOCK_42')
   })
@@ -544,7 +548,9 @@ describe('SortableBlock', () => {
     deleteBtn.dispatchEvent(event)
 
     expect(stopSpy).toHaveBeenCalled()
-    expect(onDelete).toHaveBeenCalledWith('BLOCK_1')
+    // #1532: pointerDown no longer fires onDelete (moved to onClick), so the
+    // press cannot double-delete; it only stops propagation to the parent.
+    expect(onDelete).not.toHaveBeenCalled()
   })
 
   it('delete button responds to keyboard activation (Enter/Space)', async () => {
