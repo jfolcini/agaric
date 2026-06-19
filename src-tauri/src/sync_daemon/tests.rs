@@ -949,6 +949,7 @@ async fn handle_incoming_sync_rejects_sync_with_self() {
             mat_clone,
             sched_clone,
             sink_clone,
+            Arc::new(AtomicBool::new(false)),
         )
         .await
     });
@@ -1202,6 +1203,7 @@ async fn handle_incoming_sync_rejects_unpaired_device() {
             mat_clone,
             sched_clone,
             sink_clone,
+            Arc::new(AtomicBool::new(false)),
         )
         .await
     });
@@ -1540,6 +1542,7 @@ async fn inmem_handle_incoming_sync_rejects_self() {
             mat_clone,
             sched_clone,
             sink_clone,
+            Arc::new(AtomicBool::new(false)),
         )
         .await
     });
@@ -1605,6 +1608,7 @@ async fn inmem_handle_incoming_sync_rejects_unidentifiable_peer() {
             mat_clone,
             sched_clone,
             sink_clone,
+            Arc::new(AtomicBool::new(false)),
         )
         .await
     });
@@ -1661,6 +1665,7 @@ async fn inmem_handle_incoming_sync_rejects_unpaired() {
             mat_clone,
             sched_clone,
             sink_clone,
+            Arc::new(AtomicBool::new(false)),
         )
         .await
     });
@@ -1728,6 +1733,7 @@ async fn inmem_handle_incoming_sync_rejects_busy_peer() {
             mat_clone,
             sched_clone,
             sink_clone,
+            Arc::new(AtomicBool::new(false)),
         )
         .await
     });
@@ -1764,6 +1770,96 @@ async fn inmem_handle_incoming_sync_rejects_busy_peer() {
     materializer.shutdown();
 }
 
+/// #1605: When the daemon's shared cancel flag is set, the responder
+/// session aborts at the top of its message loop — PROMPTLY, well before
+/// the 180 s `RECV_TIMEOUT` it would otherwise block on while waiting for
+/// the next message from a slow/hung initiator — and releases the per-peer
+/// lock (and, in production, the #1581 concurrency permit dropped by the
+/// caller when this fn resolves).
+///
+/// Reproduces the bug fixed here: previously the responder threaded a
+/// fresh, never-set `AtomicBool`, so a flipped shutdown/user-cancel signal
+/// was invisible to it. The client sends a single HeadExchange and then
+/// goes silent; without the cancel check the responder would block on
+/// `recv` for the full `RECV_TIMEOUT`. With the real flag threaded in, the
+/// loop's pre-recv `cancel.load()` returns the cancellation error at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handle_incoming_sync_aborts_on_cancel_and_releases_lock() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    // Pair the peer so the session reaches the message loop (an unpaired
+    // peer is rejected before the orchestrator is even built).
+    peer_refs::upsert_peer_ref(&pool, "REMOTE_DEV")
+        .await
+        .unwrap();
+
+    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+
+    // The daemon's REAL shared cancel flag, flipped to simulate a
+    // shutdown / user-cancel that arrives while the session is in flight.
+    let cancel = Arc::new(AtomicBool::new(true));
+
+    let pool_clone = pool.clone();
+    let mat_clone = materializer.clone();
+    let sched_clone = scheduler.clone();
+    let sink_clone = event_sink.clone();
+    let cancel_clone = cancel.clone();
+    let handle = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            pool_clone,
+            "LOCAL_DEV".to_string(),
+            mat_clone,
+            sched_clone,
+            sink_clone,
+            cancel_clone,
+        )
+        .await
+    });
+
+    // Send a single HeadExchange, then stay silent. The responder processes
+    // this first message (acquiring the per-peer lock), enters the message
+    // loop, and — because cancel is set — must bail BEFORE blocking on the
+    // next recv (which would otherwise stall for RECV_TIMEOUT = 180 s).
+    client_conn
+        .send_json(&SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "REMOTE_DEV".to_string(),
+                seq: 0,
+                hash: "fakehash".to_string(),
+            }],
+            loro_vvs: vec![],
+        })
+        .await
+        .unwrap();
+
+    // Prompt-abort assertion: the handler must resolve far inside the
+    // 180 s RECV_TIMEOUT. A single HeadExchange against an empty paired
+    // peer completes op-sync, so the cancel is observed at the
+    // file-transfer phase's pre-recv check (`run_file_transfer_responder`),
+    // which — like the message loop — short-circuits before its blocking
+    // recv. The 10 s budget is generous yet still proves a recv that would
+    // otherwise stall for RECV_TIMEOUT was cut short by the cancel signal.
+    let _result = tokio::time::timeout(std::time::Duration::from_secs(10), handle)
+        .await
+        .expect("cancelled responder session must abort promptly, not block on RECV_TIMEOUT")
+        .expect("responder task must not panic");
+
+    // The per-peer lock must have been released when the session aborted —
+    // otherwise a cancelled/hung responder would strand the peer as "busy".
+    // (In production the #1581 permit is likewise freed by the caller when
+    // this fn resolves; here the scheduler lock is the in-test proxy.)
+    assert!(
+        scheduler.try_lock_peer("REMOTE_DEV").is_some(),
+        "per-peer lock must be released after the responder aborts on cancel"
+    );
+
+    materializer.shutdown();
+}
+
 /// T-16 Test 4: Sending a non-HeadExchange message (SyncComplete) as
 /// the first message skips peer validation and goes straight to
 /// orch.handle_message(), which rejects it as out-of-order.
@@ -1789,6 +1885,7 @@ async fn inmem_handle_incoming_sync_non_head_exchange_first_msg() {
             mat_clone,
             sched_clone,
             sink_clone,
+            Arc::new(AtomicBool::new(false)),
         )
         .await
     });
@@ -1849,6 +1946,7 @@ async fn inmem_handle_incoming_sync_rejects_cert_cn_mismatch() {
             mat_clone,
             sched_clone,
             sink_clone,
+            Arc::new(AtomicBool::new(false)),
         )
         .await
     });
@@ -1928,6 +2026,7 @@ async fn inmem_handle_incoming_sync_rejects_cert_hash_mismatch() {
             mat_clone,
             sched_clone,
             sink_clone,
+            Arc::new(AtomicBool::new(false)),
         )
         .await
     });
@@ -2022,6 +2121,7 @@ async fn inmem_handle_incoming_sync_rejects_certless_claim_of_pinned_peer_800() 
             mat_clone,
             sched_clone,
             sink_clone,
+            Arc::new(AtomicBool::new(false)),
         )
         .await
     });
@@ -3656,6 +3756,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
             resp_mat_clone,
             resp_scheduler_clone,
             resp_sink_clone,
+            Arc::new(AtomicBool::new(false)),
         )
         .await
     });
@@ -4469,6 +4570,7 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
             resp_mat_clone,
             resp_scheduler_clone,
             resp_sink_clone,
+            Arc::new(AtomicBool::new(false)),
         )
         .await
     });
@@ -4688,6 +4790,7 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
         resp_mat_clone,
         resp_scheduler.clone(),
         resp_sink.clone(),
+        Arc::new(AtomicBool::new(false)),
     ));
 
     // ── Drive the initiator through the SAME wire helpers

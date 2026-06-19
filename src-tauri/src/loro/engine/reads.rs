@@ -36,6 +36,80 @@ impl LoroEngine {
             position,
         }))
     }
+    /// Bulk variant of [`Self::read_block`] for projecting MANY blocks at once
+    /// (sync-pull reprojection, #1621). Returns one entry per input id, in the
+    /// SAME order, with the SAME `Ok(None)`-for-absent semantics as
+    /// [`Self::read_block`].
+    ///
+    /// Why this exists: [`Self::read_block`] derives `position` via
+    /// [`Self::child_rank_position`], whose `children.iter().position(...)` is
+    /// an O(K) scan of the sibling list. Calling it once per block during a
+    /// bulk reprojection makes the projection O(N·K) — O(N²) for a flat space
+    /// (K≈N), exactly the pattern [`Self::child_rank_position`]'s docstring
+    /// warns against. Here we build a per-parent `TreeID → 1-based-rank` index
+    /// ONCE for each distinct parent touched (each via a single
+    /// `tree.children(parent)` pass), then look up every block's rank in O(1).
+    /// Total cost is ~O(N + Σ children) ≈ O(N) instead of O(N·K).
+    ///
+    /// The projected `position` is byte-identical to what
+    /// [`Self::child_rank_position`] produces: both derive the parent via
+    /// `tree.parent(node)` and rank within the SAME `tree.children(parent)`
+    /// order, so the only change is *when* the sibling list is scanned (once
+    /// per parent here vs. once per block before).
+    pub fn read_blocks_bulk(
+        &self,
+        block_ids: &[&str],
+    ) -> Result<Vec<Option<BlockSnapshot>>, AppError> {
+        let tree = self.tree();
+        // Memoise `parent → (child TreeID → 1-based rank)`. Built lazily so a
+        // parent whose children list is empty/absent is still cached as such,
+        // and each `tree.children(parent)` pass runs at most once per parent.
+        let mut rank_by_parent: HashMap<TreeParentId, HashMap<TreeID, i64>> = HashMap::new();
+        let mut out = Vec::with_capacity(block_ids.len());
+        for block_id in block_ids {
+            let Some(node) = self.node_for(block_id) else {
+                out.push(None);
+                continue;
+            };
+            let block_map = self.tree().get_meta(node).map_err(|e| {
+                AppError::Validation(format!("loro: read_blocks_bulk {block_id}: get_meta: {e}"))
+            })?;
+            let block_type = read_string(&block_map, FIELD_BLOCK_TYPE)
+                .map_err(|e| ctx_err(&e, &format!("block {block_id}: block_type")))?;
+            let content = read_text(&block_map, FIELD_CONTENT)
+                .map_err(|e| ctx_err(&e, &format!("block {block_id}: content")))?;
+            let parent_id = self.parent_block_id_of(node)?;
+
+            // Position: identical derivation to `child_rank_position`, but the
+            // per-parent rank map is built once and reused across all blocks
+            // sharing that parent (and across this whole bulk call).
+            let parent = tree.parent(node).unwrap_or(TreeParentId::Root);
+            let ranks = rank_by_parent.entry(parent).or_insert_with(|| {
+                let mut m = HashMap::new();
+                if let Some(children) = tree.children(parent) {
+                    for (idx, child) in children.iter().enumerate() {
+                        // 1-based rank, saturating exactly as `child_rank_position`.
+                        let rank = i64::try_from(idx).unwrap_or(i64::MAX).saturating_add(1);
+                        m.insert(*child, rank);
+                    }
+                }
+                m
+            });
+            // `Some` rank for any node that is a child of `parent`; fall back to
+            // `1` for the "node not found among its parent's children" case,
+            // matching `child_rank_position`'s defensive default.
+            let position = ranks.get(&node).copied().unwrap_or(1);
+
+            out.push(Some(BlockSnapshot {
+                block_id: block_id.to_string(),
+                block_type,
+                content,
+                parent_id,
+                position,
+            }));
+        }
+        Ok(out)
+    }
     /// Typed variant of the per-block property read (PEND-80 §2.1): returns each
     /// value as a native [`PropertyValue`] so the SQL projection can route
     /// `Num`/`Bool` without consulting `property_definitions`. Used by the
@@ -328,5 +402,132 @@ impl LoroEngine {
             }
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod read_blocks_bulk_tests {
+    use super::LoroEngine;
+
+    /// #1621: the bulk reprojection (`read_blocks_bulk`) must yield the EXACT
+    /// same `BlockSnapshot` (including the dense `position` rank) as the
+    /// per-block `read_block` path, on a FLAT space — one parent, many ordered
+    /// siblings (K≈N), the O(N²) pattern this change replaces with an O(1)
+    /// per-block rank lookup.
+    #[test]
+    fn flat_space_bulk_positions_match_per_block() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("P", "parent", "p", None, 0)
+            .unwrap();
+        // 200 ordered children under the single parent P. Insert at the END
+        // each time (index = current count) so the fractional-index order is
+        // C0, C1, ... C199 — a flat sibling list.
+        let n = 200usize;
+        let ids: Vec<String> = (0..n).map(|i| format!("C{i}")).collect();
+        for (i, id) in ids.iter().enumerate() {
+            e.apply_create_block_at(id, "child", "x", Some("P"), i)
+                .unwrap();
+        }
+
+        // Project every block (parent + children) via BOTH paths and compare.
+        let mut all_ids: Vec<&str> = vec!["P"];
+        all_ids.extend(ids.iter().map(String::as_str));
+
+        let bulk = e.read_blocks_bulk(&all_ids).unwrap();
+        assert_eq!(bulk.len(), all_ids.len());
+        for (id, bulk_snap) in all_ids.iter().zip(&bulk) {
+            let per_block = e.read_block(id).unwrap();
+            assert_eq!(
+                bulk_snap, &per_block,
+                "bulk snapshot for {id} differs from per-block read_block",
+            );
+        }
+
+        // And explicitly: child Ci has dense 1-based rank i+2 (the parent P
+        // occupies rank 1 under the root; under P the children are 1..=n).
+        for (i, id) in ids.iter().enumerate() {
+            let snap = bulk[i + 1].as_ref().expect("child snapshot present");
+            assert_eq!(
+                snap.position,
+                i64::try_from(i).unwrap() + 1,
+                "child {id} rank"
+            );
+            assert_eq!(snap.parent_id.as_deref(), Some("P"));
+        }
+    }
+
+    /// #1621: nested / multi-parent case — several parents each with their own
+    /// children, plus root-level blocks. Every block's bulk snapshot must match
+    /// the per-block path, proving the per-parent index keys ranks correctly
+    /// (no cross-parent bleed) and that root blocks rank among the root forest.
+    #[test]
+    fn nested_multi_parent_bulk_positions_match_per_block() {
+        let mut e = LoroEngine::new();
+        // Two root-level parents A and B (ranks 1 and 2 under the root).
+        e.apply_create_block_at("A", "parent", "a", None, 0)
+            .unwrap();
+        e.apply_create_block_at("B", "parent", "b", None, 1)
+            .unwrap();
+        // A has three children; B has two; A1 has a grandchild.
+        e.apply_create_block_at("A1", "child", "a1", Some("A"), 0)
+            .unwrap();
+        e.apply_create_block_at("A2", "child", "a2", Some("A"), 1)
+            .unwrap();
+        e.apply_create_block_at("A3", "child", "a3", Some("A"), 2)
+            .unwrap();
+        e.apply_create_block_at("B1", "child", "b1", Some("B"), 0)
+            .unwrap();
+        e.apply_create_block_at("B2", "child", "b2", Some("B"), 1)
+            .unwrap();
+        e.apply_create_block_at("G", "grandchild", "g", Some("A1"), 0)
+            .unwrap();
+        // A third root-level block C (rank 3 under the root).
+        e.apply_create_block_at("C", "leaf", "c", None, 2).unwrap();
+
+        // Intentionally pass the ids in a SCRAMBLED order (not grouped by
+        // parent) so the memoised per-parent index is exercised across
+        // interleaved parents.
+        let all_ids = ["G", "A2", "B", "C", "A", "B2", "A1", "B1", "A3"];
+        let bulk = e.read_blocks_bulk(&all_ids).unwrap();
+        assert_eq!(bulk.len(), all_ids.len());
+        for (id, bulk_snap) in all_ids.iter().zip(&bulk) {
+            let per_block = e.read_block(id).unwrap();
+            assert_eq!(
+                bulk_snap, &per_block,
+                "bulk snapshot for {id} differs from per-block read_block",
+            );
+        }
+
+        // Spot-check a few derived ranks to pin the expectation explicitly.
+        let by_id = |want: &str| {
+            all_ids
+                .iter()
+                .position(|i| *i == want)
+                .map(|idx| bulk[idx].as_ref().unwrap())
+                .unwrap()
+        };
+        assert_eq!(by_id("A").position, 1);
+        assert_eq!(by_id("B").position, 2);
+        assert_eq!(by_id("C").position, 3);
+        assert_eq!(by_id("A1").position, 1);
+        assert_eq!(by_id("A2").position, 2);
+        assert_eq!(by_id("A3").position, 3);
+        assert_eq!(by_id("B1").position, 1);
+        assert_eq!(by_id("B2").position, 2);
+        assert_eq!(by_id("G").position, 1);
+    }
+
+    /// Absent ids map to `None` in the same slot, preserving input order and
+    /// `read_block`'s `Ok(None)`-for-absent contract.
+    #[test]
+    fn bulk_absent_ids_yield_none_in_order() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("X", "leaf", "x", None, 0).unwrap();
+        let bulk = e
+            .read_blocks_bulk(&["missing-1", "X", "missing-2"])
+            .unwrap();
+        assert!(bulk[0].is_none());
+        assert_eq!(bulk[1], e.read_block("X").unwrap());
+        assert!(bulk[2].is_none());
     }
 }

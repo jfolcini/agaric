@@ -577,9 +577,18 @@ pub(crate) async fn import_and_project(
     let block_states: Vec<_> = {
         let mut guard = registry.for_space(space_id, device_id)?;
         let engine = guard.engine_mut();
+        // #1621: derive every block's `position` from a per-parent ordered-
+        // children index built ONCE (read_blocks_bulk), not a per-block O(K)
+        // `child_rank_position` sibling scan. For N changed blocks in a flat
+        // space (K≈N) the old loop was O(N²); this is ~O(N). The projected
+        // snapshot (incl. `position`) is byte-identical to `read_block`'s.
+        let block_id_refs: Vec<&str> = changed_blocks
+            .iter()
+            .map(crate::ulid::BlockId::as_str)
+            .collect();
+        let snapshots = engine.read_blocks_bulk(&block_id_refs)?;
         let mut states = Vec::with_capacity(changed_blocks.len());
-        for block_id in &changed_blocks {
-            let snapshot = engine.read_block(block_id.as_str())?;
+        for (block_id, snapshot) in changed_blocks.iter().zip(snapshots) {
             let props = engine.read_all_properties_typed(block_id.as_str())?;
             let tag_ids = engine.read_tags(block_id.as_str())?;
             let deleted_at = engine.read_deleted_at(block_id.as_str())?;
