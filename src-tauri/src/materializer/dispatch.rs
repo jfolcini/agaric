@@ -586,6 +586,12 @@ fn invalidations_for_op(
             tasks.push(MaterializeTask::RebuildAgendaCache);
             tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
             tasks.push(MaterializeTask::RebuildTagInheritanceCache);
+            // #1715: deliberately NO Update/RemoveFtsBlock here. A block's FTS
+            // row indexes only the inline `#[ULID]` TAG_REF tokens present in its
+            // content (see fts/strip.rs), which are added/removed by EditBlock and
+            // reindexed on that op. AddTag/RemoveTag mutate a structural
+            // `block_tags` edge, not the block's content, so the FTS row is
+            // unchanged — enqueueing an FTS task would be wasted work.
         }
         OpType::SetProperty | OpType::DeleteProperty => {
             // Narrow invalidation by design: only the agenda caches depend on
