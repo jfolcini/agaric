@@ -503,10 +503,15 @@ pub async fn trash_descendant_counts(
 /// `rn = 1` row is always the first **active** sibling — matching the
 /// shape of every other UI-facing read in this module.
 ///
-/// Empty `block_ids` returns an empty map (not an error).
+/// Empty `block_ids` returns an empty map (not an error). Above
+/// [`crate::commands::MAX_BATCH_BLOCK_IDS`] entries rejects with
+/// [`AppError::Validation`] (mirrors every other batch boundary in this
+/// surface).
 ///
 /// # Errors
 ///
+/// - [`AppError::Validation`] — `block_ids.len()` >
+///   [`crate::commands::MAX_BATCH_BLOCK_IDS`].
 /// - [`AppError::Json`] — failed to serialize `block_ids`.
 /// - [`AppError::Database`] — propagated from sqlx.
 #[instrument(skip(pool, block_ids), err)]
@@ -517,6 +522,7 @@ pub async fn first_child_for_blocks_inner(
     if block_ids.is_empty() {
         return Ok(HashMap::new());
     }
+    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
     // #107: re-derive owned String form for the JSON membership probe below.
     let block_ids: Vec<String> = block_ids.into_iter().map(BlockId::into_string).collect();
     let ids_json = serde_json::to_string(&block_ids)?;

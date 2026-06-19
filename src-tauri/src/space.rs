@@ -91,6 +91,23 @@ impl SpaceId {
         Self(s.to_ascii_uppercase())
     }
 
+    /// Lightweight ULID-shape check for an already-constructed `SpaceId`.
+    ///
+    /// Reuses the same validator as [`SpaceId::from_string`]
+    /// (`ulid::Ulid::from_str`) — a 26-char Crockford base32 string — but
+    /// operates on the stored value rather than constructing a new id, so
+    /// it can gate values that arrived through the lenient `Deserialize`
+    /// path (which only uppercase-normalises, mirroring `BlockId`).
+    ///
+    /// Returns [`AppError::Validation`] on a malformed id so an IPC / sync
+    /// boundary surfaces a clear error instead of binding a never-matching
+    /// SQL param and silently returning empty results (issue #1588).
+    pub fn validate_shape(&self) -> Result<(), AppError> {
+        ulid::Ulid::from_str(&self.0)
+            .map(|_| ())
+            .map_err(|e| AppError::Validation(format!("malformed space id '{}': {}", self.0, e)))
+    }
+
     /// Get the inner string reference.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -172,13 +189,51 @@ impl PartialEq<SpaceId> for &str {
 ///
 /// Specta emits this as a TS discriminated union
 /// (`{ kind: "global" } | { kind: "active"; space_id: SpaceId }`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+///
+/// # Deserialize validates the `Active` id shape (issue #1588)
+///
+/// The wire/SQL layers treat the inner `SpaceId` as a trusted-shape string —
+/// [`SpaceId::Deserialize`] only uppercase-normalises (mirroring `BlockId`),
+/// so without a guard a malformed `space_id` from the frontend / MCP / sync
+/// would bind a never-matching SQL filter param and silently return empty
+/// results. The hand-written `Deserialize` impl below deserialises through the
+/// same adjacently-tagged shape and then runs the lightweight ULID-shape check
+/// ([`SpaceScope::validate`]), so this IPC boundary rejects a malformed space
+/// id up front. `Global` and the seeded sentinel spaces are unaffected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(tag = "kind", content = "space_id")]
 pub enum SpaceScope {
     #[serde(rename = "global")]
     Global,
     #[serde(rename = "active")]
     Active(SpaceId),
+}
+
+impl<'de> Deserialize<'de> for SpaceScope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Reuse the derived adjacently-tagged shape via a private shim with an
+        // identical `#[serde(...)]` contract, then validate the `Active` id
+        // shape at this boundary. Keeping the shim's layout byte-identical to
+        // the public enum preserves the wire format / specta output.
+        #[derive(Deserialize)]
+        #[serde(tag = "kind", content = "space_id")]
+        enum Shim {
+            #[serde(rename = "global")]
+            Global,
+            #[serde(rename = "active")]
+            Active(SpaceId),
+        }
+
+        let scope = match Shim::deserialize(deserializer)? {
+            Shim::Global => SpaceScope::Global,
+            Shim::Active(id) => SpaceScope::Active(id),
+        };
+        scope.validate().map_err(serde::de::Error::custom)?;
+        Ok(scope)
+    }
 }
 
 impl SpaceScope {
@@ -192,6 +247,23 @@ impl SpaceScope {
         match self {
             SpaceScope::Global => None,
             SpaceScope::Active(id) => Some(id.as_str()),
+        }
+    }
+
+    /// Validate that an `Active` scope wraps a well-formed space ULID.
+    ///
+    /// `Global` is always valid (it applies no filter). `Active(id)` is
+    /// validated via [`SpaceId::validate_shape`] so a malformed id arriving
+    /// through the lenient serde `Deserialize` path at an IPC / MCP / sync
+    /// boundary is rejected with a clear [`AppError::Validation`] rather than
+    /// silently binding a never-matching SQL filter param and returning empty
+    /// results (issue #1588). The seeded sentinel spaces
+    /// (`SPACE_PERSONAL_ULID` / `SPACE_WORK_ULID`) are canonical ULIDs and
+    /// pass unchanged.
+    pub fn validate(&self) -> Result<(), AppError> {
+        match self {
+            SpaceScope::Global => Ok(()),
+            SpaceScope::Active(id) => id.validate_shape(),
         }
     }
 }
@@ -405,6 +477,92 @@ mod tests {
             decoded,
             SpaceScope::Active(SpaceId::from_trusted(FIXTURE_ULID))
         );
+    }
+
+    // --- SpaceScope::validate / SpaceId::validate_shape (issue #1588) ---
+
+    #[test]
+    fn validate_shape_accepts_valid_ulid() {
+        let id = SpaceId::from_trusted(FIXTURE_ULID);
+        assert!(id.validate_shape().is_ok());
+    }
+
+    #[test]
+    fn validate_shape_rejects_malformed_with_validation_error() {
+        // `from_trusted` skips validation, so a garbage id can exist; the
+        // boundary check must catch it.
+        let id = SpaceId::from_trusted("not-a-ulid");
+        let err = id
+            .validate_shape()
+            .expect_err("malformed space id must reject");
+        assert!(matches!(err, AppError::Validation(_)));
+    }
+
+    #[test]
+    fn space_scope_validate_global_is_ok() {
+        assert!(SpaceScope::Global.validate().is_ok());
+    }
+
+    #[test]
+    fn space_scope_validate_active_valid_ulid_ok() {
+        let scope = SpaceScope::Active(SpaceId::from_trusted(FIXTURE_ULID));
+        assert!(scope.validate().is_ok());
+    }
+
+    #[test]
+    fn space_scope_validate_active_malformed_is_validation_error() {
+        let scope = SpaceScope::Active(SpaceId::from_trusted("DOES_NOT_EXIST"));
+        let err = scope
+            .validate()
+            .expect_err("malformed active scope must reject");
+        assert!(matches!(err, AppError::Validation(_)));
+    }
+
+    #[test]
+    fn space_scope_validate_seeded_sentinels_pass() {
+        // Guard against over-rejection: the seeded sentinel spaces are
+        // canonical ULIDs and must pass the shape check unchanged.
+        for sentinel in [SPACE_PERSONAL_ULID, SPACE_WORK_ULID] {
+            let scope = SpaceScope::Active(SpaceId::from_trusted(sentinel));
+            assert!(
+                scope.validate().is_ok(),
+                "sentinel space {sentinel} must pass shape validation"
+            );
+        }
+    }
+
+    #[test]
+    fn space_scope_deserialize_rejects_malformed_active_id() {
+        // The IPC boundary: a malformed `space_id` must fail deserialization
+        // (a clear error) rather than yielding an `Active` scope that
+        // silently matches nothing.
+        let json = serde_json::json!({ "kind": "active", "space_id": "not-a-ulid" });
+        let result: Result<SpaceScope, _> = serde_json::from_value(json);
+        assert!(
+            result.is_err(),
+            "malformed space_id must reject at deserialize"
+        );
+    }
+
+    #[test]
+    fn space_scope_deserialize_accepts_valid_active_id() {
+        let json = serde_json::json!({ "kind": "active", "space_id": FIXTURE_ULID });
+        let decoded: SpaceScope =
+            serde_json::from_value(json).expect("valid ULID must deserialize");
+        assert_eq!(
+            decoded,
+            SpaceScope::Active(SpaceId::from_trusted(FIXTURE_ULID))
+        );
+    }
+
+    #[test]
+    fn space_scope_deserialize_accepts_seeded_sentinels() {
+        for sentinel in [SPACE_PERSONAL_ULID, SPACE_WORK_ULID] {
+            let json = serde_json::json!({ "kind": "active", "space_id": sentinel });
+            let decoded: SpaceScope =
+                serde_json::from_value(json).unwrap_or_else(|e| panic!("sentinel {sentinel}: {e}"));
+            assert_eq!(decoded, SpaceScope::Active(SpaceId::from_trusted(sentinel)));
+        }
     }
 
     // --- SpaceScope::as_filter_param ---
