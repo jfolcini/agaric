@@ -128,12 +128,19 @@ pub(crate) async fn daemon_loop(
     let resp_materializer = materializer.clone();
     let resp_scheduler = scheduler.clone();
     let resp_event_sink = event_sink.clone();
+    // #1605: clone the daemon's shared cancel flag into the responder
+    // factory so every spawned responder session observes the SAME
+    // shutdown/user-cancel signal the initiator path uses. A flipped flag
+    // aborts an in-progress responder within one recv cycle, freeing its
+    // per-peer lock and #1581 concurrency permit.
+    let resp_cancel = cancel.clone();
     let (server, port) = SyncServer::start(&cert, move |conn, permit| {
         let pool = resp_pool.clone();
         let device_id = resp_device_id.clone();
         let mat = resp_materializer.clone();
         let sched = resp_scheduler.clone();
         let sink = resp_event_sink.clone();
+        let cancel = resp_cancel.clone();
 
         // Spawn the responder session, then spawn a lightweight watcher
         // that awaits the handle. The watcher surfaces both graceful
@@ -146,7 +153,8 @@ pub(crate) async fn daemon_loop(
         // session lifetime (up to `RECV_TIMEOUT` = 180 s) and freed on
         // completion — graceful, error, or panic.
         let handle: tokio::task::JoinHandle<Result<(), AppError>> = tokio::spawn(async move {
-            let result = handle_incoming_sync(conn, pool, device_id, mat, sched, sink).await;
+            let result =
+                handle_incoming_sync(conn, pool, device_id, mat, sched, sink, cancel).await;
             drop(permit);
             result
         });

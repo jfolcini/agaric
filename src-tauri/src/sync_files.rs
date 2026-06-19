@@ -1361,6 +1361,18 @@ pub async fn run_file_transfer_responder(
 ) -> Result<FileTransferStats, AppError> {
     let mut stats = FileTransferStats::default();
 
+    // #1605: bail before Phase 1's first blocking `recv` if cancellation
+    // is already pending. Phase 1 (`receive_request_and_send_files`) blocks
+    // on the initiator's `FileRequest` *before* its per-file cancel check;
+    // a slow/hung initiator that finished op-sync but never sends that
+    // message would otherwise pin the responder (and its per-peer lock +
+    // #1581 permit) for the full `RECV_TIMEOUT` (180 s). Checking the
+    // daemon's real shared flag here mirrors the message loop's pre-recv
+    // check and gives a shutdown / user-cancel a prompt abort point.
+    if cancel.load(Ordering::Acquire) {
+        return Err(AppError::InvalidOperation("sync cancelled".into()));
+    }
+
     // Phase 1: Respond to initiator's file request
     let send_stats =
         receive_request_and_send_files(conn, pool, app_data_dir, cancel, progress).await?;

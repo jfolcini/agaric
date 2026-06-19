@@ -98,6 +98,17 @@ pub(crate) fn verify_peer_cert(
 /// MAINT-21: wrapped in a `sync_resp` span so every log line emitted during
 /// an inbound responder session (including nested orchestrator
 /// `sync_msg{...}` child spans) is tagged with the responder session prefix.
+///
+/// #1605: `cancel` is the daemon's shared cancellation `AtomicBool` — the
+/// SAME flag the initiator path (`run_sync_session`) and the shutdown path
+/// observe. Threading it here (instead of the former throwaway,
+/// never-set `AtomicBool`) means a shutdown or user-cancel that flips the
+/// flag aborts the responder session within one recv cycle and releases
+/// the per-peer lock and the #1581 concurrency permit, rather than letting
+/// a slow/hung initiator pin both for up to `RECV_TIMEOUT` (180 s) per recv.
+/// Like the initiator, the flag is checked between recvs (at the top of each
+/// message-loop iteration and per-file in the transfer phase), so a single
+/// in-flight recv still runs to its timeout; mid-recv abort is out of scope.
 #[tracing::instrument(skip_all, name = "sync_resp")]
 pub(crate) async fn handle_incoming_sync(
     mut conn: SyncConnection,
@@ -106,6 +117,7 @@ pub(crate) async fn handle_incoming_sync(
     materializer: crate::materializer::Materializer,
     scheduler: std::sync::Arc<SyncScheduler>,
     event_sink: std::sync::Arc<dyn SyncEventSink>,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), AppError> {
     tracing::info!("incoming sync connection received, starting responder session");
 
@@ -360,6 +372,16 @@ pub(crate) async fn handle_incoming_sync(
 
     // ── Message loop (same structure as initiator) ────────────────────────
     while !orch.is_terminal() {
+        // #1605: check cancellation before waiting for the next message,
+        // mirroring `run_sync_session`'s initiator-side check. A shutdown or
+        // user-cancel that flipped the daemon's shared flag aborts here within
+        // one recv cycle, releasing the per-peer lock (`_peer_guard`) and the
+        // #1581 permit (dropped by the caller when this fn resolves) instead of
+        // pinning them for up to `RECV_TIMEOUT` per recv against a hung peer.
+        if cancel.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(AppError::InvalidOperation("sync cancelled".into()));
+        }
+
         let incoming: SyncMessage = super::wire::recv_sync_message(&mut conn).await?;
         let response = tokio::time::timeout(HANDSHAKE_TIMEOUT, orch.handle_message(incoming))
             .await
@@ -428,18 +450,14 @@ pub(crate) async fn handle_incoming_sync(
     // After the op-sync completes, transfer missing attachment files.
     // The responder responds first, then requests its own files.
     //
-    // M-47: the responder side of the connection has no plumbed-in
-    // cancel signal today (only the initiator surfaces the user-visible
-    // "cancel sync" button on its end). We pass a fresh, never-set
-    // `AtomicBool` so the file-transfer helpers compile and behave
-    // exactly as before on the responder. Responder-side cancellation
-    // is a follow-up — once the daemon's per-incoming-session
-    // cancel context is wired through `handle_incoming_sync` we can
-    // replace this placeholder with the real flag. The user-visible
-    // case (initiator cancels its own outbound sync) is fully handled
-    // via the orchestrator's `run_sync_session` cancel parameter, which
-    // *is* threaded through to `run_file_transfer_initiator`.
-    let responder_cancel = std::sync::atomic::AtomicBool::new(false);
+    // #1605: thread the daemon's REAL shared cancel flag (same one the
+    // initiator and shutdown path use) into the file-transfer phase,
+    // replacing the former M-47 throwaway `AtomicBool::new(false)`. The
+    // per-file loops in `run_file_transfer_responder` observe it between
+    // files, so a shutdown or user-cancel aborts a multi-gigabyte transfer
+    // promptly rather than running it to completion (or to `RECV_TIMEOUT`
+    // per file). Mirrors `run_sync_session`, which threads the same flag
+    // through to `run_file_transfer_initiator`.
     if orch.is_succeeded() {
         match crate::sync_files::app_data_dir_from_pool(&pool_ref).await {
             Ok(app_data_dir) => {
@@ -456,7 +474,7 @@ pub(crate) async fn handle_incoming_sync(
                     &mut conn,
                     &pool_ref,
                     &app_data_dir,
-                    &responder_cancel,
+                    &cancel,
                     None,
                 )
                 .await
