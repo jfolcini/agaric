@@ -22,7 +22,7 @@ import {
  * the deterministic signal. Since #400 the slot is a 0-based `newIndex` (slot 0
  * = "first child" / "top"); the four original bugs (off-by-one, collision,
  * non-positive top/first-child) are fixed at the root, so these specs assert the
- * CORRECT slot. See docs/dnd-ux-review.md and src/lib/__tests__/dnd-pipeline.test.ts.
+ * CORRECT slot. See src/lib/__tests__/dnd-pipeline.test.ts.
  */
 
 const PAGE = 'Getting Started'
