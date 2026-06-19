@@ -340,7 +340,7 @@ describe('CommandPalette — action menu (PEND-67 Phase 5)', () => {
     expect(screen.queryByTestId('palette-action-menu')).toBeNull()
   })
 
-  it('selecting "Copy page ULID" writes the page id to clipboard (PEND-67 Phase 5 expansion)', async () => {
+  it('selecting "Copy page link" writes a pasteable [[ULID]] page link to clipboard (#1521)', async () => {
     seedRecents()
     const writeText = vi.fn().mockResolvedValue(undefined)
     const orig = navigator.clipboard
@@ -354,8 +354,10 @@ describe('CommandPalette — action menu (PEND-67 Phase 5)', () => {
       const recentRow = await screen.findByTestId('palette-recent-PAGE_R')
       recentRow.setAttribute('aria-selected', 'true')
       fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
-      fireEvent.click(await screen.findByTestId('palette-action-copy-id'))
-      expect(writeText).toHaveBeenCalledWith('PAGE_R')
+      fireEvent.click(await screen.findByTestId('palette-action-copy-page-link'))
+      // #1521 — must be the `[[ULID]]` link form, not the bare ULID (which
+      // pastes as dead text).
+      expect(writeText).toHaveBeenCalledWith('[[PAGE_R]]')
     } finally {
       Object.defineProperty(navigator, 'clipboard', { value: orig, configurable: true })
     }

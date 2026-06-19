@@ -32,7 +32,13 @@ export function buildActionMenuActions(
     hint: '⌘↵',
   }
   const reveal: PaletteAction = { id: 'reveal-in-pages', label: t('palette.actionReveal') }
-  const copyId: PaletteAction = { id: 'copy-id', label: t('palette.actionCopyId') }
+  // #1521 — pages copy a pasteable `[[ULID]]` page link (the block row's
+  // sibling copies `((ULID))`); the old `copy-id` action wrote a bare ULID
+  // that pastes as dead text, so it was renamed/relabelled to match.
+  const copyPageLink: PaletteAction = {
+    id: 'copy-page-link',
+    label: t('palette.actionCopyPageLink'),
+  }
   if (rowType === 'recent') {
     return [
       open,
@@ -41,10 +47,10 @@ export function buildActionMenuActions(
         ? { id: 'unpin', label: t('palette.actionUnpin') }
         : { id: 'pin', label: t('palette.actionPin') },
       reveal,
-      copyId,
+      copyPageLink,
       { id: 'remove-from-recents', label: t('palette.actionRemoveFromRecents') },
     ]
   }
-  if (rowType === 'page') return [open, newTab, reveal, copyId]
+  if (rowType === 'page') return [open, newTab, reveal, copyPageLink]
   return [open, newTab, reveal, { id: 'copy-block-link', label: t('palette.actionCopyBlockLink') }]
 }

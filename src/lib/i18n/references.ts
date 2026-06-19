@@ -409,10 +409,10 @@ export const references: Record<string, string> = {
   'palette.actionUnpin': 'Unpin from recents',
   // PEND-67 Phase 5 follow-up — expanded action sets.
   'palette.actionReveal': 'Reveal in Pages view',
-  'palette.actionCopyId': 'Copy page ULID',
+  'palette.actionCopyPageLink': 'Copy page link',
   'palette.actionCopyBlockLink': 'Copy block link',
   'palette.actionRemoveFromRecents': 'Remove from recents',
-  'palette.copyIdSuccess': 'ULID copied to clipboard',
+  'palette.copyPageLinkSuccess': 'Page link copied to clipboard',
   'palette.copyLinkSuccess': 'Block link copied to clipboard',
   'palette.copyFailed': 'Could not access clipboard',
   // UX-3 — search help body
