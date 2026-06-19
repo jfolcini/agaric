@@ -485,6 +485,42 @@ describe('TemplatesView', () => {
     expect(screen.getByText('Journal template')).toBeInTheDocument()
   })
 
+  it('queries journal-template membership at the same 100-cap as the template list (#1523)', async () => {
+    // Regression: the journal-template membership query is the sole source of
+    // the per-template scope badge. If it caps lower than
+    // loadTemplatePagesWithPreview's paginationLimit(100), any journal template
+    // ranked beyond the cap is mislabeled with the 'page' scope. The two caps
+    // must match.
+    let journalLimit: unknown = null
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'query_by_property') {
+        const params = args as { key: string; limit?: unknown }
+        if (params.key === 'template') {
+          return {
+            items: [makeTemplate('T1', 'Meeting Notes')],
+            next_cursor: null,
+            has_more: false,
+            total_count: null,
+          }
+        }
+        if (params.key === 'journal-template') {
+          journalLimit = params.limit
+          return emptyPage
+        }
+        return emptyPage
+      }
+      if (cmd === 'list_blocks') {
+        return emptyPage
+      }
+      return emptyPage
+    })
+
+    render(<TemplatesView />)
+    expect(await screen.findByText('Meeting Notes')).toBeInTheDocument()
+    // Must match loadTemplatePagesWithPreview's paginationLimit(100).
+    expect(journalLimit).toBe(100)
+  })
+
   it('shows tooltip on journal template badge hover', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
