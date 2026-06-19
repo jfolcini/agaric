@@ -154,6 +154,134 @@ async fn insert_remote_op_hash_mismatch_rejected() {
     );
 }
 
+/// #1600 — a remote op carrying a raw NUL byte in a hashed field must be
+/// REJECTED gracefully with `AppError::InvalidOperation`, never panic.
+///
+/// The `\0` is the wire-format delimiter for the hash preimage
+/// (`compute_op_hash`); a NUL inside a field makes the preimage
+/// ambiguous. `compute_op_hash` enforces this only as a `debug_assert!`,
+/// so the production ingest gate (`insert_remote_op`) must reject it
+/// *before* hashing — otherwise a corrupt op would panic in release.
+///
+/// We build the `OpRecord` by hand (not via `make_remote_record`, which
+/// would trip the same `debug_assert!` while computing the hash) so the
+/// test drives the production-facing rejection on the foreground path.
+#[tokio::test]
+async fn insert_remote_op_rejects_null_byte_in_device_id() {
+    let (pool, _dir) = test_pool().await;
+    let record = OpRecord {
+        device_id: "remote\0dev".to_owned(),
+        seq: 1,
+        parent_seqs: None,
+        hash: "0".repeat(64),
+        op_type: "create_block".to_owned(),
+        payload: r#"{"block_id":"B1"}"#.to_owned(),
+        created_at: FIXED_TS,
+        block_id: None,
+    };
+
+    let err = insert_remote_op(&pool, &record).await;
+    assert!(
+        matches!(err, Err(AppError::InvalidOperation(_))),
+        "NUL byte in device_id must be rejected with InvalidOperation, got: {err:?}"
+    );
+    let msg = err.unwrap_err().to_string();
+    assert!(
+        msg.contains("null byte"),
+        "expected null-byte rejection, got: {msg}"
+    );
+
+    // Confirm nothing landed.
+    let fetched = get_op_by_seq(&ReadPool(pool.clone()), "remote\0dev", 1).await;
+    assert!(
+        matches!(fetched, Err(AppError::NotFound(_))),
+        "rejected op must not land in op_log"
+    );
+}
+
+/// #1600 — NUL byte anywhere in the four hashed fields is rejected.
+#[tokio::test]
+async fn insert_remote_op_rejects_null_byte_in_each_field() {
+    let (pool, _dir) = test_pool().await;
+
+    // (field-under-test, record builder) — each carries exactly one NUL.
+    let cases: Vec<(&str, OpRecord)> = vec![
+        (
+            "parent_seqs",
+            OpRecord {
+                device_id: "remote-dev".to_owned(),
+                seq: 2,
+                parent_seqs: Some("[[\"a\",1]]\0".to_owned()),
+                hash: "0".repeat(64),
+                op_type: "edit_block".to_owned(),
+                payload: r#"{"block_id":"B1"}"#.to_owned(),
+                created_at: FIXED_TS,
+                block_id: None,
+            },
+        ),
+        (
+            "op_type",
+            OpRecord {
+                device_id: "remote-dev".to_owned(),
+                seq: 3,
+                parent_seqs: None,
+                hash: "0".repeat(64),
+                op_type: "create\0block".to_owned(),
+                payload: r#"{"block_id":"B1"}"#.to_owned(),
+                created_at: FIXED_TS,
+                block_id: None,
+            },
+        ),
+        (
+            "payload",
+            OpRecord {
+                device_id: "remote-dev".to_owned(),
+                seq: 4,
+                parent_seqs: None,
+                hash: "0".repeat(64),
+                op_type: "create_block".to_owned(),
+                payload: "{\"block_id\":\"B1\0\"}".to_owned(),
+                created_at: FIXED_TS,
+                block_id: None,
+            },
+        ),
+    ];
+
+    for (field, record) in cases {
+        let err = insert_remote_op(&pool, &record).await;
+        assert!(
+            matches!(err, Err(AppError::InvalidOperation(_))),
+            "NUL byte in {field} must be rejected with InvalidOperation, got: {err:?}"
+        );
+        assert!(
+            err.unwrap_err().to_string().contains("null byte"),
+            "expected null-byte rejection for {field}"
+        );
+    }
+}
+
+/// #1600 — a NUL-byte-free op with a correct hash still verifies and
+/// lands. Guards against the rejection gate accidentally tripping on
+/// valid content. Pairs with the `compute_op_hash` known-vector
+/// regression in `hash.rs` confirming the hash value is unchanged.
+#[tokio::test]
+async fn insert_remote_op_accepts_clean_op_after_null_byte_gate() {
+    let (pool, _dir) = test_pool().await;
+    let record = make_remote_record(
+        "remote-dev",
+        1,
+        None,
+        "create_block",
+        r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"clean"}"#,
+    );
+    insert_remote_op(&pool, &record).await.unwrap();
+
+    let fetched = get_op_by_seq(&ReadPool(pool.clone()), "remote-dev", 1)
+        .await
+        .unwrap();
+    assert_eq!(fetched.hash, record.hash);
+}
+
 #[tokio::test]
 async fn insert_remote_op_with_parent_seqs() {
     let (pool, _dir) = test_pool().await;

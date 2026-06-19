@@ -362,6 +362,27 @@ where
 /// would invalidate otherwise-valid existing op log rows produced under
 /// earlier writer code paths.
 pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bool, AppError> {
+    // #1600 — Reject any raw NUL byte in a hashed field *before* the op
+    // reaches the hash recipe. The `\0` delimiter is the wire-format
+    // contract for the hash preimage (see `compute_op_hash`); a NUL in a
+    // field would make the preimage ambiguous. `compute_op_hash` only
+    // enforces this as a `debug_assert!`, so without this gate a corrupt
+    // remote op would PANIC in release at the op-log ingest boundary.
+    // Fail fast and gracefully instead — this is the production-facing
+    // entry point for untrusted/remote content.
+    if record.device_id.contains('\0')
+        || record
+            .parent_seqs
+            .as_deref()
+            .is_some_and(|p| p.contains('\0'))
+        || record.op_type.contains('\0')
+        || record.payload.contains('\0')
+    {
+        return Err(AppError::InvalidOperation(
+            "remote op contains a null byte in a hashed field".into(),
+        ));
+    }
+
     // Verify the hash matches the record contents
     if !verify_op_hash(
         &record.hash,

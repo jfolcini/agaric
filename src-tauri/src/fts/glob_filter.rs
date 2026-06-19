@@ -247,6 +247,9 @@ fn expand_braces(input: &str) -> Result<Vec<String>, AppError> {
             Segment::Literal(s) => {
                 for r in &results {
                     next.push(format!("{r}{s}"));
+                    if next.len() > EXPANSION_CAP {
+                        break;
+                    }
                 }
             }
             Segment::Alts(alts) => {
@@ -455,5 +458,39 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn literal_segment_after_large_alts_stays_capped() {
+        // #1599: a `Literal` segment trailing a wide `{...}` group must keep
+        // the result `<= EXPANSION_CAP`. Note the prior `Alts` segment already
+        // truncates `results` to exactly the cap, so the `Literal` branch runs
+        // over a `<= cap` working set and produces exactly one entry per
+        // input — its in-loop `break` is defensive symmetry with `Alts` and is
+        // not the load-bearing cap here (the post-segment truncate is). This
+        // test pins the end-to-end invariant: the cap holds across a
+        // Literal-after-Alts boundary.
+        let alts: String = (0..EXPANSION_CAP + 10)
+            .map(|i| format!("a{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let pattern = format!("{{{alts}}}/x");
+        let out = expand_braces(&pattern).unwrap();
+        // The Alts segment truncates to exactly the cap; the Literal suffix is
+        // 1:1, so the width must be exactly EXPANSION_CAP, not merely `<=`.
+        assert_eq!(
+            out.len(),
+            EXPANSION_CAP,
+            "literal-after-alts must stay at the cap, got {}",
+            out.len()
+        );
+    }
+
+    #[test]
+    fn under_cap_literal_pattern_expands_unchanged() {
+        // A pattern with a literal segment that stays under the cap must
+        // expand exactly as before — the new guard only fires above the cap.
+        let out = expand_braces("{a,b}suffix").unwrap();
+        assert_eq!(out, vec!["asuffix".to_string(), "bsuffix".to_string()]);
     }
 }
