@@ -486,6 +486,36 @@ fn ts_for(n: usize) -> i64 {
     1_736_899_200_000 + i64::try_from(total_minutes).unwrap() * 60_000
 }
 
+/// Resolve a sketch chain into a well-formed sequence of typed
+/// [`OpPayload`]s **without touching any pool** (no `op_log` append, no
+/// materialization). Skips sketches with no valid target — exactly the
+/// same model-driven validity discipline [`seed_chain`] applies, minus the
+/// side effects.
+///
+/// B2-B4 (the materializer apply/reproject proptests, issue #1683) need the
+/// resolved payloads *before* they are appended so they can re-anchor every
+/// root `CreateBlock` under a pre-seeded page (so `resolve_block_space`
+/// succeeds and every op routes through the production engine path rather
+/// than the SQL-only fallback). Generating the payloads here and driving
+/// them through `append_local_op` + the foreground apply pipeline themselves
+/// gives those tests full control over the apply path while reusing the
+/// harness's single source of "what is a structurally valid op chain".
+pub fn resolve_chain(sketches: &[OpKind]) -> Vec<OpPayload> {
+    resolve_chain_with_pool_size(sketches, DEFAULT_POOL_SIZE)
+}
+
+/// As [`resolve_chain`] but with a caller-chosen ULID pool size.
+pub fn resolve_chain_with_pool_size(sketches: &[OpKind], pool_size: usize) -> Vec<OpPayload> {
+    let mut model = ChainModel::new(pool_size.max(1));
+    let mut payloads = Vec::new();
+    for sketch in sketches {
+        if let Some(payload) = model.resolve(sketch) {
+            payloads.push(payload);
+        }
+    }
+    payloads
+}
+
 /// Generate a fresh ULID pool, resolve the sketch chain into well-formed
 /// typed ops, and append them to `pool` with deterministic timestamps.
 /// Skips sketches with no valid target. Returns the appended chain.
