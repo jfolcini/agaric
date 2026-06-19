@@ -135,40 +135,64 @@ pub async fn list_agenda_range(
     .fetch_all(pool)
     .await?;
 
-    // Split each raw row into (ActiveBlockRow, ac_date) so we can carry
-    // the agenda_cache date through to the cursor. The two vectors stay
-    // index-aligned by construction. The boundary cast
+    // Carry the agenda_cache `date` *on each row* (a local pairing struct)
+    // rather than in a parallel index-aligned Vec. This keeps the cursor
+    // key co-located with its row, so `build_page_response`'s own
+    // truncation governs both the row set and the cursor source — there is
+    // no second collection to keep in lockstep. The boundary cast
     // `ActiveBlockRow::from_block_row_unchecked` is safe here because the
     // SQL filter pins `b.deleted_at IS NULL`.
-    let mut rows: Vec<ActiveBlockRow> = Vec::with_capacity(raw_rows.len());
-    let mut ac_dates: Vec<String> = Vec::with_capacity(raw_rows.len());
-    for r in raw_rows {
-        ac_dates.push(r.ac_date);
-        rows.push(ActiveBlockRow::from_block_row_unchecked(super::BlockRow {
-            id: r.id,
-            block_type: r.block_type,
-            content: r.content,
-            parent_id: r.parent_id,
-            position: r.position,
-            deleted_at: r.deleted_at,
-            todo_state: r.todo_state,
-            priority: r.priority,
-            due_date: r.due_date,
-            scheduled_date: r.scheduled_date,
-            page_id: r.page_id,
-        }));
-    }
+    let rows: Vec<AgendaRangeRow> = raw_rows
+        .into_iter()
+        .map(|r| AgendaRangeRow {
+            ac_date: r.ac_date,
+            block: ActiveBlockRow::from_block_row_unchecked(super::BlockRow {
+                id: r.id,
+                block_type: r.block_type,
+                content: r.content,
+                parent_id: r.parent_id,
+                position: r.position,
+                deleted_at: r.deleted_at,
+                todo_state: r.todo_state,
+                priority: r.priority,
+                due_date: r.due_date,
+                scheduled_date: r.scheduled_date,
+                page_id: r.page_id,
+            }),
+        })
+        .collect();
 
-    // Pre-trim `ac_dates` to the page size so its `.last()` aligns with
-    // whatever row `build_page_response` will treat as the last kept row.
-    // `build_page_response` truncates `rows` itself when it exceeds `limit`.
-    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
-    if ac_dates.len() > limit_usize {
-        ac_dates.truncate(limit_usize);
-    }
-    let last_ac_date = ac_dates.last().cloned();
+    // Build the page over the paired rows so the next-cursor is derived
+    // from the last *kept* row's own `ac_date` — `build_page_response`
+    // applies the page-size truncation, and the closure reads the cursor
+    // date straight off that row.
+    let paged = build_page_response(rows, page.limit, |last| {
+        Cursor::for_id_and_deleted_at(
+            last.block.id.as_str().to_string(),
+            Some(last.ac_date.clone()),
+        )
+    })?;
 
-    build_page_response(rows, page.limit, move |last| {
-        Cursor::for_id_and_deleted_at(last.id.as_str().to_string(), last_ac_date)
+    // Unwrap the pairing struct back to the public `ActiveBlockRow` shape,
+    // preserving `next_cursor` / `has_more` / `total_count` verbatim.
+    Ok(PageResponse {
+        items: paged.items.into_iter().map(|r| r.block).collect(),
+        next_cursor: paged.next_cursor,
+        has_more: paged.has_more,
+        total_count: paged.total_count,
     })
+}
+
+/// Pairs an [`ActiveBlockRow`] with the `agenda_cache.date` that ordered it,
+/// so the keyset cursor for [`list_agenda_range`] reads its date straight off
+/// the row instead of from a parallel index-aligned Vec (#1662).
+///
+/// Internal-only: it is unwrapped back to `ActiveBlockRow` before
+/// [`list_agenda_range`] returns, so it never reaches the wire. It derives
+/// `Serialize` / `specta::Type` purely to satisfy the `build_page_response`
+/// bound while it flows through the shared helper.
+#[derive(serde::Serialize, specta::Type)]
+struct AgendaRangeRow {
+    block: ActiveBlockRow,
+    ac_date: String,
 }
