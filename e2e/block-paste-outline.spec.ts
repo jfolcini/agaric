@@ -261,18 +261,27 @@ test.describe('Copy/paste block outline (keyboard + system clipboard, #913)', ()
     await expect(page.locator('[data-testid="sortable-block"]').first()).toBeVisible()
     await expect(rowsWithText(page, GS3_TEXT)).toHaveCount(0)
 
-    // Paste with the anchor gone: the chord must NOT crash. The surviving
-    // selection (GS_1) becomes the new last-owned anchor — so paste recovers by
-    // anchoring there rather than throwing on a stale id. The global
-    // console-error watcher (helpers.afterEach) asserts nothing threw. The
-    // result is bounded: GS_1's text renders at most twice (original + a single
-    // recovered paste), never duplicating off the deleted anchor.
+    // Paste with the anchor gone: the chord must NOT crash on the stale id. The
+    // global console-error watcher (helpers.afterEach) asserts nothing threw, and
+    // the count assertions below assert nothing was duplicated off the dead
+    // anchor.
     await blurEditors(page)
     await page.keyboard.press('Control+v')
-    await page.waitForTimeout(500)
-    const gs1Count = await rowsWithText(page, GS1_TEXT).count()
-    expect(gs1Count).toBeGreaterThanOrEqual(1)
-    expect(gs1Count).toBeLessThanOrEqual(2)
+    // With its anchor deleted and the selection pruned on reopen, the paste is a
+    // graceful NO-OP: it issues no IPC and mutates nothing (verified: zero
+    // `create_blocks_batch` calls, GS_1 stays at one row). There is therefore no
+    // positive "settled" observable to poll on — GS_1's single row is the
+    // untouched ORIGINAL, so a `GS1_TEXT >= 1` poll would be trivially true at
+    // t=0 and assert nothing. What this test guards is the NEGATIVE invariant: a
+    // rogue async paste must NOT duplicate content off the dead anchor.
+    //
+    // `toHaveCount` auto-retries for the full timeout and FAILS (not passes) if
+    // the count ever drifts off the expected value, so it both spans the settle
+    // window AND would catch a duplicating regression — unlike a `<=` poll, which
+    // would stop on the first tick. The recovered paste lands NO extra rows, so
+    // GS_1 stays at exactly its single original occurrence (bounded ≤2, observed
+    // 1); a buggy duplicate would push it to 2+ and fail this assertion.
+    await expect(rowsWithText(page, GS1_TEXT)).toHaveCount(1)
     // GS_3's text never reappears from a rogue paste anchored on the dead block.
     await expect(rowsWithText(page, GS3_TEXT)).toHaveCount(0)
   })

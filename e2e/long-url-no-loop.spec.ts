@@ -47,16 +47,15 @@ test.describe('Long single-line URL does not loop the editor (#1489)', () => {
     // markdown-change path on every keystroke — the exact path that looped.
     await editor.pressSequentially(LONG_URL, { delay: 0 })
 
-    // Let any deferred layout / transaction settling occur. If the loop were
-    // present, this window is where React would tip over.
-    await page.waitForTimeout(500)
+    // Wait for the editor to actually reflect the FULL typed token rather than a
+    // fixed sleep. Auto-retrying until the entire long URL has rendered spans the
+    // same deferred layout / transaction-settling window where the pre-fix loop
+    // tipped React over — but tied to an observable, not a blind delay.
+    await expect(editor).toContainText(LONG_URL)
 
     const errors = getConsoleErrors(page)
     const loopErrors = errors.filter((e) => e.includes('Maximum update depth'))
     expect(loopErrors, `max-update-depth loop on long URL:\n${loopErrors.join('\n')}`).toEqual([])
-
-    // The editor is still alive and shows the typed text.
-    await expect(editor).toContainText('example.com')
   })
 
   test('a [text](url) markdown link with a long URL does not loop', async ({ page }) => {
@@ -67,7 +66,12 @@ test.describe('Long single-line URL does not loop the editor (#1489)', () => {
 
     // The issue reproduces with a plain markdown link too, not just bare URLs.
     await editor.pressSequentially(`[link](${LONG_URL})`, { delay: 0 })
-    await page.waitForTimeout(500)
+
+    // Wait for the editor to reflect the typed link text rather than a fixed
+    // sleep. The char-by-char `pressSequentially` above already drives the
+    // autolink/markdown-change path that looped; auto-retrying on the rendered
+    // link text settles the editor on an observable instead of a blind delay.
+    await expect(editor).toContainText('link')
 
     const errors = getConsoleErrors(page)
     const loopErrors = errors.filter((e) => e.includes('Maximum update depth'))
@@ -75,6 +79,5 @@ test.describe('Long single-line URL does not loop the editor (#1489)', () => {
       loopErrors,
       `max-update-depth loop on long markdown link:\n${loopErrors.join('\n')}`,
     ).toEqual([])
-    await expect(editor).toContainText('link')
   })
 })

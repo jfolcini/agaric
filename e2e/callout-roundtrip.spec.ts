@@ -22,12 +22,15 @@ test.describe('Callout round-trip (#258)', () => {
     await editor.type('important note')
     // trigger the slash menu: a trailing "/callout" query, then select it
     await editor.type(' /callout')
-    await page.waitForTimeout(500)
+    // Wait for the suggestion popup to render the filtered `/callout` item
+    // before committing it with Enter, instead of a fixed sleep.
+    const calloutItem = page.locator('#suggestion-callout')
+    await expect(calloutItem).toBeVisible()
     await page.keyboard.press('Enter')
-    await page.waitForTimeout(400)
 
+    // saveBlock waits for the editor to leave this block (persist committed);
+    // the callout assertion below auto-retries until the view-mode render lands.
     await saveBlock(page)
-    await page.waitForTimeout(300)
 
     const callout = page
       .locator('[data-testid="sortable-block"]')
