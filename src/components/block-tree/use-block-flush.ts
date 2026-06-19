@@ -29,7 +29,7 @@
 
 import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 
 import { notify } from '@/lib/notify'
 
@@ -71,6 +71,13 @@ export function useBlockFlush({
   pageStore,
   t,
 }: UseBlockFlushParams): () => string | null {
+  // Per-block sequence token. Each flush that takes the detached async
+  // checkbox path bumps the block's token before awaiting the IPC. After the
+  // await, the IIFE re-reads the token: if a newer flush on the SAME block has
+  // bumped it in the meantime, this stale run bails BEFORE touching the store
+  // or calling `edit()`, so a late-resolving edit cannot clobber a newer one.
+  const checkboxSeqRef = useRef<Map<string, number>>(new Map())
+
   return useCallback((): string | null => {
     const handle = rovingEditorRef.current
     if (!handle?.activeBlockId) return null
@@ -98,9 +105,19 @@ export function useBlockFlush({
           // so the box stays re-parseable, and write no optimistic state. The
           // callback stays sync (`() => string | null`) via this fire-and-track
           // async IIFE — mirroring the store's own async/rollback idioms.
+          // #1591 — guard against a rapid second flush on the same block
+          // clobbering this one. Bump + capture the block's token now; the
+          // post-await re-check bails if a newer flush superseded this run.
+          const seqMap = checkboxSeqRef.current
+          const mySeq = (seqMap.get(blockId) ?? 0) + 1
+          seqMap.set(blockId, mySeq)
           void (async () => {
             try {
               const echo = await setTodoStateCmd(blockId, todoState)
+              // A newer flush on this block superseded us while the IPC was in
+              // flight — bail without applying so we don't clobber it. The
+              // newer run owns the block's final content + todo_state.
+              if (checkboxSeqRef.current.get(blockId) !== mySeq) return
               // Adopt the backend echo for `todo_state` the way `edit()` adopts
               // the content echo (#753): the optimistic write below records the
               // state we SENT; prefer the canonical value the backend returned
@@ -116,6 +133,18 @@ export function useBlockFlush({
               edit(blockId, cleanContent)
               if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
             } catch (err: unknown) {
+              // A newer flush on this block superseded us — don't clobber it
+              // with this stale run's raw content, but still surface the error.
+              if (checkboxSeqRef.current.get(blockId) !== mySeq) {
+                logger.error(
+                  'BlockTree',
+                  'Failed to set task state from checkbox syntax (superseded)',
+                  { blockId },
+                  err,
+                )
+                notify.error(t('blockTree.setTaskStateFailed'))
+                return
+              }
               // State write failed — do NOT strip the marker. Persist the raw
               // content (with the `- [ ] `/`- [x] ` marker intact) so the task
               // state stays recoverable, and write no optimistic `todo_state`
@@ -138,5 +167,5 @@ export function useBlockFlush({
       }
     }
     return changed
-  }, [edit, splitBlock, rootParentId, t, pageStore, rovingEditorRef])
+  }, [edit, splitBlock, rootParentId, t, pageStore, rovingEditorRef, checkboxSeqRef])
 }

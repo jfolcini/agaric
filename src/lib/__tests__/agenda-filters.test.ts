@@ -967,6 +967,101 @@ describe('executeAgendaFilters', () => {
       // backend with Validation; the FE short-circuits.
       expect(filteredCalls()).toHaveLength(0)
     })
+
+    // #1594 — an unresolved tag dimension must collapse the cross-dimension
+    // AND to empty, EVEN WHEN another dimension survives. Previously the tag
+    // payload was silently dropped (returned `undefined`), so this query
+    // dispatched a status-ONLY filtered_blocks_query and returned the
+    // status superset (a strict widening of the intended status-AND-tag set).
+    it('#1594: status + unresolved tag → empty result, NOT the status-only superset', async () => {
+      const statusOnlyBlock = makeBlock({ id: 'status-superset', todo_state: 'TODO' })
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        // Tag never resolves.
+        if (cmd === 'list_tags_by_prefix') return []
+        // If the bug were present, the status-only IPC would return this.
+        if (cmd === 'filtered_blocks_query') {
+          return { items: [statusOnlyBlock], next_cursor: null, has_more: false }
+        }
+        return emptyPage
+      })
+
+      const result = await executeAgendaFilters(
+        [
+          { dimension: 'status', values: ['TODO'] },
+          { dimension: 'tag', values: ['nonexistent-tag'] },
+        ],
+        null,
+      )
+
+      // The AND with an unsatisfiable tag dimension is empty — and the
+      // backend is never asked (dispatching status-only would widen).
+      expect(result.blocks).toHaveLength(0)
+      expect(filteredCalls()).toHaveLength(0)
+    })
+
+    // #1594 sibling: a tag dimension that DOES resolve still intersects
+    // correctly with a surviving status dimension (no regression).
+    it('#1594: status + resolved tag → correct AND-intersection IPC', async () => {
+      const block = makeBlock({ id: 'intersection-1', todo_state: 'TODO' })
+      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
+        const a = args as Record<string, unknown>
+        if (cmd === 'list_tags_by_prefix' && a['prefix'] === 'tag-ok') {
+          return [{ tag_id: 'TID_OK', name: 'tag-ok', usage_count: 1 }]
+        }
+        if (cmd === 'filtered_blocks_query') {
+          return { items: [block], next_cursor: null, has_more: false }
+        }
+        return emptyPage
+      })
+
+      const result = await executeAgendaFilters(
+        [
+          { dimension: 'status', values: ['TODO'] },
+          { dimension: 'tag', values: ['tag-ok'] },
+        ],
+        null,
+      )
+
+      expect(result.blocks.map((b) => b.id)).toEqual(['intersection-1'])
+      expect(filteredCalls()).toHaveLength(1)
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters).toHaveLength(1)
+      expect(propertyFilters[0]).toMatchObject({ key: 'todo_state', valueTextIn: ['TODO'] })
+      expect(call['tagFilters']).toMatchObject({ tagIds: ['TID_OK'], mode: 'or' })
+    })
+
+    // #1594 boundary: a tag dimension with NO values contributes nothing
+    // and must NOT collapse a surviving status dimension to empty (the
+    // unsatisfiable path is gated on "had values but none resolved", not
+    // "had no values"). list_tags_by_prefix must not even be called.
+    it('#1594: tag dimension with no values leaves the status dimension unaffected', async () => {
+      const block = makeBlock({ id: 'status-survives', todo_state: 'TODO' })
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
+          return { items: [block], next_cursor: null, has_more: false }
+        }
+        return emptyPage
+      })
+
+      const result = await executeAgendaFilters(
+        [
+          { dimension: 'status', values: ['TODO'] },
+          { dimension: 'tag', values: [] },
+        ],
+        null,
+      )
+
+      expect(result.blocks.map((b) => b.id)).toEqual(['status-survives'])
+      expect(filteredCalls()).toHaveLength(1)
+      const call = filteredCalls()[0] as Record<string, unknown>
+      // No tag predicate is sent (null after marshalling), and the status
+      // dimension rides through unchanged.
+      expect(call['tagFilters']).toBeNull()
+      // An empty tag dimension performs no prefix lookups.
+      const prefixCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_tags_by_prefix')
+      expect(prefixCalls).toHaveLength(0)
+    })
   })
 
   describe('property filter translation', () => {
@@ -1221,6 +1316,37 @@ describe('loadMoreAgendaFilters', () => {
     expect(result.blocks[0]?.id).toBe('b2')
     expect(result.hasMore).toBe(false)
     expect(result.cursor).toBeNull()
+  })
+
+  // #1594 — load-more mirrors executeAgendaFilters: an all-unresolved tag
+  // dimension paired with a surviving status dimension collapses to empty
+  // (and never dispatches a status-only IPC that would widen the page).
+  it('#1594: status + unresolved tag short-circuits to empty (no widening IPC)', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'filtered_blocks_query') {
+        return {
+          items: [makeBlock({ id: 'leak', todo_state: 'TODO' })],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      return emptyPage
+    })
+
+    const result = await loadMoreAgendaFilters(
+      [
+        { dimension: 'status', values: ['TODO'] },
+        { dimension: 'tag', values: ['nonexistent-tag'] },
+      ],
+      'CURSOR_PAGE_2',
+      null,
+    )
+
+    expect(result.blocks).toHaveLength(0)
+    expect(result.hasMore).toBe(false)
+    expect(result.cursor).toBeNull()
+    expect(filteredCalls()).toHaveLength(0)
   })
 
   it("page 2's blocks satisfy every active filter (AND-intersection preserved)", async () => {

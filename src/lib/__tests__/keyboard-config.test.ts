@@ -371,6 +371,71 @@ describe('keyboard-config', () => {
     expect(c?.keys).toBe('Ctrl + Shift + E')
   })
 
+  // ── #1592: document-level listeners in focus-scoped categories ──────
+  // blockTree/blockSelection/listSelection hold a handful of entries whose
+  // handlers are document/window-level keydown listeners firing with NO
+  // focus (zoomOut / clearSelection / listClearSelection — all Escape).
+  // They co-fire with the always-on listeners, so findConflicts must now
+  // include them in the cross-category pass via the `documentLevel` flag.
+
+  it('findConflicts flags a documentLevel entry rebound onto a global wildcard chord (#1592)', () => {
+    // clearSelection (blockSelection, documentLevel, condition withSelection)
+    // rebound onto paletteOpen's chord (global, wildcard). The wildcard fires
+    // unconditionally, so it races the document-level Escape listener — before
+    // #1592 blockSelection was excluded from the cross-category pass and this
+    // went unflagged.
+    setCustomShortcut('clearSelection', 'Ctrl + K')
+
+    const conflicts = findConflicts()
+    const c = conflicts.find(
+      (x) => x.ids.includes('clearSelection') && x.ids.includes('paletteOpen'),
+    )
+    expect(c).toBeDefined()
+    expect(c?.keys).toBe('Ctrl + K')
+  })
+
+  it('findConflicts flags closeOverlays colliding cross-category with a wildcard always-on listener (#1592)', () => {
+    // closeOverlays carries a defined condition (whenOverlayOpen), so it only
+    // collides with a binding whose condition is undefined (a wildcard always-on
+    // listener). Rebind closeOverlays (global) and goToToday (journal, wildcard)
+    // onto the same fresh chord with no default owner: goToToday fires
+    // unconditionally and races closeOverlays' window-level Escape handler, so
+    // the cross-category pass must flag exactly this pair.
+    setCustomShortcut('closeOverlays', 'Ctrl + Alt + Q') // conditioned global listener
+    setCustomShortcut('goToToday', 'Ctrl + Alt + Q') // journal wildcard listener
+
+    const conflicts = findConflicts()
+    const c = conflicts.find((x) => x.ids.includes('closeOverlays') && x.ids.includes('goToToday'))
+    expect(c).toBeDefined()
+    expect(c?.keys).toBe('Ctrl + Alt + Q')
+  })
+
+  it('findConflicts does NOT over-report a focus-scoped suggestionPopup binding (#1592)', () => {
+    // suggestionClose (suggestionPopup, Escape) is handled inside TipTap's
+    // suggestion keymap — it only fires when the editor is focused AND a popup
+    // is open, so it physically cannot collide with a document-level listener.
+    // It is intentionally NOT flagged `documentLevel`; rebinding a global
+    // wildcard onto its (default Escape) chord must not pair the two.
+    setCustomShortcut('paletteOpen', 'Escape')
+
+    const conflicts = findConflicts()
+    const c = conflicts.find(
+      (x) => x.ids.includes('suggestionClose') && x.ids.includes('paletteOpen'),
+    )
+    expect(c).toBeUndefined()
+  })
+
+  it('findConflicts leaves the default catalog Escape chain unflagged (#1592)', () => {
+    // The layered document-level Escape listeners (closeOverlays / zoomOut /
+    // clearSelection / listClearSelection) coexist by design under disjoint
+    // runtime guards (whenOverlayOpen / whenZoomed / withSelection /
+    // hasSelection). Their conditions are all defined and differ → the
+    // conditions-disjoint rule suppresses them. No Escape pair among the
+    // defaults may be reported.
+    const escapePairs = findConflicts().filter((c) => c.keys === 'Escape')
+    expect(escapePairs).toHaveLength(0)
+  })
+
   // ── #754: getCustomOverrides parse cache ────────────────────────────
 
   it('getCustomOverrides parses the blob once across repeated calls (#754 cache)', () => {
