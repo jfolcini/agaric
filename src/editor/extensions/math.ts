@@ -73,6 +73,19 @@ export const MathInline = Node.create({
       new InputRule({
         find: /\$([^\s$0-9][^$]*?)\$$/,
         handler: ({ state, range, match }) => {
+          // #1537 — keep `$…$` literal inside code contexts (a code block, or
+          // text carrying the inline-code mark). Defense-in-depth: TipTap's
+          // `InputRule.run` already declines rules in those contexts before this
+          // handler fires, so this guard makes the behavior explicit and
+          // self-contained rather than relying on that vendored internal.
+          const $from = state.doc.resolve(range.from)
+          const codeMark = state.schema.marks['code']
+          if (
+            $from.parent.type.spec.code ||
+            (codeMark != null && codeMark.isInSet($from.marks()))
+          ) {
+            return
+          }
           const latex = match[1] ?? ''
           state.tr.replaceWith(range.from, range.to, type.create({ latex }))
         },
@@ -135,6 +148,16 @@ export const MathBlock = Node.create({
         handler: ({ state, range, match }) => {
           const latex = (match[1] ?? '').trim()
           const $from = state.doc.resolve(range.from)
+          // #1537 — keep `$$…$$` literal inside code contexts (defense-in-depth;
+          // TipTap's `InputRule.run` already declines rules in a code block /
+          // inline-code mark, but we guard explicitly here too).
+          const codeMark = state.schema.marks['code']
+          if (
+            $from.parent.type.spec.code ||
+            (codeMark != null && codeMark.isInSet($from.marks()))
+          ) {
+            return
+          }
           // Replace the entire enclosing textblock (paragraph) with the atom.
           const blockStart = $from.before($from.depth)
           const blockEnd = $from.after($from.depth)
