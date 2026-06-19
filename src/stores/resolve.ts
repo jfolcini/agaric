@@ -61,15 +61,32 @@ function activeSpaceId(): string {
 }
 
 /**
- * Delete oldest entries (first N entries in Map iteration order) until
- * `cache.size <= maxSize`. Mutates `cache` in place. No-op when already
- * within budget. Pure helper — only touches the passed Map.
+ * Evict least-recently-used entries until `cache.size <= maxSize`.
+ *
+ * A `Map` preserves insertion order, so the front of the iteration order
+ * is the least-recently-used. Writers (`set`/`batchSet`) and reads
+ * (`resolveTitle`/`resolveStatus`, via `touch`) delete+re-set an accessed
+ * key to move it to the tail (most-recently-used), so the first `excess`
+ * keys are the genuinely coldest entries. Mutates `cache` in place. No-op
+ * when already within budget. Pure helper — only touches the passed Map.
  */
-function evictOldest<K, V>(cache: Map<K, V>, maxSize: number): void {
+function evictLeastRecentlyUsed<K, V>(cache: Map<K, V>, maxSize: number): void {
   if (cache.size <= maxSize) return
   const excess = cache.size - maxSize
   const toEvict = Array.from(cache.keys()).slice(0, excess)
   for (const key of toEvict) cache.delete(key)
+}
+
+/**
+ * Mark `key` as most-recently-used by re-inserting it at the Map's tail
+ * (delete + set preserves the value but refreshes insertion order). The
+ * Map reference is unchanged and `version` is NOT bumped, so a pure read
+ * does not trigger re-renders — it only updates LRU recency so a hot
+ * early-inserted entry survives eviction ahead of colder recent ones.
+ */
+function touch<K, V>(cache: Map<K, V>, key: K, value: V): void {
+  cache.delete(key)
+  cache.set(key, value)
 }
 
 interface ResolveEntry {
@@ -256,8 +273,8 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       if (cached && cached.title === title && cached.deleted === deleted) return
       set((state) => {
         const cache = new Map(state.cache)
-        cache.set(compositeKey, { title, deleted })
-        evictOldest(cache, MAX_CACHE_SIZE)
+        touch(cache, compositeKey, { title, deleted })
+        evictLeastRecentlyUsed(cache, MAX_CACHE_SIZE)
         return { cache, version: state.version + 1 }
       })
     },
@@ -279,25 +296,37 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       set((state) => {
         const cache = new Map(state.cache)
         for (const e of changed) {
-          cache.set(keyFor(spaceId, e.id), {
+          touch(cache, keyFor(spaceId, e.id), {
             title: e.title,
             deleted: e.deleted,
           })
         }
-        evictOldest(cache, MAX_CACHE_SIZE)
+        evictLeastRecentlyUsed(cache, MAX_CACHE_SIZE)
         return { cache, version: state.version + 1 }
       })
     },
 
     resolveTitle: (id) => {
-      const cached = get().cache.get(keyFor(activeSpaceId(), id))
-      if (cached) return cached.title
+      const cache = get().cache
+      const key = keyFor(activeSpaceId(), id)
+      const cached = cache.get(key)
+      if (cached) {
+        // LRU: refresh recency in place (no clone, no version bump → no
+        // re-render) so a frequently-read entry survives eviction.
+        touch(cache, key, cached)
+        return cached.title
+      }
       return `[[${id.slice(0, 8)}...]]`
     },
 
     resolveStatus: (id) => {
-      const cached = get().cache.get(keyFor(activeSpaceId(), id))
-      if (cached) return cached.deleted ? 'deleted' : 'active'
+      const cache = get().cache
+      const key = keyFor(activeSpaceId(), id)
+      const cached = cache.get(key)
+      if (cached) {
+        touch(cache, key, cached)
+        return cached.deleted ? 'deleted' : 'active'
+      }
       return 'active'
     },
 

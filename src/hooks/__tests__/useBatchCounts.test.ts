@@ -210,4 +210,82 @@ describe('useBatchCounts', () => {
       spaceId: 'SPACE_ABC',
     })
   })
+
+  // PERF #1632 — the parent recreates the `entries` array on unrelated
+  // renders (e.g. journal page creation churns `makeDayEntry`'s identity).
+  // The fetch effect must key on the REAL inputs (date range + page-id set),
+  // not the array reference, so a new-but-equivalent `entries` array does NOT
+  // re-fire the batch-count IPC — but a genuinely changed date range does.
+  it('does not re-fire the IPC when entries is a new array with identical dates/pageIds', async () => {
+    mockedCountAgendaBatchBySource.mockResolvedValue({})
+    mockedCountBacklinksBatch.mockResolvedValue({})
+
+    // Fresh DayEntry objects each render → new array identity, same values.
+    const { rerender } = renderHook(() => useBatchCounts([makeDayEntry('2025-01-06', 'page-1')]))
+
+    await waitFor(() => {
+      expect(mockedCountAgendaBatchBySource).toHaveBeenCalledTimes(1)
+    })
+
+    // Re-render with a brand-new array of equivalent entries (simulates the
+    // identity churn from page creation). The IPC must NOT fire again.
+    rerender()
+    rerender()
+
+    // Give any erroneous effect re-run a chance to fire.
+    await Promise.resolve()
+    expect(mockedCountAgendaBatchBySource).toHaveBeenCalledTimes(1)
+    expect(mockedCountBacklinksBatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-fires the IPC when the date range actually changes', async () => {
+    mockedCountAgendaBatchBySource.mockResolvedValue({})
+    mockedCountBacklinksBatch.mockResolvedValue({})
+
+    let dateStr = '2025-01-06'
+    const { rerender } = renderHook(() => useBatchCounts([makeDayEntry(dateStr)]))
+
+    await waitFor(() => {
+      expect(mockedCountAgendaBatchBySource).toHaveBeenCalledTimes(1)
+    })
+
+    // A genuinely different date range must trigger a refetch.
+    dateStr = '2025-02-06'
+    rerender()
+
+    await waitFor(() => {
+      expect(mockedCountAgendaBatchBySource).toHaveBeenCalledTimes(2)
+    })
+    expect(mockedCountAgendaBatchBySource).toHaveBeenLastCalledWith({
+      dates: ['2025-02-06'],
+      spaceId: null,
+    })
+  })
+
+  it('re-fires the IPC when a new pageId surfaces (page creation)', async () => {
+    mockedCountAgendaBatchBySource.mockResolvedValue({})
+    mockedCountBacklinksBatch.mockResolvedValue({ 'page-1': 4 })
+
+    // Start with a date that has no page yet, then have one created for it —
+    // the backlink fetch must run for the newly-surfaced pageId.
+    let pageId: string | null = null
+    const { rerender } = renderHook(() => useBatchCounts([makeDayEntry('2025-01-06', pageId)]))
+
+    await waitFor(() => {
+      expect(mockedCountAgendaBatchBySource).toHaveBeenCalledTimes(1)
+    })
+    // No pageId yet → backlink fetch skipped.
+    expect(mockedCountBacklinksBatch).not.toHaveBeenCalled()
+
+    pageId = 'page-1'
+    rerender()
+
+    await waitFor(() => {
+      expect(mockedCountBacklinksBatch).toHaveBeenCalledWith({
+        pageIds: ['page-1'],
+        spaceId: null,
+      })
+    })
+    expect(mockedCountAgendaBatchBySource).toHaveBeenCalledTimes(2)
+  })
 })

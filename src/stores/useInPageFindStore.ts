@@ -164,18 +164,21 @@ export const useInPageFindStore = create<InPageFindState>((set, get) => ({
 
   setContainer: (el) => {
     const wasOpen = get().open
-    set({ container: el })
-    // Container unmounted (view switch). Close the toolbar — no surface
-    // to search against. The toolbar overlay would otherwise float
-    // disconnected from any content.
+    // Container unmounted (view switch) while the toolbar was open. Close it
+    // — there's no surface to search against, and the overlay would otherwise
+    // float disconnected from any content. Both changes are applied in a
+    // single set() so the unmount-while-open path emits one notification.
     if (el === null && wasOpen) {
       set({
+        container: el,
         open: false,
         totalMatches: 0,
         currentIndex: -1,
         regexError: null,
         skippedLongNodes: 0,
       })
+      return
     }
+    set({ container: el })
   },
 }))

@@ -34,6 +34,7 @@ vi.mock('../markdown-serializer', async (importOriginal) => {
   return {
     ...actual,
     serialize: vi.fn((...args: Parameters<typeof actual.serialize>) => actual.serialize(...args)),
+    parse: vi.fn((...args: Parameters<typeof actual.parse>) => actual.parse(...args)),
   }
 })
 
@@ -264,6 +265,31 @@ describe('shouldSplitOnBlur', () => {
 
   it('returns true for heading followed by paragraph', () => {
     expect(shouldSplitOnBlur('# Title\nParagraph')).toBe(true)
+  })
+
+  // #1630 — the blur flush calls shouldSplitOnBlur with the same content more
+  // than once (Step 3 early-persist check + Step 5 split decision). The
+  // single-entry parse memo must reuse the parse for back-to-back identical
+  // strings, parsing once instead of twice, while returning the same result.
+  it('parses the same markdown only once across back-to-back calls (#1630)', () => {
+    const mockedParse = vi.mocked(parse)
+    mockedParse.mockClear()
+    // Use content unique to this test so the module-level memo starts cold for
+    // it (a string parsed by an earlier test would already be cached).
+    const md = '# Memo dedup title\nMemo dedup paragraph'
+    expect(shouldSplitOnBlur(md)).toBe(true)
+    expect(shouldSplitOnBlur(md)).toBe(true)
+    expect(mockedParse).toHaveBeenCalledTimes(1)
+  })
+
+  it('skips the parse entirely when given an already-parsed DocNode (#1630)', () => {
+    const mockedParse = vi.mocked(parse)
+    const doc = parse('# Title\nParagraph')
+    mockedParse.mockClear()
+    // Different string than the doc to prove the doc (not the string) is used.
+    expect(shouldSplitOnBlur('ignored\nstring', doc)).toBe(true)
+    expect(shouldSplitOnBlur('a\nb', { type: 'doc', content: [{ type: 'paragraph' }] })).toBe(false)
+    expect(mockedParse).not.toHaveBeenCalled()
   })
 })
 

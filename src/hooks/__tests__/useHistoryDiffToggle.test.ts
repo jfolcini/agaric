@@ -250,6 +250,31 @@ describe('useHistoryDiffToggle', () => {
     expect(result.current.handleToggleDiff).toBe(initialCallback)
   })
 
+  it('#1633: handleToggleDiff identity stable across inline keyFn churn', async () => {
+    mockedComputeEditDiff.mockResolvedValue(fakeDiff)
+
+    // Reproduce the real call sites: a freshly-allocated inline arrow on every
+    // render. The hook must not churn handleToggleDiff just because keyFn's
+    // identity changed.
+    const { result, rerender } = renderHook(() =>
+      useHistoryDiffToggle<number>((entry) => entry.seq),
+    )
+
+    const initialCallback = result.current.handleToggleDiff
+
+    // Re-render with a brand-new keyFn identity (same behavior).
+    rerender()
+    expect(result.current.handleToggleDiff).toBe(initialCallback)
+
+    // Latest keyFn is still used: toggle resolves the correct key.
+    await act(async () => {
+      await result.current.handleToggleDiff(makeEntry({ seq: 42 }))
+    })
+    expect(result.current.expandedKeys.has(42)).toBe(true)
+    expect(result.current.diffCache.has(42)).toBe(true)
+    expect(result.current.handleToggleDiff).toBe(initialCallback)
+  })
+
   it('FE-H-9: logs warning when computeEditDiff rejects', async () => {
     const rejection = new Error('compute failed')
     mockedComputeEditDiff.mockRejectedValue(rejection)
