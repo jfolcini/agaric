@@ -36,8 +36,10 @@ test.describe('Table view-mode rendering (#215)', () => {
     // clicking a sibling block races the blur→remount. Focusing the title
     // input is an unambiguous blur target.
     await page.getByRole('textbox', { name: 'Page title' }).click()
-    await page.waitForTimeout(500)
 
+    // Blur saves (serialize → persist → view-mode remount). The visibility
+    // assertion below auto-retries until the read-mode table renders, so no
+    // fixed sleep is needed to wait out the blur→save→remount.
     const table = page.locator('[data-testid="rich-table"]')
     await expect(table.first()).toBeVisible()
     await expect(table.first()).toContainText('Quarter')
