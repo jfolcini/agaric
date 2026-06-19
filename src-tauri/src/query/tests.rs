@@ -496,6 +496,109 @@ async fn sort_by_last_edited_desc() {
 }
 
 #[tokio::test]
+async fn sort_by_title_ascending_with_keyset_pagination() {
+    // Guards the correlated-subquery → LEFT JOIN materialisation for the Title
+    // sort (issue #1631): the sort key (`pages_cache.title`) must drive the
+    // ORDER BY and the keyset WHERE identically across page boundaries.
+    let (pool, _d) = test_pool().await;
+
+    // Register the space (blocks.space_id REFERENCES spaces(id)).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, page_id, space_id) VALUES (?, 'page', ?, NULL)",
+    )
+    .bind(SPACE)
+    .bind(SPACE)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+        .bind(SPACE)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Three page blocks (page_id == id, per migration 0073 CHECK) with titles
+    // that sort Apple < Banana < Cherry — deliberately NOT in id order so the
+    // primary sort key, not the id tiebreak, decides ordering.
+    let pages = [
+        ("01PAGE000000000000000000C", "Cherry"),
+        ("01PAGE000000000000000000A", "Apple"),
+        ("01PAGE000000000000000000B", "Banana"),
+    ];
+    for (id, title) in pages {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, page_id, space_id) VALUES (?, 'page', ?, ?)",
+        )
+        .bind(id)
+        .bind(id)
+        .bind(SPACE)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO pages_cache (page_id, title, updated_at) VALUES (?, ?, 0)")
+            .bind(id)
+            .bind(title)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let make = |cursor: Option<String>| AdvancedQueryRequest {
+        space_id: SPACE.to_string(),
+        filter: default_filter(),
+        sort: vec![SortKey {
+            source: SortSource::Column {
+                name: SortColumn::Title,
+            },
+            desc: false,
+        }],
+        cursor,
+        limit: Some(2),
+        fulltext: None,
+        group_by: None,
+        aggregates: Vec::new(),
+    };
+
+    // Page 1: the two lowest titles, in order — Apple then Banana.
+    let p1 = compile_and_run(&pool, make(None)).await.unwrap();
+    let p1_ids: Vec<String> = p1
+        .rows
+        .iter()
+        .map(|r| r.block.id.as_str().to_string())
+        .collect();
+    assert_eq!(
+        p1_ids,
+        vec![
+            "01PAGE000000000000000000A".to_string(), // Apple
+            "01PAGE000000000000000000B".to_string(), // Banana
+        ],
+        "Title-ascending page 1 must order by pages_cache.title"
+    );
+    assert!(p1.has_more, "third page (Cherry) remains");
+
+    // Page 2 resumes after the keyset boundary: Cherry, no overlap with page 1.
+    let p2 = compile_and_run(&pool, make(p1.next_cursor.clone()))
+        .await
+        .unwrap();
+    let p2_ids: Vec<String> = p2
+        .rows
+        .iter()
+        .map(|r| r.block.id.as_str().to_string())
+        .collect();
+    assert_eq!(
+        p2_ids,
+        vec!["01PAGE000000000000000000C".to_string()], // Cherry
+        "keyset WHERE must resume strictly after Banana"
+    );
+    let s1: BTreeSet<_> = p1_ids.iter().collect();
+    let s2: BTreeSet<_> = p2_ids.iter().collect();
+    assert!(
+        s1.is_disjoint(&s2),
+        "Title keyset pagination must not repeat rows across the page boundary"
+    );
+}
+
+#[tokio::test]
 async fn score_is_none_in_structural_only_pr() {
     let (pool, _d) = test_pool().await;
     seed(&pool).await;

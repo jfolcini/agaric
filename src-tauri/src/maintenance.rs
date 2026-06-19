@@ -196,8 +196,23 @@ pub async fn enqueue_fts_idle_optimize(
 /// 90 days mirrors `op_log_compact`'s retention.
 pub const TOMBSTONE_RETENTION_DAYS: i64 = 90;
 
-/// Per-tick cap matching `MAX_BATCH_BLOCK_IDS`.
+/// Per-batch cap matching `MAX_BATCH_BLOCK_IDS`. Each delete
+/// transaction processes at most this many rows so a single purge never
+/// holds a long write lock.
 const TOMBSTONE_PURGE_BATCH_LIMIT: i64 = 1000;
+
+/// `usize` companion to [`TOMBSTONE_PURGE_BATCH_LIMIT`] for comparing
+/// against `Vec::len()` without a lossy cast.
+const TOMBSTONE_PURGE_BATCH_LIMIT_USIZE: usize = 1000;
+
+/// Per-invocation ceiling on the number of bounded batches drained in a
+/// single `tombstone_purge` run. With a [`TOMBSTONE_PURGE_BATCH_LIMIT`]
+/// of 1000 this caps one run at 50k rows, so even a very large backlog
+/// (e.g. after a long offline period) clears within a handful of 24 h
+/// ticks instead of ~1 batch/day — while still bounding *each* delete to
+/// one short transaction and yielding back to the runtime between
+/// batches. Anything beyond the ceiling rolls over to the next tick.
+const TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN: usize = 50;
 
 /// Issue #157 sub-item E — hard-purge soft-deleted blocks whose
 /// `deleted_at` is older than [`TOMBSTONE_RETENTION_DAYS`]. Delegates
@@ -205,10 +220,15 @@ const TOMBSTONE_PURGE_BATCH_LIMIT: i64 = 1000;
 /// op-log emission, and post-commit dispatch all share one tested
 /// code path with the manual "Empty Trash" UI button.
 ///
-/// **Per-run cap:** at most [`TOMBSTONE_PURGE_BATCH_LIMIT`] rows are
-/// processed per invocation. Since this job runs on a 24 h cadence, a
-/// large accumulated backlog (e.g. after a long offline period) drains
-/// over multiple days rather than in a single blocking transaction.
+/// **Bounded catch-up drain:** each delete transaction processes at most
+/// [`TOMBSTONE_PURGE_BATCH_LIMIT`] rows (so no single purge holds a long
+/// write lock), but a run loops over successive batches — re-querying
+/// eligible rows after each — until the backlog is empty or the
+/// [`TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN`] ceiling is hit. This lets a
+/// large accumulated backlog drain within a few 24 h ticks rather than
+/// at ~1000 rows/day, while keeping every individual delete batched and
+/// bounded. The eligibility predicate (`deleted_at < cutoff`) is
+/// unchanged; only the per-run throughput grows.
 pub async fn tombstone_purge(
     pool: &SqlitePool,
     device_id: &str,
@@ -220,39 +240,68 @@ pub async fn tombstone_purge(
     let cutoff_ms = cutoff.timestamp_millis();
 
     let batch_limit = TOMBSTONE_PURGE_BATCH_LIMIT;
-    let ids: Vec<String> = sqlx::query_scalar!(
-        "SELECT id FROM blocks \
-         WHERE deleted_at IS NOT NULL AND deleted_at < ? \
-         ORDER BY deleted_at ASC \
-         LIMIT ?",
-        cutoff_ms,
-        batch_limit
-    )
-    .fetch_all(pool)
-    .await?;
+    let mut total_purged: usize = 0;
+    let mut batches: usize = 0;
 
-    if ids.is_empty() {
+    loop {
+        let ids: Vec<String> = sqlx::query_scalar!(
+            "SELECT id FROM blocks \
+             WHERE deleted_at IS NOT NULL AND deleted_at < ? \
+             ORDER BY deleted_at ASC \
+             LIMIT ?",
+            cutoff_ms,
+            batch_limit
+        )
+        .fetch_all(pool)
+        .await?;
+
+        if ids.is_empty() {
+            break;
+        }
+
+        let batch_count = ids.len();
+        let _resp = crate::commands::blocks::crud::purge_blocks_by_ids_inner(
+            pool,
+            device_id,
+            materializer,
+            ids.into_iter().map(Into::into).collect(),
+        )
+        .await?;
+
+        total_purged += batch_count;
+        batches += 1;
+
+        // Short batch (< limit) means the backlog is exhausted; stop
+        // without an extra empty probe query.
+        if batch_count < TOMBSTONE_PURGE_BATCH_LIMIT_USIZE {
+            break;
+        }
+        // Bound total work per invocation so a huge backlog can't hold the
+        // daemon in a single run; the remainder rolls over to the next tick.
+        if batches >= TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN {
+            tracing::info!(
+                purged = total_purged,
+                batches,
+                cutoff = %cutoff_ms,
+                "tombstone_purge: hit per-run batch ceiling; remaining backlog rolls to next tick"
+            );
+            return Ok(());
+        }
+    }
+
+    if total_purged == 0 {
         tracing::debug!(
             cutoff = %cutoff_ms,
             "tombstone_purge: nothing eligible past the retention window"
         );
-        return Ok(());
+    } else {
+        tracing::info!(
+            purged = total_purged,
+            batches,
+            cutoff = %cutoff_ms,
+            "tombstone_purge: hard-deleted soft-tombstones past the retention window"
+        );
     }
-
-    let count = ids.len();
-    let _resp = crate::commands::blocks::crud::purge_blocks_by_ids_inner(
-        pool,
-        device_id,
-        materializer,
-        ids.into_iter().map(Into::into).collect(),
-    )
-    .await?;
-
-    tracing::info!(
-        purged = count,
-        cutoff = %cutoff_ms,
-        "tombstone_purge: hard-deleted soft-tombstones past the retention window"
-    );
     Ok(())
 }
 
@@ -660,6 +709,78 @@ mod tests {
         assert_eq!(
             recent_present, 1,
             "recent tombstone must stay (still inside retention window)"
+        );
+    }
+
+    /// Issue #1644 — a backlog larger than [`TOMBSTONE_PURGE_BATCH_LIMIT`]
+    /// drains fully in a single `tombstone_purge` invocation via the
+    /// bounded catch-up loop (rather than ~1 batch/day). Inserts
+    /// `batch_limit + 5` aged tombstones plus one recent tombstone; after
+    /// one run every aged row is gone (proving the loop ran multiple
+    /// batches) and the recent row survives (eligibility predicate
+    /// unchanged).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tombstone_purge_drains_backlog_over_batch_limit_1644() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool.clone());
+
+        let aged_deleted_at = (chrono::Utc::now()
+            - chrono::Duration::days(TOMBSTONE_RETENTION_DAYS + 5))
+        .timestamp_millis();
+        let recent_deleted_at = chrono::Utc::now().timestamp_millis();
+
+        // A backlog strictly larger than one batch forces the drain loop
+        // to issue more than a single purge transaction.
+        let backlog = TOMBSTONE_PURGE_BATCH_LIMIT_USIZE + 5;
+        for i in 0..backlog {
+            let position = i64::try_from(i).unwrap();
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+                 VALUES (?, 'content', 'aged tombstone', NULL, ?, ?)",
+            )
+            .bind(format!("A{i:08}"))
+            .bind(position)
+            .bind(aged_deleted_at)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES ('RECENT00', 'content', 'recent tombstone', NULL, ?, ?)",
+        )
+        .bind(i64::try_from(backlog).unwrap())
+        .bind(recent_deleted_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        tombstone_purge(&pool, "test-device", &mat)
+            .await
+            .expect("tombstone_purge must drain a backlog larger than one batch");
+
+        let aged_remaining: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE id LIKE 'A%' AND deleted_at IS NOT NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            aged_remaining, 0,
+            "all aged tombstones must drain in one invocation via the bounded loop"
+        );
+
+        let recent_present: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'RECENT00'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            recent_present, 1,
+            "recent tombstone must stay (eligibility predicate unchanged)"
         );
     }
 

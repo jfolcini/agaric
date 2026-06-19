@@ -78,6 +78,46 @@ struct SortTerm {
     column: CursorKind,
 }
 
+/// Which LEFT JOINs the resolved sort terms require so a correlated sort key
+/// is materialised exactly once per candidate row and then reused — in the
+/// SELECT projection, the ORDER BY, and the keyset WHERE — instead of being
+/// re-evaluated as a correlated subquery in each of those positions.
+///
+/// Both joins are 1:1 with `blocks b` (`pages_cache.page_id` is the PRIMARY
+/// KEY; the `op_log` join is pre-aggregated `GROUP BY block_id`), so they
+/// never fan out rows and preserve the exact match cardinality.
+#[derive(Default, Clone, Copy)]
+struct SortJoins {
+    /// `LEFT JOIN pages_cache pc ON pc.page_id = b.id` — needed for a Title
+    /// sort. Exposes `pc.title` (NULL when no page row, identical to the old
+    /// `(SELECT title FROM pages_cache WHERE page_id = b.id)`).
+    title: bool,
+    /// `LEFT JOIN (SELECT block_id, MAX(created_at) AS max_ca FROM op_log
+    /// GROUP BY block_id) le ON le.block_id = b.id` — needed for a LastEdited
+    /// sort. `COALESCE(le.max_ca, 0)` is identical to the old
+    /// `COALESCE((SELECT MAX(created_at) ...), 0)`.
+    last_edited: bool,
+}
+
+impl SortJoins {
+    /// The `LEFT JOIN` fragments to append to the FROM clause (a leading
+    /// space included so it concatenates straight onto `from_clause`). Empty
+    /// when no correlated sort key is in play.
+    fn sql(self) -> String {
+        let mut out = String::new();
+        if self.title {
+            out.push_str(" LEFT JOIN pages_cache pc ON pc.page_id = b.id");
+        }
+        if self.last_edited {
+            out.push_str(
+                " LEFT JOIN (SELECT block_id, MAX(created_at) AS max_ca \
+                 FROM op_log GROUP BY block_id) le ON le.block_id = b.id",
+            );
+        }
+        out
+    }
+}
+
 /// How a [`SortTerm`]'s cursor value is typed / extracted.
 #[derive(Clone, Copy)]
 enum CursorKind {
@@ -165,8 +205,12 @@ impl QueryCursor {
 ///
 /// Rejects [`SortSource::Relevance`] when `has_fulltext` is `false` — there
 /// is no rank column to sort on without a `MATCH`.
-fn resolve_sort(sort: &[SortKey], has_fulltext: bool) -> Result<Vec<SortTerm>, AppError> {
+fn resolve_sort(
+    sort: &[SortKey],
+    has_fulltext: bool,
+) -> Result<(Vec<SortTerm>, SortJoins), AppError> {
     let mut terms: Vec<SortTerm> = Vec::with_capacity(sort.len() + 1);
+    let mut joins = SortJoins::default();
     let mut has_id = false;
     for key in sort {
         let (expr, desc, column) = match &key.source {
@@ -174,16 +218,27 @@ fn resolve_sort(sort: &[SortKey], has_fulltext: bool) -> Result<Vec<SortTerm>, A
                 let (expr, column) = match name {
                     // ULID id == creation order.
                     SortColumn::Created => ("b.id", CursorKind::Id),
-                    SortColumn::LastEdited => (
-                        "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0)",
-                        CursorKind::LastEditedMs,
-                    ),
+                    // Materialised once via the pre-aggregated op_log LEFT JOIN
+                    // (`SortJoins::last_edited`); `COALESCE(le.max_ca, 0)` is
+                    // identical to the former correlated
+                    // `COALESCE((SELECT MAX(created_at) ... ), 0)` but is
+                    // evaluated a single time per row rather than re-run in the
+                    // SELECT, ORDER BY, and keyset WHERE.
+                    SortColumn::LastEdited => {
+                        joins.last_edited = true;
+                        ("COALESCE(le.max_ca, 0)", CursorKind::LastEditedMs)
+                    }
                     SortColumn::Position => ("b.position", CursorKind::Position),
                     SortColumn::Priority => ("b.priority", CursorKind::Priority),
-                    SortColumn::Title => (
-                        "(SELECT title FROM pages_cache WHERE page_id = b.id)",
-                        CursorKind::Title,
-                    ),
+                    // Materialised once via the pages_cache LEFT JOIN
+                    // (`SortJoins::title`); `pc.title` is identical to the
+                    // former correlated `(SELECT title FROM pages_cache WHERE
+                    // page_id = b.id)` (NULL when no page row) but evaluated a
+                    // single time per row.
+                    SortColumn::Title => {
+                        joins.title = true;
+                        ("pc.title", CursorKind::Title)
+                    }
                 };
                 (expr, key.desc, column)
             }
@@ -223,7 +278,7 @@ fn resolve_sort(sort: &[SortKey], has_fulltext: bool) -> Result<Vec<SortTerm>, A
             column: CursorKind::Id,
         });
     }
-    Ok(terms)
+    Ok((terms, joins))
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -631,7 +686,7 @@ pub async fn compile_and_run(
         Some(s) => Some(QueryCursor::decode(s)?),
         None => None,
     };
-    let terms = resolve_sort(&request.sort, has_fulltext)?;
+    let (terms, sort_joins) = resolve_sort(&request.sort, has_fulltext)?;
     if let Some(c) = cursor.as_ref()
         && c.values.len() != terms.len()
     {
@@ -732,12 +787,30 @@ pub async fn compile_and_run(
         "CAST(NULL AS REAL)"
     };
 
+    // When a sort materialises a correlated key via a LEFT JOIN, project the
+    // joined column (computed once per row) instead of re-emitting the
+    // correlated subquery in the SELECT list. When the corresponding sort is
+    // absent the join isn't present, so the subquery form is retained — but
+    // then the expression appears only here (SELECT), never in ORDER BY or the
+    // keyset WHERE, so there is no per-row duplication to eliminate.
+    let last_edited_select = if sort_joins.last_edited {
+        "COALESCE(le.max_ca, 0)"
+    } else {
+        "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0)"
+    };
+    let title_select = if sort_joins.title {
+        "pc.title"
+    } else {
+        "(SELECT title FROM pages_cache WHERE page_id = b.id)"
+    };
+    let fetch_from = format!("{from_clause}{}", sort_joins.sql());
+
     let fetch_sql = format!(
         "SELECT {cols}, \
-           COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0) AS __last_edited, \
-           (SELECT title FROM pages_cache WHERE page_id = b.id) AS __title, \
+           {last_edited_select} AS __last_edited, \
+           {title_select} AS __title, \
            {rank_select} AS __rank \
-         FROM {from_clause} \
+         FROM {fetch_from} \
          WHERE {predicate}{keyset_sql} \
          ORDER BY {order_by} \
          LIMIT ?{limit_pos}",
@@ -1357,7 +1430,10 @@ async fn run_grouped(
     let page_keys: Vec<String> = buckets.iter().map(|b| b.gkey.clone()).collect();
     // Default sort for the preview: relevance-first on the full-text path,
     // else the recency keyset (`b.id DESC`). The window orders members by it.
-    let preview_terms = resolve_sort(&[], ctx.has_fulltext)?;
+    // Empty sort → no correlated-key LEFT JOINs are ever required here, so the
+    // returned `SortJoins` is discarded (the grouped preview never orders by
+    // Title/LastEdited).
+    let (preview_terms, _preview_joins) = resolve_sort(&[], ctx.has_fulltext)?;
     let preview_order = preview_terms
         .iter()
         .map(|t| {

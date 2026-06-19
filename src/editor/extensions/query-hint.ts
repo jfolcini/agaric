@@ -90,7 +90,19 @@ export const QueryHint = Extension.create({
         key: queryHintPluginKey,
         state: {
           init: (_config, editorState) => deriveState(editorState),
-          apply: (_tr, _value, _oldState, newState) => deriveState(newState),
+          apply: (tr, value, oldState, newState) => {
+            // The hint is a pure function of the textblock's content and the
+            // (collapsed) caret position. When a transaction changes neither —
+            // e.g. a metadata-only tr, or one that fires with the selection
+            // unchanged — the previous value is still valid, so skip the
+            // O(blockSize) `textBetween` + `computeQueryHint` recompute. This
+            // is the standard ProseMirror decoration-plugin short-circuit.
+            // We still recompute on every doc change AND on every selection
+            // move (caret position is an input to the hint), preserving
+            // correctness; only true no-ops are short-circuited.
+            if (!tr.docChanged && tr.selection.eq(oldState.selection)) return value
+            return deriveState(newState)
+          },
         },
         props: {
           decorations(state) {
