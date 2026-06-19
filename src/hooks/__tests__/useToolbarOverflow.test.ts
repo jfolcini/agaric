@@ -161,6 +161,34 @@ describe('computeOverflow', () => {
     expect(result.overflowed.map((i) => i.key)).toEqual(['c', 'd'])
   })
 
+  it('collapses only the separator adjacent to a fully-dropped trailing group (multi-separator)', () => {
+    // 3 groups, separators between each. Only the last group (lowest
+    // priority) drops. The separator between groups 0/1 must STAY (both
+    // sides still have a kept button); the separator between groups 1/2
+    // must COLLAPSE (nothing kept after it). This exercises the
+    // single-pass keptBefore / keptAfter derivation across >1 separator.
+    const items: ToolbarItem[] = [
+      btn('a', 90, 0),
+      sep('s1', 0),
+      btn('b', 90, 1),
+      sep('s2', 1),
+      btn('c', 10, 2),
+    ]
+    const widths = new Map([
+      ['a', 30],
+      ['s1', 8],
+      ['b', 30],
+      ['s2', 8],
+      ['c', 30],
+    ])
+    // Total with all kept = 30+8+30+8+30 = 106 > container.
+    // Drop only 'c' (lowest priority): kept = a,s1,b = 30+8+30 = 68;
+    // s2 collapses (no kept button after it). budget = 100-28 = 72.
+    const result = computeOverflow(items, 100, widths, 28)
+    expect(result.visible.map((i) => i.key)).toEqual(['a', 's1', 'b'])
+    expect(result.overflowed.map((i) => i.key)).toEqual(['c'])
+  })
+
   it('reserves +24 px for popover-trigger items via isPopoverTrigger', () => {
     // single popover-trigger button. Its measured base width is 30, so
     // effective width = 30 + 24 = 54. Container = 60 → fits inline.

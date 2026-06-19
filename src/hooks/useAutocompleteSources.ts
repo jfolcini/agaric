@@ -105,6 +105,13 @@ export function useAutocompleteSources(
   // on first propValue activation; a `null` entry records "fetched, not a
   // select / no options" so we don't refetch.
   const [selectOptions, setSelectOptions] = useState<Record<string, string[] | null>>({})
+  // #1634 — mirror `selectOptions` into a ref so the lazy-fetch effect can
+  // read the "already resolved for this key?" guard WITHOUT listing
+  // `selectOptions` in its deps. Otherwise any key's resolution changes the
+  // object identity and needlessly re-runs the effect for the active key,
+  // re-firing the idempotent value-fetch each time.
+  const selectOptionsRef = useRef(selectOptions)
+  selectOptionsRef.current = selectOptions
 
   // PEND-73 Phase 4.M3 — shared race-discard hook. The guard bumps on
   // every tag-anchor activation AND on every keystroke while active;
@@ -147,7 +154,7 @@ export function useAutocompleteSources(
     // Resolve the definition once per key. `undefined` in the map means
     // "not yet fetched"; we record `string[]` for select options or `null`
     // otherwise so the fetch never repeats for the same key.
-    if (selectOptions[propValueKey] === undefined) {
+    if (selectOptionsRef.current[propValueKey] === undefined) {
       let cancelled = false
       getPropertyDef(propValueKey)
         .then((def) => {
@@ -174,7 +181,7 @@ export function useAutocompleteSources(
       }
     }
     return undefined
-  }, [active, propValueKey, selectOptions])
+  }, [active, propValueKey])
 
   // ── Tag IPC (debounced, stale-while-loading) ──────────────────────
   useEffect(() => {

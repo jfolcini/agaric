@@ -32,6 +32,13 @@ describe('GatedImage — local/data srcs always load', () => {
     expect(screen.queryByTestId('image-external-blocked')).toBeNull()
   })
 
+  it('lazy-loads and async-decodes the real <img> to limit layout shift (#1642)', () => {
+    render(<GatedImage src="/favicon.svg" alt="logo" />)
+    const img = screen.getByTestId('image-rendered')
+    expect(img.getAttribute('loading')).toBe('lazy')
+    expect(img.getAttribute('decoding')).toBe('async')
+  })
+
   it('falls back to the labelled broken-image placeholder on load error', () => {
     render(<GatedImage src="/missing.png" alt="a cat" />)
     fireEvent.error(screen.getByTestId('image-rendered'))
