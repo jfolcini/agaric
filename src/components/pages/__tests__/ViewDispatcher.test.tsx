@@ -159,6 +159,41 @@ describe('ViewDispatcher — routing', () => {
     await user.click(cta)
     expect(useNavigationStore.getState().currentView).toBe('journal')
   })
+
+  // #1577: the `default` branch is exhaustive over the `View` union via a
+  // `never`-check (a compile error guards against a future missing case),
+  // but at runtime an unknown view must still render a recoverable fallback
+  // — never `return null`, which silently painted a blank content region.
+  // We force an out-of-union value with a cast to exercise the branch.
+  it('renders a recoverable fallback (not null) for an unknown view', () => {
+    const { container } = render(
+      <ViewDispatcher
+        {...defaultProps({
+          currentView: 'totally-unknown-view' as ViewDispatcherProps['currentView'],
+        })}
+      />,
+    )
+    expect(container).not.toBeEmptyDOMElement()
+    expect(screen.getByText(t('pageEditor.empty.message'))).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: t('pageEditor.empty.goToJournal') }),
+    ).toBeInTheDocument()
+  })
+
+  it('the unknown-view fallback CTA recovers to Journal', async () => {
+    const user = userEvent.setup()
+    useNavigationStore.setState({ currentView: 'page-editor' })
+    render(
+      <ViewDispatcher
+        {...defaultProps({
+          currentView: 'totally-unknown-view' as ViewDispatcherProps['currentView'],
+        })}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: t('pageEditor.empty.goToJournal') }))
+    expect(useNavigationStore.getState().currentView).toBe('journal')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -452,6 +487,19 @@ describe('ViewDispatcher — a11y', () => {
   it('has no a11y violations rendering the page-editor empty state (#1723)', async () => {
     const { container } = render(
       <ViewDispatcher {...defaultProps({ currentView: 'page-editor', activePage: null })} />,
+    )
+    await screen.findByText(t('pageEditor.empty.message'))
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  it('has no a11y violations rendering the unknown-view fallback (#1577)', async () => {
+    const { container } = render(
+      <ViewDispatcher
+        {...defaultProps({
+          currentView: 'totally-unknown-view' as ViewDispatcherProps['currentView'],
+        })}
+      />,
     )
     await screen.findByText(t('pageEditor.empty.message'))
     const results = await axe(container)

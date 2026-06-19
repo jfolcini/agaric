@@ -65,7 +65,22 @@ const BASE_CLASS_NAMES = {
   range_end: 'day-range-end',
   selected:
     'bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground rounded-md',
-  today: 'bg-accent text-accent-foreground rounded-md ring-2 ring-primary/50',
+  // When a day is BOTH today and selected, react-day-picker applies the `today`
+  // and `selected` class sets to the SAME day cell. `today`'s accent fill and
+  // `selected`'s primary fill are equal-specificity, so the winner used to
+  // depend on Tailwind's generated source order (non-deterministic, #1563).
+  // Make the outcome explicit: the accent fill applies ONLY when the cell is not
+  // selected, so a selected-today cell always keeps the primary fill, and the
+  // always-on ring carries the "today" cue without competing for the
+  // background. In react-day-picker v10 the `Day` component renders the `<td>`
+  // cell and puts `aria-selected` on that SAME `<td>` (verified against
+  // node_modules: components/Day.js renders a bare `<td>`, and DayPicker.js sets
+  // `aria-selected` on it — NOT on the inner button). So the gate must key off
+  // the cell's OWN attribute with `[&:not([aria-selected])]:`; a descendant
+  // `:has([aria-selected])` check would never match (the attribute is on `&`,
+  // not a child) and would fail to gate the accent on a selected-today cell.
+  today:
+    'rounded-md ring-2 ring-primary/50 [&:not([aria-selected])]:bg-accent [&:not([aria-selected])]:text-accent-foreground',
   outside: 'outside text-muted-foreground aria-selected:text-muted-foreground opacity-50',
   disabled: 'text-muted-foreground opacity-50',
   range_middle: 'aria-selected:bg-accent aria-selected:text-accent-foreground',

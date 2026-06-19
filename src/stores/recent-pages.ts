@@ -343,6 +343,87 @@ function parseRawRecentPages(raw: string | null): RawRecentPage[] {
   }
 }
 
+/**
+ * CR-PERSIST — coerce an arbitrary persisted JSON value into a valid `PageRef`,
+ * or `null` if the shape is unrecoverable. `localStorage` can hold anything
+ * (manual edits, a corrupt write, a future-shape downgrade); hydrating it with
+ * a bare cast lets a malformed blob crash `recordVisit` /
+ * `selectRecentPagesForSpace` / `applyPinFirstCap`. Requires `pageId` + `title`
+ * to be strings; keeps the optional `visitedAt` / `pinned` only when they carry
+ * the right primitive type, dropping garbage values.
+ */
+function coercePageRef(raw: unknown): PageRef | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const obj = raw as Record<string, unknown>
+  if (typeof obj['pageId'] !== 'string' || typeof obj['title'] !== 'string') return null
+  return {
+    pageId: obj['pageId'],
+    title: obj['title'],
+    ...(typeof obj['visitedAt'] === 'string' && { visitedAt: obj['visitedAt'] }),
+    ...(obj['pinned'] === true && { pinned: true }),
+  }
+}
+
+/** CR-PERSIST — coerce a persisted value into a `PageRef[]`, dropping invalid entries. */
+function coercePageRefList(raw: unknown): PageRef[] {
+  if (!Array.isArray(raw)) return []
+  const out: PageRef[] = []
+  for (const item of raw) {
+    const ref = coercePageRef(item)
+    if (ref) out.push(ref)
+  }
+  return out
+}
+
+/**
+ * CR-PERSIST — coerce a persisted value into a `Record<string, PageRef[]>`,
+ * dropping malformed keys (non-array values) and malformed entries within each
+ * slice. Array / null / primitive top-level values collapse to an empty map.
+ */
+function coerceRecentPagesBySpace(raw: unknown): Record<string, PageRef[]> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
+  const out: Record<string, PageRef[]> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(value)) continue
+    out[key] = coercePageRefList(value)
+  }
+  return out
+}
+
+/**
+ * CR-PERSIST (#1578) — coerce an entire persisted recent-pages blob
+ * field-by-field. Shared by `migrate` (version-mismatched blobs) and `merge`
+ * (same-version blobs): zustand's persist middleware only calls `migrate` when
+ * the stored version DIFFERS from `options.version`, so a corrupt blob that
+ * still carries `version: 1` (or a non-numeric version) bypasses `migrate`
+ * entirely and reaches the default shallow `merge` raw — coercing in `merge`
+ * as well closes that path. The coercion is idempotent, so the migrate→merge
+ * double pass on version-mismatched blobs is harmless.
+ *
+ * v0 → v1: pre-FEAT-3p3 stored only `recentPages`. When the blob has no
+ * `recentPagesBySpace` map, the flat list is carried into the `__legacy__`
+ * per-space slot so consumers that pass `currentSpaceId = null` still see the
+ * user's history and the per-space map gains a non-empty seed.
+ */
+function coercePersistedRecentPages(
+  persisted: unknown,
+): Pick<RecentState, 'recentPages' | 'recentPagesBySpace' | 'rawKeysMerged'> {
+  const blob = (persisted != null && typeof persisted === 'object' ? persisted : {}) as Record<
+    string,
+    unknown
+  >
+  const recentPages = coercePageRefList(blob['recentPages'])
+  const recentPagesBySpace =
+    blob['recentPagesBySpace'] === undefined
+      ? { [LEGACY_SPACE_KEY]: recentPages }
+      : coerceRecentPagesBySpace(blob['recentPagesBySpace'])
+  return {
+    recentPages,
+    recentPagesBySpace,
+    rawKeysMerged: blob['rawKeysMerged'] === true,
+  }
+}
+
 export const useRecentPagesStore = create<RecentPagesState>()(
   persist(
     (set, get) => ({
@@ -451,21 +532,29 @@ export const useRecentPagesStore = create<RecentPagesState>()(
         recentPagesBySpace: state.recentPagesBySpace,
         rawKeysMerged: state.rawKeysMerged,
       }),
-      migrate: (persisted: unknown, version: number) => {
-        // v0 → v1: pre-FEAT-3p3 stored only `recentPages`. Carry that flat
-        // list into the `__legacy__` per-space slot so consumers that pass
-        // `currentSpaceId = null` still see the user's history and the
-        // per-space map gains a non-empty seed.
-        if (version >= 1) return persisted as RecentState
-        if (persisted == null || typeof persisted !== 'object') return persisted as RecentState
-        const old = persisted as Partial<RecentState> & { recentPages?: PageRef[] }
-        const recentPages = Array.isArray(old.recentPages) ? old.recentPages : []
-        return {
-          ...old,
-          recentPages,
-          recentPagesBySpace: old.recentPagesBySpace ?? { [LEGACY_SPACE_KEY]: recentPages },
-        } as RecentState
-      },
+      // CR-PERSIST (#1578) — coercing migrate. Validates every field so a
+      // legacy/version-mismatched blob (and the v0→v1 flat-only shape) can't
+      // poison `recordVisit` / `selectRecentPagesForSpace` / `applyPinFirstCap`.
+      // The v0→v1 carry (flat `recentPages` → `__legacy__` slot) lives in
+      // `coercePersistedRecentPages` so it applies on every entry path.
+      //
+      // CR-PERSIST (#1578): the field-by-field coercion is shared with `merge`
+      // below. zustand only invokes `migrate` on a version MISMATCH —
+      // same-version blobs are coerced by `merge`. The bare `version >= 1` cast
+      // this replaced let an already-current-version corrupt blob flow through
+      // unvalidated.
+      migrate: (persisted: unknown, _version: number) => coercePersistedRecentPages(persisted),
+      // CR-PERSIST (#1578) — zustand skips `migrate` when the stored version
+      // equals `options.version` (or isn't a number), handing the raw blob
+      // straight to the default shallow `merge`. Coerce here too so a corrupt
+      // `localStorage` payload that still says `version: 1` (e.g. garbage
+      // PageRef entries, a non-array `recentPages`, bad `recentPagesBySpace`
+      // values) can't poison the recent-pages reducers / selectors. Mirrors
+      // tabs.ts / journal.ts.
+      merge: (persisted, current) => ({
+        ...current,
+        ...coercePersistedRecentPages(persisted),
+      }),
       // #1149 — after rehydrate, one-time merge the raw `recent_pages:*`
       // localStorage keys (written by the removed `lib/recent-pages.ts`) into
       // `recentPagesBySpace`, then clear them. Guarded by `rawKeysMerged` so

@@ -636,4 +636,117 @@ describe('useRecentPagesStore', () => {
       expect(localStorage.getItem('recent_pages:space-1')).toBeNull()
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // CR-PERSIST (#1578) — coerce malformed persisted blobs on rehydrate. The
+  // store's `persist` config wires `coercePersistedRecentPages` into BOTH
+  // `migrate` (version-mismatched blobs) and `merge` (same-version blobs), so
+  // a corrupt/hand-edited `agaric:recent-pages` payload can't flow unvalidated
+  // into `recordVisit` / `selectRecentPagesForSpace` / `applyPinFirstCap`.
+  // ---------------------------------------------------------------------------
+  describe('#1578 persisted-blob coercion', () => {
+    it('drops malformed PageRef entries via the merge path (same-version blob)', async () => {
+      // version: 1 matches options.version, so zustand skips `migrate` and the
+      // raw blob reaches `merge` — the entry point the old bare cast bypassed.
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          state: {
+            recentPages: [
+              { pageId: 'A', title: 'Alpha' },
+              { pageId: 'B' }, // missing title
+              { title: 'No id' }, // missing pageId
+              null,
+              42,
+              { pageId: 'C', title: 'Charlie', visitedAt: 123, pinned: 'yes' }, // bad optionals
+            ],
+            recentPagesBySpace: {
+              'space-1': [
+                { pageId: 'S1', title: 'Slice One' },
+                { pageId: 'S2' }, // dropped
+              ],
+              'bad-space': 'not-an-array', // dropped key
+            },
+            rawKeysMerged: true,
+          },
+          version: 1,
+        }),
+      )
+
+      await useRecentPagesStore.persist.rehydrate()
+
+      const state = useRecentPagesStore.getState()
+      // Only the two valid flat entries survive; garbage optionals are stripped.
+      expect(state.recentPages).toEqual([
+        { pageId: 'A', title: 'Alpha' },
+        { pageId: 'C', title: 'Charlie' },
+      ])
+      // bad-space dropped; space-1's malformed entry dropped.
+      expect(Object.keys(state.recentPagesBySpace)).toEqual(['space-1'])
+      expect(state.recentPagesBySpace['space-1']).toEqual([{ pageId: 'S1', title: 'Slice One' }])
+    })
+
+    it('coerces a non-array recentPages to an empty list via merge', async () => {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          state: { recentPages: 'corrupt', recentPagesBySpace: {} },
+          version: 1,
+        }),
+      )
+
+      await useRecentPagesStore.persist.rehydrate()
+
+      expect(useRecentPagesStore.getState().recentPages).toEqual([])
+    })
+
+    it('coerces malformed entries via the migrate path (version mismatch)', async () => {
+      // version: 0 != options.version (1), so zustand runs `migrate`. The flat
+      // list is seeded into the `__legacy__` slot, and garbage entries dropped.
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          state: {
+            recentPages: [
+              { pageId: 'A', title: 'Alpha' },
+              { pageId: 'B' }, // dropped
+              'garbage',
+            ],
+          },
+          version: 0,
+        }),
+      )
+
+      await useRecentPagesStore.persist.rehydrate()
+
+      const state = useRecentPagesStore.getState()
+      expect(state.recentPages).toEqual([{ pageId: 'A', title: 'Alpha' }])
+      // v0→v1: flat list seeded into the __legacy__ per-space slot.
+      expect(state.recentPagesBySpace['__legacy__']).toEqual([{ pageId: 'A', title: 'Alpha' }])
+    })
+
+    it('leaves a valid blob unchanged round-tripping through merge', async () => {
+      const validPages = [
+        { pageId: 'A', title: 'Alpha', visitedAt: '2026-01-01T00:00:00.000Z', pinned: true },
+        { pageId: 'B', title: 'Bravo' },
+      ]
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          state: {
+            recentPages: validPages,
+            recentPagesBySpace: { 'space-1': validPages },
+            rawKeysMerged: true,
+          },
+          version: 1,
+        }),
+      )
+
+      await useRecentPagesStore.persist.rehydrate()
+
+      const state = useRecentPagesStore.getState()
+      expect(state.recentPages).toEqual(validPages)
+      expect(state.recentPagesBySpace['space-1']).toEqual(validPages)
+    })
+  })
 })

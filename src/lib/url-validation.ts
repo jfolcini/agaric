@@ -30,11 +30,20 @@ const BLOCKED_URL_SCHEMES: readonly string[] = [
 
 /**
  * Whether `url` is free of any blocked scheme prefix. Operates on the
- * raw string (case-insensitive, whitespace-trimmed); does not validate
+ * raw string (case-insensitive; interior whitespace and ASCII control
+ * chars are stripped first to defeat scheme-obfuscation bypasses); does not validate
  * URL syntax beyond the scheme check.
  */
 export function isAllowedUrl(url: string): boolean {
-  const lower = url.trim().toLowerCase()
+  // Strip ASCII control chars (0x00-0x1F, 0x7F) and all whitespace before the
+  // denylist comparison. Browsers ignore interior control/whitespace chars when
+  // resolving a scheme, so `java\tscript:` resolves to `javascript:` at render
+  // time; without this normalization such inputs slip past `startsWith` and
+  // become live script-executing anchors (markdown import / peer sync sink).
+  const lower = url
+    // oxlint-disable-next-line no-control-regex -- control chars are the bypass vector being stripped here
+    .replace(/[\u0000-\u0020\u007f]/g, '')
+    .toLowerCase()
   return !BLOCKED_URL_SCHEMES.some((scheme) => lower.startsWith(scheme))
 }
 

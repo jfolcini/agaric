@@ -132,6 +132,39 @@ function ViewFallback(): ReactElement {
 }
 
 /**
+ * Recoverable fallback rendered when a routed view has nothing valid to
+ * paint: the `page-editor` branch with a null `activePage` (#1723), and the
+ * exhaustive `default` branch (#1577 — an unknown/unhandled `View`). Both
+ * formerly `return null`, which silently painted a blank content region.
+ *
+ * Renders the shared `EmptyState` with a CTA that navigates back to the
+ * Journal (which always has a today/daily fallback), reusing the existing
+ * `pageEditor.empty.*` copy so no new pattern is introduced.
+ */
+function JournalFallback(): ReactElement {
+  const { t } = useTranslation()
+  const setView = useNavigationStore((s) => s.setView)
+  return (
+    <FeatureErrorBoundary name="PageEditor" nameKey="errorBoundary.section.pageEditor">
+      <EmptyState
+        message={t('pageEditor.empty.message')}
+        description={t('pageEditor.empty.description')}
+        action={
+          <Button
+            variant="ghost"
+            size="sm"
+            className="mt-3 mx-auto flex items-center gap-1"
+            onClick={() => setView('journal')}
+          >
+            {t('pageEditor.empty.goToJournal')}
+          </Button>
+        }
+      />
+    </FeatureErrorBoundary>
+  )
+}
+
+/**
  * Renders the main view body based on `currentView`. Extracted from `App`
  * so the parent component stays well under the cognitive-complexity budget
  * (MAINT-52). Each branch is a `FeatureErrorBoundary` so a crashed view
@@ -143,15 +176,13 @@ export function ViewDispatcher({
   activePage,
   onPageSelect,
   navigateToPage,
-}: ViewDispatcherProps): ReactElement | null {
+}: ViewDispatcherProps): ReactElement {
   // PERF-19 (tier-3): `goBack` is consumed only by the `page-editor`
   // branch below — subscribing here instead of forwarding from App.tsx
   // removes one `useTabsStore` selector from the App shell. The action
   // reference is stable across renders, so the cost of subscribing at
   // this level is zero re-renders.
   const goBack = useTabsStore((s) => s.goBack)
-  const { t } = useTranslation()
-  const setView = useNavigationStore((s) => s.setView)
   switch (currentView) {
     case 'journal':
       return (
@@ -246,24 +277,7 @@ export function ViewDispatcher({
       // is a bug). Render an EmptyState with a CTA back to the Journal
       // (which always has a today/daily fallback) instead.
       if (!activePage) {
-        return (
-          <FeatureErrorBoundary name="PageEditor" nameKey="errorBoundary.section.pageEditor">
-            <EmptyState
-              message={t('pageEditor.empty.message')}
-              description={t('pageEditor.empty.description')}
-              action={
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="mt-3 mx-auto flex items-center gap-1"
-                  onClick={() => setView('journal')}
-                >
-                  {t('pageEditor.empty.goToJournal')}
-                </Button>
-              }
-            />
-          </FeatureErrorBoundary>
-        )
+        return <JournalFallback />
       }
       return (
         <FeatureErrorBoundary name="PageEditor" nameKey="errorBoundary.section.pageEditor">
@@ -277,7 +291,15 @@ export function ViewDispatcher({
           </Suspense>
         </FeatureErrorBoundary>
       )
-    default:
-      return null
+    default: {
+      // #1577: make the switch exhaustive over the `View` union. If a new
+      // `View` member is added without a dispatcher case, this assignment
+      // becomes a COMPILE error (the value is no longer `never`), forcing a
+      // case to be wired up. At runtime we still render a recoverable
+      // fallback instead of `return null` (which painted a blank region).
+      const _exhaustive: never = currentView
+      void _exhaustive
+      return <JournalFallback />
+    }
   }
 }
