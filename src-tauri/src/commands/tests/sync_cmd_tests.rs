@@ -372,6 +372,126 @@ async fn confirm_pairing_inner_accepts_correct_passphrase() {
     );
 }
 
+// #1603: a pairing session must bound the number of failed passphrase
+// attempts. After `MAX_PASSPHRASE_ATTEMPTS` mismatches the session is
+// invalidated (slot dropped) and further confirms are refused with
+// `pairing.attempts_exhausted` until the user re-initiates pairing. The
+// session time limit still applies independently; this is an *additional*
+// bound.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn confirm_pairing_inner_invalidates_session_after_max_attempts() {
+    let (pool, _dir) = test_pool().await;
+    let pairing_state = Mutex::new(None);
+    let scheduler = SyncScheduler::new();
+
+    let _info = start_pairing_inner(&pairing_state, "device-local").unwrap();
+
+    // Burn through MAX_PASSPHRASE_ATTEMPTS wrong guesses. Each returns the
+    // mismatch tag and (until the last) leaves the slot populated for retry.
+    for attempt in 1..crate::pairing::MAX_PASSPHRASE_ATTEMPTS {
+        let result = confirm_pairing_inner(
+            &pool,
+            &pairing_state,
+            &scheduler,
+            "device-local",
+            "wrong wrong wrong wrong".into(),
+            "device-remote".into(),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg == "pairing.passphrase.mismatch"),
+            "attempt {attempt} must surface mismatch, got {result:?}"
+        );
+        assert!(
+            pairing_state.lock().unwrap().is_some(),
+            "slot must survive while attempts remain (attempt {attempt})"
+        );
+    }
+
+    // The MAX_PASSPHRASE_ATTEMPTS-th failure exhausts the budget: the slot is
+    // dropped and the error flips to the exhausted tag.
+    let exhausting = confirm_pairing_inner(
+        &pool,
+        &pairing_state,
+        &scheduler,
+        "device-local",
+        "wrong wrong wrong wrong".into(),
+        "device-remote".into(),
+    )
+    .await;
+    assert!(
+        matches!(exhausting, Err(AppError::Validation(ref msg)) if msg == "pairing.attempts_exhausted"),
+        "the final failed attempt must surface as attempts_exhausted, got {exhausting:?}"
+    );
+    assert!(
+        pairing_state.lock().unwrap().is_none(),
+        "the session slot must be invalidated once attempts are exhausted"
+    );
+
+    // No peer was ever persisted across the failed attempts.
+    let peer = peer_refs::get_peer_ref(&pool, "device-remote")
+        .await
+        .unwrap();
+    assert!(
+        peer.is_none(),
+        "no peer may be persisted after exhausting passphrase attempts"
+    );
+}
+
+// #1603: the happy path must survive the attempt counter — a correct
+// passphrase entered within the attempt budget (here on the first try, and
+// again after some failures) still succeeds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn confirm_pairing_inner_succeeds_within_attempt_budget_after_typos() {
+    let (pool, _dir) = test_pool().await;
+    let pairing_state = Mutex::new(None);
+    let scheduler = SyncScheduler::new();
+
+    let info = start_pairing_inner(&pairing_state, "device-local").unwrap();
+
+    // A couple of genuine typos (strictly fewer than the cap) must not lock
+    // the session.
+    for _ in 0..(crate::pairing::MAX_PASSPHRASE_ATTEMPTS - 1) {
+        let bad = confirm_pairing_inner(
+            &pool,
+            &pairing_state,
+            &scheduler,
+            "device-local",
+            "wrong wrong wrong wrong".into(),
+            "device-remote".into(),
+        )
+        .await;
+        assert!(
+            matches!(bad, Err(AppError::Validation(ref msg)) if msg == "pairing.passphrase.mismatch"),
+            "pre-cap typo must be a plain mismatch, got {bad:?}"
+        );
+    }
+
+    // The correct passphrase, still within the budget, succeeds.
+    confirm_pairing_inner(
+        &pool,
+        &pairing_state,
+        &scheduler,
+        "device-local",
+        info.passphrase,
+        "device-remote".into(),
+    )
+    .await
+    .expect("correct passphrase within the attempt budget must succeed");
+
+    let peer = peer_refs::get_peer_ref(&pool, "device-remote")
+        .await
+        .unwrap();
+    assert!(
+        peer.is_some(),
+        "peer must be persisted on success within the attempt budget"
+    );
+    assert!(
+        pairing_state.lock().unwrap().is_none(),
+        "slot must be cleared on success"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn confirm_pairing_inner_errors_when_no_pairing_in_flight() {
     let (pool, _dir) = test_pool().await;

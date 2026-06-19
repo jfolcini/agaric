@@ -2156,6 +2156,85 @@ mod tree_tests {
         assert_eq!(e.list_children_walk("P").unwrap(), vec!["A", "M", "Z"]);
     }
 
+    /// #1585: a parent with NO legacy `position` on any child is a pure
+    /// new-scheme subtree — the migration must leave its fractional order
+    /// untouched, even when some *other* parent in the doc carries legacy
+    /// positions (which still triggers the doc-level migration pass).
+    #[test]
+    fn migrate_legacy_sibling_order_leaves_no_legacy_parent_untouched() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("P", "page", "P", None, 0).unwrap();
+        // New-scheme parent Q, whose children carry no position meta.
+        e.apply_create_block_at("Q", "page", "Q", None, 1).unwrap();
+        for (i, id) in ["X", "Y", "Z"].iter().enumerate() {
+            e.apply_create_block_at(id, "content", "", Some("Q"), i)
+                .unwrap();
+        }
+        // A legacy child elsewhere (under P) forces the migration to run, but
+        // Q's order must be preserved exactly.
+        e.apply_create_block_at("L", "content", "", Some("P"), 0)
+            .unwrap();
+        e.force_legacy_scheme_for_test(&[("L", 7)]);
+        assert_eq!(e.sibling_order_version(), 0, "marker must be cleared");
+
+        e.migrate_legacy_sibling_order_if_needed().unwrap();
+
+        // Q untouched: position-less children keep their fractional order.
+        assert_eq!(e.list_children_walk("Q").unwrap(), vec!["X", "Y", "Z"]);
+        assert_eq!(e.sibling_order_version(), SIBLING_ORDER_VERSION);
+    }
+
+    /// #1585 core bug: a parent that MIXES legacy position-bearing and
+    /// position-less siblings must order the legacy nodes by their position
+    /// while the position-less nodes KEEP their existing relative fractional
+    /// order — they must NOT all be dumped at the end (the old
+    /// `unwrap_or(i64::MAX)` behaviour, which this test pins against).
+    #[test]
+    fn migrate_legacy_sibling_order_mixed_parent_preserves_position_less_order() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("P", "page", "P", None, 0).unwrap();
+        // Tree (fractional) order: N1, L1, N2, L2, N3.
+        //  - N1, N2, N3 are position-less (new-scheme) siblings.
+        //  - L1, L2 are legacy nodes whose positions DISAGREE with tree order
+        //    (L1=20 sits before L2=10 in the tree → position order L2, L1).
+        for (i, id) in ["N1", "L1", "N2", "L2", "N3"].iter().enumerate() {
+            e.apply_create_block_at(id, "content", "", Some("P"), i)
+                .unwrap();
+        }
+        e.force_legacy_scheme_for_test(&[("L1", 20), ("L2", 10)]);
+
+        e.migrate_legacy_sibling_order_if_needed().unwrap();
+
+        // Pinned-position-less semantics:
+        //  - The position-less nodes N1, N2, N3 stay in their current tree slots
+        //    (indices 0, 2, 4) and keep their relative order.
+        //  - The legacy nodes are sorted by position (L2=10 before L1=20) and
+        //    refill the legacy slots (indices 1, 3) in that order.
+        // Slots: [N1, _, N2, _, N3] with legacy slots 1,3 ← [L2, L1].
+        let order = e.list_children_walk("P").unwrap();
+        assert_eq!(order, vec!["N1", "L2", "N2", "L1", "N3"], "got {order:?}");
+
+        // The #1585 pathology would have produced legacy-first then all
+        // position-less dumped at i64::MAX in id order — assert we did NOT.
+        assert_ne!(
+            order,
+            vec!["L2", "L1", "N1", "N2", "N3"],
+            "position-less siblings must not be dumped at the end (i64::MAX bug)"
+        );
+        // Position-less siblings retain their relative fractional order.
+        let positionless: Vec<&String> = order.iter().filter(|b| b.starts_with('N')).collect();
+        assert_eq!(
+            positionless,
+            vec!["N1", "N2", "N3"],
+            "position-less relative order must be preserved"
+        );
+        assert_eq!(e.sibling_order_version(), SIBLING_ORDER_VERSION);
+
+        // Idempotent: a second run (marker now set) is a no-op.
+        e.migrate_legacy_sibling_order_if_needed().unwrap();
+        assert_eq!(e.list_children_walk("P").unwrap(), order);
+    }
+
     /// jitter=0 soundness: two peers concurrently reordering siblings (including
     /// to the SAME slot) converge to an identical sibling order after a snapshot
     /// exchange — equal fractional indices tie-break deterministically by idlp.

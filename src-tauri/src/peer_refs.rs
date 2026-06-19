@@ -335,6 +335,21 @@ pub async fn update_last_address(
 /// empty-string `peer_id` row purely to trip the activation check.
 const PENDING_PAIRING_KEY: &str = "sync.pending_pairing";
 
+/// #1603: time-to-live for the pending-pairing marker, in milliseconds.
+///
+/// The marker is written when a pairing is confirmed but the first peer
+/// connection has not yet arrived; it is cleared once a real peer is
+/// established. Previously nothing else cleared it, so an *abandoned* pairing
+/// (the joining device never connects) left the daemon advertising and
+/// accepting pairing connections indefinitely. We bound it to the same
+/// window a pairing session lives ([`crate::pairing::PAIRING_TIMEOUT`], 5
+/// minutes): the joiner is expected to connect within the interactive
+/// pairing window, so a marker older than that is stale and reads as
+/// "not pending".
+// PAIRING_TIMEOUT is 5 minutes; its millis fit i64 trivially.
+#[allow(clippy::cast_possible_truncation)]
+const PENDING_PAIRING_TTL_MS: i64 = crate::pairing::PAIRING_TIMEOUT.as_millis() as i64;
+
 /// Mark that a pairing just completed and a first peer connection is expected.
 pub async fn set_pending_pairing(pool: &SqlitePool) -> Result<(), AppError> {
     // M5 (#348): bind `now_ms()` (epoch-ms, the column's contract) into both
@@ -356,14 +371,36 @@ pub async fn set_pending_pairing(pool: &SqlitePool) -> Result<(), AppError> {
 }
 
 /// Whether a pairing is awaiting its first peer connection.
+///
+/// #1603: the marker is treated as expired (and reads as *not* pending) once
+/// it is older than [`PENDING_PAIRING_TTL_MS`], so an abandoned pairing stops
+/// driving the daemon into pairing mode. An expired marker is cleared lazily
+/// on this read so it does not linger in `app_settings`.
 pub async fn is_pending_pairing(pool: &SqlitePool) -> Result<bool, AppError> {
-    let value: Option<String> = sqlx::query_scalar!(
-        "SELECT value FROM app_settings WHERE key = ?",
+    let row = sqlx::query!(
+        "SELECT value, updated_at FROM app_settings WHERE key = ?",
         PENDING_PAIRING_KEY,
     )
     .fetch_optional(pool)
     .await?;
-    Ok(value.as_deref() == Some("1"))
+
+    let Some(row) = row else {
+        return Ok(false);
+    };
+    if row.value != "1" {
+        return Ok(false);
+    }
+
+    // #1603: TTL gate. `updated_at` is epoch-ms (written via `now_ms()` in
+    // `set_pending_pairing`). If it is older than the TTL, the marker is
+    // stale — clear it lazily and report "not pending".
+    let now = crate::db::now_ms();
+    if now.saturating_sub(row.updated_at) > PENDING_PAIRING_TTL_MS {
+        clear_pending_pairing(pool).await?;
+        return Ok(false);
+    }
+
+    Ok(true)
 }
 
 /// Clear the pending-pairing marker — a real peer has been established, so the
@@ -912,6 +949,76 @@ mod tests {
 
         // Clearing an already-clear marker is a no-op (no error).
         clear_pending_pairing(&pool).await.unwrap();
+    }
+
+    /// #1603: a pending-pairing marker older than `PENDING_PAIRING_TTL_MS`
+    /// reads as *not* pending (and is cleared lazily), while a freshly-set
+    /// marker reads as pending. This stops an abandoned pairing from leaving
+    /// the daemon in pairing mode indefinitely.
+    #[tokio::test]
+    async fn pending_pairing_marker_expires_after_ttl() {
+        let (pool, _dir) = test_pool().await;
+
+        // Fresh marker → pending.
+        set_pending_pairing(&pool).await.unwrap();
+        assert!(
+            is_pending_pairing(&pool).await.unwrap(),
+            "#1603: a freshly-set marker must read as pending"
+        );
+
+        // Backdate `updated_at` to just beyond the TTL so the marker is stale.
+        let stale = crate::db::now_ms() - PENDING_PAIRING_TTL_MS - 1;
+        sqlx::query!(
+            "UPDATE app_settings SET updated_at = ? WHERE key = ?",
+            stale,
+            PENDING_PAIRING_KEY,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            !is_pending_pairing(&pool).await.unwrap(),
+            "#1603: a marker older than the TTL must read as not-pending"
+        );
+
+        // Lazily cleared: the stale row must have been deleted on the expired
+        // read so it does not linger in `app_settings`.
+        let still_there: Option<String> = sqlx::query_scalar!(
+            "SELECT value FROM app_settings WHERE key = ?",
+            PENDING_PAIRING_KEY,
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert!(
+            still_there.is_none(),
+            "#1603: an expired marker must be cleared lazily on read"
+        );
+    }
+
+    /// #1603: a marker exactly at the TTL boundary (age == TTL) is still
+    /// considered fresh — only `age > TTL` expires.
+    #[tokio::test]
+    async fn pending_pairing_marker_fresh_within_ttl() {
+        let (pool, _dir) = test_pool().await;
+        set_pending_pairing(&pool).await.unwrap();
+
+        // Backdate to TTL/2 — comfortably within the window.
+        let recent = crate::db::now_ms() - PENDING_PAIRING_TTL_MS / 2;
+        sqlx::query!(
+            "UPDATE app_settings SET updated_at = ? WHERE key = ?",
+            recent,
+            PENDING_PAIRING_KEY,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            is_pending_pairing(&pool).await.unwrap(),
+            "#1603: a marker within the TTL must still read as pending"
+        );
     }
 
     #[tokio::test]

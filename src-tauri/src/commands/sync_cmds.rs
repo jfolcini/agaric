@@ -202,11 +202,18 @@ pub async fn confirm_pairing_inner(
     // network/db call below.
     let expected_passphrase = {
         let guard = lock_pairing_state(pairing_state)?;
-        guard
+        let session = guard
             .as_ref()
-            .ok_or_else(|| AppError::Validation("pairing.no_active_session".into()))?
-            .passphrase
-            .clone()
+            .ok_or_else(|| AppError::Validation("pairing.no_active_session".into()))?;
+        // #1603: a session that already burned through
+        // `MAX_PASSPHRASE_ATTEMPTS` is dead — refuse before comparing so a
+        // late-arriving guess can't slip in on the exhausted slot. The slot
+        // is cleared on the failure path below, so in steady state we only
+        // reach here with attempts remaining; this guards the racy retry.
+        if session.attempts_exhausted() {
+            return Err(AppError::Validation("pairing.attempts_exhausted".into()));
+        }
+        session.passphrase.clone()
     };
 
     // H-1: build the device-exchange message representing the joining
@@ -219,7 +226,22 @@ pub async fn confirm_pairing_inner(
         cert_hash: String::new(),
         passphrase: passphrase.clone(),
     };
-    verify_device_exchange(&msg, None, Some(&expected_passphrase))?;
+    if let Err(verify_err) = verify_device_exchange(&msg, None, Some(&expected_passphrase)) {
+        // #1603: a failed passphrase verification counts against the bounded
+        // attempt budget. Record it on the live slot; if that exhausts the
+        // session, drop the slot entirely so all further confirms hit the
+        // `no_active_session` / `attempts_exhausted` path and the user must
+        // re-initiate pairing (regenerate the QR).
+        let mut guard = lock_pairing_state(pairing_state)?;
+        if let Some(session) = guard.as_mut() {
+            let exhausted = session.record_failed_attempt();
+            if exhausted {
+                *guard = None;
+                return Err(AppError::Validation("pairing.attempts_exhausted".into()));
+            }
+        }
+        return Err(verify_err);
+    }
 
     // No session state persisted at confirm time.
 
