@@ -65,10 +65,24 @@ function QueryExpressionPills({ expression }: { expression: string }): React.Rea
     )
   }
 
+  // #1525 — derive each key from the filter's own data (key + operator + value)
+  // and disambiguate true duplicates with a per-key occurrence counter, so
+  // repeated property filters on the same key (e.g. a range `due>=X due<=Y`) or
+  // identical filters do not collapse to the same React key — which triggers a
+  // duplicate-key warning and risks mis-reconciliation. A data-derived counter
+  // (rather than the bare array index) also satisfies react/no-array-index-key.
+  const keySeen = new Map<string, number>()
+  const uniqueKey = (base: string): string => {
+    const seen = keySeen.get(base) ?? 0
+    keySeen.set(base, seen + 1)
+    return seen === 0 ? base : `${base}#${seen}`
+  }
+
   for (const pf of parsed.propertyFilters) {
-    const opSymbol = OPERATOR_SYMBOLS[pf.operator ?? 'eq'] ?? '='
+    const op = pf.operator ?? 'eq'
+    const opSymbol = OPERATOR_SYMBOLS[op] ?? '='
     pills.push(
-      <Badge key={`prop-${pf.key}`} tone="secondary">
+      <Badge key={uniqueKey(`prop-${pf.key}-${op}-${pf.value}`)} tone="secondary">
         {pf.key} {opSymbol} {pf.value}
       </Badge>,
     )
@@ -76,7 +90,7 @@ function QueryExpressionPills({ expression }: { expression: string }): React.Rea
 
   for (const tag of parsed.tagFilters) {
     pills.push(
-      <Badge key={`tag-${tag}`} tone="secondary">
+      <Badge key={uniqueKey(`tag-${tag}`)} tone="secondary">
         tag: {tag}
       </Badge>,
     )

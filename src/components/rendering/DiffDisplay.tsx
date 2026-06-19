@@ -156,6 +156,9 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
             const content =
               renderRichContent(span.value, {
                 interactive: false,
+                // Diff spans render inside inline <del>/<ins>/<span> within a
+                // <p>; inline mode avoids invalid block-in-inline nesting (#1533).
+                inline: true,
                 ...richCallbacks,
               }) ?? span.value
             const hunkIdx = hunkOfSpan[i]

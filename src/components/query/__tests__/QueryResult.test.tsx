@@ -1454,6 +1454,60 @@ describe('QueryResult – expression pills', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  // #1525 — a range filter on the same property key (`due>=X due<=Y`) used to
+  // produce two pills keyed identically (`prop-due`), triggering React's
+  // duplicate-key warning and risking mis-reconciliation. Keys now include the
+  // array index + operator, so both pills coexist with no warning.
+  it('renders distinct pills for a same-key property range without duplicate-key warnings', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'filtered_blocks_query') {
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      }
+      return null
+    })
+
+    render(<QueryResult expression="property:due>=2025-01-01 property:due<=2025-12-31" />)
+
+    await waitFor(() => {
+      // Both ends of the range render as separate pills.
+      expect(screen.getByText('due ≥ 2025-01-01')).toBeInTheDocument()
+      expect(screen.getByText('due ≤ 2025-12-31')).toBeInTheDocument()
+    })
+
+    // No React "Encountered two children with the same key" warning emitted.
+    const dupKeyWarning = errorSpy.mock.calls.some((args) =>
+      args.some((a) => typeof a === 'string' && a.includes('same key')),
+    )
+    expect(dupKeyWarning).toBe(false)
+    errorSpy.mockRestore()
+  })
+
+  // #1525 — repeated identical tags (`tag:foo tag:foo`) used to collapse to
+  // identical `tag-foo` keys. Index-qualified keys keep them distinct.
+  it('renders distinct pills for repeated identical tags without duplicate-key warnings', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'filtered_blocks_query') {
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      }
+      return null
+    })
+
+    render(<QueryResult expression="tag:foo tag:foo" />)
+
+    await waitFor(() => {
+      // Both repeated tags render as separate pills.
+      expect(screen.getAllByText('tag: foo')).toHaveLength(2)
+    })
+
+    const dupKeyWarning = errorSpy.mock.calls.some((args) =>
+      args.some((a) => typeof a === 'string' && a.includes('same key')),
+    )
+    expect(dupKeyWarning).toBe(false)
+    errorSpy.mockRestore()
+  })
 })
 
 /* ------------------------------------------------------------------ */

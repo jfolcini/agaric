@@ -736,6 +736,41 @@ describe('DuePanel', () => {
     expect(screen.getByText('2 Due \u00b7 1 Scheduled \u00b7 1 Properties')).toBeInTheDocument()
   })
 
+  // #1540 — the breakdown is a date-equality heuristic, not a per-source
+  // tally. A block whose due_date AND scheduled_date both equal the panel date
+  // must be counted exactly once (bucketed as "due" by priority order), never
+  // double-counted, and the three buckets must sum to the visible block count.
+  it('counts a both-dates-equal block once, as Due (#1540 heuristic)', async () => {
+    mockedListBlocks.mockResolvedValue({
+      items: [
+        // due_date === scheduled_date === panel date: priority order -> Due.
+        makeBlock({
+          id: 'B1',
+          content: 'both1',
+          due_date: '2025-06-15',
+          scheduled_date: '2025-06-15',
+        }),
+        makeBlock({
+          id: 'B2',
+          content: 'sched1',
+          due_date: null,
+          scheduled_date: '2025-06-15',
+          page_id: null,
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    render(<DuePanel date="2025-06-15" />)
+
+    await screen.findByText('both1')
+
+    // Both-dates block buckets as Due (not double-counted), summing to 2 total.
+    expect(screen.getByText('1 Due · 1 Scheduled')).toBeInTheDocument()
+  })
+
   // 19. Header falls back to total count when only one source type
   it('header shows simple count when only one source type', async () => {
     mockedListBlocks.mockResolvedValue({

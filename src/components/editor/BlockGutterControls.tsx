@@ -438,13 +438,22 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
           ariaLabel={t('block.delete')}
           className={cn('delete-handle', GUTTER_HOVER_DESTRUCTIVE)}
           delayDuration={tooltipDelayDuration}
+          // #1532: bind the action to ONE event. `preventDefault` on a
+          // pointerdown does NOT suppress the synthetic click that follows it,
+          // so calling `onDelete` from BOTH handlers fired it twice per mouse
+          // interaction (the second call only no-op'd because the block id was
+          // already gone — fragile). Mirror the history button above: `onClick`
+          // owns the action (so Enter/Space keyboard activation still routes
+          // through it), and `onPointerDown` is purely focus-retention — its
+          // `preventDefault` keeps the contenteditable focused so the click
+          // isn't swallowed by a blur/remount (see the history button's note),
+          // and `stopPropagation` keeps the press from bubbling into block
+          // focus/selection.
           onPointerDown={(e) => {
             e.stopPropagation()
             e.preventDefault()
-            onDelete(blockId)
           }}
           onClick={(e) => {
-            // Fallback for keyboard activation (Enter/Space fires click, not pointerDown)
             e.stopPropagation()
             onDelete(blockId)
           }}
