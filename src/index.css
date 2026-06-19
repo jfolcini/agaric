@@ -946,6 +946,49 @@
   #root {
     min-height: 100dvh;
   }
+
+  /* ── Cross-webview normalization ─────────────────────────────────────
+   * Agaric ships on four OS webviews that reduce to two engines —
+   * WebKit (Linux WebKitGTK + macOS WKWebView) and Chromium (Windows
+   * WebView2 + Android System WebView). Tailwind Preflight unifies the
+   * structural baseline, but deliberately leaves a handful of UA-specific
+   * quirks alone. These are the ones that visibly diverge between the two
+   * engines; normalizing them here keeps the app consistent across
+   * platforms without layering a second, conflicting reset on top of
+   * Preflight. */
+  html {
+    /* WebKit auto-inflates text in some reflow paths; Chromium doesn't.
+     * Pin to 100% so font sizing is identical on both engines. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    /* Chromium/Android paint a grey flash on tap; WebKit doesn't. The app
+     * provides its own active/pressed affordances, so suppress the
+     * engine-specific highlight for a consistent touch feel. */
+    -webkit-tap-highlight-color: transparent;
+    /* Prevent overscroll chaining / elastic bounce / pull-to-refresh at the
+     * document root (it differs between WebKit and Chromium). Inner
+     * ScrollArea viewports keep their own normal scrolling. */
+    overscroll-behavior: none;
+  }
+
+  :root {
+    /* Theme native form controls (checkbox / radio / range / progress) so
+     * the few native inputs match the per-theme accent on both engines
+     * instead of falling back to each UA's default blue/grey. */
+    accent-color: var(--primary);
+  }
+
+  /* Focus-outline policy. The app signals keyboard focus exclusively via the
+   * `focus-ring-visible` token (a `:focus-visible` ring); the browser's
+   * DEFAULT `:focus` outline must never paint on its own. WebKit and Chromium
+   * draw that default outline differently (and even on programmatic
+   * `.focus()` of non-interactive targets — see the journal panel,
+   * JournalPage.tsx / #1243). Suppress it for the non-focus-visible case only,
+   * so keyboard users still get the explicit ring while mouse / programmatic
+   * focus shows nothing. */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
 }
 
 /* ── TipTap / ProseMirror editor ───────────────────────────────────── */
