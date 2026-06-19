@@ -441,5 +441,88 @@ describe('usePollingQuery', () => {
       })
       expect(queryFn).toHaveBeenCalledTimes(2)
     })
+
+    // ── #1596: force bypasses the hidden guard for explicit refetches ──
+
+    it('refetch({ force: true }) runs even while the page is hidden', async () => {
+      const queryFn = vi.fn().mockResolvedValueOnce('first').mockResolvedValueOnce('forced')
+      const { result } = renderHook(() => usePollingQuery(queryFn, { intervalMs: 60_000 }))
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(queryFn).toHaveBeenCalledTimes(1)
+      expect(result.current.data).toBe('first')
+
+      // Tab goes to the background — a plain refetch would no-op, but a
+      // user-initiated forced refetch must still run (#1596).
+      hiddenValue = true
+      await act(async () => {
+        await result.current.refetch({ force: true })
+      })
+      expect(queryFn).toHaveBeenCalledTimes(2)
+      expect(result.current.data).toBe('forced')
+    })
+
+    it('refetch() without force still no-ops while hidden (force does not leak)', async () => {
+      const queryFn = vi.fn().mockResolvedValue('ok')
+      const { result } = renderHook(() => usePollingQuery(queryFn, { intervalMs: 60_000 }))
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(queryFn).toHaveBeenCalledTimes(1)
+
+      hiddenValue = true
+
+      // A forced refetch runs while hidden …
+      await act(async () => {
+        await result.current.refetch({ force: true })
+      })
+      expect(queryFn).toHaveBeenCalledTimes(2)
+
+      // … but a subsequent plain refetch must still short-circuit — the
+      // force flag is per-call, not sticky.
+      await act(async () => {
+        await result.current.refetch()
+      })
+      expect(queryFn).toHaveBeenCalledTimes(2)
+    })
+
+    it('automatic interval ticks never force, even after a forced refetch', async () => {
+      const queryFn = vi.fn().mockResolvedValue('ok')
+      renderHook(() => usePollingQuery(queryFn, { intervalMs: 5000 }))
+
+      // Initial visible fetch
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(queryFn).toHaveBeenCalledTimes(1)
+
+      // Go hidden; automatic interval ticks must stay quiet (the polling
+      // path never forces — only explicit refetch({ force }) bypasses).
+      hiddenValue = true
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000)
+      })
+      expect(queryFn).toHaveBeenCalledTimes(1)
+    })
+
+    it('refetch({ force: true }) is unaffected when the tab is visible', async () => {
+      const queryFn = vi.fn().mockResolvedValueOnce('first').mockResolvedValueOnce('second')
+      const { result } = renderHook(() => usePollingQuery(queryFn, { intervalMs: 60_000 }))
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(queryFn).toHaveBeenCalledTimes(1)
+
+      // Visible tab — force is harmless and behaves like a normal refetch.
+      await act(async () => {
+        await result.current.refetch({ force: true })
+      })
+      expect(queryFn).toHaveBeenCalledTimes(2)
+      expect(result.current.data).toBe('second')
+    })
   })
 })

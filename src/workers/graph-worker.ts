@@ -143,20 +143,26 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
       }
     }
   } catch (err) {
-    // PEND-22: post a structured error message back so the main thread gets a
-    // richer signal than "unknown failure", then re-throw so the worker
-    // boundary `error` event still fires (preserves the existing
-    // `onWorkerFailed` fallback path in `runWorkerSimulation`).
+    // #1614: post a single structured error message back so the main thread
+    // gets a richer signal than "unknown failure". We deliberately do NOT
+    // re-throw: re-throwing surfaced at the worker boundary as a global `error`
+    // event, which posted a SECOND `{type:'error'}` message and fanned one
+    // handler failure into multiple signals. The main thread routes this
+    // structured post through the same `reportFailure` fallback path as a
+    // boundary error, so a single post is sufficient. The global
+    // `error`/`unhandledrejection` listeners below remain the fallback for
+    // failures that genuinely escape this handler (e.g. future async paths).
     self.postMessage({
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
     } satisfies WorkerErrorMessage)
-    throw err
   }
 })
 
-// PEND-22: belt-and-braces global handlers for failures that escape the
-// dispatcher (e.g., unhandled rejections from a future async path).
+// #1614: belt-and-braces global handlers for failures that escape the
+// dispatcher try/catch (e.g., unhandled rejections from a future async path).
+// Normal handler failures are reported by the catch above and never reach
+// here, so a single handler failure yields exactly one structured error post.
 self.addEventListener('error', (e) => {
   self.postMessage({
     type: 'error',

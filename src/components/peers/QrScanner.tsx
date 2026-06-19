@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -23,6 +23,17 @@ interface QrScannerProps {
 
 export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
   const { t } = useTranslation()
+  // #1615: html5-qrcode keys its render target on the element id, so a
+  // hardcoded id would collide if two scanners are mounted at once. Derive a
+  // per-instance id from useId(). useId() yields colon-bearing strings (`:r0:`)
+  // which are valid HTML ids but invalid CSS selectors, so we strip the colons
+  // to a stable id that's safe for both getElementById and querySelector. The
+  // value is memoized so it stays constant across renders.
+  const generatedId = useId()
+  const scannerId = useMemo(
+    () => `qr-scanner-region-${generatedId.replace(/:/g, '')}`,
+    [generatedId],
+  )
   const [scanning, setScanning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const scannerRef = useRef<HTMLDivElement>(null)
@@ -102,7 +113,7 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
   return (
     <div className="flex flex-col items-center gap-2">
       <section
-        id="qr-scanner-region"
+        id={scannerId}
         ref={scannerRef}
         className="w-full max-w-64 aspect-square bg-muted rounded-md flex items-center justify-center"
         aria-label={t('qrScanner.viewportLabel')}
