@@ -801,6 +801,94 @@ async fn restore_page_to_op_reverts_ops_after_target() {
     );
 }
 
+/// #1551 (behavior-preservation sanity check): an op already committed before
+/// the restore call is included in the revert set.
+///
+/// NOTE: This test does NOT distinguish the fixed code (membership SELECT
+/// inside the IMMEDIATE tx) from the pre-fix code (SELECT on the bare pool).
+/// An op committed *before* the call is visible to both reads, so the test
+/// passes on either version (verified by mutation: reverting the two SELECTs
+/// to `.fetch_all(pool)` still passes). A deterministic regression test for
+/// the TOCTOU window would need a concurrent writer racing to commit in the
+/// read -> BEGIN IMMEDIATE gap; that gap exists only in the pre-fix code and
+/// cannot be hit deterministically in a single process without an injectable
+/// seam this code does not expose. This test is therefore kept only to guard
+/// the `revert_ops_in_tx` extraction against regressing the
+/// already-committed-op case — not as proof the window is closed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_page_to_op_includes_op_present_at_tx_open() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "first".into(),
+        Some(page.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Target = the point right after b1 was created.
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let target_seq = ops.last().unwrap().seq;
+
+    // Commit an edit that lands AFTER the target. It is fully committed to
+    // op_log (and the derived projection) before the restore call below, so
+    // it is unambiguously present at the moment the restore's IMMEDIATE
+    // transaction opens its membership read. The atomic read must see it.
+    edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "first-edited".into())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+    assert_eq!(
+        get_block_inner(&pool, b1.id.clone()).await.unwrap().content,
+        Some("first-edited".into()),
+        "edit must be committed before restore (present at tx-open)"
+    );
+
+    let result = restore_page_to_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.id.to_string(),
+        DEV.into(),
+        target_seq,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    assert_eq!(
+        result.ops_reverted, 1,
+        "the edit present at tx-open must be in the revert set (membership read is inside the IMMEDIATE tx)"
+    );
+    assert_eq!(
+        get_block_inner(&pool, b1.id).await.unwrap().content,
+        Some("first".into()),
+        "b1 must revert to its pre-edit content"
+    );
+}
+
 /// Verify that ops belonging to a purged block are not discovered by the
 /// recursive CTE used inside `restore_page_to_op_inner`.  The CTE walks
 /// the live `blocks` table; once a block is purged it is no longer in

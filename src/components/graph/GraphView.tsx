@@ -49,6 +49,15 @@ export interface GraphCache {
   nodes: GraphNode[]
   edges: GraphEdge[]
   timestamp: number
+  // #1818: the module-level block-property invalidation counter at the time
+  // this entry was fetched. A later mount compares it against the *current*
+  // counter: if a block/link mutation fired since (even while GraphView was
+  // unmounted), the entry is stale and must be refetched regardless of TTL.
+  // Storing the key on the entry (rather than a per-instance ref) is what makes
+  // invalidation survive unmount — the per-instance `lastInvalidationRef`
+  // initializes to the current key on every mount, so it alone can never detect
+  // a mutation that happened while no instance was mounted.
+  invalidationKey: number
 }
 
 /**
@@ -203,8 +212,21 @@ export function GraphView(): React.ReactElement {
       setEdges(graphCache.edges)
       setLoading(false)
 
-      // If cache is still fresh AND no mutation fired, skip refetch.
-      if (!mutated && Date.now() - graphCache.timestamp < GRAPH_CACHE_TTL_MS) return
+      // #1818: the cache entry also records the invalidation counter it was
+      // fetched at. If a mutation fired since then — including while this
+      // GraphView was unmounted, which the per-instance `mutated` flag above
+      // CANNOT detect because `lastInvalidationRef` re-initializes to the
+      // current key on each mount — the entry is stale even within the TTL.
+      const cacheStaleByMutation = graphCache.invalidationKey !== invalidationKey
+
+      // If cache is still fresh, no mutation fired for this instance, and the
+      // entry wasn't invalidated by a mutation during unmount, skip the refetch.
+      if (
+        !mutated &&
+        !cacheStaleByMutation &&
+        Date.now() - graphCache.timestamp < GRAPH_CACHE_TTL_MS
+      )
+        return
     }
 
     async function run() {
@@ -216,6 +238,10 @@ export function GraphView(): React.ReactElement {
           nodes: result.nodes,
           edges: result.edges,
           timestamp: Date.now(),
+          // #1818: stamp the entry with the invalidation counter it was fetched
+          // at so a later mount can detect a mutation that occurred since (incl.
+          // during unmount) and refetch even within the TTL.
+          invalidationKey,
         })
 
         setNodes(result.nodes)

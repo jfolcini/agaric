@@ -398,6 +398,43 @@ pub async fn revert_ops_inner(
     materializer: &Materializer,
     ops: Vec<OpRef>,
 ) -> Result<Vec<UndoResult>, AppError> {
+    if ops.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Open the IMMEDIATE write transaction, run the whole revert inside it,
+    // then commit + fire dispatches.
+    //
+    // MAINT-112: `CommandTx` couples the BEGIN IMMEDIATE + commit +
+    // post-commit `dispatch_background_or_warn` steps so a failed commit
+    // cannot leak queued records to the materializer, and a missing
+    // dispatch is structurally impossible (commit_and_dispatch drains
+    // the pending queue in order).
+    let mut tx = CommandTx::begin_immediate(pool, "revert_ops").await?;
+    let results = revert_ops_in_tx(&mut tx, pool, device_id, ops).await?;
+
+    // Commits, then fires queued dispatches in enqueue order. If commit
+    // fails, no dispatches fire.
+    tx.commit_and_dispatch(materializer).await?;
+
+    Ok(results)
+}
+
+/// Compute and apply reverse ops for `ops` inside an already-open IMMEDIATE
+/// transaction, enqueueing the produced records on `tx` for post-commit
+/// dispatch. The caller owns the BEGIN IMMEDIATE / commit boundary.
+///
+/// Factored out of [`revert_ops_inner`] so that
+/// [`restore_page_to_op_inner`] can run *its* ops-to-revert SELECT inside the
+/// same transaction that performs the revert, closing the TOCTOU window where
+/// an op landing between the membership read and the write would keep its
+/// forward effect (issue #1551).
+async fn revert_ops_in_tx(
+    tx: &mut CommandTx,
+    pool: &SqlitePool,
+    device_id: &str,
+    ops: Vec<OpRef>,
+) -> Result<Vec<UndoResult>, AppError> {
     use crate::reverse;
 
     if ops.is_empty() {
@@ -429,9 +466,10 @@ pub async fn revert_ops_inner(
     //      the batch (`compute_reverse_batch` — at most 5 queries for
     //      the five context-bearing op-types).
     //
-    // The reads run against the bare pool BEFORE the IMMEDIATE write
-    // transaction below — same snapshot semantics as before (see
-    // `restore_page_to_op_inner` for the wider rationale).
+    // These reads target already-committed ops (the records being reverted),
+    // so they run against the bare pool. The membership read that decides
+    // *which* ops are reverted — `restore_page_to_op_inner`'s ops-to-revert
+    // SELECT — runs inside `tx` so it shares the IMMEDIATE write lock.
     let records = reverse::get_op_records_batch(pool, &ops).await?;
     let reverse_payloads = reverse::compute_reverse_batch(pool, &records).await?;
     let mut reverses: Vec<(OpRef, OpPayload, i64, String)> = Vec::with_capacity(ops.len());
@@ -452,14 +490,7 @@ pub async fn revert_ops_inner(
             .then_with(|| b.0.device_id.cmp(&a.0.device_id)) // device_id DESC
     });
 
-    // Phase 2: Apply all reverses in a single IMMEDIATE transaction.
-    //
-    // MAINT-112: `CommandTx` couples the BEGIN IMMEDIATE + commit +
-    // post-commit `dispatch_background_or_warn` steps so a failed commit
-    // cannot leak queued records to the materializer, and a missing
-    // dispatch is structurally impossible (commit_and_dispatch drains
-    // the pending queue in order).
-    let mut tx = CommandTx::begin_immediate(pool, "revert_ops").await?;
+    // Phase 2: Apply all reverses inside the caller's IMMEDIATE transaction.
     let mut results = Vec::with_capacity(reverses.len());
 
     for (op_ref, reverse_payload, _created_at, reversed_op_type) in reverses {
@@ -473,14 +504,14 @@ pub async fn revert_ops_inner(
         // restore undo), so flag them `is_undo = 1` like the interactive
         // undo path.
         let op_record = op_log::append_local_undo_op_in_tx(
-            &mut tx,
+            tx,
             device_id,
             reverse_payload.clone(),
             crate::db::now_ms(),
         )
         .await?;
 
-        apply_reverse_in_tx(&mut tx, &reverse_payload).await?;
+        apply_reverse_in_tx(tx, &reverse_payload).await?;
 
         results.push(UndoResult {
             reversed_op: op_ref,
@@ -496,10 +527,6 @@ pub async fn revert_ops_inner(
         tx.enqueue_background(op_record);
     }
 
-    // Commits, then fires queued dispatches in enqueue order. If commit
-    // fails, no dispatches fire.
-    tx.commit_and_dispatch(materializer).await?;
-
     Ok(results)
 }
 
@@ -509,22 +536,23 @@ pub async fn revert_ops_inner(
 /// given page (or all blocks if `page_id == "__all__"`), filters out non-reversible
 /// ops, and calls `revert_ops_inner()` with the remainder.
 ///
-/// # Snapshot semantics (L-31)
+/// # Snapshot semantics (L-31) — atomic read+revert (#1551)
 ///
-/// The list of ops to revert is computed against the bare pool **before**
-/// `revert_ops_inner` opens its `BEGIN IMMEDIATE` transaction. New ops
-/// landing between the read here and the write inside `revert_ops_inner`
-/// (for example, a sync replay or a concurrent local edit) are **not**
-/// included in the revert: they keep their forward-direction effects.
+/// The ops-to-revert membership SELECT runs **inside** the same
+/// `BEGIN IMMEDIATE` transaction that performs the revert (it executes on
+/// `tx`, sharing the write lock). There is therefore no TOCTOU window: an
+/// op landing between deciding *which* ops to revert and applying the
+/// reverses cannot slip through. Because `BEGIN IMMEDIATE` takes the
+/// database write lock up front, any concurrent writer (sync replay or a
+/// concurrent local edit) is serialized — it either commits strictly
+/// before this transaction's membership read (and so is seen and reverted)
+/// or strictly after the commit (and so is correctly excluded), never in
+/// between.
 ///
-/// In a single-user threat model the practical window between the two
-/// steps is bounded by one DB round-trip — concurrent ops in that window
-/// are vanishingly rare and survive the restore intentionally rather than
-/// being silently rolled back. Lifting the read into the same write
-/// transaction would close the window but is not motivated today; this
-/// doc-block names the snapshot-at-read-time behaviour explicitly so a
-/// future contributor reasoning about "what gets restored" does not
-/// have to re-derive it from the call graph.
+/// The target op's `created_at` is still sourced ahead of the transaction:
+/// it reads a single already-committed op by `(device_id, seq)` whose
+/// timestamp is immutable, so it is not part of the membership decision and
+/// cannot be affected by a concurrent write.
 pub async fn restore_page_to_op_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -539,7 +567,16 @@ pub async fn restore_page_to_op_inner(
         op_log::get_op_by_seq(&ReadPool(pool.clone()), &target_device_id, target_seq).await?;
     let target_ts = &target_record.created_at;
 
-    // Query all ops after the target.
+    // #1551: open the IMMEDIATE write transaction up front so the
+    // ops-to-revert membership SELECT below runs *inside* the same
+    // transaction that applies the reverses. This takes the database write
+    // lock before the read, eliminating the TOCTOU window in which an op
+    // landing between "which ops to revert" and "apply the reverses" would
+    // keep its forward effect. See the `Snapshot semantics` doc-block above.
+    let mut tx = CommandTx::begin_immediate(pool, "restore_page_to_op").await?;
+
+    // Query all ops after the target — executed on `tx` (the IMMEDIATE
+    // transaction), not the bare pool.
     // NOTE: We intentionally do NOT filter by deleted_at IS NULL in the blocks subquery.
     // We need to find ops on blocks that may have been deleted after the target point,
     // since restoring to that point means un-deleting those blocks.
@@ -552,7 +589,7 @@ pub async fn restore_page_to_op_inner(
             target_seq,
             target_device_id,
         )
-        .fetch_all(pool)
+        .fetch_all(&mut **tx)
         .await?
         .into_iter()
         .map(|r| (r.device_id, r.seq, r.op_type))
@@ -583,7 +620,7 @@ pub async fn restore_page_to_op_inner(
             target_seq,
             target_device_id,
         )
-        .fetch_all(pool)
+        .fetch_all(&mut **tx)
         .await?
         .into_iter()
         .map(|r| (r.device_id, r.seq, r.op_type))
@@ -607,11 +644,12 @@ pub async fn restore_page_to_op_inner(
     }
 
     // C5 (#344): reject an over-large restore up front with a
-    // restore-specific message. `revert_ops_inner` enforces the same
+    // restore-specific message. `revert_ops_in_tx` enforces the same
     // `MAX_REVERT_OPS` cap as a backstop, but checking here means a
     // point-in-time restore that would sweep thousands of ops fails
     // cleanly before any batch work rather than relying on the inner
     // guard. The bound matches the interactive `undo_depth` ceiling.
+    // (Returning here drops `tx`, rolling the IMMEDIATE transaction back.)
     if reversible_ops.len() > MAX_REVERT_OPS {
         return Err(AppError::Validation(format!(
             "restore would revert {} ops, exceeding the maximum of {MAX_REVERT_OPS}; \
@@ -620,11 +658,18 @@ pub async fn restore_page_to_op_inner(
         )));
     }
 
-    // Revert the reversible ops using existing infrastructure
+    // Revert the reversible ops inside the SAME IMMEDIATE transaction the
+    // membership SELECT ran in (#1551 — read and revert are now atomic),
+    // then commit and fire post-commit dispatches.
     let results = if reversible_ops.is_empty() {
+        // Nothing to revert; release the write lock without churning the
+        // materializer. (Membership read already saw a quiescent suffix.)
+        tx.rollback().await?;
         vec![]
     } else {
-        revert_ops_inner(pool, device_id, materializer, reversible_ops).await?
+        let results = revert_ops_in_tx(&mut tx, pool, device_id, reversible_ops).await?;
+        tx.commit_and_dispatch(materializer).await?;
+        results
     };
 
     Ok(RestoreToOpResult {
