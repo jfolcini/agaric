@@ -295,6 +295,88 @@ describe('useDuePanelData', () => {
     })
   })
 
+  // #1531 — a loadMore (fetchBlocks) that is in flight when the date/source/
+  // space/invalidation changes must NOT repopulate the just-cleared list with
+  // old-date blocks. The main fetch effect bumps a request token; the stale
+  // loadMore captures the old token and discards its result on resolution.
+  it('discards an in-flight loadMore result after the date changes (#1531)', async () => {
+    // Initial fetch for date A (2025-06-15): one block, has_more so loadMore
+    // is enabled with a cursor.
+    mockedListBlocks.mockResolvedValueOnce({
+      items: [makeBlock({ id: 'A1' })],
+      next_cursor: 'cursor_A_page2',
+      has_more: true,
+      total_count: null,
+    })
+
+    const { result, rerender } = renderHook(
+      ({ date }) => useDuePanelData({ date, sourceFilter: null }),
+      { initialProps: { date: '2025-06-15' } },
+    )
+
+    await waitFor(() => {
+      expect(result.current.blocks.map((b) => b.id)).toEqual(['A1'])
+      expect(result.current.hasMore).toBe(true)
+      expect(result.current.nextCursor).toBe('cursor_A_page2')
+    })
+
+    // The NEXT listBlocks call is the loadMore — hold it deferred so we can
+    // resolve it AFTER the date change bumps the request token.
+    let resolveStaleLoadMore!: (v: Awaited<ReturnType<typeof listBlocks>>) => void
+    mockedListBlocks.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          resolveStaleLoadMore = r
+        }) as ReturnType<typeof listBlocks>,
+    )
+
+    // Fire the loadMore but do NOT resolve it yet.
+    act(() => {
+      result.current.loadMore()
+    })
+
+    await waitFor(() => {
+      expect(mockedListBlocks).toHaveBeenCalledWith(
+        expect.objectContaining({ cursor: 'cursor_A_page2' }),
+      )
+    })
+
+    // Navigate to date B (2025-06-16). The main effect bumps the request
+    // token, clears the list, and refetches. This call resolves immediately
+    // with B's blocks.
+    mockedListBlocks.mockResolvedValueOnce({
+      items: [makeBlock({ id: 'B1' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    rerender({ date: '2025-06-16' })
+
+    await waitFor(() => {
+      expect(result.current.blocks.map((b) => b.id)).toEqual(['B1'])
+    })
+
+    // NOW resolve the stale loadMore with OLD-date (date A) blocks. The guard
+    // must discard this: it captured the pre-change token, which no longer
+    // matches the bumped current token.
+    await act(async () => {
+      resolveStaleLoadMore({
+        items: [makeBlock({ id: 'A2' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+      // Flush the microtask chain after the deferred listBlocks resolves so
+      // the (discarded) post-await body runs before we assert.
+      await Promise.resolve()
+    })
+
+    // The stale loadMore's old-date block (A2) must NOT be appended; the list
+    // must contain ONLY date B's blocks.
+    expect(result.current.blocks.map((b) => b.id)).toEqual(['B1'])
+    expect(result.current.blocks.map((b) => b.id)).not.toContain('A2')
+  })
+
   it('applies property: filter client-side', async () => {
     mockedListBlocks.mockResolvedValue({
       items: [
