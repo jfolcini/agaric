@@ -3,8 +3,10 @@
  *
  * Renders on JournalPage. Groups blocks by todo_state in order:
  * DOING > TODO > DONE > null (Other). Within each group, sorts by
- * priority: 1 > 2 > 3 > null. Uses cursor-based pagination with
- * a `t('duePanel.loadMore')` button.
+ * the configurable priority rank (`priorityRank` from
+ * `@/lib/priority-levels`) so the order follows the user's configured
+ * levels, with null/unknown sorting last. Uses cursor-based pagination
+ * with a `t('duePanel.loadMore')` button.
  *
  * Orchestrator that connects useDuePanelData to extracted section
  * components (OverdueSection, UpcomingSection, DuePanelFilters).
@@ -33,9 +35,11 @@ import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useDuePanelData } from '@/hooks/useDuePanelData'
 import { useKeyboardNavigableList } from '@/hooks/useKeyboardNavigableList'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
+import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { useToday } from '@/hooks/useToday'
 import type { NavigateToPageFn } from '@/lib/block-events'
+import { priorityRank } from '@/lib/priority-levels'
 import { cn } from '@/lib/utils'
 
 export interface DuePanelProps {
@@ -57,20 +61,13 @@ export interface DuePanelProps {
 // > DONE > CANCELLED > null) and the existing DONE precedent.
 const GROUP_ORDER = ['DOING', 'TODO', 'DONE', 'CANCELLED', null] as const
 
-/** Priority sort key: '1' → 1, '2' → 2, '3' → 3, null → 4 */
-function priorityKey(p: string | null): number {
-  if (p === '1') return 1
-  if (p === '2') return 2
-  if (p === '3') return 3
-  return 4
-}
-
 export function DuePanel({
   date,
   onNavigateToPage,
   excludePageId,
 }: DuePanelProps): React.ReactElement | null {
   const { t } = useTranslation()
+  const priorityLevels = usePriorityLevels()
   const callbacks = useRichContentCallbacks()
   const onTagClick = useTagClickHandler()
   const [collapsed, setCollapsed] = useState(false)
@@ -167,14 +164,19 @@ export function DuePanel({
     return GROUP_ORDER.map((state) => {
       const items = visibleBlocks
         .filter((b) => b.todo_state === state)
-        .sort((a, b) => priorityKey(a.priority) - priorityKey(b.priority))
+        .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority))
       return {
         state,
         label: state ? (groupLabels[state] ?? state) : t('duePanel.groupOther'),
         items,
       }
     }).filter((g) => g.items.length > 0)
-  }, [visibleBlocks, t])
+    // `priorityLevels` is an intentional re-sort trigger: `priorityRank` reads the
+    // configured levels from module state (not a captured variable), so it isn't
+    // referenced directly in the callback, but the memo MUST recompute when the
+    // user changes levels or the group keeps its stale order.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional re-sort trigger (see above)
+  }, [visibleBlocks, t, priorityLevels])
 
   // Deduplicate: exclude projected entries whose block already appears in real
   // agenda. Computed once here so the result is shared by the keyboard nav
