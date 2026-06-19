@@ -15,10 +15,23 @@ use super::record::OpRecord;
 ///
 /// Delegates to [`append_local_op_at`] with the current UTC timestamp.
 ///
-/// **Test/bench-only convenience** (#224): this self-opening-transaction form
-/// is used solely by unit tests and benchmarks. Production code appends via
-/// [`append_local_op_in_tx`] on an outer `CommandTx` so post-commit dispatch
-/// stays coupled to the commit — never call this wrapper from runtime paths.
+/// # TEST/BENCH ONLY — never call on a runtime path (#224, #1657)
+///
+/// This self-opening-transaction form opens **and commits** its own
+/// `BEGIN IMMEDIATE` transaction, which decouples the op-log append from the
+/// caller's post-commit materializer dispatch. Production **must** append via
+/// [`append_local_op_in_tx`] on an outer `CommandTx` so dispatch stays coupled
+/// to the commit; a runtime caller of this wrapper would silently break that
+/// coupling.
+///
+/// Why this is only doc-guarded (not `#[cfg(test)]`): the benches in
+/// `src-tauri/benches/` consume this through the public library API
+/// (`agaric_lib::op_log::append_local_op`), which is compiled **without**
+/// `cfg(test)`, so a compiler gate would break the bench build (`cargo check
+/// --benches` / `cargo bench --no-run`). No production call site exists today
+/// (verified #1657: every `src/` caller is inside a `#[cfg(test)]` module; the
+/// only non-test consumer is the bench). If you are wiring this into runtime
+/// code, you are doing something wrong — use [`append_local_op_in_tx`].
 pub async fn append_local_op(
     pool: &SqlitePool,
     device_id: &str,
@@ -267,8 +280,15 @@ async fn append_local_op_in_tx_with_provenance(
 /// 4. Computes the blake3 content hash.
 /// 5. Inserts the row and returns the full [`OpRecord`].
 ///
-/// **Test/bench-only convenience** (#224) — opens its own transaction.
-/// Production appends via [`append_local_op_in_tx`] on an outer `CommandTx`.
+/// # TEST/BENCH ONLY — never call on a runtime path (#224, #1657)
+///
+/// This opens **and commits** its own `BEGIN IMMEDIATE` transaction,
+/// decoupling the op-log append from the caller's post-commit materializer
+/// dispatch. Production **must** append via [`append_local_op_in_tx`] on an
+/// outer `CommandTx` so dispatch stays coupled to the commit. See
+/// [`append_local_op`] for why this contract is enforced by doc-comment rather
+/// than `#[cfg(test)]` (the benches consume the public API without `cfg(test)`)
+/// and for the #1657 audit confirming there are no runtime callers.
 pub async fn append_local_op_at(
     pool: &SqlitePool,
     device_id: &str,
