@@ -29,18 +29,23 @@
  *
  * #751 — the command registry, prefix routing, ranking, `[[page]]`
  * insertion, action-menu action-set, and the per-mode render bodies
- * are extracted into `components/palette/`. `CommandPalette` /
+ * are extracted into `components/palette/`. The search-mode empty-state
+ * groups and the mobile escalation CTA are extracted into the sibling
+ * `components/common/command-palette/` directory. `CommandPalette` /
  * `PaletteBody` remain the stable public entry points (App.tsx and
  * SearchSheet.tsx import them from here) and `mergeAndRankGroups` is
  * re-exported below for the existing test import path.
  */
 
-import { ChevronRight, Clock, Mic, Pin, Search as SearchIcon } from 'lucide-react'
+import { Mic } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
+import { MobileEscalationButton } from '@/components/common/command-palette/MobileEscalationButton'
+import { RecentPagesGroup } from '@/components/common/command-palette/RecentPagesGroup'
+import { RecentSearchesGroup } from '@/components/common/command-palette/RecentSearchesGroup'
 import {
   type ActionMenuRowType,
   buildActionMenuActions,
@@ -899,116 +904,20 @@ export function PaletteBody({
         ) : (
           <>
             {showRecentSearches && (
-              <CommandGroup
-                heading={
-                  <span className="flex items-center justify-between gap-2">
-                    <span>{t('searchSheet.recentSearchesTitle')}</span>
-                    <button
-                      type="button"
-                      // cmdk treats keydown on items specially; this lives
-                      // in the heading (not an item), so a plain onClick is
-                      // safe. stopPropagation keeps the list from also
-                      // reacting.
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleClearRecentSearches()
-                      }}
-                      data-testid="palette-recent-searches-clear"
-                      className="rounded px-1 text-xs font-normal text-muted-foreground hover:text-foreground focus-ring-visible"
-                    >
-                      {t('searchSheet.recentSearchesClear')}
-                    </button>
-                  </span>
-                }
-                data-testid="palette-recent-searches-group"
-              >
-                {recentSearches.map((term) => (
-                  <CommandItem
-                    key={term}
-                    value={`recentsearch:${term}`}
-                    onSelect={() => handleRecentSearchClick(term)}
-                    data-testid={`palette-recent-search-${term}`}
-                    aria-label={t('searchSheet.recentSearchRunLabel', { term })}
-                    className="gap-2"
-                  >
-                    <SearchIcon
-                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    <span className="flex-1 truncate">{term}</span>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
+              <RecentSearchesGroup
+                recentSearches={recentSearches}
+                onRun={handleRecentSearchClick}
+                onClear={handleClearRecentSearches}
+                t={t}
+              />
             )}
             {showRecents && (
-              <CommandGroup heading={t('palette.recentTitle')} data-testid="palette-recents-group">
-                {recents.map((page) => {
-                  const isPinned = page.pinned === true
-                  return (
-                    <CommandItem
-                      key={page.id}
-                      value={`recent:${page.id}`}
-                      onSelect={() => handleRecentClick(page)}
-                      data-testid={`palette-recent-${page.id}`}
-                      data-pinned={isPinned ? 'true' : undefined}
-                      className="group gap-2"
-                    >
-                      {/* PEND-67 Phase 4 — pinned entries swap the
-                          history glyph for a filled `Pin`, signalling
-                          their sticky-at-top state without a separate
-                          group heading. */}
-                      {isPinned ? (
-                        <Pin
-                          className="h-3.5 w-3.5 shrink-0 text-foreground"
-                          fill="currentColor"
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <Clock
-                          className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-                          aria-hidden="true"
-                        />
-                      )}
-                      <span className="flex-1 truncate">{page.title}</span>
-                      {/* PEND-67 Phase 4 — inline pin-toggle button.
-                          Mouse-only for v1 (mobile pin lives in the
-                          long-press action menu of Phase 5). Stops
-                          propagation so the row's onSelect does not
-                          also fire and navigate the user away. */}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          togglePinRecentPage(page.id)
-                        }}
-                        onPointerDown={(e) => {
-                          // Prevent cmdk from interpreting the
-                          // pointerdown as a row "click".
-                          e.stopPropagation()
-                        }}
-                        className={cn(
-                          'rounded p-0.5 text-muted-foreground hover:bg-muted/60 focus-ring-visible',
-                          isPinned
-                            ? 'opacity-100'
-                            : 'opacity-0 group-hover:opacity-100 focus:opacity-100',
-                        )}
-                        aria-label={
-                          isPinned
-                            ? t('palette.unpinRecent', { title: page.title })
-                            : t('palette.pinRecent', { title: page.title })
-                        }
-                        data-testid={`palette-recent-pin-${page.id}`}
-                      >
-                        <Pin
-                          className="h-3 w-3"
-                          fill={isPinned ? 'currentColor' : 'none'}
-                          aria-hidden="true"
-                        />
-                      </button>
-                    </CommandItem>
-                  )
-                })}
-              </CommandGroup>
+              <RecentPagesGroup
+                recents={recents}
+                onSelect={handleRecentClick}
+                onTogglePin={togglePinRecentPage}
+                t={t}
+              />
             )}
             {showWelcomeEmpty && (
               <CommandEmpty data-testid="palette-welcome-empty">
@@ -1069,31 +978,7 @@ export function PaletteBody({
         )}
       </CommandList>
       {showMobileEscalation && (
-        /* PEND-58g UX-A1 — prominent, always-visible escalation CTA
-           pinned beneath the CommandList. Styled as a bordered,
-           elevated box (not a muted footer row) so the path to the
-           full search view — filters, regex, history — is discoverable
-           even on a cold open with an empty query. Two lines: an
-           emphasized title with a trailing chevron + a muted hint.
-           Sibling-after-list placement loses cmdk's Enter-to-select
-           binding, but touch users tap. */
-        <button
-          type="button"
-          onClick={() => escalate(trimmedQuery)}
-          data-testid="palette-escalation-footer"
-          aria-label={t('searchSheet.escalateLabel')}
-          className="m-3 flex min-h-11 items-center gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-left shadow-(--shadow-resting) hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-ring-visible"
-        >
-          <span className="flex min-w-0 flex-1 flex-col">
-            <span className="flex items-center gap-1 text-sm font-medium text-foreground">
-              <span className="truncate">{t('searchSheet.escalateCtaTitle')}</span>
-            </span>
-            <span className="truncate text-xs text-muted-foreground">
-              {t('searchSheet.escalateCtaHint')}
-            </span>
-          </span>
-          <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-        </button>
+        <MobileEscalationButton onEscalate={() => escalate(trimmedQuery)} t={t} />
       )}
       {mode === 'search' && !linkMode && <PaletteFooterHint t={t} />}
       {actionMenu != null && (
