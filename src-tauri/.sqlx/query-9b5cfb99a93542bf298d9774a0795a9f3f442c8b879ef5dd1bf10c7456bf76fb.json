@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM _op_log_mutation_allowed",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "9b5cfb99a93542bf298d9774a0795a9f3f442c8b879ef5dd1bf10c7456bf76fb"
+}

@@ -37,7 +37,7 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::error::AppError;
-use crate::sync_net::{SyncCert, generate_self_signed_cert};
+use crate::sync_net::{SyncCert, generate_self_signed_cert, pem_to_der};
 
 /// Wrapper for the persistent TLS certificate in Tauri managed state.
 #[derive(Clone)]
@@ -107,6 +107,28 @@ fn pem_orphan_is_stale(pem_path: &Path) -> bool {
         .is_some_and(|age| age >= M54_TORN_WRITE_STALENESS)
 }
 
+/// Build `OpenOptions` for atomic creation (`create_new(true)`) of a
+/// sensitive sync-cert file.
+///
+/// #1580: the `.pem` holds the device's ECDSA P-256 *private key*. Without
+/// an explicit mode the file inherits the process umask, which is commonly
+/// `0o022` — leaving the key world-readable (`0o644`). On Unix we force the
+/// permissions to `0o600` (owner read/write only) at `open()` time, so the
+/// key is never momentarily world-readable between create and a later
+/// `chmod`. The `.hash` is non-secret but we apply the same mode for
+/// consistency and to keep the on-disk pair tidy. On Windows there is no
+/// POSIX mode; the default options are used (NTFS ACLs apply).
+fn secure_create_options() -> OpenOptions {
+    let mut opts = OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    opts
+}
+
 /// Read or generate a persistent self-signed TLS certificate.
 ///
 /// `config_path` is the base path — the function appends `.pem` and `.hash`
@@ -155,11 +177,9 @@ pub fn get_or_create_sync_cert(config_path: &Path, device_id: &str) -> Result<Sy
     }
 
     // Attempt atomic creation — succeeds only if the .pem file does not exist.
-    match OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&pem_path)
-    {
+    // #1580: `secure_create_options` forces mode 0o600 on Unix so the
+    // private key in the `.pem` is never world-readable.
+    match secure_create_options().open(&pem_path) {
         Ok(mut pem_file) => {
             let cert = generate_self_signed_cert(device_id)?;
 
@@ -174,15 +194,11 @@ pub fn get_or_create_sync_cert(config_path: &Path, device_id: &str) -> Result<Sy
             pem_file.sync_all()?;
 
             // Write hash to a separate file for quick lookup.
-            let mut hash_file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&hash_path)
-                .map_err(|e| {
-                    // Clean up the .pem file if .hash creation fails.
-                    let _ = fs::remove_file(&pem_path);
-                    unexpected_create_error(e)
-                })?;
+            let mut hash_file = secure_create_options().open(&hash_path).map_err(|e| {
+                // Clean up the .pem file if .hash creation fails.
+                let _ = fs::remove_file(&pem_path);
+                unexpected_create_error(e)
+            })?;
             hash_file.write_all(cert.cert_hash.as_bytes())?;
             hash_file.sync_all()?;
 
@@ -258,6 +274,35 @@ fn read_existing_cert(pem_path: &Path, hash_path: &Path) -> Result<SyncCert, App
 
     if cert_hash.len() != 64 || !cert_hash.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(corrupt_cert_error(hash_path, "invalid SHA-256 hex hash"));
+    }
+
+    // #1528: re-bind the stored hash to the cert it claims to describe.
+    //
+    // A well-formed `.hash` (64 hex chars) that was swapped or edited would
+    // otherwise pass the shape check above unnoticed. The device would then
+    // advertise a hash that does NOT match its own certificate, peers would
+    // TOFU-pin that wrong hash, and every subsequent TLS handshake would fail
+    // the pin check — a permanent, silent sync outage.
+    //
+    // Recompute `SHA-256(DER(cert_pem))` exactly as the write side does in
+    // `generate_self_signed_cert` (DER bytes -> SHA-256 -> lowercase hex) and
+    // confirm it matches the stored hash. On mismatch, return the same corrupt
+    // error so the M-54 recovery path regenerates a consistent cert+hash pair.
+    let computed_hash = {
+        use sha2::{Digest, Sha256};
+        let cert_der = pem_to_der(&cert_pem)
+            .map_err(|_| corrupt_cert_error(pem_path, "certificate PEM is not valid DER"))?;
+        let digest = Sha256::digest(&cert_der);
+        digest
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    if !computed_hash.eq_ignore_ascii_case(&cert_hash) {
+        return Err(corrupt_cert_error(
+            hash_path,
+            "stored hash does not match the certificate",
+        ));
     }
 
     Ok(SyncCert {
@@ -469,6 +514,97 @@ mod tests {
         assert!(
             matches!(err, AppError::InvalidOperation(_)),
             "non-hex hash should return InvalidOperation, got: {err:?}"
+        );
+    }
+
+    // ── #1528: hash is re-bound to the cert on read ─────────────────────
+
+    /// A well-formed (64 hex) but *wrong* `.hash` — e.g. swapped from
+    /// another device or hand-edited — must be rejected so the device
+    /// never advertises a hash that mismatches its own certificate.
+    /// The mismatch surfaces as the same corrupt-cert error the M-54
+    /// recovery path consumes, so a fresh consistent pair is regenerated.
+    #[test]
+    fn tampered_hash_with_valid_hex_but_wrong_value_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let base = dir.path().join("sync-cert");
+
+        // Generate a real cert + matching hash.
+        let original = get_or_create_sync_cert(&base, "tamper-1528").unwrap();
+        let hash_path = base.with_extension("hash");
+
+        // Tamper: write a different but still-valid 64-hex hash.
+        let wrong_hash = "0".repeat(64);
+        assert_ne!(
+            wrong_hash, original.cert_hash,
+            "test setup: tampered hash must differ from the real one"
+        );
+        fs::write(&hash_path, &wrong_hash).unwrap();
+
+        // Reading back must now fail the re-bind check.
+        let err = read_existing_cert(&base.with_extension("pem"), &hash_path).unwrap_err();
+        assert!(
+            matches!(err, AppError::InvalidOperation(_)),
+            "tampered hash must return InvalidOperation (corrupt cert), got: {err:?}"
+        );
+    }
+
+    /// The happy path: a correct `.hash` (as written by the create path)
+    /// passes the re-bind check and reads back the same cert unchanged.
+    #[test]
+    fn correct_hash_reads_back_cleanly_1528() {
+        let dir = TempDir::new().unwrap();
+        let base = dir.path().join("sync-cert");
+
+        let original = get_or_create_sync_cert(&base, "rebind-ok-1528").unwrap();
+
+        let reread =
+            read_existing_cert(&base.with_extension("pem"), &base.with_extension("hash")).unwrap();
+
+        assert_eq!(
+            reread.cert_hash, original.cert_hash,
+            "correct hash must read back the same cert_hash"
+        );
+        assert_eq!(
+            reread.cert_pem, original.cert_pem,
+            "correct hash must read back the same cert_pem"
+        );
+    }
+
+    // ── #1580: private-key PEM is not world-readable ────────────────────
+
+    /// The `.pem` holds the device private key; on Unix it must be created
+    /// with mode 0o600 (owner-only) regardless of the process umask, so the
+    /// key is never world- or group-readable.
+    #[cfg(unix)]
+    #[test]
+    fn pem_file_created_with_owner_only_mode_1580() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let base = dir.path().join("sync-cert");
+
+        get_or_create_sync_cert(&base, "perms-1580").unwrap();
+
+        let pem_mode = fs::metadata(base.with_extension("pem"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            pem_mode, 0o600,
+            "PEM (private key) must be 0o600, got {pem_mode:o}"
+        );
+
+        // The `.hash` is non-secret but we lock it down to 0o600 too.
+        let hash_mode = fs::metadata(base.with_extension("hash"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            hash_mode, 0o600,
+            "hash file must be 0o600, got {hash_mode:o}"
         );
     }
 
