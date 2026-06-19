@@ -699,8 +699,9 @@ export function PaletteBody({
     }
     const page = recents.find((p) => p.id === rowId)
     if (page == null) return
-    if (actionId === 'copy-id') {
-      copyToClipboard(page.id, 'palette.copyIdSuccess')
+    if (actionId === 'copy-page-link') {
+      // #1521 — copy a pasteable `[[ULID]]` page link, not a bare ULID.
+      copyToClipboard(`[[${page.id}]]`, 'palette.copyPageLinkSuccess')
       return
     }
     if (actionId === 'reveal-in-pages') {
@@ -716,8 +717,9 @@ export function PaletteBody({
   function handlePageRowAction(actionId: string, rowId: string, newTab: boolean): void {
     const group = groups.find((g) => g.pageId === rowId)
     if (group == null) return
-    if (actionId === 'copy-id') {
-      copyToClipboard(group.pageId, 'palette.copyIdSuccess')
+    if (actionId === 'copy-page-link') {
+      // #1521 — copy a pasteable `[[ULID]]` page link, not a bare ULID.
+      copyToClipboard(`[[${group.pageId}]]`, 'palette.copyPageLinkSuccess')
       return
     }
     if (actionId === 'reveal-in-pages') {

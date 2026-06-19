@@ -21,7 +21,7 @@ describe('buildActionMenuActions', () => {
       'open-new-tab',
       'pin',
       'reveal-in-pages',
-      'copy-id',
+      'copy-page-link',
       'remove-from-recents',
     ])
 
@@ -31,17 +31,24 @@ describe('buildActionMenuActions', () => {
       'open-new-tab',
       'unpin',
       'reveal-in-pages',
-      'copy-id',
+      'copy-page-link',
       'remove-from-recents',
     ])
   })
 
-  it('page rows expose open / new-tab / reveal / copy-id', () => {
+  it('page rows expose open / new-tab / reveal / copy-page-link', () => {
     const actions = buildActionMenuActions('page', false, t)
-    expect(actions.map((a) => a.id)).toEqual(['open', 'open-new-tab', 'reveal-in-pages', 'copy-id'])
+    expect(actions.map((a) => a.id)).toEqual([
+      'open',
+      'open-new-tab',
+      'reveal-in-pages',
+      'copy-page-link',
+    ])
+    // #1521 — the page copy action is a page-link copy, not a bare ULID.
+    expect(actions.find((a) => a.id === 'copy-page-link')?.label).toBe('palette.actionCopyPageLink')
   })
 
-  it('block rows swap copy-id for copy-block-link', () => {
+  it('block rows swap copy-page-link for copy-block-link', () => {
     const actions = buildActionMenuActions('block', false, t)
     expect(actions.map((a) => a.id)).toEqual([
       'open',

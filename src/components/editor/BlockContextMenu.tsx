@@ -793,9 +793,9 @@ export function BlockContextMenu({
 
   // #1445 — "Copy page reference" copies a page link (`[[ULID]]`) for the
   // containing page (or the block's own id when the block IS a page). Hidden
-  // when `pageRefId` is unknown. NOTE: emits `[[ULID]]` (not a bare ULID) — the
-  // palette's page "Copy id" action wrongly copies a bare id; this does not
-  // replicate that bug.
+  // when `pageRefId` is unknown. Emits `[[ULID]]`, matching the palette's
+  // "Copy page link" page action (#1521 aligned the palette, which previously
+  // copied a bare, unpasteable ULID).
   const copyPageRefItem: MenuItem | null = pageRefId
     ? {
         label: t('contextMenu.copyPageRef'),
