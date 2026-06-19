@@ -28,6 +28,11 @@ import {
   GraphView,
   setGraphCacheEntry,
 } from '@/components/graph/GraphView'
+import {
+  _resetBlockPropertyEventsForTest,
+  getBlockPropertyInvalidationKey,
+  recordBlockPropertyChange,
+} from '@/lib/block-property-events'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { useNavigationStore } from '@/stores/navigation'
@@ -57,14 +62,26 @@ vi.mock('@/lib/graph-filters', async (importOriginal) => {
   }
 })
 
-// #1530: mock useBlockPropertyEvents so a test can drive `invalidationKey`.
-// The mutable `mockInvalidationKey` lets a test bump the key and re-render to
-// simulate a block/link mutation event firing. Defaults to 0 so unrelated
-// tests behave as if no mutation has occurred.
-let mockInvalidationKey = 0
-vi.mock('@/hooks/useBlockPropertyEvents', () => ({
-  useBlockPropertyEvents: () => ({ invalidationKey: mockInvalidationKey }),
-}))
+// #1530 / #1818: drive the graph's invalidation signal through the REAL
+// module-level store (`src/lib/block-property-events.ts`) instead of a static
+// mock value. The hook is mocked to a thin `useSyncExternalStore` adapter over
+// that store so a test can (a) bump the key on the mounted instance (#1530) and
+// (b) fire a mutation while GraphView is UNMOUNTED and have the next mount
+// observe it (#1818 — the counter survives unmount because it is module-level).
+// The real store is imported inside the factory because `vi.mock` is hoisted
+// above the top-level imports.
+vi.mock('@/hooks/useBlockPropertyEvents', async () => {
+  const react = await import('react')
+  const store = await import('@/lib/block-property-events')
+  return {
+    useBlockPropertyEvents: () => ({
+      invalidationKey: react.useSyncExternalStore(
+        store.subscribeToBlockPropertyEvents,
+        store.getBlockPropertyInvalidationKey,
+      ),
+    }),
+  }
+})
 
 // Mock d3 modules to avoid SVG rendering issues in jsdom
 vi.mock('d3-force', () => ({
@@ -223,8 +240,8 @@ const OriginalWorker = globalThis['Worker'] as typeof Worker | undefined
 beforeEach(() => {
   vi.clearAllMocks()
   clearGraphCache()
+  _resetBlockPropertyEventsForTest()
   forceEmptyFilter = false
-  mockInvalidationKey = 0
   MockWorker.instances = []
   // Stub the global Worker with our MockWorker by default
   vi.stubGlobal('Worker', MockWorker)
@@ -850,14 +867,8 @@ describe('GraphView', () => {
       // A fresh remount within the TTL with NO mutation must NOT refetch —
       // the existing cache/TTL behavior still holds. Unmount + remount the
       // same component; the module-level cache survives across mounts.
-      // NOTE: this also characterises the KNOWN residual in #1818 — because
-      // `invalidationKey` is per-instance and resets to 0 on remount, a
-      // mutation that occurred while the graph was unmounted is NOT detected
-      // here, so the stale entry is served until the TTL expires. Fixing that
-      // needs module-level invalidation (#1818); this assertion documents the
-      // current TTL-bounded behavior, not a resolution of that case.
       first.unmount()
-      const { rerender } = render(<GraphView />)
+      render(<GraphView />)
       await waitFor(() => {
         expect(screen.getByTestId('graph-view')).toBeInTheDocument()
       })
@@ -867,12 +878,71 @@ describe('GraphView', () => {
       })
       expect(fetchCalls()).toBe(1)
 
-      // Now simulate a block/link mutation: bump invalidationKey and re-render
-      // the mounted instance. Even though the cache is fresh, the graph must
-      // refetch (stale-while-revalidate).
-      mockInvalidationKey = 1
-      await act(async () => {
-        rerender(<GraphView />)
+      // Now simulate a block/link mutation on the MOUNTED instance: fire the
+      // real (module-level) invalidation event. The debounced counter bumps and
+      // `useSyncExternalStore` propagates it; even though the cache is fresh,
+      // the graph must refetch (stale-while-revalidate).
+      act(() => {
+        recordBlockPropertyChange()
+      })
+      await waitFor(() => {
+        expect(fetchCalls()).toBeGreaterThanOrEqual(2)
+      })
+    })
+
+    // #1818: a page/[[link]] created while GraphView is UNMOUNTED must cause the
+    // next mount-within-TTL to refetch instead of serving the stale module-level
+    // cache entry. The pre-fix bug: `invalidationKey` was a per-instance
+    // `useState(0)` that RESET on every mount, so a mutation that fired during
+    // unmount was invisible — the remount saw key 0 (== lastInvalidationRef) and
+    // hit the fresh-cache early-exit. The fix hoists the counter to module scope
+    // so it survives unmount; the remount reads the bumped key and refetches.
+    it('refetches on remount when a mutation fired while unmounted (#1818)', async () => {
+      const pagesResponse = {
+        items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      const fetchCalls = () =>
+        mockedInvoke.mock.calls.filter((c) => c[0] === 'list_all_pages_in_space').length
+
+      // Initial mount → one fetch, fresh cache populated.
+      const first = render(<GraphView />)
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+      await waitFor(() => {
+        expect(fetchCalls()).toBe(1)
+      })
+
+      // Unmount the graph, THEN fire a block/link mutation while nothing is
+      // mounted. The module-level counter still advances (the crux of #1818).
+      first.unmount()
+      act(() => {
+        recordBlockPropertyChange()
+      })
+      // Let the debounce window settle so the counter actually increments
+      // before the remount reads it.
+      await waitFor(() => {
+        expect(getBlockPropertyInvalidationKey()).toBe(1)
+      })
+
+      // The cache is still well within its 5-min TTL (no Date manipulation), so
+      // pre-fix this remount would serve the stale entry and NOT refetch. With
+      // the module-level counter, the remount sees key 1 != lastInvalidationRef
+      // (0) → stale-while-revalidate refetch.
+      render(<GraphView />)
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
       })
       await waitFor(() => {
         expect(fetchCalls()).toBeGreaterThanOrEqual(2)
@@ -1657,7 +1727,9 @@ describe('GraphView', () => {
 // node/edge arrays for the whole session. It is now a small LRU.
 describe('graph cache LRU (#758 item 4)', () => {
   function makeEntry(timestamp: number) {
-    return { nodes: [], edges: [], timestamp }
+    // #1818: entries now also carry the invalidation counter they were fetched
+    // at; the LRU tests don't exercise invalidation, so a fixed 0 is fine.
+    return { nodes: [], edges: [], timestamp, invalidationKey: 0 }
   }
 
   beforeEach(() => {

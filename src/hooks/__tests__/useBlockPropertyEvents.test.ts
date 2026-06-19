@@ -1,16 +1,22 @@
 /**
- * Tests for useBlockPropertyEvents hook.
+ * Tests useBlockPropertyEvents hook.
  *
  * Validates:
- * - invalidationKey starts at 0
- * - Increments when a property change event fires
- * - Debounces rapid consecutive events (150ms)
+ *   - invalidationKey starts at 0
+ *   - Increments when property change event fires
+ *   - Debounces rapid consecutive events (150ms)
+ *
+ * #1818: the counter + listener now live at module scope
+ * (`src/lib/block-property-events.ts`), so the hook is a thin
+ * `useSyncExternalStore` adapter. Module state is reset between tests via
+ * `_resetBlockPropertyEventsForTest`, and the listener only registers inside
+ * Tauri (the `__TAURI_INTERNALS__` marker below).
  */
 
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-let eventListeners: Map<string, (event: unknown) => void>
+const eventListeners = new Map<string, (event: unknown) => void>()
 
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(
@@ -23,62 +29,50 @@ vi.mock('@tauri-apps/api/event', () => ({
   ),
 }))
 
+// The module-level listener only registers inside Tauri. Stamp the marker so
+// the lazy-init path hits the mocked `listen()` above.
+;(window as unknown as { __TAURI_INTERNALS__: object }).__TAURI_INTERNALS__ = {}
+
+import {
+  _resetBlockPropertyEventsForTest,
+  EVENT_PROPERTY_CHANGED,
+} from '../../lib/block-property-events'
 import { useBlockPropertyEvents } from '../useBlockPropertyEvents'
 
 beforeEach(() => {
-  eventListeners = new Map()
+  eventListeners.clear()
+  _resetBlockPropertyEventsForTest()
   vi.useFakeTimers()
 })
 
 afterEach(() => {
   vi.useRealTimers()
   vi.clearAllMocks()
+  _resetBlockPropertyEventsForTest()
 })
 
 function firePropertyEvent(blockId: string, keys: string[]) {
-  const handler = eventListeners.get('block:properties-changed')
-  if (handler) {
-    handler({ payload: { block_id: blockId, changed_keys: keys } })
-  }
+  const handler = eventListeners.get(EVENT_PROPERTY_CHANGED)
+  if (!handler) throw new Error(`${EVENT_PROPERTY_CHANGED} listener was never registered`)
+  handler({ payload: { block_id: blockId, changed_keys: keys } })
 }
 
 describe('useBlockPropertyEvents', () => {
-  it('starts with invalidationKey = 0', async () => {
+  it('starts invalidationKey = 0', async () => {
     const { result } = renderHook(() => useBlockPropertyEvents())
-    // Wait for async setup
+    // Let async listener setup settle.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0)
     })
     expect(result.current.invalidationKey).toBe(0)
   })
 
-  it('increments invalidationKey after event + debounce', async () => {
+  it('increments invalidationKey on event + debounce', async () => {
     const { result } = renderHook(() => useBlockPropertyEvents())
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0)
     })
 
-    act(() => {
-      firePropertyEvent('BLK01', ['todo_state'])
-    })
-
-    // Before debounce expires
-    expect(result.current.invalidationKey).toBe(0)
-
-    // After debounce (150ms)
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(150)
-    })
-    expect(result.current.invalidationKey).toBe(1)
-  })
-
-  it('debounces rapid consecutive events into single increment', async () => {
-    const { result } = renderHook(() => useBlockPropertyEvents())
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0)
-    })
-
-    // Fire 3 events in quick succession
     act(() => {
       firePropertyEvent('BLK01', ['todo_state'])
     })
@@ -105,7 +99,7 @@ describe('useBlockPropertyEvents', () => {
     expect(result.current.invalidationKey).toBe(1)
   })
 
-  it('increments separately for events spaced beyond debounce window', async () => {
+  it('increments separately for events spaced beyond the debounce window', async () => {
     const { result } = renderHook(() => useBlockPropertyEvents())
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0)
@@ -128,5 +122,34 @@ describe('useBlockPropertyEvents', () => {
       await vi.advanceTimersByTimeAsync(150)
     })
     expect(result.current.invalidationKey).toBe(2)
+  })
+
+  // #1818: the counter is module-level, so a mutation event that fires while
+  // NO component is mounted is still observed — the next mount reads the bumped
+  // key rather than a per-instance 0. This is the property that lets a
+  // module-level consumer cache (e.g. GraphView's graphCacheMap) detect a
+  // mutation that happened during its own unmount.
+  it('survives unmount: an event fired while unmounted is reflected on remount', async () => {
+    const first = renderHook(() => useBlockPropertyEvents())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(first.result.current.invalidationKey).toBe(0)
+
+    // Unmount the only consumer, then fire a mutation while nothing is mounted.
+    first.unmount()
+    act(() => {
+      firePropertyEvent('BLK01', ['todo_state'])
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150)
+    })
+
+    // A fresh mount reads the module-level counter, which advanced to 1.
+    const second = renderHook(() => useBlockPropertyEvents())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(second.result.current.invalidationKey).toBe(1)
   })
 })
