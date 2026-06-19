@@ -31,30 +31,14 @@
 
 import { useEffect } from 'react'
 
+import { computeKeyboardInset } from '@/lib/keyboard-inset'
+
 /**
  * Gap (px) to leave between the bottom of the focused element and the top
  * of the keyboard, so the caret isn't flush against the keyboard edge.
  * Modest value — enough to breathe without wasting vertical space.
  */
 const KEYBOARD_MARGIN_PX = 8
-
-/**
- * Compute the soft-keyboard overlap in px for the current visual viewport.
- *
- * Returns 0 when the keyboard is hidden, the viewport is pinch-zoomed
- * (`scale > 1` — zoom shrinks `vv.height` exactly like the IME does, but it
- * is not a keyboard), or the API is unavailable. Mirrors `useSoftKeyboardInset`
- * in `sheet.tsx`.
- */
-export function computeKeyboardInset(vv: VisualViewport): number {
-  // Pinch zoom shrinks vv.height without any keyboard. `scale > 1` is the
-  // discriminator: the IME never changes scale, pinch zoom always does.
-  // (`undefined > 1` is false, so WebViews lacking `scale` keep the plain
-  // keyboard math.)
-  if (vv.scale > 1) return 0
-  const overlap = window.innerHeight - (vv.height + vv.offsetTop)
-  return overlap > 0 ? Math.round(overlap) : 0
-}
 
 /**
  * Scroll `el` so its caret/bottom clears the soft keyboard.

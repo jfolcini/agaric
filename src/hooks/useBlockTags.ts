@@ -65,14 +65,28 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
   // fallback is intentional pre-bootstrap behaviour: empty string
   // forces a no-match SQL filter rather than a runtime null deref.
   useEffect(() => {
-    listBlocks({ blockType: 'tag', spaceId: currentSpaceId ?? '' })
+    // #1518 — guard against a stale space's tag list resolving last and
+    // clobbering the active space (cross-space leak). `cancelled` covers
+    // the unmount / dep-change case; the `getState()` re-check additionally
+    // defends a fast switch-back where the same in-flight run is stale but
+    // its cleanup hasn't fired yet (the captured id no longer matches the
+    // live store).
+    let cancelled = false
+    const capturedSpaceId = currentSpaceId
+    listBlocks({ blockType: 'tag', spaceId: capturedSpaceId ?? '' })
       .then((resp) => {
+        if (cancelled) return
+        if (useSpaceStore.getState().currentSpaceId !== capturedSpaceId) return
         setAllTags(resp.items.map((t: BlockRow) => ({ id: t.id, name: t.content ?? '' })))
       })
       .catch((error) => {
+        if (cancelled) return
         logger.error('useBlockTags', 'Failed to load all tags', undefined, error)
         notify.error(i18n.t('tags.loadFailed'), { id: 'tags-load-failed' })
       })
+    return () => {
+      cancelled = true
+    }
   }, [currentSpaceId])
 
   // Load applied + inherited tags when blockId changes (#1423).
@@ -81,24 +95,34 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
   // (direct wins, since a direct tag is removable) so it never renders as
   // a derived chip.
   useEffect(() => {
+    // #1518 — guard against an older block's tags resolving last and
+    // overwriting the newer block after a fast blockId switch. `cancelled`
+    // is tripped by the cleanup on every dep change / unmount, so any
+    // in-flight response for the previous blockId is dropped.
+    let cancelled = false
     setAppliedTagIds(new Set())
     setInheritedTagIds(new Set())
     setLoading(true)
     if (blockId) {
       Promise.all([listTagsForBlock(blockId), listInheritedTagsForBlock(blockId)])
         .then(([directIds, inheritedIds]) => {
+          if (cancelled) return
           const direct = new Set(directIds)
           setAppliedTagIds(direct)
           setInheritedTagIds(new Set(inheritedIds.filter((id) => !direct.has(id))))
           setLoading(false)
         })
         .catch((error) => {
+          if (cancelled) return
           logger.error('useBlockTags', 'Failed to load tags for block', { blockId }, error)
           notify.error(i18n.t('tags.loadFailed'), { id: 'tags-load-failed' })
           setLoading(false)
         })
     } else {
       setLoading(false)
+    }
+    return () => {
+      cancelled = true
     }
   }, [blockId])
 

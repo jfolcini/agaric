@@ -4,6 +4,7 @@ import { Dialog as SheetPrimitive } from 'radix-ui'
 import type * as React from 'react'
 import { useEffect, useState } from 'react'
 
+import { computeKeyboardInset } from '@/lib/keyboard-inset'
 import { cn } from '@/lib/utils'
 
 import { CloseButtonIcon, closeButtonClassName } from './close-button'
@@ -86,24 +87,7 @@ function useSoftKeyboardInset(enabled: boolean): number {
     const vv = typeof window !== 'undefined' ? window.visualViewport : null
     if (!vv) return
     const update = () => {
-      // Pinch zoom ALSO shrinks visualViewport.height without any
-      // keyboard — on a desktop browser / touchscreen (trackpad pinch,
-      // WebView2 touch zoom) a zoomed viewport would otherwise float
-      // every bottom sheet up by a bogus "keyboard" inset. `scale > 1`
-      // is the discriminator: the IME never changes scale, pinch zoom
-      // always does. Treat a zoomed viewport as "no keyboard".
-      // (`undefined > 1` is false, so WebViews lacking `scale` keep the
-      // plain keyboard math.)
-      if (vv.scale > 1) {
-        setInset(0)
-        return
-      }
-      // Keyboard overlap = layout-viewport bottom minus visual-viewport
-      // bottom. Positive only while the IME (or another bottom inset)
-      // is up; clamp to 0 so transient negative readings during
-      // orientation changes never push the sheet below the viewport.
-      const overlap = window.innerHeight - (vv.height + vv.offsetTop)
-      setInset(overlap > 0 ? Math.round(overlap) : 0)
+      setInset(computeKeyboardInset(vv))
     }
     update()
     vv.addEventListener('resize', update)

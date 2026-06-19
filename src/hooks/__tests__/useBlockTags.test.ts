@@ -25,6 +25,7 @@ import {
   type PageBlockState,
 } from '../../stores/page-blocks'
 import { useResolveStore } from '../../stores/resolve'
+import { useSpaceStore } from '../../stores/space'
 import { useUndoStore } from '../../stores/undo'
 import { useBlockTags } from '../useBlockTags'
 
@@ -42,6 +43,9 @@ afterEach(() => {
     onNewAction: originalOnNewAction,
     pages: new Map(),
   })
+  // #1518 — reset the space store so a race test's `currentSpaceId` doesn't
+  // leak into the next test.
+  useSpaceStore.setState({ currentSpaceId: null })
 })
 
 const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
@@ -828,5 +832,176 @@ describe('useBlockTags loading state', () => {
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #1518 — staleness guards: a slow, older IPC response must never clobber the
+// state for the newer block / space once the id has switched.
+// ---------------------------------------------------------------------------
+
+describe('useBlockTags staleness guards (#1518)', () => {
+  it('drops a stale block tag list that resolves after the newer block', async () => {
+    // Both fetches are gated behind manual resolvers. We resolve BLOCK_NEW
+    // first, then BLOCK_OLD LAST — without the cancelled guard the late
+    // BLOCK_OLD write would overwrite BLOCK_NEW's tags (the #1518 leak).
+    const resolvers = new Map<string, (value: string[]) => void>()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_inherited_tags_for_block') return []
+      if (cmd === 'list_tags_for_block') {
+        const blockId = (args as { blockId: string }).blockId
+        return new Promise<string[]>((resolve) => {
+          resolvers.set(blockId, resolve)
+        })
+      }
+      return emptyPage
+    })
+
+    const { result, rerender } = renderHook(({ id }) => useBlockTags(id), {
+      wrapper,
+      initialProps: { id: 'BLOCK_OLD' },
+    })
+
+    // Switch to the newer block before either fetch resolves.
+    await waitFor(() => expect(resolvers.has('BLOCK_OLD')).toBe(true))
+    rerender({ id: 'BLOCK_NEW' })
+    await waitFor(() => expect(resolvers.has('BLOCK_NEW')).toBe(true))
+
+    // Resolve the NEWER block first…
+    await act(async () => {
+      resolvers.get('BLOCK_NEW')?.(['TAG_NEW'])
+    })
+    await waitFor(() => {
+      expect(result.current.appliedTagIds.has('TAG_NEW')).toBe(true)
+    })
+
+    // …then let the stale OLDER block resolve LAST. It must be dropped.
+    await act(async () => {
+      resolvers.get('BLOCK_OLD')?.(['TAG_OLD'])
+    })
+
+    expect(result.current.appliedTagIds.has('TAG_OLD')).toBe(false)
+    expect(result.current.appliedTagIds.has('TAG_NEW')).toBe(true)
+    expect(result.current.appliedTagIds.size).toBe(1)
+  })
+
+  it('drops a stale space tag list that resolves after the newer space', async () => {
+    // SPACE_OLD's list_blocks is gated so it lands LAST; SPACE_NEW resolves
+    // immediately. The `getState()` re-check + cancelled guard must keep
+    // SPACE_NEW's tags and discard the late SPACE_OLD response.
+    const newTags = {
+      items: [
+        makeBlock({ id: 'TAG_NEW', block_type: 'tag' as const, content: 'New', page_id: null }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    const oldTags = {
+      items: [
+        makeBlock({ id: 'TAG_OLD', block_type: 'tag' as const, content: 'Old', page_id: null }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+
+    let resolveOld!: (value: typeof oldTags) => void
+    const oldPending = new Promise<typeof oldTags>((resolve) => {
+      resolveOld = resolve
+    })
+
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'list_inherited_tags_for_block') return []
+      if (cmd === 'list_blocks') {
+        const spaceId = (args as { spaceId: string }).spaceId
+        if (spaceId === 'SPACE_OLD') return oldPending
+        return newTags
+      }
+      return emptyPage
+    })
+
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_OLD' })
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+
+    // Switch to the newer space before the old fetch resolves. The hook
+    // re-subscribes via its currentSpaceId selector, so the store update
+    // drives a re-render + a fresh SPACE_NEW fetch.
+    await act(async () => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_NEW' })
+    })
+
+    await waitFor(() => {
+      expect(result.current.allTags).toEqual([{ id: 'TAG_NEW', name: 'New' }])
+    })
+
+    // Let the stale SPACE_OLD fetch resolve LAST — it must NOT clobber
+    // SPACE_NEW (caught by either the cancelled flag or the getState check).
+    await act(async () => {
+      resolveOld(oldTags)
+    })
+
+    expect(result.current.allTags).toEqual([{ id: 'TAG_NEW', name: 'New' }])
+  })
+
+  it('drops the original space tag list on switch-back (A→B→A) — cancelled is the load-bearing guard', async () => {
+    // Switch-back isolates the `cancelled` guard from the `getState()`
+    // re-check: the original SPACE_A fetch is stale, yet by the time it
+    // resolves the live store is back to SPACE_A — so the captured id
+    // MATCHES the store and `getState()` would let it through. Only the
+    // `cancelled` flag (tripped by the first SPACE_A effect's cleanup)
+    // drops it. Removing `if (cancelled) return` from the space effect
+    // makes this test fail; removing the `getState()` check does not.
+    let resolveStaleA: ((value: typeof emptyPage) => void) | null = null
+    const tagsFor = (id: string, name: string) => ({
+      items: [makeBlock({ id, block_type: 'tag' as const, content: name, page_id: null })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'list_inherited_tags_for_block') return []
+      if (cmd === 'list_blocks') {
+        const spaceId = (args as { spaceId: string }).spaceId
+        // The FIRST SPACE_A fetch is gated so it can resolve last (stale).
+        if (spaceId === 'SPACE_A' && resolveStaleA === null) {
+          return new Promise<typeof emptyPage>((resolve) => {
+            resolveStaleA = resolve
+          })
+        }
+        if (spaceId === 'SPACE_B') return tagsFor('TAG_B', 'B')
+        // The SECOND SPACE_A fetch (after switch-back) resolves immediately.
+        return tagsFor('TAG_A2', 'A2')
+      }
+      return emptyPage
+    })
+
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+    await waitFor(() => expect(resolveStaleA).not.toBeNull())
+
+    // A → B → A. Each switch trips the prior effect's cleanup (cancelled).
+    await act(async () => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    })
+    await act(async () => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
+    })
+    await waitFor(() => {
+      expect(result.current.allTags).toEqual([{ id: 'TAG_A2', name: 'A2' }])
+    })
+
+    // The original (stale) SPACE_A fetch resolves last. The live store is
+    // SPACE_A again, so getState() matches the captured id — only the
+    // cancelled flag prevents this stale write from clobbering TAG_A2.
+    await act(async () => {
+      resolveStaleA?.({ items: [], next_cursor: null, has_more: false, total_count: null })
+    })
+
+    expect(result.current.allTags).toEqual([{ id: 'TAG_A2', name: 'A2' }])
   })
 })
