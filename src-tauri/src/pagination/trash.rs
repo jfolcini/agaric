@@ -108,6 +108,8 @@ pub async fn list_trash(
 ///
 /// # Errors
 ///
+/// - [`AppError::Validation`] — `root_ids.len()` >
+///   [`crate::commands::MAX_BATCH_BLOCK_IDS`].
 /// - [`AppError::Json`] — failed to serialize `root_ids`.
 /// - [`AppError::Database`] — propagated from sqlx.
 pub async fn trash_descendant_counts(
@@ -117,6 +119,7 @@ pub async fn trash_descendant_counts(
     if root_ids.is_empty() {
         return Ok(HashMap::new());
     }
+    crate::commands::ensure_batch_within_cap("root_ids", root_ids.len())?;
 
     let ids_json = serde_json::to_string(root_ids)?;
 
