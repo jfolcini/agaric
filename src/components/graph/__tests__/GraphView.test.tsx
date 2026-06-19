@@ -57,6 +57,15 @@ vi.mock('@/lib/graph-filters', async (importOriginal) => {
   }
 })
 
+// #1530: mock useBlockPropertyEvents so a test can drive `invalidationKey`.
+// The mutable `mockInvalidationKey` lets a test bump the key and re-render to
+// simulate a block/link mutation event firing. Defaults to 0 so unrelated
+// tests behave as if no mutation has occurred.
+let mockInvalidationKey = 0
+vi.mock('@/hooks/useBlockPropertyEvents', () => ({
+  useBlockPropertyEvents: () => ({ invalidationKey: mockInvalidationKey }),
+}))
+
 // Mock d3 modules to avoid SVG rendering issues in jsdom
 vi.mock('d3-force', () => ({
   forceSimulation: vi.fn(() => ({
@@ -215,6 +224,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   clearGraphCache()
   forceEmptyFilter = false
+  mockInvalidationKey = 0
   MockWorker.instances = []
   // Stub the global Worker with our MockWorker by default
   vi.stubGlobal('Worker', MockWorker)
@@ -799,6 +809,74 @@ describe('GraphView', () => {
       })
 
       dateSpy.mockRestore()
+    })
+
+    // #1530: a block/link mutation bumps `invalidationKey`. The graph must
+    // refetch (stale-while-revalidate) even though the cache is still fresh
+    // — and conversely a remount within the TTL with NO bump must NOT refetch
+    // (the existing TTL behavior is preserved).
+    //
+    // Without the `mutated` bypass in GraphView, the bumped-key re-render would
+    // still hit the "fresh cache → return" early-exit and `fetchGraphData`
+    // (here observed via the `list_all_pages_in_space` invoke) would be called
+    // exactly once total — so the post-bump assertion (>= 2 calls) would fail.
+    it('refetches on invalidationKey bump but not on a fresh remount (#1530)', async () => {
+      const pagesResponse = {
+        items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      const fetchCalls = () =>
+        mockedInvoke.mock.calls.filter((c) => c[0] === 'list_all_pages_in_space').length
+
+      // Initial render → exactly one fetch, cache populated (fresh).
+      const first = render(<GraphView />)
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+      await waitFor(() => {
+        expect(fetchCalls()).toBe(1)
+      })
+
+      // A fresh remount within the TTL with NO mutation must NOT refetch —
+      // the existing cache/TTL behavior still holds. Unmount + remount the
+      // same component; the module-level cache survives across mounts.
+      // NOTE: this also characterises the KNOWN residual in #1818 — because
+      // `invalidationKey` is per-instance and resets to 0 on remount, a
+      // mutation that occurred while the graph was unmounted is NOT detected
+      // here, so the stale entry is served until the TTL expires. Fixing that
+      // needs module-level invalidation (#1818); this assertion documents the
+      // current TTL-bounded behavior, not a resolution of that case.
+      first.unmount()
+      const { rerender } = render(<GraphView />)
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+      // Give any (incorrect) background fetch a chance to fire.
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(fetchCalls()).toBe(1)
+
+      // Now simulate a block/link mutation: bump invalidationKey and re-render
+      // the mounted instance. Even though the cache is fresh, the graph must
+      // refetch (stale-while-revalidate).
+      mockInvalidationKey = 1
+      await act(async () => {
+        rerender(<GraphView />)
+      })
+      await waitFor(() => {
+        expect(fetchCalls()).toBeGreaterThanOrEqual(2)
+      })
     })
 
     it('handles partial failure (listBlocks succeeds, listPageLinks fails)', async () => {
