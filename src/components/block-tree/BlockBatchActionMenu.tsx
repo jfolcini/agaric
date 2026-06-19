@@ -61,7 +61,7 @@ export function BlockBatchActionMenu({
   return (
     <>
       <div
-        className="batch-toolbar sticky top-0 z-10 flex items-center gap-2 rounded-lg border bg-background/95 backdrop-blur px-3 py-2 mb-2 shadow-sm"
+        className="batch-toolbar sticky top-0 z-10 flex items-center gap-2 rounded-lg border bg-background/95 backdrop-blur px-3 py-2 mb-2 shadow-(--shadow-resting)"
         data-testid="batch-toolbar"
       >
         <span className="text-sm font-medium tabular-nums">

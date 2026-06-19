@@ -1011,7 +1011,7 @@ export function BlockContextMenu({
       tabIndex={-1}
       aria-label={t('contextMenu.blockActions')}
       className={cn(
-        'block-context-menu fixed z-50 min-w-[160px] rounded-lg border bg-popover p-1 shadow-md',
+        'block-context-menu fixed z-50 min-w-[160px] rounded-lg border bg-popover p-1 shadow-(--shadow-floating)',
         positioned ? 'animate-in fade-in-0 zoom-in-95 opacity-100' : 'opacity-0',
       )}
       style={{ left: computedPos.x, top: computedPos.y }}

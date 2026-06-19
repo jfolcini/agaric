@@ -175,7 +175,7 @@ export function TagValuePicker({
         aria-controls={isExpanded ? listboxId : undefined}
       />
       {isExpanded && (
-        <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover shadow-md">
+        <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover shadow-(--shadow-floating)">
           <ScrollArea className="max-h-40">
             <div
               ref={listRef}

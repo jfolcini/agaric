@@ -1080,7 +1080,7 @@ export function PaletteBody({
           onClick={() => escalate(trimmedQuery)}
           data-testid="palette-escalation-footer"
           aria-label={t('searchSheet.escalateLabel')}
-          className="m-3 flex min-h-11 items-center gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-left shadow-sm hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-ring-visible"
+          className="m-3 flex min-h-11 items-center gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-left shadow-(--shadow-resting) hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-ring-visible"
         >
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="flex items-center gap-1 text-sm font-medium text-foreground">
