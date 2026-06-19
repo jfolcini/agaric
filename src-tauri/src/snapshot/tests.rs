@@ -160,6 +160,74 @@ fn decode_snapshot_accepts_normal_snapshot() {
     assert_eq!(decoded.tables.blocks.len(), data.tables.blocks.len());
 }
 
+// =======================================================================
+// #1586 — content checksum (silent bit-rot detection)
+// =======================================================================
+
+/// (a) A new-format snapshot must round-trip through encode → decode
+/// successfully, with the blake3 payload checksum verified on the way back in.
+#[test]
+fn snapshot_checksum_round_trip() {
+    let data = sample_snapshot_data();
+    let encoded = encode_snapshot(&data).expect("encode");
+    // New-format blob carries the magic header in front of the zstd payload.
+    assert_eq!(
+        &encoded[..super::codec::SNAPSHOT_MAGIC.len()],
+        &super::codec::SNAPSHOT_MAGIC,
+        "new-format snapshot must begin with the #1586 magic"
+    );
+    let decoded = decode_snapshot(&encoded[..]).expect("checksummed snapshot must decode");
+    assert_eq!(decoded.up_to_hash, data.up_to_hash);
+    assert_eq!(decoded.snapshot_device_id, data.snapshot_device_id);
+    assert_eq!(decoded.tables.blocks.len(), data.tables.blocks.len());
+}
+
+/// (b) A single flipped bit inside the compressed payload region of a
+/// new-format blob must be caught by the blake3 checksum and surface a clear
+/// mismatch error — NOT a silent success with corrupted data.
+#[test]
+fn snapshot_checksum_detects_payload_bitflip() {
+    let data = sample_snapshot_data();
+    let mut encoded = encode_snapshot(&data).expect("encode");
+
+    // Flip a bit well inside the zstd payload (past the magic+digest header).
+    // The frame may still decompress + parse into a structurally-valid
+    // SnapshotData, so only the content digest can catch this.
+    let flip_at =
+        super::codec::SNAPSHOT_HEADER_LEN + (encoded.len() - super::codec::SNAPSHOT_HEADER_LEN) / 2;
+    encoded[flip_at] ^= 0x01;
+
+    let err =
+        decode_snapshot(&encoded[..]).expect_err("bit-rot must be rejected, not silently decoded");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("checksum") || msg.contains("bit-rot") || msg.contains("digest"),
+        "expected a clear checksum-mismatch error, got: {msg}"
+    );
+}
+
+/// (c) Back-compat: an old-format trailerless blob (bare zstd(CBOR), no #1586
+/// header) must still decode successfully with no checksum check. We synthesise
+/// one by stripping the new-format header — the bytes after it ARE exactly the
+/// legacy bare-zstd payload.
+#[test]
+fn snapshot_legacy_trailerless_blob_still_decodes() {
+    let data = sample_snapshot_data();
+    let encoded = encode_snapshot(&data).expect("encode");
+    let legacy = &encoded[super::codec::SNAPSHOT_HEADER_LEN..];
+
+    // Sanity: the legacy payload starts with the zstd frame magic, NOT our
+    // magic — so decode classifies it as the old format.
+    assert_eq!(
+        &legacy[..4],
+        &[0x28, 0xB5, 0x2F, 0xFD],
+        "legacy payload must be a bare zstd frame"
+    );
+    let decoded = decode_snapshot(legacy).expect("legacy trailerless snapshot must still decode");
+    assert_eq!(decoded.up_to_hash, data.up_to_hash);
+    assert_eq!(decoded.tables.blocks.len(), data.tables.blocks.len());
+}
+
 /// Helper: insert a block directly into the DB (bypasses op log).
 async fn insert_block(pool: &SqlitePool, id: &str, content: &str) {
     sqlx::query(

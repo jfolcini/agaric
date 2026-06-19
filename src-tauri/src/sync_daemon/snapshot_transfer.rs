@@ -2224,11 +2224,19 @@ mod tests {
         // Sanity-check the test fixture: the decompressed CBOR is at
         // least 3× the compressed size, so the streaming-vs-buffered
         // distinction is observable.
-        let mut decoder = zstd::stream::Decoder::new(encoded.as_slice()).unwrap();
+        // #1586: `encode_snapshot` now frames the zstd payload behind a
+        // magic + blake3 checksum header, so feed the raw zstd decoder the
+        // payload region (from the zstd frame magic onward), not the header.
+        let zstd_start = encoded
+            .windows(4)
+            .position(|w| w == [0x28, 0xB5, 0x2F, 0xFD])
+            .expect("zstd frame magic present");
+        let payload = &encoded[zstd_start..];
+        let mut decoder = zstd::stream::Decoder::new(payload).unwrap();
         let mut decompressed = Vec::new();
         std::io::Read::read_to_end(&mut decoder, &mut decompressed).unwrap();
         assert!(
-            decompressed.len() >= encoded.len() * 3,
+            decompressed.len() >= payload.len() * 3,
             "L-67: test fixture must decompress to ≥3× the compressed size \
              (compressed={} bytes, decompressed={} bytes) so the streaming \
              decoder's value is observable",

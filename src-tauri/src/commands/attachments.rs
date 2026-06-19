@@ -93,6 +93,53 @@ pub async fn add_attachment_inner(
         fs_path: fs_path.clone(),
     });
 
+    // #1620 (HIGH perf): SQLite has a single writer, so any I/O performed while
+    // the IMMEDIATE (exclusive-writer) tx is open serializes every other write
+    // behind it. The file stat + the multi-MB read + blake3 hash below depend
+    // only on the on-disk bytes, NOT on any DB/tx state, so we do them BEFORE
+    // `begin_immediate`. The writer lock is then held only across the DB work
+    // (block-exists check + op_log append + INSERT + commit). The block-exists
+    // validation stays inside the tx (TOCTOU-safe relative to the insert).
+
+    // M-29: confirm the file really exists on disk before inserting the row.
+    // The frontend writes bytes via `@tauri-apps/plugin-fs` *before* invoking
+    // `add_attachment`; without this guard, a silent FS-write failure leaves
+    // the DB row pointing at a non-existent file and the sync layer eventually
+    // reports `MissingAttachment`. The TOCTOU window between this stat and the
+    // insert is irrelevant — sync GC reconciles missing attachments anyway
+    // (AGENTS.md §Threat Model).
+    let full_path = app_data_dir.join(&fs_path);
+    // PEND-20 H: async stat — avoids blocking on slow / contended storage
+    // (Android eMMC, USB-mounted vaults).
+    let metadata = tokio::fs::metadata(&full_path).await?;
+    let on_disk_len = i64::try_from(metadata.len()).unwrap_or(i64::MAX);
+    if on_disk_len != size_bytes {
+        return Err(AppError::Validation(format!(
+            "attachment size mismatch: expected {size_bytes} bytes, on disk is {} bytes",
+            metadata.len()
+        )));
+    }
+
+    // #1453 Phase 1: compute and persist the blake3 content hash. Reuse the
+    // file-sync hashing helper (`read_attachment_file` → `blake3::hash(&data)
+    // .to_hex()`) so the stored hash is byte-for-byte identical to the hash
+    // the sync layer computes for the same bytes. The file is already on disk
+    // (the FE wrote it before invoking, and the M-29 stat above confirmed it).
+    // Synchronous std::fs read on the blocking pool (PEND-20 H), like the read
+    // path. A hash failure is fatal here: the bytes the M-29 stat just saw are
+    // unreadable, so the row would be broken regardless. #1620: computed before
+    // the writer tx opens so the up-to-50-MB read doesn't hold the writer lock.
+    let content_hash = {
+        let dir = app_data_dir.to_path_buf();
+        let path = fs_path.clone();
+        let (_bytes, hash) = tokio::task::spawn_blocking(move || {
+            crate::sync_files::read_attachment_file(&dir, &path)
+        })
+        .await
+        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))??;
+        hash
+    };
+
     // Single IMMEDIATE transaction: validation + op_log + attachments write.
     // MAINT-112: CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "add_attachment").await?;
@@ -110,46 +157,6 @@ pub async fn add_attachment_inner(
             "block '{block_id}' (not found or deleted)"
         )));
     }
-
-    // M-29: confirm the file really exists on disk before committing
-    // the row. The frontend writes bytes via `@tauri-apps/plugin-fs`
-    // *before* invoking `add_attachment`; without this guard, a silent
-    // FS-write failure leaves the DB row pointing at a non-existent
-    // file and the sync layer eventually reports `MissingAttachment`.
-    // Doing this inside the IMMEDIATE tx keeps it TOCTOU-safe relative
-    // to the row insert.
-    let full_path = app_data_dir.join(&fs_path);
-    // PEND-20 H: async stat — avoids blocking the writer-tx thread on slow /
-    // contended storage (Android eMMC, USB-mounted vaults). The TOCTOU
-    // window between stat and insert is irrelevant — sync GC reconciles
-    // missing attachments anyway (AGENTS.md §Threat Model).
-    let metadata = tokio::fs::metadata(&full_path).await?;
-    let on_disk_len = i64::try_from(metadata.len()).unwrap_or(i64::MAX);
-    if on_disk_len != size_bytes {
-        return Err(AppError::Validation(format!(
-            "attachment size mismatch: expected {size_bytes} bytes, on disk is {} bytes",
-            metadata.len()
-        )));
-    }
-
-    // #1453 Phase 1: compute and persist the blake3 content hash. Reuse the
-    // file-sync hashing helper (`read_attachment_file` → `blake3::hash(&data)
-    // .to_hex()`) so the stored hash is byte-for-byte identical to the hash
-    // the sync layer computes for the same bytes. The file is already on disk
-    // (the FE wrote it before invoking, and the M-29 stat above confirmed it).
-    // Synchronous std::fs read on the blocking pool (PEND-20 H), like the read
-    // path. A hash failure is fatal here: the bytes the M-29 stat just saw are
-    // unreadable, so the row would be broken regardless.
-    let content_hash = {
-        let dir = app_data_dir.to_path_buf();
-        let path = fs_path.clone();
-        let (_bytes, hash) = tokio::task::spawn_blocking(move || {
-            crate::sync_files::read_attachment_file(&dir, &path)
-        })
-        .await
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))??;
-        hash
-    };
 
     // Append to op_log within transaction
     let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
