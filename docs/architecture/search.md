@@ -19,10 +19,10 @@ CREATE VIRTUAL TABLE fts_blocks USING fts5(
 
 The `stripped` column carries the block content with markup boundaries removed (ULIDs, `[[…]]` link wrappers, `#[…]` tag wrappers, `(( … ))` block-ref wrappers) so a search for human-readable text matches what the user sees, not what's in the raw markdown. The `case_sensitive 0` flag is required for the trigram tokenizer to fold case; without it FTS5 falls back to exact-case matching on the trigram alphabet.
 
-Trigrams give substring matching for free — a query of `alp` matches `alpha`, `alphabet`, `cephalopod` — but they pay for it in index size (every overlapping three-character window of every block) and in worst-case match selectivity (short queries have many candidate trigrams). The pagination cap (the `MAX_SEARCH_RESULTS` `const` in `src-tauri/src/fts/search.rs` — read the value from the code) and a 3-character floor keep that cost bounded. The floor is **two distinct measures**, not one shared rule:
+Trigrams give substring matching for free — a query of `alp` matches `alpha`, `alphabet`, `cephalopod` — but they pay for it in index size (every overlapping three-character window of every block) and in worst-case match selectivity (short queries have many candidate trigrams). The pagination cap (the `MAX_SEARCH_RESULTS` `const` in `src-tauri/src/fts/search/constants.rs` — read the value from the code) and a 3-character floor keep that cost bounded. The floor is **two distinct measures**, not one shared rule:
 
 - **Frontend** (`src/components/SearchPanel.tsx`) — a soft hint. When the trimmed query is non-empty but its JavaScript-string length (UTF-16 code units, counted across the *whole* query) is below 3, the panel shows a "type more characters" notice. It does not block the request.
-- **Backend** (`sanitize_fts_query` in `src-tauri/src/fts/search.rs`) — the authoritative drop. Each word token shorter than `TRIGRAM_MIN_LEN` *Unicode scalars* (`word.chars().count()`, so a 2-character CJK word is measured as 2, not by byte length) is dropped from the FTS query; quoted phrases and the boolean operators bypass the floor.
+- **Backend** (`sanitize_fts_query` in `src-tauri/src/fts/search/sanitizer.rs`) — the authoritative drop. Each word token shorter than `TRIGRAM_MIN_LEN` *Unicode scalars* (`word.chars().count()`, so a 2-character CJK word is measured as 2, not by byte length) is dropped from the FTS query; quoted phrases and the boolean operators bypass the floor.
 
 The synchronous primary-state writer does **not** maintain `fts_blocks`. The materializer rebuilds the FTS row asynchronously on every block insert / update / soft-delete, batched through the materializer's retry queue (`materializer_retry_queue`). The search query therefore sees results that lag the write log by one materializer flush — measured in milliseconds at the desk, but never zero. This is the same lag every materialized view in the app pays.
 
@@ -33,7 +33,7 @@ The search SQL projects `snippet(fts_blocks, 1, '<mark>', '</mark>', '…', N)` 
 - `1` is the index of the `stripped` column (the only indexed column).
 - `<mark>` / `</mark>` are the literal text boundaries SQLite emits around each hit. These are **not** HTML tags at the SQL layer — they are opaque marker strings the frontend parses. Choosing real HTML-looking tags trades a tiny amount of confusion (someone might assume FTS5 returns HTML) for a renderer that can ignore any other angle-bracket in the source content as ordinary text.
 - `'…'` is the ellipsis that flags a truncated window on either end.
-- `N` is the window width measured in **trigrams**, not words — a tight context window (a few words of surrounding text), much tighter than the per-word windows most FTS5 deployments use. The exact value is a tunable inlined in the `snippet(...)` projection in `src-tauri/src/fts/search.rs`; consult the code rather than a number here, which would drift.
+- `N` is the window width measured in **trigrams**, not words — a tight context window (a few words of surrounding text), much tighter than the per-word windows most FTS5 deployments use. The exact value is a tunable inlined in the `snippet(...)` projection in `src-tauri/src/fts/search/constants.rs`; consult the code rather than a number here, which would drift.
 
 For page-title-only hits (block with no content body), `snippet()` may return `NULL` on the SQL side; the frontend treats `snippet: None` as "render the page title verbatim, no highlight" and the row still navigates correctly on click.
 
@@ -252,7 +252,7 @@ When ambiguity exists, autocomplete-open wins, then history recall, then result-
 - `src/stores/search-history.ts` — Zustand-persisted per-space history.
 - `src/hooks/useSearchHistoryCycling.ts` — `↑`/`↓` browse state machine.
 - `src-tauri/src/commands/queries.rs` — `SearchFilter`, `SearchBlockRow`, `MatchOffset`, `search_blocks_inner`.
-- `src-tauri/src/fts/search.rs` — FTS5 query construction + `snippet()` projection.
+- `src-tauri/src/fts/search/` — FTS5 query construction (`fetch.rs`) + `snippet()` projection (`constants.rs`).
 - `src-tauri/src/fts/toggle_filter.rs` — `SearchToggles`, `search_with_toggles`, regex pipeline.
 - `src-tauri/src/fts/glob_filter.rs` — page-name glob parser + brace-expansion.
 - `src-tauri/migrations/0006_fts5_trigram.sql` — index definition + tokenizer config.
