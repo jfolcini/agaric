@@ -208,6 +208,17 @@ pub async fn edit_block_inner(
     // binds for sqlx/format!.
     let block_id = block_id.into_string();
 
+    // Validate content length BEFORE taking the writer lock or fetching any row.
+    // Content length is a pure function of the input needing no DB state, so an
+    // over-length payload is rejected without acquiring the IMMEDIATE writer lock
+    // or doing the wasted existence fetch (fail fast on the input).
+    if to_text.len() > MAX_CONTENT_LENGTH {
+        return Err(AppError::Validation(format!(
+            "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
+            to_text.len()
+        )));
+    }
+
     // F02: Begin IMMEDIATE transaction for atomic validation + op_log + blocks write.
     // All reads (block existence, prev_edit lookup) happen inside the tx
     // to prevent TOCTOU races (a concurrent delete_block could soft-delete
@@ -231,14 +242,6 @@ pub async fn edit_block_inner(
     let block_type = existing.block_type;
     let parent_id = existing.parent_id;
     let position = existing.position;
-
-    // 1b. Validate content length
-    if to_text.len() > MAX_CONTENT_LENGTH {
-        return Err(AppError::Validation(format!(
-            "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
-            to_text.len()
-        )));
-    }
 
     // 2. Find prev_edit inside transaction (delegates to the shared
     //    helper — same query also used by `flush_draft_inner`; see
