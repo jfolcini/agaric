@@ -21,6 +21,19 @@ export interface ShortcutBinding {
    * consumption sites in `src/`.
    */
   rebindable?: false
+  /**
+   * `true` marks an entry whose handler is a DOCUMENT/WINDOW-level keydown
+   * listener that fires with no specific element focused — even though its
+   * category is otherwise focus-scoped (blockTree/blockSelection/
+   * listSelection). The matching listener co-fires with the always-on
+   * `GLOBAL_LISTENER_CATEGORIES` listeners on the same keystroke, so
+   * `findConflicts` must include these entries in its cross-category pass
+   * (#1592) — otherwise a rebind onto a chord they already use (notably
+   * Escape, shared with `closeOverlays`) goes unflagged. Omit (default) for
+   * focus-scoped bindings (e.g. the suggestion-popup keymap, editor chords)
+   * that physically cannot collide with a document-level listener.
+   */
+  documentLevel?: true
 }
 
 export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
@@ -134,6 +147,10 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.blockTree',
     description: 'keyboard.zoomOut',
     condition: 'keyboard.condition.whenZoomed',
+    // #1592 — dispatched by BlockTree's document-level keydown listener
+    // (`useBlockTreeKeyboardShortcuts` `handleZoomOutEscape`); fires with no
+    // block focused, so it races the always-on Escape listeners cross-category.
+    documentLevel: true,
   },
   {
     id: 'openDatePicker',
@@ -345,6 +362,10 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.blockSelection',
     description: 'keyboard.clearSelection',
     condition: 'keyboard.condition.withSelection',
+    // #1592 — `useBlockTreeKeyboardShortcuts` installs a document-level keydown
+    // that fires only when NO block is focused (`!focusedBlockId`); it sees the
+    // same Escape as the always-on listeners, so include it cross-category.
+    documentLevel: true,
   },
   // #913 — block cut/copy/paste as indented-markdown subtrees. Gated on a
   // block selection with NO editor focused (otherwise the browser owns the
@@ -412,6 +433,10 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.listSelection',
     description: 'keyboard.listClearSelection',
     condition: 'keyboard.condition.hasSelection',
+    // #1592 — list views (`useTrashListShortcuts`/`useListMultiSelect`) install
+    // a document-level keydown that fires whenever a selection exists and focus
+    // isn't in an input; it co-fires with the always-on Escape listeners.
+    documentLevel: true,
   },
 
   // History View
@@ -514,6 +539,14 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     keys: 'Escape',
     category: 'keyboard.category.global',
     description: 'keyboard.closeOverlays',
+    // #1592 — model the runtime guard explicitly. The window-level handler
+    // (`useAppKeyboardShortcuts` `handleCloseOverlays`) only acts when an
+    // overlay/editing surface is open and bails while typing in a field. That
+    // precondition is disjoint from the other document-level Escape listeners
+    // (`whenZoomed`/`withSelection`/`hasSelection`), so the default layered
+    // Escape chain is correctly NOT flagged, while a rebind onto a chord a
+    // wildcard always-on listener uses still surfaces.
+    condition: 'keyboard.condition.whenOverlayOpen',
   },
   // PEND-67 Phase 8 — re-run the most recently invoked palette command
   // without opening the dialog. Mirrors Raycast's `⌘.` shortcut. When

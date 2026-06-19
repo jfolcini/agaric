@@ -262,7 +262,13 @@ function findAlwaysOnCrossCategoryConflicts(
 ): Array<{ ids: string[]; keys: string; category: string }> {
   const byChord = new Map<string, ShortcutBinding[]>()
   for (const s of current) {
-    if (!GLOBAL_LISTENER_CATEGORIES.has(s.category)) continue
+    // #1592 — a binding races the always-on listeners when its category is in
+    // the global set OR when it is an individually-flagged document-level
+    // listener (e.g. Escape `zoomOut`/`clearSelection`/`listClearSelection`)
+    // sitting inside an otherwise focus-scoped category. Focus-scoped entries
+    // (suggestion-popup keymap, editor chords) lack the flag and stay out, so
+    // they aren't over-reported.
+    if (!GLOBAL_LISTENER_CATEGORIES.has(s.category) && !s.documentLevel) continue
     for (const chord of s.keys.split(' / ')) {
       const arr = byChord.get(chord) ?? []
       arr.push(s)

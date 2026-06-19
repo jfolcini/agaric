@@ -493,14 +493,35 @@ async function fetchFilteredBlocksWindow(
 }
 
 /**
+ * Sentinel returned by {@link resolveTagFilters} when the tag dimension
+ * HAD values but none of them resolved to a real tag. The dimension is
+ * then unsatisfiable: since dimensions AND together, the whole query must
+ * collapse to the empty set rather than dropping the tag constraint
+ * (#1594). It cannot be expressed as a backend payload — an empty
+ * `tagIds: []` is treated as "no tag filter" server-side
+ * (`filtered_blocks_query` only builds a predicate when `tag_ids` is
+ * non-empty), which would WIDEN the result. Callers must short-circuit.
+ */
+export const TAG_FILTER_UNSATISFIABLE = Symbol('tag-filter-unsatisfiable')
+
+/**
  * Resolve every `tag` dimension in the filter list into a single
  * `FilteredBlocksTagFilter` payload. One `listTagsByPrefix` IPC per
- * distinct prefix; unresolved names are silently dropped (matches the
- * legacy `queryTag` behaviour of skipping `undefined` exact matches).
+ * distinct prefix.
+ *
+ * Three outcomes (distinguishing the empty-input case from the
+ * all-unresolved case is what #1594 turns on):
+ * - `undefined` — no `tag` dimension / no values: contributes no
+ *   constraint, other dimensions stand alone.
+ * - {@link TAG_FILTER_UNSATISFIABLE} — values were present but NONE
+ *   resolved: the tag dimension matches nothing, so the cross-dimension
+ *   AND must collapse to empty. Returning `undefined` here would silently
+ *   drop the tag constraint and widen the result to a superset.
+ * - `FilteredBlocksTagFilter` — at least one value resolved.
  */
 async function resolveTagFilters(
   filters: AgendaFilter[],
-): Promise<FilteredBlocksTagFilter | undefined> {
+): Promise<FilteredBlocksTagFilter | typeof TAG_FILTER_UNSATISFIABLE | undefined> {
   const tagValues = filters.filter((f) => f.dimension === 'tag').flatMap((f) => f.values)
   if (tagValues.length === 0) return undefined
 
@@ -510,7 +531,9 @@ async function resolveTagFilters(
     const match = candidates.find((t) => t.name.toLowerCase() === value.toLowerCase())
     if (match) tagIds.push(match.tag_id)
   }
-  if (tagIds.length === 0) return undefined
+  // Values were present but none resolved → unsatisfiable, not "no tag
+  // filter". Collapse the cross-dimension AND to empty (#1594).
+  if (tagIds.length === 0) return TAG_FILTER_UNSATISFIABLE
   // Multiple tag values within a single tag dimension union (legacy
   // `queryTag` Map-merge semantics). `filtered_blocks_query` honours
   // this with `mode: 'or'` across `tag_ids`.
@@ -563,6 +586,15 @@ export async function executeAgendaFilters(
   const today = new Date()
   const { propertyFilters, postFilters } = translateFilters(filters, today)
   const tagFilters = await resolveTagFilters(filters)
+
+  // A tag dimension whose values ALL failed to resolve is unsatisfiable;
+  // because dimensions AND together, the whole query is empty — even if
+  // other dimensions (e.g. a status filter) survive. Short-circuit here
+  // instead of dropping the tag constraint, which would widen the result
+  // to the OTHER-dimensions superset (#1594).
+  if (tagFilters === TAG_FILTER_UNSATISFIABLE) {
+    return { blocks: [], hasMore: false, cursor: null, today }
+  }
 
   // `filtered_blocks_query` rejects empty input. This can happen when
   // the only active dimensions resolve to nothing (e.g. unknown date
@@ -619,6 +651,12 @@ export async function loadMoreAgendaFilters(
 
   const { propertyFilters, postFilters } = translateFilters(filters, today)
   const tagFilters = await resolveTagFilters(filters)
+
+  // Mirror `executeAgendaFilters`: an all-unresolved tag dimension is
+  // unsatisfiable and collapses the cross-dimension AND to empty (#1594).
+  if (tagFilters === TAG_FILTER_UNSATISFIABLE) {
+    return { blocks: [], hasMore: false, cursor: null, today }
+  }
 
   // Mirror `executeAgendaFilters`: short-circuit when every dimension
   // resolves to an empty payload, rather than letting the backend

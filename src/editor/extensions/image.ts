@@ -15,7 +15,39 @@
 import { InputRule, mergeAttributes, Node } from '@tiptap/core'
 import { ReactNodeViewRenderer } from '@tiptap/react'
 
+import { isValidHttpUrl } from './external-link'
 import { ImageNodeView } from './ImageNodeView'
+
+/**
+ * Schemes the app legitimately mounts as `<img src>` besides http(s). These
+ * mirror the "local" srcs `external-image-policy` (`shouldLoadExternalImage`)
+ * loads directly: in-app attachments (`asset:` / `tauri:`), inline/pasted data
+ * (`data:` / `blob:`), and the Tauri asset host. Any other explicit scheme
+ * (e.g. `javascript:`, `ftp:`) is rejected so the input rule won't mint a node
+ * for a hostile/garbage src — symmetric with how the link rule gates on
+ * `isValidHttpUrl`.
+ */
+const SAFE_IMAGE_SCHEMES = ['data:', 'blob:', 'asset:', 'tauri:']
+
+/**
+ * Whether `src` is an acceptable image source for node creation. Accepts a
+ * valid http(s) URL (same predicate the link path uses), a known-safe local
+ * scheme (`data:`/`blob:`/`asset:`/`tauri:`), or a scheme-less relative path
+ * (e.g. `c.png`, `./img/x.png`) — i.e. anything WITHOUT an explicit unknown
+ * scheme. A src carrying any other explicit `scheme:` (`javascript:`, `ftp:`, …)
+ * is rejected.
+ */
+export function isValidImageSrc(src: string): boolean {
+  const trimmed = src.trim()
+  if (trimmed === '') return false
+  if (isValidHttpUrl(trimmed)) return true
+  const lower = trimmed.toLowerCase()
+  if (SAFE_IMAGE_SCHEMES.some((scheme) => lower.startsWith(scheme))) return true
+  // Reject anything else that carries an explicit `scheme:` prefix; a leading
+  // segment of `[a-z][a-z0-9+.-]*:` is a URI scheme (e.g. `javascript:`). No
+  // such prefix ⇒ a relative path, which is a legitimate local src.
+  return !/^[a-z][a-z0-9+.-]*:/i.test(trimmed)
+}
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -76,6 +108,11 @@ export const Image = Node.create({
         handler: ({ state, range, match }) => {
           const alt = match[1] ?? ''
           const src = match[2] ?? ''
+          // Gate src like the link rule gates on `isValidHttpUrl` (#1587): an
+          // invalid/garbage/hostile-scheme src no-ops the rule, leaving the
+          // literal `![alt](src)` text instead of minting an image node whose
+          // src flows unvalidated into `<img src>`.
+          if (!isValidImageSrc(src)) return
           state.tr.replaceWith(range.from, range.to, type.create({ alt, src }))
         },
       }),

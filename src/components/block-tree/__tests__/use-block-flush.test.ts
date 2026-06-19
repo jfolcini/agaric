@@ -165,6 +165,76 @@ describe('useBlockFlush — checkbox markdown', () => {
     expect(pageStore.getState().blocksById.get('BLK')?.content).toBe('- [ ] task')
   })
 
+  it('a superseding second flush on the same block wins; the stale late edit bails (#1591)', async () => {
+    const block = makeBlock({ id: 'BLK', content: '', todo_state: null })
+    pageStore.setState({ blocks: [block] })
+
+    // Hold the FIRST set_todo_state open so the second flush can supersede it
+    // before the first resolves, forcing the late-resolve ordering.
+    let releaseFirst!: (echo: unknown) => void
+    const firstGate = new Promise((resolve) => {
+      releaseFirst = resolve
+    })
+    let setTodoCalls = 0
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'set_todo_state') {
+        setTodoCalls += 1
+        // First call hangs on the gate; second resolves immediately.
+        return setTodoCalls === 1 ? firstGate : Promise.resolve({ ...block, todo_state: 'DONE' })
+      }
+      if (cmd === 'edit_block') {
+        // Echo whatever cleaned text it was sent.
+        return Promise.resolve({ ...block })
+      }
+      return Promise.resolve(undefined)
+    })
+
+    // A SINGLE hook instance (one shared sequence-token map) whose roving
+    // editor ref is swapped between flushes — mirroring how BlockTree reuses
+    // the stable callback across edits.
+    const handle1 = makeHandle('BLK', '- [ ] task')
+    const rovingEditorRef = { current: handle1 as RovingEditorHandle | null }
+    const { result } = renderHook(() => useBlockFlush(makeParams(handle1, { rovingEditorRef })))
+
+    // First flush: unchecked box → TODO. Stays in flight on the gate.
+    await act(async () => {
+      result.current()
+      await Promise.resolve()
+    })
+
+    // Second flush on the SAME block while the first is still in flight:
+    // checked box → DONE. This bumps the block's shared sequence token.
+    rovingEditorRef.current = makeHandle('BLK', '- [x] task')
+    await act(async () => {
+      result.current()
+      await Promise.resolve()
+    })
+
+    // The newer (DONE) flush settles first and wins.
+    await waitFor(() => {
+      expect(pageStore.getState().blocksById.get('BLK')?.todo_state).toBe('DONE')
+    })
+    const editCallsBeforeRelease = mockedInvoke.mock.calls.filter(
+      (c) => c[0] === 'edit_block',
+    ).length
+
+    // Now release the stale FIRST set_todo_state. Its IIFE re-checks the token,
+    // sees it was superseded, and bails WITHOUT writing todo_state or calling edit.
+    await act(async () => {
+      releaseFirst({ ...block, todo_state: 'TODO' })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // The stale TODO write never lands; DONE stands.
+    expect(pageStore.getState().blocksById.get('BLK')?.todo_state).toBe('DONE')
+    // The stale run did not issue another edit_block (no clobber).
+    const editCallsAfterRelease = mockedInvoke.mock.calls.filter(
+      (c) => c[0] === 'edit_block',
+    ).length
+    expect(editCallsAfterRelease).toBe(editCallsBeforeRelease)
+  })
+
   it('non-checkbox content saves the changed text verbatim via edit', async () => {
     const block = makeBlock({ id: 'BLK', content: 'old', todo_state: null })
     pageStore.setState({ blocks: [block] })
