@@ -71,8 +71,7 @@ const FRONTMATTER_RESERVED_KEYS: &[&str] = &[
     "template",
 ];
 
-/// Streaming progress payload for a single `import_markdown` call (#128,
-/// PEND-38 / PEND-06 Tier 3).
+/// Streaming progress payload for a single `import_markdown` call (#128).
 ///
 /// Carried over a Tauri `Channel<ImportProgressUpdate>` so a long import
 /// can render a per-block progress bar instead of a bare spinner. The
@@ -178,7 +177,7 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     // CR-only files (classic Mac), where no `\n` exists at all and the entire
     // frontmatter would otherwise be retained as block content. Doing this
     // first also lets `body.lines()` and the indent calculation see clean
-    // lines without stray `\r` characters. (L-9)
+    // Lines without stray `\r` characters.
     let normalized_eol = content.replace("\r\n", "\n").replace('\r', "\n");
 
     // Normalize tabs to 2 spaces for consistent indentation parsing
@@ -1295,17 +1294,17 @@ mod tests {
     }
 }
 
-/// L-9 — Line-ending normalization in front of the YAML
+/// Line-ending normalization in front of the YAML
 /// frontmatter strip. The strip uses `find("\n---")`, so CRLF and lone-CR
 /// inputs must be normalized to LF first. Tests live in their own module
-/// (per the L-9 review note) to keep the regression surface explicit.
+/// (per the review note) to keep the regression surface explicit.
 #[cfg(test)]
 mod tests_l9 {
     use super::*;
 
     #[test]
     fn crlf_frontmatter_is_stripped() {
-        // Exact fixture from the L-9 review note.
+        // Exact fixture from the review note.
         let output = parse_logseq_markdown("---\r\ntitle: hello\r\n---\r\nbody");
         assert_eq!(
             output.blocks.len(),
@@ -1399,7 +1398,7 @@ mod tests_l9 {
 
     #[test]
     fn mixed_line_endings_frontmatter_is_stripped() {
-        // TEST-50: single fixture mixing all three styles (CRLF, LF, lone
+        // Single fixture mixing all three styles (CRLF, LF, lone
         // CR) within the same file — including across the frontmatter
         // boundary.  Exercises the same normalization the CRLF-only and
         // CR-only frontmatter tests above check, but with the styles

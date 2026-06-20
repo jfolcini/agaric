@@ -1,5 +1,5 @@
 //! Privacy-safe one-line summaries per MCP tool, for the activity feed
-//! (FEAT-4k).
+//! .
 //!
 //! Each summariser takes the tool's parsed JSON `args` + structured
 //! return `result` and produces a short string that the activity-feed
@@ -101,7 +101,7 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_DELETE_BLOCK => summarise_delete_block(args, result),
         // Defensive default — keeps the activity feed working when
         // someone adds a new tool without a summariser. This is the
-        // pre-FEAT-4k behaviour for every entry. The MAINT-136 privacy
+        // Pre- behaviour for every entry. The privacy
         // guard test in this module asserts every registered MCP tool
         // has a non-fallback summariser arm above; if you add a tool
         // without one the test fails in CI.
@@ -202,7 +202,7 @@ pub fn summarise_list_backlinks(args: &Value, result: &Value) -> String {
 /// `list_tags — N tag(s)`. Never includes tag display names — those are
 /// user-authored content even though the tag id is structural.
 ///
-/// M-85: `list_tags_inner` is now cursor-paginated, so the result is a
+/// `list_tags_inner` is now cursor-paginated, so the result is a
 /// `PageResponse { items, next_cursor, has_more }` rather than a
 /// top-level array. Count via `array_len(result, "items")`, with a
 /// fall-back to the legacy top-level array shape so unit-test fixtures
@@ -216,7 +216,7 @@ pub fn summarise_list_tags(_args: &Value, result: &Value) -> String {
 /// would be safe to include, but we keep the summary terse and just
 /// surface the count.
 ///
-/// M-85: `list_property_defs_inner` is now cursor-paginated, so the
+/// `list_property_defs_inner` is now cursor-paginated, so the
 /// result is a `PageResponse { items, next_cursor, has_more }` rather
 /// than a top-level array. Count via `array_len(result, "items")`, with
 /// a fall-back to the legacy top-level array shape so unit-test
@@ -232,7 +232,7 @@ pub fn summarise_list_property_defs(_args: &Value, result: &Value) -> String {
 /// `get_agenda — N entr(y|ies) (start..end)`. Dates are not user
 /// content; entry counts are structural.
 ///
-/// M-25: `list_projected_agenda_inner` is now cursor-paginated, so the
+/// `list_projected_agenda_inner` is now cursor-paginated, so the
 /// result is a `PageResponse { items, next_cursor, has_more }` rather
 /// than a top-level array. Count via `array_len(result, "items")`.
 pub fn summarise_get_agenda(args: &Value, result: &Value) -> String {
@@ -880,7 +880,7 @@ mod tests {
     // refuse to leak the secret payloads regardless of how they appear
     // in the args / result envelope.
     //
-    // MAINT-136: this test iterates over the **live** tool-description
+    // This test iterates over the **live** tool-description
     // lists exposed by `tools_ro::list_tool_descriptions()` and
     // `tools_rw::list_tool_descriptions()`, rather than a hand-typed
     // sibling list. Adding a new tool to either registry without also

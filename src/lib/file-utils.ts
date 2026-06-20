@@ -55,13 +55,13 @@ export function extractFileInfo(file: File): {
 }
 
 /**
- * Maximum attachment size accepted by the backend (PEND-76 F2) — 50 MB.
+ * Maximum attachment size accepted by the backend — 50 MB.
  * Mirrors the Rust-side cap; keep the two in sync.
  */
 export const MAX_ATTACHMENT_BYTES = 52_428_800
 
 /**
- * MIME types the backend accepts for bytes-over-IPC attachments (PEND-76 F2).
+ * MIME types the backend accepts for bytes-over-IPC attachments.
  * Anything outside this allow-list is rejected server-side; we mirror the
  * check client-side so the UI can fail fast with a clear message instead of
  * round-tripping bytes only to have the IPC reject them.
@@ -86,7 +86,7 @@ function isMimeAllowed(mimeType: string): boolean {
 
 /**
  * Pure validator mirroring the backend attachment allow-list + size cap
- * (PEND-76 F2). Returns a discriminated result so callers can surface the
+ *. Returns a discriminated result so callers can surface the
  * `reason` directly in a toast.
  *
  * The `reason` strings are i18n keys (resolved by the caller via `t()`).

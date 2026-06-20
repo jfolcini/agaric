@@ -1,5 +1,5 @@
 /**
- * PEND-55 — Search history store.
+ * Search history store.
  *
  * Zustand-persisted, per-space MRU list of submitted search queries.
  * Mirrors the existing `agaric:`-prefixed pattern (see
@@ -7,7 +7,7 @@
  * referencing space-specific paths / tags doesn't surface cross-space.
  *
  * Capped at [`MAX_HISTORY`] entries per space (recommendation locked in
- * by PEND-55's open Q2). Submitting the same query twice moves the
+ * By open Q2). Submitting the same query twice moves the
  * existing entry to the front (MRU dedup); duplicate strings never
  * accumulate.
  */
@@ -35,7 +35,7 @@ interface SearchHistoryState {
   /** Per-space MRU lists. Keyed by space id (or `__legacy__`). */
   bySpace: Record<string, string[]>
   /**
-   * UX-11 — when `false`, `push` is a no-op (recording is paused) and
+   * When `false`, `push` is a no-op (recording is paused) and
    * the dropdown shows the disabled notice. Persisted alongside the
    * history so the preference survives reloads.
    */
@@ -45,11 +45,11 @@ interface SearchHistoryState {
   /** Clear the MRU list for the given space (does not affect other spaces). */
   clear: (spaceId: string | null | undefined) => void
   /**
-   * UX-11 — remove a single query from the given space's MRU list.
+   * Remove a single query from the given space's MRU list.
    * No-op when the query isn't present. Other spaces untouched.
    */
   removeEntry: (spaceId: string | null | undefined, query: string) => void
-  /** UX-11 — toggle whether new submissions are recorded. */
+  /** toggle whether new submissions are recorded. */
   setHistoryEnabled: (enabled: boolean) => void
 }
 
@@ -59,7 +59,7 @@ function spaceKey(spaceId: string | null | undefined): string {
 }
 
 /**
- * FE-14 — coerce arbitrary persisted JSON into a valid `bySpace` shape.
+ * Coerce arbitrary persisted JSON into a valid `bySpace` shape.
  *
  * `localStorage` can hold anything (manual edits, a corrupt write, a
  * future-shape downgrade). Hydrating it with a bare `as` cast lets a
@@ -118,13 +118,13 @@ export const useSearchHistoryStore = create<SearchHistoryState>()(
       historyEnabled: true,
       push: (spaceId, query) =>
         set((state) => {
-          // UX-11 — recording paused: drop the submission silently.
+          // Recording paused: drop the submission silently.
           if (!state.historyEnabled) return state
           const trimmed = query.trim()
           if (trimmed.length === 0) return state
           const key = spaceKey(spaceId)
           const existing = state.bySpace[key] ?? []
-          // Dedupe by exact match (case-sensitive — preserves PEND-54
+          // Dedupe by exact match (case-sensitive — preserves
           // syntax like `tag:#Urgent` vs `tag:#urgent`).
           const filtered = existing.filter((q) => q !== trimmed)
           const next = [trimmed, ...filtered].slice(0, MAX_HISTORY)
@@ -154,13 +154,13 @@ export const useSearchHistoryStore = create<SearchHistoryState>()(
         bySpace: state.bySpace,
         historyEnabled: state.historyEnabled,
       }),
-      // PEND-73 Phase 4.R1 — no-op migrate placeholder. Locks the
+      // Phase 4.R1 — no-op migrate placeholder. Locks the
       // contract: a future `version: 2` bump MUST replace this with
       // a real migration. Without the placeholder, zustand's persist
       // middleware silently wipes the persisted state on a version
       // mismatch and the user loses their MRU history.
       //
-      // FE-14 — validate/coerce the persisted blob on read so a corrupt
+      // Validate/coerce the persisted blob on read so a corrupt
       // `localStorage` payload can't poison the store.
       //
       // CR-PERSIST (#1609): zustand only invokes `migrate` on a version

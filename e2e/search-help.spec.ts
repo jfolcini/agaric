@@ -1,14 +1,14 @@
 /**
- * E2E — PEND-58f search help dialog (E2E-7).
+ * E2E — search help dialog (E2E-7).
  *
- * UX-1 wired the previously-dead SearchHelpDialog to a `?` toolbar button and
+ * Wired the previously-dead SearchHelpDialog to a `?` toolbar button and
  * a `?` keyboard shortcut (on an empty input). Covers: open via button, open
  * via the keyboard shortcut, the filter-syntax section renders, and close.
  */
 
 import { activeDialog, expect, openSearchView, test } from './helpers'
 
-test.describe('Search help dialog (PEND-58f E2E-7)', () => {
+test.describe('Search help dialog (E2E-7)', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
   })
@@ -21,7 +21,7 @@ test.describe('Search help dialog (PEND-58f E2E-7)', () => {
     await expect(dialog.getByRole('heading', { name: 'Filter syntax' })).toBeVisible()
     await expect(dialog).toContainText('tag:#name')
     await expect(dialog).toContainText('prop:KEY=VALUE')
-    // Other PEND-55 sections are present too.
+    // Other sections are present too.
     await expect(dialog.getByRole('heading', { name: 'Regex syntax' })).toBeVisible()
     await expect(dialog.getByRole('heading', { name: 'Toggles' })).toBeVisible()
   })

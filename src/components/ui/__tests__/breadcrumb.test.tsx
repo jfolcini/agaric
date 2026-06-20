@@ -1,5 +1,5 @@
 /**
- * Tests for the Breadcrumb primitive (UX-257 / FEAT-13).
+ * Tests for the Breadcrumb primitive.
  *
  * Covers:
  *  - Returns null when there are no items and no home button
@@ -7,15 +7,15 @@
  *  - Final item is rendered as a non-clickable span with `aria-current="page"`
  *  - Intermediate items invoke their onSelect handler
  *  - Per-crumb truncation: intermediate `max-w-[160px]`, active `max-w-[280px]`
- *  - FEAT-13 text-link styling: non-active crumbs do NOT carry `rounded-sm`
+ * Text-link styling: non-active crumbs do NOT carry `rounded-sm`
  *    or the form-control `focus-ring-visible`; hover/focus indicate
  *    via underline + outline-hidden instead.
- *  - Toolbar density `min-h-6` (FEAT-13).
- *  - UX-215 keyboard navigation — ArrowLeft / ArrowRight / Home / End on the
+ * Toolbar density `min-h-6`.
+ * Keyboard navigation — ArrowLeft / ArrowRight / Home / End on the
  *    `role="toolbar"` container (now lives in the primitive, not BlockZoomBar)
  *  - Overflow popover triggers when items > 5 (and not at exactly 5)
  *  - Overflow popover lists the collapsed middle crumbs and invokes their handlers
- *  - axe(container) audit passes (incl. after the FEAT-13 focus-style change)
+ * Axe(container) audit passes (incl. after the focus-style change)
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
@@ -177,7 +177,7 @@ describe('Breadcrumb', () => {
       expect(intermediate?.className).toContain('max-w-[160px]')
     })
 
-    it('applies max-w-[280px] truncate to the active final crumb (FEAT-13)', () => {
+    it('applies max-w-[280px] truncate to the active final crumb', () => {
       const items: BreadcrumbCrumb[] = [
         { id: 'A', label: 'first', onSelect: vi.fn() },
         {
@@ -192,7 +192,7 @@ describe('Breadcrumb', () => {
     })
   })
 
-  describe('FEAT-13 text-link styling', () => {
+  describe(' text-link styling', () => {
     it('non-active crumbs use hover:underline (not hover:text-foreground / hover:bg)', () => {
       const items: BreadcrumbCrumb[] = [
         { id: 'A', label: 'Alpha', onSelect: vi.fn() },
@@ -228,11 +228,11 @@ describe('Breadcrumb', () => {
       expect(btn.className).not.toContain('px-1')
     })
 
-    // PEND-21 — Icon-only triggers (Home, overflow `…`) get the standard 3 px
+    // Icon-only triggers (Home, overflow `…`) get the standard 3 px
     // form-control focus ring + a hover-chip instead of `hover:underline` /
     // `focus-visible:underline`. The underline rule has no visible effect on a
     // single icon glyph, so hover/focus state would otherwise be invisible.
-    // Text-link crumb segments above keep the FEAT-13 underline treatment.
+    // Text-link crumb segments above keep the underline treatment.
     it('home icon button uses the icon-button treatment (rounded-sm hover-chip + 3 px focus ring)', () => {
       render(
         <Breadcrumb
@@ -265,7 +265,7 @@ describe('Breadcrumb', () => {
       expect(trigger.className).not.toContain('focus-visible:underline')
     })
 
-    it('toolbar uses min-h-6 density (FEAT-13)', () => {
+    it('toolbar uses min-h-6 density', () => {
       render(<Breadcrumb items={baseItems} ariaLabel="Trail" />)
       const toolbar = screen.getByRole('toolbar', { name: 'Trail' })
       expect(toolbar.className).toContain('min-h-6')
@@ -481,7 +481,7 @@ describe('Breadcrumb', () => {
     })
   })
 
-  describe('UX-215 keyboard navigation', () => {
+  describe(' keyboard navigation', () => {
     it('ArrowRight moves focus to the next button', async () => {
       const user = userEvent.setup()
       render(
@@ -620,11 +620,11 @@ describe('Breadcrumb', () => {
       expect(results).toHaveNoViolations()
     })
 
-    // FEAT-13 — the principled deviation from the AGENTS.md focus-ring rule
+    // The principled deviation from the AGENTS.md focus-ring rule
     // (text-link `focus-visible:underline` instead of the form-control 3 px
     // ring) must not introduce any axe violation. Focus an intermediate
     // crumb so the focus-visible style is engaged at audit time.
-    it('passes axe with the FEAT-13 text-link focus style (focused crumb)', async () => {
+    it('passes axe with the  text-link focus style (focused crumb)', async () => {
       const { container } = render(
         <Breadcrumb
           items={baseItems}

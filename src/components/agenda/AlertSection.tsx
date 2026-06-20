@@ -4,7 +4,7 @@
  * Parameterized by variant, title, and optional priority Badge display.
  * Used by OverdueSection (destructive) and UpcomingSection (pending).
  *
- * Extracted to eliminate near-duplication between the two sections (#M-11).
+ * Extracted to eliminate near-duplication between the two sections (#).
  */
 
 import type React from 'react'

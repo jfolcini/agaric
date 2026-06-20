@@ -50,7 +50,7 @@ describe('sortAgendaBlocks', () => {
     expect(sorted[1]?.id).toBe('B1')
   })
 
-  it('within same date, sorts DOING > TODO > DONE > CANCELLED > null (UX-202/UX-234)', () => {
+  it('within same date, sorts DOING > TODO > DONE > CANCELLED > null ()', () => {
     const blocks = [
       makeBlock({ id: 'done', due_date: '2025-06-15', todo_state: 'DONE' }),
       makeBlock({ id: 'todo', due_date: '2025-06-15', todo_state: 'TODO' }),
@@ -97,7 +97,7 @@ describe('sortAgendaBlocks', () => {
 })
 
 describe('groupByDate', () => {
-  // TEST-64: pin the system clock so groupByDate's internal `new Date()` matches
+  // Pin the system clock so groupByDate's internal `new Date()` matches
   // the `todayStr` constructed in the "Overdue group is always first" test.
   // Otherwise a midnight crossing between the two `new Date()` calls flakes the test.
   // Local-time timestamp (no `Z`) so `.getDate()` / `.getMonth()` resolve identically
@@ -170,7 +170,7 @@ describe('groupByDate', () => {
   })
 
   it('Overdue group is always first', () => {
-    // TEST-64: hardcoded `todayStr` aligned with the fake system time set in beforeEach.
+    // Hardcoded `todayStr` aligned with the fake system time set in beforeEach.
     // Previously this constructed `todayStr` from `new Date()` and then groupByDate
     // called `new Date()` again — across midnight, the two values diverged and the
     // "Today" assertion flaked.
@@ -328,7 +328,7 @@ describe('groupByPriority', () => {
 })
 
 describe('groupByState', () => {
-  it('groups blocks by todo state (UX-202/UX-234: DOING, TODO, DONE, CANCELLED, No state)', () => {
+  it('groups blocks by todo state (: DOING, TODO, DONE, CANCELLED, No state)', () => {
     const blocks = [
       makeBlock({ id: 'doing', todo_state: 'DOING' }),
       makeBlock({ id: 'todo', todo_state: 'TODO' }),
@@ -609,9 +609,9 @@ describe('sortByPage', () => {
 })
 
 // -----------------------------------------------------------------------
-// UX-201b: priority sort / group with user-configured levels.
+// Priority sort / group with user-configured levels.
 // -----------------------------------------------------------------------
-describe('UX-201b: custom priority levels', () => {
+describe('custom priority levels', () => {
   it('sortByPriority honours extended level set (A > B > C > D)', () => {
     setPriorityLevels(['A', 'B', 'C', 'D'])
     const blocks = [

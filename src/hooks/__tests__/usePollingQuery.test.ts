@@ -300,9 +300,9 @@ describe('usePollingQuery', () => {
     })
   })
 
-  // ── PERF-21: visibility-aware polling ──────────────────────────
+  // ── visibility-aware polling ──────────────────────────
 
-  describe('document.hidden gating (PERF-21)', () => {
+  describe('document.hidden gating', () => {
     let hiddenValue = false
 
     beforeEach(() => {

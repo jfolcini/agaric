@@ -10,7 +10,7 @@
  *    looked up exactly once — no refetch loop).
  *
  * Also pins: a failed lookup IPC settles as unresolved (conservative —
- * empty results beat unfiltered ones), and the FE-5 space-switch cache
+ * Empty results beat unfiltered ones), and the space-switch cache
  * drop still re-resolves.
  *
  * NOTE: `tagNames` props are module-level constants — the resolve
@@ -157,7 +157,7 @@ describe('useTagResolution', () => {
     expect(result.current.hasUnresolved).toBe(true)
   })
 
-  it('drops the cache and re-resolves on a space switch (FE-5)', async () => {
+  it('drops the cache and re-resolves on a space switch', async () => {
     mockedListTags.mockResolvedValue([wipTag])
 
     const { result, rerender } = renderHook(

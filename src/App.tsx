@@ -51,8 +51,8 @@ import { useSearchSheetStore } from './stores/useSearchSheetStore'
 
 // `KeyboardShortcuts` and `WelcomeModal` are top-level overlays mounted
 // outside the view dispatcher; the rest of the lazy-loaded view chunks
-// (PERF-24) and the shared `<ViewFallback>` Suspense skeleton live in
-// `./components/ViewDispatcher` (MAINT-124 step 4).
+// And the shared `<ViewFallback>` Suspense skeleton live in
+// `./components/ViewDispatcher`.
 const KeyboardShortcuts = lazy(() =>
   import('@/components/common/KeyboardShortcuts').then((m) => ({ default: m.KeyboardShortcuts })),
 )
@@ -84,14 +84,14 @@ const QuickCaptureDialog = lazy(() =>
 const NoPeersDialog = lazy(() =>
   import('@/components/dialogs/NoPeersDialog').then((m) => ({ default: m.NoPeersDialog })),
 )
-// PEND-52 — in-page find toolbar; lazy so the matcher + highlight code
+// In-page find toolbar; lazy so the matcher + highlight code
 // only ships when the user actually opens it (Ctrl+F). It self-renders
 // nothing when the store flag is closed, so the lazy boundary is also
 // the rendering gate.
 const InPageFind = lazy(() =>
   import('@/components/query/InPageFind').then((m) => ({ default: m.InPageFind })),
 )
-// PEND-61 — Cmd/Ctrl+K command palette (successor to PEND-51's
+// Cmd/Ctrl+K command palette (successor to
 // SearchPalette). Same lazy-render-gate pattern: the component
 // self-renders nothing when its `useCommandPaletteStore.open` flag
 // is `false`.
@@ -119,7 +119,7 @@ const DATE_CONTROL_VIEWS: ReadonlySet<View> = new Set<View>(['pages', 'search', 
 
 function App() {
   const { t } = useTranslation()
-  // PERF-19 (design-system perf review tier-3 #19) — App subscribes
+  // (design-system perf review tier-3 #19) — App subscribes
   // ONLY to the routing / view-shell zustand slices it actually uses:
   //   • `currentView`      — drives view routing, header switch, viewKey,
   //                           and the focus-on-view-change effect.
@@ -155,7 +155,7 @@ function App() {
   const isOnline = useOnlineStatus()
   const isMobile = useIsMobile()
   const shouldShowMobileChrome = useShouldShowMobileChrome()
-  // MAINT-124 step 3: shell-level dialog state (4 dialogs + their
+  // Shell-level dialog state (4 dialogs + their
   // event listeners) lives in `useAppDialogs`. The dialog JSX stays in
   // this file — the hook only owns the open/closed booleans, the
   // bug-report prefill payload, and the `BUG_REPORT_EVENT` /
@@ -202,15 +202,15 @@ function App() {
     }
   }, [])
 
-  // ── MAINT-124 step 4 (stretch): space-driven side-effects ─────────
-  // Resolve-cache preload (FEAT-3p7), cross-space link enforcement
-  // (FEAT-3p7) and visual identity (FEAT-3p10) — all driven by
+  // ── (stretch): space-driven side-effects ─────────
+  // Resolve-cache preload, cross-space link enforcement
+  // And visual identity — all driven by
   // `currentSpaceId` / `availableSpaces` — live in a single hook so
   // App.tsx no longer carries the inline `useEffect` clusters.
   useAppSpaceLifecycle()
 
-  // ── MAINT-124 step 4 (stretch): mount-only IPC hydration ──────────
-  // Boot recovery (orphan-draft flush) and the UX-201b priority-levels
+  // ── (stretch): mount-only IPC hydration ──────────
+  // Boot recovery (orphan-draft flush) and the priority-levels
   // hydrate the global state from Tauri once at app start. Both are
   // empty-deps effects with no React state coupling.
   useAppBootRecovery()
@@ -262,7 +262,7 @@ function App() {
   // ── Sync event listeners (Tauri → store) ───────────────────────────
   useSyncEvents()
 
-  // ── Deep-link router (FEAT-10) ─────────────────────────────────────
+  // ── Deep-link router ─────────────────────────────────────
   // Listens for `deeplink:navigate-to-{block,page}` / `deeplink:open-settings`
   // events emitted by the Rust router and feeds them into the
   // navigation store / settings localStorage key.  Also backfills the
@@ -271,15 +271,15 @@ function App() {
   // Tauri.
   useDeepLinkRouter()
 
-  // ── App-level keyboard shortcuts (MAINT-124 step 1) ────────────────
+  // ── App-level keyboard shortcuts ────────────────
   // All five in-app keydown listeners (journal, global, space,
   // close-overlays, tab) live inside `useAppKeyboardShortcuts`. The
-  // FEAT-12 OS-level chord (`registerGlobalShortcut`) below stays here
+  // OS-level chord (`registerGlobalShortcut`) below stays here
   // because it interacts with Tauri APIs and the local
   // `quickCaptureChord` state.
   useAppKeyboardShortcuts({ t, isMobile })
 
-  // ── FEAT-12: register the quick-capture global hotkey ─────────────
+  // ── register the quick-capture global hotkey ─────────────
   // Chord state, the storage-event re-bind listener, and the SEQUENCED
   // register/unregister IPC chain live in `useQuickCaptureShortcut`
   // (#754 — extracted so StrictMode / HMR mount cycles can't interleave
@@ -287,7 +287,7 @@ function App() {
   useQuickCaptureShortcut(setQuickCaptureOpen)
 
   const handleNewPage = useCallback(async () => {
-    // FEAT-3 Phase 2 — route through the atomic `createPageInSpace`
+    // Phase 2 — route through the atomic `createPageInSpace`
     // Tauri command (CreateBlock + SetProperty('space') in one tx).
     const { currentSpaceId, isReady } = useSpaceStore.getState()
     if (!isReady || currentSpaceId == null) {
@@ -313,7 +313,7 @@ function App() {
     [navigateToPage],
   )
 
-  // BUG-2: sidebar Sync click guard. The hook itself short-circuits on
+  // Sidebar Sync click guard. The hook itself short-circuits on
   // `peers.length === 0` silently (see useSyncTrigger.ts:113-117) — this
   // wrapper opens a discoverable dialog instead, with a CTA that
   // navigates the user to the Settings → Sync tab where pairing lives.
@@ -348,7 +348,7 @@ function App() {
     void syncAll()
   }, [syncAll, setShowNoPeersDialog])
 
-  // BUG-2: CTA handler for the NoPeersDialog. Pre-selects the Sync tab so
+  // CTA handler for the NoPeersDialog. Pre-selects the Sync tab so
   // the user lands directly on the pairing UI without an extra click.
   // #734 — routes through the navigation store's pending-tab handoff slot
   // (which SettingsView subscribes to while mounted) instead of the
@@ -406,7 +406,7 @@ function App() {
         {t('accessibility.skipToMain')}
       </a>
       {/*
-       * PEND-11 — full-width 3px accent stripe pinned to the top of
+       * Full-width 3px accent stripe pinned to the top of
        * the viewport. Sits above the sidebar/content so it remains
        * visible regardless of sidebar state. Decorative; identity
        * is announced by the SpaceSwitcher / OS title.
@@ -445,7 +445,7 @@ function App() {
                   Ctrl+Shift+F. Gating at this JSX level keeps the
                   component from re-rendering / re-subscribing on every
                   navigation change for desktop sessions.
-                  PEND-68 — `useShouldShowMobileChrome()` widens the
+                  `useShouldShowMobileChrome()` widens the
                   gate from `< 768 px` to "phone OR (tablet AND no
                   hardware keyboard)" so iPad-portrait touch users get
                   the trigger while iPad-with-keyboard sessions still
@@ -453,7 +453,7 @@ function App() {
               {shouldShowMobileChrome && <SearchSheetTrigger />}
             </header>
             {/*
-             * FEAT-7: TabBar is hoisted out of the page-editor view router
+             * TabBar is hoisted out of the page-editor view router
              * case and rendered at shell level so tabs stay visible across
              * every sidebar destination (journal, pages, search, …). The
              * autohide guard on `tabs.length <= 1` and the desktop-only
@@ -468,7 +468,7 @@ function App() {
               <TabBar />
             </FeatureErrorBoundary>
             {/*
-             * PEND-68 Part B (#83 recents-only): desktop-only quick-access
+             * Part B (#83 recents-only): desktop-only quick-access
              * bar — the MRU recents scroller. The former destinations cluster
              * (Pages / Tags / Graph / Search) was removed (#83) as it
              * duplicated the left sidebar. Mounted between the hoisted TabBar
@@ -481,7 +481,7 @@ function App() {
               <QuickAccessBar />
             </FeatureErrorBoundary>
             {/*
-             * UX-198: view-level sticky headers didn't stick because the
+             * View-level sticky headers didn't stick because the
              * nearest scroll ancestor was the <ScrollArea> viewport below,
              * not the view component. Hoisting the headers to an outlet
              * that lives _outside_ the scroll container lets them stay
@@ -492,7 +492,7 @@ function App() {
             <ScrollArea
               viewportRef={setMainContentViewport}
               className="flex-1"
-              // UX-225: re-apply the bottom safe-area inset to the scroll
+              // Re-apply the bottom safe-area inset to the scroll
               // viewport so the last block of a long scroll doesn't sit
               // under the iPhone home indicator / Android gesture bar.
               // `scroll-pb-[env(…)]` extends the scroll end so keyboard
@@ -592,7 +592,7 @@ function App() {
         </FeatureErrorBoundary>
       )}
       {/*
-       * UX-279: top-level BugReportDialog driven by `BUG_REPORT_EVENT`.
+       * Top-level BugReportDialog driven by `BUG_REPORT_EVENT`.
        * `initialTitle` / `initialDescription` are conditionally spread so
        * the dialog only sees them once a prefill payload exists, keeping
        * `exactOptionalPropertyTypes` happy.
@@ -634,7 +634,7 @@ function App() {
       >
         <QuickCaptureFab setQuickCaptureOpen={setQuickCaptureOpen} />
       </FeatureErrorBoundary>
-      {/* FEAT-12: Quick-capture dialog — driven by the global hotkey
+      {/* Quick-capture dialog — driven by the global hotkey
           registered in App's startup effect. Gated on `quickCaptureOpen`
           + lazy-loaded so the editor surface stays off the critical path
           until the chord fires. */}
@@ -645,7 +645,7 @@ function App() {
           </Suspense>
         </FeatureErrorBoundary>
       )}
-      {/* BUG-2: shell-level dialog opened by the sidebar Sync button when
+      {/* shell-level dialog opened by the sidebar Sync button when
           there are zero paired peers. Replaces the silent
           `peers.length === 0` no-op with a discoverable affordance that
           links the user to the pairing flow. Lazy + Suspense so the

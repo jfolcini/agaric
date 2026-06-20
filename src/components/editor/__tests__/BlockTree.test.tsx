@@ -151,7 +151,7 @@ let capturedOnSelect: ((blockId: string, mode: 'toggle' | 'range') => void) | un
 
 // Minimal mock for SortableBlock — production SortableBlock pulls action
 // callbacks from `useBlockActions()`, so the mock does the same to mirror
-// the real component's wiring (MAINT-118).
+// The real component's wiring.
 vi.mock('../SortableBlock', async () => {
   const { useBlockActions } = await import('@/hooks/useBlockActions')
   return {
@@ -363,7 +363,7 @@ beforeEach(() => {
     focusedBlockId: null,
     selectedBlockIds: [],
   })
-  // FEAT-3 Phase 2 — seed the space store so `onCreatePage` inside
+  // Phase 2 — seed the space store so `onCreatePage` inside
   // `useBlockResolve` routes through `createPageInSpace` without hitting
   // the defensive `!isReady` guard. Tests that need to exercise the
   // guard can override this in their own `beforeEach`.
@@ -778,7 +778,7 @@ describe('BlockTree picker wiring', () => {
       expect(capturedOnCreatePage).toBeDefined()
     })
 
-    // FEAT-3 Phase 2 — `onCreatePage` now routes through the atomic
+    // Phase 2 — `onCreatePage` now routes through the atomic
     // `create_page_in_space` command, which returns the new page's ULID.
     mockedInvoke.mockResolvedValueOnce('NEW_PAGE_ID_00000000000000')
 
@@ -2194,7 +2194,7 @@ describe('BlockTree resolve cache preload', () => {
     await waitFor(
       () => {
         // Preload should call batch_resolve for the uncached ULID.
-        // FEAT-3p7 + PEND-18 Phase 3 — the wrapper now threads `scope`
+        // + Phase 3 — the wrapper now threads `scope`
         // (a tagged enum) instead of `spaceId`.
         expect(mockedInvoke).toHaveBeenCalledWith('batch_resolve', {
           ids: [CONTENT_ULID],
@@ -2429,7 +2429,7 @@ describe('BlockTree searchPages caching', () => {
       expect(capturedOnCreatePage).toBeDefined()
     })
 
-    // FEAT-3 Phase 2 — onCreatePage routes through create_page_in_space,
+    // Phase 2 — onCreatePage routes through create_page_in_space,
     // which returns the new page's ULID (a plain string).
     mockedInvoke.mockResolvedValueOnce('NEW_PAGE_ID')
 
@@ -4566,7 +4566,7 @@ describe('BlockTree handleDatePick date format', () => {
     mockedInvoke.mockResolvedValueOnce([])
 
     // Mock create_page_in_space response for the new date page
-    // (BUG-1 / H-3b: date pages route through `createPageInSpace` so
+    // (H-3b: date pages route through `createPageInSpace` so
     // they own a `space` property and surface in PageBrowser).
     mockedInvoke.mockResolvedValueOnce('DATE_PAGE_1')
 
@@ -4947,7 +4947,7 @@ describe('BlockTree /attach slash command', () => {
 
     expect(capturedInput).not.toBeNull()
 
-    // PEND-76 F2 — the upload path now reads the file to bytes and ships them
+    // The upload path now reads the file to bytes and ships them
     // over IPC; the browser file's absolute path is no longer used.
     const mockFile = new File([new Uint8Array([1, 2, 3, 4])], 'test.pdf', {
       type: 'application/pdf',
@@ -5549,7 +5549,7 @@ describe('BlockTree zoom-in', () => {
     })
   })
 
-  it('does not render the zoom-in affordance for leaf blocks (MAINT-118)', async () => {
+  it('does not render the zoom-in affordance for leaf blocks', async () => {
     // Regression guard for the prop-drill → context migration: SortableBlock
     // gates onZoomIn by hasChildren before forwarding it to the context
     // menu. A leaf block must NOT expose the zoom-in button, even though
@@ -6221,7 +6221,7 @@ describe('BlockTree batch toolbar (#657)', () => {
       const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_blocks_by_ids')
       expect(batchCalls.length).toBe(1)
     })
-    // The legacy per-row IPC must NOT fire under batch — PEND-35 Tier 2.1
+    // The legacy per-row IPC must NOT fire under batch
     // collapsed N IMMEDIATE txs into a single one.
     expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_block')).toHaveLength(0)
 
@@ -6256,7 +6256,7 @@ describe('BlockTree batch toolbar (#657)', () => {
       const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'set_todo_state_batch')
       expect(batchCalls.length).toBe(1)
     })
-    // Legacy per-row IPC must NOT fire under batch (PEND-35 Tier 2.1).
+    // Legacy per-row IPC must NOT fire under batch.
     expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'set_todo_state')).toHaveLength(0)
 
     // Selection should be cleared
@@ -6297,7 +6297,7 @@ describe('BlockTree batch toolbar (#657)', () => {
     await screen.findByTestId('sortable-block-A')
 
     // Mock set_todo_state_batch to block, after initial render is done.
-    // PEND-35 Tier 2.1: the batch IPC replaces the per-row set_todo_state loop.
+    // The batch IPC replaces the per-row set_todo_state loop.
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'set_todo_state_batch') {
         return new Promise((resolve) => {
@@ -6325,10 +6325,10 @@ describe('BlockTree batch toolbar (#657)', () => {
 })
 
 // =========================================================================
-// UX-M8 — Escape closes unfocused editor
+// Escape closes unfocused editor
 // =========================================================================
 
-describe('BlockTree unfocused-Escape handler (UX-M8)', () => {
+describe('BlockTree unfocused-Escape handler', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
     mockedInvoke.mockResolvedValue({})
@@ -6398,10 +6398,10 @@ describe('BlockTree unfocused-Escape handler (UX-M8)', () => {
 })
 
 // =========================================================================
-// UX-M9 — Container mousedown closes editor
+// Container mousedown closes editor
 // =========================================================================
 
-describe('BlockTree container mousedown (UX-M9)', () => {
+describe('BlockTree container mousedown', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
     mockedInvoke.mockResolvedValue({})

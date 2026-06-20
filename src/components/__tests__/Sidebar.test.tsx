@@ -382,7 +382,7 @@ describe('swipe-to-open gesture', () => {
 })
 
 // ---------------------------------------------------------------------------
-// UX-231: Persistent icon rail on mobile when collapsible="icon"
+// Persistent icon rail on mobile when collapsible="icon"
 // ---------------------------------------------------------------------------
 
 /**
@@ -408,7 +408,7 @@ function restoreDesktopViewport() {
   vi.restoreAllMocks()
 }
 
-describe('UX-231 — persistent mobile icon rail (collapsible="icon")', () => {
+describe('persistent mobile icon rail (collapsible="icon")', () => {
   beforeEach(() => {
     mockMobileViewport()
   })
@@ -428,7 +428,7 @@ describe('UX-231 — persistent mobile icon rail (collapsible="icon")', () => {
     expect(rail).toHaveAttribute('data-state', 'collapsed')
     expect(rail).toHaveAttribute('data-slot', 'sidebar')
 
-    // UX-231 a11y: the rail is a navigation landmark so assistive tech
+    // A11y: the rail is a navigation landmark so assistive tech
     // announces it. A `<nav>` element (implicit role=navigation) + a
     // non-empty `aria-label` are both required for the landmark to be
     // meaningful. We use `tagName` instead of `toHaveAttribute('role', …)`
@@ -523,7 +523,7 @@ describe('UX-231 — persistent mobile icon rail (collapsible="icon")', () => {
   })
 })
 
-describe('UX-231 — collapsible="none" on mobile (regression guard)', () => {
+describe('collapsible="none" on mobile (regression guard)', () => {
   beforeEach(() => {
     mockMobileViewport()
   })
@@ -574,7 +574,7 @@ describe('UX-231 — collapsible="none" on mobile (regression guard)', () => {
   })
 })
 
-describe('UX-231 — collapsible="offcanvas" regression guard (Sheet-only)', () => {
+describe('collapsible="offcanvas" regression guard (Sheet-only)', () => {
   beforeEach(() => {
     mockMobileViewport()
   })
@@ -610,7 +610,7 @@ describe('UX-231 — collapsible="offcanvas" regression guard (Sheet-only)', () 
   })
 })
 
-describe('UX-231 — desktop branch preservation (collapsible="icon")', () => {
+describe('desktop branch preservation (collapsible="icon")', () => {
   beforeEach(() => {
     Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true, writable: true })
   })
@@ -634,7 +634,7 @@ describe('UX-231 — desktop branch preservation (collapsible="icon")', () => {
   })
 })
 
-describe('UX-231 — SidebarInset overflow-x-hidden (belt-and-braces)', () => {
+describe('SidebarInset overflow-x-hidden (belt-and-braces)', () => {
   it('SidebarInset carries overflow-x-hidden to contain lateral overflow', () => {
     render(
       <SidebarProvider>

@@ -5,7 +5,7 @@
  *  - Renders title + description inputs reflecting controlled props.
  *  - Renders both switches with translated labels.
  *  - Edits to each field surface via the matching `onChange` callback.
- *  - The redact switch is disabled when `includeLogs` is OFF (UX-383).
+ * The redact switch is disabled when `includeLogs` is OFF.
  *  - No a11y violations under axe.
  */
 
@@ -90,12 +90,12 @@ describe('BugReportForm', () => {
     expect(props.onRedactChange).toHaveBeenCalledWith(false)
   })
 
-  it('disables the redact switch when include-logs is OFF (UX-383)', () => {
+  it('disables the redact switch when include-logs is OFF', () => {
     renderForm({ includeLogs: false })
     expect(screen.getByRole('switch', { name: t('bugReport.redactLabel') })).toBeDisabled()
   })
 
-  it('enables the redact switch when include-logs is ON (UX-383)', () => {
+  it('enables the redact switch when include-logs is ON', () => {
     renderForm({ includeLogs: true })
     expect(screen.getByRole('switch', { name: t('bugReport.redactLabel') })).not.toBeDisabled()
   })

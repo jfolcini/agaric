@@ -41,7 +41,7 @@ pub(crate) fn ws_config() -> tokio_tungstenite::tungstenite::protocol::WebSocket
 ///   match (reconnection / pinning mode).  If `None`, any certificate is
 ///   accepted (initial pairing) and the hash is available via
 ///   [`SyncConnection::peer_cert_hash`].
-/// * `expected_remote_id` (M-56) – if `Some(eid)`, the server's TLS
+/// * `expected_remote_id` – if `Some(eid)`, the server's TLS
 ///   certificate CN must equal `agaric-{eid}`. Pass the known peer device
 ///   id whenever the caller has one (orchestrator path), and `None` for
 ///   first-pair flows where the peer id is not yet known (the existing
@@ -51,7 +51,7 @@ pub(crate) fn ws_config() -> tokio_tungstenite::tungstenite::protocol::WebSocket
 /// * `local_cert` – the local device's TLS certificate, sent to the server
 ///   during the handshake so the responder can verify our identity (mTLS).
 ///
-/// **Implementation note (M-57):** the verifier writes the observed cert
+/// **Implementation note:** the verifier writes the observed cert
 /// hash into a shared `Arc<OnceLock<String>>` from inside the rustls
 /// handshake task, and this function reads it after the handshake
 /// completes. `OnceLock` is used (rather than `Mutex<Option<String>>`)
@@ -100,7 +100,7 @@ pub async fn connect_to_peer(
     .await
     .map_err(|e| sync_err(format!("connect: {e}")))?;
 
-    // M-57: read via `OnceLock::get` — no locking, no poisoning.
+    // Read via `OnceLock::get` — no locking, no poisoning.
     let peer_hash = observed_hash.get().cloned();
 
     Ok(SyncConnection {
@@ -197,7 +197,7 @@ impl SyncConnection {
     /// `Vec<u8>` (e.g. an `encode_snapshot` blob loaded from
     /// `log_snapshots`) use this; callers that have a `tokio::fs::File`
     /// or other `AsyncRead` source should prefer
-    /// [`Self::send_binary_streaming`] (M-51 / L-67) so the file is
+    /// [`Self::send_binary_streaming`] so the file is
     /// chunked off-disk frame-by-frame instead of materialised in a
     /// `Vec<u8>` first.
     ///
@@ -233,7 +233,7 @@ impl SyncConnection {
     /// Buffered shape: this thin wrapper around
     /// [`Self::receive_binary_streaming`] writes into an in-memory
     /// `Vec<u8>` of `size_bytes`. Callers that need to land the bytes
-    /// on disk (M-51 attachment writer, L-67 snapshot temp file)
+    /// On disk (attachment writer, snapshot temp file)
     /// should prefer the streaming variant directly so the peak
     /// Rust-heap stays at one frame instead of `O(size_bytes)`.
     pub async fn receive_binary_chunked(&mut self, size_bytes: u64) -> Result<Vec<u8>, AppError> {
@@ -258,7 +258,7 @@ impl SyncConnection {
     /// [`Self::send_binary_chunked`] and
     /// [`Self::receive_binary_chunked`].
     ///
-    /// **M-51 / L-67:** this is the primary low-memory entry point
+    /// **:** this is the primary low-memory entry point
     /// for shipping a large file (attachment) or compressed snapshot
     /// over the wire — the only buffer is the fixed-size frame
     /// allocation, so peak Rust-heap stays at `chunk_size` regardless
@@ -282,7 +282,7 @@ impl SyncConnection {
 
     /// Per-frame variant of [`Self::send_binary_streaming`].
     ///
-    /// PEND-06 Tier 2: invokes `on_progress(bytes_sent_so_far)` after
+    /// Invokes `on_progress(bytes_sent_so_far)` after
     /// every frame written to the wire so callers can stream
     /// per-5 MB-frame progress updates through a Tauri channel without
     /// duplicating the chunk loop. The closure is called *after* each
@@ -348,12 +348,12 @@ impl SyncConnection {
     /// (more bytes than advertised) is rejected; `MAX_MSG_SIZE` per
     /// frame is enforced by the underlying [`Self::recv_binary`].
     ///
-    /// **M-51 / L-67:** this is the primary low-memory entry point
+    /// **:** this is the primary low-memory entry point
     /// for receiving a large attachment file or compressed snapshot.
     /// The `writer` is typically a `TempAttachmentWriter`
-    /// (M-51 — attaches a `blake3::Hasher` and renames atomically on
+    /// (attaches a `blake3::Hasher` and renames atomically on
     /// commit) or a `tokio::fs::File` opened on a temp file under
-    /// `app_data_dir` (L-67). Peak Rust-heap stays at one frame
+    /// `app_data_dir`. Peak Rust-heap stays at one frame
     /// regardless of `total_size`.
     pub async fn receive_binary_streaming<W: AsyncWrite + Unpin>(
         &mut self,
@@ -366,7 +366,7 @@ impl SyncConnection {
 
     /// Per-frame variant of [`Self::receive_binary_streaming`].
     ///
-    /// PEND-06 Tier 2 mirror of
+    /// Mirror of
     /// [`Self::send_binary_streaming_with_progress`]: the closure is
     /// invoked with `bytes_received_so_far` after every successful
     /// `write_all`, plus once with `0` on the zero-size path.
@@ -562,7 +562,7 @@ fn describe_message(msg: &Message) -> String {
 
 /// Create an in-memory WebSocket pair for testing sync protocol flows.
 ///
-/// **TEST-28: this helper bypasses real TLS.** The two `SyncConnection`s
+/// **this helper bypasses real TLS.** The two `SyncConnection`s
 /// are wired through `tokio::io::duplex` (not `rustls`), and both ends
 /// have `peer_cert_hash_val: None` + `peer_cert_cn_val: None`. Tests
 /// using `test_connection_pair()` therefore CANNOT exercise mTLS cert
@@ -612,7 +612,7 @@ mod recv_timeout_invariant {
     use crate::sync_constants::HANDSHAKE_TIMEOUT;
     use std::time::Duration;
 
-    /// Tripwire (L-64): the per-recv timeout must stay strictly larger
+    /// Tripwire: the per-recv timeout must stay strictly larger
     /// than the per-message `HANDSHAKE_TIMEOUT` outer budget so the
     /// outer guard fires first and produces a more informative error.
     /// Lowering `RECV_TIMEOUT` below `HANDSHAKE_TIMEOUT` would cause

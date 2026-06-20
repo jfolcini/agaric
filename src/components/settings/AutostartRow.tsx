@@ -1,5 +1,5 @@
 /**
- * AutostartRow — `t('settings.autostart.label')` toggle inside the General settings tab (FEAT-13).
+ * AutostartRow — `t('settings.autostart.label')` toggle inside the General settings tab.
  *
  * Three-state: `null` (loading or unavailable → row hidden), `true`
  * (toggle on), `false` (toggle off).  The unavailable case folds into
@@ -88,7 +88,7 @@ export function AutostartRow(): React.ReactElement | null {
   )
 
   // Hide entirely on mobile / browser-dev where the plugin is
-  // unavailable — matches the FEAT-13 "Desktop only" requirement
+  // Unavailable — matches the "Desktop only" requirement
   // without needing a separate platform-detection helper.
   if (enabled === null) return null
 

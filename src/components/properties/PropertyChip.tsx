@@ -20,7 +20,7 @@ interface PropertyChipProps {
  *
  * The pill itself is a non-interactive `<div role="group">` wrapper. Each
  * zone is a real `<button>` sibling so both keep native keyboard semantics
- * without producing a `<button>` nested inside a `<button>` (TEST-4b).
+ * Without producing a `<button>` nested inside a `<button>`.
  *
  * Event isolation: the wrapper has no click handler. Clicking the key
  * button fires `onKeyClick` only; clicking the value button fires

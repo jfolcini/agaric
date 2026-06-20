@@ -1,5 +1,5 @@
 /**
- * Tests for StatusIcon shared component (M-21).
+ * Tests for StatusIcon shared component.
  *
  * Validates:
  *  1. Renders correct icon for each todo state (TODO, DOING, DONE)
@@ -45,7 +45,7 @@ describe('StatusIcon', () => {
     expect(screen.queryByTestId('icon-doing')).not.toBeInTheDocument()
   })
 
-  it('renders XCircle icon for CANCELLED state (UX-202)', () => {
+  it('renders XCircle icon for CANCELLED state', () => {
     render(<StatusIcon state="CANCELLED" />)
     expect(screen.getByTestId('icon-cancelled')).toBeInTheDocument()
     expect(screen.queryByTestId('icon-todo')).not.toBeInTheDocument()
@@ -107,14 +107,14 @@ describe('StatusIcon', () => {
     expect(results).toHaveNoViolations()
   })
 
-  it('a11y: no violations for CANCELLED state (UX-202)', async () => {
+  it('a11y: no violations for CANCELLED state', async () => {
     const { container } = render(<StatusIcon state="CANCELLED" />)
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
 
-  // PEND-23 L17: size variants modeled after Spinner.
-  describe('size variants (PEND-23 L17)', () => {
+  // Size variants modeled after Spinner.
+  describe('size variants', () => {
     it('renders default md variant with h-4 w-4', () => {
       render(<StatusIcon state="TODO" />)
       const el = screen.getByTestId('icon-todo')

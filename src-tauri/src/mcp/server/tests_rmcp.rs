@@ -1,7 +1,7 @@
-//! MAINT-111 M3 — rmcp-client integration tests.
+//! rmcp-client integration tests.
 //!
 //! Wire-level coverage for the surfaces the production
-//! `handle_connection` no longer owns directly: the FEAT-4e L-113
+//! `handle_connection` no longer owns directly: the
 //! disconnect grace period (still implemented in `run_connection`)
 //! and the rmcp framer's handling of protocol-level errors (unknown
 //! method, malformed JSON). Sibling `mcp::rmcp_adapter::tests` covers
@@ -30,7 +30,7 @@ use crate::mcp::actor::ActorContext;
 use crate::mcp::registry::{ToolDescription, ToolRegistry};
 
 /// Registry whose `call_tool` parks on `sleep(self.sleep)` before
-/// returning success — drives the FEAT-4e grace-period race between
+/// Returning success — drives the grace-period race between
 /// `lifecycle.disconnect_all()` and an in-flight tool dispatch.
 struct SlowRegistry {
     sleep: Duration,
@@ -40,7 +40,7 @@ impl ToolRegistry for SlowRegistry {
     fn list_tools(&self) -> Vec<ToolDescription> {
         vec![ToolDescription {
             name: "slow".to_string(),
-            description: "Sleeps before returning success — L-113 grace-period test fixture."
+            description: "Sleeps before returning success —  grace-period test fixture."
                 .to_string(),
             input_schema: json!({ "type": "object", "properties": {} }),
         }]
@@ -65,7 +65,7 @@ fn make_test_client_info(name: &str) -> ClientInfo {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// FEAT-4e L-113 grace period — happy path
+// Grace period — happy path
 // ──────────────────────────────────────────────────────────────────────
 
 /// When `lifecycle.disconnect_all()` fires while a `tools/call` is
@@ -127,7 +127,7 @@ async fn disconnect_signal_grants_grace_period_for_in_flight_tool_call_l113() {
         call_task,
     )
     .await
-    .expect("call_tool must complete within the L-113 grace period")
+    .expect("call_tool must complete within the  grace period")
     .expect("call_task did not panic");
 
     let result = outcome.expect("tools/call must succeed under the grace period");
@@ -151,7 +151,7 @@ async fn disconnect_signal_grants_grace_period_for_in_flight_tool_call_l113() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// FEAT-4e L-113 grace period — timeout (hang) path
+// Grace period — timeout (hang) path
 // ──────────────────────────────────────────────────────────────────────
 
 /// If the in-flight `tools/call` does not complete within the bounded
@@ -216,13 +216,13 @@ async fn disconnect_signal_drops_after_grace_period_when_call_hangs_l113() {
     .await;
     assert!(
         server_outcome.is_ok(),
-        "L-113: server task must exit within grace + buffer; timed out",
+        "server task must exit within grace + buffer; timed out",
     );
     let elapsed = t0.elapsed();
     let lower_bound = MCP_DISCONNECT_GRACE_PERIOD - Duration::from_millis(200);
     assert!(
         elapsed >= lower_bound,
-        "L-113: server task exited too quickly ({:?}); the grace-period \
+        "server task exited too quickly ({:?}); the grace-period \
          timeout arm must elapse before the stream is dropped",
         elapsed,
     );

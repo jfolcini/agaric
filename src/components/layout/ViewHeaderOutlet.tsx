@@ -4,7 +4,7 @@
  * Problem: view components render a "sticky top-0" header, but the nearest
  * scroll ancestor is App.tsx's <ScrollArea>, not the view itself. Sticky
  * positioning resolves against the nearest scrolling ancestor, so the
- * intra-view sticky never actually sticks (UX-198).
+ * Intra-view sticky never actually sticks.
  *
  * Solution: hoist view headers to App-level, _above_ the scroll container.
  * Views opt in by wrapping their header content in <ViewHeader>, which

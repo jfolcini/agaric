@@ -139,9 +139,9 @@ describe('MermaidDiagram', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // UX-226: horizontal ScrollArea replaces bare overflow-x-auto on both
+  // Horizontal ScrollArea replaces bare overflow-x-auto on both
   //          the success diagram wrapper and the error-state `<pre>`.
-  it('wraps the rendered diagram in a horizontal ScrollArea (UX-226)', async () => {
+  it('wraps the rendered diagram in a horizontal ScrollArea', async () => {
     const fakeSvg = '<svg><text>X</text></svg>'
     mockedRender.mockResolvedValue({
       svg: fakeSvg,
@@ -164,7 +164,7 @@ describe('MermaidDiagram', () => {
     expect(anyOverflowX).toBeNull()
   })
 
-  it('wraps the error-state code block in a horizontal ScrollArea (UX-226)', async () => {
+  it('wraps the error-state code block in a horizontal ScrollArea', async () => {
     mockedRender.mockRejectedValue(new Error('bad syntax'))
 
     const { container } = render(<MermaidDiagram code="garbage" />)

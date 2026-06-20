@@ -1,5 +1,5 @@
 /**
- * Tests for SpaceJournalTemplateEditor (PEND-30 D-2 extraction).
+ * Tests for SpaceJournalTemplateEditor (D-2 extraction).
  *
  * Coverage:
  *  - Initial value seeded via lazy `useState`.
@@ -144,7 +144,7 @@ describe('SpaceJournalTemplateEditor', () => {
     })
   })
 
-  it('collapsible Examples panel renders and expands on summary click (UX-375)', async () => {
+  it('collapsible Examples panel renders and expands on summary click', async () => {
     const user = userEvent.setup()
     render(<SpaceJournalTemplateEditor spaceId="SPACE_1" initialValue="" onCommitted={() => {}} />)
 
@@ -163,7 +163,7 @@ describe('SpaceJournalTemplateEditor', () => {
   })
 
   // SOURCE-LEVEL guard — the canary `journalTemplateInitializedRef`
-  // from pre-PEND-30 D-2 must be gone as a declaration / runtime
+  // From pre- D-2 must be gone as a declaration / runtime
   // symbol. Read the source on disk and assert no `useRef` call and no
   // identifier-style declaration of the old ref name.
   it('source no longer declares journalTemplateInitializedRef and uses no useRef', () => {

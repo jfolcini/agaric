@@ -17,7 +17,7 @@ expression: wire
         minimum: 1
         type: integer
       space_id:
-        description: "PEND-24 — ULID of the space the agent is operating in. The append is rejected with a Validation error if `parent_id`'s owning page lives in a different space."
+        description: "ULID of the space the agent is operating in. The append is rejected with a Validation error if `parent_id`'s owning page lives in a different space."
         type: string
     required:
       - parent_id
@@ -36,7 +36,7 @@ expression: wire
         description: New Markdown content.
         type: string
       space_id:
-        description: "PEND-24 — ULID of the space the agent is operating in. The edit is rejected with a Validation error if `block_id`'s owning page lives in a different space."
+        description: "ULID of the space the agent is operating in. The edit is rejected with a Validation error if `block_id`'s owning page lives in a different space."
         type: string
     required:
       - block_id
@@ -55,7 +55,7 @@ expression: wire
         description: Property key (see list_property_defs).
         type: string
       space_id:
-        description: "PEND-24 — ULID of the space the agent is operating in. The write is rejected with a Validation error if `block_id`'s owning page lives in a different space."
+        description: "ULID of the space the agent is operating in. The write is rejected with a Validation error if `block_id`'s owning page lives in a different space."
         type: string
       value_bool:
         description: "Boolean value (exactly one value_* must be set). #697 — for `value_type = 'boolean'` property definitions."
@@ -86,7 +86,7 @@ expression: wire
         description: ULID of the block to tag.
         type: string
       space_id:
-        description: "PEND-24 — ULID of the space the agent is operating in. The tag application is rejected with a Validation error if `block_id`'s owning page lives in a different space. (Tags themselves are global — `tag_id` is not space-scoped.)"
+        description: "ULID of the space the agent is operating in. The tag application is rejected with a Validation error if `block_id`'s owning page lives in a different space. (Tags themselves are global — `tag_id` is not space-scoped.)"
         type: string
       tag_id:
         description: ULID of an existing tag block.
@@ -102,7 +102,7 @@ expression: wire
     additionalProperties: false
     properties:
       space_id:
-        description: "PEND-24 / BUG-1 — ULID of the space the new page belongs to. Required: every page lives in exactly one space; a page created without a `space_id` would be invisible to every space-scoped query."
+        description: "ULID of the space the new page belongs to. Required: every page lives in exactly one space; a page created without a `space_id` would be invisible to every space-scoped query."
         type: string
       title:
         description: "Page title (becomes the page's content)."
@@ -120,7 +120,7 @@ expression: wire
         description: ULID of the block to soft-delete.
         type: string
       space_id:
-        description: "PEND-24 — ULID of the space the agent is operating in. The delete is rejected with a Validation error if `block_id`'s owning page lives in a different space."
+        description: "ULID of the space the agent is operating in. The delete is rejected with a Validation error if `block_id`'s owning page lives in a different space."
         type: string
     required:
       - block_id

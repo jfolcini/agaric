@@ -198,7 +198,7 @@ describe('TagValuePicker', () => {
     })
   })
 
-  // PEND-23 M2: failed `listTagsByPrefix` IPC must log a warn (no silent
+  // Failed `listTagsByPrefix` IPC must log a warn (no silent
   // catch). Mirrors LinkEditPopover's prefetch-failure logging pattern.
   it('logs a warn when listTagsByPrefix rejects', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
@@ -346,7 +346,7 @@ describe('TagValuePicker', () => {
   })
 
   // -----------------------------------------------------------------------
-  // Debounce (PERF-28)
+  // Debounce
   // -----------------------------------------------------------------------
   describe('debounce', () => {
     beforeEach(() => {

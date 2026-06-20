@@ -3,7 +3,7 @@
  *
  * Wraps ListViewState (loading skeleton + empty-state) plus the
  * filtered "no match" empty state, and renders one TrashRowItem per
- * filtered block. Extracted from TrashView.tsx for MAINT-128 so the
+ * Filtered block. Extracted from TrashView.tsx for so the
  * orchestrator only composes filter bar / toolbar / list / dialogs.
  *
  * Virtualized (#740): each `TrashRowItem` runs a heavy

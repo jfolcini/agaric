@@ -75,7 +75,7 @@ describe('useSlashCommandStructural — headings', () => {
     })
   })
 
-  it('heading slash command notifies undo (MAINT-116)', async () => {
+  it('heading slash command notifies undo', async () => {
     const onNewAction = vi.fn()
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction })
     const { result } = renderHook(() => useSlashCommandStructural())

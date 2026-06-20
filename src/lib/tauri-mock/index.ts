@@ -38,7 +38,7 @@ export function resetMock(): void {
 /**
  * Fully reset the mock's module-scoped in-memory state back to the
  * canonical seed. Safe to call between Playwright tests to avoid parallel
- * mock-state collision (`TEST-1a`). Idempotent.
+ * Mock-state collision (). Idempotent.
  *
  * Resets:
  *   - `blocks`, `properties`, `blockTags`, `propertyDefs`, `pageAliases`,
@@ -87,7 +87,7 @@ export function setupMock(): void {
   // Expose bulk agenda-item seeding to E2E tests (#548 virtualization spec).
   w['__addMockAgendaItems'] = addMockAgendaItems
 
-  // Expose the full reset hook to E2E tests (TEST-1a). Wired into a global
+  // Expose the full reset hook to E2E tests. Wired into a global
   // beforeEach in `e2e/helpers.ts` so every spec starts from seed state.
   w['__resetTauriMock__'] = __resetTauriMock__
 }

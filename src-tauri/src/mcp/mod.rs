@@ -2,10 +2,10 @@
 //! for external agents via a local Unix domain socket (Linux/macOS) or
 //! Windows named pipe.
 //!
-//! This module is the entry point for the FEAT-4 umbrella. FEAT-4a (this
+//! This module is the entry point for the umbrella. (this
 //! slice) ships the transport + handshake skeleton; later sub-items fill in
-//! the tool registry (FEAT-4b), the read-only tool handlers (FEAT-4c), and
-//! the activity ring buffer (FEAT-4d). Sibling modules are pre-declared here
+//! the tool registry, the read-only tool handlers, and
+//! the activity ring buffer. Sibling modules are pre-declared here
 //! so each sub-item can land additively without rewriting `mod.rs`.
 //!
 //! # Threat model
@@ -25,7 +25,7 @@ pub mod summarise;
 pub mod tools_ro;
 pub mod tools_rw;
 
-// MAINT-111: the rmcp adapter is the production dispatcher.
+// The rmcp adapter is the production dispatcher.
 // Hand-rolled framing in `mcp/server.rs` is retained for the helper
 // types `ConnectionState`, `serve_unix`, `serve_pipe`, and the
 // lifecycle/grace-period plumbing — those wrap (rather than replace)
@@ -89,10 +89,10 @@ impl McpSurface {
 }
 
 // ---------------------------------------------------------------------------
-// Runtime lifecycle (FEAT-4e)
+// Runtime lifecycle
 // ---------------------------------------------------------------------------
 
-/// Shared runtime handle surfaced to the FEAT-4e Tauri command layer
+/// Shared runtime handle surfaced to the Tauri command layer
 /// (`mcp_disconnect_all`, `mcp_set_enabled`, `get_mcp_status`).
 ///
 /// - `disconnect_signal`: notified once per `mcp_disconnect_all` call. The
@@ -164,7 +164,7 @@ impl McpLifecycle {
     /// via `select!` and drops its stream. Safe to call with no active
     /// connections (no-op).
     ///
-    /// **Edge-triggered semantics (L-120).** Internally this calls
+    /// **Edge-triggered semantics.** Internally this calls
     /// [`tokio::sync::Notify::notify_waiters`], which only wakes tasks
     /// already parked inside `Notify::notified().await`. Connections
     /// that arrive *after* this call register a fresh waiter on entry
@@ -209,7 +209,7 @@ impl Default for McpLifecycle {
 }
 
 /// Newtype wrapper around an [`Arc<McpLifecycle>`] for the **read-write**
-/// MCP server (FEAT-4h slice 2).
+/// MCP server (slice 2).
 ///
 /// Tauri's managed-state resolver keys on type, so the RO and RW servers
 /// cannot share `Arc<McpLifecycle>` as separate managed states — the
@@ -257,13 +257,13 @@ impl Drop for ConnectionCounterGuard {
 /// path-resolver share a single source of truth for the per-platform
 /// data-dir layout.
 ///
-/// MAINT-150 (i).
+/// (i).
 pub const APP_IDENTIFIER: &str = "com.agaric.app";
 
 /// Marker-file name inside the application data directory. When this file
 /// exists, the MCP read-only socket is bound at startup; otherwise the task
-/// stays dormant. FEAT-4e wires the Settings UI toggle to create / remove
-/// this file atomically; FEAT-4a only reads it.
+/// Stays dormant. wires the Settings UI toggle to create / remove
+/// This file atomically; only reads it.
 pub const MCP_RO_ENABLED_MARKER: &str = "mcp-ro-enabled";
 
 /// Default socket file-name under the application data directory on unix.
@@ -299,7 +299,7 @@ pub fn default_mcp_ro_socket_path(
 /// marker file in the application data directory; its presence means "on"
 /// and absence means "off". This mirrors the on-disk patterns used for
 /// `device-id` and `sync-cert` so no new persistence mechanism is introduced
-/// by FEAT-4a.
+/// By.
 ///
 /// Ignored on Windows in the same way as unix (the marker file is created
 /// in the same `app_data_dir` on every platform; only the socket transport
@@ -308,7 +308,7 @@ pub fn mcp_ro_enabled(app_data_dir: &Path) -> bool {
     app_data_dir.join(MCP_RO_ENABLED_MARKER).is_file()
 }
 
-/// Marker-file name for the MCP **read-write** socket (FEAT-4h slice 2).
+/// Marker-file name for the MCP **read-write** socket (slice 2).
 /// Distinct from [`MCP_RO_ENABLED_MARKER`] so the user can opt into
 /// read-only access without also opening the write socket.
 pub const MCP_RW_ENABLED_MARKER: &str = "mcp-rw-enabled";
@@ -355,9 +355,9 @@ pub enum SocketKind {
     /// Windows named pipe (first server instance). Successive connections
     /// require re-creating a `NamedPipeServer` each time the previous one
     /// is handed off to a connection handler; `serve_pipe` takes care of
-    /// that in FEAT-4a's accept loop.
+    /// That in accept loop.
     ///
-    /// The bound `path` is captured on the variant (M-83 fix) so the
+    /// The bound `path` is captured on the variant (fix) so the
     /// accept loop creates each successor instance on the same pipe
     /// namespace it bound on. Recovering the path from a constant
     /// (the pre-M-83 implementation) silently routed RW callers onto
@@ -504,14 +504,14 @@ pub async fn bind_socket(pipe_path: &Path, socket_kind: &str) -> Result<SocketKi
 /// bound by another instance, logs at warn level and returns — the first
 /// owner keeps the socket.
 ///
-/// FEAT-4c wires the real [`tools_ro::ReadOnlyTools`] registry, replacing
-/// FEAT-4a's [`server::PlaceholderRegistry`]. The registry owns the
+/// Wires the real [`tools_ro::ReadOnlyTools`] registry, replacing
+/// [`server::PlaceholderRegistry`]. The registry owns the
 /// read-pool [`SqlitePool`], the [`Materializer`] (used only by the
 /// `journal_for_date` tool for idempotent page creation), and this
 /// device's `device_id` so any op-log entries the tool creates are
 /// attributed correctly.
 ///
-/// M-82: `journal_for_date` is the only RO tool with a write side-effect
+/// `journal_for_date` is the only RO tool with a write side-effect
 /// (it inserts a fresh `page` block whenever the requested date has no
 /// existing journal page). The registry therefore takes **both** pools:
 /// `read_pool` backs the eight pure-read tools and the lookup branch of
@@ -519,7 +519,7 @@ pub async fn bind_socket(pipe_path: &Path, socket_kind: &str) -> Result<SocketKi
 /// `BEGIN IMMEDIATE` on the read pool fails with `SQLITE_READONLY`
 /// because that pool sets `PRAGMA query_only = ON`.
 ///
-/// `app_handle` is used to build the FEAT-4d activity emitter — every
+/// `app_handle` is used to build the activity emitter — every
 /// completed tool call pushes an [`activity::ActivityEntry`] into the ring
 /// and emits an `mcp:activity` event on this handle's bus.
 ///
@@ -528,12 +528,12 @@ pub async fn bind_socket(pipe_path: &Path, socket_kind: &str) -> Result<SocketKi
 /// letting `ActivityContext` allocate a fresh ring per spawn) makes
 /// the ring readable and persistent across enable/disable cycles.
 ///
-/// `lifecycle` is the FEAT-4e managed state that surfaces connection
+/// `lifecycle` is the managed state that surfaces connection
 /// counts and disconnect-signal plumbing to the Settings UI. Passed as
 /// `Option` so headless / test callers can elide it.
 // One spawn entry point assembling the full RO server dependency set
 // (pools, materializer, device id, the #695 shared activity ring, and
-// the FEAT-4e lifecycle handle); grouping these into a struct would just
+// The lifecycle handle); grouping these into a struct would just
 // move the same fields behind one more indirection.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_mcp_ro_task<R: tauri::Runtime>(
@@ -563,7 +563,7 @@ pub fn spawn_mcp_ro_task<R: tauri::Runtime>(
 
 /// Spawn the MCP RO task against a caller-supplied registry and socket path.
 ///
-/// Exposed separately so later sub-items (FEAT-4b/4c) can swap in the real
+/// Exposed separately so later sub-items (4c) can swap in the real
 /// `ReadOnlyTools` registry and integration tests can exercise the bind +
 /// accept + dispatch pipeline against a tempdir socket path.
 ///
@@ -572,7 +572,7 @@ pub fn spawn_mcp_ro_task<R: tauri::Runtime>(
 /// scenarios pass `None` (and any tool dispatches fall through without
 /// emitting events).
 ///
-/// `lifecycle` is the FEAT-4e shared state that exposes the
+/// `lifecycle` is the shared state that exposes the
 /// disconnect-signal and per-connection counter to the Settings UI. When
 /// `Some`, the serve loop sets `task_running = true` on entry and back to
 /// `false` on exit so `get_mcp_status` reflects the accept loop's state;
@@ -639,7 +639,7 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
 }
 
 /// Spawn the MCP **read-write** task onto the current Tokio runtime
-/// (FEAT-4h slice 2).
+/// (slice 2).
 ///
 /// Mirrors [`spawn_mcp_ro_task`] but reads the RW marker
 /// ([`MCP_RW_ENABLED_MARKER`]) and builds a [`tools_rw::ReadWriteTools`]
@@ -649,7 +649,7 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
 /// socket is already bound by another instance, logs at warn level and
 /// returns — the first owner keeps the socket.
 ///
-/// `lifecycle` is the FEAT-4e / FEAT-4h managed state that surfaces
+/// `lifecycle` is the managed state that surfaces
 /// connection counts and disconnect-signal plumbing to the Settings UI.
 /// Passed as `Option` so headless / test callers can elide it. Call sites
 /// normally wrap the lifecycle in an [`McpRwLifecycle`] newtype before
@@ -798,7 +798,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // RW parity tests (FEAT-4h slice 2)
+    // RW parity tests (slice 2)
     // -----------------------------------------------------------------
 
     #[test]

@@ -337,7 +337,7 @@ describe('PageHeaderMenu template toggle button', () => {
   })
 })
 
-describe('PageHeaderMenu export shortcut hint (UX-158)', () => {
+describe('PageHeaderMenu export shortcut hint', () => {
   it('shows Export as Markdown with keyboard shortcut hint', () => {
     renderMenu({ kebabOpen: true })
 
@@ -505,7 +505,7 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
   })
 })
 
-describe('PageHeaderMenu delete button danger zone (UX-358)', () => {
+describe('PageHeaderMenu delete button danger zone', () => {
   it('wraps the delete button in a destructive-tinted container', () => {
     renderMenu({ kebabOpen: true })
 

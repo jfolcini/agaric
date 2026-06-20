@@ -5,7 +5,7 @@
  *  - getTagColors / getTagColor / setTagColor / clearTagColor round-trip
  *    through localStorage under the `tag-colors` key.
  *  - Graceful handling of missing / corrupted / non-object data.
- *  - Regression guard (MAINT-101): tag color reads and writes are
+ * Regression guard: tag color reads and writes are
  *    *device-local only*. setTagColor / clearTagColor must not call the
  *    Tauri `invoke()` IPC bridge — the previous header comment in
  *    `tag-colors.ts` claimed colors were also persisted to block properties
@@ -120,7 +120,7 @@ describe('tag-colors', () => {
     })
   })
 
-  describe('device-local only (MAINT-101 regression guard)', () => {
+  describe('device-local only (regression guard)', () => {
     // Tag colors are intentionally device-local. The header comment in
     // `tag-colors.ts` previously claimed colors were also persisted via
     // `setProperty()` for cross-device sync — that claim was wrong. If

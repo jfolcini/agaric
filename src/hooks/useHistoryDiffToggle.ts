@@ -17,7 +17,7 @@ export function useHistoryDiffToggle<K>(keyFn: (entry: HistoryEntry) => K): {
   const [diffCache, setDiffCache] = useState<Map<K, DiffSpan[]>>(new Map())
   const [loadingDiffs, setLoadingDiffs] = useState<Set<K>>(new Set())
 
-  // FE-M-4: mirror state into refs so handleToggleDiff can read latest values
+  // Mirror state into refs so handleToggleDiff can read latest values
   // without listing them as deps (which would churn the callback identity on
   // every toggle). Functional setState forms below remain the source of truth
   // for writes.

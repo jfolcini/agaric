@@ -6,7 +6,7 @@
  *  - localStorage persistence
  *  - .dark class applied to document.documentElement
  *  - System dark mode respected in auto mode
- *  - UX-203: VSCode-inspired themes (solarized-light, solarized-dark, dracula, one-dark-pro)
+ * VSCode-inspired themes (solarized-light, solarized-dark, dracula, one-dark-pro)
  */
 
 import { act, renderHook } from '@testing-library/react'
@@ -171,7 +171,7 @@ describe('useTheme', () => {
     expect(result.current.isDark).toBe(true)
   })
 
-  // ── UX-203: VSCode-inspired themes ─────────────────────────────────
+  // ── VSCode-inspired themes ─────────────────────────────────
 
   describe('setTheme', () => {
     it('sets theme to solarized-light and applies correct classes', () => {

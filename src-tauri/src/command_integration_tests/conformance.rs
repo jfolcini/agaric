@@ -811,13 +811,13 @@ async fn move_same_parent_tail_clamp_matches_fe_new_index() {
     }
 }
 
-/// #1257 PR-2 — LOCAL `create_block` is engine-fresh and densely positioned
+/// #1257 LOCAL `create_block` is engine-fresh and densely positioned
 /// IN-TRANSACTION, with the apply cursor PINNED.
 ///
-/// Before PR-2 the LOCAL command path (`create_block_inner` →
+/// Before the LOCAL command path (`create_block_inner` →
 /// `create_block_in_tx`) wrote a PROVISIONAL `index + 1` SQL position and NEVER
 /// touched the Loro engine: positions were reconciled to dense ranks only on the
-/// next boot replay (the #1245 / #1249 bug). PR-2 routes the create through
+/// Next boot replay (the #1245 / #1249 bug). routes the create through
 /// `apply_create_block_via_loro` inside the same `CommandTx` — engine apply +
 /// `project_create_block_to_sql` + `reproject_dense_positions` — but
 /// deliberately does NOT advance `materializer_apply_cursor` (so boot replay
@@ -833,7 +833,7 @@ async fn move_same_parent_tail_clamp_matches_fe_new_index() {
 ///       Under the OLD provisional path the index-0 insert would have written
 ///       position `index_to_provisional_position(0)` and left the siblings at
 ///       their seeded 1/2, so this dense-rank assertion would FAIL — exactly the
-///       drift PR-2 closes; and
+/// Drift closes; and
 ///   (c) the apply cursor (`materialized_through_seq`) did NOT advance.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_create_is_engine_fresh_and_dense_1257() {
@@ -984,9 +984,9 @@ async fn local_create_is_engine_fresh_and_dense_1257() {
 }
 
 // ---------------------------------------------------------------------------
-// #1257 PR-3 — local simple-op engine-freshness conformance.
+// #1257 local simple-op engine-freshness conformance.
 //
-// PR-3 routes the LOCAL edit_block / set_property / delete_property /
+// Routes the LOCAL edit_block / set_property / delete_property /
 // add_tag / remove_tag command paths through their `apply_*_via_loro` engine
 // helpers IN-TRANSACTION (instead of writing SQL directly and never touching
 // the Loro engine). None of these ops touch `position`, so there is NO
@@ -1026,7 +1026,7 @@ async fn pr3_max_seq(pool: &SqlitePool) -> i64 {
         .unwrap()
 }
 
-/// PR-3: a LOCAL `edit_block_inner` routes the content write through
+/// A LOCAL `edit_block_inner` routes the content write through
 /// `apply_edit_block_via_loro` IN-TX, so the engine's `read_block` reflects the
 /// new content (no boot replay) AND the SQL `content` matches, AND the apply
 /// cursor stays put while op_log advances.
@@ -1110,7 +1110,7 @@ async fn local_edit_block_is_engine_fresh_1257() {
     mat.shutdown();
 }
 
-/// PR-3: a LOCAL `set_property_inner` routes the property write through
+/// A LOCAL `set_property_inner` routes the property write through
 /// `apply_set_property_via_loro` IN-TX, so the engine's `read_property_typed`
 /// reflects the value (no boot replay) AND the SQL `block_properties` row
 /// matches, AND the apply cursor stays put while op_log advances.
@@ -1207,7 +1207,7 @@ async fn local_set_property_is_engine_fresh_1257() {
     mat.shutdown();
 }
 
-/// PR-3: a LOCAL `add_tag_inner` routes the `block_tags` write + inheritance
+/// A LOCAL `add_tag_inner` routes the `block_tags` write + inheritance
 /// fan-out through `apply_add_tag_via_loro` IN-TX, so the engine's `read_tags`
 /// reflects the membership (no boot replay) AND the SQL `block_tags` row
 /// matches, AND the apply cursor stays put while op_log advances.
@@ -1291,16 +1291,16 @@ async fn local_add_tag_is_engine_fresh_1257() {
     mat.shutdown();
 }
 
-/// #1257 PR-4 — LOCAL `move_block` is engine-fresh and densely positioned in
+/// #1257 LOCAL `move_block` is engine-fresh and densely positioned in
 /// BOTH the source and target parents IN-TRANSACTION, with the apply cursor
 /// PINNED.
 ///
-/// Before PR-4 the LOCAL command path (`move_block_inner`) wrote a PROVISIONAL
+/// Before the LOCAL command path (`move_block_inner`) wrote a PROVISIONAL
 /// `new_index + 1` SQL position via a raw `UPDATE blocks SET parent_id,
 /// position` and NEVER touched the Loro engine: positions were reconciled to
 /// dense ranks (and the source/target sibling groups re-ranked) only on the next
-/// boot replay (the #1245 / #1249 bug, the move counterpart of PR-2's create).
-/// PR-4 routes the move through `apply_move_block_via_loro` inside the same
+/// Boot replay (the #1245 / #1249 bug, the move counterpart of create).
+/// Routes the move through `apply_move_block_via_loro` inside the same
 /// `CommandTx` — engine apply + `project_move_block_to_sql` +
 /// `reproject_dense_positions` over BOTH the old and new parent sibling groups —
 /// but deliberately does NOT advance `materialized_through_seq` (so boot replay
@@ -1318,7 +1318,7 @@ async fn local_add_tag_is_engine_fresh_1257() {
 ///       the OLD provisional path the moved block would carry
 ///       `index_to_provisional_position(new_index)` and the siblings would keep
 ///       their seeded ranks, so this dense-rank assertion would FAIL — exactly
-///       the drift PR-4 closes;
+/// The drift closes;
 ///   (c) the moved block's `parent_id` is updated to B; and
 ///   (d) the apply cursor (`materialized_through_seq`) did NOT advance while
 ///       `op_log.seq` did.
@@ -1509,17 +1509,17 @@ async fn local_move_is_engine_fresh_and_dense_1257() {
     mat.shutdown();
 }
 
-/// #1257 PR-5 — LOCAL `delete_blocks_by_ids` tombstones the WHOLE subtree
+/// #1257 LOCAL `delete_blocks_by_ids` tombstones the WHOLE subtree
 /// cohort on the engine IN the CommandTx, with NO #1257 phantom and the apply
 /// cursor PINNED; then `restore_blocks_by_ids` restores the cohort on both
 /// sides.
 ///
-/// Before PR-5 the LOCAL batch-delete command path ran ONLY the multi-root SQL
+/// Before the LOCAL batch-delete command path ran ONLY the multi-root SQL
 /// soft-delete cascade and never told the per-space Loro engine — so the engine
 /// kept the deleted subtree LIVE while SQL reported it gone. That is exactly the
-/// engine-live-but-SQL-deleted divergence the PR-1 freshness gate
+/// Engine-live-but-SQL-deleted divergence the freshness gate
 /// (`prepare_outgoing` / `live_block_ids` ∩ SQL-deleted) refuses to ship: a
-/// "phantom". PR-5 PRE-CAPTURES each root's active subtree cohort + space BELOW
+/// "phantom". PRE-CAPTURES each root's active subtree cohort + space BELOW
 /// the SQL UPDATE (a post-delete `resolve_block_space` would return None for
 /// every now-deleted row) and fans the captured cohort onto the engine
 /// post-commit (`dispatch_delete_descendants`).
@@ -1531,7 +1531,7 @@ async fn local_move_is_engine_fresh_and_dense_1257() {
 ///   (b) SQL `deleted_at` is set on the whole cohort;
 ///   (c) the apply cursor (`materialized_through_seq`) did NOT advance while
 ///       `op_log.seq` did;
-///   (d) the #1257 PR-1 gate sees NO phantom — `live_block_ids()` ∩
+/// (d) the #1257 gate sees NO phantom — `live_block_ids()` ∩
 ///       SQL-deleted is empty (no block is engine-live yet SQL-deleted).
 /// Then drives `restore_blocks_by_ids_inner` on the root and asserts the cohort
 /// is restored in BOTH the engine (`read_deleted` false) and SQL (`deleted_at`
@@ -1650,7 +1650,7 @@ async fn local_delete_restore_tombstones_cohort_no_phantom_1257() {
          cursor moved {cursor_before} -> {cursor_after}",
     );
 
-    // (d) #1257 PR-1 GATE — NO phantom. The set of blocks the engine still
+    // (d) #1257 GATE — NO phantom. The set of blocks the engine still
     //     holds LIVE must contain NONE that SQL has soft-deleted. This is the
     //     whole point: an eager local delete that did NOT reach the engine
     //     would leave P/C/G engine-live-but-SQL-deleted, and `prepare_outgoing`

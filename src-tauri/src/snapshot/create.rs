@@ -6,7 +6,7 @@ use super::types::*;
 use crate::error::AppError;
 
 // ---------------------------------------------------------------------------
-// L-105: snapshot-creation memory-pressure thresholds
+// Snapshot-creation memory-pressure thresholds
 // ---------------------------------------------------------------------------
 //
 // `collect_tables` buffers the entire derived state (blocks,
@@ -35,14 +35,14 @@ use crate::error::AppError;
 // conservative — chosen to fire long before the platform OOM ceiling
 // rather than as a tight bound.
 
-/// L-105: emit a `warn!` when an op_log compaction would buffer this
+/// Emit a `warn!` when an op_log compaction would buffer this
 /// many rows in memory at once. 100k rows is roughly the size at which
 /// the encoded snapshot starts to approach single-digit-MB territory
 /// in compressed form (and considerably larger pre-compression), giving
 /// the user a clear heads-up before the 24 MB Android heap is at risk.
 pub(crate) const SNAPSHOT_WARN_ROW_COUNT: i64 = 100_000;
 
-/// L-105: emit a `warn!` when the sum of `LENGTH(payload)` across the
+/// Emit a `warn!` when the sum of `LENGTH(payload)` across the
 /// op_log exceeds 64 MiB. This is a payload-only ceiling — it does not
 /// include the derived rows in `SnapshotData.tables` or the encoded
 /// CBOR overhead — so the actual memory peak during snapshot creation
@@ -54,7 +54,7 @@ pub(crate) const SNAPSHOT_WARN_PAYLOAD_BYTES: i64 = 64 * 1024 * 1024;
 /// #706 item 3 — pending-snapshot deletion grace window (defense in depth).
 ///
 /// The retention DELETE's `status = 'pending'` arm purges crash-leftover
-/// pending rows. That arm is only *unconditionally* safe because M-69
+/// Pending rows. That arm is only *unconditionally* safe because
 /// makes create's INSERT-pending → UPDATE-complete a single transaction:
 /// a cleanup running concurrently can never observe a legitimate, still
 /// in-flight pending row, because it is invisible until the same tx flips
@@ -91,7 +91,7 @@ fn pending_delete_cutoff_ulid(now_ms: i64, grace_ms: i64) -> String {
     ulid::Ulid::from_parts(ts, 0).to_string()
 }
 
-/// L-105: probe the op_log for the row count and total payload-byte
+/// Probe the op_log for the row count and total payload-byte
 /// size that the upcoming snapshot creation will buffer in memory.
 ///
 /// Returns `(row_count, payload_bytes)`. The caller decides whether to
@@ -188,7 +188,7 @@ pub(crate) async fn collect_tables(
 /// op_log (e.g., `compact_op_log`) gate this function behind their own
 /// row-count check before invocation.
 ///
-/// # `up_to_hash` is opaque, `up_to_seqs` is the real causal anchor (L-106)
+/// # `up_to_hash` is opaque, `up_to_seqs` is the real causal anchor
 ///
 /// The "latest hash" returned here is selected via `ORDER BY created_at DESC,
 /// device_id DESC, seq DESC LIMIT 1` — i.e. wall-clock-ordered. Because two
@@ -274,11 +274,11 @@ pub async fn create_snapshot(pool: &SqlitePool, device_id: &str) -> Result<Strin
 
     let encoded = encode_snapshot(&data)?;
 
-    // M-69: fold the INSERT(pending) + UPDATE(complete) pair into a single
+    // Fold the INSERT(pending) + UPDATE(complete) pair into a single
     // `BEGIN IMMEDIATE` transaction so no other connection ever observes
     // an orphan 'pending' row. Mirrors the write phase of `compact_op_log`
     // below. `begin_immediate_logged` also surfaces slow acquires as
-    // `warn` logs (MAINT-30 family) instead of being absorbed by the
+    // `warn` logs (family) instead of being absorbed by the
     // pool's busy_timeout.
     let mut tx = crate::db::begin_immediate_logged(pool, "snapshot_create").await?;
 
@@ -319,7 +319,7 @@ pub const DEFAULT_RETENTION_DAYS: u64 = 90;
 /// `None` if no old ops exist.
 ///
 /// The work is split into three phases to minimise the time the exclusive
-/// write-lock is held (PERF-10a):
+/// Write-lock is held:
 ///
 /// 1. **Read phase** — a DEFERRED read transaction collects all table rows
 ///    and the op frontier (`up_to_seqs`).  No write lock is acquired.
@@ -333,12 +333,12 @@ pub const DEFAULT_RETENTION_DAYS: u64 = 90;
 /// `seq <= up_to_seqs[device_id]`, so ops that were not yet visible during
 /// the read phase can never be deleted.
 ///
-/// MAINT-21: instrumented with a `compact_op_log` span that mirrors the
+/// Instrumented with a `compact_op_log` span that mirrors the
 /// `#[instrument]` wrapper on the Tauri command in `commands/compaction.rs`,
 /// so the `retention_days`, `eligible_ops`, `ops_deleted`, and timing log
 /// lines emitted from this function all share a common span prefix.
 ///
-/// L-42: the second tuple element is the **actual** number of rows the
+/// The second tuple element is the **actual** number of rows the
 /// per-device DELETE in phase 3 affected. The wrapper in
 /// `commands/compaction.rs` previously reported a stale "eligible at start"
 /// figure; surfacing the real `deleted_count` here lets the wrapper return
@@ -379,14 +379,14 @@ pub async fn compact_op_log(
         return Ok(None);
     }
 
-    // L-105: heads-up warning when the op_log is large enough that
+    // Heads-up warning when the op_log is large enough that
     // `collect_tables` + `encode_snapshot` will buffer a snapshot
     // approaching the platform heap ceiling (Android release APK is
     // capped at ~24 MB). This is a non-blocking warn — the actual OOM
     // ceiling is platform-dependent and the snapshot includes more than
     // just op_log payloads, so the thresholds are conservative. A
     // streaming snapshot format is the eventual fix and is deliberately
-    // deferred per L-105's recommendation.
+    // Deferred recommendation.
     let (op_log_rows, op_log_bytes) = measure_op_log_size(&mut read_tx).await?;
     if op_log_rows > SNAPSHOT_WARN_ROW_COUNT || op_log_bytes > SNAPSHOT_WARN_PAYLOAD_BYTES {
         tracing::warn!(
@@ -394,7 +394,7 @@ pub async fn compact_op_log(
             payload_bytes = op_log_bytes,
             row_threshold = SNAPSHOT_WARN_ROW_COUNT,
             byte_threshold = SNAPSHOT_WARN_PAYLOAD_BYTES,
-            "op_log size approaches snapshot memory ceiling (L-105); snapshot creation buffers all derived rows in memory and may OOM on constrained platforms (e.g., Android 24 MB heap)"
+            "op_log size approaches snapshot memory ceiling; snapshot creation buffers all derived rows in memory and may OOM on constrained platforms (e.g., Android 24 MB heap)"
         );
     }
 
@@ -419,13 +419,13 @@ pub async fn compact_op_log(
 
     // ── Phase 3: Write (brief BEGIN IMMEDIATE transaction) ───────────
     // Only the INSERT, UPDATE, DELETE, and cleanup happen under the
-    // exclusive write lock. L-7: route through `begin_immediate_logged`
+    // Exclusive write lock. route through `begin_immediate_logged`
     // so a stalled writer surfaces as a `warn` instead of disappearing
     // into the 5s busy_timeout (the wrapper command already uses the
     // logged variant for the recount tx — this is the matching inner
     // delete).
     //
-    // SQL-review M-6: the snapshot create (INSERT + UPDATE-to-complete) and
+    // SQL-review the snapshot create (INSERT + UPDATE-to-complete) and
     // the op_log purge run in SEPARATE transactions so a failure in the
     // purge leaves the snapshot complete-and-usable instead of rolling
     // back both. Previously both lived in one tx and any crash in the
@@ -510,7 +510,7 @@ pub async fn compact_op_log(
         "compaction completed"
     );
 
-    // L-42: return the real deleted_count alongside the snapshot id so
+    // Return the real deleted_count alongside the snapshot id so
     // callers (the Tauri wrapper) can report a non-stale figure.
     Ok(Some((snapshot_id, deleted_count)))
 }
@@ -530,7 +530,7 @@ pub async fn get_latest_snapshot(pool: &SqlitePool) -> Result<Option<(String, Ve
 /// column that [`create_snapshot`] persists.
 ///
 /// #705: callers that only need the frontier (e.g. the responder's
-/// M-58 covering check in `sync_daemon::snapshot_transfer`) previously
+/// Covering check in `sync_daemon::snapshot_transfer`) previously
 /// ran a full zstd+CBOR `decode_snapshot` over the entire blob just to
 /// reach `up_to_seqs`. The column already stores that map as JSON, so
 /// reading it back avoids decoding every table.
@@ -540,7 +540,7 @@ pub async fn get_latest_snapshot(pool: &SqlitePool) -> Result<Option<(String, Ve
 /// `TEXT NOT NULL` and always holds the JSON map `create_snapshot`
 /// serialised; an unparsable value (corruption) maps to an empty
 /// frontier, which the covering check treats as "covers nothing" —
-/// fail-safe for the responder's M-58 guard.
+/// Fail-safe for the responder's guard.
 pub async fn get_latest_snapshot_with_frontier(
     pool: &SqlitePool,
 ) -> Result<Option<(String, Vec<u8>, BTreeMap<String, i64>)>, AppError> {
@@ -561,7 +561,7 @@ pub async fn get_latest_snapshot_with_frontier(
 /// works both inside a transaction (`compact_op_log` phase 3) and with a bare
 /// pool connection (`cleanup_old_snapshots`).
 ///
-/// M-68: `keep == 0` is a no-op guard (see `cleanup_old_snapshots` doc).
+/// `keep == 0` is a no-op guard (see `cleanup_old_snapshots` doc).
 async fn cleanup_snapshots_impl<'e, E>(exec: E, keep: i64) -> Result<u64, AppError>
 where
     E: Executor<'e, Database = sqlx::Sqlite>,
@@ -583,7 +583,7 @@ where
     // *any* row outside the kept completes — including every pending row —
     // so it would have deleted a brand-new pending snapshot regardless of
     // the age gate. Scoping each arm to its own status fixes that: a
-    // recent pending row matches neither arm and survives. (M-68: when
+    // Recent pending row matches neither arm and survives. (when
     // `keep == 0` we already returned above, so the complete arm's
     // subquery is never empty here.)
     let pending_cutoff =
@@ -606,7 +606,7 @@ where
 /// Also deletes any lingering 'pending' snapshots (crash leftovers).
 /// Returns the number of deleted rows.
 ///
-/// M-68: `keep == 0` is treated as a no-op (returns `Ok(0)` without
+/// `keep == 0` is treated as a no-op (returns `Ok(0)` without
 /// touching the table). SQLite evaluates `x NOT IN (empty subquery)`
 /// as TRUE, so naively passing `LIMIT 0` to the subquery would delete
 /// every row, including completes — almost certainly not what any
@@ -619,11 +619,11 @@ pub async fn cleanup_old_snapshots(pool: &SqlitePool, keep: usize) -> Result<u64
 }
 
 // ---------------------------------------------------------------------------
-// M-69: atomic create_snapshot regression tests
+// Atomic create_snapshot regression tests
 // ---------------------------------------------------------------------------
 //
 // These tests live inline (rather than in `snapshot/tests.rs`) because the
-// M-69 item that motivated them is scoped to `create_snapshot` —
+// Item that motivated them is scoped to `create_snapshot` —
 // keeping them next to the production code makes the invariant ("INSERT +
 // UPDATE are one atomic transaction") easier to spot when this function is
 // edited again in the future.

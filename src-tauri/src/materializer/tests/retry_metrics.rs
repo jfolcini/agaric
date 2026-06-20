@@ -76,7 +76,7 @@ async fn fg_apply_dropped_stays_zero_for_non_apply_task() {
     // C-2a (negative case): a non-Apply task — `UpdateFtsBlock` for a
     // block that doesn't exist — must never bump `fg_apply_dropped`.
     // This task is routed to the background queue, where the existing
-    // retry/persist semantics (BUG-22) apply unchanged. The point of
+    // Retry/persist semantics apply unchanged. The point of
     // the assertion is that the new fg-only counter does not pollute
     // the bg path. (`UpdateFtsBlock` against a missing block actually
     // succeeds — the handler treats "no row" as "remove from FTS" — so
@@ -105,7 +105,7 @@ async fn fg_apply_dropped_stays_zero_for_non_apply_task() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// PEND-24 M1 — `record_failure` persistence-failure path is metered.
+// `record_failure` persistence-failure path is metered.
 //
 // When the consumer's drop path calls `record_failure` and the SQLite
 // write itself returns Err (e.g. table missing during a hot
@@ -157,7 +157,7 @@ async fn record_failure_persist_error_is_metered_pend24_m1() {
     // because the table is gone → +2 on retry_queue_persist_errors.
     assert!(
         m.retry_queue_persist_errors.load(AtomicOrdering::Relaxed) >= 2,
-        "PEND-24 M1: both record_failure attempts must bump retry_queue_persist_errors \
+        "both record_failure attempts must bump retry_queue_persist_errors \
          (got {})",
         m.retry_queue_persist_errors.load(AtomicOrdering::Relaxed),
     );
@@ -171,14 +171,14 @@ async fn record_failure_persist_error_is_metered_pend24_m1() {
     assert_eq!(
         m.fg_apply_dropped_persisted.load(AtomicOrdering::Relaxed),
         0,
-        "PEND-24 H1+M1: persist-failure path must NOT bump fg_apply_dropped_persisted",
+        "+M1: persist-failure path must NOT bump fg_apply_dropped_persisted",
     );
 
     mat.shutdown();
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// #851 — bounded persist-failure mitigation. The previous PEND-24 M1
+// #851 — bounded persist-failure mitigation. The previous
 // budget retried `record_failure` exactly ONCE; if both the first attempt
 // and that single retry hit transient WAL-lock contention, the op was
 // permanently un-materialized (it already failed its foreground apply, so
@@ -262,13 +262,13 @@ async fn persist_recovers_within_bounded_budget_851() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// PEND-24 H1 — Foreground `ApplyOp` retry exhaustion now persists the
+// Foreground `ApplyOp` retry exhaustion now persists the
 // failure to `materializer_retry_queue` (replacing the previous
 // silent drop). The boot-time / periodic sweeper re-loads the
 // `OpRecord` from `op_log` and re-enqueues onto the foreground
 // queue.
 //
-// Persistence shape (mirrors PEND-03's `__GLOBAL__` sentinel):
+// Persistence shape (mirrors `__GLOBAL__` sentinel):
 //   block_id = '__APPLY_OP__'
 //   task_kind = "ApplyOp:<seq>:<device_id>"
 //
@@ -311,7 +311,7 @@ async fn foreground_applyop_exhausted_persists_and_re_enqueues_on_boot() {
     );
     assert!(
         m.fg_apply_dropped_persisted.load(AtomicOrdering::Relaxed) >= 1,
-        "PEND-24 H1: fg_apply_dropped_persisted must bump after retry-queue write succeeds",
+        "fg_apply_dropped_persisted must bump after retry-queue write succeeds",
     );
 
     let expected_kind = format!("ApplyOp:{bad_seq}:{bad_device}");
@@ -325,7 +325,7 @@ async fn foreground_applyop_exhausted_persists_and_re_enqueues_on_boot() {
     .expect("retry-queue row must exist for the persisted ApplyOp failure");
     assert_eq!(
         row.block_id, "__APPLY_OP__",
-        "PEND-24 H1: failed ApplyOp rows live under the __APPLY_OP__ sentinel"
+        "failed ApplyOp rows live under the __APPLY_OP__ sentinel"
     );
     assert_eq!(row.task_kind, expected_kind);
 
@@ -369,7 +369,7 @@ async fn foreground_applyop_exhausted_persists_and_re_enqueues_on_boot() {
     let n = retry_queue::sweep_once(&pool, &pool, &mat).await.unwrap();
     assert_eq!(
         n, 1,
-        "PEND-24 H1: the planted ApplyOp retry row must be re-enqueued onto the foreground queue"
+        "the planted ApplyOp retry row must be re-enqueued onto the foreground queue"
     );
     // Issue #378: the sweeper now LEASES the row on enqueue instead of
     // deleting it — the row stays put until the re-enqueued task
@@ -421,7 +421,7 @@ async fn foreground_applyop_exhausted_persists_and_re_enqueues_on_boot() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// L-16 — Foreground retry: ordering of error log vs.
+// Foreground retry: ordering of error log vs.
 // retry attempt.
 //
 // The shared `retry_with_backoff` helper used to emit the first-attempt

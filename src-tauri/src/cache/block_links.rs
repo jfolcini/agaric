@@ -45,7 +45,7 @@ pub async fn reindex_block_links_conn(
 ) -> Result<(), AppError> {
     // 1. Get current content (combined with step 2 in the same tx to
     //    avoid an extra connection round-trip). Soft-deleted blocks
-    //    do not contribute outbound links to `block_links` (M-14).
+    // Do not contribute outbound links to `block_links`.
     let row = sqlx::query!(
         "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
         block_id,
@@ -79,7 +79,7 @@ pub async fn reindex_block_links_conn(
     let to_delete: Vec<&String> = old_targets.difference(&new_targets).collect();
     let to_insert: Vec<&String> = new_targets.difference(&old_targets).collect();
 
-    // PEND-15 Phase 3 — filter out cross-space targets before inserting.
+    // Phase 3 — filter out cross-space targets before inserting.
     // The write-time enforcement gate (Phase 2) rejects new cross-space
     // references, but the materializer rebuild path also processes content
     // that may contain legacy tokens. Filtering here ensures the cache
@@ -108,7 +108,7 @@ pub async fn reindex_block_links_conn(
         return Ok(());
     }
 
-    // L-24: batch DELETE/INSERT via `json_each` — one round-trip per side
+    // Batch DELETE/INSERT via `json_each` — one round-trip per side
     // regardless of the number of changed targets, replacing the previous
     // 2N round-trip per-target loops.
     if !to_delete.is_empty() {
@@ -177,7 +177,7 @@ pub async fn reindex_block_links_split(
     // Read phase from read_pool
 
     // 1. Get current content. Soft-deleted blocks do not contribute
-    //    outbound links to `block_links` (M-14).
+    // Outbound links to `block_links`.
     let row = sqlx::query!(
         "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
         block_id,
@@ -213,7 +213,7 @@ pub async fn reindex_block_links_split(
 
     // #375: resolve the source space so the INSERT below can exclude
     // cross-space targets, identically to the single-pool `reindex_block_links`
-    // (PEND-15 Phase 3 / #345/#346). The split path reads from `read_pool`, so
+    // (Phase 3 / #345/#346). The split path reads from `read_pool`, so
     // the resolution does too (consistent with the content/target reads above).
     // Without this the production split path silently re-admits exactly the
     // cross-space rows the canonical path is careful to exclude.
@@ -235,7 +235,7 @@ pub async fn reindex_block_links_split(
     let mut tx =
         crate::db::begin_immediate_logged(write_pool, "cache_block_links_reindex_write").await?;
 
-    // L-24: batch DELETE/INSERT via `json_each` — one round-trip per side
+    // Batch DELETE/INSERT via `json_each` — one round-trip per side
     // regardless of the number of changed targets, replacing the previous
     // 2N round-trip per-target loops.
     if !to_delete.is_empty() {

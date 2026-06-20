@@ -93,7 +93,7 @@ const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
 /// post-update one, never a mid-update split state.
 ///
 /// Cross-space isolation is inherited transitively: `block_links` is
-/// already filtered to same-space pairs by `reindex_block_links` (PEND-15
+/// Already filtered to same-space pairs by `reindex_block_links` (
 /// Phase 3 guard at the write-time gate), so a roll-up over `block_links`
 /// cannot manufacture a cross-space `page_link_cache` row.
 pub async fn reindex_page_link_cache_for_block(

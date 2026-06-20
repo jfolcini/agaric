@@ -160,10 +160,10 @@ pub async fn draft_count(pool: &SqlitePool) -> Result<i64, AppError> {
     Ok(rec.count)
 }
 
-/// L-135: Delete `block_drafts` rows whose `block_id` no longer maps to a
+/// Delete `block_drafts` rows whose `block_id` no longer maps to a
 /// live (non-soft-deleted) block. Returns the count of orphan drafts removed.
 ///
-/// Migration 0038 (M-93) added a FK from `block_drafts.block_id` to
+/// Migration 0038 added a FK from `block_drafts.block_id` to
 /// `blocks(id) ON DELETE CASCADE`, so drafts whose parent block has been
 /// hard-deleted are now removed by the cascade. This function remains
 /// load-bearing for the **soft-deleted** branch: the FK references the
@@ -186,12 +186,12 @@ pub async fn sweep_orphan_drafts(pool: &SqlitePool) -> Result<u64, AppError> {
     Ok(result.rows_affected())
 }
 
-/// PEND-28a M1: Default cadence for the orphan-drafts sweeper after the
+/// Default cadence for the orphan-drafts sweeper after the
 /// boot one-shot. Drafts are user-typed, so the rate of orphan creation
 /// is bounded by user clicks; an hourly sweep is more than sufficient.
 pub const ORPHAN_DRAFTS_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);
 
-/// PEND-28a M1: Spawn a long-lived task that runs [`sweep_orphan_drafts`]
+/// Spawn a long-lived task that runs [`sweep_orphan_drafts`]
 /// once at boot and then every `interval` until `shutdown_flag` is set.
 ///
 /// Mirrors the shape of

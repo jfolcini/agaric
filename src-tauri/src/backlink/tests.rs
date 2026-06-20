@@ -341,7 +341,7 @@ async fn filter_property_text_gte() {
     assert!(set.contains("SRC_B"), "beta is >= beta");
 }
 
-// PERF-27: `Contains` and `StartsWith` are pushed down to SQL via `LIKE
+// `Contains` and `StartsWith` are pushed down to SQL via `LIKE
 // ? ESCAPE '\'`.  The test below covers `Contains` and also verifies
 // that `%` / `_` in the user input are treated literally (not as LIKE
 // wildcards) via `escape_like`, so callers cannot accidentally or
@@ -710,7 +710,7 @@ async fn filter_has_tag_prefix_no_match() {
 }
 
 // ======================================================================
-// MAINT-143 / UX-250 — `BacklinkFilter::HasTag` & `HasTagPrefix` share
+// `BacklinkFilter::HasTag` & `HasTagPrefix` share
 // the leaf-resolution SQL with `tag_query::resolve_expr` via the
 // `resolve_tag_leaves` / `resolve_tag_prefix_leaves` helpers. Inline
 // `#[ULID]` references stored in `block_tag_refs` must union into the
@@ -754,7 +754,7 @@ async fn maint143_inline_ref_union_shared_leaf_sql() {
     .unwrap();
     assert!(
         set_inline.contains("SRC_B"),
-        "UX-250: HasTag must union block_tag_refs (inline #[ULID]) — \
+        "HasTag must union block_tag_refs (inline #[ULID]) — \
          this pins parity with tag_query::resolve_tag_leaves"
     );
     assert!(!set_inline.contains("SRC_A"));
@@ -776,7 +776,7 @@ async fn maint143_inline_ref_union_shared_leaf_sql() {
     );
     assert!(
         set_prefix.contains("SRC_B"),
-        "UX-250: HasTagPrefix must union block_tag_refs (inline #[ULID]) — \
+        "HasTagPrefix must union block_tag_refs (inline #[ULID]) — \
          this pins parity with tag_query::resolve_tag_prefix_leaves"
     );
     assert!(!set_prefix.contains("SRC_C"));
@@ -2095,12 +2095,12 @@ async fn filter_property_date_gte() {
 }
 
 // ======================================================================
-// PERF-27 inline-SQL operator coverage for PropertyNum / PropertyDate.
-// These tests exercise the post-PERF-27 SQL-pushdown shape (replacing
+// Inline-SQL operator coverage for PropertyNum / PropertyDate.
+// These tests exercise the post- SQL-pushdown shape (replacing
 // the prior Rust-side `.fetch_all` + `.filter()` evaluation).
 // ======================================================================
 
-// PERF-27: `Eq` is now SQL `=` rather than `|a - b| < f64::EPSILON`.
+// `Eq` is now SQL `=` rather than `|a - b| < f64::EPSILON`.
 // The classic 0.1 + 0.2 vs 0.3 floating-point gotcha gives us two
 // values that differ by ≈5.55e-17 — strictly less than f64::EPSILON
 // (≈2.22e-16) — so the OLD EPSILON-tolerant comparison would have
@@ -2149,7 +2149,7 @@ async fn filter_property_num_eq_uses_sql_equals_not_epsilon() {
     );
 }
 
-// PERF-27: `Contains` / `StartsWith` are nonsensical for numeric
+// `Contains` / `StartsWith` are nonsensical for numeric
 // properties.  The post-pushdown implementation short-circuits to an
 // empty set rather than running a string-LIKE on `value_num`.
 #[tokio::test]
@@ -2182,7 +2182,7 @@ async fn filter_property_num_contains_and_starts_with_return_empty() {
     );
 }
 
-// PERF-27: `Contains` on date strings is a substring LIKE pushed into
+// `Contains` on date strings is a substring LIKE pushed into
 // SQL.  Verifies the operator returns the expected matches and that
 // `%` / `_` in the needle are escaped so they match literally rather
 // than as LIKE wildcards.
@@ -2236,7 +2236,7 @@ async fn filter_property_date_contains_pushed_into_sql() {
     );
 }
 
-// PERF-27: `StartsWith` on date strings is a prefix LIKE pushed into
+// `StartsWith` on date strings is a prefix LIKE pushed into
 // SQL.  Mirrors the PropertyText prefix behaviour: `escape_like` makes
 // `%` / `_` / `\` literal.
 #[tokio::test]
@@ -3184,7 +3184,7 @@ async fn total_and_filtered_count_with_filter() {
 }
 
 // ======================================================================
-// TEST-18 — eval_backlink_query: self-reference filtering coverage.
+// Eval_backlink_query: self-reference filtering coverage.
 //
 // `setup_backlinks()` creates orphan source blocks whose IDs differ from
 // TARGET, so every other non-grouped test trivially satisfies the
@@ -4636,7 +4636,7 @@ async fn eval_unlinked_refs_excludes_own_page_blocks() {
 }
 
 // ======================================================================
-// PEND-83 Bug 2 — title-block filter
+// Bug 2 — title-block filter
 //
 // The trigram FTS tokenizer is substring-based, so a child page like
 // `Notes/2026` (a `block_type = 'page'` row whose `content =
@@ -5019,7 +5019,7 @@ async fn eval_unlinked_refs_empty_alias_ignored() {
 }
 
 // ======================================================================
-// PropertyIsEmpty — candidate-scoped json_each() path (PERF-3)
+// PropertyIsEmpty — candidate-scoped json_each() path
 // ======================================================================
 
 #[tokio::test]
@@ -5076,7 +5076,7 @@ async fn property_is_empty_scoped_to_candidate_set() {
 }
 
 // ======================================================================
-// BUG-44 — eval_unlinked_references with filters and sort
+// Eval_unlinked_references with filters and sort
 // ======================================================================
 
 /// Seed four PAGE_B-scoped blocks that mention "Project Alpha" without a
@@ -5196,7 +5196,7 @@ async fn eval_unlinked_refs_tag_filter_excludes_non_matching() {
         .collect();
     assert!(ids.contains("BLK_B1"), "BLK_B1 has T_A");
     assert!(ids.contains("BLK_B4"), "BLK_B4 has T_A");
-    // MAINT-170: `total_count` is captured pre-filter, post-self-reference
+    // `total_count` is captured pre-filter, post-self-reference
     // (parity with `eval_backlink_query_grouped:128`); `filtered_count` is
     // the post-filter, post-grouping sum. Pre-fix this assertion encoded
     // the bug — `total_count == 2` collapsed both counts to the post-filter
@@ -5241,7 +5241,7 @@ async fn eval_unlinked_refs_property_filter_matches_exact_value() {
         .collect();
     assert!(ids.contains("BLK_B1"));
     assert!(ids.contains("BLK_B3"));
-    // MAINT-170: `total_count` is the pre-filter, post-self-ref count
+    // `total_count` is the pre-filter, post-self-ref count
     // (parity with `eval_backlink_query_grouped:128`).
     assert_eq!(resp.total_count, 4, "pre-filter total_count == 4");
     assert_eq!(resp.filtered_count, 2, "post-filter filtered_count == 2");
@@ -5342,7 +5342,7 @@ async fn eval_unlinked_refs_sort_property_text_orders_by_value() {
 
 #[tokio::test]
 async fn eval_unlinked_refs_total_count_reflects_pre_filter() {
-    // MAINT-170 regression: `total_count` is the pre-filter,
+    // Regression: `total_count` is the pre-filter,
     // post-self-reference-exclusion count (parity with
     // `eval_backlink_query_grouped:128`). `filtered_count` is the
     // post-filter, post-grouping sum. Pre-fix the function collapsed
@@ -5391,14 +5391,14 @@ async fn eval_unlinked_refs_total_count_reflects_pre_filter() {
 }
 
 // ======================================================================
-// MAINT-170 — `eval_unlinked_references::total_count` must reflect the
+// `eval_unlinked_references::total_count` must reflect the
 // pre-filter, post-self-reference-exclusion count (parity with
 // `eval_backlink_query_grouped:128`).
 // ======================================================================
 
 /// Seed 6 unlinked-reference blocks distributed across 3 source pages,
 /// none of which are self-references to the TARGET page. Used by the
-/// MAINT-170 regression tests below. Each block carries a `priority`
+/// Regression tests below. Each block carries a `priority`
 /// property so a filter can split the set in half (3 high / 3 low).
 ///
 /// Layout:
@@ -5477,7 +5477,7 @@ async fn eval_unlinked_refs_total_count_equals_filtered_count_with_no_filter() {
 
 #[tokio::test]
 async fn eval_unlinked_refs_total_count_holds_when_filter_drops_half() {
-    // Regression anchor for MAINT-170: 6 unlinked blocks pre-filter, a
+    // Regression anchor for 6 unlinked blocks pre-filter, a
     // user filter eliminates 3 of them. `total_count` must remain the
     // pre-filter count (6) while `filtered_count` reflects the
     // post-filter group sum (3). Pre-fix the function collapsed both
@@ -5734,7 +5734,7 @@ async fn eval_unlinked_references_does_not_truncate_at_exactly_fts_row_cap() {
 }
 
 // ======================================================================
-// L-82 / L-83 / L-84 — IN-clause `≤SMALL_IN_LIMIT → IN, >SMALL_IN_LIMIT → json_each(?)`
+// IN-clause `≤SMALL_IN_LIMIT → IN, >SMALL_IN_LIMIT → json_each(?)`
 // chunking. Each pair below exercises the IN-bind path and the
 // `json_each` fallback against the same logical scenario, asserting
 // both branches return the expected row set.
@@ -5788,7 +5788,7 @@ async fn bulk_insert_n_backlink_sources(
 }
 
 /// Bulk-insert `n` distinct pages, each with a single content block,
-/// and link every content block to `target_id`. Used for L-84 large
+/// And link every content block to `target_id`. Used for large
 /// `SourcePage` tests that need a >SMALL_IN_LIMIT-sized `included` /
 /// `excluded` page list.
 async fn bulk_insert_n_pages_with_one_link(
@@ -5861,10 +5861,10 @@ async fn bulk_insert_n_pages_with_one_link(
 }
 
 // ----------------------------------------------------------------------
-// L-83 — fetch_block_rows_by_ids helper (shared by query.rs & grouped.rs)
+// Fetch_block_rows_by_ids helper (shared by query.rs & grouped.rs)
 // ----------------------------------------------------------------------
 
-/// L-83 (a): IN-bind path — `ids.len() <= SMALL_IN_LIMIT` returns the
+/// (a): IN-bind path — `ids.len() <= SMALL_IN_LIMIT` returns the
 /// expected row set in correct quantity. Reuses `setup_backlinks` (3
 /// content sources) so the small path is exercised against the same
 /// shape as every other backlink test.
@@ -5884,7 +5884,7 @@ async fn fetch_block_rows_by_ids_small_in_bind() {
     );
 }
 
-/// L-83 (b): json_each fallback path — `ids.len() > SMALL_IN_LIMIT`
+/// (b): json_each fallback path — `ids.len() > SMALL_IN_LIMIT`
 /// returns a row set that is element-wise identical to what an
 /// equivalent IN-bind sub-batch would yield. We assert by:
 ///   1. Fetching all 600 ids in one call (fallback branch),
@@ -5927,10 +5927,10 @@ async fn fetch_block_rows_by_ids_large_json_each_matches_in_bind() {
 }
 
 // ----------------------------------------------------------------------
-// L-82 — eval_backlink_query_grouped: BlockRow batch fetch
+// Eval_backlink_query_grouped: BlockRow batch fetch
 // ----------------------------------------------------------------------
 
-/// L-82 (a): IN-bind path — small fixture with 5 source blocks under a
+/// (a): IN-bind path — small fixture with 5 source blocks under a
 /// single page exercises the `<= SMALL_IN_LIMIT` branch of
 /// `fetch_block_rows_by_ids` via the grouped backlink path.
 #[tokio::test]
@@ -5959,7 +5959,7 @@ async fn eval_grouped_blockrow_fetch_small_in_bind() {
     assert_eq!(ids, expected, "IN-bind path must return the 5 source ids");
 }
 
-/// L-82 (b): json_each fallback path — three source pages, each owning
+/// (b): json_each fallback path — three source pages, each owning
 /// 250 backlinks (above MAX_BLOCKS_PER_GROUP). #380 caps each group's
 /// materialised blocks at MAX_BLOCKS_PER_GROUP (200), so the post-cap
 /// fetch set is 3 × 200 = 600 ids, still exceeding SMALL_IN_LIMIT and
@@ -6034,10 +6034,10 @@ async fn eval_grouped_blockrow_fetch_large_json_each() {
 }
 
 // ----------------------------------------------------------------------
-// L-84 — SourcePage filter: included / excluded IN-clauses
+// SourcePage filter: included / excluded IN-clauses
 // ----------------------------------------------------------------------
 
-/// L-84: `included` json_each fallback — 600 included pages, each
+/// `included` json_each fallback — 600 included pages, each
 /// owning one content block that links to TARGET. The recursive
 /// descendant CTE switches to `IN (SELECT value FROM json_each(?))`
 /// because `included.len() > SMALL_IN_LIMIT`.
@@ -6071,7 +6071,7 @@ async fn filter_source_page_included_large_json_each() {
     );
 }
 
-/// L-84: exclusion-only json_each fallback — 600 excluded pages
+/// Exclusion-only json_each fallback — 600 excluded pages
 /// triggers the `> SMALL_IN_LIMIT` branch of the exclusion-only SQL
 /// path (line ~452 pre-fix). Setup: 600 pages each contribute a
 /// backlink, plus one extra "ALLOWED" page whose backlink should
@@ -6118,7 +6118,7 @@ async fn filter_source_page_excluded_only_large_json_each() {
     assert_eq!(resp.items[0].id, "ALLOWED_BK");
 }
 
-/// L-84: combined `included` + `excluded` both json_each — exercises
+/// Combined `included` + `excluded` both json_each — exercises
 /// the within-included `excluded` placeholder site (line ~431 pre-fix)
 /// alongside the `included` site. With 600 included PG_* and 300
 /// excluded PG_* (the second half), exactly the first 300 pages

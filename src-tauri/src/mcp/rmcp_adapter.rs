@@ -13,8 +13,8 @@
 //! - It does NOT replace the accept loop / lifecycle bookkeeping in
 //!   `mcp/mod.rs::serve` / `mcp/server.rs::serve_unix` /
 //!   `serve_pipe` / `run_connection`. Those are agaric-specific
-//!   (Unix-domain socket, Windows named pipe, FEAT-4e disconnect
-//!   gate, L-113 grace period). `rmcp` only takes over the
+//!   (Unix-domain socket, Windows named pipe, disconnect
+//!   gate, grace period). `rmcp` only takes over the
 //!   per-connection JSON-RPC loop.
 //! - It does NOT replace the connection-level [`super::server::serve`]
 //!   plumbing — that wraps the rmcp `serve` loop. It DOES, however,
@@ -158,7 +158,7 @@ fn durable_agent_name(sanitized: &str, session_id: &str) -> String {
 /// read-only server even on the RW socket.)
 pub struct RmcpAdapter<R: ToolRegistry> {
     registry: Arc<R>,
-    /// FEAT-4d activity-emission seam. `None` in tests / stub binaries
+    /// Activity-emission seam. `None` in tests / stub binaries
     /// where no Tauri runtime is bound; `Some(_)` in production via
     /// `ActivityContext::from_app_handle`.
     activity_ctx: Option<ActivityContext>,
@@ -174,7 +174,7 @@ pub struct RmcpAdapter<R: ToolRegistry> {
 
 impl<R: ToolRegistry> RmcpAdapter<R> {
     /// Build an adapter around an existing registry handle, an optional
-    /// FEAT-4d activity context, and the surface it fronts. Pass `None`
+    /// Activity context, and the surface it fronts. Pass `None`
     /// for activity_ctx in tests / stub binaries with no Tauri runtime
     /// bound.
     pub fn new(
@@ -303,7 +303,7 @@ impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
             })
             .await;
 
-        // FEAT-4d emission point.
+        // Emission point.
         // The success branch routes through the privacy-safe summariser;
         // the error branch clips at ERROR_CLIP_CAP chars before pushing.
         let (summary, result_variant) = match &result {
@@ -635,7 +635,7 @@ mod tests {
         ));
         drop(ring_guard);
 
-        // (d) the recording emitter saw the same entry — the FEAT-4d
+        // (d) the recording emitter saw the same entry — the
         // `mcp:activity` Tauri-event surface still fires through the
         // rmcp path.
         let emitted = emitter.entries();

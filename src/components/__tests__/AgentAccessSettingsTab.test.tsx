@@ -1,5 +1,5 @@
 /**
- * Tests for AgentAccessSettingsTab — FEAT-4e/FEAT-4h Settings tab.
+ * Tests for AgentAccessSettingsTab — Settings tab.
  *
  * Validates:
  *  - Renders the happy-path layout (RO toggle, socket path, copy
@@ -126,12 +126,12 @@ function makeRwStatus(overrides: Partial<McpRwStatus> = {}): McpRwStatus {
 
 /**
  * Mirrors the production `ActivityEntry` shape (wire payload emitted on
- * `mcp:activity`).  Includes the FEAT-4h slice 3 additions:
+ * `mcp:activity`). Includes the slice 3 additions:
  *   - `sessionId` — required per-connection ULID
  *   - `opRef` — optional snake_case OpRef populated only for RW + ok
  *
  * Factory defaults match the most common fixture (agent + ok + opRef
- * present) so FEAT-4h slice 3 tests read cleanly; overrides let tests
+ * Present) so slice 3 tests read cleanly; overrides let tests
  * flip `actorKind` / `result` / `opRef` with one line.
  */
 interface ActivityEntryFixture {
@@ -625,7 +625,7 @@ describe('AgentAccessSettingsTab — activity feed', () => {
 })
 
 // ---------------------------------------------------------------------------
-// FEAT-4h slice 3 — per-entry Undo button on agent-authored RW rows.
+// Slice 3 — per-entry Undo button on agent-authored RW rows.
 // Visibility rules (button renders iff all three hold):
 //   - actorKind === 'agent'
 //   - result.kind === 'ok'
@@ -772,7 +772,7 @@ describe('AgentAccessSettingsTab — undo agent op', () => {
     expect(btn).toHaveAttribute('aria-busy', 'true')
     expect(btn.querySelector('[data-slot="spinner"]')).not.toBeNull()
 
-    // Resolve the pending invoke — UX-252: a successful revert marks
+    // Resolve the pending invoke — a successful revert marks
     // this opRef terminal-success so the per-entry Undo button drops
     // out of the DOM entirely (instead of re-enabling). The entry row
     // itself stays rendered — only the action affordance vanishes.
@@ -942,7 +942,7 @@ describe('AgentAccessSettingsTab — undo agent op', () => {
 })
 
 // ---------------------------------------------------------------------------
-// FEAT-4h slice 4 — per-session bulk-revert on the activity feed.
+// Slice 4 — per-session bulk-revert on the activity feed.
 //
 // A session header renders on the first-seen entry (newest-first) of
 // each session that has ≥ 2 undoable ops.  The header carries a
@@ -1437,7 +1437,7 @@ describe('AgentAccessSettingsTab — revert session', () => {
 })
 
 // ---------------------------------------------------------------------------
-// UX-252 — terminal-state tracking for successfully-reverted opRefs.
+// Terminal-state tracking for successfully-reverted opRefs.
 //
 // A successful per-entry Undo OR per-session bulk revert adds every
 // reverted opRef's `${device_id}:${seq}` key to an in-component
@@ -1449,7 +1449,7 @@ describe('AgentAccessSettingsTab — revert session', () => {
 // behaviour.  On error no keys are added, so the user can retry.
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessSettingsTab — revertedOpKeys tracking (UX-252)', () => {
+describe('AgentAccessSettingsTab — revertedOpKeys tracking', () => {
   const undoLabel = 'Undo this agent action'
 
   it('hides the per-entry Undo button after a successful revert', async () => {
@@ -1685,7 +1685,7 @@ describe('AgentAccessSettingsTab — revertedOpKeys tracking (UX-252)', () => {
 })
 
 // ---------------------------------------------------------------------------
-// UX-253 — per-entry Undo button carries a visible text label next to
+// Per-entry Undo button carries a visible text label next to
 // the icon on coarse-pointer (touch) devices.
 //
 // Desktop keeps the minimal icon-only chrome. Touch users see "Undo"
@@ -1696,7 +1696,7 @@ describe('AgentAccessSettingsTab — revertedOpKeys tracking (UX-252)', () => {
 // (span present, class pinned) rather than computed visibility.
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessSettingsTab — touch discoverability (UX-253)', () => {
+describe('AgentAccessSettingsTab — touch discoverability', () => {
   const undoLabel = 'Undo this agent action'
 
   it('renders the buttonText span with the responsive class when the icon is visible', async () => {
@@ -1752,7 +1752,7 @@ describe('AgentAccessSettingsTab — touch discoverability (UX-253)', () => {
     })
     expect(btn.querySelector('[data-slot="spinner"]')).not.toBeNull()
 
-    // Resolve the deferred invoke; UX-252 then removes the entire
+    // Resolve the deferred invoke; then removes the entire
     // button from the DOM on success.
     await act(async () => {
       resolveRevert?.(undefined)

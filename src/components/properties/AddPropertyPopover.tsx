@@ -90,7 +90,7 @@ export function AddPropertyPopover({
     [isControlled, controlledOnOpenChange],
   )
 
-  // UX-248 — Unicode-aware fold.  Both the filter and the
+  // Unicode-aware fold. Both the filter and the
   // "exists-exact-match" check must agree on Unicode equivalence
   // (`café-visits` matching `cafe`), otherwise the picker shows
   // the matching definition AND the `t('pageProperty.createButton')`
@@ -180,7 +180,7 @@ export function AddPropertyPopover({
         ))}
       </ScrollArea>
 
-      {/* "Create new definition" prompt — UX-272 sub-fix 7: surface the
+      {/* "Create new definition" prompt —  sub-fix 7: surface the
           default value type so users know what they get when clicking. */}
       {supportCreateDef && defSearch.trim() && !searchMatchesExistingDef && !creatingDef && (
         <Button

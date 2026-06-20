@@ -120,7 +120,7 @@ describe('BlockLink Backspace deletes the chip cleanly (#1739)', () => {
   })
 })
 
-describe('BlockLink broken link recovery (UX-25)', () => {
+describe('BlockLink broken link recovery', () => {
   /** Helper: invoke the NodeView factory and return the DOM + view object. */
   function createNodeView(options: {
     id: string

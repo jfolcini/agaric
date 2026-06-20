@@ -8,7 +8,7 @@
  *  - List navigation: delegates to `useListKeyboardNavigation`'s handler
  *    (arrows / Home / End / PageUp / PageDown), calling `preventDefault`
  *    when the handler reports it consumed the key.
- *  - Batch selection (#81 / PEND-57, mirroring `useTrashListShortcuts`):
+ * Batch selection (#81 / mirroring `useTrashListShortcuts`):
  *    Cmd/Ctrl+A selects every visible page, Escape clears the selection.
  *    Escape is gated on a non-empty selection so it doesn't swallow the
  *    key for other consumers (e.g. closing the create form) when nothing
@@ -52,7 +52,7 @@ export function usePageBrowserKeyboard({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [navHandleKeyDown])
 
-  // #81 / PEND-57 — document-level batch-selection shortcuts, mirroring
+  // #81 / document-level batch-selection shortcuts, mirroring
   // the `useTrashListShortcuts` precedent: Cmd/Ctrl+A selects every
   // visible page, Escape clears the selection. Gated on a non-empty
   // selection for Escape so it doesn't swallow the key for other consumers

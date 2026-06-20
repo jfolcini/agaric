@@ -1,4 +1,4 @@
-/// SQL-review M-1: the two production apply-tx sites in this module —
+/// SQL-review the two production apply-tx sites in this module —
 /// `apply_op` (handlers/apply.rs) and the `BatchApplyOps` arm of
 /// `handle_foreground_task` (handlers/task_handlers.rs) — must open
 /// their write transaction via [`crate::db::begin_immediate_logged`],
@@ -48,12 +48,12 @@ fn apply_tx_uses_begin_immediate_not_deferred() {
     assert!(
         all_prod.contains("crate::db::begin_immediate_logged(pool, \"materializer_apply_op\")"),
         "apply_op must open its write tx via `begin_immediate_logged` with the \
-         `materializer_apply_op` label — see SQL-review M-1.",
+         `materializer_apply_op` label — see SQL-review .",
     );
     assert!(
         all_prod.contains("crate::db::begin_immediate_logged(pool, \"materializer_apply_batch\")"),
         "BatchApplyOps must open its write tx via `begin_immediate_logged` with \
-         the `materializer_apply_batch` label — see SQL-review M-1.",
+         the `materializer_apply_batch` label — see SQL-review .",
     );
 
     // Defence in depth: the production paths must not regress to a
@@ -65,6 +65,6 @@ fn apply_tx_uses_begin_immediate_not_deferred() {
         !all_prod.contains("pool.begin()"),
         "production code in src/materializer/handlers/ must not call bare \
          `pool.begin()` (DEFERRED isolation) — use `begin_immediate_logged` \
-         so sync-burst contention serialises upfront. See SQL-review M-1.",
+         so sync-burst contention serialises upfront. See SQL-review .",
     );
 }

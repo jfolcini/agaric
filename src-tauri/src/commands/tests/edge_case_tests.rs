@@ -291,7 +291,7 @@ async fn f14_page_size_none_uses_default() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();

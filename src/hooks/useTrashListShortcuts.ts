@@ -5,9 +5,9 @@
  * Combines (1) generic list navigation via the supplied
  * useListKeyboardNavigation handler (Arrow / Home / End / PageUp /
  * PageDown), (2) Space toggle, Ctrl/Cmd+A select-all, Escape clear,
- * and (3) UX-275 sub-fix 3 batch toolbar shortcuts (Shift+R restore,
+ * And (3) sub-fix 3 batch toolbar shortcuts (Shift+R restore,
  * Shift+Delete / Shift+Backspace purge). Extracted from TrashView for
- * MAINT-128.
+ *.
  */
 
 import { useEffect } from 'react'
@@ -78,12 +78,12 @@ export function useTrashListShortcuts({
         return
       }
 
-      // UX-275 sub-fix 3: batch toolbar shortcuts. Delegated to a helper so
+      // Sub-fix 3: batch toolbar shortcuts. Delegated to a helper so
       // this effect stays under oxlint's eslint/complexity ceiling.
       tryBatchShortcut(e)
     }
 
-    // UX-275 sub-fix 3: batch toolbar shortcuts. Mirrors the keyboard-hint
+    // Sub-fix 3: batch toolbar shortcuts. Mirrors the keyboard-hint
     // pattern surfaced by HistorySelectionToolbar — fires only while the
     // batch toolbar is mounted (selectedSize > 0). Shift+R restores the
     // selection (gated by the >5 confirm), Shift+Delete purges (always

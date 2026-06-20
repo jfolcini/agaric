@@ -1,5 +1,5 @@
 /**
- * PEND-54 — Lightweight glob validation for the frontend.
+ * Lightweight glob validation for the frontend.
  *
  * The backend re-validates and brace-expands authoritatively
  * (`src-tauri/src/fts/glob_filter.rs`); the frontend duplicates the
@@ -88,7 +88,7 @@ function stepGlobValidate(
  * Mirrors the Rust implementation in `src-tauri/src/fts/glob_filter.rs`
  * so chip-side preview counts match the backend exactly.
  *
- * DSL-A4 — this is a parity reference: it currently has no production
+ * This is a parity reference: it currently has no production
  * caller (the chip-side preview-count consumer was never built; the
  * glob value is passed verbatim to the backend, which expands it
  * authoritatively). It is intentionally retained, exported, and pinned

@@ -1,5 +1,5 @@
 /**
- * PEND-73 Phase 2.R4 — tests for the AbortSignal IPC wrapper.
+ * Phase 2.R4 — tests for the AbortSignal IPC wrapper.
  */
 
 import { describe, expect, it } from 'vitest'

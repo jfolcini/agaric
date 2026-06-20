@@ -7,7 +7,7 @@ import { axe as _axe } from 'vitest-axe'
 // `aria-hidden-focus` rule even though the guards are never user-reachable.
 // jsdom's looser focus-visibility computation hid the violation. Tests that
 // specifically want to verify `aria-hidden-focus` can re-enable it by
-// passing `rules: { 'aria-hidden-focus': { enabled: true } }`. PEND-37.
+// Passing `rules: { 'aria-hidden-focus': { enabled: true } }`..
 export async function axe(
   target: Parameters<typeof _axe>[0],
   options?: Parameters<typeof _axe>[1],

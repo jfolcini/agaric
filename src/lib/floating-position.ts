@@ -8,7 +8,7 @@
  * `(-9999px, -9999px)` so it cannot float orphaned mid-page after
  * the anchor scrolls or moves.
  *
- * MAINT-175: shared helper consolidates the
+ * Shared helper consolidates the
  * `BlockPropertyEditor` (kept popup at last position on failure)
  * and `suggestion-renderer` (off-screen fallback) call sites.
  */

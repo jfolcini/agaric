@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 /**
- * Tests for PageBrowserBatchToolbar (#81 / PEND-57, CORE scope).
+ * Tests for PageBrowserBatchToolbar (#81 / CORE scope).
  *
  * Validates the three bulk actions wired to the typed Tauri bindings:
  *  - Trash       → delete_blocks_by_ids

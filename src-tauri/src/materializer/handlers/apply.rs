@@ -4,11 +4,11 @@
 
 use super::*;
 
-/// PEND-25 L2/L9: takes `&Arc<OpRecord>` so callers (the
+/// /L9: takes `&Arc<OpRecord>` so callers (the
 /// `MaterializeTask::ApplyOp` arm) that already hold the record as
 /// `Arc<OpRecord>` thread the borrow through without a deep clone.
 pub(super) async fn apply_op(pool: &SqlitePool, record: &Arc<OpRecord>) -> Result<(), AppError> {
-    // SQL-review M-1: route through `begin_immediate_logged` so
+    // SQL-review route through `begin_immediate_logged` so
     // sync-burst contention surfaces as upfront serialised wait (with
     // a `warn!` if slow) instead of mid-tx `busy_timeout` stalls
     // under SQLite's default DEFERRED isolation.
@@ -255,7 +255,7 @@ pub(crate) async fn dispatch_delete_descendants(
 
     let Some(space_id) = space_id else {
         // Pre-UPDATE space resolve returned None — the seed has no
-        // resolvable space (pre-FEAT-3 data, or a block whose owning
+        // Resolvable space (pre- data, or a block whose owning
         // page never received a `space` SetProperty). Nothing to do —
         // there's no canonical engine to mirror onto. The SQL-side
         // delete already stands as the durable outcome.
@@ -368,7 +368,7 @@ pub(super) struct ApplyEffects {
     /// Space id resolved for the `DeleteBlock` seed at PRE-UPDATE
     /// time. `None` for every other op type and for delete ops on
     /// blocks that have no resolvable space (a permitted but rare
-    /// state — pre-FEAT-3 data). Required because
+    /// State — pre- data). Required because
     /// `resolve_block_space` filters `deleted_at IS NULL`; a
     /// post-commit resolve attempt would fail on every cohort row.
     pub delete_space_id: Option<crate::space::SpaceId>,
@@ -405,7 +405,7 @@ pub(super) async fn apply_op_tx(
             // unresolved space) inside the `via_loro` helpers
             // themselves.
             let p: CreateBlockPayload = serde_json::from_str(&record.payload)?;
-            // PEND-56b: capture payload fields for the post-projection
+            // Capture payload fields for the post-projection
             // pages_cache count refresh (`maintain_pages_cache_counts_after_op`).
             pre_state = PreOpState::Create {
                 block_id: p.block_id.as_str().to_owned(),
@@ -417,7 +417,7 @@ pub(super) async fn apply_op_tx(
         }
         OpType::EditBlock => {
             let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
-            // PEND-56b: capture the new text so the post-projection
+            // Capture the new text so the post-projection
             // recompute knows which target pages to refresh.
             pre_state = PreOpState::Edit {
                 block_id: p.block_id.as_str().to_owned(),
@@ -443,7 +443,7 @@ pub(super) async fn apply_op_tx(
             let cohort = collect_delete_cohort(conn, &p).await?;
             let delete_space_id =
                 crate::space::resolve_block_space(&mut *conn, &p.block_id).await?;
-            // PEND-56b: feed the cohort into the count-refresh hook.
+            // Feed the cohort into the count-refresh hook.
             pre_state = PreOpState::Cohort(cohort.clone());
             apply_delete_block_via_loro(conn, &record.device_id, &p, record.created_at).await?;
             effects.deleted_cohort = cohort;
@@ -467,14 +467,14 @@ pub(super) async fn apply_op_tx(
             // `apply_restore_block` is a no-op on an already-restored
             // block).
             let cohort = collect_restore_cohort(conn, &p).await?;
-            // PEND-56b: cohort feeds the count refresh.
+            // Cohort feeds the count refresh.
             pre_state = PreOpState::Cohort(cohort.clone());
             apply_restore_block_via_loro(conn, &record.device_id, &p).await?;
             effects.restored_cohort = cohort;
         }
         OpType::PurgeBlock => {
             let p: PurgeBlockPayload = serde_json::from_str(&record.payload)?;
-            // PEND-56b: capture the affected pages BEFORE the SQL
+            // Capture the affected pages BEFORE the SQL
             // cascade clears `block_links` (FK CASCADE on mig 0061).
             // The cascade walks the descendant CTE so we mirror that
             // shape to collect the set we need to refresh.
@@ -533,7 +533,7 @@ pub(super) async fn apply_op_tx(
             apply_rename_attachment_tx(conn, p).await?;
         }
     }
-    // PEND-56b: maintain `pages_cache.{inbound_link_count,child_block_count}`.
+    // Maintain `pages_cache.{inbound_link_count,child_block_count}`.
     // Runs after every per-op projection inside the same transaction, so
     // the count UPDATEs commit atomically with the block mutations. The
     // hook is a no-op for op types that cannot affect the counts (see

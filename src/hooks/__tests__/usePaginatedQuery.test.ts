@@ -53,7 +53,7 @@ describe('usePaginatedQuery', () => {
     expect(result.current.items).toEqual(['x'])
   })
 
-  it('discards an in-flight response after `enabled` flips false (FE-1)', async () => {
+  it('discards an in-flight response after `enabled` flips false', async () => {
     let resolve!: (v: PaginatedResponse<string>) => void
     const queryFn = vi.fn(
       () =>
@@ -437,7 +437,7 @@ describe('usePaginatedQuery', () => {
     expect(result.current.totalCount).toBeUndefined()
   })
 
-  // ── AbortController (PEND-58f FE-2) ─────────────────────────────
+  // ── AbortController ─────────────────────────────
 
   it('passes an AbortSignal to queryFn', async () => {
     const queryFn = vi.fn().mockResolvedValue(makePage(['a']))

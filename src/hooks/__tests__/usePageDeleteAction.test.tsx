@@ -1,5 +1,5 @@
 /**
- * Tests for usePageDeleteAction hook (PEND-68 Part A).
+ * Tests for usePageDeleteAction hook (Part A).
  *
  * Validates:
  *  - `requestDelete()` opens the ConfirmDialog (dialog mount appears in DOM).

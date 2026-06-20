@@ -1,5 +1,5 @@
 /**
- * PEND-60 Phase 1 — Caret-anchored autocomplete popover.
+ * Phase 1 — Caret-anchored autocomplete popover.
  *
  * Renders a Radix Popover anchored at a caller-supplied `DOMRect`
  * (the caret pixel position) containing a cmdk-based list of value
@@ -157,7 +157,7 @@ export function AutocompletePopover({
     lastEmittedKeyRef.current = key
     onAriaIdsChange({ listboxId: listbox.id, activeDescendantId: activeId })
   }, [onAriaIdsChange])
-  // PEND-73 Phase 4.M7 — investigated removing this no-deps post-commit
+  // Phase 4.M7 — investigated removing this no-deps post-commit
   // effect as "redundant with the SelectedItemBridge below". It is NOT
   // redundant: the bridge fires from INSIDE `<Command>` (a child of
   // PopoverContent), whose first effect runs before the listbox's DOM
@@ -226,7 +226,7 @@ export function AutocompletePopover({
                   key={item.value}
                   value={item.value}
                   onSelect={() => onSelect(item.value)}
-                  // PEND-73 Phase 3.U5 follow-up — keep the search input
+                  // Phase 3.U5 follow-up — keep the search input
                   // focused through the click. Without this, the input's
                   // synchronous `onInputBlur` flips `inputFocused` → false
                   // on mousedown, which closes `autocompleteOpen` (gated

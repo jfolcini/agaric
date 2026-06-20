@@ -150,7 +150,7 @@ describe('BlockRefPicker suggestion config', () => {
     expect(mockRun).toHaveBeenCalled()
   })
 
-  // ── UX-232 ─────────────────────────────────────────────────────────────
+  // ── ─────────────────────────────────────────────────────────────
   it('command appends a single trailing space via insertContent(" ") — exact order', () => {
     const { opts } = buildPlugins()
 
@@ -194,9 +194,9 @@ describe('BlockRefPicker suggestion config', () => {
   })
 })
 
-// ── Integration: real editor doc state after the picker chain (UX-232) ──
+// ── Integration: real editor doc state after the picker chain ──
 
-describe('BlockRefPicker real-editor chain result (UX-232)', () => {
+describe('BlockRefPicker real-editor chain result', () => {
   let editor: Editor | undefined
 
   afterEach(() => {
@@ -262,9 +262,9 @@ describe('BlockRefPicker real-editor chain result (UX-232)', () => {
   })
 })
 
-// ── Input rule: ((text)) auto-resolution (MAINT-130(c)) ─────────────────
+// ── Input rule: ((text)) auto-resolution ((c)) ─────────────────
 
-describe('BlockRefPicker input rule (MAINT-130(c))', () => {
+describe('BlockRefPicker input rule ((c))', () => {
   it('registers an input rule via addInputRules', () => {
     const ext = BlockRefPicker.configure({ items: () => [] })
     expect(ext.config.addInputRules).toBeDefined()
@@ -492,7 +492,7 @@ describe('BlockRefPicker input rule (MAINT-130(c))', () => {
   })
 })
 
-// ── FE-M-15 ──────────────────────────────────────────────────────────────
+// ── ──────────────────────────────────────────────────────────────
 //
 // `insertContentAt(insertPos, ...)` clamps silently rather than throwing
 // when `insertPos` is past the doc's end. The user can edit (or clear) the
@@ -502,7 +502,7 @@ describe('BlockRefPicker input rule (MAINT-130(c))', () => {
 // `insertContentAt`, and fall back to plain text at the current cursor
 // when the offset is stale.
 
-describe('BlockRefPicker stale-insertPos guard (FE-M-15)', () => {
+describe('BlockRefPicker stale-insertPos guard ()', () => {
   it('falls back to plain text at cursor when insertPos > doc.content.size', async () => {
     const insertContentCalls: unknown[] = []
     const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
@@ -560,9 +560,9 @@ describe('BlockRefPicker stale-insertPos guard (FE-M-15)', () => {
   })
 })
 
-// ── resolveBlockRefFromSelection command (MAINT-130(c)) ─────────────────
+// ── resolveBlockRefFromSelection command ((c)) ─────────────────
 
-describe('resolveBlockRefFromSelection command (MAINT-130(c))', () => {
+describe('resolveBlockRefFromSelection command ((c))', () => {
   /** Helper: create a chainProxy that tracks deleteRange + insertContentAt calls. */
   function createChainProxy() {
     const deleteRangeCalls: Array<{ from: number; to: number }> = []

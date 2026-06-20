@@ -71,7 +71,7 @@ export function BlockPropertyDrawer({
   useEffect(() => {
     if (!blockId || !open) return
     setLoading(true)
-    // M-85: `listPropertyDefs` is paginated. The drawer is single-page-by-design —
+    // `listPropertyDefs` is paginated. The drawer is single-page-by-design —
     // it shows the property-defs vocabulary picker, which fits well under one page.
     // FE-H-17: use `Promise.allSettled` so a single rejection no longer fails the
     // whole load. Each fetch reports its own failure via `reportIpcError`, and
@@ -104,7 +104,7 @@ export function BlockPropertyDrawer({
     )
   }, [blockId, open, t, getProperties, listPropertyDefs])
 
-  // Save / delete via shared hook (M-28)
+  // Save / delete via shared hook
   const { handleSave, handleDelete } = usePropertySave({
     blockId,
     setProperties,

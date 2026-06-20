@@ -12,7 +12,7 @@ use agaric_lib::commands::{
     batch_resolve_inner, create_block_inner, edit_block_inner, get_batch_properties_inner,
     get_block_history_inner, get_block_inner, list_blocks_inner, set_property_inner,
 };
-// FEAT-3p4 — inline copies of the test helpers, mirrored from
+// Inline copies of the test helpers, mirrored from
 // `agaric_lib::commands::tests::common`. The `tests` module is
 // `#[cfg(test)]`-gated so it is invisible to bench targets; duplicating
 // the constants + helper here is the simplest way to keep benches
@@ -372,7 +372,7 @@ fn bench_list_blocks_empty(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "list_empty"));
-    // FEAT-3p4 — seed the test space so the FEAT-3p4-required `space_id`
+    // Seed the test space so the -required `space_id`
     // filter has a valid block to point at; nothing else to assign.
     rt.block_on(assign_all_to_test_space(&pool));
 
@@ -586,7 +586,7 @@ fn bench_batch_resolve(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("batch_resolve");
 
-    // FEAT-3 Phase 7 — batch_resolve_inner takes a required space_id.
+    // Phase 7 — batch_resolve_inner takes a required space_id.
     // The bench seeds a synthetic space block + assigns every seeded
     // block to it so the membership filter doesn't drop the entire
     // result set (which would skew the throughput numbers).
@@ -640,7 +640,7 @@ fn bench_batch_resolve(c: &mut Criterion) {
                     let pool = pool.clone();
                     let ids = ids.clone();
                     async move {
-                        // PEND-18 Phase 2 / FEAT-3p4: `batch_resolve_inner`
+                        // Phase 2 / `batch_resolve_inner`
                         // takes `&SpaceScope` (was `Option<String>`).
                         // Wrap the bench fixture's space ULID in
                         // `SpaceScope::Active`.

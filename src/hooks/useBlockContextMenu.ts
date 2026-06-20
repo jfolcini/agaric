@@ -8,7 +8,7 @@
  * - `editingProp`: `{ key, value } | null` — property currently being edited
  * - `editingKey`:  `{ oldKey, value } | null` — property key currently being renamed
  *
- * Extracted from `SortableBlock` (MAINT-128).
+ * Extracted from `SortableBlock`.
  */
 
 import { useCallback, useState } from 'react'

@@ -7,9 +7,9 @@
  *  - Loading state shows spinner and disables buttons
  *  - Children slot renders extra content
  *  - a11y compliance (axe audit)
- *  - UX-259: destructive variant flips initial focus to Cancel so a reflex
+ * Destructive variant flips initial focus to Cancel so a reflex
  *    Enter on open dismisses the dialog instead of confirming.
- *  - PEND-23 H3: when `useIsMobile()` is true the dialog renders as a Sheet
+ * When `useIsMobile()` is true the dialog renders as a Sheet
  *    (`side="bottom"`) and the same controlled API + a11y guarantees still
  *    hold (see `describe('mobile path …')` block).
  */
@@ -260,9 +260,9 @@ describe('ConfirmDialog', () => {
     })
   })
 
-  // ─── UX-259: destructive variant safety ─────────────────────────────────────
+  // ─── destructive variant safety ─────────────────────────────────────
 
-  describe('destructive variant (UX-259)', () => {
+  describe('destructive variant', () => {
     it('focuses the Cancel button on open (not the Action button)', () => {
       render(<ConfirmDialog {...defaultProps} variant="destructive" />)
 
@@ -328,7 +328,7 @@ describe('ConfirmDialog', () => {
     })
   })
 
-  // ─── PEND-23 H3: mobile path renders as a Sheet ────────────────────────────
+  // ─── mobile path renders as a Sheet ────────────────────────────
 
   describe('mobile path (Sheet, side="bottom")', () => {
     const defaultProps = {
@@ -727,7 +727,7 @@ describe('ConfirmDialog', () => {
       expect(screen.queryByText(TITLE)).not.toBeInTheDocument()
     })
 
-    it('reflex Enter on open dismisses without firing onConfirm (UX-259)', async () => {
+    it('reflex Enter on open dismisses without firing onConfirm', async () => {
       const user = userEvent.setup()
       const onConfirm = vi.fn()
       const onOpenChange = vi.fn()

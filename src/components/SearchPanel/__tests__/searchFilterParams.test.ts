@@ -1,5 +1,5 @@
 /**
- * Tests for `astFilterParams` (PEND-58g FE-A18).
+ * Tests for `astFilterParams` (FE-A18).
  *
  * The function maps a parsed `AstFilterProjection` (+ resolved tag ids)
  * to the `searchBlocks` IPC filter bundle. The contract under test:

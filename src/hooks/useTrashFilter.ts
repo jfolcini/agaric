@@ -1,9 +1,9 @@
 /**
- * useTrashFilter — UX-221 / UX-248 search-filter state for TrashView.
+ * UseTrashFilter — search-filter state for TrashView.
  *
  * Owns the filter input value, its 300ms debounced echo, the
  * Unicode-aware filteredBlocks memo, and the clearFilter helper.
- * Extracted from TrashView.tsx (MAINT-128) so the orchestrator stays
+ * Extracted from TrashView.tsx so the orchestrator stays
  * focused on data fetching and dialog wiring.
  */
 
@@ -45,7 +45,7 @@ export function useTrashFilter({ blocks }: UseTrashFilterOptions): UseTrashFilte
 
   const filteredBlocks = useMemo(() => {
     if (!debouncedFilter) return blocks
-    // UX-248 — Unicode-aware fold (Turkish / German / accented).
+    // Unicode-aware fold (Turkish / German / accented).
     return blocks.filter((b) => matchesSearchFolded(b.content ?? '', debouncedFilter))
   }, [blocks, debouncedFilter])
 

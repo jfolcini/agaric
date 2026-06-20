@@ -136,10 +136,10 @@ describe('QrScanner', () => {
     expect(onScan).not.toHaveBeenCalled()
   })
 
-  // UX-264: parent receives an explicit camera-denied signal so it can
+  // Parent receives an explicit camera-denied signal so it can
   // auto-switch to manual entry rather than leave the user staring at the
   // in-scanner error indefinitely.
-  it('calls onCameraDenied when camera access fails (UX-264)', async () => {
+  it('calls onCameraDenied when camera access fails', async () => {
     const user = userEvent.setup()
     const onScan = vi.fn()
     const onError = vi.fn()
@@ -155,7 +155,7 @@ describe('QrScanner', () => {
     expect(onError).toHaveBeenCalledWith('Camera access denied')
   })
 
-  it('does not call onCameraDenied on successful scan (UX-264)', async () => {
+  it('does not call onCameraDenied on successful scan', async () => {
     mockStartBehavior = 'scan'
     mockScanData = 'success'
 

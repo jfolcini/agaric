@@ -58,7 +58,7 @@ pub(crate) const MAX_BLOCK_DEPTH: i64 = 20;
 /// follow-up; this change keeps the validator's return type stable so
 /// existing callers don't need updating.
 ///
-/// MAINT-163: chrono's `%Y-%m-%d` accepts non-zero-padded forms like
+/// Chrono's `%Y-%m-%d` accepts non-zero-padded forms like
 /// `2025-1-1` and 2-digit years like `25-1-1`. Pre-validate the strict
 /// shape (`\d{4}-\d{2}-\d{2}`) before delegating calendar validity to
 /// chrono — otherwise these slip through and downstream callers get
@@ -250,7 +250,7 @@ pub(crate) async fn create_block_in_tx(
             return Err(AppError::NotFound(format!("parent block '{pid}'")));
         }
 
-        // L-37: Enforce `MAX_BLOCK_DEPTH` on the create path. The new block
+        // Enforce `MAX_BLOCK_DEPTH` on the create path. The new block
         // will live at depth = parent_depth + 1, so reject when that exceeds
         // the documented limit (docs/ARCHITECTURE.md §20). Without this guard
         // a user could repeatedly create blocks under the deepest leaf and
@@ -319,7 +319,7 @@ pub(crate) async fn create_block_in_tx(
         None
     };
 
-    // #1257 PR-2: route the create through the SAME engine-apply + dense-rank
+    // #1257 route the create through the SAME engine-apply + dense-rank
     // projection the boot-replay / sync `ApplyOp` path uses, IN this CommandTx,
     // INSTEAD of an inline provisional INSERT. `apply_create_block_via_loro`:
     //   1. resolves the block's space (parent for content, self for pages),
@@ -367,7 +367,7 @@ pub(crate) async fn create_block_in_tx(
     .execute(&mut **tx)
     .await?;
 
-    // #1257 PR-2 — ENGINE-ABSENT bare-append position parity. When the engine
+    // #1257 ENGINE-ABSENT bare-append position parity. When the engine
     // path engages, `reproject_dense_positions` gives every sibling a concrete
     // dense 1-based rank (never the sentinel). But when the create falls back to
     // the SQL-only path (engine uninitialised / space unresolved) AND it's a
@@ -403,7 +403,7 @@ pub(crate) async fn create_block_in_tx(
         .await?;
     }
 
-    // PEND-76 F5 — referential cross-space integrity: reject creating a
+    // Referential cross-space integrity: reject creating a
     // block whose content references a block in a different space. Runs
     // after the INSERT so the new block's `page_id` (hence space) is
     // resolvable; an unparented/orphan block resolves to no space and is
@@ -434,7 +434,7 @@ pub(crate) async fn create_block_in_tx(
             .await?;
     }
 
-    // #1257 PR-2: the engine projected the authoritative DENSE position; read
+    // #1257 the engine projected the authoritative DENSE position; read
     // it back so the returned `BlockRow` reflects the persisted rank rather
     // than the old provisional value. (The engine-absent fallback wrote the
     // provisional rank here instead — either way this is the committed row.)
@@ -466,7 +466,7 @@ pub(crate) async fn create_block_in_tx(
 
 /// Snapshot of a `property_definitions` row's validation-relevant fields.
 ///
-/// PEND-28a M2: pre-fetched by the caller of [`set_property_in_tx`] and
+/// Pre-fetched by the caller of [`set_property_in_tx`] and
 /// passed to [`validate_property_value`] so the helper stays sync and
 /// trivially unit-testable. The full `PropertyDefinition` struct carries
 /// `key` and `created_at` fields that the validation logic does not need;
@@ -479,7 +479,7 @@ struct PropertyDeclaration {
 /// Validate a [`SetPropertyPayload`] against the reserved-key shape rules
 /// and (optionally) against a pre-fetched `property_definitions` row.
 ///
-/// PEND-28a M2: structural extraction from [`set_property_in_tx`]. This
+/// Structural extraction from [`set_property_in_tx`]. This
 /// function has no side effects — it never touches the DB and only reads
 /// from its inputs — so unit tests can exercise the full validation matrix
 /// without spinning up a pool.
@@ -496,9 +496,9 @@ struct PropertyDeclaration {
 ///   4. Declared-type vs. payload-shape check (only for non-reserved
 ///      keys — reserved-key shape is fixed by step 3 and the columns on
 ///      `blocks` already constrain the type).
-///   5. BUG-20 select-options-membership: when the definition declares
-///      `value_type = "select"` with a non-NULL `options` JSON array, the
-///      supplied `value_text` must be one of the listed options.
+/// 5. select-options-membership: when the definition declares
+///    `value_type = "select"` with a non-NULL `options` JSON array, the
+///    supplied `value_text` must be one of the listed options.
 ///
 /// `declaration` is `None` when no `property_definitions` row exists for
 /// the key — type/options checks are skipped (custom keys without a
@@ -589,7 +589,7 @@ fn validate_property_value(
             }
         }
 
-        // BUG-20: Options membership validation for select-type
+        // Options membership validation for select-type
         // properties. When the definition declares a non-NULL options
         // array, the supplied value_text must be one of the listed
         // options. A NULL options column means "no restriction" — a
@@ -639,7 +639,7 @@ pub(crate) async fn set_property_in_tx(
     value_bool: Option<bool>,
 ) -> Result<(BlockRow, op_log::OpRecord), AppError> {
     // 1. Build and validate the payload before touching the DB.
-    //    PEND-28a M2: validation logic lives in `validate_property_value`
+    // Validation logic lives in `validate_property_value`
     //    above. The `property_definitions` row is pre-fetched here so the
     //    helper stays sync and unit-testable.
     let prop_payload = SetPropertyPayload {
@@ -696,7 +696,7 @@ pub(crate) async fn set_property_in_tx(
         )));
     }
 
-    // PEND-76 F5 — referential cross-space integrity (PEND-15 Phase 2):
+    // Referential cross-space integrity (Phase 2):
     // reject a ref-type property whose target lives in a different space
     // than the source block. No-op when `value_ref` is None (clear) and
     // exempts the reserved `space` key (how blocks move between spaces).
@@ -742,7 +742,7 @@ pub(crate) async fn set_property_in_tx(
         }
     }
 
-    // 4. #1257 PR-3: route the property write through the SAME engine-apply +
+    // 4. #1257 route the property write through the SAME engine-apply +
     // projection the boot-replay / sync `ApplyOp` path uses, IN this CommandTx,
     // INSTEAD of the inline reserved-column / `space` fan-out / `block_properties`
     // INSERT branches. `apply_set_property_via_loro` resolves the block's space,
@@ -799,7 +799,7 @@ pub(crate) async fn set_property_in_tx(
 // Tests — `validate_property_value` matrix
 // ===========================================================================
 //
-// PEND-28a M2: pin the pure-validation matrix extracted from
+// Pin the pure-validation matrix extracted from
 // `set_property_in_tx`. Each test exercises one (declared type ×
 // payload shape) cell. The helper is sync and DB-free, so these tests
 // don't need a pool.
@@ -962,7 +962,7 @@ mod validate_property_value_tests {
         }
     }
 
-    // --- select-typed declarations (BUG-20 options membership) ------------
+    // --- select-typed declarations (options membership) ------------
 
     #[test]
     fn validate_property_value_select_with_value_in_options_succeeds() {

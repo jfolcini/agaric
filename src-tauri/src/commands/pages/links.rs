@@ -29,19 +29,19 @@ const GRAPH_EDGE_WARN_THRESHOLD: usize = 50_000;
 /// Block-level links (where source is a content block) are rolled up to
 /// their parent page.
 ///
-/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the result set
+/// `scope` — [`SpaceScope::Active`] restricts the result set
 /// to edges where **both** the source page (`COALESCE(sb.parent_id,
 /// bl.source_id)`) and the target page (`bl.target_id`) carry
 /// `space = ?space_id`. This is the policy enforcement point for
 /// "no live links between spaces, ever" in the graph view: an edge
 /// crossing space boundaries must not surface in either space's
-/// graph. [`SpaceScope::Global`] keeps the pre-FEAT-3 cross-space
+/// Graph. [`SpaceScope::Global`] keeps the pre- cross-space
 /// behaviour for callers that span every space.
 ///
-/// `tag_ids` (PEND-35 Tier 4.5) — when `Some(non-empty)`, restricts
+/// `tag_ids` — when `Some(non-empty)`, restricts
 /// edges to those whose **target page** carries at least one of the
 /// listed tags via `block_tags` or `block_tag_inherited` (the same
-/// UX-250 union semantics `query_by_tags` resolves to: explicit
+/// Union semantics `query_by_tags` resolves to: explicit
 /// `block_tags`, materialised inheritance via `block_tag_inherited`,
 /// and inline `[[ULID]]` references via `block_tag_refs`). The audit
 /// implies the tag predicate filters the **page being linked TO** —
@@ -85,7 +85,7 @@ pub async fn list_page_links_inner_split(
     tag_ids: Option<&[String]>,
 ) -> Result<Vec<PageLink>, AppError> {
     let pool = read_pool;
-    // PEND-35 Tier 4.5 — encode the tag set as a JSON array so the SQL
+    // Encode the tag set as a JSON array so the SQL
     // can fan it out via `json_each(?2)` (mirrors the
     // `value_text_in_json` shape in `pagination::properties`). The
     // unfiltered branch passes `None` and the `(?2 IS NULL OR …)`
@@ -153,16 +153,16 @@ pub async fn list_page_links_inner_split(
     // is by construction a page id (the `[[ULID]]` token only ever
     // resolves to a page in the markdown serializer).
     //
-    // FEAT-3p4 (preserved) — `(?1 IS NULL OR ...)` filters both
+    // (preserved) — `(?1 IS NULL OR...)` filters both
     // endpoints by space membership. Cross-space rows cannot exist in
     // `page_link_cache` to begin with because the underlying
     // `block_links` rows are write-time-filtered to same-space pairs
-    // (PEND-15 Phase 3 in `cache::block_links::reindex_block_links`),
+    // (Phase 3 in `cache::block_links::reindex_block_links`),
     // but the explicit filter here defends against legacy rows that
-    // slipped in pre-PEND-15.
+    // Slipped in pre-.
     //
-    // PEND-20 F (preserved) — the `space_members` CTE is materialised
-    // once and reused for both endpoints. PEND-35 Tier 4.5 (preserved)
+    // F (preserved) — the `space_members` CTE is materialised
+    // Once and reused for both endpoints. (preserved)
     // — the tag-EXISTS branch UNIONs `block_tags`,
     // `block_tag_inherited`, and `block_tag_refs` to mirror the
     // canonical `tag_query::resolve_tag_leaves` union semantics.
@@ -237,7 +237,7 @@ pub async fn list_page_links_inner_split(
 
 /// Tauri command: list all page-to-page links for graph visualization.
 ///
-/// `tag_ids` (PEND-35 Tier 4.5) — when non-empty, restricts edges to
+/// `tag_ids` — when non-empty, restricts edges to
 /// those whose target page carries at least one of the listed tags. The
 /// frontend GraphView passes its active tag filter here so the backend
 /// no longer ships every space-wide edge for the renderer to discard.

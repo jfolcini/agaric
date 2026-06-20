@@ -180,7 +180,7 @@ describe('BlockPropertyEditor', () => {
     })
   })
 
-  // ── MAINT-103: portal + floating-ui ─────────────────────────────────────
+  // ── portal + floating-ui ─────────────────────────────────────
   describe('portal rendering', () => {
     it('renders the value popup as a portal in document.body, not inside the trigger tree', () => {
       const { container } = render(
@@ -190,12 +190,12 @@ describe('BlockPropertyEditor', () => {
       expect(popup).toBeInTheDocument()
       expect(popup).toHaveAttribute('data-editor-portal')
       // The popup must NOT live inside the rendered React subtree — that's
-      // the whole point of MAINT-103 (escapes overflow:hidden ancestors).
+      // The whole point of (escapes overflow:hidden ancestors).
       expect(container.contains(popup)).toBe(false)
       expect(popup?.parentElement).toBe(document.body)
     })
 
-    // PEND-28b H4 — this is a custom floating-UI portal, not a Radix
+    // This is a custom floating-UI portal, not a Radix
     // PopoverContent, so the Radix `max-w-[calc(100vw-2rem)]` baseline does
     // not apply. The inner ref-picker fieldset is hard-coded `w-56` and
     // would clip on a 360 px phone without an explicit viewport cap on the
@@ -431,7 +431,7 @@ describe('BlockPropertyEditor', () => {
       expect(setEditingProp).toHaveBeenCalledWith(null)
     })
 
-    // PEND-23 H1 — regression: the popover wrapper must expose listbox
+    // Regression: the popover wrapper must expose listbox
     // semantics, each option must carry `role="option"` + `aria-selected`,
     // and the listbox's `aria-activedescendant` must point at the selected
     // option's id. Mirrors the in-repo reference in
@@ -643,7 +643,7 @@ describe('BlockPropertyEditor', () => {
       expect(screen.queryByText('Page Beta')).not.toBeInTheDocument()
     })
 
-    // UX-248 — Unicode-aware fold via `matchesSearchFolded`.
+    // Unicode-aware fold via `matchesSearchFolded`.
     it('ref picker matches Turkish İstanbul when query is lowercase istanbul', () => {
       const unicodePages = [
         {

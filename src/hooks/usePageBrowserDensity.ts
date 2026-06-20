@@ -1,5 +1,5 @@
 /**
- * PEND-56 — `usePageBrowserDensity`.
+ * `usePageBrowserDensity`.
  *
  * Owns the `density` preference for the Pages view's row chrome. Three
  * modes: `compact` (32 px row, title + relative time only), `regular`

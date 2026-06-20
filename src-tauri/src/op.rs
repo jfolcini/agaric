@@ -216,8 +216,8 @@ pub struct RemoveTagPayload {
 
 /// Payload for the `set_property` op — upserts a typed key-value property on a block (exactly one value field must be set).
 ///
-/// `value_bool` (PEND-14) is marked `#[serde(default)]` so op-log entries
-/// written before PEND-14 (which had no `value_bool` column) still
+/// `value_bool` is marked `#[serde(default)]` so op-log entries
+/// Written before (which had no `value_bool` column) still
 /// deserialize — they yield `value_bool = None`. Mirrors the pattern used
 /// by [`DeleteAttachmentPayload::fs_path`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -544,7 +544,7 @@ pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), crate::error:
     .count();
 
     if count == 1 {
-        // L-6 — Reject empty / whitespace-only string fields. The frontend
+        // Reject empty / whitespace-only string fields. The frontend
         // already enforces non-empty values, but op-log entries can also
         // originate from MCP tools and import paths, so backend-side
         // validation prevents downstream parse failures (e.g. agenda code
@@ -871,7 +871,7 @@ mod tests {
         assert_eq!(mdeser.new_position, 3);
     }
 
-    /// PEND-14 backwards-compat: pre-existing op-log rows for `set_property`
+    /// Backwards-compat: pre-existing op-log rows for `set_property`
     /// were written without a `value_bool` field. Those entries must continue
     /// to deserialize, with `value_bool` defaulting to `None`. Mirrors the
     /// `delete_attachment_payload_legacy_json_deserializes_without_fs_path`
@@ -1421,7 +1421,7 @@ mod tests {
         assert!(err.to_string().contains("found 2"));
     }
 
-    /// PEND-14: validation accepts a payload whose only set value is
+    /// Validation accepts a payload whose only set value is
     /// `value_bool` (both `Some(true)` and `Some(false)`).
     #[test]
     fn validate_set_property_accepts_value_bool_alone() {
@@ -1442,7 +1442,7 @@ mod tests {
         }
     }
 
-    /// PEND-14: mixing `value_bool` with another set value field fails the
+    /// Mixing `value_bool` with another set value field fails the
     /// exactly-one-value check just like any other pair.
     #[test]
     fn validate_set_property_rejects_value_bool_with_other_fields() {
@@ -1463,7 +1463,7 @@ mod tests {
         assert!(err.to_string().contains("found 2"));
     }
 
-    /// PEND-14: snapshot the JSON serde shape of a `value_bool=Some(true)`
+    /// Snapshot the JSON serde shape of a `value_bool=Some(true)`
     /// payload. Locks the wire format so any accidental rename / reorder is
     /// caught.
     #[test]
@@ -1691,7 +1691,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // L-6: validate_set_property rejects empty / whitespace-only string fields
+    // Validate_set_property rejects empty / whitespace-only string fields
     // -----------------------------------------------------------------------
 
     #[test]

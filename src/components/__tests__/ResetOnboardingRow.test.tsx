@@ -1,5 +1,5 @@
 /**
- * Tests for ResetOnboardingRow (UX-374).
+ * Tests for ResetOnboardingRow.
  *
  * Coverage:
  *  - Renders the title + description copy.

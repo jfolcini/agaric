@@ -1,4 +1,4 @@
-//! PEND-53 — integration tests for the metadata-filter pipeline.
+//! integration tests for the metadata-filter pipeline.
 //!
 //! Exercises the full chain: `SearchFilter` metadata fields →
 //! `fts::metadata_filter::prepare_metadata` → SQL composition in
@@ -65,7 +65,7 @@ async fn seed_property(pool: &SqlitePool, block_id: &str, key: &str, value_text:
         .unwrap();
 }
 
-/// PEND-64 — seed a property with a non-text typed value (one of
+/// Seed a property with a non-text typed value (one of
 /// `value_num` / `value_date` / `value_ref`). The `exactly_one_value`
 /// CHECK on `block_properties` (migration 0062) means the caller
 /// picks exactly one column.
@@ -463,17 +463,17 @@ async fn unknown_property_key_returns_zero_results() {
     .unwrap();
     assert!(
         resp.items.is_empty(),
-        "unknown property key must return zero results — same tolerance as PEND-54 unknown tag"
+        "unknown property key must return zero results — same tolerance as  unknown tag"
     );
 }
 
 // =====================================================================
-// PEND-63 — `not-state:` / `not-priority:` proper inversion
+// `not-state:` / `not-priority:` proper inversion
 // =====================================================================
 
 #[tokio::test]
 async fn excluded_state_filter_includes_no_state_rows() {
-    // The PEND-63 design: `not-state:DONE` returns blocks with no
+    // The design: `not-state:DONE` returns blocks with no
     // state AT ALL, in addition to blocks whose state isn't DONE.
     let (pool, _dir) = pool().await;
     seed_corpus(&pool).await;
@@ -583,13 +583,13 @@ async fn excluded_priority_inverts_priority_values() {
 }
 
 // =====================================================================
-// PEND-64 — `prop:KEY=VALUE` four-column matching
+// `prop:KEY=VALUE` four-column matching
 // =====================================================================
 
 #[tokio::test]
 async fn prop_filter_matches_value_num_column() {
     // Block with a numeric property `priority=1` stored in value_num.
-    // PEND-53 v1 missed this entirely (value_text-only); PEND-64
+    // V1 missed this entirely (value_text-only);
     // matches across all four columns with type coercion.
     let (pool, _dir) = pool().await;
     seed_corpus(&pool).await;

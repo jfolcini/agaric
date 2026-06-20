@@ -1,7 +1,7 @@
 /**
  * Tests for useScrollToFocus — the rAF + scrollIntoView pattern shared
  * between JournalPage (date/panel scroll) and DailyView (selectedBlockId
- * scroll, UX-258).
+ * Scroll).
  *
  * Validates:
  *  - noop when `targetId == null` (no scroll, no onComplete)

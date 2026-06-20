@@ -1,6 +1,6 @@
 /**
  * ResultCountSummary — "N matches in M pages" header above the first
- * search-result group (PEND-50 Phase 1).
+ * Search-result group (Phase 1).
  *
  * Empty result counts render nothing — the SearchPanel surfaces
  * `search.noResultsFound` elsewhere when `searched && !loading &&

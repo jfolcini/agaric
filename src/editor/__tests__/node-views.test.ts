@@ -296,10 +296,10 @@ describe('BlockLink NodeView', () => {
   })
 })
 
-// -- FEAT-3p7 — Cross-space (foreign-target) chip rendering -------------------
+// -- Cross-space (foreign-target) chip rendering -------------------
 
 /**
- * FEAT-3p7: when the active space is A and the document still
+ * When the active space is A and the document still
  * contains `[[ULID_OF_PAGE_IN_B]]`, the resolve store has marked the
  * ULID as a deleted placeholder (this is what
  * BlockTree.fetchAndCacheLinks does for every id the backend's

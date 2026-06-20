@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
 
 /**
- * Display label for a priority level. UX-201b: priority levels are
+ * Display label for a priority level. priority levels are
  * user-configurable; the label is always `P{level}` so any string key
  * (numeric or alpha) renders correctly.
  */
@@ -26,7 +26,7 @@ export function priorityLabel(priority: string): string {
 }
 
 // Re-exported from date-utils so existing call sites + tests that import these
-// names from BlockInlineControls keep working after MAINT-94 / MAINT-129
+// Names from BlockInlineControls keep working after
 // deduplication.
 export { dueDateColor, formatCompactDate, MONTH_SHORT }
 
@@ -248,7 +248,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
   // `navigator.maxTouchPoints` to short-circuit the false-coarse.
   const isTouch = useIsTouch()
 
-  // UX-308: Play a one-shot bump animation when the attachment count changes
+  // Play a one-shot bump animation when the attachment count changes
   // (file dropped/pasted). `animKey` starts as null so the very first render
   // has no animation classes; subsequent count changes set it to the new
   // count, which (a) re-keys the badge to force a remount and replay the

@@ -50,12 +50,12 @@ pub async fn soft_delete_block(pool: &SqlitePool, block_id: &str) -> Result<Opti
 /// This site inlines the SQL because `sqlx::query!` requires a string
 /// literal and cannot accept `concat!()` of a `macro_rules!` expansion.
 ///
-/// L-101: Emits `tracing::debug!` at entry and `tracing::info!` after
+/// Emits `tracing::debug!` at entry and `tracing::info!` after
 /// the cascade UPDATE so a user-reported "I lost a tree of blocks"
 /// triage has a log record of the seed block_id, the cascade size, and
 /// the timestamp.
 ///
-/// SQL-review M-3: takes `materializer: &Materializer` so the test-only
+/// SQL-review takes `materializer: &Materializer` so the test-only
 /// cache-rebuild fan-out is wired through the type system rather than left
 /// to each test caller. The fan-out is routed through the canonical
 /// `delete_block` op-type dispatch (a synthesized minimal [`OpRecord`]
@@ -75,7 +75,7 @@ pub async fn cascade_soft_delete(
     // #1549: monotonic-per-process delete clock so this cascade's cohort
     // `deleted_at` never collides with another same-ms delete's cohort.
     let now = crate::db::next_delete_ms();
-    // MAINT-112: `CommandTx::begin_immediate` inherits the slow-acquire
+    // `CommandTx::begin_immediate` inherits the slow-acquire
     // tracing from `begin_immediate_logged` AND couples commit +
     // post-commit cache dispatch (see the synthesized `delete_block` op
     // enqueued below).
@@ -98,7 +98,7 @@ pub async fn cascade_soft_delete(
     .execute(&mut **tx)
     .await?;
 
-    // PEND-26 N2: warn when the cascade walk hit the depth-100 cap so an
+    // Warn when the cascade walk hit the depth-100 cap so an
     // operator has a breadcrumb if a pathological tree silently truncated
     // the soft-delete. The cap (invariant #9) is preserved; we only ADD
     // detection + surfacing here. The standard-variant helper is
@@ -107,14 +107,14 @@ pub async fn cascade_soft_delete(
         tracing::warn!(
             seed_block_id = %block_id,
             op = "cascade_soft_delete",
-            "PEND-26 N2: cascade-depth cap reached (>=99 levels); descendants \
+            "cascade-depth cap reached (>=99 levels); descendants \
              below depth 100 were not soft-deleted. Tree is pathologically deep.",
         );
     }
 
     let count = result.rows_affected();
 
-    // SQL-review M-3 + MAINT-112: route the cache-rebuild fan-out through
+    // SQL-review + route the cache-rebuild fan-out through
     // the canonical `delete_block` op-type dispatch. Enqueueing a
     // synthesized minimal `OpRecord` on the `CommandTx` means
     // `commit_and_dispatch` fires *exactly* the task set
@@ -141,7 +141,7 @@ pub async fn cascade_soft_delete(
 /// [`crate::materializer::dispatch::invalidations_for_op`] from the
 /// test/bench-only [`cascade_soft_delete`].
 ///
-/// MAINT-112 / decision-b: this primitive is *not* a command — it does
+/// / decision-b: this primitive is *not* a command — it does
 /// not append to `op_log`, so it has no real `OpRecord`. The
 /// `delete_block` arm of `invalidations_for_op` reads **only**
 /// `record.op_type` and `record.block_id` (it ignores `seq`, `hash`,
@@ -169,7 +169,7 @@ mod tests {
     use crate::db::init_pool;
     use tempfile::TempDir;
 
-    /// SQL-review M-3 regression: `cascade_soft_delete` MUST dispatch
+    /// SQL-review regression: `cascade_soft_delete` MUST dispatch
     /// the cache-rebuild fan-out itself so the type system enforces it
     /// (no caller-by-caller convention).
     ///
@@ -191,7 +191,7 @@ mod tests {
     /// `cascade_soft_delete`, `pages_cache` will still contain the
     /// soft-deleted page and this assertion fails.
     ///
-    /// MAINT-112: also asserts a stale `page_link_cache` row was rebuilt
+    /// Also asserts a stale `page_link_cache` row was rebuilt
     /// away — proving `cascade_soft_delete` dispatched
     /// `RebuildPageLinkCache` (the 8th task in `FULL_CACHE_REBUILD_TASKS`).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -237,7 +237,7 @@ mod tests {
             "baseline: pages_cache must contain the seeded page before soft-delete"
         );
 
-        // MAINT-112: plant a stale `page_link_cache` edge with no backing
+        // Plant a stale `page_link_cache` edge with no backing
         // `block_links` row. `RebuildPageLinkCache` does a full
         // DELETE-all + re-INSERT-from-`block_links`, so after the fan-out
         // drains this edge must be gone (no `block_links` to re-derive
@@ -255,7 +255,7 @@ mod tests {
         .unwrap();
 
         // Soft-delete via the primitive. The function dispatches the
-        // cache-rebuild fan-out itself (SQL-review M-3).
+        // Cache-rebuild fan-out itself (SQL-review).
         let (_ts, count) = cascade_soft_delete(&pool, &mat, "m3-test-device", page_id)
             .await
             .unwrap();
@@ -277,12 +277,12 @@ mod tests {
                 .unwrap();
         assert_eq!(
             post_count, 0,
-            "SQL-review M-3: pages_cache must reflect the soft-delete after \
+            "SQL-review pages_cache must reflect the soft-delete after \
              flush_background — proving cascade_soft_delete dispatched \
              RebuildPagesCache itself (no caller dispatched on its behalf)."
         );
 
-        // MAINT-112: the stale page-link edge must be gone, proving
+        // The stale page-link edge must be gone, proving
         // `RebuildPageLinkCache` was in the dispatched fan-out.
         let stale_links: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM page_link_cache WHERE source_page_id = ? AND target_page_id = ?",
@@ -294,7 +294,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             stale_links, 0,
-            "MAINT-112: page_link_cache must reflect the soft-delete after \
+            "page_link_cache must reflect the soft-delete after \
              flush_background — proving cascade_soft_delete dispatched \
              RebuildPageLinkCache (the 8th FULL_CACHE_REBUILD task)."
         );

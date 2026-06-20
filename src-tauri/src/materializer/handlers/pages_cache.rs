@@ -1,11 +1,11 @@
-//! PEND-56b `pages_cache.{inbound_link_count,child_block_count}`
+//! `pages_cache.{inbound_link_count,child_block_count}`
 //! maintenance: the canonical recompute SELECT and the per-op
 //! affected-page resolution hooks.
 
 use super::*;
 
 // ---------------------------------------------------------------------------
-// PEND-56b — `pages_cache.{inbound_link_count,child_block_count}` maintenance
+// `pages_cache.{inbound_link_count,child_block_count}` maintenance
 // ---------------------------------------------------------------------------
 //
 // Migrations 0069/0070 added two materialised aggregate columns to
@@ -209,7 +209,7 @@ pub(super) async fn target_pages_for_block_ids(
     Ok(rows.into_iter().map(|r| r.page_id).collect())
 }
 
-/// PEND-56b: maintenance hook called from `apply_op_tx` after each per-op
+/// Maintenance hook called from `apply_op_tx` after each per-op
 /// projection commits. Computes the bounded set of pages whose counts may
 /// have changed and refreshes them via the canonical SELECT.
 ///
@@ -621,7 +621,7 @@ pub(super) async fn refresh_inbound_counts_after_reindex(
     pre: &[String],
 ) -> Result<(), AppError> {
     use std::collections::HashSet;
-    // SQL-review M-1: write txs must use `begin_immediate_logged` so
+    // SQL-review write txs must use `begin_immediate_logged` so
     // sync-burst contention serialises upfront with a `warn!` log
     // instead of stalling mid-tx under SQLite's default DEFERRED
     // isolation. Mirrors the convention in `apply_op` / `apply_op` batch.

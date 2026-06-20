@@ -558,7 +558,7 @@ describe('UnfinishedTasks', () => {
     expect(within(olderGroup).getByText('Older task')).toBeInTheDocument()
   })
 
-  // UX-274: per-group collapse state persists to localStorage
+  // Per-group collapse state persists to localStorage
   describe('per-group collapse persistence', () => {
     const STORAGE_KEY = 'agaric:unfinishedTasks.groupCollapsed'
 

@@ -1,4 +1,4 @@
-//! Read-write [`ToolRegistry`] impl — the v2 MCP write tool surface (FEAT-4h slice 2).
+//! Read-write [`ToolRegistry`] impl — the v2 MCP write tool surface (slice 2).
 //!
 //! Where `tools_ro.rs` exposes read paths, this module exposes the narrow
 //! set of **reversible** mutations that external agents may perform. Every
@@ -22,7 +22,7 @@
 //!
 //! Each call is wrapped in [`ACTOR::scope`](crate::mcp::actor::ACTOR) so
 //! downstream `append_local_op_in_tx` stamps `origin = 'agent:<name>'`
-//! (FEAT-4h slice 1). The server dispatcher already wraps outer
+//! (slice 1). The server dispatcher already wraps outer
 //! `call_tool` invocations; scoping again here is idempotent and keeps
 //! direct `ReadWriteTools::call_tool` calls (tests, diagnostics) honest.
 //!
@@ -63,16 +63,16 @@ use crate::space::{SpaceId, SpaceScope};
 // Typed argument structs (one per tool)
 // ---------------------------------------------------------------------------
 
-// PEND-24 C1+C2 — every rw tool that targets a block carries a required
+// +C2 — every rw tool that targets a block carries a required
 // `space_id` field. For tools that take a block ID input (`parent_id` /
 // `block_id`), the handler runs `validate_block_in_space` before
 // delegating to `*_inner`, so an agent scoped to space A cannot mutate
 // content owned by space B by knowing a Work-side ULID. For
 // `create_page`, `space_id` is threaded into
 // `create_block_inner_with_space` so the page lands with its `space`
-// property in a single `BEGIN IMMEDIATE` transaction (BUG-1 / H-3a).
+// Property in a single `BEGIN IMMEDIATE` transaction.
 //
-// PEND-18 will eventually replace these `String` fields with a `SpaceId`
+// Will eventually replace these `String` fields with a `SpaceId`
 // newtype; until then the wire format stays plain-string for parity
 // with the rest of the IPC surface.
 
@@ -107,8 +107,8 @@ struct SetPropertyArgs {
     value_date: Option<String>,
     #[serde(default)]
     value_ref: Option<String>,
-    /// #697 — boolean slot (PEND-14 `value_type = 'boolean'` defs).
-    /// Previously the backend accepted it and the L-122 error message
+    /// #697 — boolean slot (`value_type = 'boolean'` defs).
+    /// Previously the backend accepted it and the error message
     /// advertised it, but the MCP schema rejected it via
     /// `deny_unknown_fields` — an agent following the error got a
     /// parse failure.
@@ -173,7 +173,7 @@ impl ReadWriteTools {
 ///
 /// Lifted out of [`ToolRegistry::list_tools`] so callers that need the
 /// names without a constructed registry (notably the privacy-guard test
-/// in `summarise.rs`, MAINT-136) can drive iteration from the live
+/// In `summarise.rs`) can drive iteration from the live
 /// metadata. The `&self` impl below just delegates here.
 pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
     vec![
@@ -197,7 +197,7 @@ impl ToolRegistry for ReadWriteTools {
         args: Value,
         ctx: &ActorContext,
     ) -> impl Future<Output = Result<Value, AppError>> + Send {
-        // MAINT-150 (h): ACTOR scope + name-clone boilerplate is
+        // ACTOR scope + name-clone boilerplate is
         // shared with `tools_ro` via `super::dispatch::scoped_dispatch`.
         let pool = self.pool.clone();
         let materializer = self.materializer.clone();
@@ -256,7 +256,7 @@ fn tool_desc_append_block() -> ToolDescription {
                 },
                 "space_id": {
                     "type": "string",
-                    "description": "PEND-24 — ULID of the space the agent is operating in. The append is rejected with a Validation error if `parent_id`'s owning page lives in a different space.",
+                    "description": "ULID of the space the agent is operating in. The append is rejected with a Validation error if `parent_id`'s owning page lives in a different space.",
                 },
             },
         }),
@@ -277,7 +277,7 @@ fn tool_desc_update_block_content() -> ToolDescription {
                 "content": { "type": "string", "description": "New Markdown content." },
                 "space_id": {
                     "type": "string",
-                    "description": "PEND-24 — ULID of the space the agent is operating in. The edit is rejected with a Validation error if `block_id`'s owning page lives in a different space.",
+                    "description": "ULID of the space the agent is operating in. The edit is rejected with a Validation error if `block_id`'s owning page lives in a different space.",
                 },
             },
         }),
@@ -304,7 +304,7 @@ fn tool_desc_set_property() -> ToolDescription {
                 "value_bool": { "type": "boolean", "description": "Boolean value (exactly one value_* must be set). #697 — for `value_type = 'boolean'` property definitions." },
                 "space_id": {
                     "type": "string",
-                    "description": "PEND-24 — ULID of the space the agent is operating in. The write is rejected with a Validation error if `block_id`'s owning page lives in a different space.",
+                    "description": "ULID of the space the agent is operating in. The write is rejected with a Validation error if `block_id`'s owning page lives in a different space.",
                 },
             },
         }),
@@ -326,7 +326,7 @@ fn tool_desc_add_tag() -> ToolDescription {
                 "tag_id":   { "type": "string", "description": "ULID of an existing tag block." },
                 "space_id": {
                     "type": "string",
-                    "description": "PEND-24 — ULID of the space the agent is operating in. The tag application is rejected with a Validation error if `block_id`'s owning page lives in a different space. (Tags themselves are global — `tag_id` is not space-scoped.)",
+                    "description": "ULID of the space the agent is operating in. The tag application is rejected with a Validation error if `block_id`'s owning page lives in a different space. (Tags themselves are global — `tag_id` is not space-scoped.)",
                 },
             },
         }),
@@ -348,7 +348,7 @@ fn tool_desc_create_page() -> ToolDescription {
                 "title": { "type": "string", "description": "Page title (becomes the page's content)." },
                 "space_id": {
                     "type": "string",
-                    "description": "PEND-24 / BUG-1 — ULID of the space the new page belongs to. Required: every page lives in exactly one space; a page created without a `space_id` would be invisible to every space-scoped query.",
+                    "description": "ULID of the space the new page belongs to. Required: every page lives in exactly one space; a page created without a `space_id` would be invisible to every space-scoped query.",
                 },
             },
         }),
@@ -369,7 +369,7 @@ fn tool_desc_delete_block() -> ToolDescription {
                 "block_id": { "type": "string", "description": "ULID of the block to soft-delete." },
                 "space_id": {
                     "type": "string",
-                    "description": "PEND-24 — ULID of the space the agent is operating in. The delete is rejected with a Validation error if `block_id`'s owning page lives in a different space.",
+                    "description": "ULID of the space the agent is operating in. The delete is rejected with a Validation error if `block_id`'s owning page lives in a different space.",
                 },
             },
         }),
@@ -392,10 +392,10 @@ async fn handle_append_block(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: AppendBlockArgs = parse_args(TOOL_APPEND_BLOCK, args)?;
-    // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
+    // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let parent_id = normalize_ulid_arg(&args.parent_id);
     let space_id = normalize_ulid_arg(&args.space_id);
-    // PEND-24 C2 — refuse cross-space writes at the MCP boundary
+    // Refuse cross-space writes at the MCP boundary
     // before opening the BEGIN IMMEDIATE in `create_block_inner`.
     validate_block_in_space(pool, &parent_id, &space_id).await?;
     // #1606: the JSON schema declares `position` `minimum: 1`, but serde does
@@ -440,10 +440,10 @@ async fn handle_update_block_content(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: UpdateBlockContentArgs = parse_args(TOOL_UPDATE_BLOCK_CONTENT, args)?;
-    // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
+    // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let block_id = normalize_ulid_arg(&args.block_id);
     let space_id = normalize_ulid_arg(&args.space_id);
-    // PEND-24 C2 — refuse cross-space writes at the MCP boundary.
+    // Refuse cross-space writes at the MCP boundary.
     validate_block_in_space(pool, &block_id, &space_id).await?;
     let resp =
         edit_block_inner(pool, device_id, materializer, block_id.into(), args.content).await?;
@@ -471,19 +471,19 @@ async fn handle_set_property(
             crate::commands::MAX_CONTENT_LENGTH,
         )));
     }
-    // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary
+    // Normalise ULID-shaped IDs to uppercase at the MCP boundary
     // (block_id is required, value_ref is optional and only meaningful
     // when the property is a ref-typed value).
     let block_id = normalize_ulid_arg(&args.block_id);
     let value_ref = args.value_ref.as_deref().map(normalize_ulid_arg);
     let space_id = normalize_ulid_arg(&args.space_id);
-    // PEND-24 C2 — refuse cross-space writes at the MCP boundary. We
+    // Refuse cross-space writes at the MCP boundary. We
     // intentionally do NOT validate `value_ref` against `space_id`: a
     // ref-typed property may legitimately point at a global block
-    // (a tag, a space, etc.). PEND-15 hardens cross-space *references*
+    // (a tag, a space, etc.). hardens cross-space *references*
     // separately at the op boundary.
     validate_block_in_space(pool, &block_id, &space_id).await?;
-    // L-122: the exactly-one-value invariant is enforced inside
+    // The exactly-one-value invariant is enforced inside
     // `set_property_inner` when a `caller_context` is supplied — passing
     // `Some(TOOL_SET_PROPERTY)` keeps the agent-facing error message
     // naming the tool, without duplicating the precheck at this boundary.
@@ -500,7 +500,7 @@ async fn handle_set_property(
         args.value_date,
         value_ref,
         // #697 — thread the boolean slot through; the schema and the
-        // L-122 error message now agree on the five accepted slots.
+        // Error message now agree on the five accepted slots.
         args.value_bool,
         Some(TOOL_SET_PROPERTY),
     )
@@ -515,11 +515,11 @@ async fn handle_add_tag(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: AddTagArgs = parse_args(TOOL_ADD_TAG, args)?;
-    // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
+    // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let block_id = normalize_ulid_arg(&args.block_id);
     let tag_id = normalize_ulid_arg(&args.tag_id);
     let space_id = normalize_ulid_arg(&args.space_id);
-    // PEND-24 C2 — refuse cross-space writes at the MCP boundary. We
+    // Refuse cross-space writes at the MCP boundary. We
     // validate only the target `block_id`; tags themselves are global
     // (no `space` property by design), so validating `tag_id` would
     // reject every legitimate add_tag call.
@@ -542,9 +542,9 @@ async fn handle_create_page(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: CreatePageArgs = parse_args(TOOL_CREATE_PAGE, args)?;
-    // PEND-24 C1 — every MCP-created page must carry the `space`
+    // Every MCP-created page must carry the `space`
     // property. Routing through `create_block_inner_with_space` (the
-    // BUG-1 / H-3a IPC-tightened wrapper) emits `CreateBlock` +
+    // IPC-tightened wrapper) emits `CreateBlock` +
     // `SetProperty(space = <space_id>)` inside one
     // `BEGIN IMMEDIATE` transaction so the page never exists in the
     // op log without its space stamp.
@@ -571,10 +571,10 @@ async fn handle_delete_block(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: DeleteBlockArgs = parse_args(TOOL_DELETE_BLOCK, args)?;
-    // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
+    // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let block_id = normalize_ulid_arg(&args.block_id);
     let space_id = normalize_ulid_arg(&args.space_id);
-    // PEND-24 C2 — refuse cross-space writes at the MCP boundary.
+    // Refuse cross-space writes at the MCP boundary.
     validate_block_in_space(pool, &block_id, &space_id).await?;
     let resp = delete_block_inner(pool, device_id, materializer, block_id.into()).await?;
     to_tool_result(&resp)

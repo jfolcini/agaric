@@ -1,6 +1,6 @@
 /**
  * Tests for `SearchResultGroups` — the page-grouped, virtualized result
- * tree (PEND-58f FE-3).
+ * Tree.
  *
  * Focus of this file: the virtualization wiring + the a11y contract that
  * must survive it.

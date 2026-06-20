@@ -27,13 +27,13 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
   const pageStore = usePageBlockStoreApi()
   const [attachments, setAttachments] = useState<AttachmentRow[]>([])
   const [loading, setLoading] = useState(false)
-  // MAINT-131: when this hook is rendered inside a BatchAttachmentsProvider
+  // When this hook is rendered inside a BatchAttachmentsProvider
   // (BlockTree mounts one), mutations need to invalidate the page-level
   // batch cache so StaticBlock's batch-derived view stays consistent with
   // the AttachmentList drawer's local state. Outside a provider the hook
   // is `null` and the optional-chain calls below are no-ops.
   const batchProvider = useBatchAttachments()
-  // PEND-35 Tier 2.7b: when a BatchAttachmentsProvider is mounted, defer
+  // When a BatchAttachmentsProvider is mounted, defer
   // entirely to it — the provider is the page-level source of truth and
   // already issues a single batched IPC for every block on the page. We
   // read the rows reference and the loading flag so the effect re-runs
@@ -51,7 +51,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
       setLoading(false)
       return
     }
-    // PEND-35 Tier 2.7b: defer to the batch provider when one is mounted.
+    // Defer to the batch provider when one is mounted.
     // While the batch is in flight we mirror its loading flag (no per-block
     // IPC fires); once it resolves we read `get(blockId) ?? []` (absent
     // keys mean "no attachments"). The provider's `invalidate` path keeps
@@ -83,7 +83,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
         const { rootParentId } = pageStore.getState()
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         setAttachments((prev) => [...prev, row])
-        // MAINT-131: invalidate the page-level batch cache so StaticBlock
+        // Invalidate the page-level batch cache so StaticBlock
         // sees the new attachment without firing its own listAttachments IPC.
         batchProvider?.invalidate(blockId)
       } catch (err) {
@@ -102,7 +102,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
         const { rootParentId } = pageStore.getState()
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
-        // MAINT-131: invalidate the page-level batch cache.
+        // Invalidate the page-level batch cache.
         batchProvider?.invalidate(blockId)
       } catch (err) {
         logger.error(
@@ -125,7 +125,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
         setAttachments((prev) =>
           prev.map((a) => (a.id === attachmentId ? { ...a, filename: newFilename } : a)),
         )
-        // MAINT-131: invalidate the page-level batch cache.
+        // Invalidate the page-level batch cache.
         batchProvider?.invalidate(blockId)
       } catch (err) {
         logger.error(

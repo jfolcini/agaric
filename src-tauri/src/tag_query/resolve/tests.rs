@@ -483,7 +483,7 @@ async fn materialized_matches_cte_oracle() {
     );
 }
 
-/// Regression for M-59: the recursive-CTE oracle used by parity tests must
+/// Regression for the recursive-CTE oracle used by parity tests must
 /// bound `depth < 100` to match `tag_inheritance::rebuild_all` and
 /// AGENTS.md invariant #9. Build a 101-deep chain whose root is tagged;
 /// the oracle must not return the leaf, which sits beyond the depth bound.
@@ -1050,7 +1050,7 @@ async fn oracle_validates_complex_boolean_expressions() {
 }
 
 // ======================================================================
-// UX-250 — inline #[ULID] tag refs (block_tag_refs) must union into
+// Inline #[ULID] tag refs (block_tag_refs) must union into
 // TagExpr::Tag / Prefix results alongside explicit block_tags.
 // ======================================================================
 
@@ -1316,7 +1316,7 @@ async fn resolve_tag_inherited_explicit_still_propagates() {
 }
 
 // ======================================================================
-// L-85 — `resolve_expr` And/Or arms now resolve sub-expressions
+// `resolve_expr` And/Or arms now resolve sub-expressions
 // concurrently via `try_join_all`, mirroring `BacklinkFilter::And/Or`.
 // The set algebra (intersection / union) is order-independent, so the
 // concurrent and sequential implementations must produce identical
@@ -1363,7 +1363,7 @@ fn resolve_expr_sequential<'a>(
                 Ok(result)
             }
             // Leaf / Not / Prefix arms delegate to the production resolver —
-            // L-85 only changed the And/Or arms.
+            // Only changed the And/Or arms.
             _ => resolve_expr(pool, expr, include_inherited).await,
         }
     })
@@ -1395,7 +1395,7 @@ async fn setup_six_tag_fixture(pool: &SqlitePool) {
     insert_block(pool, "BLK_NONE", "content", "none").await;
 }
 
-/// L-85: And of 6 child expressions. Concurrent resolution must return
+/// And of 6 child expressions. Concurrent resolution must return
 /// the same intersection set as the sequential reference. Only BLK_ALL
 /// carries every TAG_1..TAG_6, so it is the sole survivor.
 #[tokio::test]
@@ -1423,7 +1423,7 @@ async fn resolve_expr_and_concurrent_matches_sequential_oracle() {
     assert!(concurrent.contains("BLK_ALL"));
 }
 
-/// L-85: Or of 6 child expressions. Concurrent resolution must return
+/// Or of 6 child expressions. Concurrent resolution must return
 /// the same union set as the sequential reference. BLK_ALL, BLK_ODD,
 /// and BLK_EVEN all carry at least one of TAG_1..TAG_6.
 #[tokio::test]
@@ -1498,11 +1498,11 @@ async fn resolve_expr_or_concurrent_matches_sequential_oracle() {
 /// (b) align the oracle's seed at the child of the tag-bearer (matches
 /// macro) in `resolve_expr_cte` (`resolve.rs:249-261`). Either fix
 /// requires the symmetric change in both helpers landing together.
-/// `#[ignore]` until the M-59 fix lands; the failure message documents
+/// `#[ignore]` until the fix lands; the failure message documents
 /// the exact divergence so the next maintainer doesn't have to
 /// re-derive it.
 #[tokio::test]
-#[ignore = "I-Search-5 / M-59: off-by-one between materialised helper and CTE oracle — both walk 100 recursive steps but anchor at different points; production fix required in tag_inheritance_macros.rs and/or resolve.rs"]
+#[ignore = "I-Search-5 / off-by-one between materialised helper and CTE oracle — both walk 100 recursive steps but anchor at different points; production fix required in tag_inheritance_macros.rs and/or resolve.rs"]
 async fn materialized_matches_cte_oracle_at_depth_boundary_i_search_5() {
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "TAG_BD", "tag", "boundary-tag").await;

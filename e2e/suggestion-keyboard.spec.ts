@@ -29,7 +29,7 @@ import {
 async function openPagePicker(page: import('@playwright/test').Page) {
   await page.keyboard.press('End')
   await page.keyboard.type(' [[', { delay: 30 })
-  // TEST-1b: scope to the active popup; stale popups from a previous test
+  // Scope to the active popup; stale popups from a previous test
   // can transiently coexist with the fresh one in `document.body`.
   const popup = activeSuggestionPopup(page)
   await expect(popup).toBeVisible()

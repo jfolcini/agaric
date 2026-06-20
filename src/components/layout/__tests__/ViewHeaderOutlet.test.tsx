@@ -1,6 +1,6 @@
 /**
  * Tests for ViewHeaderOutlet — the provider + slot + hook that power
- * App-level view headers (UX-198).
+ * App-level view headers.
  *
  * Validates:
  *  1. Provider + Slot render and expose the outlet DOM element via context.

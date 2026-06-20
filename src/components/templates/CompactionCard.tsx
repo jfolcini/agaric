@@ -27,7 +27,7 @@ export function CompactionCard(): React.ReactElement {
   const [loading, setLoading] = useState(true)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [compacting, setCompacting] = useState(false)
-  // UX-352: auto-expand on first transition to eligible_ops > 0, exactly once
+  // Auto-expand on first transition to eligible_ops > 0, exactly once
   // per mount. Don't re-expand if the user manually collapses afterwards, even
   // if eligible_ops grows further.
   const autoExpandedRef = useRef(false)

@@ -1,9 +1,9 @@
 /**
  * SpaceOnboardingHint — first-open onboarding banner for the manage-spaces
- * dialog. Lifted out of the per-row `SpaceRowEditor` (PEND-30 D-2) so it
+ * Dialog. Lifted out of the per-row `SpaceRowEditor` (D-2) so it
  * renders exactly once at the dialog level rather than once per row.
  *
- * **localStorage key.** Pre-PEND-30 the dismissal flag was keyed by
+ * **localStorage key.** Pre- the dismissal flag was keyed by
  * `i18n.t('space.onboardingSeenKey')` — i.e. derived from the runtime
  * i18n bundle. That was a smell: the storage key is invariant across
  * locales (a per-locale key would orphan the flag on language switch),
@@ -26,7 +26,7 @@ const LOG_MODULE = 'components/SpaceManageDialog/SpaceOnboardingHint'
  * — pre-existing users have this key set in their localStorage and
  * changing the string would re-show the banner once after upgrade.
  *
- * Pre-PEND-30 this was derived at runtime from the i18n bundle key
+ * Pre- this was derived at runtime from the i18n bundle key
  * `space.onboardingSeenKey`. The new const matches the previously-seeded
  * value `agaric:space-onboarding-seen-v1` exactly.
  */
@@ -56,7 +56,7 @@ function writeOnboardingSeen(): void {
 /**
  * Clear the onboarding-dismissed flag so the banner shows again on
  * the next `Manage spaces` open. Surfaced from Settings → General as
- * the in-app way to undo a `Got it` dismissal (UX-374).
+ * The in-app way to undo a `Got it` dismissal.
  */
 export function resetOnboardingSeen(): void {
   try {

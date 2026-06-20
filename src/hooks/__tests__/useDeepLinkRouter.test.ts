@@ -54,7 +54,7 @@ vi.mock('@/stores/navigation', () => ({
   },
 }))
 
-// MAINT-127: navigateToPage moved from useNavigationStore to useTabsStore.
+// NavigateToPage moved from useNavigationStore to useTabsStore.
 // The deep-link hook was updated to call `useTabsStore.getState().navigateToPage(...)`
 // — mock that path here so the existing test assertions still observe the spy.
 vi.mock('@/stores/tabs', () => ({
@@ -201,7 +201,7 @@ describe('handleNavigatePayload', () => {
     })
 
     it('passes a date-formatted title through so the journal redirect can fire', async () => {
-      // tabs.ts keys the UX-242 journal redirect on the TITLE shape — the
+      // Tabs.ts keys the journal redirect on the TITLE shape — the
       // pre-#734 hardcoded '' meant daily pages always opened in the page
       // editor. The router's job is to deliver the real title.
       mockGetBlock.mockResolvedValueOnce(makeBlock({ id: PAGE_ID, content: '2026-06-11' }))

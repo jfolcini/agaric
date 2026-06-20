@@ -108,7 +108,7 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getAllByText('[[').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('Escape').length).toBeGreaterThanOrEqual(1)
 
-    // Verify conditions are rendered separately from keys. FEAT-7 moved the
+    // Verify conditions are rendered separately from keys. moved the
     // 4 tab shortcuts (openInNewTab, closeActiveTab, nextTab, previousTab)
     // from the `inEditor` condition to `desktopOnly` so they fire shell-wide
     // on desktop. inEditor count dropped 8 → 4; #213 PR4 added blockRefPicker
@@ -154,10 +154,10 @@ describe('KeyboardShortcuts', () => {
     expect(codeTexts).toContain('@tag')
   })
 
-  // UX-310: the syntax cheat-sheet must document the `((` block-reference
+  // The syntax cheat-sheet must document the `((` block-reference
   // picker trigger alongside the other 3 user-typed picker triggers
   // (`@tag`, `[[page]]`, `/command`).
-  it('renders the ((block)) block-reference syntax entry (UX-310)', () => {
+  it('renders the ((block)) block-reference syntax entry', () => {
     render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
 
     const syntaxTable = screen.getByTestId('syntax-table')
@@ -195,10 +195,10 @@ describe('KeyboardShortcuts', () => {
     expect(table.dataset['slot']).toBe('scroll-area')
   })
 
-  // UX-389: category headers stick to the top of the scroll viewport so the
+  // Category headers stick to the top of the scroll viewport so the
   // user keeps category context mid-list. Pin the Tailwind classes that
   // implement the sticky behavior + opaque background + layering.
-  it('category headers are sticky to keep context while scrolling (UX-389)', () => {
+  it('category headers are sticky to keep context while scrolling', () => {
     render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
 
     const categoryLabel = screen.getByText(t('keyboard.category.navigation'))
@@ -239,7 +239,7 @@ describe('KeyboardShortcuts', () => {
 
     expect(screen.getByText(t('keyboard.condition.atStart'))).toBeInTheDocument()
     expect(screen.getByText(t('keyboard.condition.atEnd'))).toBeInTheDocument()
-    // FEAT-7: inEditor 8 → 4, desktopOnly 0 → 4; #213 PR4 added blockRefPicker
+    // InEditor 8 → 4, desktopOnly 0 → 4; #213 PR4 added blockRefPicker
     // (inEditor) → 5; #1576 added bold/italic editor built-ins (inEditor) → 7
     // (see "shows all shortcut entries" above for the rationale).
     expect(screen.getAllByText(t('keyboard.condition.inEditor'))).toHaveLength(7)
@@ -264,8 +264,8 @@ describe('KeyboardShortcuts', () => {
     expect(kbdTexts).not.toContain('F')
   })
 
-  // UX-223 + BUG-31 bundled: macOS users see ⌘ (Cmd) instead of Ctrl in the help UI.
-  describe('macOS platform display (UX-223)', () => {
+  // + bundled: macOS users see ⌘ (Cmd) instead of Ctrl in the help UI.
+  describe('macOS platform display', () => {
     it('renders "⌘" instead of "Ctrl" on macOS', () => {
       setPlatform('MacIntel')
       render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
@@ -305,11 +305,11 @@ describe('KeyboardShortcuts', () => {
     expect(kbdTexts).toEqual(['Ctrl', 'Shift', 'S'])
   })
 
-  // UX-228: closeOverlays shortcut dispatches a window CustomEvent;
+  // CloseOverlays shortcut dispatches a window CustomEvent;
   // KeyboardShortcuts listens and calls onOpenChange(false). Verified
   // here without the full App so we catch regressions even when the
   // component is rendered standalone (e.g. from a future settings tab).
-  describe('closeOverlays event (UX-228)', () => {
+  describe('closeOverlays event', () => {
     it('dispatching agaric:closeAllOverlays while open calls onOpenChange(false)', () => {
       const onOpenChange = vi.fn()
       render(<KeyboardShortcuts open={true} onOpenChange={onOpenChange} />)
@@ -341,10 +341,10 @@ describe('KeyboardShortcuts', () => {
     })
   })
 
-  // UX-395: the footer "Customize" button navigates away to Settings → Keyboard.
+  // The footer "Customize" button navigates away to Settings → Keyboard.
   // Make the label say "Customize in Settings" and add a ChevronRight glyph
   // after the text to telegraph the navigation.
-  describe('customize footer button (UX-395)', () => {
+  describe('customize footer button', () => {
     it('button label reads "Customize in Settings"', () => {
       render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
 
@@ -376,9 +376,9 @@ describe('KeyboardShortcuts', () => {
     })
   })
 
-  // UX-388: filter input narrows the visible shortcuts by description, key
+  // Filter input narrows the visible shortcuts by description, key
   // text, or category so users don't have to eyeball-scan the full list.
-  describe('shortcut filter (UX-388)', () => {
+  describe('shortcut filter', () => {
     it('renders the filter input above the table', () => {
       render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
 
@@ -511,10 +511,10 @@ describe('KeyboardShortcuts', () => {
     })
   })
 
-  // UX-397: customised shortcuts in the help panel are flagged with a
+  // Customised shortcuts in the help panel are flagged with a
   // "Customized" badge so users can tell which rows reflect their own
   // bindings vs. defaults.
-  describe('customized badge (UX-397)', () => {
+  describe('customized badge', () => {
     it('renders a "Customized" badge in the row of an overridden shortcut', () => {
       setCustomShortcut('focusSearch', 'Ctrl + G')
       render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)

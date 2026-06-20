@@ -1,5 +1,5 @@
 /**
- * SpaceManageDialog — manage-spaces UI (FEAT-3 Phase 6).
+ * SpaceManageDialog — manage-spaces UI (Phase 6).
  *
  * Replaces the previous "Manage spaces… (Coming in Phase 6)" placeholder
  * with a fully functional Radix Dialog. Per-row actions:
@@ -7,13 +7,13 @@
  * - **Rename** — inline-editable name. Blur or Enter saves via the
  *   shared `editBlock` IPC (spaces are page blocks, so the existing
  *   block-content edit op is the natural fit — no new op type).
- * - **Accent color** — small swatch grid (FEAT-3p10 consumer). Click
+ * **Accent color** — small swatch grid (consumer). Click
  *   writes a `setProperty(accent_color, …)` op. Storage is plain
  *   `value_text` so the palette token (`accent-emerald`, `accent-blue`,
  *   …) survives unchanged.
  * - **Delete** — `deleteBlock` op, but only allowed when the space is
  *   empty. We probe emptiness via `listBlocks({ spaceId, blockType:
- *   'page', limit: 1 })`; the existing FEAT-3 Phase 2 query scoping
+ * 'page', limit: 1 })`; the existing Phase 2 query scoping
  *   already returns just pages whose `space` property points at the
  *   target. Disabled state shows a tooltip explaining why. Always
  *   disabled on the last remaining space.
@@ -26,10 +26,10 @@
  * exactly the two seeded spaces (`availableSpaces.length <= 2`) and
  * the `agaric:space-onboarding-seen-v1` localStorage flag is unset, an
  * inline banner explains what spaces are. Dismissal sets the flag so
- * the hint never reappears. Owned by `SpaceOnboardingHint` (PEND-30
+ * The hint never reappears. Owned by `SpaceOnboardingHint` (
  * D-2) — hoisted out of the per-row editor since it is dialog-wide.
  *
- * **PEND-30 D-2 decomposition** — the per-row editor used to mix five
+ * ** D-2 decomposition** — the per-row editor used to mix five
  * orthogonal concerns (rename / accent / journal-template / delete /
  * onboarding-hint) in a 600-line `SpaceRowEditor`. Each concern now
  * lives in its own file under `./SpaceManageDialog/`. The dialog
@@ -42,7 +42,7 @@
  * `useSpaceStore.refreshAvailableSpaces()` is the single refresh seam
  * after every mutation so the SpaceSwitcher re-renders within a tick.
  *
- * MAINT-215: on phones < 768 px (`useIsMobile() === true`) the outer
+ * On phones < 768 px (`useIsMobile() === true`) the outer
  * dialog renders as a bottom Sheet so the per-row controls + the
  * `t('space.createSpaceLabel')` form land within thumb reach. The desktop path
  * keeps the regular Radix `Dialog` (not `AlertDialog`) so
@@ -183,7 +183,7 @@ function CreateSpaceForm({ onCreated }: CreateSpaceFormProps) {
               style={{ backgroundColor: `var(--${swatch.token})` }}
               data-accent-token={swatch.token}
             >
-              {/* UX-6 — same icon-overlay rationale as the per-row
+              {/* same icon-overlay rationale as the per-row
                * picker; keeps the two swatch grids visually consistent
                * for colour-blind users. */}
               {accent === swatch.token ? (
@@ -237,7 +237,7 @@ export function SpaceManageDialog({
     await refreshAvailableSpaces()
   }, [refreshAvailableSpaces])
 
-  // MAINT-180 — both the per-space emptiness probe and the
+  // Both the per-space emptiness probe and the
   // journal-template fetch are owned here so each IPC fires once per
   // unique `space.id` for the whole dialog lifetime, not once per row
   // mount. Re-opening the dialog (which unmounts and remounts every
@@ -249,14 +249,14 @@ export function SpaceManageDialog({
   //
   // Errors deliberately do *not* poison the cache: the key is removed
   // from the in-flight set so the next render (e.g. after a re-open)
-  // retries — same observable behaviour as the pre-MAINT-180 row-local
+  // Retries — same observable behaviour as the pre- row-local
   // probes that re-fired on every mount.
   const [emptinessBySpace, setEmptinessBySpace] = useState<Record<string, boolean>>({})
   const [journalTemplateBySpace, setJournalTemplateBySpace] = useState<Record<string, string>>({})
   const emptinessFetchedRef = useRef<Set<string>>(new Set())
   const journalTemplateFetchedRef = useRef<Set<string>>(new Set())
 
-  // PEND-29 B-7: cancellation flag prevents post-unmount setState on
+  // B-7: cancellation flag prevents post-unmount setState on
   // both async chains. Closing the dialog unmounts the content (Radix
   // portal, no `forceMount`); without the guard the in-flight
   // `listBlocks` / `getBatchProperties` IPCs resolved into setState
@@ -265,7 +265,7 @@ export function SpaceManageDialog({
   // catch path's `delete(id)` still gates on `active` so we don't
   // re-open a slot for a dead component.
   //
-  // PEND-35 Tier 2.4b: the per-space `getProperties(id)` loop was
+  // The per-space `getProperties(id)` loop was
   // collapsed into a single `getBatchProperties(ids)` call covering
   // every un-fetched space id at once. Each row only reads one key
   // (`journal_template`); fanning out N IPCs to surface N single-key

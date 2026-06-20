@@ -14,17 +14,17 @@ import type { PaletteMode } from '@/stores/useCommandPaletteStore'
  * Mode-chip row — the visible affordance for switching modes. Renders
  * as a thin header strip above the input.
  *
- * PEND-61 CR — clicking the chip flips the store mode WITHOUT
+ * Clicking the chip flips the store mode WITHOUT
  * writing to the input. The `>` input prefix remains a one-way entry
  * shortcut (handled by the mode router in `PaletteBody`); the chip is
  * the way back to search.
  *
- * PEND-67 Phase 6 — toggling no longer clears the query. The store
+ * Phase 6 — toggling no longer clears the query. The store
  * remembers a query per mode (`queryByMode`); `setMode` restores it
  * so flipping back to the previous mode feels responsive, not
  * destructive (VSCode Cmd+P / Cmd+Shift+P parity).
  *
- * PEND-67 Phase 3 — with 4 modes (search / commands / tags / help)
+ * Phase 3 — with 4 modes (search / commands / tags / help)
  * a 4-cycle on the chip would force users to click 3 times to escape
  * any non-search mode. The plan suggested a cycle but Open Question 1
  * acknowledges this is awkward; we choose single-step exit semantics
@@ -72,13 +72,13 @@ export function ModeChipRow({
         aria-label={t('palette.modeChipLabel', { mode: label })}
         data-testid="palette-mode-chip"
       >
-        {/* PEND-61 CR-2 — `ArrowLeftRight` reads as a bidirectional
+        {/* `ArrowLeftRight` reads as a bidirectional
             toggle. `ChevronRight` previously implied a one-way
             drill-in, which is the wrong affordance signal. */}
         <ArrowLeftRight className="h-3 w-3" aria-hidden="true" />
         {label}
       </button>
-      {/* PEND-61 CR — drop `aria-hidden` so SR users can discover the
+      {/* drop `aria-hidden` so SR users can discover the
           prefix shortcuts. The hint is short and informational, so it
           lives in the visible header rather than a tooltip. */}
       <span className="text-muted-foreground">{hint}</span>
@@ -92,7 +92,7 @@ export function ModeChipRow({
  * without reading prose. Hidden in link mode and commands mode
  * because the modifier-key vocabulary changes per mode.
  *
- * PEND-61 CR-2 — round-1 shipped this as a flat `text-[10px]` string;
+ * Round-1 shipped this as a flat `text-[10px]` string;
  * `<kbd>`-rendered chord chips match Raycast / Linear and respect
  * the project's 11px typography floor.
  */

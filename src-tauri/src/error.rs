@@ -141,7 +141,7 @@ pub enum AppError {
     #[error("Non-reversible operation: {op_type} cannot be undone")]
     NonReversible { op_type: String },
 
-    /// PEND-70 — in-flight Tauri command was cancelled because the
+    /// In-flight Tauri command was cancelled because the
     /// client dropped the response promise (e.g. the palette fired a
     /// fresh search before the previous one completed). The frontend
     /// already discriminates stale results via `generationRef`; this
@@ -203,7 +203,7 @@ impl Serialize for AppError {
 
         let mut state = serializer.serialize_struct("AppError", 2)?;
         state.serialize_field("kind", kind)?;
-        // L-17 (PEND-25): kept as-is. `self.to_string()` always
+        // Kept as-is. `self.to_string()` always
         // allocates the formatted message, but `Serialize` for
         // `AppError` only fires on the IPC error boundary (cold path),
         // and serde lacks a "borrowed Display" adapter that would let

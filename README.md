@@ -193,7 +193,7 @@ After installing Agaric, point your MCP client's `command` field at the stub:
 | macOS `.app` | `/Applications/Agaric.app/Contents/MacOS/agaric-mcp` |
 | Windows installer | `C:\Program Files\Agaric\agaric-mcp.exe` |
 
-Override the default socket path with the `--socket <path>` flag or `AGARIC_MCP_SOCKET` environment variable if your setup puts Agaric's data directory somewhere non-standard. The read-only socket is gated by a Settings → Agent access toggle (shipping with FEAT-4e).
+Override the default socket path with the `--socket <path>` flag or `AGARIC_MCP_SOCKET` environment variable if your setup puts Agaric's data directory somewhere non-standard. The read-only socket is gated by a Settings → Agent access toggle (shipping with).
 
 ### Project Structure
 

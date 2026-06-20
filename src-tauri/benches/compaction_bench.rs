@@ -132,7 +132,7 @@ fn bench_compact_op_log(c: &mut Criterion) {
                         let start = std::time::Instant::now();
                         // `retention_days` must be >= MIN_RETENTION_DAYS (7);
                         // `compact_op_log_cmd_inner` rejects 0 with
-                        // `retention_days.too_small` (M-38 IPC guard). The
+                        // `retention_days.too_small` (IPC guard). The
                         // seeded ops are dated 2020 (OLD_TIMESTAMP_MS), so a
                         // 7-day cutoff still leaves every seeded op eligible
                         // for compaction.

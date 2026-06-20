@@ -334,7 +334,7 @@ impl ChainModel {
                 }
                 let target = deleted[deleted_index % deleted.len()].clone();
                 self.state.insert(target.clone(), true);
-                // M-71: reverse-of-restore discards the original
+                // Reverse-of-restore discards the original
                 // deleted_at_ref; we still need a non-empty ref to build a
                 // structurally valid RestoreBlock payload. Use a marker —
                 // the actual value is irrelevant to the chain model.

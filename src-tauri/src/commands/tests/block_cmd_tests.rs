@@ -472,11 +472,11 @@ async fn move_block_huge_index_clamps_below_sentinel() {
 }
 
 // ======================================================================
-// BUG-1 / H-3a — `create_block_inner_with_space` (IPC tightening)
+// `create_block_inner_with_space` (IPC tightening)
 // ======================================================================
 //
 // The IPC `create_block` Tauri command delegates to
-// `create_block_inner_with_space`, which enforces the FEAT-3
+// `create_block_inner_with_space`, which enforces the
 // "every page belongs to a space" invariant at the IPC boundary so a
 // misbehaving frontend (e.g. a stale `createBlock({ blockType: 'page' })`
 // callsite) cannot leak unscoped pages into the materialized state.
@@ -611,7 +611,7 @@ async fn create_block_with_page_and_space_id_emits_two_ops_atomically() {
 
     // The page must surface from `list_blocks(blockType='page', spaceId=Personal)` —
     // the very pagination path PageBrowser uses. Without the space property
-    // it would silently disappear (BUG-1 root cause).
+    // It would silently disappear (root cause).
     assign_all_to_test_space(&pool).await;
     let page = list_blocks_inner(
         &pool,
@@ -854,7 +854,7 @@ async fn edit_block_sequential_edits_chain_prev_edit() {
     );
 }
 
-/// PEND-20 B.1 parity: after the rewrite from
+/// B.1 parity: after the rewrite from
 /// `json_extract(payload, '$.block_id')` + `ORDER BY created_at DESC`
 /// to `block_id = ?` + `ORDER BY (seq DESC, device_id DESC)`,
 /// `find_prev_edit_in_tx` must still chain the most-recent edit
@@ -908,14 +908,14 @@ async fn edit_block_prev_edit_picks_highest_seq_after_b1_rewrite() {
     // `prev_edit` serializes as a `[device_id, seq]` JSON array
     // (`Option<(String, i64)>`); see `op.rs::edit_block_prev_edit_serializes_as_array_or_null`.
     let latest_payload: serde_json::Value = serde_json::from_str(&rows[0].payload).unwrap();
-    let prev_edit = latest_payload["prev_edit"].as_array().expect(
-        "PEND-20 B.1: prev_edit must be set after sequential edits, even with native column",
-    );
+    let prev_edit = latest_payload["prev_edit"]
+        .as_array()
+        .expect(" B.1: prev_edit must be set after sequential edits, even with native column");
     assert_eq!(prev_edit.len(), 2, "prev_edit is (device_id, seq) tuple");
     let prev_seq = prev_edit[1].as_i64().unwrap();
     assert_eq!(
         prev_seq, rows[1].seq,
-        "PEND-20 B.1: prev_edit.seq must point at the second-latest edit (highest-seq predecessor)"
+        " B.1: prev_edit.seq must point at the second-latest edit (highest-seq predecessor)"
     );
 }
 
@@ -1903,7 +1903,7 @@ async fn move_and_undo_rederive_page_and_space_ids_synchronously() {
 }
 
 // ======================================================================
-// PEND-35 Tier 2.2 — restore_blocks_by_ids / purge_blocks_by_ids
+// Restore_blocks_by_ids / purge_blocks_by_ids
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2044,7 +2044,7 @@ async fn restore_blocks_by_ids_empty_input_returns_validation_error() {
     );
 }
 
-/// PEND-35 Tier 2.2 — input list above the batch cap rejects with
+/// Input list above the batch cap rejects with
 /// `Validation`. Mirrors the delete + purge sibling rejection paths so
 /// the per-call cap is uniformly enforced across the four `*_by_ids`
 /// commands.
@@ -2324,7 +2324,7 @@ async fn list_blocks_no_filters_returns_top_level() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -2359,7 +2359,7 @@ async fn list_blocks_with_block_type_filter() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -2389,7 +2389,7 @@ async fn list_blocks_with_parent_id_filter() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -2426,7 +2426,7 @@ async fn list_blocks_with_tag_id_filter() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -2488,7 +2488,7 @@ async fn list_blocks_rejects_conflicting_filters() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -2508,7 +2508,7 @@ async fn list_blocks_rejects_conflicting_filters() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -2528,7 +2528,7 @@ async fn list_blocks_rejects_conflicting_filters() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -2537,7 +2537,7 @@ async fn list_blocks_rejects_conflicting_filters() {
     );
 }
 
-// FEAT-3 Phase 4 — the legacy `list_blocks_rejects_space_id_with_*`
+// Phase 4 — the legacy `list_blocks_rejects_space_id_with_*`
 // tests (agenda_date / agenda_date_range / tag_id) have been removed.
 // Phase 4 dropped the rejection guard: agenda and tag filters now
 // thread `space_id` through their pagination helpers
@@ -2565,7 +2565,7 @@ async fn list_blocks_single_filter_is_accepted() {
             None,
             None,
             None,
-            TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+            TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
         )
         .await
         .is_ok(),
@@ -2583,7 +2583,7 @@ async fn list_blocks_single_filter_is_accepted() {
             None,
             None,
             None,
-            TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+            TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
         )
         .await
         .is_ok(),
@@ -2613,7 +2613,7 @@ async fn list_blocks_empty_db_returns_empty_page() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -2659,11 +2659,11 @@ async fn get_block_nonexistent_returns_not_found() {
     );
 }
 
-/// M-98 — Pin the deliberate "include soft-deleted rows" contract on
+/// Pin the deliberate "include soft-deleted rows" contract on
 /// `get_block_inner`. Trash UI / restore / purge / undo / snapshot
 /// flows depend on this shape: the public read surfaces moved to
 /// [`get_active_block_inner`] (which filters `deleted_at IS NULL`)
-/// in the M-98 audit, leaving `get_block_inner` for callers that
+/// In the audit, leaving `get_block_inner` for callers that
 /// genuinely need to inspect tombstoned rows. If a future refactor
 /// adds the filter back into this function, this test fails — at
 /// which point either the trash/restore flows need their own helper
@@ -2701,7 +2701,7 @@ async fn get_block_inner_returns_soft_deleted_block() {
 // get_active_block_inner
 // ======================================================================
 
-/// M-98 — Pin that `get_active_block_inner` returns active rows.
+/// Pin that `get_active_block_inner` returns active rows.
 /// The active-only counterpart of `get_block_inner` is the public
 /// read surface (Tauri IPC `get_block`, MCP `get_block`,
 /// `export_page_markdown_inner`, `get_page_inner`). On a live row
@@ -2727,7 +2727,7 @@ async fn get_active_block_inner_returns_live_block() {
     );
 }
 
-/// M-98 — Pin that `get_active_block_inner` rejects soft-deleted
+/// Pin that `get_active_block_inner` rejects soft-deleted
 /// rows with `NotFound`. This is the bug-fix contract: a tombstoned
 /// row must NEVER reach the public read surface. If a future
 /// refactor drops the `AND deleted_at IS NULL` predicate from the
@@ -2748,11 +2748,11 @@ async fn get_active_block_inner_returns_not_found_for_soft_deleted() {
     let result = get_active_block_inner(&pool, "TOMB01".into()).await;
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
-        "get_active_block_inner must surface soft-deleted rows as NotFound (M-98), got: {result:?}"
+        "get_active_block_inner must surface soft-deleted rows as NotFound, got: {result:?}"
     );
 }
 
-/// M-98 — Pin that `get_active_block_inner` returns NotFound for
+/// Pin that `get_active_block_inner` returns NotFound for
 /// IDs that don't exist at all (same shape as `get_block_inner` for
 /// missing rows — the predicate just adds a second case where we
 /// hit NotFound).
@@ -3160,10 +3160,10 @@ async fn move_block_at_depth_limit_succeeds() {
     );
 }
 
-// ── L-37: MAX_BLOCK_DEPTH enforced in create_block_in_tx ─────────────────
+// ── MAX_BLOCK_DEPTH enforced in create_block_in_tx ─────────────────
 //
 // `move_block_inner` already rejects moves that would push the subtree past
-// the documented limit (docs/ARCHITECTURE.md §20). L-37 closed the asymmetry on
+// The documented limit (docs/ARCHITECTURE.md §20). closed the asymmetry on
 // the create side: a user used to be able to repeatedly create blocks under
 // the deepest leaf and drift past the bound. The recursive CTE inside
 // `create_block_in_tx` now computes parent_depth and rejects when
@@ -3253,7 +3253,7 @@ async fn create_block_exceeding_max_depth_returns_validation_error() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_block_at_root_with_no_parent_skips_depth_check() {
-    // L-37 regression guard: when `parent_id = None`, the new depth check
+    // Regression guard: when `parent_id = None`, the new depth check
     // must NOT fire — root-level page creation is unconstrained by the
     // depth limit (the page itself sits at depth 0).
     let (pool, _dir) = test_pool().await;
@@ -3335,7 +3335,7 @@ async fn add_attachment_creates_row() {
     .await
     .unwrap();
 
-    // M-29: file must exist on disk under app_data_dir before the row commits.
+    // File must exist on disk under app_data_dir before the row commits.
     let app_data_dir = _dir.path();
     std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
     let bytes: Vec<u8> = vec![0u8; 1024];
@@ -3855,7 +3855,7 @@ async fn add_attachment_validates_mime_type() {
     mat.shutdown();
 }
 
-/// L-56: `add_attachment_inner` must reject a `size_bytes` that disagrees
+/// `add_attachment_inner` must reject a `size_bytes` that disagrees
 /// with the on-disk file's `metadata.len()` in *all* builds (previously
 /// only checked via `debug_assert_eq!`, which compiled out in release).
 /// The mismatch surfaces as `AppError::Validation` and the IMMEDIATE
@@ -3951,7 +3951,7 @@ async fn list_attachments_returns_for_block() {
     .await
     .unwrap();
 
-    // Set up the on-disk attachment fixtures (M-29: stat-check inside tx).
+    // Set up the on-disk attachment fixtures (stat-check inside tx).
     let app_data_dir = _dir.path();
     std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
     std::fs::write(app_data_dir.join("attachments/a1.png"), vec![0u8; 100]).unwrap();
@@ -4030,9 +4030,9 @@ async fn list_attachments_returns_for_block() {
 }
 
 // ======================================================================
-// list_attachments_batch (MAINT-131)
+// List_attachments_batch
 //
-// PEND-35 Tier 2.7a: the previous `get_batch_attachment_counts_*` tests
+// The previous `get_batch_attachment_counts_*` tests
 // were retired with the command — counts are now derived as `rows.len()`
 // from this batch's response on the frontend.
 // ======================================================================
@@ -4359,7 +4359,7 @@ async fn list_attachments_batch_attachment_row_shape_matches_list_attachments() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_attachments_returns_rows_with_deleted_at_set() {
-    // M-28: `attachments.deleted_at` is dead code — no production path ever
+    // `attachments.deleted_at` is dead code — no production path ever
     // writes a non-NULL value (both `delete_attachment_inner` and the
     // materializer's `DeleteAttachment` handler hard-delete). The historical
     // `AND deleted_at IS NULL` filter in `list_attachments_inner` was
@@ -4409,7 +4409,7 @@ async fn list_attachments_returns_rows_with_deleted_at_set() {
     assert_eq!(
         rows.len(),
         1,
-        "M-28: row with deleted_at set must be returned (the old filter was a no-op)"
+        "row with deleted_at set must be returned (the old filter was a no-op)"
     );
     assert_eq!(rows[0].filename, "ghost.png");
 
@@ -4418,7 +4418,7 @@ async fn list_attachments_returns_rows_with_deleted_at_set() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn add_attachment_returns_io_error_when_file_missing_on_disk() {
-    // M-29: when the frontend's `@tauri-apps/plugin-fs` write fails or
+    // When the frontend's `@tauri-apps/plugin-fs` write fails or
     // races so the file is never actually persisted, `add_attachment`
     // must surface `AppError::Io` rather than committing a row that
     // points at a non-existent file (which would later trip the sync
@@ -4472,7 +4472,7 @@ async fn add_attachment_returns_io_error_when_file_missing_on_disk() {
     mat.shutdown();
 }
 
-/// M-30: a second `add_attachment_inner` for the same `fs_path` (with the
+/// A second `add_attachment_inner` for the same `fs_path` (with the
 /// underlying file present on disk and a different `attachment_id` /
 /// `block_id`) must surface as `AppError::Database` — the partial unique
 /// index `idx_attachments_fs_path_unique` (migration 0037) trips the
@@ -4488,7 +4488,7 @@ async fn add_attachment_duplicate_fs_path_returns_error_m30() {
     let mat = Materializer::new(pool.clone());
 
     // Two distinct blocks so the test exercises the *cross-block*
-    // collision case (M-30 explicitly calls out "different attachment_id,
+    // Collision case (explicitly calls out "different attachment_id,
     // even different block_id"). If a same-block re-add were the only
     // case, it might be argued the frontend should dedupe; the schema
     // guard has to cover the cross-block case too.
@@ -4558,7 +4558,7 @@ async fn add_attachment_duplicate_fs_path_returns_error_m30() {
     // unique index still has to trip — only the discriminant moved.
     assert!(
         matches!(result, Err(AppError::Conflict(_))),
-        "M-30: duplicate fs_path must surface as AppError::Conflict, got: {result:?}"
+        "duplicate fs_path must surface as AppError::Conflict, got: {result:?}"
     );
 
     // Schema guarantee: only one row exists for this fs_path. The
@@ -4570,18 +4570,18 @@ async fn add_attachment_duplicate_fs_path_returns_error_m30() {
         .unwrap();
     assert_eq!(
         count, 1,
-        "M-30: only the first add must have produced a row at this fs_path"
+        "only the first add must have produced a row at this fs_path"
     );
 
     mat.shutdown();
 }
 
-/// M-30: the partial unique index excludes soft-deleted rows
+/// The partial unique index excludes soft-deleted rows
 /// (`WHERE deleted_at IS NULL`). A tombstone row at a given `fs_path`
 /// must NOT block a fresh `add_attachment_inner` at the same path —
 /// otherwise a user who deletes a file and re-adds it would be locked
 /// out forever. Today's `delete_attachment_inner` hard-deletes (the
-/// `deleted_at` column is dead code per the M-28 audit), so the only
+/// `deleted_at` column is dead code per the audit), so the only
 /// way to materialise a tombstone is by direct SQL. This test is
 /// therefore phrased as a schema-level guarantee on the partial index,
 /// not as a workflow assertion against the command path.
@@ -4648,7 +4648,7 @@ async fn add_attachment_after_soft_delete_can_reuse_fs_path_m30() {
         rel_path.into(),
     )
     .await
-    .expect("M-30: re-adding a fs_path after soft-delete must succeed");
+    .expect("re-adding a fs_path after soft-delete must succeed");
 
     assert_ne!(
         first.id, second.id,
@@ -4747,7 +4747,7 @@ async fn save_and_flush_draft() {
 async fn delete_draft_removes_entry() {
     let (pool, _dir) = test_pool().await;
 
-    // M-93 / migration 0038: seed the parent block so save_draft satisfies
+    // / migration 0038: seed the parent block so save_draft satisfies
     // the FK from block_drafts.block_id to blocks(id).
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, parent_id, position) \
@@ -4795,7 +4795,7 @@ async fn list_drafts_returns_all_drafts() {
     let result = list_drafts_inner(&pool).await.unwrap();
     assert!(result.is_empty(), "should start with zero drafts");
 
-    // Seed parent blocks so save_draft satisfies the M-93 FK
+    // Seed parent blocks so save_draft satisfies the FK
     // (`block_drafts.block_id REFERENCES blocks(id) ON DELETE CASCADE`,
     // migration 0038).
     for id in ["01HZ000000000000000000DRF03", "01HZ000000000000000000DRF04"] {
@@ -4822,7 +4822,7 @@ async fn list_drafts_returns_all_drafts() {
 }
 
 // ======================================================================
-// PEND-35 Tier 2.12: flush_all_drafts — single-IPC boot recovery
+// Flush_all_drafts — single-IPC boot recovery
 // ======================================================================
 
 /// No drafts → 0 flushed, no op_log rows, single tx commits cleanly.
@@ -4859,7 +4859,7 @@ async fn flush_all_drafts_writes_one_op_log_row_per_draft() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    // Three live blocks. M-93 FK requires the `blocks` row first.
+    // Three live blocks. FK requires the `blocks` row first.
     let block_ids = [
         "01HZ000000000000000FA00001",
         "01HZ000000000000000FA00002",
@@ -5021,11 +5021,11 @@ async fn flush_all_drafts_atomic_rollback_on_inner_failure() {
 }
 
 // ======================================================================
-// PEND-18 Phase 2 — SpaceScope parity test (blocks/queries.rs)
+// Phase 2 — SpaceScope parity test (blocks/queries.rs)
 // ======================================================================
 //
 // Asserts that `batch_resolve_inner` honours the `&SpaceScope` boundary:
-// `Global` returns the union across spaces (FEAT-3p4 cross-space behaviour),
+// `Global` returns the union across spaces (cross-space behaviour),
 // while `Active(SpaceId)` drops foreign-space targets so the frontend's
 // resolve store renders them via the broken-link branch.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -5068,7 +5068,7 @@ async fn pend18_batch_resolve_scope_parity() {
 }
 
 // ======================================================================
-// PEND-35 Tier 2.8 — first_child_for_blocks_inner
+// First_child_for_blocks_inner
 // ======================================================================
 //
 // Asserts the per-parent first-child batch query used by the templates
@@ -5190,10 +5190,10 @@ async fn first_child_for_blocks_empty_input_returns_empty_map() {
 }
 
 // ======================================================================
-// PEND-35 Tier 2.1 — delete_blocks_by_ids batch
+// Delete_blocks_by_ids batch
 // ======================================================================
 
-/// PEND-35 Tier 2.1 — seeded parent + child + grandchild, calling
+/// Seeded parent + child + grandchild, calling
 /// `delete_blocks_by_ids_inner` with the parent's id alone must
 /// soft-delete every descendant via the recursive CTE. Mirrors the
 /// single-row `delete_block_cascades_descendants` regression
@@ -5262,7 +5262,7 @@ async fn delete_blocks_by_ids_cascades_descendants() {
     }
 }
 
-/// PEND-35 Tier 2.1 — `delete_blocks_by_ids_inner` writes ONE
+/// `delete_blocks_by_ids_inner` writes ONE
 /// `delete_block` op_log row per RESOLVED root. Two independent roots
 /// + their children = 2 op_log rows total (cascade is captured by
 /// the recursive UPDATE, not re-emitted as ops).
@@ -5364,7 +5364,7 @@ async fn delete_blocks_by_ids_writes_one_op_per_root_in_one_tx() {
     );
 }
 
-/// PEND-35 Tier 2.1 — already-soft-deleted block in the input list
+/// Already-soft-deleted block in the input list
 /// is silently skipped (no double-delete, no extra op_log row).
 /// Calling with the SAME id twice in a row yields zero work the
 /// second time.
@@ -5413,7 +5413,7 @@ async fn delete_blocks_by_ids_skips_already_deleted() {
     );
 }
 
-/// PEND-35 Tier 2.1 — missing ids in the input list silently drop out
+/// Missing ids in the input list silently drop out
 /// (mirror of the `set_todo_state_batch` lenient-skip semantic). A
 /// batch that contains ONLY ghosts must commit cleanly with zero
 /// affected rows and zero op_log writes.
@@ -5449,7 +5449,7 @@ async fn delete_blocks_by_ids_only_ghosts_returns_zero() {
     );
 }
 
-/// PEND-35 Tier 2.1 — mixed input (one live, one ghost): the live
+/// Mixed input (one live, one ghost): the live
 /// root is soft-deleted, the ghost is silently dropped. The whole tx
 /// commits — partial misses must NOT abort the batch.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -5484,7 +5484,7 @@ async fn delete_blocks_by_ids_partial_miss_commits_live_subset() {
     assert!(deleted_at.is_some(), "live root must be soft-deleted");
 }
 
-/// PEND-35 Tier 2.1 — empty input list rejects with `Validation`
+/// Empty input list rejects with `Validation`
 /// (mirrors every other batch boundary in the surface).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_blocks_by_ids_rejects_empty_list() {
@@ -5498,7 +5498,7 @@ async fn delete_blocks_by_ids_rejects_empty_list() {
     );
 }
 
-/// PEND-35 Tier 2.1 — input list above the batch cap rejects with
+/// Input list above the batch cap rejects with
 /// `Validation` (defends the writer-lock blast radius).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_blocks_by_ids_rejects_oversize_list() {
@@ -5521,11 +5521,11 @@ async fn delete_blocks_by_ids_rejects_oversize_list() {
     );
 }
 
-/// PEND-35 Tier 2.1 — selecting both an ancestor and one of its
+/// Selecting both an ancestor and one of its
 /// descendants in the same batch must NOT double-count (the
 /// recursive CTE walks the union; the descendant is already covered
 /// by the ancestor's subtree). Anchors the FE refactor: the FE no
-/// longer needs the MAINT-173 ancestor-pre-walk because the backend
+/// Longer needs the ancestor-pre-walk because the backend
 /// coalesces.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_blocks_by_ids_coalesces_ancestor_plus_descendant() {
@@ -5592,7 +5592,7 @@ async fn delete_blocks_by_ids_coalesces_ancestor_plus_descendant() {
     );
 }
 
-/// PEND-35 Tier 2.1 — id casing must be normalised to uppercase
+/// Id casing must be normalised to uppercase
 /// before SQL touch (AGENTS.md invariant #8). Lower-case input
 /// resolves the same row as upper-case.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -5612,7 +5612,7 @@ async fn delete_blocks_by_ids_normalises_lowercase_block_id() {
 }
 
 // ======================================================================
-// #81 / PEND-57 — move_blocks_to_space (bulk move-to-space)
+// #81 / move_blocks_to_space (bulk move-to-space)
 // ======================================================================
 
 /// Seed the synthetic test space as a real space block (so the upfront
@@ -5955,10 +5955,10 @@ async fn move_blocks_to_space_rejects_non_space_target() {
 }
 
 // ======================================================================
-// PEND-35 Tier 4.3 — create_blocks_batch
+// Create_blocks_batch
 // ======================================================================
 
-/// PEND-35 Tier 4.3 — N input specs land as N blocks AND N op_log
+/// N input specs land as N blocks AND N op_log
 /// rows that all share a single contiguous seq range (one tx, no
 /// foreign tx interleaving). Mirrors the
 /// `delete_blocks_by_ids_writes_one_op_per_root_in_one_tx` pattern.
@@ -6038,7 +6038,7 @@ async fn create_blocks_batch_inserts_n_blocks_in_one_tx() {
     );
 }
 
-/// PEND-35 Tier 4.3 — an invalid `block_type` mid-batch must roll the
+/// An invalid `block_type` mid-batch must roll the
 /// whole transaction back. After the call returns Err, neither the
 /// blocks table nor the op_log carries any rows from the attempted
 /// batch.
@@ -6111,7 +6111,7 @@ async fn create_blocks_batch_atomic_rollback() {
     );
 }
 
-/// PEND-35 Tier 4.3 — empty input rejects with Validation; oversize
+/// Empty input rejects with Validation; oversize
 /// input rejects with Validation. Mirror of
 /// `delete_blocks_by_ids_rejects_empty_list` /
 /// `…_rejects_oversize_list`.
@@ -6143,7 +6143,7 @@ async fn create_blocks_batch_rejects_empty_oversize() {
     );
 }
 
-/// PEND-35 Tier 4.3 — each spec carries `properties`. After commit,
+/// Each spec carries `properties`. After commit,
 /// every spec's block exists AND its properties land in either
 /// `block_properties` (non-reserved keys) or the corresponding column
 /// on `blocks` (reserved keys: `todo_state` / `priority` / `due_date`
@@ -6323,7 +6323,7 @@ async fn create_blocks_batch_with_due_date_stores_as_date() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn edit_block_cross_space_content_rejected() {
-    // PEND-76 F5: editing a block to reference a block in a different
+    // Editing a block to reference a block in a different
     // space is rejected.
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -6364,7 +6364,7 @@ async fn edit_block_cross_space_content_rejected() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_block_cross_space_content_rejected() {
-    // PEND-76 F5: creating a block (under a page in space A) whose content
+    // Creating a block (under a page in space A) whose content
     // references a block in space B is rejected.
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -6407,7 +6407,7 @@ async fn create_block_cross_space_content_rejected() {
 }
 
 // ======================================================================
-// PEND-76 F2 — bytes-over-IPC attachment add/read
+// Bytes-over-IPC attachment add/read
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

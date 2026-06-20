@@ -2,7 +2,7 @@
  * useListMultiSelect — shared multi-select logic for flat list views.
  *
  * Provides selection management (single toggle, shift-range, select-all, clear)
- * with UX-140 shift-state-propagation: shift-click applies the *target* state
+ * With shift-state-propagation: shift-click applies the *target* state
  * (add or remove) of the clicked item to the entire range.
  *
  * Used by TrashView and HistoryView.
@@ -51,7 +51,7 @@ export function useListMultiSelect<T>({
   const selectedRef = useRef(selected)
   selectedRef.current = selected
 
-  // FE-M-5: read `items` via a ref inside toggleSelection so its identity stays
+  // Read `items` via a ref inside toggleSelection so its identity stays
   // stable across paginated loads — memoized children (rows) won't re-render
   // just because the items array reference changed.
   const itemsRef = useRef(items)
@@ -123,7 +123,7 @@ export function useListMultiSelect<T>({
   const handleRowClick = useCallback(
     (id: string, e: React.MouseEvent | React.KeyboardEvent) => {
       if (e.shiftKey) {
-        // UX-140: propagate the clicked item's *target* state to the range.
+        // Propagate the clicked item's *target* state to the range.
         // If the item is currently selected the user wants to deselect → false.
         // If not selected → true.
         const isCurrentlySelected = selectedRef.current.has(id)

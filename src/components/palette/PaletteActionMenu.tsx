@@ -1,5 +1,5 @@
 /**
- * PaletteActionMenu (PEND-67 Phase 5).
+ * PaletteActionMenu (Phase 5).
  *
  * Per-row action sheet for the palette. Anchored to the row that had
  * focus when Tab was pressed (or to the `…` button on mouse hover);

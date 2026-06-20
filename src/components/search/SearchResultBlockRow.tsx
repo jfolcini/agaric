@@ -1,6 +1,6 @@
 /**
  * SearchResultBlockRow — single result row inside a page-grouped result
- * listbox (PEND-50 Phase 1).
+ * Listbox (Phase 1).
  *
  * Renders the matched block's snippet (with `<mark>` highlights via
  * `SnippetHighlight`) or, when the row has no content snippet (page-name-
@@ -36,19 +36,19 @@ export interface SearchResultBlockRowProps {
   /** DOM id used by the parent listbox `aria-activedescendant`. */
   id?: string
   /**
-   * PEND-58f FE-3 — absolute-positioning style supplied by the per-group
+   * Absolute-positioning style supplied by the per-group
    * virtualizer (`position:absolute; transform:translateY(start)`). Unset
    * for the non-virtualized callers (tests) where the row flows normally.
    */
   style?: React.CSSProperties
   /**
-   * PEND-58f FE-3 — the virtualizer's `measureElement` ref. Attached to
+   * The virtualizer's `measureElement` ref. Attached to
    * the `<li>` so its real height corrects the size estimate after first
    * paint. Unset outside the virtualized listbox.
    */
   measureRef?: (el: HTMLElement | null) => void
   /**
-   * PEND-58f FE-3 — the virtual-row index, rendered as `data-index` so
+   * The virtual-row index, rendered as `data-index` so
    * `@tanstack/react-virtual`'s `measureElement` can map the measured DOM
    * node back to its row. Unset outside the virtualized listbox.
    */
@@ -56,7 +56,7 @@ export interface SearchResultBlockRowProps {
 }
 
 /**
- * PEND-55 — split `content` into alternating plain spans and `<mark>`
+ * Split `content` into alternating plain spans and `<mark>`
  * highlight runs from a list of UTF-16 offset pairs. NO
  * `dangerouslySetInnerHTML`; React renders each fragment as its own
  * node so axe + react-dom escape every span.
@@ -110,7 +110,7 @@ function SearchResultBlockRowImpl({
     row.match_offsets != null && row.match_offsets.length > 0 && row.content != null
   const hasSnippet = !hasOffsets && row.snippet != null && row.snippet.length > 0
   const fallback = row.content && row.content.length > 0 ? row.content : t('common.empty')
-  // PEND-55 — derive the offset-driven React nodes once per row.
+  // Derive the offset-driven React nodes once per row.
   // Inputs change only when the row identity / offsets change.
   const offsetNodes = useMemo(() => {
     if (!hasOffsets || row.content == null) return null
@@ -123,7 +123,7 @@ function SearchResultBlockRowImpl({
   }
 
   return (
-    // oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- tabIndex={-1} keeps the row out of the focus path; keyboard activation flows through the parent combobox's input via aria-activedescendant per the WAI-ARIA 1.2 combobox pattern. PEND-73 Phase 3.U3 removed the dead row-level onKeyDown that was never reachable.
+    // oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- tabIndex={-1} keeps the row out of the focus path; keyboard activation flows through the parent combobox's input via aria-activedescendant per the WAI-ARIA 1.2 combobox pattern. Phase 3.U3 removed the dead row-level onKeyDown that was never reachable.
     <li
       id={id}
       ref={measureRef}
@@ -161,7 +161,7 @@ function SearchResultBlockRowImpl({
 }
 
 /**
- * PEND-73 Phase 4.P1 — memoised. The parent `SearchResultGroups`
+ * Phase 4.P1 — memoised. The parent `SearchResultGroups`
  * re-renders on every focus move (it owns `focusedRowId`); without
  * memoisation, every visible row re-runs `useMemo` + reflows its
  * `<mark>` highlights even though only the two rows whose `isFocused`
@@ -178,7 +178,7 @@ function SearchResultBlockRowImpl({
  * commit it gets the latest closure.
  */
 export const SearchResultBlockRow = memo(SearchResultBlockRowImpl, (prev, next) => {
-  // PEND-58f FE-3 — `style` is the virtualizer's positioning transform; it
+  // `style` is the virtualizer's positioning transform; it
   // changes whenever the row's offset shifts (scroll / re-measure), so it
   // must defeat the memo. `measureRef` is stable per virtualizer instance,
   // so it is intentionally NOT compared.

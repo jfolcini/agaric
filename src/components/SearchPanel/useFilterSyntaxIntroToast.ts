@@ -2,9 +2,9 @@
  * useFilterSyntaxIntroToast — show the one-time "filter syntax is live"
  * intro toast on first mount of the search panel.
  *
- * PEND-58f FE-9 — extracted from the SearchPanel god-component.
+ * Extracted from the SearchPanel god-component.
  *
- * PEND-73 Phase 3.U10 — guard against re-firing in browsers where
+ * Phase 3.U10 — guard against re-firing in browsers where
  * localStorage is unavailable (private mode, embedded webviews with
  * storage disabled). The in-memory session sentinel is checked first;
  * the localStorage write is best-effort and only matters for

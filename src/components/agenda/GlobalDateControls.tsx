@@ -10,7 +10,7 @@
  * off-context. The allowlist that gates it lives in `App.tsx`
  * (`DATE_CONTROL_VIEWS`).
  *
- * Extracted from `JournalPage.tsx` under MAINT-119.
+ * Extracted from `JournalPage.tsx` under.
  */
 
 import { isSameDay } from 'date-fns'
@@ -57,7 +57,7 @@ export function GlobalDateControls(): React.ReactElement {
 
   const isAgendaActive = currentView === 'journal' && mode === 'agenda'
 
-  // UX-236: hide the Today button when already on today's daily journal — the
+  // Hide the Today button when already on today's daily journal — the
   // click would be a no-op. Only applies to daily mode inside the journal view;
   // weekly/monthly still benefit from a scroll-to-today, and non-journal views
   // should keep the jump-in affordance.

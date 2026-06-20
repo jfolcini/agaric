@@ -1,6 +1,6 @@
 /**
  * Tests for priority-levels — the single source of truth for the active
- * priority level list (UX-201b).
+ * Priority level list.
  *
  * Validates:
  *  - Default levels match historic `['1', '2', '3']`.
@@ -9,7 +9,7 @@
  *  - setPriorityLevels is a no-op when the new array equals the current one.
  *  - Subscribers fire on change and stop firing after unsubscribe.
  *  - A throwing listener does not block other listeners (logger.warn fires).
- *  - priorityRank matches the pre-UX-201b constants for default levels.
+ * PriorityRank matches the pre- constants for default levels.
  *  - getPriorityCycle returns `[null, ...levels]`.
  */
 
@@ -160,7 +160,7 @@ describe('priority-levels: subscribe / unsubscribe', () => {
     )
   })
 
-  // FE-M-14: pin the documented best-effort contract.
+  // Pin the documented best-effort contract.
   // A throwing listener is logged but does NOT roll back the state mutation;
   // the new levels remain observable via getPriorityLevels(), and the listener
   // itself sees the post-mutation value when it runs.
@@ -193,7 +193,7 @@ describe('priority-levels: subscribe / unsubscribe', () => {
 })
 
 describe('priority-levels: priorityRank', () => {
-  it('returns 0 / 1 / 2 for default 1 / 2 / 3 (regression vs UX-201b)', () => {
+  it('returns 0 / 1 / 2 for default 1 / 2 / 3 (regression vs)', () => {
     expect(priorityRank('1')).toBe(0)
     expect(priorityRank('2')).toBe(1)
     expect(priorityRank('3')).toBe(2)

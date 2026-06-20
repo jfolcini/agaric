@@ -1,5 +1,5 @@
 /**
- * Unit tests for useAppKeyboardShortcuts (MAINT-124 step 1).
+ * Unit tests for useAppKeyboardShortcuts.
  *
  * Validates the hook in isolation: the 5 keydown listeners are installed,
  * dispatch to the right callback for each shortcut, gate correctly
@@ -75,14 +75,14 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () => {
-  it('Ctrl+F (findInPage, PEND-52) opens the in-page find toolbar', () => {
+  it('Ctrl+F (findInPage,) opens the in-page find toolbar', () => {
     // Reset the find store explicitly so prior test runs don't leak state.
     useInPageFindStore.setState({ open: false, query: '', lastQuery: '' })
     renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
 
-    // The PEND-52 rebind reclaims Ctrl+F for the in-page find toolbar;
+    // The rebind reclaims Ctrl+F for the in-page find toolbar;
     // the global search view now lives under Ctrl+Shift+F.
     expect(useInPageFindStore.getState().open).toBe(true)
     expect(useNavigationStore.getState().currentView).toBe('journal')
@@ -96,7 +96,7 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
     expect(useNavigationStore.getState().currentView).toBe('search')
   })
 
-  it('Ctrl+. (runLastCommand) runs the most recent palette command directly (PEND-67 Phase 8)', async () => {
+  it('Ctrl+. (runLastCommand) runs the most recent palette command directly (Phase 8)', async () => {
     // Seed a previously-run command under the active space.
     localStorage.setItem(
       'recent_commands:SPACE_PERSONAL',
@@ -115,7 +115,7 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
     expect(recents[0]?.id).toBe('go-settings')
   })
 
-  it('Ctrl+. with no recent commands opens the palette in commands mode (PEND-67 Phase 8)', async () => {
+  it('Ctrl+. with no recent commands opens the palette in commands mode (Phase 8)', async () => {
     localStorage.removeItem('recent_commands:SPACE_PERSONAL')
     renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
@@ -126,7 +126,7 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
     expect(useCommandPaletteStore.getState().mode).toBe('commands')
   })
 
-  it('Ctrl+. skips when typing in an input (PEND-67 Phase 8)', async () => {
+  it('Ctrl+. skips when typing in an input (Phase 8)', async () => {
     localStorage.setItem(
       'recent_commands:SPACE_PERSONAL',
       JSON.stringify([{ id: 'go-settings', runAt: '2026-05-19T00:00:00Z' }]),
@@ -432,7 +432,7 @@ describe('useAppKeyboardShortcuts — close-overlays', () => {
 })
 
 describe('useAppKeyboardShortcuts — tab shortcuts', () => {
-  // FEAT-3 Phase 3 the lookup runs through the per-space selector, but
+  // Phase 3 the lookup runs through the per-space selector, but
   // `switchTab` writes through the flat `tabs`/`activeTabIndex` fields
   // (those mirror the active space slice). Seed both so the hook can
   // both find and rotate the tab list.
@@ -510,7 +510,7 @@ describe('useAppKeyboardShortcuts — modifier discipline', () => {
     expect(useNavigationStore.getState().currentView).toBe('journal')
   })
 
-  it('auto-repeat events are ignored (MAINT-105)', () => {
+  it('auto-repeat events are ignored', () => {
     renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
     fireEvent.keyDown(window, { key: 'f', ctrlKey: true, repeat: true })

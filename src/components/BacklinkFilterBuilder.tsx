@@ -38,7 +38,7 @@ export interface BacklinkFilterBuilderProps {
 }
 
 // ---------------------------------------------------------------------------
-// React-key stamping for filter pills (MAINT-190)
+// React-key stamping for filter pills
 //
 // Each filter added via `handleAddFilter` is stamped with a monotonic
 // `_addId`. `FilterPillRow` uses `_addId` as the React `key`, which gives
@@ -127,7 +127,7 @@ export function BacklinkFilterBuilder({
         setShowAddRow(false)
         return
       }
-      // Stamp a per-add monotonic React key (MAINT-190) so the pill row's
+      // Stamp a per-add monotonic React key so the pill row's
       // `key={filter._addId}` is collision-free even past the data-level
       // dedup above. `_addId` rides along on the filter object; the Rust
       // serde layer silently drops the extra field on the IPC boundary.

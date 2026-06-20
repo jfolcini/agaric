@@ -303,7 +303,7 @@ export function useBlockDnD({
       const blockId = active.id as string
       const activeBlock = blocks.find((b) => b.id === blockId)
 
-      // UX-241: on success restore focus on the dragged block so EditableBlock's
+      // On success restore focus on the dragged block so EditableBlock's
       // `isFocused` effect re-fires `scrollIntoView` and the viewport tracks it.
       // Only restore on success — if the move rejects, leave focus cleared.
       const restoreFocusOnSuccess = (label: string, p: Promise<unknown>) =>

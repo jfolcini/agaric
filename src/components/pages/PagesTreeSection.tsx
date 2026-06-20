@@ -4,7 +4,7 @@
  * Renders the current page's descendant pages (anything whose title starts
  * with `pageTitle + '/'`) as a collapsible tree. Sits ABOVE LinkedReferences
  * so the navigational "pages under this page" affordance lives near the
- * editor body, not buried under the references stack (PEND-83 Bug 2).
+ * Editor body, not buried under the references stack (Bug 2).
  *
  * Data source: `listAllPagesInSpace(currentSpaceId)` — same IPC the
  * `[[ picker preload uses, so the data is usually already warm in the
@@ -136,7 +136,7 @@ export function PagesTreeSection({
   }, [pages, pageTitle])
 
   // Hide the entire section when there are zero descendants. The plan
-  // mandates `return null` here — UX-152's "explain why empty" rule
+  // Mandates `return null` here — "explain why empty" rule
   // doesn't apply to discovery affordances (the editor body is the
   // primary surface; the tree is purely additive).
   if (children.length === 0) {

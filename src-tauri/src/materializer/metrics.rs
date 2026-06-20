@@ -65,7 +65,7 @@ pub struct QueueMetrics {
     /// Each `BatchApplyOps` drop is counted once regardless of batch
     /// size; the rest of the batch is implicitly dropped together.
     pub fg_apply_dropped: AtomicU64,
-    /// PEND-24 H1: subset of [`Self::fg_apply_dropped`] whose retry
+    /// Subset of [`Self::fg_apply_dropped`] whose retry
     /// row was successfully written to `materializer_retry_queue` so
     /// the boot-time / periodic sweeper can re-enqueue the op.
     /// `BatchApplyOps` drops fan out into one persisted row per
@@ -78,16 +78,16 @@ pub struct QueueMetrics {
     /// [`Self::retry_queue_persist_errors`] for triage.
     pub fg_apply_dropped_persisted: AtomicU64,
     /// Background tasks that exhausted all in-memory retries (per-block
-    /// tasks persisted to `materializer_retry_queue`, **and as of PEND-03
+    /// Tasks persisted to `materializer_retry_queue`, **and as of
     /// global cache rebuilds also persisted to that queue under the
-    /// `'__GLOBAL__'` sentinel** — see BUG-22 / PEND-03), **and** tasks
+    /// `'__GLOBAL__'` sentinel** — see), **and** tasks
     /// that `try_enqueue_background` had to shed under backpressure
-    /// because the bounded channel was full (M-7 / M-8). Both
+    /// Because the bounded channel was full. Both
     /// drop-classes are aggregated here so a non-zero value is the
     /// single observability signal that the materializer is silently
     /// degrading cache freshness.
     pub bg_dropped: AtomicU64,
-    /// PEND-03: subset of [`Self::bg_dropped`] attributable to global
+    /// Subset of [`Self::bg_dropped`] attributable to global
     /// cache rebuild tasks (`RebuildTagsCache`, `RebuildPagesCache`,
     /// `RebuildAgendaCache`, `RebuildProjectedAgendaCache`,
     /// `RebuildTagInheritanceCache`, `RebuildPageIds`,
@@ -100,9 +100,9 @@ pub struct QueueMetrics {
     pub bg_dropped_global: AtomicU64,
     /// Number of times `enqueue_foreground` had to await on a full
     /// channel. A non-zero value indicates foreground backpressure.
-    /// See MAINT-24.
+    /// See.
     pub fg_full_waits: AtomicU64,
-    /// PEND-24 M1: count of failed
+    /// Count of failed
     /// [`super::retry_queue::record_failure`] calls — i.e. the number
     /// of times the retry-queue persistence write itself returned an
     /// error.
@@ -204,7 +204,7 @@ pub struct StatusInfo {
     /// (which carry `seq` / `device_id` / `op_type`) for triage.
     /// Each `BatchApplyOps` drop counts once regardless of batch size.
     pub fg_apply_dropped: u64,
-    /// PEND-24 H1: subset of `fg_apply_dropped` whose retry row was
+    /// Subset of `fg_apply_dropped` whose retry row was
     /// successfully persisted to `materializer_retry_queue`. The
     /// boot-time / periodic sweeper re-enqueues these onto the
     /// foreground queue so the apply-op is eventually retried. A
@@ -213,11 +213,11 @@ pub struct StatusInfo {
     /// indicates the persistence write path is failing — pair with
     /// `retry_queue_persist_errors` for triage.
     pub fg_apply_dropped_persisted: u64,
-    // --- MAINT-24 additions ---
+    // --- additions ---
     /// Number of background tasks that were either persisted to the retry
     /// queue or silently dropped after exhausting retries.
     pub bg_dropped: u64,
-    /// PEND-03: subset of `bg_dropped` attributable to global cache
+    /// Subset of `bg_dropped` attributable to global cache
     /// rebuilds (`RebuildTagsCache`, `RebuildPagesCache`,
     /// `RebuildAgendaCache`, `RebuildProjectedAgendaCache`,
     /// `RebuildTagInheritanceCache`, `RebuildPageIds`,
@@ -234,7 +234,7 @@ pub struct StatusInfo {
     /// Number of times the foreground `enqueue_foreground` path awaited on
     /// a full channel. Non-zero indicates backpressure.
     pub fg_full_waits: u64,
-    /// PEND-24 M1: count of failed `record_failure` calls (i.e. retry
+    /// Count of failed `record_failure` calls (i.e. retry
     /// queue persistence writes that returned an error). Each
     /// dropped task that fails persistence twice contributes `+2`
     /// (first attempt + retry attempt). A non-zero value means the
@@ -275,7 +275,7 @@ pub struct StatusInfo {
     pub sql_only_fallback_count: u64,
     /// #1319: process-global, cross-session count of sync snapshot-fallbacks
     /// taken because a peer advertised a `from_vv` unreachable from our local
-    /// `oplog_vv()` (MAINT-228). Monotonic, never reset. A steadily rising
+    /// `oplog_vv()`. Monotonic, never reset. A steadily rising
     /// value means sync keeps falling back to snapshot catch-up instead of
     /// applying incremental updates — pair with `snapshot_fallback_last` (and
     /// the `target=sync_protocol::snapshot_fallback` debug lines) to see the

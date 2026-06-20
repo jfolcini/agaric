@@ -30,7 +30,7 @@ export function useRichContentCallbacks(): RichContentCallbacks {
   const cacheRef = useRef(cache)
   cacheRef.current = cache
 
-  // FEAT-3p7 — cache is keyed by composite `${spaceId}::${ulid}`. Read
+  // Cache is keyed by composite `${spaceId}::${ulid}`. Read
   // the active space at lookup time so a switch immediately routes
   // resolves to the new space's slice.
   const resolveBlockTitle = useCallback((id: string): string | undefined => {
@@ -94,7 +94,7 @@ export function useTagClickHandler(): (tagId: string) => void {
 
   return useCallback(
     (tagId: string) => {
-      // FEAT-3p7 — composite-key cache; resolve under the active space.
+      // Composite-key cache; resolve under the active space.
       const spaceId = useSpaceStore.getState().currentSpaceId
       const cached = cacheRef.current.get(keyFor(spaceId, tagId))
       const name = cached?.title ?? 'Tag'

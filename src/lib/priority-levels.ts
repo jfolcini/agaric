@@ -1,7 +1,7 @@
 /**
  * priority-levels — single source of truth for the active priority levels.
  *
- * UX-201b: priority levels are user-configurable via the `priority` property
+ * Priority levels are user-configurable via the `priority` property
  * definition's `options` JSON. This module caches the current levels in
  * module-level state and notifies subscribers when they change.
  *
@@ -71,7 +71,7 @@ export function setPriorityLevels(levels: readonly string[]): void {
     return
   }
   currentLevels = normalised
-  // FE-M-14: best-effort listener notification.
+  // Best-effort listener notification.
   //   (a) Listeners are notified AFTER `currentLevels` has already been
   //       mutated above — they observe the new value via `getPriorityLevels()`.
   //   (b) A thrown listener is caught and logged, but the mutation is NOT

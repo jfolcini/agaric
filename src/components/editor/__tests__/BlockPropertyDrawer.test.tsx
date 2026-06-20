@@ -77,7 +77,7 @@ function makeDef(key: string, valueType = 'text'): PropertyDefinition {
 function setupMock(props: PropertyRowData[] = [], defs: PropertyDefinition[] = []) {
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'get_properties') return props
-    // M-85: paginated PageResponse envelope.
+    // Paginated PageResponse envelope.
     if (cmd === 'list_property_defs') return { items: defs, next_cursor: null, has_more: false }
     if (cmd === 'set_property') return undefined
     if (cmd === 'delete_property') return undefined
@@ -104,7 +104,7 @@ describe('BlockPropertyDrawer', () => {
     expect(screen.getByText('Block Properties')).toBeInTheDocument()
   })
 
-  it('shows LoadingSkeleton initially (UX-272 sub-fix 3)', () => {
+  it('shows LoadingSkeleton initially (sub-fix 3)', () => {
     // Return a never-resolving promise to keep loading state
     mockedInvoke.mockReturnValue(new Promise(() => {}))
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
@@ -117,7 +117,7 @@ describe('BlockPropertyDrawer', () => {
     expect(skeletons?.length).toBe(3)
   })
 
-  it('disables the Add property button while loading with a tooltip (UX-272 sub-fix 3)', async () => {
+  it('disables the Add property button while loading with a tooltip (sub-fix 3)', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockReturnValue(new Promise(() => {}))
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
@@ -191,7 +191,7 @@ describe('BlockPropertyDrawer', () => {
     expect(screen.queryByText('Block Properties')).not.toBeInTheDocument()
   })
 
-  // PEND-28b H3 — the SheetContent must inherit the responsive baseline.
+  // The SheetContent must inherit the responsive baseline.
   // `w-80` alone clips a 360 px phone (320 px drawer leaves 40 px for content);
   // `w-3/4 sm:w-80` keeps the desktop 320 px while making mobile 75% viewport.
   it('SheetContent uses responsive width (w-3/4 sm:w-80)', () => {
@@ -479,7 +479,7 @@ describe('BlockPropertyDrawer', () => {
     expect(screen.queryByRole('button', { name: 'Delete property' })).not.toBeInTheDocument()
   })
 
-  // ── UX-320: Repeat-syntax help popover ────────────────────────────────
+  // ── Repeat-syntax help popover ────────────────────────────────
 
   it('renders the repeat-syntax help popover trigger on the repeat property row', async () => {
     const props = [makeProp('repeat', { value_text: '++ 1d' })]
@@ -515,7 +515,7 @@ describe('BlockPropertyDrawer', () => {
     expect(screen.getByText('Reschedule from the moment of completion.')).toBeInTheDocument()
   })
 
-  // PEND-23 M3: PopoverContent must carry an aria-label so screen readers
+  // PopoverContent must carry an aria-label so screen readers
   // announce the popover purpose, not a generic "dialog".
   it('labels the open repeat-help popover with property.repeatHelpPopoverLabel', async () => {
     const user = userEvent.setup()
@@ -547,7 +547,7 @@ describe('BlockPropertyDrawer', () => {
     expect(screen.queryByTestId('repeat-help-trigger')).not.toBeInTheDocument()
   })
 
-  // ── UX-H1: Consistent built-in property rendering ────────────────────
+  // ── Consistent built-in property rendering ────────────────────
 
   it('renders built-in property (created_at) with icon and formatted name', async () => {
     const props = [makeProp('created_at', { value_text: '2026-01-01' })]
@@ -631,7 +631,7 @@ describe('BlockPropertyDrawer', () => {
 
   it('renders ref-type property with resolved page title', async () => {
     // Pre-populate resolve cache so the title is available.
-    // FEAT-3p7 — cache is keyed by composite `${spaceId}::${ulid}`;
+    // Cache is keyed by composite `${spaceId}::${ulid}`;
     // no active space is set so we use the `__global__` sentinel via
     // `keyFor(null, id)`.
     const { useResolveStore, keyFor } = await import('@/stores/resolve')
@@ -1029,7 +1029,7 @@ describe('PropertyRow', () => {
     expect(input).toHaveValue('2026-06-15')
   })
 
-  it('shows "Parsing…" indicator while NL date is being debounced (UX-322)', async () => {
+  it('shows "Parsing…" indicator while NL date is being debounced', async () => {
     const user = userEvent.setup()
     render(
       <PropertyRow label="Due" value="" inputType="date" ariaLabel="Due value" onSave={vi.fn()} />,

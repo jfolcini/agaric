@@ -1,5 +1,5 @@
 /**
- * Unit tests for `useToolbarOverflow` (PEND-33 Layer B).
+ * Unit tests for `useToolbarOverflow` (Layer B).
  *
  * Covers (per plan lines 259-263):
  *  - Items fit (no overflow returned)

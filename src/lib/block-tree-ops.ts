@@ -1,7 +1,7 @@
 /**
  * Pure tree algorithms used by the page-blocks store.
  *
- * Extracted from `src/stores/page-blocks.ts` per MAINT-127 — these are
+ * Extracted from `src/stores/page-blocks.ts` per these are
  * referentially-transparent helpers (no IPC, no Zustand state) that
  * operate on `FlatBlock[]` arrays. Keep new pure tree helpers here
  * rather than back in the store factory.

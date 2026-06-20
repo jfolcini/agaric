@@ -139,7 +139,7 @@ describe('ImageResizeToolbar', () => {
     expect(btn25).toBeInTheDocument()
   })
 
-  it('preset matching currentWidth has aria-pressed="true"; others "false" (UX-280)', () => {
+  it('preset matching currentWidth has aria-pressed="true"; others "false"', () => {
     renderToolbar({ currentWidth: '50' })
 
     expect(screen.getByTestId('image-resize-25')).toHaveAttribute('aria-pressed', 'false')
@@ -148,7 +148,7 @@ describe('ImageResizeToolbar', () => {
     expect(screen.getByTestId('image-resize-100')).toHaveAttribute('aria-pressed', 'false')
   })
 
-  it('aria-pressed updates when currentWidth changes (UX-280)', () => {
+  it('aria-pressed updates when currentWidth changes', () => {
     const { rerender } = renderToolbar({ currentWidth: '25' })
 
     expect(screen.getByTestId('image-resize-25')).toHaveAttribute('aria-pressed', 'true')

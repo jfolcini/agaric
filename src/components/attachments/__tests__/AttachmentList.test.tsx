@@ -237,7 +237,7 @@ describe('AttachmentList', () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_attachment', expect.anything())
   })
 
-  it('cancels the pending-delete timer on unmount (#MAINT-48)', async () => {
+  it('cancels the pending-delete timer on unmount (#)', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
 

@@ -426,7 +426,7 @@ async fn reverse_move_block_when_prior_is_create_uses_create_position() {
         _ => panic!("expected MoveBlock"),
     }
 }
-/// BUG-26: An ancient `create_block` payload with `position = None`
+/// An ancient `create_block` payload with `position = None`
 /// (pre-migration data) cannot be reversed into a valid `move_block`
 /// because positions are 1-based and `move_block_inner` rejects 0.
 /// Instead of silently defaulting to 0 (overflow into Validation) or
@@ -465,7 +465,7 @@ async fn reverse_move_block_when_prior_create_lacks_position_is_non_reversible()
             result,
             Err(AppError::NonReversible { ref op_type }) if op_type == "move_block"
         ),
-        "BUG-26: reverse of move_block must be NonReversible when the \
+        "reverse of move_block must be NonReversible when the \
          prior create_block payload has position=None; got: {result:?}"
     );
 }
@@ -733,7 +733,7 @@ async fn reverse_delete_block_missing_block_returns_not_found() {
         Err(AppError::NotFound(_))
     ));
 }
-/// TEST-50: with a populated `op_log`, calling `compute_reverse` on a
+/// With a populated `op_log`, calling `compute_reverse` on a
 /// `seq` that does not exist must return `AppError::NotFound` whose
 /// message names the `(device_id, seq)` pair — not panic, not return
 /// an empty payload, not silently succeed. The sibling test above
@@ -978,7 +978,7 @@ async fn reverse_set_property_value_date() {
         other => panic!("Expected SetProperty, got {:?}", other),
     }
 }
-/// PEND-14 regression: reversing a `set_property` whose prior op was a
+/// Regression: reversing a `set_property` whose prior op was a
 /// boolean must restore the prior `value_bool`. Without this, the rebuilt
 /// payload would have all-None typed values, failing
 /// `validate_set_property` with a count == 0 error.
@@ -1028,7 +1028,7 @@ async fn reverse_set_property_value_bool() {
         other => panic!("Expected SetProperty, got {:?}", other),
     }
 }
-/// PEND-14 regression: reversing a `delete_property` whose prior op was a
+/// Regression: reversing a `delete_property` whose prior op was a
 /// boolean must restore the prior `value_bool` so the redo path emits a
 /// valid `SetProperty` payload (exactly-one-value).
 #[tokio::test]
@@ -1782,7 +1782,7 @@ async fn add_attachment_apply_then_reverse_round_trip_i_lifecycle_3() {
     );
 }
 
-/// M-71 pinning test: `compute_reverse(restore_block)` discards the
+/// Pinning test: `compute_reverse(restore_block)` discards the
 /// original `RestoreBlockPayload::deleted_at_ref` and produces a bare
 /// `DeleteBlock(block_id)`. A subsequent `cascade_soft_delete`
 /// therefore mints a fresh `deleted_at` distinct from the original
@@ -1797,7 +1797,7 @@ async fn add_attachment_apply_then_reverse_round_trip_i_lifecycle_3() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
     let (pool, _dir) = test_pool().await;
-    // SQL-review M-3: `cascade_soft_delete` / `restore_block` now take
+    // SQL-review `cascade_soft_delete` / `restore_block` now take
     // `&Materializer` so cache-invalidation dispatch is type-system-
     // enforced. The dispatched tasks are background fire-and-forget;
     // we don't await them here because this test only asserts the
@@ -1840,14 +1840,14 @@ async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
     )
     .await;
 
-    // Step 3: compute the reverse. M-71: it must be bare DeleteBlock —
+    // Step 3: compute the reverse. it must be bare DeleteBlock —
     // `deleted_at_ref` is intentionally NOT propagated.
     let reverse = compute_reverse(&pool, TEST_DEVICE, restore_rec.seq)
         .await
         .unwrap();
     assert!(
         matches!(&reverse, OpPayload::DeleteBlock(p) if p.block_id == block_id),
-        "M-71: reverse(RestoreBlock) must be bare DeleteBlock(block_id); got: {reverse:?}"
+        "reverse(RestoreBlock) must be bare DeleteBlock(block_id); got: {reverse:?}"
     );
 
     // Sleep ≥1ms so the second cascade's millisecond-precision
@@ -1867,7 +1867,7 @@ async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
     // cascade group's timestamp.
     assert_ne!(
         deleted_at_a, deleted_at_b,
-        "M-71: reverse(RestoreBlock) does not propagate deleted_at_ref, \
+        "reverse(RestoreBlock) does not propagate deleted_at_ref, \
          so a subsequent cascade_soft_delete mints a fresh deleted_at. \
          If this assertion ever flips to equal, update the doc comment \
          on `reverse_restore_block` in `reverse/block_ops.rs` to match \
@@ -1876,7 +1876,7 @@ async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// TEST-7 — AGENTS.md "Undo/reverse testing" invariants
+// AGENTS.md "Undo/reverse testing" invariants
 //
 // Pins two contract-level properties of the batch reverse path
 // (`revert_ops_inner` in `commands/history.rs` — the function the
@@ -1900,7 +1900,7 @@ async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
 // surfaces here even if the command-layer tests drift.
 // ──────────────────────────────────────────────────────────────────────
 
-/// TEST-7 (a): batch-ordering is newest-first by (created_at DESC,
+/// Batch-ordering is newest-first by (created_at DESC,
 /// seq DESC). Three ops on the same device share an identical
 /// `created_at`, so the tie-break falls entirely on `seq`. Passing
 /// them oldest-first must yield results in strict seq-descending
@@ -1989,7 +1989,7 @@ async fn revert_ops_returns_results_newest_first_by_created_at_desc_seq_desc() {
     );
 }
 
-/// TEST-7 (b): op_log is append-only (invariant #1). Reverting one
+/// Op_log is append-only (invariant #1). Reverting one
 /// op must append exactly one new op to the log and leave the
 /// original row untouched.
 #[tokio::test]
@@ -2002,7 +2002,7 @@ async fn revert_ops_appends_reverse_op_without_mutating_original() {
 
     // A single SetProperty. Its reverse is `DeleteProperty` (no
     // prior for this block/key), which applies cleanly without a
-    // seeded block row — see the TEST-7 (a) note above.
+    // Seeded block row — see the (a) note above.
     let rec = append_op(
         &pool,
         OpPayload::SetProperty(SetPropertyPayload {

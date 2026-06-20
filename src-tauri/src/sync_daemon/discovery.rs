@@ -123,7 +123,7 @@ pub fn resolve_peer_address(
 /// Format a peer's first address as "ip:port" for connection.
 /// Returns None if the peer has no addresses.
 ///
-/// Prefer [`format_peer_addresses`] when callers can iterate — L-62 added
+/// Prefer [`format_peer_addresses`] when callers can iterate — added
 /// a multi-address try-all callsite in `try_sync_with_peer`. This
 /// single-address helper is retained for callers (and tests) that
 /// genuinely want only the top-priority address.
@@ -132,7 +132,7 @@ pub(crate) fn format_peer_address(peer: &DiscoveredPeer) -> Option<String> {
     format_peer_addresses(peer).into_iter().next()
 }
 
-/// L-62: format every address advertised by the peer, ordered so that
+/// Format every address advertised by the peer, ordered so that
 /// `try_sync_with_peer` can fail-fast from the most-likely-routable
 /// candidate to the least, without ever silently giving up after the
 /// first attempt.
@@ -248,7 +248,7 @@ pub fn process_discovery_event(
             Some(peer)
         }
         ServiceEventKind::Removed { device_id: removed } => {
-            // L-63: drop the entry from the discovered map immediately
+            // Drop the entry from the discovered map immediately
             // so try_sync_with_peer doesn't keep firing against a stale
             // address. Returns None because there is no peer to sync
             // with — eviction is the side effect.
@@ -261,7 +261,7 @@ pub fn process_discovery_event(
     }
 }
 
-/// L-63: explicit eviction helper.
+/// Explicit eviction helper.
 ///
 /// Drops `removed_device_id` from the `discovered` HashMap. Returns
 /// `true` if the entry was present (useful in unit tests asserting the

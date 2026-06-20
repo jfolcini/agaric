@@ -26,7 +26,7 @@ export function useJournalAutoCreate({
   const autoCreatedRef = useRef<string | null>(null)
 
   // Auto-create *today*'s page on mount when the journal opens in daily mode.
-  // BUG-48 follow-up: the prior behaviour fired on every date change, which
+  // Follow-up: the prior behaviour fired on every date change, which
   // silently created an empty journal page for any past or future day the
   // user merely navigated to. Restricting to today scopes the
   // create-on-arrival affordance to the case users actually want — landing
@@ -73,9 +73,9 @@ export function useJournalAutoCreate({
         .map((k) => k.trim().toLowerCase())
       if (!createKeys.includes(e.key.toLowerCase())) return
       e.preventDefault()
-      // BUG-48: per-keypress probe replaces the in-memory `pageMap.has`
+      // Per-keypress probe replaces the in-memory `pageMap.has`
       // gate. Skips creation when a page already exists for `dateStr`,
-      // matching the pre-BUG-48 short-circuit semantics.
+      // Matching the pre- short-circuit semantics.
       getJournalPageByDate({ date: dateStr, spaceId })
         .then((page) => {
           if (page != null) return

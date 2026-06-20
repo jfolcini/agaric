@@ -84,7 +84,7 @@ describe('AddPropertyPopover', () => {
     })
   })
 
-  // UX-248 — Unicode-aware fold via `matchesSearchFolded`.
+  // Unicode-aware fold via `matchesSearchFolded`.
   it('search matches accented property key via diacritic fold', async () => {
     const user = userEvent.setup()
     const defs = [makeDef('café-visits', 'number'), makeDef('priority', 'number')]
@@ -103,7 +103,7 @@ describe('AddPropertyPopover', () => {
     })
   })
 
-  // UX-248 — both the filter AND the "exists-exact-match" check must
+  // Both the filter AND the "exists-exact-match" check must
   // agree on Unicode equivalence, otherwise the picker shows the match
   // and the "Create new" suggestion simultaneously when the user types
   // a diacritic-folded form of an existing key.
@@ -171,9 +171,9 @@ describe('AddPropertyPopover', () => {
     })
   })
 
-  // UX-272 sub-fix 7 — surface the default value type next to the
+  // Sub-fix 7 — surface the default value type next to the
   // "Create new" label so users know what they get when clicking.
-  it('UX-272 sub-fix 7 — surfaces the default "(text)" hint on the Create new button', async () => {
+  it(' sub-fix 7 — surfaces the default "(text)" hint on the Create new button', async () => {
     const user = userEvent.setup()
     render(
       <AddPropertyPopover
@@ -243,9 +243,9 @@ describe('AddPropertyPopover', () => {
     })
   })
 
-  // PEND-14: the boolean value-type option must appear alongside text/number/
+  // The boolean value-type option must appear alongside text/number/
   // date/select/ref so users can create native boolean property defs.
-  it('PEND-14: surfaces a "boolean" option in the value-type selector', async () => {
+  it('surfaces a "boolean" option in the value-type selector', async () => {
     const user = userEvent.setup()
     render(
       <AddPropertyPopover
@@ -271,11 +271,11 @@ describe('AddPropertyPopover', () => {
     )
   })
 
-  // PEND-14: extra a11y audit covering the create-definition surface (which
+  // Extra a11y audit covering the create-definition surface (which
   // includes the boolean option). The default "browse mode" axe pass at the
   // top of this file does not render the create-definition select, so the
   // boolean SelectItem stays uncovered without this second pass.
-  it('PEND-14: has no a11y violations with the create-definition select visible', async () => {
+  it('has no a11y violations with the create-definition select visible', async () => {
     const user = userEvent.setup()
     const { container } = render(
       <AddPropertyPopover
@@ -364,9 +364,9 @@ describe('AddPropertyPopover', () => {
     })
   })
 
-  // UX-1 — definition rows render via the Button primitive so they inherit
+  // Definition rows render via the Button primitive so they inherit
   // the focus-visible ring tokens from buttonVariants.
-  it('UX-1: definition rows render as Button primitives with focus-visible ring tokens', async () => {
+  it('definition rows render as Button primitives with focus-visible ring tokens', async () => {
     const defs = [makeDef('status', 'text')]
     render(<AddPropertyPopover definitions={defs} onAdd={vi.fn()} open onOpenChange={vi.fn()} />)
 
@@ -374,10 +374,10 @@ describe('AddPropertyPopover', () => {
     expect(row.className).toContain('focus-ring-visible')
   })
 
-  // UX-6 — the type-hint contrast fix. The hint must not use the old
+  // The type-hint contrast fix. The hint must not use the old
   // text-xs opacity-70 combo (both font-size and contrast were below
   // WCAG AA); it should now use text-xs + text-muted-foreground.
-  it('UX-6: create-new-type-hint uses text-xs + text-muted-foreground (no opacity-70)', async () => {
+  it('create-new-type-hint uses text-xs + text-muted-foreground (no opacity-70)', async () => {
     const user = userEvent.setup()
     render(
       <AddPropertyPopover

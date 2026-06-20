@@ -306,7 +306,7 @@ describe('useBacklinkResolution', () => {
     })
   })
 
-  it('returns different titles for the same ULID in two spaces within the TTL window (PEND-30 L-2)', async () => {
+  it('returns different titles for the same ULID in two spaces within the TTL window', async () => {
     // Same backlink id resolves to different titles in two different
     // spaces. Without space-aware cache keys the second render would
     // hit the stale "Title in A" entry (still well within the 5-min

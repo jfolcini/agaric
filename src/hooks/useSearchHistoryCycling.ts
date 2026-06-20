@@ -1,5 +1,5 @@
 /**
- * PEND-55 — `↑` / `↓` recall through the search history MRU list.
+ * `↑` / `↓` recall through the search history MRU list.
  *
  * Behaviour mirrors the browser address bar / shell history:
  *
@@ -15,7 +15,7 @@
  * **Precedence rule** (locked by the maintainer's pre-flight notes):
  *   - `↑`/`↓` cycle history only when the input is empty.
  *   - When the input has content, the keys pass through to whatever
- *     consumer wants them (e.g. PEND-54's deferred typed-token
+ * Consumer wants them (e.g. deferred typed-token
  *     autocomplete; today, the result list keyboard nav).
  *
  * Returned `handleKeyDown` calls `preventDefault()` only when the hook
@@ -31,7 +31,7 @@ export interface SearchHistoryCycling {
   /** Reset to typing mode externally (e.g. when history changes). */
   reset: () => void
   /**
-   * PEND-73 Phase 3.U2 — index of the currently-active history row
+   * Phase 3.U2 — index of the currently-active history row
    * for the WAI-ARIA listbox-with-input-combobox pattern. `-1` when
    * the user is typing (no row is active). Consumers render this as
    * `aria-selected={idx === activeIndex}` on each row and wire
@@ -137,7 +137,7 @@ export function useSearchHistoryCycling(
     [state, writeQuery],
   )
 
-  // PEND-73 Phase 3.U2 — surface the browse index for the listbox a11y
+  // Phase 3.U2 — surface the browse index for the listbox a11y
   // wiring. -1 when typing (no active descendant). The dropdown
   // consumer reads this and renders `aria-selected` per row; the
   // input wires `aria-activedescendant` to the matching row id.

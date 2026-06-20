@@ -36,7 +36,7 @@ beforeEach(() => {
     scrollToDate: null,
     scrollToPanel: null,
   })
-  // BUG-48: useCalendarPageDates now hits `list_journal_pages_in_range`,
+  // UseCalendarPageDates now hits `list_journal_pages_in_range`,
   // which returns a flat `BlockRow[]` (no pagination envelope).
   mockedInvoke.mockResolvedValue([])
 })
@@ -103,7 +103,7 @@ describe('JournalControls', () => {
     expect(screen.getByRole('dialog', { name: /date picker/i })).toBeInTheDocument()
   })
 
-  // UX-328: SR users need a signal that the calendar trigger opens a popover
+  // SR users need a signal that the calendar trigger opens a popover
   // and whether it is currently open.
   it('calendar trigger has aria-haspopup="dialog" and aria-expanded reflects open state', async () => {
     const user = userEvent.setup()
@@ -133,7 +133,7 @@ describe('JournalControls', () => {
     expect(fetchCalls).toHaveLength(1)
   })
 
-  // PEND-28 M11: the date readout's min-width is gated on sm: so phones
+  // The date readout's min-width is gated on sm: so phones
   // (e.g. 360 px wide) aren't penalized by a fixed 100 px reservation that
   // wastes ~28 % of the viewport.
   it('date display min-width is scoped to sm: breakpoint', () => {

@@ -29,7 +29,7 @@ beforeEach(() => {
     version: 0,
     _preloaded: false,
   })
-  // FEAT-3p7 — pin the active space so `useResolveStore.set` composes
+  // Pin the active space so `useResolveStore.set` composes
   // its cache key with a deterministic prefix.
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_TEST',

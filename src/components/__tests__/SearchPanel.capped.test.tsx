@@ -1,5 +1,5 @@
 /**
- * Tests for SearchPanel — E2E-A4 (PEND-58g): the capped (5000) result notice.
+ * Tests for SearchPanel — E2E-A4: the capped (5000) result notice.
  *
  * The cap arithmetic itself is unit-tested in
  * `src/hooks/__tests__/usePaginatedQuery.test.ts`. This file covers ONLY the
@@ -25,11 +25,11 @@ import { useSpaceStore } from '../../stores/space'
 import { useTabsStore } from '../../stores/tabs'
 import { SearchPanel } from '../SearchPanel'
 
-// PEND-58f FE-3 — mirror the main SearchPanel.test.tsx virtualizer mock so
+// Mirror the main SearchPanel.test.tsx virtualizer mock so
 // jsdom's zero-height scroll container doesn't collapse the virtual window.
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
-// UX-153: Mock resolvePageByAlias separately so alias-resolution calls don't
+// Mock resolvePageByAlias separately so alias-resolution calls don't
 // consume values from the FIFO invoke mock queue.
 vi.mock('../../lib/tauri', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/tauri')>()
@@ -88,7 +88,7 @@ beforeEach(() => {
     activeTabIndex: 0,
   })
   useSearchHistoryStore.setState({ bySpace: {}, historyEnabled: true })
-  // FEAT-3 Phase 2 — SearchPanel gates on `useSpaceStore.isReady`; seed it so
+  // Phase 2 — SearchPanel gates on `useSpaceStore.isReady`; seed it so
   // the render gets past the loading skeleton.
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_TEST',

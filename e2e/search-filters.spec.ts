@@ -1,5 +1,5 @@
 /**
- * E2E — PEND-58f search-view filters: the `+ Filter` builder (E2E-3), chip
+ * E2E — search-view filters: the `+ Filter` builder (E2E-3), chip
  * lifecycle (E2E-4), and structured-DSL → IPC-param marshalling (E2E-6).
  *
  * The web+mock harness has no real SQL filtering (the mock `search_blocks`
@@ -51,7 +51,7 @@ async function searchUntil(
 // E2E-3 — `+ Filter` builder popover
 // ===========================================================================
 
-test.describe('Filter helper popover (PEND-58f E2E-3)', () => {
+test.describe('Filter helper popover (E2E-3)', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
   })
@@ -69,7 +69,7 @@ test.describe('Filter helper popover (PEND-58f E2E-3)', () => {
     const tagPicker = page.getByTestId('filter-helper-tag')
     await expect(tagPicker).toBeVisible()
     // Seed tags (work / personal / idea) come from `list_tags_by_prefix`.
-    // The tag items are `role="option"` (UX-A6 combobox/listbox a11y), not buttons.
+    // The tag items are `role="option"` (combobox/listbox a11y), not buttons.
     await tagPicker.getByRole('option', { name: '#work' }).click()
     // The popover closes and a `tag:#work` chip appears in the chip bar.
     await expect(page.getByTestId('filter-chip-bar')).toContainText('tag:#work')
@@ -101,7 +101,7 @@ test.describe('Filter helper popover (PEND-58f E2E-3)', () => {
 // E2E-4 — chip lifecycle
 // ===========================================================================
 
-test.describe('Filter chip lifecycle (PEND-58f E2E-4)', () => {
+test.describe('Filter chip lifecycle (E2E-4)', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
   })
@@ -135,7 +135,7 @@ test.describe('Filter chip lifecycle (PEND-58f E2E-4)', () => {
     await bar.getByRole('button', { name: 'Clear all' }).click()
     await expect(bar).not.toContainText('tag:#work')
     await expect(bar).not.toContainText('state:TODO')
-    // FE-6 — clear-all preserves the just-typed free text.
+    // Clear-all preserves the just-typed free text.
     await expect(input).toHaveValue(/keepme/)
   })
 
@@ -156,7 +156,7 @@ test.describe('Filter chip lifecycle (PEND-58f E2E-4)', () => {
 // E2E-6 — structured DSL filters → IPC params
 // ===========================================================================
 
-test.describe('Structured DSL filters → IPC params (PEND-58f E2E-6)', () => {
+test.describe('Structured DSL filters → IPC params (E2E-6)', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
     await installIpcRecorder(page)
@@ -231,7 +231,7 @@ test.describe('Structured DSL filters → IPC params (PEND-58f E2E-6)', () => {
   })
 
   // E2E-A1 — negated filters project onto the dedicated `excluded*` fields
-  // (PEND-63 wiring; the backend emits NULL-inclusive `NOT IN (...)`).
+  // (wiring; the backend emits NULL-inclusive `NOT IN (...)`).
   test('not-state: token → filter.excludedStateFilter', async ({ page }) => {
     await searchUntil(
       page,

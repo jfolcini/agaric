@@ -122,11 +122,11 @@ async fn normalized_and_unnormalized_ulid_produce_same_hash() {
     );
 }
 
-/// M-1 regression: `AddAttachmentPayload.attachment_id` is now an
+/// Regression: `AddAttachmentPayload.attachment_id` is now an
 /// `AttachmentId` (alias of `BlockId`), so a payload deserialized from
 /// JSON with a lowercase ULID must produce byte-identical canonical
 /// payload bytes (and thus an identical `compute_op_hash` digest) to
-/// the same payload constructed with the uppercase form. Before M-1
+/// The same payload constructed with the uppercase form. Before
 /// the field was a raw `String`, which bypassed the
 /// `BlockId`-deserialize uppercase contract and broke blake3
 /// hash determinism across devices when one device emitted a
@@ -153,7 +153,7 @@ async fn attachment_id_normalization_lowercase_and_uppercase_produce_same_hash_m
 
     // After deserialization through `BlockId`, the two payloads must be
     // byte-identical at the struct level — this is the invariant the
-    // raw-`String` field violated before M-1.
+    // Raw-`String` field violated before.
     assert_eq!(
         payload_lower, payload_upper,
         "lowercase and uppercase attachment_id must deserialize equal"

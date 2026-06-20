@@ -121,9 +121,9 @@ impl LoroEngine {
     /// #1054 — detect an *update*-shaped blob whose causal base is NOT
     /// reachable from this doc's current `oplog_vv()`, BEFORE importing it.
     ///
-    /// ## Why this mirrors the live MAINT-228 gate
+    /// ## Why this mirrors the live gate
     ///
-    /// [`crate::sync_protocol::loro_sync::apply_remote`] runs the MAINT-228
+    /// [`crate::sync_protocol::loro_sync::apply_remote`] runs the
     /// reachability gate on a `LoroSyncMessage::Update`'s declared `from_vv`
     /// and short-circuits into the snapshot-fallback path on a miss — an
     /// unreachable update would otherwise surface as an *opaque Loro decode
@@ -165,7 +165,7 @@ impl LoroEngine {
             }
         };
         // Snapshot-shaped blobs are self-contained and always safe to import
-        // (the live MAINT-228 gate only checks Update variants). Skip them.
+        // (the live gate only checks Update variants). Skip them.
         if meta.mode.is_snapshot() {
             return None;
         }

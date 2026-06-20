@@ -306,7 +306,7 @@ describe('PageTagSection interaction', () => {
   })
 })
 
-describe('PageTagSection UX-1 / UX-2', () => {
+describe('PageTagSection ', () => {
   it('remove-tag button has 44 px coarse-pointer touch target', () => {
     render(<PageTagSection {...defaultProps} appliedTags={[TAG_1]} allTags={[TAG_1]} />)
 

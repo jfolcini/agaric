@@ -1,6 +1,6 @@
-//! FEAT-3 Phase 1: `list_spaces` Tauri command.
-//! FEAT-3 Phase 2: `create_page_in_space` Tauri command.
-//! FEAT-3 Phase 6: `create_space` Tauri command.
+//! Phase 1: `list_spaces` Tauri command.
+//! Phase 2: `create_page_in_space` Tauri command.
+//! Phase 6: `create_space` Tauri command.
 //!
 //! A "space" is a page block marked with `is_space = "true"`. This
 //! module hosts the space-related Tauri commands:
@@ -35,7 +35,7 @@ use super::sanitize_internal_error;
 
 /// A space row returned by [`list_spaces_inner`] — the pieces the
 /// frontend needs to render the switcher (ULID + display name) plus
-/// the FEAT-3p10 visual-identity surface (`accent_color`).
+/// The visual-identity surface (`accent_color`).
 ///
 /// `accent_color` carries the free-form palette token (e.g.
 /// `accent-emerald`, `accent-blue`) stored under
@@ -47,7 +47,7 @@ use super::sanitize_internal_error;
 pub struct SpaceRow {
     pub id: String,
     pub name: String,
-    /// FEAT-3p10 — accent palette token, or `None` if unset.
+    /// Accent palette token, or `None` if unset.
     pub accent_color: Option<String>,
 }
 
@@ -58,7 +58,7 @@ pub struct SpaceRow {
 /// with `key = 'is_space'` and `value_text = 'true'`. The `content`
 /// column on the block row is the user-facing name.
 ///
-/// FEAT-3p10 — the optional `accent_color` property is pulled in via a
+/// The optional `accent_color` property is pulled in via a
 /// LEFT JOIN on `block_properties` so spaces without an explicit
 /// accent token still surface (with `accent_color = None`).
 #[instrument(skip(pool), err)]
@@ -142,14 +142,14 @@ pub async fn list_spaces_registry_inner(pool: &SqlitePool) -> Result<Vec<McpSpac
 }
 
 // ---------------------------------------------------------------------------
-// FEAT-3 Phase 2: `create_page_in_space`
+// Phase 2: `create_page_in_space`
 // ---------------------------------------------------------------------------
 
 /// Create a new page block and atomically assign it to `space_id`.
 ///
 /// Both ops (`CreateBlock` and `SetProperty(space = <space_id>)`) are
 /// appended inside a single `BEGIN IMMEDIATE` transaction so a page can
-/// never exist in the op log without a `space` property — the FEAT-3
+/// Never exist in the op log without a `space` property — the
 /// invariant "nothing outside of spaces".
 ///
 /// Rejects (with [`AppError::Validation`]) if `space_id` does not resolve
@@ -176,7 +176,7 @@ pub async fn create_page_in_space_inner(
     content: String,
     space_id: String,
 ) -> Result<BlockId, AppError> {
-    // PEND-26 N1: normalize ULID to uppercase per AGENTS.md invariant #8.
+    // Normalize ULID to uppercase per AGENTS.md invariant #8.
     // Strict ULID-typed args from Tauri are already uppercase by
     // construction (op_log path), but raw String args from MCP tools /
     // sync replay / scripted imports must be normalised here. Mirrors
@@ -184,7 +184,7 @@ pub async fn create_page_in_space_inner(
     // (`commands/blocks/crud.rs`, `commands/pages.rs`, `commands/tags.rs`).
     let space_id = space_id.to_ascii_uppercase();
 
-    // MAINT-112: CommandTx couples commit + post-commit dispatch. The
+    // CommandTx couples commit + post-commit dispatch. The
     // previous implementation returned without dispatching and the
     // wrapper re-queried op_log to find the two freshly-appended rows —
     // a classic "missing dispatch" footgun if a future caller forgot
@@ -216,11 +216,11 @@ pub async fn create_page_in_space_inner(
         )));
     }
 
-    // M-91 — when a parent is supplied, enforce that it belongs to the
+    // When a parent is supplied, enforce that it belongs to the
     // SAME space as `space_id`. Otherwise a frontend bug (e.g. resolving
     // `parent_id` from another space's tree but passing the current
     // `space_id`) could land a page whose `parent_id` walks across a
-    // space boundary, breaking the FEAT-3 "page sets are disjoint"
+    // Space boundary, breaking the "page sets are disjoint"
     // invariant. The check happens inside the tx so it is TOCTOU-safe
     // against a concurrent move. Phase 2: a block's space membership
     // lives in `blocks.space_id` (the SOLE source of truth), so we read
@@ -323,7 +323,7 @@ pub async fn create_page_in_space(
 }
 
 // ---------------------------------------------------------------------------
-// FEAT-3 Phase 6: `create_space`
+// Phase 6: `create_space`
 // ---------------------------------------------------------------------------
 
 /// Create a new space (a top-level `block_type = 'page'` block flagged
@@ -340,7 +340,7 @@ pub async fn create_page_in_space(
 ///
 /// If `accent_color` is `Some(...)`, an additional
 /// `SetProperty(key = "accent_color")` op is appended in the same
-/// transaction. The accent color is consumed by FEAT-3p10 (visual
+/// Transaction. The accent color is consumed by (visual
 /// identity); this command stores it as plain `value_text` so the
 /// frontend palette tokens stay free-form.
 ///
@@ -359,7 +359,7 @@ pub async fn create_space_inner(
     name: String,
     accent_color: Option<String>,
 ) -> Result<BlockId, AppError> {
-    // MAINT-112: CommandTx couples commit + post-commit dispatch. See
+    // CommandTx couples commit + post-commit dispatch. See
     // `create_page_in_space_inner` for the rationale — enqueuing
     // during the transaction removes the post-commit re-fetch helper
     // this function previously required.
@@ -398,7 +398,7 @@ pub async fn create_space_inner(
     .await?;
     tx.enqueue_background(is_space_op);
 
-    // 3. Optional accent color (FEAT-3p10 consumer). Stored as
+    // 3. Optional accent color (consumer). Stored as
     //    `value_text` so the palette token (`accent-violet`,
     //    `accent-blue`, …) survives serialisation as-is.
     if let Some(color) = accent_color {
@@ -647,7 +647,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // FEAT-3 Phase 2 — `create_page_in_space_inner` tests
+    // Phase 2 — `create_page_in_space_inner` tests
     // ---------------------------------------------------------------------
     //
     // Covers the happy path, op-log atomicity, and every validation
@@ -927,10 +927,10 @@ mod tests {
         );
     }
 
-    /// M-91 — a parent resolved from one space (Personal) must NOT
+    /// A parent resolved from one space (Personal) must NOT
     /// be accepted when the caller submits a different `space_id`
     /// (Work). Otherwise the new page belongs to Work but its
-    /// `parent_id` walks back into Personal, violating the FEAT-3
+    /// `parent_id` walks back into Personal, violating the
     /// "page sets are disjoint" invariant.
     #[tokio::test]
     async fn create_page_in_space_rejects_cross_space_parent() {
@@ -988,7 +988,7 @@ mod tests {
         );
     }
 
-    /// M-91 — when a parent block exists but carries no `space`
+    /// When a parent block exists but carries no `space`
     /// property (e.g. some legacy / hand-inserted block), the helper
     /// must refuse rather than invent a default or silently produce a
     /// cross-space orphan.
@@ -1037,7 +1037,7 @@ mod tests {
         );
     }
 
-    /// PEND-26 N1 — invariant #8: ULIDs must be normalised to uppercase
+    /// Invariant #8: ULIDs must be normalised to uppercase
     /// at every entry point. A caller (MCP agent, importer, etc.) that
     /// passes a lowercase `space_id` must succeed, and the resulting
     /// `space` ref-property must be stored in canonical uppercase so
@@ -1073,7 +1073,7 @@ mod tests {
 }
 
 // ---------------------------------------------------------------------------
-// FEAT-3 Phase 6 tests — `create_space_inner`
+// Phase 6 tests — `create_space_inner`
 // ---------------------------------------------------------------------------
 //
 // Covers the happy path with + without an accent color and the
@@ -1265,7 +1265,7 @@ mod tests_p6 {
         );
     }
 
-    /// FEAT-3p6 — backend defense-in-depth: `delete_block_inner` MUST
+    /// Backend defense-in-depth: `delete_block_inner` MUST
     /// refuse to delete a space block while it still carries child
     /// pages. The frontend `SpaceManageDialog` already disables the
     /// delete button until empty, but a concurrent device creating a
@@ -1327,7 +1327,7 @@ mod tests_p6 {
         );
     }
 
-    /// FEAT-3p6 — counterpart to the guard test: an empty space is
+    /// Counterpart to the guard test: an empty space is
     /// freely deletable. This proves the guard is precisely targeted
     /// (not a blanket ban on `is_space=true` blocks) and that the
     /// "delete-only-if-empty" workflow still completes for the

@@ -2,14 +2,14 @@
  * BlockGutterControls — drag handle, history, and delete buttons
  * that appear in the narrow left gutter of each sortable block.
  *
- * Extracted from SortableBlock to reduce duplication (M-25).
+ * Extracted from SortableBlock to reduce duplication.
  *
  * Each button is rendered via the `GutterButton` helper which wraps
  * a `<button>` inside `Tooltip` / `TooltipTrigger` / `TooltipContent`.
  *
  * On coarse-pointer devices (touch screens, tablets) hover tooltips are
  * unreachable and three 44×44 buttons no longer fit in the 68 px gutter
- * (UX-281). The touch render therefore collapses the secondary actions
+ *. The touch render therefore collapses the secondary actions
  * (history + delete) into an overflow `Sheet` opened from a single
  * `MoreVertical` button next to the drag handle.
  */
@@ -270,7 +270,7 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
       // `block.reorderTip`; this makes the shortcut programmatically discoverable.
       aria-keyshortcuts={t('block.reorderKeyshortcuts')}
       // Stable focus-fallback target for `BlockContextMenu`'s
-      // `handleCloseWithFocus` (MAINT-174). The drag handle is the only
+      // `handleCloseWithFocus`. The drag handle is the only
       // gutter button guaranteed to render on every block.
       data-context-trigger="true"
       {...dragAttributes}
@@ -306,7 +306,7 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
   // ── Touch render — drag handle + overflow Sheet ─────────────────
   if (isTouch) {
     const hasOverflow = Boolean(onDelete || onShowHistory)
-    // UX-305: on touch, the @dnd-kit PointerSensor requires a press-and-hold
+    // On touch, the @dnd-kit PointerSensor requires a press-and-hold
     // before the drag activates; the desktop tooltip never fires on touch UAs,
     // so the hint lives in `aria-label`.
     // #918: render the grip as a plain, always-visible button (NOT the
@@ -334,7 +334,7 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
         <GripVertical className="h-4 w-4 [@media(pointer:coarse)]:h-5 [@media(pointer:coarse)]:w-5" />
       </button>
     )
-    // UX-306: enumerate the available secondary actions in the
+    // Enumerate the available secondary actions in the
     // overflow button's `aria-label` so screen readers can preview
     // what the Sheet contains before opening it.
     const moreActionsLabel = (() => {

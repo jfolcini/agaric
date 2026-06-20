@@ -464,7 +464,7 @@ test.describe('Global shortcuts', () => {
   })
 
   test('Ctrl+F opens in-page find toolbar', async ({ page }) => {
-    // PEND-52 rebind — Ctrl+F now opens the in-page find toolbar (browser
+    // Rebind — Ctrl+F now opens the in-page find toolbar (browser
     // convention). Find-in-files moved to Ctrl+Shift+F.
     await page.keyboard.down('Control')
     await page.keyboard.press('f')
@@ -475,7 +475,7 @@ test.describe('Global shortcuts', () => {
   })
 
   test('Ctrl+Shift+F opens search view', async ({ page }) => {
-    // PEND-52 rebind — find-in-files moved from Ctrl+F to Ctrl+Shift+F.
+    // Rebind — find-in-files moved from Ctrl+F to Ctrl+Shift+F.
     await page.keyboard.down('Control')
     await page.keyboard.down('Shift')
     await page.keyboard.press('f')
@@ -486,9 +486,9 @@ test.describe('Global shortcuts', () => {
   })
 
   test('Ctrl+K opens search palette when focus is outside the editor', async ({ page }) => {
-    // PEND-51 — Cmd/Ctrl+K opens the quick-nav palette. Context-aware:
+    // Cmd/Ctrl+K opens the quick-nav palette. Context-aware:
     // only fires when focus is OUTSIDE any TipTap/ProseMirror surface.
-    // PEND-61 — palette refactored to cmdk; the input testid moved
+    // Palette refactored to cmdk; the input testid moved
     // from `search-palette-input` to `command-palette-input` along
     // with the SearchPalette → CommandPalette rename.
     // Click on the sidebar to take focus out of the editor.
@@ -623,7 +623,7 @@ test.describe('Link shortcuts', () => {
   test('Ctrl+K opens link popover when focus is inside the editor', async ({ page }) => {
     // Context-aware Cmd+K — focus is inside the editor (TipTap), so
     // useAppKeyboardShortcuts yields to TipTap's own keymap instead of
-    // opening the palette. PEND-51 + PEND-66.
+    // Opening the palette. +.
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 

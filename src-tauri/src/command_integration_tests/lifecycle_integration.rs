@@ -95,7 +95,7 @@ async fn full_lifecycle_create_edit_delete_restore_edit() {
     );
 }
 
-/// PEND-24 M6: `restore_block_inner` must refresh the denormalized
+/// `restore_block_inner` must refresh the denormalized
 /// `page_id` column synchronously inside its own tx, mirroring
 /// `move_block_inner`. Pre-fix the column was only rewritten by the
 /// async `RebuildPageIds` materializer task, leaving an observable
@@ -235,7 +235,7 @@ async fn restore_block_synchronously_refreshes_page_id() {
     assert_eq!(
         leaf_page_after_restore.as_deref(),
         Some(page_b.id.as_str()),
-        "PEND-24 M6: restore_block_inner must synchronously refresh \
+        "restore_block_inner must synchronously refresh \
          page_id to the new ancestor (page_b), not the stale page_a"
     );
 }
@@ -306,7 +306,7 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
     const TOTAL: usize = 50;
     const PAGE_SIZE: i64 = 7;
 
-    // TEST-29: parallelize the 50 block creates. The downstream assertions
+    // Parallelize the 50 block creates. The downstream assertions
     // check count, uniqueness, and page count only — never ordering — so
     // nondeterministic completion order across the 2-writer pool is safe.
     let creates = (0..TOTAL).map(|i| {
@@ -322,7 +322,7 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
     });
     futures_util::future::try_join_all(creates).await.unwrap();
 
-    // Drain bg dispatches before paginating. Post-MAINT-112 every
+    // Drain bg dispatches before paginating. Post- every
     // `create_block_inner` enqueues a bg op record; with the parallel
     // `try_join_all` above, all 50 dispatches must settle before the
     // pagination loop reads materializer-affected joined state.
@@ -345,7 +345,7 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
             None,
             cursor,
             Some(PAGE_SIZE),
-            TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+            TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
         )
         .await
         .unwrap();
@@ -427,7 +427,7 @@ async fn list_blocks_with_agenda_date_returns_matching_blocks() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -464,7 +464,7 @@ async fn list_blocks_with_agenda_date_no_matches_returns_empty() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -542,7 +542,7 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -579,7 +579,7 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -746,7 +746,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -766,7 +766,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -786,7 +786,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -806,7 +806,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -826,7 +826,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -846,7 +846,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -866,7 +866,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -893,7 +893,7 @@ async fn test_list_blocks_accepts_valid_date() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -913,7 +913,7 @@ async fn test_list_blocks_accepts_valid_date() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -933,7 +933,7 @@ async fn test_list_blocks_accepts_valid_date() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -1021,7 +1021,7 @@ async fn create_block_with_none_position_appends_after_siblings() {
 // `apply_op` / the `BatchApplyOps` arm (`advance_apply_cursor`), reached by
 // boot replay / the test-only `dispatch_op` helper / remote apply.
 //
-// #1257 PR-2 routed the LOCAL create path's ENGINE-apply + dense-position
+// #1257 routed the LOCAL create path's ENGINE-apply + dense-position
 // projection INTO the CommandTx (`create_block_inner` →
 // `create_block_in_tx` → `apply_create_block_via_loro`), but DELIBERATELY
 // did NOT call `advance_apply_cursor`: advancing the cursor on the local

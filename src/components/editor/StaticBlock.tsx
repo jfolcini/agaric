@@ -116,7 +116,7 @@ function StaticBlockInner({
     [content, onNavigate, resolveVersion],
   )
 
-  // MAINT-131 StaticBlock half: read from the BatchAttachmentsProvider
+  // StaticBlock half: read from the BatchAttachmentsProvider
   // mounted at the BlockTree level so we don't fire one
   // `listAttachments` IPC per static block on every page render. Outside
   // a provider (e.g. unit tests, isolated rendering) the hook returns
@@ -155,7 +155,7 @@ function StaticBlockInner({
     !attachmentsLoading && attachments.some((a) => a.mime_type.startsWith('image/'))
 
   // Load stored image_width / image_alignment / image_caption properties when
-  // image attachments are present. PEND-35 Tier 2.4c — single-key PK lookups
+  // Image attachments are present. single-key PK lookups
   // instead of fetching the whole property vocabulary just to read a few rows.
   useEffect(() => {
     if (!hasImageAttachments) return
@@ -204,7 +204,7 @@ function StaticBlockInner({
   }, [])
 
   const handlePdfOpen = useCallback((url: string, filename: string, attachmentId: string) => {
-    // PEND-76 F2 — the PDF url is now a `blob:` object URL (asset protocol is
+    // The PDF url is now a `blob:` object URL (asset protocol is
     // disabled). Revoke any previously-opened blob URL before replacing it so
     // we don't leak across successive opens.
     setPdfViewerUrl((prev) => {
@@ -232,7 +232,7 @@ function StaticBlockInner({
     setPdfViewerUrl('')
   }, [pdfViewerOpen, pdfViewerUrl])
 
-  // MAINT-162: the outer wrapper is a passive container — no role, no
+  // The outer wrapper is a passive container — no role, no
   // tabIndex, no keyboard handler. Inner controls (rich-content link/tag
   // chips, attachment buttons, QueryResult chevron) keep their own focus
   // and keyboard handling. Click on a non-interactive area still focuses
@@ -287,7 +287,7 @@ function StaticBlockInner({
   if (content?.startsWith('{{query ') && content.endsWith('}}')) {
     const expression = content.slice(8, -2).trim()
     return (
-      // MAINT-162: passive container — no role/tabIndex; the inner subtree
+      // Passive container — no role/tabIndex; the inner subtree
       // owns keyboard + focus. Click capture forwards bare-card clicks to
       // onFocus while yielding to inner button/link targets.
       <div
@@ -308,7 +308,7 @@ function StaticBlockInner({
 
   return (
     <>
-      {/* MAINT-162: passive container — no role/tabIndex/aria-label/onKeyDown.
+      {/* passive container — no role/tabIndex/aria-label/onKeyDown.
           The wrapper accepts mouse clicks (which mount the roving TipTap
           editor via onFocus) but is not in the tab order. Inner rich-content
           chips (block-link, tag-ref, external-link) and any attachment
@@ -321,7 +321,7 @@ function StaticBlockInner({
           following line, so stacking them on separate lines left the first
           one disabling the second comment instead of the element. Passive
           container — keyboard activation routes through inner focusable
-          controls; see MAINT-162 comment above. */}
+          controls;  comment above. */}
       {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events */}
       <div
         className={cn(

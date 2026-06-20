@@ -58,7 +58,7 @@ beforeEach(() => {
   // Default to the desktop path so existing test bodies keep their semantics.
   mockedUseIsMobile.mockReturnValue(false)
   useBootStore.setState({ state: 'ready', error: null, boot: noopBoot })
-  // BUG-1 / H-3b — WelcomeModal routes onboarding sample-page creation
+  // / H-3b — WelcomeModal routes onboarding sample-page creation
   // through `createPageInSpace`, which reads
   // `useSpaceStore.getState().currentSpaceId`. On a fresh first boot the
   // SpaceStore has hydrated to whichever space sorts first
@@ -99,7 +99,7 @@ describe('WelcomeModal', () => {
     expect(screen.getByText('Select text to format')).toBeInTheDocument()
   })
 
-  // UX-278: feature list must use <ul role="list"> + <li> for proper SR
+  // Feature list must use <ul role="list"> + <li> for proper SR
   // semantics. #214 Phase 1B reduced six rows to three workflows.
   it('renders the workflow list with semantic <ul>/<li> markup', () => {
     render(<WelcomeModal />)
@@ -168,7 +168,7 @@ describe('WelcomeModal', () => {
     expect(localStorage.getItem('agaric-onboarding-done')).toBe('true')
   })
 
-  // BUG-1 / H-3b — page creation routes through `create_page_in_space`
+  // / H-3b — page creation routes through `create_page_in_space`
   // (returns the new ULID as a plain string). Content blocks still use
   // `create_block`. So the sequence is:
   //   2× `create_page_in_space` (Getting Started + Quick Tips)
@@ -211,7 +211,7 @@ describe('WelcomeModal', () => {
     })
 
     // Verify it created the two pages via the new IPC — assert via i18n
-    // keys (UX-278) so a locale change cannot silently break the test.
+    // Keys so a locale change cannot silently break the test.
     expect(mockedInvoke).toHaveBeenCalledWith(
       'create_page_in_space',
       expect.objectContaining({
@@ -242,7 +242,7 @@ describe('WelcomeModal', () => {
     expect(localStorage.getItem('agaric-onboarding-done')).toBe('true')
   })
 
-  // UX-278: sample-page bodies must come from i18n keys so non-English
+  // Sample-page bodies must come from i18n keys so non-English
   // locales don't see English onboarding content.
   it('"Create sample pages" uses i18n strings for every block content', async () => {
     const user = userEvent.setup()
@@ -305,7 +305,7 @@ describe('WelcomeModal', () => {
     }
   })
 
-  // MAINT-99: IPC error-path coverage. The "Create sample pages" flow
+  // IPC error-path coverage. The "Create sample pages" flow
   // wraps the create-page chain in try/catch and surfaces failures via
   // toast.error. A regression where the catch block is dropped (or the
   // toast call goes missing) would leave the user staring at a stuck
@@ -364,10 +364,10 @@ describe('WelcomeModal', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // UX-228: the closeOverlays shortcut (Escape by default) dispatches a
+  // The closeOverlays shortcut (Escape by default) dispatches a
   // window CustomEvent that WelcomeModal listens for. Verifies the modal
   // dismisses, marks onboarding done, and stays dismissed on re-render.
-  describe('closeOverlays event (UX-228)', () => {
+  describe('closeOverlays event', () => {
     it('dispatching agaric:closeAllOverlays closes the modal', async () => {
       render(<WelcomeModal />)
 
@@ -429,13 +429,13 @@ describe('WelcomeModal', () => {
   })
 
   // ----------------------------------------------------------------------
-  // MAINT-215: modal mounts under both desktop (Dialog) and mobile (Sheet)
+  // Modal mounts under both desktop (Dialog) and mobile (Sheet)
   // paths via useDialogOrSheet('dialog'). We don't assert on Radix DOM
   // specifics — just that the title / body content / buttons are
   // accessible under both code paths.
   // ----------------------------------------------------------------------
 
-  describe('responsive path (MAINT-215)', () => {
+  describe('responsive path', () => {
     it('mounts on the mobile path (Sheet) with title, workflow list, and buttons accessible', () => {
       mockedUseIsMobile.mockReturnValue(true)
 

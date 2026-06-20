@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// PEND-37: same as useBlockCollapse — spies on `Storage.prototype.{getItem,setItem}`
+// Same as useBlockCollapse — spies on `Storage.prototype.{getItem,setItem}`
 // don't intercept under happy-dom. Pin to jsdom until refactored.
 
 /**
@@ -202,10 +202,10 @@ describe('useLocalStoragePreference', () => {
   })
 
   it(
-    'review-MAINT-129: pre-existing useAgendaPreferences upgrade — bare-string ' +
+    'review-pre-existing useAgendaPreferences upgrade — bare-string ' +
       'value survives the migration without falling back to default',
     () => {
-      // Regression test for the MAINT-129 review concern: when a user's
+      // Regression test for the review concern: when a user's
       // existing localStorage holds the legacy bare-string format
       // (e.g. `agenda.sortBy = "date"` written before the migration to
       // useLocalStoragePreference), mounting the hook with the custom

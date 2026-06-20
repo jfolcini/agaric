@@ -1,5 +1,5 @@
 /**
- * PEND-68 — tests for useShouldShowMobileChrome.
+ * Tests for useShouldShowMobileChrome.
  */
 
 import { fireEvent, render } from '@testing-library/react'

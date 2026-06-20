@@ -43,7 +43,7 @@ test.describe('Journal view modes', () => {
     await page.getByRole('tab', { name: 'Monthly view' }).click()
 
     // Monthly view renders a 6-week × 7-day grid of MonthlyDayCell
-    // (`role="gridcell"`) — UX-83 replaced the DaySection list with a grid.
+    // (`role="gridcell"`) — replaced the DaySection list with a grid.
     const cells = page.locator('[role="gridcell"]')
     await expect(cells.first()).toBeVisible()
     const count = await cells.count()
@@ -58,7 +58,7 @@ test.describe('Journal view modes', () => {
 
     // Agenda view renders a filter-driven task list: the container, the filter
     // builder fieldset, and the default-filter pill (Status: TODO, DOING) the
-    // view opens with (UX-196) must all be visible.
+    // View opens with must all be visible.
     await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
     await expect(page.locator('[data-testid="agenda-filter-builder"]')).toBeVisible()
     await expect(page.locator('[data-testid="agenda-filter-builder"] ul li').first()).toBeVisible()
@@ -85,7 +85,7 @@ test.describe('Search', () => {
     await input.fill('Welcome')
     await input.press('Enter')
 
-    // Verify the page-grouped result tree renders (PEND-50). Each match is
+    // Verify the page-grouped result tree renders. Each match is
     // bucketed under a `<SearchResultGroup>` — one group per page hit, each
     // with a header row and indented block rows.
     const region = page.getByTestId('search-result-region')
@@ -466,7 +466,7 @@ test.describe('External link editing and removal', () => {
     // aria-pressed=true yet; Ctrl+K dispatches the custom event directly
     // on the editor DOM regardless of toolbar state, so the popover
     // always opens in edit mode when the cursor is inside a link mark
-    // (TEST-3 flake, session 679 verification pass).
+    // (flake, session 679 verification pass).
     await link.click()
     await page.keyboard.press('Control+k')
     await expect(page.getByTestId('link-edit-popover')).toBeVisible()

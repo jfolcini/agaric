@@ -44,7 +44,7 @@ export function extractUlidRefs(text: string): string[] {
   return ids
 }
 
-// ── Module-level cache for projected agenda (UX-114) ──────────────────
+// ── Module-level cache for projected agenda ──────────────────
 const PROJECTED_CACHE_TTL_MS = 30_000 // 30 seconds
 
 interface ProjectedCacheEntry {
@@ -59,14 +59,14 @@ export function clearProjectedCache(): void {
   projectedCache.clear()
 }
 
-// ── Pure helpers (MAINT-60) ───────────────────────────────────────────
+// ── Pure helpers ───────────────────────────────────────────
 // Factored out of doFetch/fetchBlocks to keep oxlint eslint/complexity
 // bounded. Each helper is side-effect-free and independently testable.
 
 /**
  * Apply the `property:` source filter (excludes blocks whose due_date or
  * scheduled_date matches the current agenda date) and drop blocks with
- * empty or whitespace-only content (UX-129). Other sourceFilter values
+ * Empty or whitespace-only content. Other sourceFilter values
  * pass through unchanged except for the empty-content pass.
  */
 export function applySourceFilter(
@@ -108,7 +108,7 @@ export function buildTitleMap(resolved: ResolvedBlock[], fallback: string): Map<
  * calling convention: `property:` collapses to a null source, and the
  * optional `cursor` arg is only included when defined.
  *
- * FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. Callers thread
+ * Phase 4 — `listBlocks` requires `spaceId`. Callers thread
  * `currentSpaceId` (or `''` pre-bootstrap) so agenda views are space-scoped.
  */
 function listBlocksForAgenda(
@@ -190,7 +190,7 @@ export function useDuePanelData({
   const [hasMore, setHasMore] = useState(false)
   const [totalCount, setTotalCount] = useState(0)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
-  // PEND-27 P4 — mirror `blocks` into a ref so `fetchBlocks` can compute
+  // Mirror `blocks` into a ref so `fetchBlocks` can compute
   // the merged paginated list (`prev + new items`) without keeping
   // `blocks` in its deps array. Updated on every render to stay in sync
   // with the latest committed state.
@@ -209,7 +209,7 @@ export function useDuePanelData({
   // changes), not on every effect re-run. The projected effect's deps
   // include `date` + `currentSpaceId`, so without this guard a plain
   // date navigation (after any prior property event) wiped the whole
-  // 30s-TTL cache for the rest of the session, defeating UX-114.
+  // 30s-TTL cache for the rest of the session, defeating.
   const prevInvalidationKeyRef = useRef(invalidationKey)
   const [overdueBlocks, setOverdueBlocks] = useState<BlockRow[]>([])
   const [upcomingBlocks, setUpcomingBlocks] = useState<BlockRow[]>([])
@@ -283,7 +283,7 @@ export function useDuePanelData({
           )
         }
       } catch (err) {
-        // FE-M-1: log overdue fetch failure to match the main/projected pattern.
+        // Log overdue fetch failure to match the main/projected pattern.
         logger.warn('useDuePanelData', 'overdue fetch failed', { date }, err)
         if (!stale) setOverdueBlocks([])
       }
@@ -361,7 +361,7 @@ export function useDuePanelData({
           )
         }
       } catch (err) {
-        // FE-M-1: log upcoming fetch failure to match the main/projected pattern.
+        // Log upcoming fetch failure to match the main/projected pattern.
         logger.warn('useDuePanelData', 'upcoming fetch failed', { date, warningDays }, err)
         if (!stale) setUpcomingBlocks([])
       }
@@ -374,12 +374,12 @@ export function useDuePanelData({
   }, [isToday, date, warningDays, invalidationKey, currentSpaceId])
 
   // Fetch blocks due on the given date.
-  // PEND-27 P4 — `blocks` / `totalCount` / `pageTitles` are no longer in
+  // `blocks` / `totalCount` / `pageTitles` are no longer in
   // the deps array; mutable state is read via functional setters
   // (`setTotalCount(prev => …)`, `setPageTitles(prev => …)`) and via
   // `blocksRef` for the paginated merge. Reduces callback churn and
   // closes the latent stale-closure footgun if a future maintainer
-  // dropped one of the deps. MAINT-129 byte-equivalent map ordering is
+  // Dropped one of the deps. byte-equivalent map ordering is
   // preserved: `new Map(prev)` clones existing entries in insertion
   // order, the loop appends resolved entries in iteration order.
   const fetchBlocks = useCallback(
@@ -391,7 +391,7 @@ export function useDuePanelData({
       const myReqId = requestIdRef.current
       setLoading(true)
       try {
-        // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
+        // Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
         // fallback is intentional pre-bootstrap behaviour: empty string
         // forces a no-match SQL filter rather than a runtime null deref.
         const resp = await listBlocksForAgenda(date, sourceFilter, cursor, 50, currentSpaceId ?? '')
@@ -446,7 +446,7 @@ export function useDuePanelData({
     let cancelled = false
     const doFetch = async () => {
       try {
-        // FEAT-3 Phase 4 — `?? ''` is the pre-bootstrap no-match fallback.
+        // Phase 4 — `?? ''` is the pre-bootstrap no-match fallback.
         const resp = await listBlocksForAgenda(
           date,
           sourceFilter,
@@ -480,8 +480,8 @@ export function useDuePanelData({
     }
   }, [date, sourceFilter, invalidationKey, currentSpaceId])
 
-  // Fetch projected agenda entries with caching (UX-114).
-  // FEAT-3 Phase 4 — cache key includes the active space so two
+  // Fetch projected agenda entries with caching.
+  // Phase 4 — cache key includes the active space so two
   // spaces don't share entries.
   useEffect(() => {
     let stale = false
@@ -490,7 +490,7 @@ export function useDuePanelData({
     // #738 sub-3 — clear the projected cache ONLY when `invalidationKey`
     // actually changes (a property event fired since the last run), not
     // on every effect re-run. Comparing against the prev-value ref keeps
-    // the UX-114 30s-TTL cache alive across plain date / space
+    // The 30s-TTL cache alive across plain date / space
     // navigations that don't carry a fresh invalidation.
     if (invalidationKey !== prevInvalidationKeyRef.current) {
       prevInvalidationKeyRef.current = invalidationKey
@@ -513,7 +513,7 @@ export function useDuePanelData({
     }
 
     setProjectedLoading(true)
-    // M-25: `listProjectedAgenda` is cursor-paginated. The Due panel only
+    // `listProjectedAgenda` is cursor-paginated. The Due panel only
     // needs today's projected entries, which fit comfortably under the
     // limit, so this hook is first-page-only by design — `next_cursor`
     // and `has_more` are intentionally ignored.
@@ -528,7 +528,7 @@ export function useDuePanelData({
           const entries = response.items
           // Update cache
           projectedCache.set(cacheKey, { entries, timestamp: Date.now() })
-          // Filter out empty-content projected entries (UX-129)
+          // Filter out empty-content projected entries
           const nonEmptyEntries = entries.filter((e) => e.block.content?.trim())
           setProjectedEntries(nonEmptyEntries)
           const idsToResolve = collectResolveIds(nonEmptyEntries.map((e) => e.block))
@@ -545,7 +545,7 @@ export function useDuePanelData({
               })
             },
           ).catch((err) => {
-            // FE-M-2: skip side effects (logging, toast) if the effect has unmounted.
+            // Skip side effects (logging, toast) if the effect has unmounted.
             if (stale) return
             logger.warn('useDuePanelData', 'nested agenda fetch failed', undefined, err)
             notify.error(t('duePanel.loadAgendaFailed'), { id: 'due-panel-load-failed' })
@@ -554,7 +554,7 @@ export function useDuePanelData({
       })
       .catch((err) => {
         logger.warn('useDuePanelData', 'projected agenda fetch failed', undefined, err)
-        // #757 (FE-M-2 follow-up): the toast was outside the `!stale`
+        // #757 (follow-up): the toast was outside the `!stale`
         // guard, firing after unmount. Skip state + toast once stale —
         // same contract as the nested handler above.
         if (stale) return

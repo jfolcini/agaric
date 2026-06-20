@@ -179,7 +179,7 @@ Error { message: String }
 Any side may send at any point to abort. The receiver transitions to
 `SyncState::Failed`; the connection closes and the daemon retries on the
 next scheduled tick. It is also used by the responder's snapshot covering
-check to fail loudly on a stale snapshot (see the M-58 path in
+check to fail loudly on a stale snapshot (see the path in
 `snapshot_transfer.rs`).
 
 ## State machine
@@ -333,9 +333,9 @@ Initiator                                  Responder
    ◄──────────────────────────────────────────┤
    │ (delta loop breaks; both enter sub-flow)  │
    │                                           │  get_latest_snapshot()
-   │                                           │  + covering check (M-58):
+   │                                           │  + covering check:
    │                                           │    if snapshot frontier <
-   │      Error { message }   (M-58 stale)     │    remote head → Error, abort
+   │      Error { message }   (stale)     │    remote head → Error, abort
    ◄──────────────────────────────────────────┤
    │      SnapshotOffer { size_bytes }         │  otherwise offer
    ◄──────────────────────────────────────────┤
@@ -356,7 +356,7 @@ Notes:
 - If the responder has no complete snapshot in `log_snapshots`,
   `try_offer_snapshot_catchup` returns `NoSnapshot` and the session closes
   with no catch-up.
-- The M-58 covering check (`snapshot_covers_remote_heads`) guards against a
+- The covering check (`snapshot_covers_remote_heads`) guards against a
   snapshot whose `up_to_seqs` is behind any advertised remote head; on
   mismatch the responder sends `Error` rather than silently rolling the
   initiator back.

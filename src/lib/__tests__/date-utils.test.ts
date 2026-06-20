@@ -13,8 +13,8 @@ import {
   MONTH_SHORT,
 } from '../date-utils'
 
-describe('formatDate (review-MAINT-129: timezone semantics regression)', () => {
-  // The MAINT-129 migration replaced an inline `padStart`-based formatter
+describe('formatDate (review-timezone semantics regression)', () => {
+  // The migration replaced an inline `padStart`-based formatter
   // in `BlockListItem` with this date-fns-backed `formatDate`. The
   // padStart version used local-time `Date` getters (`getFullYear()`,
   // `getMonth()`, `getDate()`); date-fns `format(d, 'yyyy-MM-dd')` also

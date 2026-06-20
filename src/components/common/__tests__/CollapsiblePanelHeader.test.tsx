@@ -8,8 +8,8 @@
  *  4. Calls onToggle when clicked
  *  5. Applies custom className
  *  6. Has no a11y violations (axe)
- *  7. Focus-visible ring classes are present (UX-1)
- *  8. aria-label changes with collapsed state (UX-2)
+ * 7. Focus-visible ring classes are present
+ * 8. aria-label changes with collapsed state
  */
 
 import { render, screen } from '@testing-library/react'
@@ -114,7 +114,7 @@ describe('CollapsiblePanelHeader', () => {
     expect(results).toHaveNoViolations()
   })
 
-  it('includes focus-visible ring classes on the button (UX-1, UX-209)', () => {
+  it('includes focus-visible ring classes on the button ()', () => {
     render(
       <CollapsiblePanelHeader isCollapsed={false} onToggle={() => {}}>
         Header
@@ -124,9 +124,9 @@ describe('CollapsiblePanelHeader', () => {
     expect(button.className).toContain('focus-ring-visible')
   })
 
-  // UX-240: header button must allow shrinking inside a narrow flex parent so
+  // Header button must allow shrinking inside a narrow flex parent so
   // siblings like the inline filter toggle never wrap below it.
-  it('includes min-w-0 on the button to allow flex shrinking (UX-240)', () => {
+  it('includes min-w-0 on the button to allow flex shrinking', () => {
     render(
       <CollapsiblePanelHeader isCollapsed={false} onToggle={() => {}}>
         Header
@@ -138,7 +138,7 @@ describe('CollapsiblePanelHeader', () => {
     expect(button.className).toContain('w-full')
   })
 
-  it('sets aria-label to "Expand …" when collapsed (UX-2)', () => {
+  it('sets aria-label to "Expand …" when collapsed', () => {
     render(
       <CollapsiblePanelHeader isCollapsed={true} onToggle={() => {}}>
         References
@@ -148,7 +148,7 @@ describe('CollapsiblePanelHeader', () => {
     expect(button).toHaveAttribute('aria-label', 'Expand References')
   })
 
-  it('sets aria-label to "Collapse …" when not collapsed (UX-2)', () => {
+  it('sets aria-label to "Collapse …" when not collapsed', () => {
     render(
       <CollapsiblePanelHeader isCollapsed={false} onToggle={() => {}}>
         References
@@ -158,7 +158,7 @@ describe('CollapsiblePanelHeader', () => {
     expect(button).toHaveAttribute('aria-label', 'Collapse References')
   })
 
-  it('handles non-string children gracefully in aria-label (UX-2)', () => {
+  it('handles non-string children gracefully in aria-label', () => {
     render(
       <CollapsiblePanelHeader isCollapsed={true} onToggle={() => {}}>
         <span>Complex child</span>

@@ -203,11 +203,11 @@ pub(super) async fn compacted_floor_above(
 ///  1. **Missing snapshot** — the table is empty (e.g. the snapshot
 ///     scheduler was disabled in 8c2c5ddf) while the cursor advanced; the
 ///     engine boots empty. Reset the cursor to 0 → full replay rebuilds it.
-///  2. **Stale snapshot (PEND-70 C1/C2)** — a snapshot blob reflects ops
-///     only up to its `applied_through_seq` watermark, but a crash let the
-///     cursor run ahead (snapshots are periodic, the cursor is per-op).
-///     Reset the cursor down to `MIN(applied_through_seq)` so replay
-///     re-applies the unmaterialized tail onto the behind engines.
+/// 2. **Stale snapshot (C2)** — a snapshot blob reflects ops
+///    only up to its `applied_through_seq` watermark, but a crash let the
+///    cursor run ahead (snapshots are periodic, the cursor is per-op).
+///    Reset the cursor down to `MIN(applied_through_seq)` so replay
+///    re-applies the unmaterialized tail onto the behind engines.
 ///
 /// In both cases the op_log is the append-only source of truth and every
 /// apply handler is idempotent (`MAX(materialized_through_seq, ?)` +
@@ -645,7 +645,7 @@ mod tests {
         );
     }
 
-    /// PEND-70 C1/C2 repro: a snapshot that is *present but stale*
+    /// /C2 repro: a snapshot that is *present but stale*
     /// (`applied_through_seq` < cursor — the crash let the cursor run ahead
     /// of the last periodic snapshot) must rewind the cursor down to the
     /// watermark so replay re-applies the unmaterialized tail onto the

@@ -1,5 +1,5 @@
 /**
- * Tests for KeyboardSettingsTab component (UX-86).
+ * Tests for KeyboardSettingsTab component.
  *
  * Validates:
  *  - Renders all categories
@@ -255,7 +255,7 @@ describe('KeyboardSettingsTab', () => {
     expect(screen.getByText('Key binding cannot be empty')).toBeInTheDocument()
   })
 
-  it('UX-391: modifier-only binding (e.g. "Ctrl + Shift") disables Save and shows inline error', async () => {
+  it('modifier-only binding (e.g. "Ctrl + Shift") disables Save and shows inline error', async () => {
     const user = userEvent.setup()
     render(<KeyboardSettingsTab />)
 
@@ -283,7 +283,7 @@ describe('KeyboardSettingsTab', () => {
     expect(mockSetCustomShortcut).not.toHaveBeenCalled()
   })
 
-  it('UX-391: valid binding ("Ctrl + E") clears the validation error and enables Save', async () => {
+  it('valid binding ("Ctrl + E") clears the validation error and enables Save', async () => {
     const user = userEvent.setup()
     render(<KeyboardSettingsTab />)
 
@@ -307,7 +307,7 @@ describe('KeyboardSettingsTab', () => {
     expect(input.getAttribute('aria-describedby')).toBeNull()
   })
 
-  it('UX-386/UX-392: conflict warning renders inside the keys column, not as a row sibling', () => {
+  it(': conflict warning renders inside the keys column, not as a row sibling', () => {
     mockFindConflicts.mockReturnValue([
       {
         ids: ['prevBlock', 'nextBlock'],
@@ -332,7 +332,7 @@ describe('KeyboardSettingsTab', () => {
     expect(ancestor?.className).toMatch(/sm:shrink-0/)
   })
 
-  it('UX-8: empty-binding error is wired to the input via aria-describedby + aria-invalid', async () => {
+  it('empty-binding error is wired to the input via aria-describedby + aria-invalid', async () => {
     const user = userEvent.setup()
     render(<KeyboardSettingsTab />)
 
@@ -357,7 +357,7 @@ describe('KeyboardSettingsTab', () => {
     expect(screen.queryByText('Key binding cannot be empty')).not.toBeInTheDocument()
   })
 
-  it('UX-390: shows format hint below the input while editing', async () => {
+  it('shows format hint below the input while editing', async () => {
     const user = userEvent.setup()
     render(<KeyboardSettingsTab />)
 
@@ -403,7 +403,7 @@ describe('KeyboardSettingsTab', () => {
 
     const badge = screen.getByText('Customized')
     expect(badge).toBeInTheDocument()
-    // UX-393: must be rendered as the Badge UI primitive, not plain text.
+    // Must be rendered as the Badge UI primitive, not plain text.
     expect(badge).toHaveAttribute('data-slot', 'badge')
     expect(badge).toHaveAttribute('data-variant', 'secondary')
   })
@@ -442,9 +442,9 @@ describe('KeyboardSettingsTab', () => {
     })
   })
 
-  // PEND-28 M10 — uses `dvh` (dynamic viewport height) so the scroll area
+  // Uses `dvh` (dynamic viewport height) so the scroll area
   // does not flicker as the mobile address bar collapses/expands.
-  it('PEND-28 M10: scroll area uses 60dvh, not 60vh', () => {
+  it('scroll area uses 60dvh, not 60vh', () => {
     const { container } = render(<KeyboardSettingsTab />)
     const scrollArea = container.querySelector('[data-slot="scroll-area"]') as HTMLElement | null
     expect(scrollArea).not.toBeNull()
@@ -452,7 +452,7 @@ describe('KeyboardSettingsTab', () => {
     expect(scrollArea?.className).not.toContain('max-h-[60vh]')
   })
 
-  it('UX-223: renders the Ctrl token as ⌘ on macOS', async () => {
+  it('renders the Ctrl token as ⌘ on macOS', async () => {
     vi.resetModules()
     const original = Object.getOwnPropertyDescriptor(navigator, 'platform')
     Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
@@ -475,7 +475,7 @@ describe('KeyboardSettingsTab', () => {
     }
   })
 
-  it('UX-223: renders the Ctrl token verbatim on non-macOS', async () => {
+  it('renders the Ctrl token verbatim on non-macOS', async () => {
     vi.resetModules()
     const original = Object.getOwnPropertyDescriptor(navigator, 'platform')
     Object.defineProperty(navigator, 'platform', { value: 'Linux x86_64', configurable: true })

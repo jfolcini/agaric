@@ -1,5 +1,5 @@
 /**
- * Platform detection helpers (UX-223 / BUG-31 bundled fix).
+ * Platform detection helpers (bundled fix).
  *
  * These utilities abstract platform-specific UI decisions — currently the
  * keyboard-modifier label shown in shortcut help / tooltips. macOS users

@@ -124,7 +124,7 @@ function DaySectionInner({
   const Heading = headingLevel === 'h2' ? 'h2' : 'h3'
   const isClickable = mode !== 'daily'
 
-  // PEND-68 Part A — page-delete flow (confirm dialog → IPC → success
+  // Part A — page-delete flow (confirm dialog → IPC → success
   // toast with Undo). The journal uses higher-stakes copy
   // ("Delete the note for {{date}}?") because a daily note is a
   // distinguished entry, not just another page.
@@ -246,7 +246,7 @@ function DaySectionInner({
               <ExternalLink className="h-3.5 w-3.5" />
             </Button>
           )}
-          {/* PEND-68 Part A — star + delete affordance next to the
+          {/*  Part A — star + delete affordance next to the
               "open in editor" button. Guarded on `entry.pageId` so the
               auto-create placeholder day (no note yet) doesn't show
               destructive controls. Hover-reveal on desktop, always-
@@ -275,7 +275,7 @@ function DaySectionInner({
             <ExternalLink className="h-3.5 w-3.5 mr-1" />
             {t('journal.openInEditor')}
           </Button>
-          {/* PEND-68 Part A — same affordance for daily mode (hideHeading). */}
+          {/*  Part A — same affordance for daily mode (hideHeading). */}
           <PageQuickActions
             pageId={entry.pageId}
             title={entry.displayDate}
@@ -285,7 +285,7 @@ function DaySectionInner({
           />
         </div>
       )}
-      {/* Single delete-confirm dialog (PEND-68 Part A) — both header
+      {/* Single delete-confirm dialog (Part A) — both header
           branches above route through `usePageDeleteAction.requestDelete`. */}
       {deleteConfirmDialog}
 
@@ -310,7 +310,7 @@ function DaySectionInner({
 
       {/* DuePanel + DonePanel are date-keyed agenda queries — they
           render in daily mode for any day regardless of whether a
-          journal page exists for that day (BUG-48 follow-up: the
+          journal page exists for that day (follow-up: the
           journal page is no longer auto-created for past navigation,
           so gating these on `entry.pageId` would silently hide overdue
           tasks for past days).

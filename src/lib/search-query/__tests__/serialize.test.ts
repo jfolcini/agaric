@@ -13,7 +13,7 @@ describe('serialize round-trip', () => {
     'tag:#urgent hello world',
     'path:{Journal,Archive}/* tag:#meeting',
     'tag:#日本語',
-    // PEND-53 — new token kinds round-trip cleanly.
+    // New token kinds round-trip cleanly.
     'state:TODO',
     'not-state:DONE',
     'priority:1 priority:2',

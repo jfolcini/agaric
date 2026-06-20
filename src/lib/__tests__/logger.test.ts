@@ -478,7 +478,7 @@ describe('rate limiting', () => {
     expect(mockLogFrontend).toHaveBeenCalledTimes(5)
   })
 
-  it('evicts expired entries from rateLimitMap when map grows large (MAINT-31)', () => {
+  it('evicts expired entries from rateLimitMap when map grows large', () => {
     vi.useFakeTimers()
     try {
       // Fill the map past the eviction threshold (1000) with 1100 unique

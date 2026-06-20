@@ -8,9 +8,9 @@
  *  - CJK limitation notice (p3-t6)
  *
  * Opened via Ctrl+F (see `App.tsx` global handler around line 712, the
- * `focusSearch` `matchesShortcutBinding` branch — UX-260 sub-fix 6).
+ * `focusSearchmatchesShortcutBinding` branch — sub-fix 6).
  *
- * PEND-30 D-3 — state-heavy logic decomposed into siblings under
+ * D-3 — state-heavy logic decomposed into siblings under
  * `./SearchPanel/`:
  *  - `searchFilterReducer.ts` collapses the four applied-filter
  *    `useState`s into a single typed reducer.
@@ -18,13 +18,13 @@
  *    machines (4 useStates each) behind one parameterised hook.
  *  - `useAliasResolution.ts` owns the `[[alias]]` resolution effect.
  *
- * PEND-30 Phase 3b — JSX presentation lifted into siblings under
+ * Phase 3b — JSX presentation lifted into siblings under
  * `./SearchPanel/`:
  *  - `SearchHeader.tsx` owns the input form + activity indicators.
  *  - `SearchFilters.tsx` owns the filter chip bar + popovers.
  *  - `SearchStatusRegion.tsx` owns the aria-live status announcer.
  *  - The result listbox now lives in `./search/SearchResultGroups.tsx`
- *    (PEND-73 Phase 4.M4 removed the stub `SearchResultList.tsx`).
+ * (Phase 4.M4 removed the stub `SearchResultList.tsx`).
  */
 
 import { FilterX, Search } from 'lucide-react'
@@ -65,7 +65,7 @@ import { useFilterSyntaxIntroToast } from './SearchPanel/useFilterSyntaxIntroToa
 import { useSearchHistoryControls } from './SearchPanel/useSearchHistoryControls'
 import { useSearchResults } from './SearchPanel/useSearchResults'
 
-/** PEND-55 — localStorage key for the toggle state (component-local but
+/** localStorage key for the toggle state (component-local but
  * persisted across reloads so power users don't re-click on every
  * session). Per plan: persists in localStorage. */
 const SEARCH_TOGGLE_STORAGE_KEY = 'agaric:searchToggles:v1'
@@ -86,7 +86,7 @@ function hasCJK(text: string): boolean {
 export function SearchPanel(): React.ReactElement {
   const { t } = useTranslation()
 
-  // FEAT-3 Phase 2 — scope search to the current space. Render a skeleton
+  // Phase 2 — scope search to the current space. Render a skeleton
   // until the SpaceStore has hydrated so the first `searchBlocks` call never
   // leaks cross-space results.
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
@@ -95,18 +95,18 @@ export function SearchPanel(): React.ReactElement {
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [searched, setSearched] = useState(false)
-  // PEND-55 — toggle state, persisted via localStorage so re-opening the app
+  // Toggle state, persisted via localStorage so re-opening the app
   // preserves the user's preference.
   const [toggles, setToggles] = useLocalStoragePreference<SearchToggleState>(
     SEARCH_TOGGLE_STORAGE_KEY,
     DEFAULT_SEARCH_TOGGLES,
   )
-  // PEND-55 — history dropdown visibility (shown when the input is focused
+  // History dropdown visibility (shown when the input is focused
   // AND empty).
   const [inputFocused, setInputFocused] = useState(false)
-  // UX-1 — search help dialog open state (the `?` toolbar button).
+  // Search help dialog open state (the `?` toolbar button).
   const [helpOpen, setHelpOpen] = useState(false)
-  // PEND-60 / FE-10 — the caret-anchored autocomplete machine lives in
+  // / the caret-anchored autocomplete machine lives in
   // <SearchAutocomplete>; SearchPanel keeps only the open/aria summary it
   // reports (for the input's combobox attrs) and the shared pending-caret ref.
   const [autocomplete, setAutocomplete] = useState<SearchAutocompleteState>({
@@ -125,12 +125,12 @@ export function SearchPanel(): React.ReactElement {
     pendingCaretRef.current = caret ?? value.length
     setQuery(value)
   }, [])
-  // UX-335 — `cleared` is true iff the user emptied the input AFTER a search
+  // `cleared` is true iff the user emptied the input AFTER a search
   // had been performed (surfaces a `t('search.statusCleared')` announcement).
   const [cleared, setCleared] = useState(false)
   const [typing, setTyping] = useState(false)
 
-  // PEND-54 — the query string is the canonical filter state. The AST is
+  // The query string is the canonical filter state. The AST is
   // derived state recomputed on every keystroke. The debounced query is also
   // parsed so the IPC sees the filters that match the rendered chips.
   const ast = useMemo(() => parse(query), [query])
@@ -166,7 +166,7 @@ export function SearchPanel(): React.ReactElement {
     handleRecentClick,
   } = useSearchResults({ debouncedAst, debouncedQuery, currentSpaceId, spaceIsReady, toggles })
 
-  // PEND-30 D-3 / PEND-54 — alias resolution runs against the free-text
+  // D-3 / alias resolution runs against the free-text
   // portion so a query like `[[Alpha]] tag:#x` resolves the alias correctly.
   const { aliasMatch, aliasQuery } = useAliasResolution(
     debouncedAst.freeText,
@@ -197,14 +197,14 @@ export function SearchPanel(): React.ReactElement {
     debounced,
   })
 
-  // PEND-51 — consume the palette's transient `pendingViewQuery` handoff slot
+  // Consume the palette's transient `pendingViewQuery` handoff slot
   // exactly once on mount, then seed both `query` + `debouncedQuery` to fire
   // the IPC. Read via `getState()` so no subscription is created and the
   // effect's empty-dep array stays honest.
   useEffect(() => {
     const pending = useCommandPaletteStore.getState().pendingViewQuery
     if (pending != null) {
-      // PEND-61 CR — accept empty-string escalation seeds (the commands-mode
+      // Accept empty-string escalation seeds (the commands-mode
       // "Search everywhere" entry writes `''` to land the user on this panel
       // with a clean input). The previous `length > 0` gate left the slot
       // dirty across the session.
@@ -217,21 +217,21 @@ export function SearchPanel(): React.ReactElement {
     }
   }, [setQueryAndCaret])
 
-  // PEND-54 / FE-9 — one-time migration toast pointing users at the help
+  // / one-time migration toast pointing users at the help
   // dialog so they discover the inline filter syntax.
   useFilterSyntaxIntroToast()
 
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     const value = e.target.value
     setQuery(value)
-    // FE-10 — caret tracking lives in <SearchAutocomplete>; feed it the
+    // Caret tracking lives in <SearchAutocomplete>; feed it the
     // authoritative caret eagerly so the anchor stays in lockstep.
     autocompleteRef.current?.syncCaret(e.target.selectionStart ?? value.length)
 
     debounced.cancel()
 
     if (!value.trim()) {
-      // UX-335 — keep `cleared` set so the aria-live region announces
+      // Keep `cleared` set so the aria-live region announces
       // `t('search.statusCleared')`.
       setCleared((prev) => prev || searched)
       setDebouncedQuery('')
@@ -249,7 +249,7 @@ export function SearchPanel(): React.ReactElement {
   }
 
   // Auto-focus search input on mount.
-  // PEND-73 Phase 3.U4 — useLayoutEffect to focus before paint, matching
+  // Phase 3.U4 — useLayoutEffect to focus before paint, matching
   // CommandPalette + InPageFind (avoids the one-frame unfocused flash).
   const searchInputRef = useRef<HTMLInputElement>(null)
   useRegisterPrimaryFocus(searchInputRef)
@@ -257,13 +257,13 @@ export function SearchPanel(): React.ReactElement {
     searchInputRef.current?.focus()
   }, [])
 
-  // FE-10 — combobox a11y for the input. History and autocomplete are
+  // Combobox a11y for the input. History and autocomplete are
   // mutually exclusive (history wants an empty query, autocomplete wants caret
   // content), so they share the input's combobox attrs.
   const expanded = autocomplete.open && autocomplete.ariaIds != null
   // FE-A13 — ONE source of truth for whether the history dropdown is on
   // screen. The dropdown is shown while the input is focused + empty AND there
-  // is either history to recall OR recording is OFF (UX-11 keeps the Enable
+  // Is either history to recall OR recording is OFF (keeps the Enable
   // toggle + "history is off" footer reachable even with zero entries).
   //
   // CR-A11Y (#151) — ALSO keep it open while a recall is active
@@ -278,7 +278,7 @@ export function SearchPanel(): React.ReactElement {
     inputFocused &&
     (query.length === 0 || cycling.activeIndex >= 0) &&
     (historyEntries.length > 0 || !historyEnabled)
-  // FE-A13 / UX-A2 — the `role="listbox"` element (and its `historyListboxId`)
+  // FE-A13 / the `role="listbox"` element (and its `historyListboxId`)
   // only renders when there are entries, so the combobox's `aria-expanded` /
   // `aria-controls` must track the LISTBOX, not the dropdown shell.
   const historyListboxVisible = historyDropdownVisible && historyEntries.length > 0
@@ -314,7 +314,7 @@ export function SearchPanel(): React.ReactElement {
     setAutocomplete(state)
   }, [])
 
-  // FE-10 — apply a chosen completion. The child computed nextValue +
+  // Apply a chosen completion. The child computed nextValue +
   // nextCaret from its own caret/anchor; SearchPanel owns query + debounce.
   const handleAutocompleteApply = useCallback(
     (nextValue: string, nextCaret: number) => {
@@ -335,10 +335,10 @@ export function SearchPanel(): React.ReactElement {
     if (trimmed) {
       setDebouncedQuery(trimmed)
       setSearched(true)
-      // PEND-55 — push on submit, not on every keystroke. Per-space
+      // Push on submit, not on every keystroke. Per-space
       // partitioning is owned by the store.
       pushHistory(currentSpaceId, trimmed)
-      // PEND-60 Phase 2 — record each path glob (include + exclude) in the
+      // Phase 2 — record each path glob (include + exclude) in the
       // per-space MRU so the next caret-anchored `path:` autocomplete surfaces
       // them.
       for (const filter of ast.filters) {
@@ -351,7 +351,7 @@ export function SearchPanel(): React.ReactElement {
 
   const handleInputKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
-      // UX-1 — `?` on an empty input opens the search help dialog. Reading the
+      // `?` on an empty input opens the search help dialog. Reading the
       // live value avoids taking `query` as a dependency.
       if (e.key === '?' && e.currentTarget.value.length === 0) {
         e.preventDefault()
@@ -362,7 +362,7 @@ export function SearchPanel(): React.ReactElement {
       // <SearchAutocomplete> owns that state; it returns true if it consumed
       // the key.
       if (autocompleteRef.current?.handleKeyDown(e)) return
-      // UX-9 — Escape cancels an in-progress history recall and restores the
+      // Escape cancels an in-progress history recall and restores the
       // empty input (commit semantics differ between the two suggestion
       // sources, so the keys do too).
       if (e.key === 'Escape' && cycling.activeIndex >= 0) {
@@ -409,7 +409,7 @@ export function SearchPanel(): React.ReactElement {
     [cycling, setQueryAndCaret, historyEntries, handleRemoveHistory],
   )
 
-  // PEND-54 / FE-A12 — chip / helper handlers. Each appends a filter token to
+  // / FE-A12 — chip / helper handlers. Each appends a filter token to
   // the AST and re-serialises the canonical query string; they read the `ast`
   // memo (already `parse(query)`, recomputed on every `query` change and
   // current inside the same render's event handlers).
@@ -421,7 +421,7 @@ export function SearchPanel(): React.ReactElement {
     patchQuery((a) => removeFilterAt(a, index))
   }
   function handleClearAllFilters() {
-    // FE-6 — keep the LIVE free text (not the debounced/last-committed AST) so
+    // Keep the LIVE free text (not the debounced/last-committed AST) so
     // just-typed-but-not-yet-debounced words aren't dropped.
     setQueryAndCaret(ast.freeText)
   }
@@ -437,14 +437,14 @@ export function SearchPanel(): React.ReactElement {
     const token: FilterToken = { kind: 'pathExclude', value: glob, span: [0, 0] }
     patchQuery((a) => addFilter(a, token))
   }
-  // PEND-58g UX-A5 — the structural builder forms hand back a fully built
+  // The structural builder forms hand back a fully built
   // token (state / priority / due / scheduled / prop and not- variants);
   // route it through the same append-and-reserialise path.
   function handleAddFilter(token: FilterToken) {
     patchQuery((a) => addFilter(a, token))
   }
 
-  // FEAT-3 Phase 2 — render a skeleton while the SpaceStore hydrates so we
+  // Phase 2 — render a skeleton while the SpaceStore hydrates so we
   // never fire a `searchBlocks` call with an unresolved `spaceId`.
   if (!spaceIsReady) {
     return (
@@ -456,8 +456,8 @@ export function SearchPanel(): React.ReactElement {
 
   return (
     <div className="search-panel space-y-4">
-      {/* PEND-30 Phase 3b — input form lifted into `SearchHeader`. */}
-      {/* PEND-55 — append toggle row + history dropdown + regex error slot. */}
+      {/*  Phase 3b — input form lifted into `SearchHeader`. */}
+      {/* append toggle row + history dropdown + regex error slot. */}
       <SearchHeader
         inputRef={searchInputRef}
         query={query}
@@ -467,7 +467,7 @@ export function SearchPanel(): React.ReactElement {
         typing={typing}
         onInputKeyDown={handleInputKeyDown}
         onInputFocus={() => setInputFocused(true)}
-        // PEND-73 Phase 3.U5 — synchronous blur. The history dropdown's rows
+        // Phase 3.U5 — synchronous blur. The history dropdown's rows
         // preventDefault on mousedown, which keeps the input focused through
         // the click; no defer needed.
         onInputBlur={() => setInputFocused(false)}
@@ -485,7 +485,7 @@ export function SearchPanel(): React.ReactElement {
             // / `aria-controls` additionally require entries
             // (`historyListboxVisible`) so they only reference a listbox that
             // actually renders.
-            // UX-11 — the shell also shows when recording is OFF (even with no
+            // The shell also shows when recording is OFF (even with no
             // entries) so the Enable toggle + "history is off" notice remain
             // reachable from the dropdown footer.
             visible={historyDropdownVisible}
@@ -499,7 +499,7 @@ export function SearchPanel(): React.ReactElement {
           />
         }
       />
-      {/* PEND-60 / FE-10 — caret-anchored value autocomplete. Owns its own
+      {/*  / caret-anchored value autocomplete. Owns its own
           caret state so caret moves don't re-render this panel; the popover
           portals to body via Radix (placement is positional). */}
       <SearchAutocomplete
@@ -513,7 +513,7 @@ export function SearchPanel(): React.ReactElement {
         onStateChange={handleAutocompleteStateChange}
       />
 
-      {/* UX-269 — CJK limitation notice sits directly below the input so CJK
+      {/* CJK limitation notice sits directly below the input so CJK
           users see it before scanning results. */}
       {hasCJK(query) && (
         <div
@@ -525,7 +525,7 @@ export function SearchPanel(): React.ReactElement {
         </div>
       )}
 
-      {/* PEND-54 — chip row projected from the parsed AST. */}
+      {/* chip row projected from the parsed AST. */}
       <FilterChipRow
         filters={ast.filters}
         onRemove={handleRemoveFilter}
@@ -540,7 +540,7 @@ export function SearchPanel(): React.ReactElement {
         }
       />
 
-      {/* UX-A11 — info, not warning: search still runs at 1–2 chars, so this
+      {/* info, not warning: search still runs at 1–2 chars, so this
           is an FYI rather than a problem. */}
       {query.trim().length > 0 && query.trim().length < 3 && (
         <div className="rounded-lg border border-alert-info-border bg-alert-info p-3 text-sm text-alert-info-foreground">
@@ -550,7 +550,7 @@ export function SearchPanel(): React.ReactElement {
 
       {query === '' && recentPages.length > 0 && (
         <div className="recent-pages">
-          {/* UX-8 — label the list via its heading so screen readers announce
+          {/* label the list via its heading so screen readers announce
               it as a named "Recent" group distinct from the results listbox. */}
           <h3
             id="search-recent-heading"
@@ -574,12 +574,12 @@ export function SearchPanel(): React.ReactElement {
         <LoadingSkeleton count={2} height="h-12" className="search-loading" />
       )}
 
-      {/* PEND-30 Phase 3b — status region lifted into `SearchStatusRegion`. */}
+      {/*  Phase 3b — status region lifted into `SearchStatusRegion`. */}
       <SearchStatusRegion
         searched={searched}
         searchLoading={searchLoading}
         error={error}
-        // UX-A2 — let the status region suppress the generic "Search failed"
+        // Let the status region suppress the generic "Search failed"
         // announcement when the failure is an invalid regex (the header alert
         // already announces the specific message).
         regexError={regexError}
@@ -614,7 +614,7 @@ export function SearchPanel(): React.ReactElement {
         />
       )}
 
-      {/* UX-2 — a generic (non-regex) failure previously left the panel blank.
+      {/* a generic (non-regex) failure previously left the panel blank.
           Regex errors already render inline in the header (`regexError`);
           everything else gets a visible error state. */}
       {searched && !searchLoading && error && !regexError && (
@@ -628,7 +628,7 @@ export function SearchPanel(): React.ReactElement {
         </div>
       )}
 
-      {/* UX-4 — the 5000-item ceiling was hit silently; tell the user. */}
+      {/* the 5000-item ceiling was hit silently; tell the user. */}
       {capped && (
         <div
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level notice card (border/padding/rounded); <output> is inline-level and would break the boxed layout
@@ -641,7 +641,7 @@ export function SearchPanel(): React.ReactElement {
       )}
 
       {aliasMatch && (
-        // UX-8 — expose the alias-match card as a labelled region so it is
+        // Expose the alias-match card as a labelled region so it is
         // announced distinctly from the results listbox (it sits outside the
         // roving-listbox model by design).
         <section data-testid="alias-match" aria-label={t('search.aliasMatchRegion')}>
@@ -659,7 +659,7 @@ export function SearchPanel(): React.ReactElement {
         </section>
       )}
 
-      {/* PEND-50 Phase 1 — page-grouped result tree. The summary count sits
+      {/*  Phase 1 — page-grouped result tree. The summary count sits
           above the first group (rendered inside `SearchResultGroups`).
           Per-group listboxes preserve the existing `useListKeyboardNavigation`
           roving model. */}
@@ -670,7 +670,7 @@ export function SearchPanel(): React.ReactElement {
         expandedGroups={expandedGroups}
         onToggleGroup={handleToggleGroup}
         onResultClick={handleResultClick}
-        // PEND-50 Phase 1 — passing a no-op tells `CollapsibleGroupList` to
+        // Phase 1 — passing a no-op tells `CollapsibleGroupList` to
         // render the page title via `<PageLink>` (its own click navigates
         // through `useTabsStore.navigateToPage`). The callback signature is
         // preserved for future hooks; today it defers to `PageLink`'s built-in

@@ -1,7 +1,7 @@
 /**
  * Tests for HistoryPanel component.
  *
- * PEND-17 Part B redesign — the in-panel restore is dialog-free
+ * Part B redesign — the in-panel restore is dialog-free
  * (toast-with-Undo is the safety net). Restore now goes through the
  * expanded panel's primary "Restore this version" button, reached by
  * clicking the row to expand.
@@ -45,7 +45,7 @@ const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: 
 
 /**
  * Route IPC calls by command name. Test files used to chain
- * `mockResolvedValueOnce` calls, but the PEND-17 Part B expanded panel
+ * `mockResolvedValueOnce` calls, but the Part B expanded panel
  * eagerly fires `compute_block_vs_current_diff` (and `compute_edit_diff`
  * via `useHistoryDiffToggle`) on row expansion — call ordering is no
  * longer 1:1 with user actions. Routing by command name keeps tests
@@ -103,7 +103,7 @@ describe('HistoryPanel', () => {
     render(<HistoryPanel blockId="BLOCK001" />)
 
     await waitFor(() => {
-      // PEND-35 Tier 1.3 — `opTypeFilter` is now part of the IPC contract.
+      // `opTypeFilter` is now part of the IPC contract.
       expect(mockedInvoke).toHaveBeenCalledWith('get_block_history', {
         blockId: 'BLOCK001',
         opTypeFilter: null,
@@ -217,7 +217,7 @@ describe('HistoryPanel', () => {
 
     // The legacy ConfirmDialog title is gone for the panel flow. This
     // is the regression guard for the user-approved decision to drop
-    // the dialog from in-panel restore (per PEND-17 Part B Q2).
+    // The dialog from in-panel restore (Part B Q2).
     expect(screen.queryByText('Restore to this version?')).not.toBeInTheDocument()
   })
 
@@ -450,7 +450,7 @@ describe('HistoryPanel', () => {
     expect(screen.getByText('dev:DEVICE01')).toBeInTheDocument()
   })
 
-  // -- Op-type filter bar (UX-139) -------------------------------------------
+  // -- Op-type filter bar -------------------------------------------
 
   it('renders the op-type filter bar', async () => {
     setupInvokeRouter({ get_block_history: () => emptyPage })
@@ -463,7 +463,7 @@ describe('HistoryPanel', () => {
 
   it('filters entries by op type when filter is changed', async () => {
     const user = userEvent.setup()
-    // PEND-35 Tier 1.3 — the backend now applies `opTypeFilter` in SQL,
+    // The backend now applies `opTypeFilter` in SQL,
     // so the mock returns the already-filtered set when the filter is
     // active. This test exercises the post-filter UX (only edit_block
     // rows visible) end-to-end through the new IPC contract.
@@ -499,7 +499,7 @@ describe('HistoryPanel', () => {
 
   it('shows empty state when filter produces zero results', async () => {
     const user = userEvent.setup()
-    // PEND-35 Tier 1.3 — empty state now comes from the backend
+    // Empty state now comes from the backend
     // returning an empty page (no JS post-filter), so the mock honours
     // the `opTypeFilter` arg.
     const allRows = [makeHistoryEntry(1, 'edit_block', { to_text: 'edited' }, 1736942400000)]
@@ -525,7 +525,7 @@ describe('HistoryPanel', () => {
     expect(screen.queryByText('edited')).not.toBeInTheDocument()
   })
 
-  // PEND-35 Tier 1.3 — selecting a filter must trigger a refetch with
+  // Selecting a filter must trigger a refetch with
   // `opTypeFilter` forwarded into the IPC args, NOT a JS post-filter.
   it('passes opTypeFilter into get_block_history when the filter changes', async () => {
     const user = userEvent.setup()
@@ -555,7 +555,7 @@ describe('HistoryPanel', () => {
     })
   })
 
-  // PEND-35 Tier 1.3 regression guard — when the backend returns 50
+  // Regression guard — when the backend returns 50
   // already-filtered rows, the FE must NOT drop any (no post-filter).
   it('does not drop rows from a backend page (filter is SQL-side)', async () => {
     // Backend simulation: 50 already-filtered rows returned for the
@@ -606,7 +606,7 @@ describe('HistoryPanel', () => {
     expect(preview).toHaveClass('line-clamp-2')
   })
 
-  // -- Property op display (UX-134) -----------------------------------------
+  // -- Property op display -----------------------------------------
 
   it('renders set_property with formatted property name and value', async () => {
     const page = {
@@ -647,11 +647,11 @@ describe('HistoryPanel', () => {
   })
 
   // ===========================================================================
-  // UX-275 sub-fix 4: restore success toast carries an Undo action that
-  // round-trips the block back to its pre-restore content. PEND-17 Part B
+  // Sub-fix 4: restore success toast carries an Undo action that
+  // Round-trips the block back to its pre-restore content. Part B
   // preserves this contract — the in-panel flow is the new primary path.
   // ===========================================================================
-  describe('UX-275 restore Undo round-trip (in-panel flow)', () => {
+  describe(' restore Undo round-trip (in-panel flow)', () => {
     it('attaches an Undo action to the success toast that re-applies the snapshot', async () => {
       const user = userEvent.setup()
       const page = {
@@ -744,7 +744,7 @@ describe('HistoryPanel', () => {
   })
 
   // ===========================================================================
-  // PEND-17 Part B keyboard browse — ↓/↑/Enter/Escape on the list.
+  // Part B keyboard browse — ↓/↑/Enter/Escape on the list.
   // ===========================================================================
   describe('keyboard browse', () => {
     function setupKeyboardFixture() {
@@ -859,7 +859,7 @@ describe('HistoryPanel', () => {
       })
     })
 
-    // MAINT-219 regression guard — arrow-key navigation must move DOM
+    // Regression guard — arrow-key navigation must move DOM
     // focus to the newly-expanded row's `Restore` button (focus follows
     // state). Before the fix, `↓`/`↑` updated `expandedSeq` but left
     // focus on the originally-focused row, so a subsequent `Enter`

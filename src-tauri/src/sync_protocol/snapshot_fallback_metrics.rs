@@ -3,7 +3,7 @@
 //! When a peer advertises a `from_vv` the receiver can't reach,
 //! [`super::loro_sync::apply_remote`] short-circuits the engine import and
 //! returns [`super::loro_sync::ApplyOutcome::SnapshotFallbackRequested`] so
-//! the daemon layer drives a fresh snapshot catch-up (MAINT-228). Each such
+//! the daemon layer drives a fresh snapshot catch-up. Each such
 //! occurrence is already surfaced **once per protocol session** as a
 //! `SyncEvent::Error` / `SyncMessage::ResetRequired` line by the
 //! orchestrator.

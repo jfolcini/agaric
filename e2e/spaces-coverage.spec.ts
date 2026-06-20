@@ -1,5 +1,5 @@
 /**
- * E2E coverage for BUG-1 — page creation flows route through the
+ * E2E coverage for page creation flows route through the
  * `create_page_in_space` IPC so every new page lands with its `space`
  * property set atomically.
  *
@@ -31,7 +31,7 @@ async function openPagesView(page: import('@playwright/test').Page) {
     .locator('[data-slot="sidebar"]')
     .getByRole('button', { name: 'Pages', exact: true })
     .click()
-  // MAINT-162 — the page list is now an ARIA grid (was listbox).
+  // The page list is now an ARIA grid (was listbox).
   await expect(page.getByRole('grid')).toBeVisible()
 }
 
@@ -45,7 +45,7 @@ async function openJournalView(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'Journal', exact: true }).click()
 }
 
-test.describe('BUG-1 — page creation routes through create_page_in_space', () => {
+test.describe('page creation routes through create_page_in_space', () => {
   test.beforeEach(async ({ page }) => {
     // Clear localStorage so the WelcomeModal is allowed to render in the
     // welcome-flow test, and so cross-test mutations cannot bleed.
@@ -73,7 +73,7 @@ test.describe('BUG-1 — page creation routes through create_page_in_space', () 
     // Both onboarding pages must show up in the active space's PageBrowser.
     // Under heavy parallel load, the page-creation IPC → materializer →
     // PageBrowser refresh chain can lag behind the modal-dismiss assert;
-    // waitFor with a 10s timeout absorbs that gap (TEST-3 flake, session
+    // WaitFor with a 10s timeout absorbs that gap (flake, session
     // 679 verification pass).
     await openPagesView(page)
     await expect(async () => {
@@ -98,7 +98,7 @@ test.describe('BUG-1 — page creation routes through create_page_in_space', () 
     page,
   }) => {
     // Today's daily page is auto-created on Journal mount — that is the
-    // production path under test (BUG-1 used to leak it). Wait for the
+    // Production path under test (used to leak it). Wait for the
     // BlockTree to render to confirm the page exists.
     await openJournalView(page)
     await expect(page.locator('[data-testid="block-tree"]').first()).toBeVisible()
@@ -141,7 +141,7 @@ test.describe('BUG-1 — page creation routes through create_page_in_space', () 
 
     // And it surfaces in the PageBrowser list scoped to the active space —
     // proving the new page carries the `space` property
-    // (BUG-1 regression net: pre-fix, this assertion failed because the
+    // (regression net: pre-fix, this assertion failed because the
     // template page was unscoped and the scoped `list_blocks` skipped it).
     await openPagesView(page)
     await expect(

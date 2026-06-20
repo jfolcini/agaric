@@ -1,8 +1,8 @@
-//! PEND-58 Phase 1 — shared filter primitives module.
+//! Phase 1 — shared filter primitives module.
 //!
 //! Defines the cross-surface `FilterPrimitive` enum + a `Projection`
 //! trait that per-surface back-ends (Pages, Search) implement to compile
-//! a primitive into a `WhereClause` fragment. Future phases (PEND-58
+//! a primitive into a `WhereClause` fragment. Future phases (
 //! Phase 2–5) consume this module to deliver the Pages compound-filter
 //! chip row and the corresponding Search vocabulary unification.
 //!

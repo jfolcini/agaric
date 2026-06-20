@@ -42,7 +42,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   // Load properties and definitions in parallel.
-  // M-85: `listPropertyDefs` is paginated; this surface is
+  // `listPropertyDefs` is paginated; this surface is
   // single-page-by-design — the seeded property vocabulary fits
   // well under one page, so we destructure `.items` and ignore the cursor.
   // FE-H-17: use `Promise.allSettled` so a single rejection no longer fails
@@ -95,7 +95,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
     [definitions],
   )
 
-  // Save / delete via shared hook (M-28)
+  // Save / delete via shared hook
   const { handleSave: doSave, handleDelete: doDeleteProperty } = usePropertySave({
     blockId: pageId,
     setProperties,

@@ -1,5 +1,5 @@
 /**
- * BugReportDialog — in-app bug-report surface (FEAT-5).
+ * BugReportDialog — in-app bug-report surface.
  *
  * Three-section dialog: a form (title, description, include-logs +
  * redact switches), a read-only Markdown preview + list of log files,
@@ -85,10 +85,10 @@ export function BugReportDialog({
   const [loadingLogs, setLoadingLogs] = useState<boolean>(false)
   const [submitting, setSubmitting] = useState<boolean>(false)
 
-  // UX-277: per-log preview sub-dialog state. Falls back to a fresh
+  // Per-log preview sub-dialog state. Falls back to a fresh
   // `readLogsForReport(redact)` call per click so loading + error UX is
   // observable; H-9c will eventually replace this with a server-rendered
-  // redacted bundle. UX-12: `showFullLog` toggles the truncated preview.
+  // Redacted bundle. `showFullLog` toggles the truncated preview.
   const [previewOpen, setPreviewOpen] = useState<boolean>(false)
   const [previewFilename, setPreviewFilename] = useState<string | null>(null)
   const [previewContents, setPreviewContents] = useState<string | null>(null)
@@ -96,7 +96,7 @@ export function BugReportDialog({
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [showFullLog, setShowFullLog] = useState<boolean>(false)
 
-  // MAINT-120: collect metadata via the shared useIpcCommand hook. The
+  // Collect metadata via the shared useIpcCommand hook. The
   // `setLoadingMetadata` flag stays external because it's tied to the
   // open/close lifecycle rather than the IPC itself.
   const { execute: executeCollectMetadata } = useIpcCommand<void, BugReport>({
@@ -182,7 +182,7 @@ export function BugReportDialog({
     })
   }, [title, body, t])
 
-  // MAINT-120: copy the formatted report body. The navigator-availability
+  // Copy the formatted report body. The navigator-availability
   // guard stays in the wrapper because it short-circuits BEFORE the IPC.
   const { execute: executeCopy } = useIpcCommand<void, void>({
     call: () => writeText(body),
@@ -205,7 +205,7 @@ export function BugReportDialog({
     await executeCopy()
   }, [executeCopy, t])
 
-  // MAINT-120: build + download the diagnostic-logs ZIP. Returns `true`
+  // Build + download the diagnostic-logs ZIP. Returns `true`
   // on success so callers can branch on it (vs `undefined` on error).
   const { execute: executeBuildZip } = useIpcCommand<
     { redact: boolean; metadata: BugReport },
@@ -251,7 +251,7 @@ export function BugReportDialog({
     try {
       // PEND-bug-report-zip-affordance: handleSubmit only opens the GitHub
       // URL — the zip download happens via the dedicated footer button.
-      // MAINT-177: openUrl resolves false when the Tauri shell errored AND
+      // OpenUrl resolves false when the Tauri shell errored AND
       // window.open was popup-blocked / null. In that case neither path
       // actually opened a tab, so we must NOT claim success — surface an
       // error toast, copy the issue URL as a manual escape hatch, and
@@ -284,7 +284,7 @@ export function BugReportDialog({
     }
   }, [submitting, includeLogs, issueUrl, onOpenChange, t])
 
-  // MAINT-120: re-fetch logs and surface one entry inline for preview.
+  // Re-fetch logs and surface one entry inline for preview.
   // `setPreviewLoading` toggles outside the hook because it gates
   // aria-busy on the sub-dialog.
   const { execute: executePreview } = useIpcCommand<{ filename: string; redact: boolean }, string>({
@@ -333,7 +333,7 @@ export function BugReportDialog({
 
   const previewSectionId = 'bug-report-preview'
 
-  // MAINT-215: on phones < 768 px render as a bottom Sheet — `'dialog'`
+  // On phones < 768 px render as a bottom Sheet — `'dialog'`
   // kind keeps regular Dialog parts on desktop.
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title, Description, Footer } = parts
@@ -342,7 +342,7 @@ export function BugReportDialog({
 
   return (
     <Root open={open} onOpenChange={onOpenChange}>
-      {/* PEND-28b: Dialog primitive bakes in flex flex-col + pinned
+      {/* Dialog primitive bakes in flex flex-col + pinned
           header/footer + a scrollable DialogBody slot. */}
       <Content className="max-w-2xl" {...contentSideProps}>
         <Header>
@@ -407,12 +407,12 @@ export function BugReportDialog({
               onCheckedChange={(v) => {
                 if (typeof v === 'boolean') setConfirmed(v)
               }}
-              // UX-12: aria-required surfaces the required state to AT.
+              // Aria-required surfaces the required state to AT.
               aria-required="true"
             />
             <Label htmlFor="bug-report-confirm" muted={false}>
               {t('bugReport.confirmCheckbox')}
-              {/* UX-12: visual asterisk; aria-hidden because the checkbox
+              {/* visual asterisk; aria-hidden because the checkbox
                   itself announces the required state via aria-required. */}
               <span
                 aria-hidden="true"

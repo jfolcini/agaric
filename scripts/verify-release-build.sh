@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────
-# Release pre-flight verifier (PEND-39 follow-on).
+# Release pre-flight verifier (follow-on).
 #
 # Runs the bundle-build step that distinguishes release.yml from the
 # everyday _validate.yml gate: `cargo tauri build` for the LOCAL OS

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────
-// STRICT tables policy check (PEND-07).
+// STRICT tables policy check.
 //
 // Enforces the AGENTS.md invariant under "Database":
 // every new `CREATE TABLE` in a SQLite migration must use STRICT mode.
@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs'
 import { basename } from 'node:path'
 
 // First migration required to use STRICT. Bump only when introducing
-// a new policy floor; existing migrations 0001..0041 predate PEND-07.
+// A new policy floor; existing migrations 0001..0041 predate.
 const FIRST_STRICT_MIGRATION = 42
 
 /**

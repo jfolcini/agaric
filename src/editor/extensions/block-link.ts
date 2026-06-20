@@ -18,7 +18,7 @@ export interface BlockLinkOptions {
   resolveTitle: (id: string) => string
   /** Called when the user clicks a block link chip. Navigates to the target page/block. */
   onNavigate?: ((id: string) => void) | undefined
-  /** PEND-15 Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
+  /** Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
   resolveStatus?: ((id: string) => 'active' | 'deleted') | undefined
 }
 

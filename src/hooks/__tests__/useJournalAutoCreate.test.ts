@@ -9,14 +9,14 @@ const mockedInvoke = vi.mocked(invoke)
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // BUG-48: the hook now probes `get_journal_page_by_date` instead of
+  // The hook now probes `get_journal_page_by_date` instead of
   // checking an in-memory pageMap. Default to "no page exists" so the
   // existing auto-create assertions still hold without per-test setup.
   mockedInvoke.mockResolvedValue(null)
 })
 
 /** Today's date in `YYYY-MM-DD` form — auto-create only fires when
- *  `currentDate` matches today (BUG-48 follow-up). */
+ * `currentDate` matches today (follow-up). */
 const todayStr = format(new Date(), 'yyyy-MM-dd')
 
 function makeOptions(overrides: Partial<Parameters<typeof useJournalAutoCreate>[0]> = {}) {
@@ -184,7 +184,7 @@ describe('useJournalAutoCreate', () => {
 
   it('shortcut works on a past date when mount-effect did not auto-create', async () => {
     // Validates that the keyboard shortcut earns its keep after the
-    // BUG-48 follow-up: it remains the only way to backfill a past
+    // Follow-up: it remains the only way to backfill a past
     // day's page now that the mount-effect is restricted to today.
     const opts = makeOptions({ currentDate: pastDate })
     renderHook(() => useJournalAutoCreate(opts))

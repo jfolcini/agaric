@@ -215,7 +215,7 @@ pub fn encode_snapshot(data: &SnapshotData) -> Result<Vec<u8>, AppError> {
 
 /// Decode zstd-compressed CBOR bytes to `SnapshotData`.
 ///
-/// **L-67 — streaming decoder.** The reader is wrapped in
+/// **streaming decoder.** The reader is wrapped in
 /// [`zstd::stream::Decoder`] (lazy decompression) and that decoder
 /// is fed straight to `ciborium::from_reader`, so neither the
 /// compressed bytes nor the decompressed bytes are ever fully

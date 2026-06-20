@@ -5,7 +5,7 @@
  * deletion timestamp + breadcrumb, and the inline restore/purge
  * action buttons. Stays pure-presentational: all state and handlers
  * are passed in from the orchestrator. Sibling extracted from
- * TrashView.tsx for MAINT-128.
+ * TrashView.tsx for.
  */
 
 import { RotateCcw } from 'lucide-react'
@@ -198,7 +198,7 @@ export function TrashRowItem({
             <p>{t('trash.restoreTooltip')}</p>
           </TooltipContent>
         </Tooltip>
-        {/* UX-342 — Tooltip on the destructive Purge button so users
+        {/* Tooltip on the destructive Purge button so users
             understand "Purge" means permanent deletion. Mirrors the
             Restore button's Tooltip structure above. */}
         <Tooltip>

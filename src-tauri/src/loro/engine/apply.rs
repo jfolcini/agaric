@@ -295,13 +295,13 @@ impl LoroEngine {
     /// value is **lossless across sync**: a peer that imports this doc
     /// reads the same timestamp back via [`Self::read_deleted_at`] and
     /// re-derives the SQL descendant cascade + restore cohort from it
-    /// (PEND-80 Phase 2 — was a fixed marker that collapsed every
+    /// (Phase 2 — was a fixed marker that collapsed every
     /// delete onto one timestamp, breaking cross-peer cohort identity).
     /// Concurrent delete/restore converge on the `deleted_at` slot via
     /// Loro's per-key LWW.
     ///
     /// **Scope: seed only.** The descendant cascade stays an SQL/app
-    /// derivation (per the PEND-80 boundary); this writes only the
+    /// Derivation (per the boundary); this writes only the
     /// seed's timestamp. The local materializer mirrors the same
     /// timestamp onto the descendant cohort for engine parity via the
     /// post-commit `dispatch_delete_descendants` fanout, but **inbound
@@ -477,7 +477,7 @@ impl LoroEngine {
         self.doc.commit();
         Ok(())
     }
-    /// Mirrors `SetProperty`, storing a native typed value (PEND-80 §2.1):
+    /// Mirrors `SetProperty`, storing a native typed value:
     /// `Num`→`Double`, `Bool`→`Bool`, `Str`→`String`, `Null`→explicit clear.
     /// Stored under `block_properties` keyed by block_id then property key.
     /// LWW per `(block_id, key)`. `PropertyValue::Null` writes an explicit

@@ -1,12 +1,12 @@
 /**
- * Tests for QuickAccessBar (PEND-68 Part B; #83 recents-only).
+ * Tests for QuickAccessBar (Part B; #83 recents-only).
  *
  * One nav element holding the recents scroller (the former destinations
  * cluster was removed in #83 — it duplicated the left sidebar). Coverage:
  *  - Render gate: desktop AND mobile with recents render; no recents → null
  *    (#927 f6: the recents strip is the mobile page-switch affordance).
  *  - Currently-open page excluded from recents.
- *  - Recents zone preserves all FEAT-9 / PEND-19 / PEND-32 / UX-256 behaviour.
+ * Recents zone preserves all behaviour.
  *  - Roving tabindex over the recents (wrap, horizontal-only).
  *  - axe clean.
  */
@@ -244,7 +244,7 @@ describe('QuickAccessBar', () => {
       expect(chip).toHaveAttribute('title', 'Untitled')
     })
 
-    it('chips carry the focus-tint class for keyboard discoverability (UX-284)', () => {
+    it('chips carry the focus-tint class for keyboard discoverability', () => {
       useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
 
       render(<QuickAccessBar />)
@@ -386,10 +386,10 @@ describe('QuickAccessBar', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Recents single-line / wheel / mask (preserved from PEND-32 / MAINT-211)
+  // Recents single-line / wheel / mask (preserved from)
   // ---------------------------------------------------------------------------
 
-  describe('recents scroller (PEND-32 / MAINT-211)', () => {
+  describe('recents scroller ()', () => {
     function seedFive() {
       const { recordVisit } = useRecentPagesStore.getState()
       recordVisit({ pageId: 'A', title: 'Alpha' })

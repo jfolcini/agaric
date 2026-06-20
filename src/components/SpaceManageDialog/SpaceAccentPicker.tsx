@@ -1,7 +1,7 @@
 /**
  * SpaceAccentPicker — 6-swatch accent-color grid for an existing space.
  *
- * Extracted from `SpaceRowEditor` (PEND-30 D-2). Click writes a
+ * Extracted from `SpaceRowEditor` (D-2). Click writes a
  * `setProperty(accent_color, token)` op against the space block. The
  * selection state is local — the parent's only concern is providing
  * `spaceId`; nothing flows back up because the accent token is not
@@ -28,7 +28,7 @@ import { cn } from '@/lib/utils'
 const LOG_MODULE = 'components/SpaceManageDialog/SpaceAccentPicker'
 
 /**
- * Palette tokens consumed by FEAT-3p10. Stored verbatim in the
+ * Palette tokens consumed by. Stored verbatim in the
  * `accent_color` property; the visual identity layer maps them to
  * concrete CSS custom properties at render time. Kept in module scope
  * so tests can import the same source of truth without duplication.
@@ -112,7 +112,7 @@ export function SpaceAccentPicker({
             style={{ backgroundColor: `var(--${swatch.token})` }}
             data-accent-token={swatch.token}
           >
-            {/* UX-6 — surface selection with an icon, not just a ring,
+            {/* surface selection with an icon, not just a ring,
              * so colour-blind users can identify the active swatch.
              * White text + bold stroke + dark drop-shadow guarantees
              * WCAG AA contrast on every palette fill (incl. amber-500

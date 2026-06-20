@@ -68,7 +68,7 @@ export interface PageBlockState {
   /** Ordered flat-tree of blocks for this page (depth-annotated). */
   blocks: FlatBlock[]
   /**
-   * O(1) lookup index over `blocks`, keyed by block id (PEND-20 G).
+   * O(1) lookup index over `blocks`, keyed by block id (G).
    * Always rebuilt from `blocks` on every mutation that touches the array;
    * the array is the source of truth for ordering, the Map is a derived cache.
    * Mutations produce a new Map reference so Zustand selector subscribers fire.
@@ -169,7 +169,7 @@ export interface PageBlockState {
   pasteBlocks: (anchorBlockId: string, markdown: string) => Promise<string[]>
 
   /**
-   * PEND-35 Tier 4.2 — append a single backend-returned `BlockRow` to the
+   * Append a single backend-returned `BlockRow` to the
    * in-memory flat tree at depth 0 (top-level child of this page).
    *
    * Used by callers that already have the freshly-created row in hand and
@@ -218,7 +218,7 @@ function siblingSlot(blocks: FlatBlock[], block: FlatBlock): number {
   return siblings.findIndex((b) => b.id === block.id)
 }
 
-// ── blocksById helpers (PEND-20 G) ───────────────────────────────────────
+// ── blocksById helpers (G) ───────────────────────────────────────
 
 /**
  * Build a fresh `blocksById` Map from a `blocks` array.
@@ -1342,7 +1342,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         const newIndex = sibIndex - 1
 
         try {
-          // PEND-35 Tier 4.1 — splice locally instead of full re-list.
+          // Splice locally instead of full re-list.
           // The MoveResponse echoes the canonical (parent_id, position) the
           // backend committed, so we can mirror the `reorder` path
           // without a follow-up `list_blocks` IPC. Same-parent only — moveUp
@@ -1461,7 +1461,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         const newIndex = sibIndex + 1
 
         try {
-          // PEND-35 Tier 4.1 — splice locally instead of full re-list.
+          // Splice locally instead of full re-list.
           // See moveUp comment for rationale; same-parent reorder only.
           // #730 — pool_busy retry (see edit/createBelow).
           const resp = await retryOnPoolBusy(() => moveBlock(blockId, parentId, newIndex))
@@ -1657,7 +1657,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     },
   }))
 
-  // PEND-20 G — escape hatch for external callers (tests, ad-hoc setState).
+  // G — escape hatch for external callers (tests, ad-hoc setState).
   // Wrap `store.setState` so callers passing only `{ blocks: [...] }` get
   // `blocksById` derived automatically. Internal `set(...)` calls inside the
   // factory already maintain the Map atomically and bypass this wrap.

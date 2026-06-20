@@ -80,7 +80,7 @@ describe('TemplatePicker', () => {
   })
 
   it('calls onClose when Escape is pressed while focus is outside the picker', () => {
-    // Regression for TEST-1c-B: the TipTap editor installs a capture-phase
+    // Regression for -B: the TipTap editor installs a capture-phase
     // keydown listener on its container that calls stopPropagation on Escape.
     // The picker must intercept Escape on the document BEFORE the editor's
     // listener — otherwise Escape fails to close the picker when focus is
@@ -111,7 +111,7 @@ describe('TemplatePicker', () => {
   })
 
   it('marks the dialog as an editor portal so TipTap stays mounted', () => {
-    // Regression for TEST-1c-B: without `data-editor-portal`, the editor's
+    // Regression for -B: without `data-editor-portal`, the editor's
     // blur handler treats the picker as an unrelated element and unmounts
     // on button-focus, clearing `focusedBlockId` before the click-handler
     // can insert the template.

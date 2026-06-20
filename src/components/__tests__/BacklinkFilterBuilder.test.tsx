@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// PEND-37: the "active filters" a11y test throws STACK_TRACE_ERROR (not a clean
+// The "active filters" a11y test throws STACK_TRACE_ERROR (not a clean
 // assertion failure) under happy-dom — render or axe walk crashes deep in the
 // runner. Other tests in this file would work under happy-dom but pinning the
 // whole file is the conservative call until that crash is investigated.
@@ -116,7 +116,7 @@ describe('BacklinkFilterBuilder', () => {
       ])
     })
 
-    it('clicking Apply fires onFiltersChange exactly once (L-137)', async () => {
+    it('clicking Apply fires onFiltersChange exactly once', async () => {
       const user = userEvent.setup()
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
@@ -495,7 +495,7 @@ describe('BacklinkFilterBuilder', () => {
       expect(onFiltersChange).not.toHaveBeenCalled()
     })
 
-    // PEND-28b H6 — Apply / Cancel rows hard-code `h-7`, which overrides the
+    // Apply / Cancel rows hard-code `h-7`, which overrides the
     // `Button size="xs"` coarse-pointer height bump. Without an explicit
     // `[@media(pointer:coarse)]:h-11` the buttons render at 28 px on touch,
     // below the 44 px minimum touch target.
@@ -721,7 +721,7 @@ describe('BacklinkFilterBuilder', () => {
   })
 
   // ====================================================================
-  // MAINT-190 — `_addId` per-add monotonic React key on filter pills.
+  // `_addId` per-add monotonic React key on filter pills.
   //
   // Replaces the previous `key={index}` + oxlint-disable workaround. Each
   // add stamps a fresh `_addId`, so byte-identical filters that bypass
@@ -735,7 +735,7 @@ describe('BacklinkFilterBuilder', () => {
   // useful: it pre-empts a class of bugs around future filter
   // reorder / animation work.
   // ====================================================================
-  describe('per-add React key stamping (MAINT-190)', () => {
+  describe('per-add React key stamping', () => {
     it('does not emit React duplicate-key warnings on rapid identical add', async () => {
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       try {
@@ -1272,7 +1272,7 @@ describe('BacklinkFilterBuilder', () => {
       })
     })
 
-    // PEND-74 — flake hardening. Two changes together remove the race:
+    // Flake hardening. Two changes together remove the race:
     //   1. Pre-seed `listTagsByPrefix` with the same `tagsData` shape so
     //      the 150 ms debounced IPC's `setTagSearchResults` swaps `items`
     //      to an array whose keys match the initial `tags` prop — no
@@ -1347,10 +1347,10 @@ describe('BacklinkFilterBuilder', () => {
   })
 
   // ====================================================================
-  // UX-246 — SearchInput clear-button coverage across filter categories
+  // SearchInput clear-button coverage across filter categories
   // ====================================================================
 
-  describe('SearchInput clear button (UX-246)', () => {
+  describe('SearchInput clear button', () => {
     it('shows clear button in the Contains filter when value is non-empty and clears it', async () => {
       const user = userEvent.setup()
       const onFiltersChange = vi.fn()

@@ -48,7 +48,7 @@ pub use draft_recovery::find_prev_edit;
 pub use replay::{ReplayReport, replay_unmaterialized_ops};
 pub use sync_inbox::replay_sync_inbox;
 
-// L-103 test wrapper: re-export the once-only-guard reset for in-crate
+// Test wrapper: re-export the once-only-guard reset for in-crate
 // test code (`integration_tests.rs`) so multi-test runs aren't poisoned
 // by the production guard. Test-only by `cfg(test)`; not part of the
 // public crate API.

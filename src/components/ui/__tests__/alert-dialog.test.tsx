@@ -71,7 +71,7 @@ describe('AlertDialog ref forwarding', () => {
 })
 
 // ---------------------------------------------------------------------------
-// responsive viewport cap (PEND-28 H1)
+// Responsive viewport cap
 // ---------------------------------------------------------------------------
 
 describe('AlertDialogContent viewport cap', () => {

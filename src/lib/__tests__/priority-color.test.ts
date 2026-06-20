@@ -1,6 +1,6 @@
 /**
  * Tests for priorityColor — index-based colour mapping driven by the
- * user-configurable priority levels (UX-201b).
+ * User-configurable priority levels.
  *
  * Validates:
  *  - Default levels (1/2/3) map to urgent / high / normal (regression).

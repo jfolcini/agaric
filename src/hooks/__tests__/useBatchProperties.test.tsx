@@ -1,5 +1,5 @@
 /**
- * Tests for useBatchProperties / BatchPropertiesProvider (PEND-35
+ * Tests for useBatchProperties / BatchPropertiesProvider (
  * Tier 2.4a).
  *
  * Validates:

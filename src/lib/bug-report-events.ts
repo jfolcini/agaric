@@ -12,7 +12,7 @@
  * a class component (the boundary) up into the App-level dialog mount
  * without prop-drilling. Mirrors the `overlay-events.ts` pattern.
  *
- * UX-279.
+ *.
  */
 
 export const BUG_REPORT_EVENT = 'agaric:report-bug'

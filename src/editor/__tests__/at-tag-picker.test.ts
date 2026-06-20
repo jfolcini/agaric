@@ -242,7 +242,7 @@ describe('AtTagPicker input rule (T-2)', () => {
   })
 })
 
-// ── FE-M-15 ──────────────────────────────────────────────────────────────
+// ── ──────────────────────────────────────────────────────────────
 //
 // `insertContentAt(insertPos, ...)` clamps silently rather than throwing
 // when `insertPos` is past the doc's end. The user can edit (or clear) the
@@ -252,7 +252,7 @@ describe('AtTagPicker input rule (T-2)', () => {
 // `insertContentAt`, and fall back to plain text at the current cursor
 // when the offset is stale.
 
-describe('AtTagPicker stale-insertPos guard (FE-M-15)', () => {
+describe('AtTagPicker stale-insertPos guard ()', () => {
   it('falls back to plain text at cursor when insertPos > doc.content.size', async () => {
     const insertContentCalls: unknown[] = []
     const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
@@ -310,13 +310,13 @@ describe('AtTagPicker stale-insertPos guard (FE-M-15)', () => {
   })
 })
 
-// ── Suggestion plugin `command` — UX-232 trailing-space behaviour ────────
+// ── Suggestion plugin `command` — trailing-space behaviour ────────
 //
 // After picking a tag from the @ suggestion popup, the chain must end with
 // .insertContent(' ').run() so the cursor sits one space past the chip.
 
 describe('AtTagPicker suggestion plugin configuration', () => {
-  // Regression guard for TEST-1fh query-blocks failures. Typing
+  // Regression guard for query-blocks failures. Typing
   // `{{query property:context=@office}}` previously triggered the at-tag
   // picker because `allowedPrefixes: null` let `@` fire after any character.
   // Enter then created a `Create 'office}}'` tag instead of saving the
@@ -352,7 +352,7 @@ describe('AtTagPicker suggestion plugin configuration', () => {
   })
 })
 
-describe('AtTagPicker suggestion command chain (UX-232)', () => {
+describe('AtTagPicker suggestion command chain', () => {
   it('non-create path chains deleteRange → insertTagRef → insertContent(" ") → run', async () => {
     let capturedCommand:
       | ((ctx: { editor: unknown; range: { from: number; to: number }; props: unknown }) => void)
@@ -481,9 +481,9 @@ describe('AtTagPicker suggestion command chain (UX-232)', () => {
   })
 })
 
-// ── Integration: real editor doc state after the picker chain (UX-232) ──
+// ── Integration: real editor doc state after the picker chain ──
 
-describe('AtTagPicker real-editor chain result (UX-232)', () => {
+describe('AtTagPicker real-editor chain result', () => {
   let editor: Editor | undefined
 
   afterEach(() => {

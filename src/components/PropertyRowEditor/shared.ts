@@ -1,5 +1,5 @@
 /**
- * Shared helpers + types for PropertyRowEditor decomposition (MAINT-128).
+ * Shared helpers + types for PropertyRowEditor decomposition.
  *
  * Pure functions and shared types that the orchestrator, typed editors, and
  * the containing hook depend on. Kept lib-style (no React imports) so the

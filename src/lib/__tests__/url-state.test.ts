@@ -1,5 +1,5 @@
 /**
- * Tests for url-state helpers (UX-276).
+ * Tests for url-state helpers.
  *
  * Validates query-param read/write contract via `history.replaceState` for
  * the SettingsView deep-link feature. Helpers are total — corrupted URLs

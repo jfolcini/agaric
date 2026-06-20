@@ -3,7 +3,7 @@
  * within a text string using a <mark> element.
  *
  * Extracted from PageBrowser for reuse in any search/filter context.
- * Uses Unicode-aware folding (UX-247) so the highlight triggers for
+ * Uses Unicode-aware folding so the highlight triggers for
  * Turkish (`İstanbul` ↔ `istanbul`), German (`Straße` ↔ `strasse`),
  * and accented (`café` ↔ `cafe`) mismatches that plain
  * `.toLowerCase()` would miss.

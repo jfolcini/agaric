@@ -20,7 +20,7 @@ use super::row::{FtsSearchRow, content_select_expr};
 
 /// Build the dynamic FTS5 MATCH SQL and execute it, returning the raw
 /// rows in rank order. Reused by both [`search_fts`] (cursor-paginated,
-/// single-partition) and [`search_fts_partitioned`] (PEND-61 Phase 1,
+/// Single-partition) and [`search_fts_partitioned`] (Phase 1,
 /// no-cursor, two-partition).
 ///
 /// Callers control:
@@ -34,19 +34,19 @@ use super::row::{FtsSearchRow, content_select_expr};
 ///   [`search_fts`] today; the partitioned caller passes
 ///   `block_type_filter = None` to fetch the unrestricted candidate
 ///   set and partitions in Rust.
-/// - `with_snippet` — PEND-69 F5. `false` omits the FTS5
+///   `with_snippet` —. `false` omits the FTS5
 ///   `snippet(...)` call from the SELECT (projects `NULL` instead) so
 ///   we don't re-tokenize once per row when the downstream pipeline
 ///   will overwrite `row.snippet = None` anyway (regex / non-regex
 ///   toggle post-filter paths). Saves a per-row tokenizer walk; the
 ///   FTS5 `snippet()` cost compounds on cold cache.
 ///
-/// PEND-70 — `cancel` is an optional cancellation token. When `Some`,
+/// `cancel` is an optional cancellation token. When `Some`,
 /// the SQL `fetch_all` is raced against the cancel signal via
 /// `tokio::select!`; if the signal fires, the SQL future is dropped
 /// cleanly and the call returns [`AppError::Cancelled`]. Passing
 /// `None` (or [`CancellationToken::never_cancelled`]) preserves the
-/// pre-PEND-70 behaviour.
+/// Pre- behaviour.
 ///
 /// [`search_fts`]: super::cursor::search_fts
 /// [`search_fts_partitioned`]: super::partitioned::search_fts_partitioned
@@ -73,7 +73,7 @@ pub(super) async fn fts_fetch_rows(
     snippet_len: Option<usize>,
     cancel: Option<CancellationToken>,
 ) -> Result<Vec<FtsSearchRow>, AppError> {
-    // PEND-70 — early-cancel before we even touch the read pool.
+    // Early-cancel before we even touch the read pool.
     // The next-keystroke palette pattern fires fresh IPCs faster than
     // SQLite can deliver a connection, so checking here catches the
     // burst before we waste a pool slot.
@@ -85,17 +85,17 @@ pub(super) async fn fts_fetch_rows(
     // Build dynamic SQL with optional filter clauses.
     // Base parameters: ?1=query, ?2=cursor_flag, ?3=cursor_rank, ?4=cursor_id, ?5=limit
     // Additional parameters are appended after ?5 for parent_id, tag_ids,
-    // and (FEAT-3 Phase 2) space_id.
-    // PEND-50 Phase 1 — `snippet()` carries #828 PUA sentinel boundaries
+    // And (Phase 2) space_id.
+    // Phase 1 — `snippet()` carries #828 PUA sentinel boundaries
     // (U+E000 open / U+E001 close, see SNIPPET_SQL_PROJECTION) around each
     // match span. Column index 1 = the `stripped`
     // column of `fts_blocks` (migration `0006_fts5_trigram.sql:13`).
     // Window width is `32` trigrams (≈ a few words); the constant is
-    // documented in PEND-50's "Edge cases" as tunable. The leading /
+    // Documented in "Edge cases" as tunable. The leading /
     // trailing `…` flag truncation. The result is rendered as React
     // nodes by the frontend; NEVER `dangerouslySetInnerHTML`.
     //
-    // PEND-69 F5 — when the downstream pipeline will clear
+    // When the downstream pipeline will clear
     // `row.snippet` (toggle post-filter paths), project `NULL` instead
     // of calling `snippet()` so we don't pay the per-row tokenizer
     // walk just to throw the result away.
@@ -104,7 +104,7 @@ pub(super) async fn fts_fetch_rows(
     } else {
         "NULL as snippet"
     };
-    // SQL-9 (PEND-58f) — the cursor tiebreak uses a RELATIVE epsilon
+    // The cursor tiebreak uses a RELATIVE epsilon
     // (#1598). Two ranks are treated as "equal" (and disambiguated by the
     // unique `b.id` tiebreaker) when they fall within
     // `1e-9 * MAX(1, ABS(?3))` of each other, i.e. the band half-width
@@ -166,7 +166,7 @@ pub(super) async fn fts_fetch_rows(
 
     // Optional tag_ids filter (ALL semantics).
     //
-    // SQL-1 (PEND-58f) — dedupe the caller's `tag_ids` before binding.
+    // Dedupe the caller's `tag_ids` before binding.
     // The "ALL tags" clause compares `COUNT(DISTINCT bt.tag_id)` against
     // the bound list length; a duplicate tag id (e.g. the same chip added
     // twice, or two FE code paths appending the same id) would make the
@@ -176,7 +176,7 @@ pub(super) async fn fts_fetch_rows(
     // semantics. Order is preserved so the placeholder/bind indices stay
     // deterministic.
     //
-    // SQL-A6 (PEND-58f) — normalise each id to its canonical UPPERCASE
+    // SQL-A6 — normalise each id to its canonical UPPERCASE
     // ULID form BEFORE the dedup set (and bind the normalised form).
     // `block_tags.tag_id` stores the canonical uppercase Crockford-base32
     // ULID (`BlockId`/`ActiveBlockId` both normalise via
@@ -193,7 +193,7 @@ pub(super) async fn fts_fetch_rows(
         }
         _ => Vec::new(),
     };
-    // #1320 PR-1 — the ALL-tags filter is now compiled through
+    // #1320 the ALL-tags filter is now compiled through
     // `SearchProjection` (the cross-surface filter compiler) rather than
     // the inline `COUNT(DISTINCT)` fragment. `add_tags_via_projection`
     // emits one per-tag `b.id IN (SELECT block_id FROM block_tags WHERE
@@ -202,13 +202,13 @@ pub(super) async fn fts_fetch_rows(
     // result-equivalent to the legacy `COUNT(DISTINCT bt.tag_id) = N`
     // ALL-semantics (the SQL shape differs; equivalence is proved by the
     // `tags_via_projection_matches_legacy_*` DB tests in `filter_builder`).
-    // Follows the `Space` cutover (PR-0). As of #1320 PR-3 the legacy
+    // Follows the `Space` cutover. As of #1320 the legacy
     // `add_tags_all` builder is retired — every search path (this one plus
     // the toggle-filter `regex_mode_query` / `filter_only_scan` builders) now
     // routes tags through `add_tags_via_projection`.
     fb.add_tags_via_projection(PREFIX, &active_tag_ids);
 
-    // FEAT-3 Phase 2 — optional space-id filter. Filters on the
+    // Phase 2 — optional space-id filter. Filters on the
     // first-class `b.space_id` column directly (#533, migration 0086 — the
     // former `b.page_id IN (SELECT … block_properties WHERE key = 'space')`
     // sub-select is gone). Appends the bare `b.space_id = ?N` form (no
@@ -220,7 +220,7 @@ pub(super) async fn fts_fetch_rows(
     // tag / space filters) prevents the compile-time sqlx macro from being
     // applied.
     //
-    // #1320 PR-0 — the space-id fragment is now compiled through
+    // #1320 the space-id fragment is now compiled through
     // `SearchProjection` (the cross-surface filter compiler) rather than
     // inline. `compile_space` emits the identical `b.space_id = ?` shape
     // with one text bind, so the net SQL + binds are byte-identical to the
@@ -230,25 +230,25 @@ pub(super) async fn fts_fetch_rows(
     // (`prop:` four-column OR) diverge from the projection and stay legacy.
     fb.add_space_via_projection(PREFIX, space_id);
 
-    // PEND-54 — page-name glob include / exclude filters. Each entry
+    // Page-name glob include / exclude filters. Each entry
     // has already been brace-expanded, lowercased and substring-
     // wrapped by `prepare_globs`; the shared P2 (#346) helper binds one
     // parameter per pattern and OR-joins inside each `IN (...)`
     // sub-select. `LOWER(title)` is applied SQL-side (cheap on the small
     // `pages_cache` table).
     //
-    // SQL-2 (PEND-58f) — that `LOWER(pc.title) GLOB ?` clause is a
+    // That `LOWER(pc.title) GLOB ?` clause is a
     // `pages_cache` SCAN; it does NOT use `idx_pages_cache_title_nocase`.
     // See `glob_filter::append_page_glob_subselect` and migration
     // `0068_pages_cache_title_index.sql` for the full rationale.
     fb.add_page_globs_via_projection(PREFIX, false, include_page_globs);
     fb.add_page_globs_via_projection(PREFIX, true, exclude_page_globs);
 
-    // PEND-51 — optional `block_type` equality filter. The palette
+    // Optional `block_type` equality filter. The palette
     // fires a page-only query (`block_type_filter = Some("page")`)
     // alongside the unrestricted blocks query so the FE only has to
     // merge by `page_id`. `None` preserves today's no-filter behaviour.
-    // PEND-61 Phase 1 — the partitioned caller passes `None` here and
+    // Phase 1 — the partitioned caller passes `None` here and
     // partitions in Rust instead.
     // #1280 B2 — routed through `SearchProjection::compile_block_type`
     // (canonical A2 SQL). Result-equivalent to the legacy `b.block_type = ?`
@@ -256,7 +256,7 @@ pub(super) async fn fts_fetch_rows(
     // `b.block_type IN (?)`); `None` stays a no-op.
     fb.add_block_type_via_projection(PREFIX, block_type_filter);
 
-    // PEND-53 — priority / property metadata predicates (legacy path), plus
+    // Priority / property metadata predicates (legacy path), plus
     // state / due / scheduled routed through `SearchProjection` (#1280 B2),
     // spliced (with their ordered binds) into the builder.
     fb.add_metadata(metadata, "b");
@@ -275,19 +275,19 @@ pub(super) async fn fts_fetch_rows(
         .bind(fetch_limit); // ?5
     let db_query = fb.apply(db_query);
 
-    // PEND-70 — acquire a read-pool connection via the slow-acquire
+    // Acquire a read-pool connection via the slow-acquire
     // logger so saturation under bursty typing surfaces in the log.
     let mut conn = search_pool_acquire_logged(pool, "fts_fetch_rows")
         .await
         .map_err(AppError::Database)?;
 
-    // PEND-70 — measure the per-query wall time so pathological scans
+    // Measure the per-query wall time so pathological scans
     // surface in the log. The timer starts after the pool acquire
     // because the acquire wait is already logged by
     // `search_pool_acquire_logged`.
     let query_start = Instant::now();
 
-    // PEND-70 — race the SQL fetch against the cancellation signal so
+    // Race the SQL fetch against the cancellation signal so
     // the in-flight Rust future drops cleanly when the client
     // unsubscribed. When the signal wins this `select!`, we return
     // immediately, which drops `conn` and releases the read-pool slot
@@ -331,7 +331,7 @@ pub(super) async fn fts_fetch_rows(
     }
 
     result.map_err(|e| {
-        // PEND-73 Phase 1.B5 — robust FTS5 parse-error mapping.
+        // Phase 1.B5 — robust FTS5 parse-error mapping.
         //
         // We want to translate FTS5 MATCH-syntax errors into a
         // user-facing validation error, but every other SQLite error

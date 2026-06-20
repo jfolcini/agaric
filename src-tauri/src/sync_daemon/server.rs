@@ -95,7 +95,7 @@ pub(crate) fn verify_peer_cert(
 /// that peer (e.g. an outbound initiator-mode session is in progress) the
 /// connection is rejected with an `Error` message.
 ///
-/// MAINT-21: wrapped in a `sync_resp` span so every log line emitted during
+/// Wrapped in a `sync_resp` span so every log line emitted during
 /// an inbound responder session (including nested orchestrator
 /// `sync_msg{...}` child spans) is tagged with the responder session prefix.
 ///
@@ -125,7 +125,7 @@ pub(crate) async fn handle_incoming_sync(
     let event_sink_box: Box<dyn SyncEventSink> =
         Box::new(super::SharedEventSink(std::sync::Arc::clone(&event_sink)));
 
-    // L-71: construction of `orch` is deferred until after the cert
+    // Construction of `orch` is deferred until after the cert
     // check so we can wire the verified TLS certificate CN into the
     // orchestrator's `expected_remote_id`. This makes the orchestrator's
     // internal HeadExchange-vs-expected mismatch path active on the
@@ -145,7 +145,7 @@ pub(crate) async fn handle_incoming_sync(
     // loop uniform.)
     let first_msg: SyncMessage = super::wire::recv_sync_message(&mut conn).await?;
 
-    // M-58: capture the initiator's advertised heads BEFORE the
+    // Capture the initiator's advertised heads BEFORE the
     // orchestrator consumes `first_msg`. If the session later exits in
     // `ResetRequired` we need these heads to verify our snapshot's
     // `up_to_seqs` actually covers the remote's frontier — otherwise
@@ -197,7 +197,7 @@ pub(crate) async fn handle_incoming_sync(
         }
 
         // #778: the peer's identity is the verified TLS certificate CN
-        // (mTLS), mirroring the initiator-side BUG-27 fallback
+        // (mTLS), mirroring the initiator-side fallback
         // (`expected_remote_id` in `sync_protocol::orchestrator`). The
         // heads-claimed id is only a fallback for cert-less connections
         // (in-memory test pairs); the hoisted B-34 check above
@@ -391,7 +391,7 @@ pub(crate) async fn handle_incoming_sync(
         None
     };
 
-    // L-71: build the orchestrator now that the cert CN is known. If
+    // Build the orchestrator now that the cert CN is known. If
     // the connection carried a verified peer cert (the production
     // path), wire its CN as `expected_remote_id`; the orchestrator's
     // HeadExchange handler then rejects any first_msg whose advertised
@@ -454,14 +454,14 @@ pub(crate) async fn handle_incoming_sync(
         }
     }
 
-    // FEAT-6: Snapshot-driven catch-up (post-ResetRequired).
+    // Snapshot-driven catch-up (post-ResetRequired).
     //
     // If the main loop exited with `state == ResetRequired`, we
     // signalled to the initiator that our op log cannot satisfy its
     // heads (typically after compaction). Offer our most recent
     // snapshot as an alternative path. If `log_snapshots` is empty
     // (e.g. no compaction has run yet) we simply close the session,
-    // matching pre-FEAT-6 behavior.
+    // Matching pre- behavior.
     if matches!(orch.session().state, SyncState::ResetRequired) {
         let remote_id = orch.session().remote_device_id.clone();
         match super::snapshot_transfer::try_offer_snapshot_catchup(
@@ -496,7 +496,7 @@ pub(crate) async fn handle_incoming_sync(
     //
     // #1605: thread the daemon's REAL shared cancel flag (same one the
     // initiator and shutdown path use) into the file-transfer phase,
-    // replacing the former M-47 throwaway `AtomicBool::new(false)`. The
+    // Replacing the former throwaway `AtomicBool::new(false)`. The
     // per-file loops in `run_file_transfer_responder` observe it between
     // files, so a shutdown or user-cancel aborts a multi-gigabyte transfer
     // promptly rather than running it to completion (or to `RECV_TIMEOUT`
@@ -505,7 +505,7 @@ pub(crate) async fn handle_incoming_sync(
     if orch.is_succeeded() {
         match crate::sync_files::app_data_dir_from_pool(&pool_ref).await {
             Ok(app_data_dir) => {
-                // PEND-06 Tier 2 — pass `None`: the responder is the
+                // Pass `None`: the responder is the
                 // *incoming* side of a sync session, so no `start_sync`
                 // command on this device has set up a `Channel` for file
                 // progress. The active `Channel` lives on the initiator's

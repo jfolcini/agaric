@@ -1,4 +1,4 @@
-# Cargo workspace root.  PEND-09 Phase 0 introduced the `loro-spike` crate
+# Cargo workspace root. Phase 0 introduced the `loro-spike` crate
 # under `crates/loro-spike` as an isolated, throwaway evaluation of the Loro
 # CRDT library (see `docs/session-log/2026-sessions-401-800.md` Session 698); Phase 1 ported the
 # necessary engine code into `src-tauri/src/loro/`.  The spike was archived
@@ -28,7 +28,7 @@ publish = false
 # pointer when multiple targets exist.
 default-run = "agaric"
 
-# cargo-machete allowlist — PEND-41 R20.
+# Cargo-machete allowlist —.
 #
 # Each entry must carry a reachability rationale so a future audit can decide
 # whether to keep, remove, or replace. cargo-machete flags these because their
@@ -48,7 +48,7 @@ ignored = [
     "tokio-rustls",      # async TLS adapter for tokio. Direct dep + transitive via reqwest, tokio-tungstenite.
     "futures-util",      # Stream / Sink combinators used by sync_net + sqlx_core paths. Direct dep + transitive via futures, sqlx-core, reqwest, hyper-util, gio, glib.
     "x509-parser",       # peer-certificate parsing during the TLS mTLS handshake validation.
-    # Android-only, unused on desktop targets (BUG-39)
+    # Android-only, unused on desktop targets
     "jni",         # Java <-> Rust FFI for the multicast lock + Android lifecycle bridge.
     "ndk-context", # Android NDK runtime context handle for JNI calls.
 ]
@@ -87,10 +87,10 @@ ci-smoke = []
 # bins moved to the `agaric-diagnostics` workspace member, so the feature
 # gated nothing in this crate. Run the tools with
 # `cargo run -p agaric-diagnostics --bin <name>`.
-# MAINT-111: `rmcp` is a hard dep (was previously gated behind the
+# `rmcp` is a hard dep (was previously gated behind the
 # `mcp_rmcp_spike` feature during the M1/M2 spike). The adapter in
 # `mcp/rmcp_spike.rs` is the production tools/call dispatcher.
-# PEND-09 Phase 3 day-9 — `loro-shadow` feature flag retired.  The
+# Phase 3 day-9 — `loro-shadow` feature flag retired. The
 # Loro CRDT engine is now the only path: `loro` and `xxhash-rust` are
 # hard deps below (no `optional = true`), and `src/loro/` compiles
 # unconditionally.  Removing the gate landed in commit `f7c21782`; see
@@ -104,11 +104,11 @@ tauri = { version = "2", features = ["image-png"] }
 tauri-plugin-shell = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "2"
-# MAINT-109: cross-platform platform/version/arch/locale/hostname API.
+# Cross-platform platform/version/arch/locale/hostname API.
 # Used by the bug-report metadata collector (see commands/bug_report.rs).
 # Works on desktop and mobile.  Part of the Tauri plugin coupled stack.
 tauri-plugin-os = "2"
-# FEAT-11: native OS notifications for due / scheduled tasks.  The
+# Native OS notifications for due / scheduled tasks. The
 # `notify_task` command (see commands/notifier.rs) fires a desktop /
 # mobile notification through the plugin's builder.  Works on desktop
 # and mobile (Android 13+ needs the `POST_NOTIFICATIONS` runtime grant,
@@ -127,7 +127,7 @@ chrono = { version = "0.4.44", features = ["serde"] }
 tokio = { version = "1", features = ["sync", "macros", "rt", "net", "io-util", "io-std"] }
 regex = "1"
 aho-corasick = "1"
-# PEND-73 B3 — NFC normalisation at FTS index time + query time. The
+# NFC normalisation at FTS index time + query time. The
 # crate is already a transitive dep (via the regex stack and a few
 # other transitives in the lockfile); pinning it explicitly here is
 # what makes our direct `use unicode_normalization::UnicodeNormalization`
@@ -153,7 +153,7 @@ tokio-rustls = "0.26"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 rcgen = "0.14"
 mdns-sd = "0.20"
-# L-65: enumerate local interfaces so mDNS announces only on RFC 1918
+# Enumerate local interfaces so mDNS announces only on RFC 1918
 # private IPv4 LAN interfaces (not on every routable interface, which
 # leaks the device IP onto guest WiFi / VPN / cellular). Already in the
 # build graph transitively via `mdns-sd`; promoted to a direct dep so
@@ -164,7 +164,7 @@ sha2 = "0.11"
 rand = "0.10"
 x509-parser = "0.18.1"
 tracing-appender = "0.2.4"
-# FEAT-5c / MAINT-91 — align `reqwest 0.13` to the repo's rustls-everywhere
+# Align `reqwest 0.13` to the repo's rustls-everywhere
 # posture (same TLS stack as `tokio-tungstenite` / `tokio-rustls` / sqlx on
 # rustls).  `rustls` in reqwest 0.13 pulls `rustls-platform-verifier` which
 # uses the OS's native trust roots (matches the `rustls-tls-native-roots`
@@ -179,20 +179,20 @@ tracing-appender = "0.2.4"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json", "http2", "charset"] }
 tauri-plugin-process = "2.3.1"
 
-# FEAT-10 — `tauri-plugin-deep-link` enables OS-level URL routing for the
+# `tauri-plugin-deep-link` enables OS-level URL routing for the
 # `agaric://` scheme: `agaric://block/<ULID>` / `agaric://page/<ULID>` for
 # external automation (terminal scripts, OS notifications, Spotlight),
 # `agaric://settings/<tab>` for OS-level deep links into the Settings
-# panel (composes with UX-276's `?settings=…` query param), and
+# Panel (composes with `?settings=…` query param), and
 # `agaric://oauth/callback` for the Custom-Tabs + PKCE + App-Link flow on
-# Android (FEAT-5g unblocker — Android sandboxes the loopback HTTP
+# Android (unblocker — Android sandboxes the loopback HTTP
 # listener that desktop OAuth uses).  Cross-platform — required on
 # desktop AND Android, so registration is NOT gated behind
 # `#[cfg(desktop)]`.  Part of the Tauri plugin coupled stack per
 # AGENTS.md §"Coupled Dependency Updates" — move in lockstep with the
 # rest of the tauri-plugin-* crates.
 tauri-plugin-deep-link = "2"
-# FEAT-10 — `url` 2.x is already a transitive dep of every `tauri-plugin-*`
+# `url` 2.x is already a transitive dep of every `tauri-plugin-*`
 # crate that handles URLs (notably `tauri-plugin-deep-link`); declare it
 # explicitly so `src-tauri/src/deeplink/mod.rs` can `use url::Url` to
 # parse inbound `agaric://…` strings without depending on transitive
@@ -200,7 +200,7 @@ tauri-plugin-deep-link = "2"
 url = "2"
 dirs = { version = "6.0.0", default-features = false }
 
-# MAINT-111 spike: official Rust MCP SDK. Optional + feature-gated so
+# Spike: official Rust MCP SDK. Optional + feature-gated so
 # the default build does not link `rmcp`. Pinned to v1.7 (post-1.0,
 # Apache-2.0). Defaults (`base64`, `macros`, `server`) include the
 # `transport-async-rw` server transport via the `server` feature; the
@@ -209,7 +209,7 @@ dirs = { version = "6.0.0", default-features = false }
 # `src/mcp/rmcp_spike.md` for the spike verdict.
 rmcp = { version = "1.7", features = ["client"] }
 
-# PEND-09 Phase 1 — Loro CRDT runtime.  Hard dep as of Phase 3 day-9
+# Phase 1 — Loro CRDT runtime. Hard dep as of Phase 3 day-9
 # (the `loro-shadow` feature gate retired); the engine is the only
 # materializer path.  Caret-1 mirrors what the (now-archived) spike
 # crate pinned (see git tag `pend-09/spike-archive` for
@@ -218,7 +218,7 @@ rmcp = { version = "1.7", features = ["client"] }
 # coupled dep stack per AGENTS.md §"Coupled Dependency Updates".
 loro = "1.12"
 
-# PEND-09 Phase 1 day-7 — deterministic, cross-Rust-version-stable u64
+# Phase 1 day-7 — deterministic, cross-Rust-version-stable u64
 # hash for `peer_id_from_device_id`.  `std::hash::DefaultHasher`
 # (SipHash-1-3) is documented as not stable across stdlib versions, and
 # Loro's PeerID is load-bearing once peer ids start persisting across
@@ -236,10 +236,10 @@ insta = { version = "1.47.0", features = ["yaml", "redactions"] }
 proptest = "1.11.0"
 tempfile = "3.27.0"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
-# FEAT-5b — HTTP mocking for OAuth token endpoint tests.
+# HTTP mocking for OAuth token endpoint tests.
 wiremock = "0.6"
 
-# Android-only dependencies (BUG-39: WiFi multicast lock via JNI).
+# Android-only dependencies (WiFi multicast lock via JNI).
 # Gated on target_os = "android" so desktop builds do not pull in
 # these transitive dependencies.
 [target.'cfg(target_os = "android")'.dependencies]
@@ -264,15 +264,15 @@ notify-rust = "4"
 # §"Coupled Dependency Updates" — move in lockstep with the rest of the
 # tauri-plugin-* crates.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-# MAINT-106: prevent two SQLite pools racing on the same DB if the user
+# Prevent two SQLite pools racing on the same DB if the user
 # double-launches.  Android/iOS enforce single-instance via the OS task
 # model.  MUST stay the first plugin registered in lib.rs.
 tauri-plugin-single-instance = "2"
-# MAINT-108: remember window size / position / monitor / maximized state
+# Remember window size / position / monitor / maximized state
 # across launches.  Android/iOS handle window state via the OS task
 # lifecycle.
 tauri-plugin-window-state = "2"
-# FEAT-13: launch-on-login support.  Settings → General → "Launch on
+# Launch-on-login support. Settings → General → "Launch on
 # login" toggle drives the plugin's `enable()` / `disable()` /
 # `isEnabled()` IPC.  Plumbing per OS lives upstream (XDG autostart
 # `.desktop` files on Linux, macOS `LaunchAgents`, Windows registry).
@@ -283,7 +283,7 @@ tauri-plugin-autostart = "2"
 # tauri.conf.json).  Android updates flow through the Play Store /
 # sideloaded APK, not Tauri's updater path.
 tauri-plugin-updater = "2.10.0"
-# FEAT-12 — global hotkey for "quick capture" (drop a line into today's
+# Global hotkey for "quick capture" (drop a line into today's
 # journal from anywhere).  Android / iOS have no global-shortcut
 # concept (the `global-hotkey` crate doesn't compile there).
 tauri-plugin-global-shortcut = "2"
@@ -293,7 +293,7 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 debug = false
-# PEND-41 R24 — `panic = "abort"` shrinks the binary 5-10% (drops the
+# `panic = "abort"` shrinks the binary 5-10% (drops the
 # unwind tables) and shaves a small amount of cold-start cost. Safe
 # because Agaric does not rely on stack unwinding to recover from
 # panics: Tauri IPC commands return `Result`, the daemon panic hook
@@ -427,7 +427,7 @@ harness = false
 name = "interactive_slo"
 harness = false
 
-# PEND-09 Phase 0 day-10 — paired SQL read benchmark mirroring the
+# Phase 0 day-10 — paired SQL read benchmark mirroring the
 # (now-archived) spike's `read_path_bench` (day-7); see git tag
 # `pend-09/spike-archive` for the original source.  Throwaway in
 # spirit; lives only until the spike's open question 8 is closed
@@ -448,7 +448,7 @@ harness = false
 name = "resource_envelope_bench"
 harness = false
 
-# FEAT-4a — stdio ↔ MCP socket bridge binary shipped alongside the Tauri app.
+# Stdio ↔ MCP socket bridge binary shipped alongside the Tauri app.
 # The main Tauri binary is `src/main.rs` (auto-detected); this extra bin is
 # a small standalone forwarder that MCP clients spawn as a stdio subprocess.
 [[bin]]
@@ -464,7 +464,7 @@ path = "src/bin/agaric-mcp.rs"
 # outside this manifest entirely. Run them with
 # `cargo run -p agaric-diagnostics --bin <name>`.
 
-# PEND-09 Phase 3 day-10 — `parity_report` bin deleted alongside the
+# Phase 3 day-10 — `parity_report` bin deleted alongside the
 # `merge_parity_log` table (migration `0057`).  The bin's reason for
 # existing was the diffy-vs-Loro parity histogram during the Phase-2
 # soak; with diffy gone the comparison surface no longer exists, the

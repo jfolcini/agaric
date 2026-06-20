@@ -135,8 +135,8 @@ function mergeResolvedIntoCache(
 export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResolutionResult {
   const [resolveVersion, setResolveVersion] = useState(0)
   const resolveCache = useRef<ResolveCache>(new Map())
-  // PEND-30 L-2: include `currentSpaceId` in cache keys so two spaces with
-  // the same ULID (or — under PEND-15 — the same backlink existing in
+  // Include `currentSpaceId` in cache keys so two spaces with
+  // The same ULID (or — under the same backlink existing in
   // both spaces with different titles) don't bleed across the 5-minute
   // TTL. Matches the `${spaceId}::${ulid}` convention from
   // `useResolveStore` (`stores/resolve.ts`).

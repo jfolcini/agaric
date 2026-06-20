@@ -330,9 +330,9 @@ describe('BacklinkGroupRenderer', () => {
     })
   })
 
-  // UX-271: linkType prop renders a "Linked" / "Unlinked" badge so users can
+  // LinkType prop renders a "Linked" / "Unlinked" badge so users can
   // tell the two backlink sections apart at a glance.
-  describe('linkType badge (UX-271)', () => {
+  describe('linkType badge', () => {
     it('renders "Linked" badge when linkType="linked"', () => {
       const groups = [makeGroup('P1', 'Page', [makeBlock({ id: 'B1', content: 'block' })])]
 

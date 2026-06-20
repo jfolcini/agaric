@@ -1,5 +1,5 @@
 /**
- * Tests for useGraphRenderElements (MAINT-127 split from useGraphSimulation).
+ * Tests for useGraphRenderElements (split from useGraphSimulation).
  *
  * The hook returns a stable callback that materializes d3 node + edge
  * selections for the orchestrator. Tests focus on observable effects

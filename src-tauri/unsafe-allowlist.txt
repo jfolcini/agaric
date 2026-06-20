@@ -1,4 +1,4 @@
-# PEND-41 R13 — files allowed to carry `#![allow(unsafe_code)]`.
+# Files allowed to carry `#![allow(unsafe_code)]`.
 #
 # Workspace lint is `unsafe_code = "deny"` (`src-tauri/Cargo.toml`). The
 # only escape hatch is a per-file `#![allow(unsafe_code)]`. Every file

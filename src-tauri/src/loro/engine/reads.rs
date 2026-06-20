@@ -110,7 +110,7 @@ impl LoroEngine {
         }
         Ok(out)
     }
-    /// Typed variant of the per-block property read (PEND-80 §2.1): returns each
+    /// Typed variant of the per-block property read: returns each
     /// value as a native [`PropertyValue`] so the SQL projection can route
     /// `Num`/`Bool` without consulting `property_definitions`. Used by the
     /// inbound re-projection path and the unified state-projection (Phase 4).
@@ -316,7 +316,7 @@ impl LoroEngine {
     /// only the boolean): inbound-sync re-projection
     /// (`reproject_block_deleted_at_from_engine`) reads the actual
     /// timestamp so the SQL descendant cascade + restore cohort key off
-    /// the same value the originating peer wrote (PEND-80 Phase 2).
+    /// The same value the originating peer wrote (Phase 2).
     ///
     /// Returns `Ok(None)` for an absent block (rather than erroring like
     /// the `get_block_map`-based readers) so a purged/missing id maps to

@@ -63,7 +63,7 @@ export const BlockRefPicker = Extension.create<BlockRefPickerOptions>({
           const insertPos = from
           editor.chain().focus().deleteRange({ from, to }).run()
 
-          // MAINT-203: shared FE-M-15 race-guard. No `onCreate` — block refs
+          // Shared race-guard. No `onCreate` — block refs
           // reference existing blocks only (unlike block links, which can
           // create pages).
           void resolveAndInsertPickerToken({
@@ -99,7 +99,7 @@ export const BlockRefPicker = Extension.create<BlockRefPickerOptions>({
           // Delete the ((text)) range immediately so the raw text doesn't linger
           state.tr.delete(range.from, range.to)
 
-          // MAINT-203: shared FE-M-15 race-guard. Token shape `block_ref`;
+          // Shared race-guard. Token shape `block_ref`;
           // no `onCreate` path.
           void resolveAndInsertPickerToken({
             editor,

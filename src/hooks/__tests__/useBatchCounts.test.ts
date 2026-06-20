@@ -84,7 +84,7 @@ describe('useBatchCounts', () => {
       dates: ['2025-01-06', '2025-01-07'],
       spaceId: null,
     })
-    // PEND-35 Tier 1.6 — spaceId must be forwarded so badge counts
+    // SpaceId must be forwarded so badge counts
     // exclude source blocks the user can't see (cross-space).
     expect(mockedCountBacklinksBatch).toHaveBeenCalledWith({
       pageIds: ['page-1', 'page-2'],
@@ -187,7 +187,7 @@ describe('useBatchCounts', () => {
     hookB.unmount()
   })
 
-  // PEND-35 Tier 1.6 — when the active space is set, both batch
+  // When the active space is set, both batch
   // helpers receive that spaceId so badge counts (and agenda counts)
   // stay scoped to what the user can see.
   it('forwards the active spaceId to countBacklinksBatch', async () => {

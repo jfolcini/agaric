@@ -1,5 +1,5 @@
 /**
- * Integration tests for FEAT-3 Phase 4 — verify that space scoping flows
+ * Integration tests for Phase 4 — verify that space scoping flows
  * end-to-end from `useSpaceStore.currentSpaceId` through React state
  * and into the IPC wrapper call args.
  *
@@ -63,7 +63,7 @@ function lastInvokeArgs(cmd: string): Record<string, unknown> {
   return last[1]
 }
 
-describe('FEAT-3 Phase 4 — space scoping integration', () => {
+describe(' Phase 4 — space scoping integration', () => {
   it('switching currentSpaceId causes useDuePanelData to refetch with the new spaceId', async () => {
     useSpaceStore.setState({
       currentSpaceId: 'SPACE_A',
@@ -79,7 +79,7 @@ describe('FEAT-3 Phase 4 — space scoping integration', () => {
     // `listBlocks` (for agenda) and `queryByProperty` (for projected
     // overdue / upcoming) — both must carry `SPACE_A`. `listBlocks`
     // takes the legacy `spaceId: string` (required); `queryByProperty`
-    // takes a `scope: SpaceScope` post-PEND-18 Phase 3.
+    // Takes a `scope: SpaceScope` post- Phase 3.
     await waitFor(() => {
       const args = lastInvokeArgs('list_blocks')
       expect(args['spaceId']).toBe('SPACE_A')
@@ -111,7 +111,7 @@ describe('FEAT-3 Phase 4 — space scoping integration', () => {
     expect(listAllPagesArgs['spaceId']).toBe('SPACE_GRAPH')
     const listTemplateArgs = lastInvokeArgs('list_template_page_ids_in_space')
     expect(listTemplateArgs['spaceId']).toBe('SPACE_GRAPH')
-    // PEND-18 Phase 3: `listPageLinks` takes `scope: SpaceScope`; the
+    // Phase 3: `listPageLinks` takes `scope: SpaceScope`; the
     // wrapper translates `spaceId | null` into `{ kind: 'active', ... }`.
     const listPageLinksArgs = lastInvokeArgs('list_page_links')
     expect(listPageLinksArgs['scope']).toEqual({ kind: 'active', space_id: 'SPACE_GRAPH' })
@@ -141,7 +141,7 @@ describe('FEAT-3 Phase 4 — space scoping integration', () => {
     })
     expect(templateQuery).toBeDefined()
     const args = templateQuery?.[1] as Record<string, unknown>
-    // PEND-18 Phase 3: `query_by_property` now takes `scope: SpaceScope`.
+    // Phase 3: `query_by_property` now takes `scope: SpaceScope`.
     expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_TPL' })
   })
 })

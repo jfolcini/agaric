@@ -6,7 +6,7 @@
  * `null`). Never rejects — callers can gate UI feedback on the
  * boolean without try/catch.
  *
- * MAINT-177: previously returned `Promise<void>`; the BugReportDialog
+ * Previously returned `Promise<void>`; the BugReportDialog
  * success toast now gates on the returned boolean to avoid claiming
  * "issue opened" when neither path actually opened a tab.
  */

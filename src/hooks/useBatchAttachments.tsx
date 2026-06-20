@@ -11,8 +11,8 @@
  * to per-block fetches use `useBatchAttachments()?.get(blockId) ?? []`
  * (or `?.getCount(blockId) ?? 0` for the badge-count variant).
  *
- * MAINT-131 — replaced N per-block `listAttachments` IPCs with one batched
- * query mounted at the BlockTree level. PEND-35 Tier 2.7a folded the
+ * Replaced N per-block `listAttachments` IPCs with one batched
+ * Query mounted at the BlockTree level. folded the
  * separate `BatchAttachmentCountsProvider` into this provider: counts are
  * derived as `rows.length`, eliminating a redundant Tauri command, IPC,
  * specta binding, and tauri-mock handler.
@@ -40,7 +40,7 @@ interface BatchAttachmentsValue {
    * Read the cached attachment count for a block. Returns 0 when the block
    * is absent from the cache (no attachments OR the initial fetch is still
    * pending). Derived as `rows.length` from the same map `get` reads —
-   * PEND-35 Tier 2.7a collapsed the separate count batch into this hook.
+   * Collapsed the separate count batch into this hook.
    */
   getCount: (blockId: string) => number
   /** Whether the initial fetch is still in flight. */

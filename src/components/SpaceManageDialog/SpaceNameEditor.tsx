@@ -1,7 +1,7 @@
 /**
  * SpaceNameEditor — inline rename for a single space row.
  *
- * Extracted from `SpaceRowEditor` (PEND-30 D-2). Owns its own draft
+ * Extracted from `SpaceRowEditor` (D-2). Owns its own draft
  * `name` state; commits via `editBlock` on blur or Enter. Escape
  * reverts the draft to the canonical `space.name` and blurs.
  *

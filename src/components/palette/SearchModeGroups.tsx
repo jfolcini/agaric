@@ -36,7 +36,7 @@ export function SearchModeGroups({
   return (
     <>
       {groups.map((group) => (
-        // PEND-61 CR — no `heading` prop. The page-header CommandItem
+        // No `heading` prop. The page-header CommandItem
         // below IS the visible title; cmdk's muted group-heading would
         // double-render the page title in the same group.
         <CommandGroup key={group.pageId} data-testid={`palette-group-${group.pageId}`}>
@@ -49,7 +49,7 @@ export function SearchModeGroups({
             <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <span className="flex-1 truncate">{group.pageTitle}</span>
             {group.hasPageNameMatch && (
-              // PEND-61 CR-2 — render the title-match signal as a small
+              // Render the title-match signal as a small
               // uppercase pill so it reads as metadata rather than as
               // an accidental subtitle. Matches Linear's match-source
               // pill convention.
@@ -75,7 +75,7 @@ export function SearchModeGroups({
                     (which is a `<li role="option">`) inside the
                     `<CommandItem>` (already an option) — nesting two
                     listbox options would violate ARIA. SnippetHighlight
-                    is the pure renderer extracted in PEND-50. */}
+                    is the pure renderer extracted in . */}
                 {block.snippet != null && block.snippet.length > 0 ? (
                   <SnippetHighlight snippet={block.snippet} className="truncate" />
                 ) : (

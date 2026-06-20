@@ -1,5 +1,5 @@
 /**
- * Tests for platform detection helpers (UX-223 / BUG-31 bundled fix).
+ * Tests for platform detection helpers (bundled fix).
  */
 
 import { readFileSync } from 'node:fs'

@@ -4,7 +4,7 @@
 //! debounced change notifications, and periodic resync tracking.
 //! Designed to be consumed by a future `SyncDaemon` (issue #382).
 //!
-//! ## MAINT-168 — dual schedulers, no coordination
+//! ## dual schedulers, no coordination
 //!
 //! This is the **authoritative** sync scheduler. It owns:
 //! - per-peer mutexes (no concurrent syncs to the same peer),
@@ -80,7 +80,7 @@ struct BackoffState {
 
 /// Initial seed for the per-peer backoff state.
 ///
-/// L-58: this is **not** the user-observed first-failure wait. The seed
+/// This is **not** the user-observed first-failure wait. The seed
 /// is `1s`, but [`SyncScheduler::record_failure`] doubles the stored
 /// backoff *before* it computes `next_retry_at`, so the first call after
 /// a clean state advances `state.backoff` from `1s` to `2s`. The
@@ -174,7 +174,7 @@ impl SyncScheduler {
             .remove(peer_id)
     }
 
-    /// L-56: Garbage-collect entries from `peer_locks` whose `Arc::strong_count`
+    /// Garbage-collect entries from `peer_locks` whose `Arc::strong_count`
     /// is exactly 1, meaning no `PeerSyncGuard` currently holds the lock.
     ///
     /// `peer_locks` grows monotonically in `try_lock_peer` — each new peer
@@ -227,7 +227,7 @@ impl SyncScheduler {
 
     /// Record a sync failure for `peer_id`, advancing the backoff one step.
     ///
-    /// L-57: the stored state and the wall-clock retry deadline are *two
+    /// The stored state and the wall-clock retry deadline are *two
     /// different views* of the backoff and they intentionally diverge:
     ///
     /// - **Internal `state.backoff` (deterministic).** Doubled on every
@@ -235,7 +235,7 @@ impl SyncScheduler {
     ///   32s → 60s → 60s …`. The leading `1s` is the [`MIN_BACKOFF`]
     ///   seed planted by the `or_insert`; it is overwritten by `2s`
     ///   *inside this very call*, so callers never observe `1s` after
-    ///   `record_failure` returns. See L-58 on [`MIN_BACKOFF`] for the
+    ///   `record_failure` returns. See on [`MIN_BACKOFF`] for the
     ///   user-visible sequence.
     /// - **Wall-clock `state.next_retry_at` (jittered).** Computed as
     ///   `now + state.backoff * jitter` where `jitter ∈ [0.9, 1.1]`,
@@ -258,7 +258,7 @@ impl SyncScheduler {
             consecutive_failures: 0,
         });
         state.consecutive_failures += 1;
-        // L-58: doubling happens *before* we write `next_retry_at`, so the
+        // Doubling happens *before* we write `next_retry_at`, so the
         // first call doubles the `MIN_BACKOFF` seed `1s → 2s`. The sequence
         // an external observer sees is therefore 2, 4, 8, 16, 32, 60s — the
         // raw `1s` seed is never the value of a scheduled retry.
@@ -291,7 +291,7 @@ impl SyncScheduler {
     /// Return `(peer_id, consecutive_failures)` pairs for every peer the
     /// scheduler has seen fail at least once. Returns an empty vector when
     /// no peers are in backoff. Used by the materializer status snapshot
-    /// (MAINT-24) to surface sync health without coupling the scheduler
+    /// To surface sync health without coupling the scheduler
     /// struct into `Materializer`.
     pub fn failure_counts(&self) -> Vec<(String, u32)> {
         let backoff = self
@@ -339,7 +339,7 @@ impl SyncScheduler {
     /// overdue for a resync (`synced_at` is `None` or older than
     /// `resync_interval`).
     ///
-    /// L-76: this used to take `&[(String, Option<String>)]`, which
+    /// This used to take `&[(String, Option<String>)]`, which
     /// forced Branch C of the daemon loop to clone every paired peer's
     /// `peer_id` and `synced_at` on every 30 s tick just to build the
     /// tuple form. Borrowing the rows directly avoids that round-trip;
@@ -417,7 +417,7 @@ mod tests {
         assert!(sched.try_lock_peer("peer-a").is_some());
     }
 
-    // -- L-56: gc_unused_peer_locks --------------------------------------
+    // -- gc_unused_peer_locks --------------------------------------
 
     #[test]
     fn gc_unused_peer_locks_removes_idle_entries() {
@@ -496,7 +496,7 @@ mod tests {
         assert_eq!(sched.failure_count("peer-a"), 0);
     }
 
-    /// L-58: pin the documented intent — the first `record_failure` call
+    /// Pin the documented intent — the first `record_failure` call
     /// doubles the `MIN_BACKOFF` seed `1s → 2s`, so the user-observable
     /// first wait is `2s`, not `1s`. The doc-comments on `MIN_BACKOFF` and
     /// `record_failure` describe the `2,4,8,16,32,60` sequence; this test
@@ -525,7 +525,7 @@ mod tests {
         sched.record_failure("peer-a");
         sched.record_failure("peer-a");
         assert_eq!(sched.failure_count("peer-a"), 3);
-        // L-58: seed 1s -> 2s -> 4s -> 8s after 3 failures (the 1s seed
+        // Seed 1s -> 2s -> 4s -> 8s after 3 failures (the 1s seed
         // is never observable; observers see the 2,4,8,... ladder).
         let backoff = sched.backoff.lock().unwrap();
         let state = backoff.get("peer-a").unwrap();
@@ -748,7 +748,7 @@ mod tests {
         );
     }
 
-    // ── PEND-06 Phase 1 — channel registration / handoff ───────────────────────
+    // ── Phase 1 — channel registration / handoff ───────────────────────
     //
     // The scheduler holds the per-peer `Channel<SyncProgressUpdate>` set up by
     // `start_sync` so the daemon's `try_sync_with_peer` can hand it off to the

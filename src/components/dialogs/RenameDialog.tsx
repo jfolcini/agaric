@@ -5,14 +5,14 @@
  * Originally built for device renaming (#422), now generic via optional
  * title / description / placeholder / ariaLabel props.
  *
- * UX-263: Validates the entered name before invoking onConfirm.
+ * Validates the entered name before invoking onConfirm.
  *  - Strips ASCII control characters (U+0000–U+001F, U+007F).
  *  - Trims leading/trailing whitespace.
  *  - Disallows empty names.
  *  - Caps length at MAX_RENAME_LENGTH (64) characters.
  * Errors are shown inline via aria-invalid + a text-destructive message.
  *
- * MAINT-215: on phones < 768 px (`useIsMobile() === true`) the dialog
+ * On phones < 768 px (`useIsMobile() === true`) the dialog
  * renders as a bottom Sheet so the form input + footer buttons sit within
  * thumb reach. The desktop path keeps the regular Radix `Dialog` (not
  * `AlertDialog`) so dismiss-on-outside-click / Escape works without
@@ -153,7 +153,7 @@ export function RenameDialog({
           <Description>{description ?? t('rename.deviceName')}</Description>
         </Header>
         {/*
-          MAINT-215: route the body through DialogBody on desktop so a tall
+          route the body through DialogBody on desktop so a tall
           body scrolls and the footer stays pinned. The mobile Sheet path
           keeps its native flow — SheetContent already constrains height
           and the form is short enough that adding a SheetBody scroll

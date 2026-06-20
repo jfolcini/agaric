@@ -1,7 +1,7 @@
 /**
  * FilterPill -- generic removable filter badge with accessible touch targets.
  *
- * Extracted from FilterPillRow (#M-27) to eliminate the duplicated
+ * Extracted from FilterPillRow (#) to eliminate the duplicated
  * Badge + X button pattern. Provides keyboard handling (Delete/Backspace),
  * ARIA labelling, and coarse-pointer touch targets out of the box.
  */

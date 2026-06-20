@@ -34,7 +34,7 @@ pub async fn reverse_delete_attachment(
 ) -> Result<OpPayload, AppError> {
     let payload: crate::op::DeleteAttachmentPayload = serde_json::from_str(&record.payload)?;
     let attachment_id = payload.attachment_id.as_str();
-    // MAINT-152(f): this query mirrors the
+    // (f): this query mirrors the
     // `(created_at < ?ts OR (created_at = ?ts AND seq < ?seq)) ORDER BY
     // created_at DESC, seq DESC LIMIT 1` "strictly before (ts, seq)"
     // shape used by `block_ops::find_prior_text`,

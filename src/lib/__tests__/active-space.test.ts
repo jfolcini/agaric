@@ -1,6 +1,6 @@
 /**
  * Tests for `activeSpaceKey()` — the shared 3-line helper extracted in
- * PEND-30 L-1 from the four per-space partition stores
+ * From the four per-space partition stores
  * (`navigation.ts`, `journal.ts`, `tabs.ts`, `recent-pages.ts`).
  *
  * Verifies the two branches: returns `currentSpaceId` when set, falls

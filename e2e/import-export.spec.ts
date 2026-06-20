@@ -32,7 +32,7 @@ async function triggerExport(page: import('@playwright/test').Page) {
 
 // ===========================================================================
 // Helper: navigate to Settings → Data tab (where the import/export UI lives
-// after UX-144). The import panel used to live in the Status panel but was
+// After). The import panel used to live in the Status panel but was
 // moved to Settings → Data with the lazy-loaded DataSettingsTab component.
 // ===========================================================================
 

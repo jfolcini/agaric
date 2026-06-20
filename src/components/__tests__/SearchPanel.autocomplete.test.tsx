@@ -1,5 +1,5 @@
 /**
- * PEND-60 Phase 1 — SearchPanel caret-anchored autocomplete integration.
+ * Phase 1 — SearchPanel caret-anchored autocomplete integration.
  *
  * Smaller, focused test file separate from `SearchPanel.test.tsx` so
  * the per-feature surface stays readable. Covers the wire-up between
@@ -74,7 +74,7 @@ function typeFull(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
-describe('SearchPanel autocomplete (PEND-60 Phase 1)', () => {
+describe('SearchPanel autocomplete (Phase 1)', () => {
   it('opens the popover with state values when the user types `state:`', async () => {
     render(<SearchPanel />)
     const input = getInput()
@@ -175,7 +175,7 @@ describe('SearchPanel autocomplete (PEND-60 Phase 1)', () => {
     expect(await axe(container)).toHaveNoViolations()
   })
 
-  // PEND-58g NEW-1 — regex mode still applies structural filters, so the
+  // NEW-1 — regex mode still applies structural filters, so the
   // filter-prefix autocomplete must keep working there; only the free-text
   // (= the regex remainder) is self-suppressing because the anchor detector
   // returns null for non-prefix tokens.
@@ -305,7 +305,7 @@ describe('SearchPanel autocomplete (PEND-60 Phase 1)', () => {
   })
 })
 
-describe('SearchPanel autocomplete dynamic sources (PEND-60 Phase 2)', () => {
+describe('SearchPanel autocomplete dynamic sources (Phase 2)', () => {
   it('surfaces tag suggestions from listTagsByPrefix when typing `tag:#`', async () => {
     vi.useFakeTimers()
     mockedInvoke.mockImplementation(async (cmd) => {

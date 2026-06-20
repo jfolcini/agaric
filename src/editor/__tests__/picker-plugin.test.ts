@@ -236,9 +236,9 @@ describe('createPickerPlugin — render', () => {
   })
 })
 
-// ── MAINT-203 — resolveAndInsertPickerToken ─────────────────────────────────
+// ── resolveAndInsertPickerToken ─────────────────────────────────
 //
-// Focused tests for the shared FE-M-15 race-guard helper. The per-picker
+// Focused tests for the shared race-guard helper. The per-picker
 // suites (at-tag-picker.test.ts, block-link-picker.test.ts,
 // block-ref-picker.test.ts) exercise the end-to-end input-rule + command
 // paths through their picker; these tests pin down the helper's branches
@@ -335,7 +335,7 @@ describe('resolveAndInsertPickerToken — onCreate path', () => {
   })
 })
 
-describe('resolveAndInsertPickerToken — stale insertPos guard (FE-M-15)', () => {
+describe('resolveAndInsertPickerToken — stale insertPos guard ()', () => {
   it('falls back to insertContent at cursor when insertPos > doc.content.size (exact match)', async () => {
     // Doc shrank: captured insertPos (10) is past live doc size (5).
     const { editor, calls } = makeEditor(5)

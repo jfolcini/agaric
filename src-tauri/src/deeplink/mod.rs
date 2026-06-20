@@ -1,4 +1,4 @@
-//! Deep-link router (FEAT-10).
+//! Deep-link router.
 //!
 //! Parses inbound URLs delivered by [`tauri-plugin-deep-link`] and emits
 //! typed Tauri events the frontend ([`useDeepLinkRouter`]) consumes:
@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn rejects_malformed_url_with_unclosed_bracket() {
-        // TEST-50: edge case — input has the `agaric://` shape but trips
+        // Edge case — input has the `agaric://` shape but trips
         // `url::Url::parse` itself (unclosed `[` is parsed as a malformed
         // IPv6 host).  Must surface as `Malformed`, never panic.
         let err =

@@ -18,7 +18,7 @@ use crate::ulid::{ActiveBlockId, BlockId};
 use super::sanitize_internal_error;
 use super::*;
 
-/// MAINT-147 (e): defensive fallback validation for reserved property
+/// Defensive fallback validation for reserved property
 /// keys (`todo_state`, `priority`) when the corresponding row in
 /// `property_definitions` has been deleted.
 ///
@@ -53,7 +53,7 @@ fn validate_reserved_property_value(
     Ok(())
 }
 
-/// MAINT-134: Emit `EVENT_PROPERTY_CHANGED` with a log-on-error
+/// Emit `EVENT_PROPERTY_CHANGED` with a log-on-error
 /// fallback so a transient emit failure does not propagate as a
 /// command error.  Centralises the previously-duplicated emit block
 /// shared by `set_property`, `set_todo_state`, `set_priority`,
@@ -101,7 +101,7 @@ pub async fn list_property_values_inner(
 /// Thin wrapper around [`set_property_in_tx`] that manages the transaction
 /// lifecycle and dispatches background work.
 ///
-/// `caller_context` (L-122): when `Some(name)`, the exactly-one-value
+/// `caller_context`: when `Some(name)`, the exactly-one-value
 /// invariant is enforced up-front and the resulting `AppError::Validation`
 /// message names the caller (e.g. `"tool 'set_property': ..."`). When
 /// `None`, the message wording is delegated to `set_property_in_tx`'s
@@ -124,7 +124,7 @@ pub async fn set_property_inner(
     value_bool: Option<bool>,
     caller_context: Option<&str>,
 ) -> Result<ActiveBlockRow, AppError> {
-    // L-122: when a caller_context is supplied, enforce the
+    // When a caller_context is supplied, enforce the
     // exactly-one-value invariant here so the error message can name
     // the caller. Callers that pass `None` keep the legacy behaviour
     // (the inner `validate_set_property` in `set_property_in_tx` runs
@@ -150,7 +150,7 @@ pub async fn set_property_inner(
             )));
         }
     }
-    // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "set_property").await?;
     let (block, op_record) = set_property_in_tx(
         &mut tx,
@@ -211,14 +211,14 @@ pub async fn set_todo_state_inner(
     // next-occurrence sibling (H-4).
     let mut tx = CommandTx::begin_immediate(pool, "set_todo_state").await?;
 
-    // BUG-20: Validate against todo_state property definition options.
+    // Validate against todo_state property definition options.
     // `set_property_in_tx` already performs this check when the
     // definition exists; this fallback guards the case where the
     // definition has been deleted, ensuring the built-in defaults are
-    // still enforced. MAINT-147 (e): the validation logic is shared
+    // Still enforced. the validation logic is shared
     // with `set_priority_inner` via `validate_reserved_property_value`.
     //
-    // M-97: this fetch was previously issued against `pool` *before*
+    // This fetch was previously issued against `pool` *before*
     // opening the tx; folded inside so the validation read and the
     // write share atomicity (single source of truth = the live tx).
     if let Some(ref s) = state {
@@ -343,7 +343,7 @@ pub async fn set_todo_state_inner(
     Ok(ActiveBlockRow::from_block_row_unchecked(result))
 }
 
-/// PEND-35 Tier 2.1 — batch variant of [`set_todo_state_inner`].
+/// Batch variant of [`set_todo_state_inner`].
 ///
 /// Replaces the per-row IMMEDIATE-tx loop the FE used to drive on
 /// "mark done" / "mark TODO" multi-select gestures. The whole batch
@@ -408,7 +408,7 @@ pub async fn set_todo_state_batch_inner(
     // column). Either every state change commits or none of them.
     let mut tx = CommandTx::begin_immediate(pool, "set_todo_state_batch").await?;
 
-    // SQL-review M-7: this batch path skips the timestamp + recurrence
+    // SQL-review this batch path skips the timestamp + recurrence
     // side-effects that the single-row `set_todo_state_inner` performs.
     // If any block in the batch carries a `repeat` property, emit a
     // `tracing::warn!` so callers expecting per-block recurrence advance
@@ -439,7 +439,7 @@ pub async fn set_todo_state_batch_inner(
         );
     }
 
-    // BUG-20 / MAINT-147 (e) fallback validation — mirrors
+    // Fallback validation — mirrors
     // `set_todo_state_inner`. Read once for the whole batch (single
     // SELECT, regardless of N).
     if let Some(ref s) = state {
@@ -500,12 +500,12 @@ pub async fn set_todo_state_batch_inner(
 
 /// Set the priority on a block (level value or clear).
 ///
-/// M-20: priority levels are user-configurable through the
+/// Priority levels are user-configurable through the
 /// `property_definitions.options` JSON for the `priority` key (see
-/// docs/ARCHITECTURE.md §20 / UX-201b). Validation against the configured
+/// Docs/ARCHITECTURE.md §20). Validation against the configured
 /// options is performed inside [`set_property_in_tx`], which honours the
 /// current definition row. As a defensive fallback — mirroring the
-/// `set_todo_state_inner` pattern (BUG-20) — when the `priority`
+/// `set_todo_state_inner` pattern — when the `priority`
 /// definition row has been deleted we re-enforce the seeded built-in
 /// `["1","2","3"]` defaults so a missing definition cannot relax the
 /// reserved-key contract.
@@ -525,7 +525,7 @@ pub async fn set_priority_inner(
         ));
     }
 
-    // M-97: open the CommandTx before the property_definitions read so
+    // Open the CommandTx before the property_definitions read so
     // the fallback validation and the write share atomicity. Previously
     // the fetch ran against `pool` and we then delegated to
     // `set_property_inner`, which opens its own tx — the validation
@@ -535,12 +535,12 @@ pub async fn set_priority_inner(
     // tx scope wide enough to host the fallback read.
     let mut tx = CommandTx::begin_immediate(pool, "set_priority").await?;
 
-    // M-20: rely on the user-extended `priority` property definition
+    // Rely on the user-extended `priority` property definition
     // options for validation (handled inside `set_property_in_tx`).
     // If the definition row has been deleted, fall back to the
     // built-in seeded options so reserved-key validation remains
     // enforced. Mirrors `set_todo_state_inner` via the shared
-    // `validate_reserved_property_value` helper (MAINT-147 (e)).
+    // `validate_reserved_property_value` helper.
     if let Some(ref l) = level {
         let def_row =
             sqlx::query!("SELECT options FROM property_definitions WHERE key = 'priority'")
@@ -694,7 +694,7 @@ pub async fn get_properties_inner(
     Ok(rows)
 }
 
-/// PEND-35 Tier 2.4c — fetch a single property row by `(block_id, key)`
+/// Fetch a single property row by `(block_id, key)`
 /// primary key. Returns `Ok(None)` when no row exists.
 ///
 /// Sibling of [`get_properties_inner`] for the common "list everything
@@ -817,7 +817,7 @@ pub async fn create_property_def_inner(
 }
 
 /// List all property definitions, paginated and ordered by `key ASC`
-/// (M-85, AGENTS.md invariant #3).
+/// (AGENTS.md invariant #3).
 ///
 /// `key` is the primary key on `property_definitions` (a string, not a
 /// ULID), so the keyset cursor is encoded via [`Cursor::for_id`] with
@@ -827,7 +827,7 @@ pub async fn create_property_def_inner(
 /// `[1, MAX_PAGE_SIZE]` range; the MCP tool boundary applies its own
 /// `LIST_RESULT_CAP` clamp.
 ///
-/// M-85: previously returned a flat `Vec<PropertyDefinition>`. Now
+/// Previously returned a flat `Vec<PropertyDefinition>`. Now
 /// returns a [`PageResponse<PropertyDefinition>`] so the tool surface
 /// is consistent with the rest of the paginated read commands. The
 /// frontend `listPropertyDefs()` wrapper destructures `.items`; MCP
@@ -862,7 +862,7 @@ pub async fn list_property_defs_inner(
     })
 }
 
-/// PEND-35 Tier 2.6 — fetch a single property definition by primary
+/// Fetch a single property definition by primary
 /// key. Returns `Ok(None)` when no row exists for `key` (callers like
 /// `useAppBootRecovery` treat the missing-priority-def case as "use
 /// the default level set" rather than an error).
@@ -892,7 +892,7 @@ pub async fn get_property_def_inner(
 /// Update the options array for a select-type definition.
 /// Returns error if the key doesn't exist or isn't select-type.
 ///
-/// # Orphan rows on narrowing (L-32)
+/// # Orphan rows on narrowing
 ///
 /// Narrowing the option set (e.g. removing `"in_review"` from
 /// `["todo", "in_review", "done"]`) leaves any existing
@@ -948,7 +948,7 @@ pub async fn update_property_def_options_inner(
         )));
     }
 
-    // L-32: count orphan rows before applying the narrowing. The new
+    // Count orphan rows before applying the narrowing. The new
     // options are encoded as a JSON array; bind via `json_each(?)` so
     // SQLite expands the membership test without a placeholder
     // explosion. Live blocks only — `b.deleted_at IS NULL` matches the
@@ -973,7 +973,7 @@ pub async fn update_property_def_options_inner(
             orphan_count = orphan_count,
             new_options = %options,
             "narrowing select-type property options leaves rows whose value is no longer in the \
-             allowed list (L-32); subsequent writes for those values will be rejected but reads \
+             allowed list; subsequent writes for those values will be rejected but reads \
              continue to surface them",
         );
     }
@@ -1013,7 +1013,7 @@ pub async fn update_property_def_options_inner(
 /// Returns error if the key doesn't exist, is a built-in, or is still
 /// referenced by `block_properties` rows.
 ///
-/// # M-26 — reject when dependent rows exist
+/// # reject when dependent rows exist
 ///
 /// The previous behaviour deleted the `property_definitions` row
 /// unconditionally, which orphaned any `block_properties` rows that
@@ -1042,7 +1042,7 @@ pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result
         ));
     }
 
-    // M-26: open a BEGIN IMMEDIATE tx so the dependent-row check and
+    // Open a BEGIN IMMEDIATE tx so the dependent-row check and
     // the DELETE are TOCTOU-safe. Dropping the tx without commit (early
     // returns below) rolls it back automatically.
     // allow-raw-tx: deletes from property_definitions (schema metadata), no op_log (#110)
@@ -1151,7 +1151,7 @@ pub async fn list_property_values(
 
 /// Tauri command: set (upsert) a property on a block. Delegates to [`set_property_inner`].
 ///
-/// PEND-14: typed value fields are bundled into [`SetPropertyArgs`] so the
+/// Typed value fields are bundled into [`SetPropertyArgs`] so the
 /// IPC signature stays at 7 positional args (under specta's 10-arg cap).
 /// Adding `value_bool` as a 5th flat field would have exceeded the limit.
 #[tauri::command]
@@ -1214,7 +1214,7 @@ pub async fn set_todo_state(
     Ok(result.into())
 }
 
-/// Tauri command: batch-set todo state on multiple blocks (PEND-35 Tier 2.1).
+/// Tauri command: batch-set todo state on multiple blocks.
 ///
 /// Delegates to [`set_todo_state_batch_inner`]. Single IMMEDIATE tx
 /// covers every per-block write — collapses the legacy N-IPC loop the
@@ -1224,7 +1224,7 @@ pub async fn set_todo_state(
 /// Emits one `EVENT_PROPERTY_CHANGED` per successfully-updated block
 /// so existing per-block listeners (e.g. agenda recompute, property
 /// drawer) keep firing without protocol changes. Failed-emit
-/// breadcrumbs follow the established log-on-error pattern (L-33).
+/// Breadcrumbs follow the established log-on-error pattern.
 #[tauri::command]
 #[specta::specta]
 pub async fn set_todo_state_batch(
@@ -1256,11 +1256,11 @@ pub async fn set_todo_state_batch(
 
 /// Tauri command: set priority on a block. Delegates to [`set_priority_inner`].
 ///
-/// L-38: emits `EVENT_PROPERTY_CHANGED` after a successful set so the
+/// Emits `EVENT_PROPERTY_CHANGED` after a successful set so the
 /// frontend property-change listener fires for priority updates (parity
 /// with `set_todo_state` / `set_due_date` / `set_scheduled_date` /
 /// `delete_property` / `set_property`). The emit uses the
-/// log-on-error pattern (mirror of L-33) so a transient emit failure
+/// Log-on-error pattern (mirror of) so a transient emit failure
 /// does not propagate as a command error.
 #[tauri::command]
 #[specta::specta]
@@ -1378,7 +1378,7 @@ pub async fn get_properties(
 }
 
 /// Tauri command: fetch a single property row by `(block_id, key)`
-/// primary key (PEND-35 Tier 2.4c). Delegates to [`get_property_inner`].
+/// Primary key. Delegates to [`get_property_inner`].
 #[tauri::command]
 #[specta::specta]
 pub async fn get_property(
@@ -1417,7 +1417,7 @@ pub async fn create_property_def(
         .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: list all property definitions, paginated (M-85).
+/// Tauri command: list all property definitions, paginated.
 /// Delegates to [`list_property_defs_inner`].
 #[tauri::command]
 #[specta::specta]
@@ -1431,7 +1431,7 @@ pub async fn list_property_defs(
         .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: fetch a single property definition by key (PEND-35 Tier 2.6).
+/// Tauri command: fetch a single property definition by key.
 /// Delegates to [`get_property_def_inner`].
 #[tauri::command]
 #[specta::specta]

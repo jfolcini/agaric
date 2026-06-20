@@ -4,13 +4,13 @@
  * Renders one `<li>` per `ActivityEntry` (newest-first), with:
  *   - the tool-name badge, summary, and relative timestamp;
  *   - a per-entry Undo button on agent-authored RW successes
- *     (FEAT-4h slice 3);
+ * (slice 3);
  *   - a session-header row above the first-seen entry of any session
- *     with ≥ 2 undoable ops (FEAT-4h slice 4 — bulk revert).
+ * With ≥ 2 undoable ops (slice 4 — bulk revert).
  *
  * Extracted from AgentAccessSettingsTab.tsx so the feed-renderer
  * concern (per-entry undo state, per-session bulk-revert state, the
- * UX-252 terminal-state tracking, the `revert_ops` IPC plumbing, and
+ * Terminal-state tracking, the `revert_ops` IPC plumbing, and
  * the bulk-revert confirm dialog) lives in one place.  The parent
  * passes the `entries` array (sourced from `useMcpActivityFeed`) and
  * keeps owning device-info / toggle state.
@@ -63,7 +63,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
   // activity rows, keyed by `${device_id}:${seq}`.  Buttons disable +
   // swap to a spinner while their key is in the set.
   const [undoingKeys, setUndoingKeys] = useState<Set<string>>(() => new Set())
-  // FEAT-4h slice 4 — per-session bulk revert.
+  // Slice 4 — per-session bulk revert.
   //
   // Confirmation target for the per-session bulk-revert flow.  The
   // payload carries the session id + the exact opRefs we'll submit so
@@ -76,7 +76,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
   // Session ids currently in-flight — used to disable the per-session
   // button and swap its icon to a spinner.  Keyed by sessionId.
   const [revertingSessions, setRevertingSessions] = useState<Set<string>>(() => new Set())
-  // UX-252 — terminal-state tracking. Once an opRef has been successfully
+  // Terminal-state tracking. Once an opRef has been successfully
   // reverted (single-entry Undo OR per-session bulk revert), its button
   // disappears from the feed so the user can't click again and hit
   // unexpected backend double-undo behaviour. Scoped to the component
@@ -101,7 +101,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
       try {
         await revertOps({ ops: [opRef] })
         notify.success(t('agentAccess.undoAgentOp.success'))
-        // UX-252 — mark this opRef's button as terminal-success so it
+        // Mark this opRef's button as terminal-success so it
         // disappears from the feed. On error the key is NOT added, so
         // the user can retry.
         setRevertedOpKeys((prev) => {
@@ -128,7 +128,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
     [t],
   )
 
-  // FEAT-4h slice 4 — derived per-session data.
+  // Slice 4 — derived per-session data.
   //
   // Walk the current entries (newest-first) and bucket the opRef of
   // every agent+ok+opRef entry by sessionId.  Used to:
@@ -143,7 +143,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
         entry.actorKind === 'agent' &&
         entry.result.kind === 'ok' &&
         entry.opRef != null &&
-        // UX-252 — opRefs that have been successfully reverted drop out
+        // OpRefs that have been successfully reverted drop out
         // of the per-session list so the header's visible count + the
         // ≥ 2 visibility gate both reflect the remaining undoable ops.
         !revertedOpKeys.has(`${entry.opRef.device_id}:${entry.opRef.seq}`)
@@ -195,7 +195,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
     try {
       await revertOps({ ops: target.ops })
       notify.success(t('agentAccess.revertSession.success', { count: target.ops.length }))
-      // UX-252 — mark every opRef in the batch as terminal-success so
+      // Mark every opRef in the batch as terminal-success so
       // the session header + every per-entry Undo button in this
       // session drop out of the feed. On error none are added, so
       // the user can retry the whole batch.
@@ -253,7 +253,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
                   entry.actorKind === 'agent' &&
                   entry.result.kind === 'ok' &&
                   entry.opRef != null &&
-                  // UX-252 — a successful revert marks this opRef as
+                  // A successful revert marks this opRef as
                   // terminal-success; the button disappears from
                   // the feed so the user can't double-click through
                   // an unexpected backend toggle (delete↔restore,
@@ -262,7 +262,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
                 const undoKey =
                   entry.opRef != null ? `${entry.opRef.device_id}:${entry.opRef.seq}` : null
                 const isUndoing = undoKey !== null && undoingKeys.has(undoKey)
-                // FEAT-4h slice 4 — session-header controls.  The
+                // Slice 4 — session-header controls. The
                 // header renders on the first-seen entry of each
                 // session (in newest-first order, i.e. the most
                 // recent row of that session) and only when the
@@ -326,7 +326,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
                                 <>
                                   <Undo2 className="h-3.5 w-3.5" />
                                   {/*
-                                   * UX-253 — hidden by default (icon-only on
+                                   * Hidden by default (icon-only on
                                    * desktop), revealed on coarse pointers so
                                    * touch-only users get a visible label
                                    * alongside the icon. The `aria-label` +
@@ -351,7 +351,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
           </div>
         </ScrollArea>
       )}
-      {/* FEAT-4h slice 4 — per-session bulk revert confirmation */}
+      {/*  slice 4 — per-session bulk revert confirmation */}
       <ConfirmDialog
         open={pendingSessionRevert !== null}
         onOpenChange={(open) => {

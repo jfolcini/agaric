@@ -14,7 +14,7 @@ const CACHE_MISS_FALLBACK_PATTERN = /^\[\[[0-9A-Z]{1,12}\.{3}\]\]$/
  * we fall back to the block's own content. The resolve store only preloads
  * pages + tags + links from the current page — query results often include
  * blocks from other pages that are never populated, so the cache miss is
- * the normal case for cross-page query results (TEST-1f).
+ * The normal case for cross-page query results.
  */
 export function resolveBlockDisplay(
   block: BlockRow,

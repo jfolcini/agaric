@@ -8,7 +8,7 @@
  * - handleAddAttachment does not notify undo on failure
  * - handleDeleteAttachment does not notify undo on failure
  * - loading state transitions correctly
- * - PEND-35 Tier 2.7b: skips the per-block listAttachments IPC when an
+ * Skips the per-block listAttachments IPC when an
  *   active BatchAttachmentsProvider already holds the rows
  */
 
@@ -433,7 +433,7 @@ describe('useBlockAttachments error paths', () => {
 })
 
 // ---------------------------------------------------------------------------
-// PEND-35 Tier 2.7b — skip per-block listAttachments IPC when batch provider
+// Skip per-block listAttachments IPC when batch provider
 // already has the data
 // ---------------------------------------------------------------------------
 

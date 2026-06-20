@@ -54,7 +54,7 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
   })
-  // BUG-48: useCalendarPageDates now hits `list_journal_pages_in_range`,
+  // UseCalendarPageDates now hits `list_journal_pages_in_range`,
   // which returns a flat `BlockRow[]` (no pagination envelope).
   mockedInvoke.mockResolvedValue([])
 })
@@ -107,7 +107,7 @@ describe('GlobalDateControls', () => {
     expect(diff).toBeLessThan(5000)
   })
 
-  it('Agenda button is hidden (not in DOM) when on journal agenda view (UX-236)', () => {
+  it('Agenda button is hidden (not in DOM) when on journal agenda view', () => {
     useNavigationStore.setState({
       currentView: 'journal',
       selectedBlockId: null,
@@ -125,7 +125,7 @@ describe('GlobalDateControls', () => {
 
     render(<GlobalDateControls />)
 
-    // UX-236: the Agenda button is removed from the DOM (not just restyled)
+    // The Agenda button is removed from the DOM (not just restyled)
     // when it would be a no-op.
     expect(screen.queryByRole('button', { name: /go to agenda/i })).not.toBeInTheDocument()
   })
@@ -195,7 +195,7 @@ describe('GlobalDateControls', () => {
     expect(screen.getByRole('dialog', { name: /date picker/i })).toBeInTheDocument()
   })
 
-  // UX-328: SR users need a signal that the calendar trigger opens a popover
+  // SR users need a signal that the calendar trigger opens a popover
   // and whether it is currently open.
   it('calendar trigger has aria-haspopup="dialog" and aria-expanded reflects open state', async () => {
     const user = userEvent.setup()

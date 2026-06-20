@@ -160,7 +160,7 @@ describe('SourcePageFilter', () => {
     expect(screen.queryByText('Untitled')).not.toBeInTheDocument()
   })
 
-  // UX-248 — Unicode-aware fold: Turkish / German / accented titles
+  // Unicode-aware fold: Turkish / German / accented titles
   // match their ASCII-typed queries via `matchesSearchFolded`.
   it('search matches Turkish İstanbul when query is lowercase istanbul', async () => {
     const user = userEvent.setup()
@@ -300,7 +300,7 @@ describe('SourcePageFilter', () => {
     expect(items[2]).toHaveTextContent('(1)')
   })
 
-  // UX-268 — touch-target sizing
+  // Touch-target sizing
   it('trigger button has explicit desktop and coarse-pointer sizing classes', () => {
     render(
       <SourcePageFilter

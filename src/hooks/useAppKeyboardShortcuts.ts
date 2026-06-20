@@ -2,7 +2,7 @@
  * useAppKeyboardShortcuts — single hook owning all 5 App-level keyboard
  * shortcut effects.
  *
- * MAINT-124 step 1 — extracted from App.tsx as part of the 4-extraction
+ * Extracted from App.tsx as part of the 4-extraction
  * collapse plan (others: useAppDialogs, ViewDispatcher, AppShell).
  *
  * Categories (one keydown listener per category, behaviour preserved
@@ -12,7 +12,7 @@
  *   Listens at `document` (everything else listens at `window`); only
  *   fires while `currentView === 'journal'`.
  * - **global** — `focusSearch`, `createNewPage`.
- *   Routed through `matchesShortcutBinding` so Settings rebinding (BUG-18)
+ * Routed through `matchesShortcutBinding` so Settings rebinding
  *   works for every entry.
  * - **space** — `switchSpace1` … `switchSpace9` digit hotkeys.
  *   Out-of-range indices are deliberate silent no-ops.
@@ -147,7 +147,7 @@ interface TabShortcut {
  * specific — without the ordering the nextTab matcher would fire first and
  * Shift+Tab would be misrouted once the user rebound one of them.
  *
- * FEAT-3 Phase 3 — every action reads tabs through the per-space selectors
+ * Phase 3 — every action reads tabs through the per-space selectors
  * (passing the current `currentSpaceId`) so cycling/closing only sees the
  * tabs that belong to the active space.
  */
@@ -197,7 +197,7 @@ const TAB_SHORTCUTS: ReadonlyArray<TabShortcut> = [
 ]
 
 /**
- * PEND-52 — open the in-page find toolbar from a global keyboard
+ * Open the in-page find toolbar from a global keyboard
  * shortcut. Captures the user's current text selection (if any) so it
  * seeds the toolbar query (browser/VSCode convention). When there's no
  * selection the store restores the previous query (locked-in Q3).
@@ -213,7 +213,7 @@ function openInPageFindFromShortcut(t: (key: string) => string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Global-shortcut actions (MAINT-53)
+// Global-shortcut actions
 //
 // Each `try*` helper checks its own binding and returns `true` when it
 // consumed the event. Keeping the bodies out of the `useEffect` dispatcher
@@ -223,7 +223,7 @@ function openInPageFindFromShortcut(t: (key: string) => string): void {
 // ---------------------------------------------------------------------------
 
 /**
- * PEND-52 — `findInPage` (Ctrl+F by default) opens the in-page find toolbar.
+ * `findInPage` (Ctrl+F by default) opens the in-page find toolbar.
  */
 function tryFindInPage(e: KeyboardEvent, t: (key: string) => string): boolean {
   if (!matchesShortcutBinding(e, 'findInPage')) return false
@@ -233,7 +233,7 @@ function tryFindInPage(e: KeyboardEvent, t: (key: string) => string): boolean {
 }
 
 /**
- * PEND-52 — `focusSearch` (Ctrl+Shift+F by default) opens the global
+ * `focusSearch` (Ctrl+Shift+F by default) opens the global
  * find-in-files view.
  */
 function tryFocusSearch(e: KeyboardEvent, t: (key: string) => string): boolean {
@@ -245,7 +245,7 @@ function tryFocusSearch(e: KeyboardEvent, t: (key: string) => string): boolean {
 }
 
 /**
- * PEND-67 Phase 8 — `runLastCommand` (Cmd+. by default) re-runs the most
+ * Phase 8 — `runLastCommand` (Cmd+. by default) re-runs the most
  * recent palette command without mounting the dialog. Falls back to opening
  * the palette in commands mode when no recent command exists yet (cold start)
  * or when the recent id no longer maps to a registered command (registry
@@ -283,7 +283,7 @@ function tryRunLastCommand(e: KeyboardEvent, t: (key: string) => string): boolea
 }
 
 /**
- * PEND-51 — Cmd/Ctrl+K opens the quick-navigation palette. Context-aware: when
+ * Cmd/Ctrl+K opens the quick-navigation palette. Context-aware: when
  * focus is inside a TipTap / ProseMirror surface it yields to the editor's own
  * Cmd+K link command by NOT calling preventDefault (VSCode does the same for
  * Cmd+P).
@@ -299,7 +299,7 @@ function tryPaletteOpen(e: KeyboardEvent): boolean {
 
 /**
  * `createNewPage` — create an "Untitled" page in the active space and navigate
- * to it. FEAT-3 Phase 2: every page must belong to a space, so it routes through
+ * To it. Phase 2: every page must belong to a space, so it routes through
  * the atomic `createPageInSpace` command. The `isReady`/`currentSpaceId` guard
  * is defensive — the shortcut only fires after boot resolves the space list.
  */
@@ -338,12 +338,12 @@ export interface UseAppKeyboardShortcutsParams {
 
 export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcutsParams): void {
   // ── Journal navigation shortcuts (Alt+Arrow, Alt+T) ────────────────
-  // Uses keyboard-config matchers so users can rebind these (BUG-18).
+  // Uses keyboard-config matchers so users can rebind these.
   // Dispatches through JOURNAL_SHORTCUTS so the handler stays well under
-  // the cognitive-complexity budget (MAINT-53).
+  // The cognitive-complexity budget.
   useEffect(() => {
     function handleJournalNav(e: KeyboardEvent) {
-      // MAINT-105: ignore auto-repeat so holding Alt+Arrow doesn't spam
+      // Ignore auto-repeat so holding Alt+Arrow doesn't spam
       // setCurrentDate / SR announcements.
       if (e.repeat) return
       if (useNavigationStore.getState().currentView !== 'journal') return
@@ -364,12 +364,12 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
   // ── Global shortcuts (findInPage, focusSearch, runLastCommand,
   //    paletteOpen, createNewPage) ──
   // All go through matchesShortcutBinding so rebinding in Settings takes
-  // effect (BUG-18). Each shortcut's action lives in a module-level `try*`
+  // Effect. Each shortcut's action lives in a module-level `try*`
   // helper that returns true once it consumes the event, keeping this
-  // dispatcher within oxlint's eslint/complexity budget (MAINT-53).
+  // Dispatcher within oxlint's eslint/complexity budget.
   useEffect(() => {
     function handleGlobalShortcuts(e: KeyboardEvent) {
-      // MAINT-105: ignore auto-repeat so holding the shortcut doesn't
+      // Ignore auto-repeat so holding the shortcut doesn't
       // re-fire view changes / new-page creation on every keypress.
       if (e.repeat) return
       if (tryFindInPage(e, t)) return
@@ -382,7 +382,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
     return () => window.removeEventListener('keydown', handleGlobalShortcuts)
   }, [t])
 
-  // ── FEAT-3p11: digit hotkeys for instant space switching ──────────
+  // ── digit hotkeys for instant space switching ──────────
   // `Ctrl+1` … `Ctrl+9` (`Cmd+1` … `Cmd+9` on macOS — `matchesShortcutBinding`
   // already accepts `metaKey` in place of `ctrlKey`) jump directly to the
   // Nth entry of `availableSpaces`, which the backend serves alphabetical
@@ -395,14 +395,14 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
   // wired to a global handler, so there is no real collision).
   useEffect(() => {
     function handleSpaceShortcuts(e: KeyboardEvent) {
-      // MAINT-105: ignore auto-repeat so holding the chord doesn't
+      // Ignore auto-repeat so holding the chord doesn't
       // re-fire the space-switch on every frame.
       if (e.repeat) return
       if (isTypingInField(e.target as HTMLElement | null)) return
       for (let n = 1; n <= 9; n++) {
         if (!matchesShortcutBinding(e, `switchSpace${n}`)) continue
         e.preventDefault()
-        // FEAT-3 Phase 1 — `availableSpaces` is server-truth alphabetical
+        // Phase 1 — `availableSpaces` is server-truth alphabetical
         // by name. Out-of-range index is a deliberate silent no-op
         // (`Ctrl+5` with three spaces does nothing, no toast, no error).
         const { availableSpaces, currentSpaceId, setCurrentSpace } = useSpaceStore.getState()
@@ -418,7 +418,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
   }, [])
 
   // ── Global "close all overlays" shortcut (Escape by default) ────────
-  // UX-228: dispatch a plain DOM CustomEvent on `window` so any top-level
+  // Dispatch a plain DOM CustomEvent on `window` so any top-level
   // overlay (KeyboardShortcuts sheet, WelcomeModal, future non-Radix
   // popovers) can listen and close itself. The shortcut is rebindable
   // through Settings — we route via `matchesShortcutBinding` rather than
@@ -427,7 +427,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
   // native semantics there (blur, cancel suggestion, etc.).
   useEffect(() => {
     function handleCloseOverlays(e: KeyboardEvent) {
-      // MAINT-105: ignore auto-repeat so holding Escape doesn't dispatch
+      // Ignore auto-repeat so holding Escape doesn't dispatch
       // the custom event / SR announcement on every keypress.
       if (e.repeat) return
       if (!matchesShortcutBinding(e, 'closeOverlays')) return
@@ -441,17 +441,17 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
   }, [t])
 
   // ── Tab shortcuts (openInNewTab, closeActiveTab, nextTab, previousTab) ──
-  // Routed through matchesShortcutBinding so users can rebind (BUG-18).
+  // Routed through matchesShortcutBinding so users can rebind.
   // Dispatches through TAB_SHORTCUTS so the handler stays well under the
-  // cognitive-complexity budget (MAINT-54).
+  // Cognitive-complexity budget.
   //
-  // FEAT-7: the TabBar is now shell-wide on desktop, so these shortcuts fire
+  // The TabBar is now shell-wide on desktop, so these shortcuts fire
   // from any view (not just page-editor). We still short-circuit on mobile
   // because the TabBar itself is hidden there and the shortcuts have no
   // meaningful UI affordance.
   useEffect(() => {
     function handleTabShortcuts(e: KeyboardEvent) {
-      // MAINT-105: ignore auto-repeat so holding the tab-cycle shortcut
+      // Ignore auto-repeat so holding the tab-cycle shortcut
       // doesn't spin through every tab on each frame.
       if (e.repeat) return
       if (isMobile) return
@@ -462,11 +462,11 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
 
       e.preventDefault()
 
-      // FEAT-7 follow-up: Ctrl+T in a fresh tab (empty pageStack) would
+      // Follow-up: Ctrl+T in a fresh tab (empty pageStack) would
       // silently do nothing. Surface a toast so the user gets feedback
       // instead of a silent failure. The other tab shortcuts (close,
       // next, previous) are well-defined regardless of stack state.
-      // FEAT-3 Phase 3 — read the active tab through the per-space
+      // Phase 3 — read the active tab through the per-space
       // selector so the toast fires when the active SPACE has no
       // open page, not just the legacy flat list.
       if (shortcut.binding === 'openInNewTab') {

@@ -1,7 +1,7 @@
 /**
- * Tests for useGraphWorkerSimulation (MAINT-127 split from useGraphSimulation).
+ * Tests for useGraphWorkerSimulation (split from useGraphSimulation).
  *
- * Owns the `workerFailed` flag (BUG-45) and exposes a stable `runWorker`
+ * Owns the `workerFailed` flag and exposes a stable `runWorker`
  * callback that wraps `runWorkerSimulation` with the failure handler. The
  * orchestrator re-runs its effect when `workerFailed` flips to true and
  * falls back to the main-thread path.
@@ -175,7 +175,7 @@ describe('useGraphWorkerSimulation', () => {
     expect(w.terminated).toBe(true)
   })
 
-  // PEND-22: regression test for the structured error envelope. The worker's
+  // Regression test for the structured error envelope. The worker's
   // dispatcher try/catch (and global error/unhandledrejection handlers) post
   // an explicit `{ type: 'error', message }` outbound message; the main
   // thread's `handleMessage` routes that through `reportFailure` with the

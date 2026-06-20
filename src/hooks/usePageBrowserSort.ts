@@ -5,7 +5,7 @@
  * input page list. The comparator is shared by both the `Starred` and
  * `Pages` sections so they stay in lock-step under any sort option.
  *
- * PEND-56 — extended from 3 to 7 sort modes. The new 4 modes
+ * Extended from 3 to 7 sort modes. The new 4 modes
  * (`recently-modified`, `most-linked`, `most-content`, `default`) read
  * the metadata columns added by the `listPagesWithMetadata` IPC; the
  * row shape extends `BlockRow` with optional metadata fields so
@@ -22,7 +22,7 @@ import type { BlockRow, PageWithMetadataRow } from '../lib/tauri'
 import { useLocalStoragePreference } from './useLocalStoragePreference'
 
 /**
- * PEND-56 sort options. 3 legacy + 4 new.
+ * Sort options. 3 legacy + 4 new.
  *
  *   - `alphabetical` — title ASC, case-insensitive.
  *   - `recent` — frontend-only; per-device visit history via `getRecentPages()`.
@@ -117,7 +117,7 @@ export function pageSortWireFor(sort: SortOption): PageSortWire {
  * server id-ASC order and is therefore globally accurate, so it
  * returns `false`. The three server-side sorts return `false`.
  *
- * Used by `PageBrowser` (PEND-58d D3) to surface a "sorted within
+ * Used by `PageBrowser` to surface a "sorted within
  * loaded pages" cue while more pages remain to load.
  */
 export function isFrontendOnlySort(sort: SortOption): boolean {
@@ -158,7 +158,7 @@ export function usePageBrowserSort(): UsePageBrowserSortReturn {
       const hasMetadata = first != null && Object.hasOwn(first, 'lastModifiedAt')
       const sorted = [...(input as readonly BlockRow[])]
       const alpha = (a: BlockRow, b: BlockRow) => (a.content ?? '').localeCompare(b.content ?? '')
-      // PEND-58e E14: the server keysets every sort by `(key, id ASC)`
+      // The server keysets every sort by `(key, id ASC)`
       // (see `SortKeyset::apply` in `commands/pages.rs`). When rows carry
       // metadata (the server-derived path), break key ties by `id ASC` too
       // so equal-key groups don't reshuffle as pages stream in. The

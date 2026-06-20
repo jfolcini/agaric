@@ -214,7 +214,7 @@ describe('PageEditor', () => {
     })
   })
 
-  it('renders PagesTreeSection with correct pageId and pageTitle (PEND-83)', () => {
+  it('renders PagesTreeSection with correct pageId and pageTitle', () => {
     render(<PageEditor pageId="PAGE_123" title="Test Title" />)
 
     const pagesTree = screen.getByTestId('pages-tree-section')
@@ -287,12 +287,12 @@ describe('PageEditor', () => {
     })
   })
 
-  it('Add block button creates first block when no blocks exist (PEND-35 Tier 4.2 — splice, no re-list)', async () => {
+  it('Add block button creates first block when no blocks exist (splice, no re-list)', async () => {
     const user = userEvent.setup()
 
     // Store starts empty (per-page store is fresh)
 
-    // Mock createBlock response for the new block. PEND-35 Tier 4.2 —
+    // Mock createBlock response for the new block. —
     // there is no longer a follow-up list_blocks IPC; the row is spliced
     // into the local store via pageStore.appendBlock(row).
     mockedInvoke.mockResolvedValueOnce({
@@ -463,7 +463,7 @@ describe('PageEditor undo/redo integration', () => {
   })
 })
 
-describe('PageEditor background pointerdown (UX-M9)', () => {
+describe('PageEditor background pointerdown', () => {
   it('pointerdown on page background closes active editor', () => {
     useBlockStore.setState({
       focusedBlockId: 'B1',
@@ -509,7 +509,7 @@ describe('PageEditor BlockTree auto-creation prop', () => {
 
     // Per-page store starts empty
 
-    // Mock createBlock only — PEND-35 Tier 4.2 splices the returned row
+    // Mock createBlock only — splices the returned row
     // into the per-page store instead of triggering a follow-up list_blocks.
     mockedInvoke.mockResolvedValueOnce({
       id: 'FIRST_BLOCK',
@@ -571,7 +571,7 @@ describe('PageEditor date-page panels (B-1)', () => {
   })
 })
 
-describe('UX-230 responsive layout', () => {
+describe(' responsive layout', () => {
   it('page-editor root has min-w-0 so it can shrink inside a flex parent', () => {
     const { container } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
 

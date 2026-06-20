@@ -5,7 +5,7 @@
  * Covers all five store actions and validates correct state isolation
  * (each action only touches its intended fields).
  *
- * FEAT-3p5 — also covers the per-space slices and the
+ * Also covers the per-space slices and the
  * `useSpaceStore` flush/pull subscriber. Per-space tests live in
  * `useJournalStore.test.ts` (separate file because they exercise the
  * subscriber side-effect, which needs careful isolation).

@@ -487,9 +487,9 @@ describe('RichContentRenderer', () => {
     expect(chip).toHaveAttribute('tabindex', '0')
   })
 
-  // -- Tag ref click behaviour (UX-249) ---------------------------------------
+  // -- Tag ref click behaviour ---------------------------------------
 
-  describe('tag_ref click activation (UX-249)', () => {
+  describe('tag_ref click activation', () => {
     it('click fires onTagClick with the tag ULID when interactive', async () => {
       const onTagClick = vi.fn()
       const user = userEvent.setup()

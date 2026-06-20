@@ -5,8 +5,8 @@
  *  - Smoke render with blocks
  *  - Renders empty state when blocks array is empty
  *  - Renders SortableBlock for each visible item
- *  - Semantic tree structure: ul/li with aria attributes (UX-48)
- *  - Expand animation class applied to children of just-expanded block (UX-79)
+ * Semantic tree structure: ul/li with aria attributes
+ * Expand animation class applied to children of just-expanded block
  *  - No animation on initial render or collapse
  *  - Axe a11y audit passes
  */
@@ -26,7 +26,7 @@ vi.mock('../SortableBlock', () => ({
   INDENT_WIDTH: 24,
 }))
 
-// Mock EmptyState — expose icon + description so UX-929 F7 (richer empty state)
+// Mock EmptyState — expose icon + description so (richer empty state)
 // can be asserted. The icon is a component; render a marker when present.
 vi.mock('@/components/common/EmptyState', () => ({
   EmptyState: ({
@@ -146,7 +146,7 @@ describe('BlockListRenderer', () => {
     expect(screen.queryByTestId('empty-state-description')).not.toBeInTheDocument()
   })
 
-  // UX-929 F7: the page-root empty state (rootParentId falsy → `noBlocks`)
+  // The page-root empty state (rootParentId falsy → `noBlocks`)
   // advertises the slash-command entry path with an icon + description.
   it('renders icon + slash-command hint in the page-root empty state', () => {
     render(
@@ -310,7 +310,7 @@ describe('BlockListRenderer', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // ── Semantic tree structure tests (UX-48) ───────────────────────────
+  // ── Semantic tree structure tests ───────────────────────────
 
   it('renders block tree as <ul> with aria-label', () => {
     const blocks = [makeBlock({ id: 'BLK001', content: 'First' })]
@@ -455,7 +455,7 @@ describe('BlockListRenderer', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // ── Expand animation tests (UX-79) ─────────────────────────────────
+  // ── Expand animation tests ─────────────────────────────────
 
   it('applies block-children-enter class to children of a just-expanded block', () => {
     const parent = makeBlock({ id: 'PARENT', content: 'Parent', depth: 0 })
@@ -582,7 +582,7 @@ describe('BlockListRenderer', () => {
     ).toHaveClass('block-children-enter')
   })
 
-  // ── Sentinel drop zone tests (UX-176) ─────────────────────────────
+  // ── Sentinel drop zone tests ─────────────────────────────
 
   it('renders sentinel droppable zone after last block when blocks exist', () => {
     const blocks = [
@@ -644,9 +644,9 @@ describe('BlockListRenderer', () => {
     expect(dropIndicator).toBeInTheDocument()
   })
 
-  // ── PERF-22: O(N) sibling aria walk regression tests ──────────────
+  // ── O(N) sibling aria walk regression tests ──────────────
 
-  describe('sibling aria walk — pathological structures (PERF-22)', () => {
+  describe('sibling aria walk — pathological structures', () => {
     it('resets sibling groups when tree returns to a previously-seen depth', () => {
       // ROOT1
       //   CHILD_A (d=1 under ROOT1)

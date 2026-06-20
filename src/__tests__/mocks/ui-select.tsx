@@ -140,7 +140,7 @@ function partitionSelectChildren(children: React.ReactNode): {
       // model accepts as direct children. Crucially, 'button' / 'div' /
       // arbitrary other intrinsic strings are NOT on this list — they
       // match the production "<button> hint inside <SelectContent>"
-      // pattern (UX-373) that triggers the very warning this mock exists
+      // Pattern that triggers the very warning this mock exists
       // to avoid.
       type === 'option' ||
       type === 'optgroup' ||

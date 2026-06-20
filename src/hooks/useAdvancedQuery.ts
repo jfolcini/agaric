@@ -167,7 +167,7 @@ function buildQueryArgs(
   // conjunction entirely. Other callers pass only `filters`, so `filterExpr` is
   // absent and we wrap the flat list as an `And` of Leaves.
   const filter = filterExpr != null ? filterExpr : primitivesToFilterExpr(filters)
-  // FEAT-3 Phase 4 parity: the engine requires a space. The `?? ''` fallback is
+  // Phase 4 parity: the engine requires a space. The `?? ''` fallback is
   // intentional pre-bootstrap behaviour — an empty string forces a no-match SQL
   // filter rather than a runtime null deref. Optional engine inputs are omitted
   // (not sent as empty) when unset so the request stays the minimal wire shape.

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────
-// Tauri command IPC error-sanitization check (MAINT-147 (c)).
+// Tauri command IPC error-sanitization check.
 //
 // Every `#[tauri::command]` wrapper that returns
 // `Result<_, AppError>` should funnel its tail expression through
@@ -10,7 +10,7 @@
 // surface (`AppError::Internal("internal error")`).
 //
 // Macro-extracting this wrapper would obstruct specta's type
-// extraction (per MAINT-147 spec), so the convention is enforced as a
+// Extraction (spec), so the convention is enforced as a
 // regex-based pre-commit check rather than as a code-level helper.
 //
 // ─── Scope ──────────────────────────────────────────────────────────
@@ -152,16 +152,16 @@ function propagatesErrors(body) {
 }
 
 /**
- * Pre-existing violations grandfathered in at the time MAINT-147 (c)
+ * Pre-existing violations grandfathered in at the time (c)
  * landed. Each entry is `<filename>:<command name>` (relative to
  * `commands/`). Listed here rather than fixed inline because:
  *
  *   - The fix in some cases requires a deeper refactor (e.g. the
  *     `mcp` commands return state-summary types that arguably could
  *     leak `AppError::Sqlx` only via the snapshot decoder, which is
- *     already test-covered for non-internal payloads — see MAINT-147
+ * Already test-covered for non-internal payloads
  *     batch report);
- *   - Touching files outside the MAINT-147 (c) scope (`mcp.rs`,
+ * Touching files outside the (c) scope (`mcp.rs`,
  *     `logging.rs`) would step on adjacent in-flight MAINT items.
  *
  * New `#[tauri::command]`s must NOT be added to this list; they must

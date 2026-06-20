@@ -2,7 +2,7 @@
  * useCalendarPageDates — fetch the dateStr→pageId map of journal pages in
  * a bounded date range, dedup'd across multiple subscribers.
  *
- * MAINT-119: the JournalPage component, JournalControls, and
+ * The JournalPage component, JournalControls, and
  * GlobalDateControls each used to issue an identical
  * `listBlocks({blockType:'page',limit:500})` fetch on mount. When two of
  * them rendered together (JournalPage + JournalControls in the journal
@@ -11,7 +11,7 @@
  * module-level in-flight promise so concurrent subscribers reuse a
  * single IPC round-trip, keyed by `(spaceId, startDate, endDate)`.
  *
- * BUG-48 follow-up: the underlying fetch is now
+ * Follow-up: the underlying fetch is now
  * `list_journal_pages_in_range`, scoped to the date range the caller
  * is actually rendering. Mirrors the per-month
  * `count_agenda_batch_by_source` fetch already used by

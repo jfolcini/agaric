@@ -1,5 +1,5 @@
 /**
- * Tests for NoPeersDialog (BUG-2).
+ * Tests for NoPeersDialog.
  *
  * Validates:
  *  - Dialog renders title / body / Cancel + Open-sync-settings actions when open

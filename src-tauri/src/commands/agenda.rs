@@ -19,9 +19,9 @@ use super::*;
 /// Returns a `HashMap<date, count>` for dates that have at least one matching
 /// agenda entry whose owning block is not soft-deleted.
 ///
-/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the count to
+/// `scope` — [`SpaceScope::Active`] restricts the count to
 /// blocks whose owning page carries `space = ?space_id`.
-/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour
+/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour
 /// preserved for callsites that span every space.
 ///
 /// # Errors
@@ -40,13 +40,13 @@ pub async fn count_agenda_batch_inner(
     for d in &dates {
         validate_date_format(d)?;
     }
-    // M-24: marshal the date list into a JSON array and unwrap it inside SQL
+    // Marshal the date list into a JSON array and unwrap it inside SQL
     // via `json_each(?1)`. This replaces the previous runtime-formatted
     // `?1, ?2, …` placeholder list with a single bind, and lets us drop
     // through `sqlx::query!` for compile-time SQL verification (AGENTS.md
     // invariant #6). Mirrors the sibling `count_agenda_batch_by_source_inner`.
     //
-    // FEAT-3p4 — ?2 (space filter) drives the shared space-filter clause.
+    // ?2 (space filter) drives the shared space-filter clause.
     // The literal mirrors
     // [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] — kept
     // inline here because `sqlx::query!` requires a string literal and does
@@ -85,9 +85,9 @@ pub async fn count_agenda_batch_inner(
 /// Returns a nested map: `date -> source -> count`. Only includes entries
 /// whose owning block is not soft-deleted.
 ///
-/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the count to
+/// `scope` — [`SpaceScope::Active`] restricts the count to
 /// blocks whose owning page carries `space = ?space_id`.
-/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour
+/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour
 /// preserved for callsites that span every space.
 ///
 /// # Errors
@@ -107,7 +107,7 @@ pub async fn count_agenda_batch_by_source_inner(
     }
     let dates_json = serde_json::to_string(&dates)?;
     let scope_param = scope.as_filter_param();
-    // FEAT-3p4 — ?2 (space filter) drives the shared space-filter clause.
+    // ?2 (space filter) drives the shared space-filter clause.
     // The literal mirrors
     // [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] and filters
     // on the first-class `b.space_id` column (#533, migration 0086). Uses
@@ -148,7 +148,7 @@ pub async fn count_agenda_batch_by_source_inner(
 /// Returns a [`PageResponse`] of at most `limit` entries (default 200,
 /// max 500). When more pages remain, `next_cursor` is populated and
 /// `has_more` is `true` — pass `next_cursor` back as the `cursor` arg to
-/// fetch the next page (M-25, AGENTS.md invariant #3).
+/// Fetch the next page (AGENTS.md invariant #3).
 ///
 /// **Cursor encoding** (matches `list_agenda_range`'s H-8 convention):
 /// the cursor is keyed on `(projected_date, block_id)` — the same
@@ -156,7 +156,7 @@ pub async fn count_agenda_batch_by_source_inner(
 /// `Cursor::deleted_at` (date) + `Cursor::id` (block_id) and
 /// base64-encoded JSON.
 ///
-/// MAINT-164: the on-the-fly fallback's `dot_plus` (`.+`) / `plus_plus` (`++`)
+/// The on-the-fly fallback's `dot_plus` (`.+`) / `plus_plus` (`++`)
 /// repeat-mode projection is anchored to `today`. We capture `today` once
 /// here from `chrono::Local::now()` and thread it through. Tests that need
 /// to pin a fixed `today` (so the assertion does not drift with the system
@@ -180,7 +180,7 @@ pub async fn list_projected_agenda_inner(
     // because that helper clamps to MAX_PAGE_SIZE=200 and this command
     // historically clamps to 500 (kept as the per-page cap — callers now
     // page past the cap via the cursor instead of being silently
-    // truncated; M-25).
+    // Truncated;).
     let after = match cursor.as_deref() {
         Some(s) => Some(Cursor::decode(s)?),
         None => None,
@@ -246,7 +246,7 @@ pub async fn list_projected_agenda_inner(
         Option<String>,
         Option<String>,
     )> = sqlx::query_as(
-        // FEAT-3p4 — ?7 (space_id) drives the shared space-filter clause.
+        // ?7 (space_id) drives the shared space-filter clause.
         // Mirrors `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline because this
         // query uses dynamic-typed `query_as`. Filters on the first-class
         // `b.space_id` column (#533, migration 0086).
@@ -297,7 +297,7 @@ pub async fn list_projected_agenda_inner(
         .await;
     }
 
-    // MAINT-113 M1.5 — boundary cast: the cache query above joins
+    // Boundary cast: the cache query above joins
     // `blocks` filtered to live, non-conflict rows, so every surviving
     // block id is active. `from_trusted_active` records the claim in
     // the type system without re-running the predicate.
@@ -354,16 +354,16 @@ pub async fn list_projected_agenda_inner(
 ///
 /// `today` anchors `dot_plus` (`.+`) and `plus_plus` (`++`) repeat-mode
 /// projections; it is threaded in from
-/// [`list_projected_agenda_inner`] (MAINT-164) instead of being
+/// [`list_projected_agenda_inner`] instead of being
 /// read from `chrono::Local::now()` so tests can pin a fixed today.
 ///
-/// `after` is the optional decoded cursor (M-25). When supplied, entries
+/// `after` is the optional decoded cursor. When supplied, entries
 /// whose `(projected_date, block_id)` are `<= cursor` are filtered out
 /// before the page is built. The same `(date, id)` keyset that the cache
 /// path uses is honoured here so the two branches stay swappable mid-
 /// pagination if the materializer populates the cache between calls.
 ///
-/// `pub(crate)` so the MAINT-164 regression test in
+/// `pub(crate)` so the regression test in
 /// `commands::tests::agenda_cmd_tests` can call this path directly,
 /// bypassing the cache-or-fallback branch in
 /// [`list_projected_agenda_inner`]. The cache rebuild itself
@@ -372,7 +372,7 @@ pub async fn list_projected_agenda_inner(
 /// indirectly populates the cache with today-anchored rows that vary as
 /// the system clock advances. Calling on-the-fly directly sidesteps that
 /// drift; threading `today` through the cache rebuild itself is a larger
-/// follow-up that MAINT-164 leaves open.
+/// Follow-up that leaves open.
 pub(crate) async fn list_projected_agenda_on_the_fly(
     pool: &SqlitePool,
     range_start: chrono::NaiveDate,
@@ -391,11 +391,11 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     // LEFT JOINs fetch repeat-until / repeat-count / repeat-seq in the same
     // round-trip, eliminating per-block N+1 queries.
     //
-    // Template-page filter (FEAT-5a, spec line 812): blocks whose owning
+    // Template-page filter (spec line 812): blocks whose owning
     // page has a `template` property are excluded so template scaffolding
     // never surfaces in agenda / Google Calendar results.  `b.page_id`
     // is the denormalised root-page column (migration 0027).
-    // FEAT-3p4 — ?1 (space_id) drives the shared space-filter clause.
+    // ?1 (space_id) drives the shared space-filter clause.
     // Mirrors `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline because
     // `sqlx::query_as!` requires a string literal directly. Filters on the
     // first-class `b.space_id` column (#533, migration 0086).
@@ -519,7 +519,7 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
             _ => continue,
         };
 
-        // PEND-24 M3 — surface DB-level corruption: write-time validation
+        // Surface DB-level corruption: write-time validation
         // (`set_property_in_tx`'s `is_valid_iso_date`) should make this
         // unreachable. A miss means either the DB was hand-edited or a
         // sync-protocol bug let through a bad value; either way we warn
@@ -551,7 +551,7 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
             _ => None,                          // no limit
         };
 
-        // MAINT-196 — recurrence math lives in the shared
+        // Recurrence math lives in the shared
         // `recurrence::project_block_dates` helper so the cache rebuild
         // and the on-the-fly path cannot drift. The closure below is
         // the on-the-fly-specific concern: cursor predicate + size-cap
@@ -560,12 +560,12 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
         // `until_date` / `remaining` end conditions, the 10 000-iter
         // safety bound, and `[range_start, range_end]` clipping.
         //
-        // PEND-24 M3: emit the malformed-date warn at the callsite
+        // Emit the malformed-date warn at the callsite
         // before handing the validated source strings to the helper.
         // The helper itself silently skips on parse failure; doing the
         // validation here preserves the original ops-log signal
         // (the cache-rebuild path never had this warn — it stays silent
-        // there, matching pre-MAINT-196 behaviour).
+        // There, matching pre- behaviour).
         let validate_source = |date: Option<&str>, source: &'static str| -> Option<String> {
             let s = date?;
             if chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok() {
@@ -668,7 +668,7 @@ pub async fn count_agenda_batch_by_source(
 /// Tauri command: list projected future occurrences of repeating tasks.
 /// Delegates to [`list_projected_agenda_inner`].
 ///
-/// Cursor-paginated (M-25) — pass `cursor = next_cursor` from the previous
+/// Cursor-paginated — pass `cursor = next_cursor` from the previous
 /// response to fetch the next page.
 #[tauri::command]
 #[specta::specta]
@@ -688,9 +688,9 @@ pub async fn list_projected_agenda(
 /// List undated tasks: blocks with todo_state but no due_date and no scheduled_date.
 /// Cursor-paginated.
 ///
-/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the result set
+/// `scope` — [`SpaceScope::Active`] restricts the result set
 /// to blocks whose owning page carries `space = ?space_id`.
-/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour
+/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour
 /// preserved for callsites that span every space.
 #[instrument(skip(pool), err)]
 pub async fn list_undated_tasks_inner(
@@ -719,7 +719,7 @@ pub async fn list_undated_tasks(
 }
 
 // ======================================================================
-// M-24 — `count_agenda_batch_inner` json_each refactor regression tests
+// `count_agenda_batch_inner` json_each refactor regression tests
 // ======================================================================
 //
 // Inline coverage for the migration off the runtime `?1, ?2, …` placeholder

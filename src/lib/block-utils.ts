@@ -14,7 +14,7 @@
  * deletion guards. That set is broader (includes `todo_state`, `priority`,
  * `due_date`, `scheduled_date`, `repeat-until`, `repeat-count`).
  *
- * Added for MAINT-187.
+ * Added for.
  */
 export const INTERNAL_PROPERTY_KEYS: ReadonlySet<string> = new Set([
   'repeat',

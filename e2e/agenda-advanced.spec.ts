@@ -376,7 +376,7 @@ test.describe('View mode interactions', () => {
     // Switch to monthly view
     await page.getByRole('tab', { name: 'Monthly view' }).click()
 
-    // Monthly view renders a 6-week × 7-day grid of day cells (UX-83) —
+    // Monthly view renders a 6-week × 7-day grid of day cells —
     // the old `section[aria-label^="Journal for"]` list was replaced by a
     // CSS Grid of MonthlyDayCell (`role="gridcell"`).
     const cells = page.locator('[role="gridcell"]')
@@ -496,7 +496,7 @@ test.describe('View mode interactions', () => {
 })
 
 // ===========================================================================
-// 7. Page-centric agenda + undated tasks (FEAT-1)
+// 7. Page-centric agenda + undated tasks
 // ===========================================================================
 
 test.describe('Page-centric agenda defaults', () => {
@@ -509,7 +509,7 @@ test.describe('Page-centric agenda defaults', () => {
     await page.getByRole('tab', { name: 'Agenda view' }).click()
     await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
 
-    // The agenda opens with the TODO+DOING status filter applied (UX-196).
+    // The agenda opens with the TODO+DOING status filter applied.
     // Clear filters so undated DONE tasks surface — the whole point of
     // this test is verifying undated tasks are NOT hidden by the "no date"
     // filter, not that DONE shows by default.
@@ -525,7 +525,7 @@ test.describe('Page-centric agenda defaults', () => {
   })
 
   test('agenda view groups by page by default', async ({ page }) => {
-    // Switch to agenda view — default groupBy is 'page' since FEAT-1
+    // Switch to agenda view — default groupBy is 'page' since
     await page.getByRole('tab', { name: 'Agenda view' }).click()
     await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
 

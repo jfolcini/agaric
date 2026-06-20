@@ -1,5 +1,5 @@
 /**
- * Tests for QuickCaptureDialog (FEAT-12).
+ * Tests for QuickCaptureDialog.
  *
  *  - Renders Title + textarea + Capture / Cancel buttons.
  *  - Submitting via Capture button calls `quick_capture_block` and closes.
@@ -7,7 +7,7 @@
  *  - Cancel button closes without invoking the IPC.
  *  - Empty / whitespace-only submissions are blocked (button disabled).
  *  - IPC rejection path: shows error toast, keeps dialog open, re-enables
- *    inputs (MAINT-99 IPC error-path coverage).
+ * Inputs (IPC error-path coverage).
  *  - Dialog is reset (textarea cleared) on each open.
  *  - axe(container) accessibility audit.
  */
@@ -24,7 +24,7 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { t } from '@/lib/i18n'
 import { useSpaceStore } from '@/stores/space'
 
-// MAINT-215: the dialog swaps to a bottom Sheet via `useDialogOrSheet`
+// The dialog swaps to a bottom Sheet via `useDialogOrSheet`
 // when `useIsMobile()` is true. Mock the hook so each test can pin the
 // viewport-state boolean.
 vi.mock('@/hooks/useIsMobile', () => ({
@@ -40,7 +40,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   // Default to the desktop path so existing test bodies keep their semantics.
   mockedUseIsMobile.mockReturnValue(false)
-  // FEAT-3p5: QuickCaptureDialog reads `currentSpaceId` from
+  // QuickCaptureDialog reads `currentSpaceId` from
   // `useSpaceStore` and passes it through `quickCaptureBlock`. Seed
   // a fixed space so the IPC arg shape is deterministic.
   useSpaceStore.setState({
@@ -142,7 +142,7 @@ describe('QuickCaptureDialog', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
-  // MAINT-99: every component that calls IPC must have a mockRejectedValue test.
+  // Every component that calls IPC must have a mockRejectedValue test.
   it('shows an error toast and stays open when quick_capture_block fails', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
@@ -175,7 +175,7 @@ describe('QuickCaptureDialog', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // PEND-23 M4: the dialog must have exactly one accessible label source —
+  // The dialog must have exactly one accessible label source —
   // Radix derives it from <DialogTitle>, so the explicit aria-label on
   // DialogContent was redundant. The textarea must carry its own label
   // (not the dialog title) so screen readers don't mislabel the input.
@@ -197,11 +197,11 @@ describe('QuickCaptureDialog', () => {
     expect(textarea.getAttribute('aria-label')).not.toBe(t('quickCapture.dialogTitle'))
   })
 
-  // MAINT-215: the dialog mounts under both the desktop Dialog path and
+  // The dialog mounts under both the desktop Dialog path and
   // the mobile Sheet path. Assert on body content (the capture textarea)
   // being visible rather than the Dialog / Sheet DOM specifics so the
   // test stays decoupled from the underlying primitive.
-  describe('mobile / desktop responsive surfaces (MAINT-215)', () => {
+  describe('mobile / desktop responsive surfaces', () => {
     it('renders the capture textarea on the mobile Sheet path', () => {
       mockedUseIsMobile.mockReturnValue(true)
       render(<QuickCaptureDialog open={true} onOpenChange={() => {}} />)

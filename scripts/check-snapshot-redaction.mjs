@@ -60,9 +60,9 @@
 // payload equals a specific blake3 output), add a same-line YAML
 // comment of the form:
 //
-//     hash: deadbeef…  # MAINT-99-allow-hash: known-fixture-payload
+// Hash: deadbeef… # snapshot-allow-hash: known-fixture-payload
 //
-// Markers supported (all share the `MAINT-99-allow-` prefix): `ulid`,
+// Markers supported (all share the `snapshot-allow-` prefix): `ulid`,
 // `hash`, `timestamp`, `cursor`. The reason after the colon is
 // mandatory and should explain *why* the value is stable. Note that
 // insta regenerates `.snap` files; comments survive only if the
@@ -140,8 +140,8 @@ function isFixtureValue(value) {
 }
 
 // Inline allow marker — same-line YAML comment, e.g.:
-//     hash: deadbeef…  # MAINT-99-allow-hash: known-fixture-payload
-const ALLOW_MARKER_RE = /#\s*MAINT-99-allow-(ulid|hash|timestamp|cursor)\s*:/i
+// Hash: deadbeef… # snapshot-allow-hash: known-fixture-payload
+const ALLOW_MARKER_RE = /#\s*snapshot-allow-(ulid|hash|timestamp|cursor)\s*:/i
 
 function lineHasAllowMarker(line, kind) {
   const m = line.match(ALLOW_MARKER_RE)
@@ -286,7 +286,7 @@ if (violations.length > 0) {
   console.error('If the value is genuinely a deterministic fixture (declared as a const')
   console.error('in a `.rs` test module), this hook will auto-allow it on the next run.')
   console.error('For the rare case of a known-fixed generated hash, add an inline marker:')
-  console.error('  hash: <value>  # MAINT-99-allow-hash: <reason>')
+  console.error('  hash: <value>  # snapshot-allow-hash: <reason>')
   process.exit(1)
 }
 

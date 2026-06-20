@@ -2,7 +2,7 @@
 // ─────────────────────────────────────────────────────────────────────
 // Bundle-size regression gate (#750).
 //
-// vite.config.ts hand-tunes `manualChunks` with a PERF-24 rationale: the
+// Vite.config.ts hand-tunes `manualChunks` with a rationale: the
 // single-bundle default pushed the entry chunk past 1.8 MB raw, tripping
 // Vite's 500 kB warning and slowing first-paint parse on low-end / Android
 // devices. That tuning is invisible to CI — any new STATIC import (someone
@@ -34,7 +34,7 @@ const DIST_ASSETS = join(REPO_ROOT, 'dist', 'assets')
 const BUDGETS_PATH = join(__dirname, 'bundle-budgets.json')
 
 // Allowed growth before the gate fails, as a fraction of the budgeted
-// gzip size. PERF-24's value is the entry chunk staying small; 10% lets
+// Gzip size. value is the entry chunk staying small; 10% lets
 // ordinary feature growth through while catching a heavy static import
 // (which moves a chunk by far more than 10%).
 const GROWTH_TOLERANCE = 0.1
@@ -112,12 +112,12 @@ function writeBudgets(sizes, tracked) {
   console.log(`Wrote ${BUDGETS_PATH}`)
 }
 
-// The chunks we gate. These are the PERF-24-hand-tuned manualChunks groups
+// The chunks we gate. These are the -hand-tuned manualChunks groups
 // (vite.config.ts) plus the entry chunk. `index` is Vite's entry chunk;
 // the rest are explicit manualChunks names. Keep in sync with
 // vite.config.ts `manualChunks` if a group is added/removed.
 const TRACKED = [
-  'index', // entry chunk (PERF-24's core concern)
+  'index', // entry chunk ('s core concern)
   'editor', // tiptap/prosemirror editor stack
   'highlight', // lowlight/highlight.js grammars
   'react-vendor',
@@ -168,7 +168,7 @@ function main() {
       '\n  -> A chunk grew past its gzip budget. If a heavy module landed on\n' +
         '     the entry/critical path via a new STATIC import, lazy-load it\n' +
         '     (dynamic import()) or add it to a manualChunks group in\n' +
-        '     vite.config.ts (PERF-24). If the growth is intentional and\n' +
+        '     vite.config.ts. If the growth is intentional and\n' +
         '     reviewed, re-baseline:\n' +
         '       npm run build && node scripts/check-bundle-budget.mjs --update',
     )

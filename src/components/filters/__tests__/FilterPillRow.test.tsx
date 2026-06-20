@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// PEND-37: same STACK_TRACE_ERROR pattern as BacklinkFilterBuilder's "active
+// Same STACK_TRACE_ERROR pattern as BacklinkFilterBuilder's "active
 // filters" a11y test under happy-dom. Pin until investigated.
 
 /**
@@ -151,7 +151,7 @@ describe('FilterPillRow', () => {
   })
 
   // ====================================================================
-  // FE-L-14 / MAINT-190 — stable per-filter React key contract.
+  // FE-L-14 / stable per-filter React key contract.
   //
   // `key={filter._addId}` (stamped at creation in `BacklinkFilterBuilder`)
   // replaces the old `key={index}` workaround. Re-rendering with a

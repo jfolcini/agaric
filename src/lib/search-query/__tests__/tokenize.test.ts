@@ -52,7 +52,7 @@ describe('tokenize', () => {
     expect(t1.text).toBe('path:Journal/*')
   })
 
-  it('requires the closing quote at a token boundary (DSL-1)', () => {
+  it('requires the closing quote at a token boundary', () => {
     // `"a"b` — the inner `"` is glued to `b`, so it is not a clean
     // phrase close; the whole run degrades to a single word rather than
     // a fragmented phrase + word.
@@ -61,7 +61,7 @@ describe('tokenize', () => {
     expect(tokens[0]).toMatchObject({ kind: 'word', text: '"a"b' })
   })
 
-  it('a deliberately quoted phrase swallows a filter-shaped token (DSL-1 contract)', () => {
+  it('a deliberately quoted phrase swallows a filter-shaped token (contract)', () => {
     // This is *correct* quote behaviour, documented as a regression
     // guard: once the user quotes a span, structured tokens inside it
     // are literal phrase text, not filters.

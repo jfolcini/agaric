@@ -1,7 +1,7 @@
 /**
  * Badge color class for a given priority level (theme-aware, index-based).
  *
- * UX-201b: priority levels are user-configurable, so the color mapping is
+ * Priority levels are user-configurable, so the color mapping is
  * index-based rather than keyed on the string value. The first three levels
  * get distinct semantic tokens (urgent / high / normal); level 4+ and any
  * unknown value (not in the current level set) fall back to `normal`.

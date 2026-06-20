@@ -1,5 +1,5 @@
 /**
- * Tests for LoadMoreButton component (R-3, UX-3).
+ * Tests for LoadMoreButton component (R-3).
  *
  * Validates:
  *  1. Renders button when hasMore=true
@@ -206,7 +206,7 @@ describe('LoadMoreButton', () => {
     })
   })
 
-  // 10. i18n default label resolves to "Load more" (UX-3)
+  // 10. i18n default label resolves to "Load more"
   it('default label resolves from i18n to "Load more"', () => {
     const onLoadMore = vi.fn()
     render(<LoadMoreButton hasMore={true} loading={false} onLoadMore={onLoadMore} />)
@@ -215,7 +215,7 @@ describe('LoadMoreButton', () => {
     expect(btn).toHaveTextContent('Load more')
   })
 
-  // 11. i18n loading label resolves to "Loading…" (UX-3)
+  // 11. i18n loading label resolves to "Loading…"
   it('default loading label resolves from i18n to "Loading…"', () => {
     const onLoadMore = vi.fn()
     render(<LoadMoreButton hasMore={true} loading={true} onLoadMore={onLoadMore} />)
@@ -224,7 +224,7 @@ describe('LoadMoreButton', () => {
     expect(btn).toHaveTextContent('Loading\u2026')
   })
 
-  // 12. Custom labels override i18n defaults (UX-3)
+  // 12. Custom labels override i18n defaults
   it('custom labels override i18n defaults', () => {
     const onLoadMore = vi.fn()
     render(
@@ -240,8 +240,8 @@ describe('LoadMoreButton', () => {
     expect(screen.getByRole('button')).toHaveTextContent('Fetch more')
   })
 
-  // UX-218 progress indicator
-  describe('UX-218 progress indicator', () => {
+  // Progress indicator
+  describe(' progress indicator', () => {
     it('does not render progress when counts are omitted', () => {
       render(<LoadMoreButton hasMore={true} loading={false} onLoadMore={vi.fn()} />)
       expect(screen.queryByTestId('load-more-progress')).not.toBeInTheDocument()

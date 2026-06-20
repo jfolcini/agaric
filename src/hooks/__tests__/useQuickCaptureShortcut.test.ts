@@ -1,7 +1,7 @@
 /**
  * Tests for useQuickCaptureShortcut (#754).
  *
- * The hook owns the FEAT-12 quick-capture chord: lazy-init from
+ * The hook owns the quick-capture chord: lazy-init from
  * localStorage, storage-event rebinds, and — the #754 fix — a sequenced
  * register/unregister IPC chain so StrictMode / HMR mount cycles can't
  * interleave the async calls and leave the chord dead.

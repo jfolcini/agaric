@@ -15,9 +15,9 @@ import {
 /** Helper to reset the store to a clean initial state. */
 function resetStore() {
   resetTabIdCounter()
-  // FEAT-3 Phase 3 — clear the per-space slices alongside the flat fields
+  // Phase 3 — clear the per-space slices alongside the flat fields
   // so tab data from a prior test doesn't leak in via the selector fall-
-  // back path. FEAT-3p4 — `currentViewBySpace` is now persisted alongside
+  // Back path. `currentViewBySpace` is now persisted alongside
   // `currentView`; reset both so view state from a prior test doesn't
   // bleed across cases.
   useNavigationStore.setState({
@@ -38,7 +38,7 @@ function resetStore() {
     scrollToDate: null,
     scrollToPanel: null,
   })
-  // Reset recent-pages store so FEAT-9 hook tests start from an empty MRU.
+  // Reset recent-pages store so hook tests start from an empty MRU.
   useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
 }
 
@@ -74,7 +74,7 @@ describe('useNavigationStore', () => {
       expect(useNavigationStore.getState().currentView).toBe('search')
     })
 
-    it('preserves pageStack and tabs when switching away from page-editor (UX-251)', () => {
+    it('preserves pageStack and tabs when switching away from page-editor', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
         selectedBlockId: 'B1',
@@ -117,7 +117,7 @@ describe('useNavigationStore', () => {
       expect(useNavigationStore.getState().currentView).toBe('page-editor')
     })
 
-    it('preserves tabs across every non-editor view destination (UX-251)', () => {
+    it('preserves tabs across every non-editor view destination', () => {
       const seededTabs = [
         {
           id: '0',
@@ -174,7 +174,7 @@ describe('useNavigationStore', () => {
       }
     })
 
-    it('round-trip setView(journal) -> setView(page-editor) preserves tabs identically (UX-251)', () => {
+    it('round-trip setView(journal) -> setView(page-editor) preserves tabs identically', () => {
       const seededTabs = [
         {
           id: '0',
@@ -214,7 +214,7 @@ describe('useNavigationStore', () => {
       expect(useTabsStore.getState().tabs).toEqual(seededTabs)
     })
 
-    // UX-251: pins that `setView` honours its JSDoc contract at line 56 of
+    // Pins that `setView` honours its JSDoc contract at line 56 of
     // src/stores/navigation.ts — "DON'T clear tabs when leaving page-editor
     // (preserve them)".
     it('setView_preserves_tabs_when_leaving_page_editor_matching_jsdoc_contract', () => {
@@ -329,7 +329,7 @@ describe('useNavigationStore', () => {
     })
 
     // ---------------------------------------------------------------------
-    // UX-242: date-titled pages route to Journal → Daily instead of editor
+    // Date-titled pages route to Journal → Daily instead of editor
     // ---------------------------------------------------------------------
     it('navigateToPage with YYYY-MM-DD title routes to journal daily', () => {
       useTabsStore.getState().navigateToPage('DATE_PAGE', '2026-04-20')
@@ -385,7 +385,7 @@ describe('useNavigationStore', () => {
       expect(journalState.currentDate.getDate()).toBe(1)
     })
 
-    it('navigateToPage to a date title from page-editor preserves tabs and pageStack (UX-251)', () => {
+    it('navigateToPage to a date title from page-editor preserves tabs and pageStack', () => {
       // Start on a regular page so we're in page-editor with a populated stack.
       useTabsStore.getState().navigateToPage('P1', 'Regular Page')
       expect(useNavigationStore.getState().currentView).toBe('page-editor')
@@ -749,11 +749,11 @@ describe('useNavigationStore', () => {
       expect(useNavigationStore.getState().selectedBlockId).toBeNull()
     })
 
-    // FEAT-7 scope item 3: TabBar is hoisted to the app shell so a click on
+    // Scope item 3: TabBar is hoisted to the app shell so a click on
     // any tab from a non-editor view must also flip `currentView` back to
     // 'page-editor' — otherwise the user clicks a tab and nothing visible
     // changes because the editor is not rendered.
-    it('FEAT-7: switching tabs from a non-editor view flips currentView to page-editor', () => {
+    it('switching tabs from a non-editor view flips currentView to page-editor', () => {
       useNavigationStore.setState({
         currentView: 'journal',
         selectedBlockId: null,
@@ -774,7 +774,7 @@ describe('useNavigationStore', () => {
       expect(state.currentView).toBe('page-editor')
     })
 
-    it('FEAT-7: switching tabs from page-editor leaves currentView unchanged', () => {
+    it('switching tabs from page-editor leaves currentView unchanged', () => {
       useTabsStore.getState().navigateToPage('P1', 'Page 1')
       useTabsStore.getState().openInNewTab('P2', 'Page 2')
       expect(useNavigationStore.getState().currentView).toBe('page-editor')
@@ -786,10 +786,10 @@ describe('useNavigationStore', () => {
       expect(state.currentView).toBe('page-editor')
     })
 
-    // FEAT-7: clicking the already-active tab while on a non-editor view is
+    // Clicking the already-active tab while on a non-editor view is
     // NOT a no-op — it should flip back to the editor. (The pure "active
     // tab in editor" no-op branch is still covered above.)
-    it('FEAT-7: clicking the active tab from a non-editor view flips currentView to page-editor', () => {
+    it('clicking the active tab from a non-editor view flips currentView to page-editor', () => {
       useNavigationStore.setState({
         currentView: 'journal',
         selectedBlockId: null,
@@ -845,7 +845,7 @@ describe('useNavigationStore', () => {
       expect(selectPageStack(useTabsStore.getState())).toEqual([])
     })
 
-    it('setView to non-editor preserves stack; navigate appends onto it (UX-251)', () => {
+    it('setView to non-editor preserves stack; navigate appends onto it', () => {
       useTabsStore.getState().navigateToPage('P1', 'Page 1')
       useTabsStore.getState().navigateToPage('P2', 'Page 2')
 
@@ -924,7 +924,7 @@ describe('useNavigationStore', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // persistence (MAINT-127 — split across two storage keys)
+  // Persistence (split across two storage keys)
   //
   // After the navigation/tabs split, persisted state lives under TWO keys:
   //   - `agaric:navigation` (version 2): currentView only
@@ -953,10 +953,10 @@ describe('useNavigationStore', () => {
       expect(raw).not.toBeNull()
 
       const parsed = JSON.parse(raw as string)
-      // FEAT-3p4 bumped the persist version 2 → 3 to add `currentViewBySpace`.
+      // Bumped the persist version 2 → 3 to add `currentViewBySpace`.
       expect(parsed.version).toBe(3)
       expect(parsed.state.currentView).toBe('search')
-      // FEAT-3p4 — `currentViewBySpace` is also persisted alongside the flat
+      // `currentViewBySpace` is also persisted alongside the flat
       // mirror so the per-space slice survives reloads.
       expect(parsed.state).toHaveProperty('currentViewBySpace')
       // Tabs do NOT bleed into the navigation slot post-split.
@@ -1056,7 +1056,7 @@ describe('useNavigationStore', () => {
     })
 
     it('navigation v1→v2 migrate strips tab fields from legacy persisted blob', () => {
-      // Simulate a pre-MAINT-127 user who had tabs persisted under the
+      // Simulate a pre- user who had tabs persisted under the
       // navigation key. The v2 migrate function drops them — users get a
       // fresh tab list on first post-split boot (documented one-time UX
       // cost; tabs.ts starts empty since `agaric:tabs` is not set).
@@ -1214,9 +1214,9 @@ describe('useNavigationStore', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // FEAT-9: navigateToPage → useRecentPagesStore.recordVisit integration
+  // NavigateToPage → useRecentPagesStore.recordVisit integration
   // ---------------------------------------------------------------------------
-  describe('FEAT-9 recentPages recordVisit hook', () => {
+  describe(' recentPages recordVisit hook', () => {
     beforeEach(() => {
       useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
     })
@@ -1487,9 +1487,9 @@ describe('useNavigationStore', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // FEAT-3 Phase 3 — per-space tab partitioning
+  // Phase 3 — per-space tab partitioning
   // ---------------------------------------------------------------------------
-  describe('FEAT-3p3 per-space tabs', () => {
+  describe(' per-space tabs', () => {
     beforeEach(() => {
       // Each per-space test drives `useSpaceStore` directly. Reset it
       // back to "no active space" between cases so the subscriber never
@@ -1592,7 +1592,7 @@ describe('useNavigationStore', () => {
     it('rehydrate with stale currentSpaceId (no slice) does not crash', () => {
       // Persisted shape has tabsBySpace + activeTabIndexBySpace but the
       // user's current space is no longer a key. This is the
-      // "deleted-on-another-device" path. Post-MAINT-127 the per-space
+      // "deleted-on-another-device" path. Post- the per-space
       // partition lives under `agaric:tabs`, so we seed THAT key.
       const TABS_KEY = 'agaric:tabs'
       const persistedTabs = {
@@ -1645,7 +1645,7 @@ describe('useNavigationStore', () => {
       expect(parsed.state.activeTabIndexBySpace['space-1']).toBe(2)
     })
 
-    // MAINT-127 — pre-split users had tabs persisted under the navigation
+    // Pre-split users had tabs persisted under the navigation
     // key. The simpler migration strategy adopted for the split is to just
     // drop those tab fields on first post-split boot and let the new tabs
     // store start from defaults. Verifies the v1→v2 navigation migration
@@ -1691,7 +1691,7 @@ describe('useNavigationStore', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // MAINT-127 — cross-store coordination
+  // Cross-store coordination
   //
   // The split is asymmetric: tab actions in `useTabsStore` may IMPLY view
   // changes (calling `useNavigationStore.getState().setView(...)` directly);
@@ -1699,7 +1699,7 @@ describe('useNavigationStore', () => {
   // tests pin the asymmetry at the action boundary so a future refactor that
   // breaks it fails loudly.
   // ---------------------------------------------------------------------------
-  describe('MAINT-127 cross-store coordination', () => {
+  describe(' cross-store coordination', () => {
     it('cross_store_coord_navigateToPage_flips_currentView_maint127', () => {
       // Start from a non-editor view.
       useNavigationStore.getState().setView('pages')
@@ -1766,9 +1766,9 @@ describe('useNavigationStore', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // FEAT-3p4 — per-space currentView
+  // Per-space currentView
   // ---------------------------------------------------------------------------
-  describe('FEAT-3p4 per-space currentView', () => {
+  describe(' per-space currentView', () => {
     beforeEach(() => {
       // Each per-space test drives `useSpaceStore` directly. Reset it
       // back to "no active space" between cases so the subscriber never
@@ -1861,7 +1861,7 @@ describe('useNavigationStore', () => {
       // Switch to fresh space-2.
       useSpaceStore.setState({ currentSpaceId: 'space-2' })
 
-      // Default for fresh spaces is `page-editor` per the FEAT-3p4 spec.
+      // Default for fresh spaces is `page-editor` per the spec.
       expect(useNavigationStore.getState().currentView).toBe('page-editor')
     })
 

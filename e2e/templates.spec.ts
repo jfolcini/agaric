@@ -9,7 +9,7 @@ import {
   waitForBoot,
 } from './helpers'
 
-// TEST-1a: template-lifecycle tests chain create/remove/apply template
+// Template-lifecycle tests chain create/remove/apply template
 // sequences inside a describe — serial run prevents cross-test mock-state
 // interleaving under fullyParallel.
 test.describe.configure({ mode: 'serial' })
@@ -82,7 +82,7 @@ test.describe('Save page as template', () => {
     await openPage(page, 'Getting Started')
     await openKebabMenu(page)
 
-    // TEST-1b: the kebab menu is a Radix Popover; scope to the active
+    // The kebab menu is a Radix Popover; scope to the active
     // popover-content so a stale portal from a previous test can't match.
     await expect(activePopover(page).getByText('Save as template')).toBeVisible()
   })

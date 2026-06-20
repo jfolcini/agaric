@@ -1,5 +1,5 @@
 /**
- * QuickCaptureRow — `t('settings.quickCapture.label')` row inside the General settings tab (FEAT-12).
+ * QuickCaptureRow — `t('settings.quickCapture.label')` row inside the General settings tab.
  *
  * Surfaces the user-configured global hotkey and an `t('settings.quickCapture.editButton')` button.
  * Clicking edit opens an inline editor (Input + Save / Cancel) where
@@ -19,7 +19,7 @@
  * actually surfaces "this chord conflicts" feedback in real time.
  *
  * Hidden entirely on mobile PLATFORMS (`isMobilePlatform()` — the coarse
- * UA capability check from `@/lib/platform`), matching FEAT-12's
+ * UA capability check from `@/lib/platform`), matching
  * desktop-only requirement. This is a CAPABILITY gate, not a layout one:
  * the chord it configures is wired to `registerGlobalShortcut`, which
  * no-ops on the same `isMobilePlatform()` check (the underlying

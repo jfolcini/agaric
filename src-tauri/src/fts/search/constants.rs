@@ -21,7 +21,7 @@ pub(crate) const SNIPPET_SQL_PROJECTION: &str =
     "snippet(fts_blocks, 1, '\u{E000}', '\u{E001}', '…', 32) as snippet";
 
 // ---------------------------------------------------------------------------
-// PEND-70 — per-FTS-query timing thresholds
+// Per-FTS-query timing thresholds
 // ---------------------------------------------------------------------------
 
 /// Per-FTS-query wall-time threshold at which [`fts_fetch_rows`] emits
@@ -29,7 +29,7 @@ pub(crate) const SNIPPET_SQL_PROJECTION: &str =
 /// sit comfortably above a warm-cache FTS5 trigram scan yet well below
 /// the 1 s `warn!` budget — it surfaces "the cache is cold and the query
 /// is doing real work" without spamming on every keystroke. It is a
-/// log-only breadcrumb, not a budget the code enforces. SQL-7 (PEND-58f):
+/// Log-only breadcrumb, not a budget the code enforces.:
 /// this is a design figure, not a benchmarked value; see
 /// `benches/fts_bench.rs` if you want to derive a measured floor.
 ///
@@ -37,8 +37,8 @@ pub(crate) const SNIPPET_SQL_PROJECTION: &str =
 pub(crate) const FTS_QUERY_INFO_MS: u128 = 200;
 
 /// Per-FTS-query wall-time threshold at which [`fts_fetch_rows`] emits
-/// a `warn!`. SQL-7 (PEND-58f) — 1 s is a **round design figure**
-/// (the PEND-70 design's recommended ceiling), NOT a benchmarked value;
+/// A `warn!`. 1 s is a **round design figure**
+/// (the design's recommended ceiling), NOT a benchmarked value;
 /// the earlier "measured starting point" wording overstated its
 /// provenance. It is log-only — nothing aborts at this threshold. If CI
 /// runners observe legitimate cold-cache scans crossing this floor on the
@@ -56,10 +56,10 @@ pub(crate) const FTS_QUERY_WARN_MS: u128 = 1_000;
 /// Maximum number of results returned from a single search query, regardless
 /// of the client-supplied page limit.  Prevents unbounded result sets.
 ///
-/// PEND-61 Phase 1 — also used by [`search_fts_partitioned`] as the
+/// Phase 1 — also used by [`search_fts_partitioned`] as the
 /// ceiling on the combined `page_limit + block_limit` fetch.
 ///
-/// PEND-58f BE-2 — re-exported via `crate::fts` so the partitioned IPC
+/// BE-2 — re-exported via `crate::fts` so the partitioned IPC
 /// command can validate `page_limit` / `block_limit` against the same
 /// ceiling and **reject** (not silently cap) an over-limit request,
 /// matching the cursor path's `PageRequest::new` contract.
@@ -67,7 +67,7 @@ pub(crate) const FTS_QUERY_WARN_MS: u128 = 1_000;
 /// [`search_fts_partitioned`]: super::partitioned::search_fts_partitioned
 pub(crate) const MAX_SEARCH_RESULTS: i64 = 100;
 
-/// SQL-4 (PEND-58f) — maximum byte length of a raw FTS query string.
+/// Maximum byte length of a raw FTS query string.
 ///
 /// The regex-mode path already rejects patterns over [`MAX_PATTERN_LEN`]
 /// (1 KiB) up front via `build_regex`; the FTS path had no equivalent

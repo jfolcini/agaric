@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-// PEND-37: drop-indicator assertion reads `style.marginLeft` which contains
+// Drop-indicator assertion reads `style.marginLeft` which contains
 // `calc(var(--indent-width) * N)`. happy-dom's CSS parser rejects `var()` and
 // `calc()` so the property never lands. Pin to jsdom.
 
 /**
- * Tests for SortableBlockWrapper component (MAINT-55).
+ * Tests for SortableBlockWrapper component.
  *
  * Validates the per-row branching that was extracted from
  * BlockListRenderer:
@@ -17,7 +17,7 @@
  *  - axe a11y
  *
  * Per-block action callbacks and reference resolvers no longer flow
- * through SortableBlockWrapper as props (MAINT-118) — they're published
+ * Through SortableBlockWrapper as props — they're published
  * via `BlockActionsProvider` / `BlockResolversProvider`. The tests
  * covering callback gating live with SortableBlock now.
  */

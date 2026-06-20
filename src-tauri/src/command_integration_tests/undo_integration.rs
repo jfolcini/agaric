@@ -654,7 +654,7 @@ async fn undo_property_change_restores_prior_value() {
     );
 }
 
-/// MAINT-214 (b): `apply_reverse_in_tx` for `OpPayload::MoveBlock`
+/// `apply_reverse_in_tx` for `OpPayload::MoveBlock`
 /// must refresh the denormalised `page_id` column synchronously,
 /// mirroring the M6 fix in `move_block_inner`
 /// (`commands/blocks/move_ops.rs:174-231`). Pre-fix, undoing a
@@ -671,7 +671,7 @@ async fn undo_property_change_restores_prior_value() {
 ///    sync-update behaviour we are testing.
 /// 4. Undo the move via `undo_page_op_inner`. The reverse payload is
 ///    a `MoveBlock` putting the leaf back under `page_a`. With the
-///    MAINT-214 (b) fix, `apply_reverse_in_tx` synchronously rewrites
+/// (b) fix, `apply_reverse_in_tx` synchronously rewrites
 ///    `leaf.page_id = page_a`. Without the fix the column stays at
 ///    `page_b` (async catch-up is blocked).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -750,7 +750,7 @@ async fn undo_move_block_synchronously_refreshes_page_id() {
     );
 
     // Shut the materialiser down so async RebuildPageIds cannot
-    // catch up — only the sync MAINT-214 (b) fix can produce the
+    // Catch up — only the sync (b) fix can produce the
     // expected post-state.
     mat.shutdown();
 
@@ -773,7 +773,7 @@ async fn undo_move_block_synchronously_refreshes_page_id() {
     assert_eq!(
         leaf_page_after_undo.as_deref(),
         Some(page_a.id.as_str()),
-        "MAINT-214 (b): apply_reverse_in_tx for MoveBlock must \
+        "apply_reverse_in_tx for MoveBlock must \
          synchronously refresh page_id back to page_a — async \
          RebuildPageIds is blocked by the materialiser shutdown"
     );

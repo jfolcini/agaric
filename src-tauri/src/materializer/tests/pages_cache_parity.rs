@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// PEND-56b — `pages_cache.{inbound_link_count,child_block_count}` parity
+// `pages_cache.{inbound_link_count,child_block_count}` parity
 // ---------------------------------------------------------------------------
 //
 // These tests assert that the materialised count columns added by
@@ -10,7 +10,7 @@
 // Strategy: seed a fixture, run a series of materializer ops via
 // `handle_foreground_task` + `handle_background_task`, and after each
 // step recompute the canonical aggregates from the raw data and compare
-// to the cached columns. Drift here is the cliff PEND-56b is closing.
+// To the cached columns. Drift here is the cliff is closing.
 
 use super::*;
 use crate::materializer::handlers::{handle_background_task, handle_foreground_task};
@@ -266,7 +266,7 @@ async fn delete_restore_updates_child_count() {
 
 /// Multi-page fixture with mixed link patterns; exercises every
 /// op kind and asserts parity at every step. The fixture is
-/// intentionally small (10 pages instead of the 1000 PEND-56b
+/// Intentionally small (10 pages instead of the 1000
 /// proposed) — the parity contract is op-agnostic, so the same
 /// invariants would hold at any scale. Larger fixtures slow the
 /// CI loop without adding coverage.

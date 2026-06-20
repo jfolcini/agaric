@@ -94,12 +94,12 @@ export function LinkEditPopover({
         .run()
     }
 
-    // Exit the link mark so subsequent typing is plain text (UX-177)
+    // Exit the link mark so subsequent typing is plain text
     const linkMarkType = editor.schema.marks['link']
     if (linkMarkType) {
       editor.view.dispatch(editor.state.tr.removeStoredMark(linkMarkType))
     }
-    // Fire-and-forget: prefetch metadata for the applied URL (UX-165)
+    // Fire-and-forget: prefetch metadata for the applied URL
     fetchMeta(normalized).catch((err: unknown) => {
       logger.warn('LinkEditPopover', 'link metadata prefetch failed', { url: normalized }, err)
     })

@@ -1,5 +1,5 @@
 /**
- * PEND-17 Part B regression guard: the `comparedToCurrent` diff fetch
+ * Part B regression guard: the `comparedToCurrent` diff fetch
  * must NOT be self-cancelled by its own `setComparedLoading(true)`
  * triggering a re-run of the effect that owns the in-flight promise.
  *
@@ -34,7 +34,7 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-describe('PEND-17 Part B compareDiff regression', () => {
+describe(' Part B compareDiff regression', () => {
   it('renders comparedToCurrent diff after async fetch resolves (no stuck spinner)', async () => {
     const user = userEvent.setup()
     const page = {

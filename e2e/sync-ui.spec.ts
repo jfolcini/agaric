@@ -1,13 +1,13 @@
 import { expect, test } from './helpers'
 
-// TEST-1a: sync UI tests share mocked peer / pairing state within the
+// Sync UI tests share mocked peer / pairing state within the
 // describe block and are sensitive to parallel mock-state collisions.
 test.describe.configure({ mode: 'serial' })
 
 test.describe('Sync UI', () => {
   // --- StatusPanel (materializer + sync summary) -------------------------
   //
-  // UX-143 moved DeviceManagement out of StatusPanel; the panel now only
+  // Moved DeviceManagement out of StatusPanel; the panel now only
   // exposes materializer stats and a high-level sync summary. The two
   // assertions below target what actually lives in StatusPanel today.
   test.describe('Status panel', () => {
@@ -31,7 +31,7 @@ test.describe('Sync UI', () => {
 
   // --- DeviceManagement (Settings → Sync & Devices) ----------------------
   //
-  // UX-143: DeviceManagement was removed from StatusPanel and kept only in
+  // DeviceManagement was removed from StatusPanel and kept only in
   // SettingsView under the "Sync & Devices" tab. All pairing / device-id /
   // paired-peer-list surfaces now live here.
   test.describe('Device management', () => {

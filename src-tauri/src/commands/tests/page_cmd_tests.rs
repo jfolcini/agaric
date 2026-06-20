@@ -103,7 +103,7 @@ async fn set_page_aliases_skips_empty_and_duplicates() {
     );
 }
 
-// M-21: `set_page_aliases_inner` wraps DELETE + INSERT in a single
+// `set_page_aliases_inner` wraps DELETE + INSERT in a single
 // `BEGIN IMMEDIATE` transaction so that a mid-loop failure rolls the
 // page back to its prior alias set instead of leaving a partial
 // replacement. The three tests below exercise:
@@ -179,7 +179,7 @@ async fn set_page_aliases_empty_clears_all() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_page_aliases_in_transaction() {
-    // Regression for M-21: if a per-row INSERT fails mid-loop, the
+    // Regression for if a per-row INSERT fails mid-loop, the
     // entire DELETE + INSERT sequence must roll back so the page
     // retains its original alias set. We force the failure with a
     // temporary BEFORE-INSERT trigger that calls RAISE(ABORT) on a
@@ -407,14 +407,14 @@ async fn resolve_page_by_alias_case_insensitive() {
 }
 
 // ======================================================================
-// list_page_aliases_by_prefix (PEND-34)
+// List_page_aliases_by_prefix
 // ======================================================================
 //
 // Prefix-indexed alias autocomplete used by the `[[` page-link picker.
 // Mirrors the `list_tags_by_prefix_inner_*` test trio: returns matches,
 // case-insensitive, soft-delete excluded, limit honoured, exact-first
 // ordering by length, escape-like correctness for `_` / `%` literals.
-// Plus PEND-34 Q3 — active-space scoping when `space_id` is `Some`.
+// Plus active-space scoping when `space_id` is `Some`.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_page_aliases_by_prefix_inner_returns_matching() {
@@ -634,7 +634,7 @@ async fn list_page_aliases_by_prefix_inner_matches_substring() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_page_aliases_by_prefix_inner_escapes_like_metachars() {
-    // Mirrors PERF-27's `filter_property_text_contains_pushed_into_sql`:
+    // Mirrors `filter_property_text_contains_pushed_into_sql`:
     // a literal `_` in the query must be matched as a literal, not as
     // SQLite's LIKE single-char wildcard. Without `escape_like` the
     // query `a_b` would also match `axb`, `a-b`, etc. — the test pins
@@ -665,8 +665,8 @@ async fn list_page_aliases_by_prefix_inner_escapes_like_metachars() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_page_aliases_by_prefix_inner_scopes_to_active_space() {
-    // PEND-34 Q3 — when `space_id` is Some, only aliases whose page
-    // carries `space = ?space_id` may surface. Mirrors the FEAT-3p4
+    // When `space_id` is Some, only aliases whose page
+    // Carries `space = ?space_id` may surface. Mirrors the
     // `(? IS NULL OR ... IN (...))` short-circuit applied elsewhere in
     // the picker so cross-space aliases don't leak into the popup.
     let (pool, _dir) = test_pool().await;
@@ -710,7 +710,7 @@ async fn list_page_aliases_by_prefix_inner_scopes_to_active_space() {
 // export_page_markdown (#519)
 // ======================================================================
 //
-// M-27 — `export_page_markdown_inner` walks the full descendant subtree
+// `export_page_markdown_inner` walks the full descendant subtree
 // via the denormalised `blocks.page_id` column rather than the
 // `parent_id` direct-children filter. The raw `insert_block` helper
 // bypasses the materializer, so each export test must call
@@ -872,7 +872,7 @@ async fn export_page_markdown_resolves_page_link_ulids() {
 }
 
 // ======================================================================
-// M-27 — descendant pagination & batched ref-resolution
+// Descendant pagination & batched ref-resolution
 // ======================================================================
 //
 // Pre-fix `export_page_markdown_inner` walked direct children only with
@@ -1673,10 +1673,10 @@ async fn import_markdown_frontmatter_ref_is_space_scoped_1432() {
 }
 
 // ======================================================================
-// export_page_markdown — error paths (TEST-11)
+// Export_page_markdown — error paths
 // ======================================================================
 //
-// TEST-11 — Pre-fix `export_page_markdown_inner` had 6 happy-path tests
+// Pre-fix `export_page_markdown_inner` had 6 happy-path tests
 // (above) and zero error coverage.  Per AGENTS.md "Backend test
 // patterns": every command needs at least nonexistent-id → NotFound
 // and invalid-input → Validation pins so a refactor cannot silently
@@ -1686,12 +1686,12 @@ async fn import_markdown_frontmatter_ref_is_space_scoped_1432() {
 // preserving the message would slip past a substring check).
 //
 // Two of the three pins surface production findings that the parent
-// agent should triage as TEST-11 follow-ups (each is documented
+// Agent should triage as follow-ups (each is documented
 // inline, in the test it shows up in):
 //   1. Soft-deleted pages export as `# title\n\n` (Ok), not NotFound —
 //      `get_block_inner` does not filter `deleted_at`, and there is no
 //      explicit check inside `export_page_markdown_inner` either.
-//      RESOLVED via M-98: `export_page_markdown_inner` now calls
+// RESOLVED via `export_page_markdown_inner` now calls
 //      `get_active_block_inner`, which filters `deleted_at IS NULL`,
 //      so soft-deleted pages surface as `Err(NotFound)`. The test
 //      below was flipped to assert the new contract.
@@ -1700,9 +1700,9 @@ async fn import_markdown_frontmatter_ref_is_space_scoped_1432() {
 //      because the function never invokes `BlockId::from_string` to
 //      reject the input as Validation up front.
 
-/// TEST-11 — Pin the NotFound variant when the page id is absent.
+/// Pin the NotFound variant when the page id is absent.
 /// `export_page_markdown_inner` calls `get_active_block_inner` first
-/// (M-98), which returns `AppError::NotFound` for a `WHERE id = ? AND
+/// Which returns `AppError::NotFound` for a `WHERE id = ? AND
 /// deleted_at IS NULL` miss; if a future refactor swaps that for an
 /// `Internal` (e.g. by ignoring the result and falling through to the
 /// markdown builder), this test fails.
@@ -1719,7 +1719,7 @@ async fn export_page_markdown_inner_with_nonexistent_id_returns_not_found() {
     );
 }
 
-/// TEST-11 — Pin the variant when the supplied id refers to a
+/// Pin the variant when the supplied id refers to a
 /// non-page block (e.g. a `content` row).  The production code's
 /// explicit `if page.block_type != "page"` branch returns
 /// `AppError::Validation("not a page".into())`; pinning the variant
@@ -1750,12 +1750,12 @@ async fn export_page_markdown_inner_with_non_page_block_returns_validation() {
     );
 }
 
-/// TEST-11 / M-98 — Pin that a soft-deleted page is no longer
+/// / Pin that a soft-deleted page is no longer
 /// exportable. Pre-fix, `export_page_markdown_inner` called
 /// `get_block_inner` (no `deleted_at` filter) so a soft-deleted page
 /// exported as `# Title\n\n` with no descendants — title-only
 /// content because the descendant walk *did* filter `deleted_at IS
-/// NULL`. M-98 switched the page-row fetch to
+/// NULL`. switched the page-row fetch to
 /// `get_active_block_inner`, which adds the same predicate, so the
 /// export now surfaces as `Err(NotFound)`. This test pins the new
 /// contract so a future regression that re-introduces the leak is
@@ -1800,15 +1800,15 @@ async fn export_page_markdown_inner_with_soft_deleted_page_returns_not_found() {
 
     let result = export_page_markdown_inner(&pool, page.id.as_str()).await;
 
-    // M-98 — soft-deleted pages must surface as NotFound, not as a
+    // Soft-deleted pages must surface as NotFound, not as a
     // partial title-only export.
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
-        "soft-deleted page export must return AppError::NotFound (M-98), got: {result:?}"
+        "soft-deleted page export must return AppError::NotFound, got: {result:?}"
     );
 }
 
-/// L-136 — Pin the variant returned for a malformed page id.
+/// Pin the variant returned for a malformed page id.
 /// `export_page_markdown_inner` now validates ULID format upfront via
 /// `BlockId::from_string(page_id)?`, so malformed inputs surface as
 /// `AppError::Ulid` (precise) rather than `AppError::NotFound` (imprecise,
@@ -1824,7 +1824,7 @@ async fn export_page_markdown_inner_with_malformed_id_returns_ulid_error() {
 
     assert!(
         matches!(result, Err(AppError::Ulid(_))),
-        "malformed page id must surface as Ulid (L-136 upfront validation) — got: {result:?}"
+        "malformed page id must surface as Ulid (upfront validation) — got: {result:?}"
     );
 }
 
@@ -1836,7 +1836,7 @@ async fn export_page_markdown_inner_with_malformed_id_returns_ulid_error() {
 async fn import_markdown_creates_page_and_blocks() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    // PEND-35 Tier 1.1 — `import_markdown_inner` now requires a valid
+    // `import_markdown_inner` now requires a valid
     // space_id. Seed the synthetic test space and stamp `is_space=true`.
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
@@ -1876,7 +1876,7 @@ async fn import_markdown_handles_properties() {
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
 
-    // BUG-20: values must be in the seeded options:
+    // Values must be in the seeded options:
     //   priority: ["1","2","3"]; status: ["active","paused","done","archived"]
     let content = "- Task\n  priority:: 1\n  status:: done";
     let result = import_markdown_inner(
@@ -2002,7 +2002,7 @@ async fn import_markdown_empty_content() {
 }
 
 // ======================================================================
-// #128 (PEND-38 / PEND-06 Tier 3) — import progress streaming
+// #128 — import progress streaming
 // ======================================================================
 
 /// Test recorder for [`ImportProgressUpdate`] events, mirroring
@@ -2205,7 +2205,7 @@ async fn import_markdown_single_transaction() {
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
 
-    // BUG-20: values must be in the seeded options:
+    // Values must be in the seeded options:
     //   priority: ["1","2","3"]; status: ["active","paused","done","archived"]
     let content = "- Parent block\n  priority:: 1\n  status:: active\n  - Child A\n  - Child B\n    - Grandchild";
     let result = import_markdown_inner(
@@ -2318,7 +2318,7 @@ async fn import_markdown_single_transaction() {
     assert_eq!(props[0].1, "active");
 
     // Verify op_log entries: 1 page + 1 set_property(space) for the
-    // page (PEND-35 Tier 1.1) + 4 blocks + 2 properties = 8 ops
+    // Page + 4 blocks + 2 properties = 8 ops
     let op_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
         .bind(DEV)
         .fetch_one(&pool)
@@ -2332,7 +2332,7 @@ async fn import_markdown_single_transaction() {
     mat.shutdown();
 }
 
-/// L-30: a per-property validation error mid-import must abort the
+/// A per-property validation error mid-import must abort the
 /// whole transaction. No page, no blocks, no properties, no op_log
 /// entries should land in the DB. The import returns `Err(...)` rather
 /// than swallowing the failure into `result.warnings`.
@@ -2655,19 +2655,19 @@ async fn import_markdown_commits_chunks_visible_to_separate_reader_662() {
 }
 
 // ======================================================================
-// PEND-35 Tier 1.1 — `import_markdown_inner` stamps `space` property
+// `import_markdown_inner` stamps `space` property
 // ======================================================================
 //
-// Pre-PEND-35, `import_markdown_inner` created a page block but never
+// Pre-`import_markdown_inner` created a page block but never
 // appended a `SetProperty(key='space', value_ref=<space>)` op. Imported
 // pages were therefore invisible to space-scoped reads
-// (`list_blocks_inner`, `get_page_inner`) and broke the FEAT-3 invariant
+// (`list_blocks_inner`, `get_page_inner`) and broke the invariant
 // "nothing outside of spaces". The fix mirrors `create_page_in_space_inner`:
 // validate `space_id` upfront inside the same `BEGIN IMMEDIATE` tx, then
 // append the `SetProperty(space=...)` op right after the `CreateBlock` so
 // the page never lands without its space.
 
-/// PEND-35 Tier 1.1 — happy path: imported page must carry `space =
+/// Happy path: imported page must carry `space =
 /// ?space_id` in `block_properties`. Without the fix, the page would
 /// land with no `space` property at all.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2711,13 +2711,13 @@ async fn import_markdown_stamps_space_property() {
         space_ref.as_deref(),
         Some(TEST_SPACE_ID),
         "imported page's `space_id` must point to the requested space \
-         (PEND-35 Tier 1.1: orphan-page fix)"
+         (orphan-page fix)"
     );
 
     mat.shutdown();
 }
 
-/// PEND-35 Tier 1.1 — invalid space rejection: passing a ULID that does
+/// Invalid space rejection: passing a ULID that does
 /// not refer to a live block carrying `is_space = 'true'` must surface as
 /// `AppError::Validation` and leave the DB unchanged. Mirrors
 /// `create_page_in_space_rejects_nonexistent_space` in spaces.rs.
@@ -2780,17 +2780,17 @@ async fn import_markdown_rejects_invalid_space() {
 }
 
 // ======================================================================
-// PEND-35 Tier 1.2 — `resolve_page_by_alias_inner` SpaceScope
+// `resolve_page_by_alias_inner` SpaceScope
 // ======================================================================
 //
-// Pre-PEND-35, the inner took only `alias: &str` and the SQL had no
+// Pre-the inner took only `alias: &str` and the SQL had no
 // `space` predicate, so an alias matching a foreign-space page would
 // surface in the active space's UI (cross-space leak in SearchPanel /
 // PageBrowser). The fix takes a `&SpaceScope` and applies the same
 // `(?N IS NULL OR pa.page_id IN (SELECT bp.block_id ...))` short-circuit
 // `list_page_aliases_by_prefix_inner` already uses.
 
-/// PEND-35 Tier 1.2 — two pages in two spaces share a single alias. A
+/// Two pages in two spaces share a single alias. A
 /// scoped resolve must surface only the page belonging to that scope;
 /// the unscoped (Global) resolve still returns one match (the page that
 /// won the `INSERT OR IGNORE` race for the alias row).
@@ -2850,7 +2850,7 @@ async fn resolve_page_by_alias_active_scope_excludes_other_spaces() {
     assert!(
         b_from_a.is_none(),
         "Active(A) MUST NOT surface a page that lives in B \
-         (PEND-35 Tier 1.2: cross-space leak fix)"
+         (cross-space leak fix)"
     );
 
     // Scoped to B: mirror image — only B's alias surfaces.
@@ -2877,10 +2877,10 @@ async fn resolve_page_by_alias_active_scope_excludes_other_spaces() {
     assert!(
         a_from_b.is_none(),
         "Active(B) MUST NOT surface a page that lives in A \
-         (PEND-35 Tier 1.2: cross-space leak fix)"
+         (cross-space leak fix)"
     );
 
-    // SpaceScope::Global: the unscoped path keeps pre-PEND-35 behaviour
+    // SpaceScope::Global: the unscoped path keeps pre- behaviour
     // — both aliases still resolve, regardless of which space the page
     // lives in. Confirms the filter is opt-in and does not regress the
     // MCP / agent paths that span every space.
@@ -3610,7 +3610,7 @@ async fn list_page_links_optimized_matches_oracle() {
     mat.shutdown();
 }
 
-// PEND-18 Phase 2 — parity test: `&SpaceScope::Global` reproduces the
+// Phase 2 — parity test: `&SpaceScope::Global` reproduces the
 // pre-migration `space_id: None` behaviour bit-for-bit. Fixtures span
 // two spaces with intra-space and cross-space links; the global query
 // must surface every edge regardless of where its endpoints live, which
@@ -3685,7 +3685,7 @@ async fn list_page_links_inner_global_matches_legacy_none_pend18() {
     assert_eq!(scope_b.len(), 1, "Active(B) keeps the within-B edge only");
 }
 
-// PEND-35 Tier 4.5 — `tag_ids` filter pushes the GraphView tag-filter
+// `tag_ids` filter pushes the GraphView tag-filter
 // predicate into SQL: only edges whose **target page** carries one of
 // the listed tags surface. Pre-Tier-4.5 the renderer fetched every
 // space-wide edge and JS-discarded any whose endpoint was not in the
@@ -3819,7 +3819,7 @@ async fn list_page_links_filters_by_tag_ids() {
     mat.shutdown();
 }
 
-// PEND-35 Tier 4.5 — control test: `tag_ids = None` is identical to the
+// Control test: `tag_ids = None` is identical to the
 // pre-Tier-4.5 behaviour (every edge surfaces). Guards against a
 // regression where `None` accidentally suppresses rows via a planner
 // quirk in the `(?2 IS NULL OR …)` short-circuit.
@@ -3929,7 +3929,7 @@ async fn list_page_links_no_tag_filter_returns_all() {
 }
 
 // ======================================================================
-// page_id tests (FEAT-1)
+// Page_id tests
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -4177,7 +4177,7 @@ async fn rebuild_page_ids_restores_correct_values() {
 }
 
 // ======================================================================
-// PEND-18 Phase 2 — SpaceScope parity test
+// Phase 2 — SpaceScope parity test
 // ======================================================================
 //
 // Asserts that `list_page_aliases_by_prefix_inner` honours the

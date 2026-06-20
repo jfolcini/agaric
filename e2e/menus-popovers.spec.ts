@@ -23,7 +23,7 @@
 import { activePopover, expect, openPage, openSearchView, test, waitForBoot } from './helpers'
 
 // ===========================================================================
-// 1. TabBar dropdown switcher (FEAT-8 / UX-262)
+// 1. TabBar dropdown switcher
 // ===========================================================================
 //
 // The TabBar (src/components/layout/TabBar.tsx) only renders with ≥2 open tabs
@@ -164,7 +164,7 @@ test.describe('SourcePageFilter popover (#1171 surface 2)', () => {
 })
 
 // ===========================================================================
-// 3. FilterHelperPopover — search panel "+ Filter" (PEND-54)
+// 3. FilterHelperPopover — search panel "+ Filter"
 // ===========================================================================
 //
 // FilterHelperPopover (src/components/search/FilterHelperPopover.tsx) anchors
@@ -195,7 +195,7 @@ test.describe('FilterHelperPopover +Filter (#1171 surface 3)', () => {
     await expect(tagForm).toBeVisible()
     await expect(helperMenu).toHaveCount(0)
 
-    // The tag listbox is an ARIA combobox/listbox (UX-A6); seed tags come from
+    // The tag listbox is an ARIA combobox/listbox; seed tags come from
     // list_tags_by_prefix. Applying #work routes through onAddTag and closes
     // the popover (FilterHelperPopover.tsx lines 173-176).
     await tagForm.getByRole('option', { name: '#work' }).click()

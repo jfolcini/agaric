@@ -1,6 +1,6 @@
 /**
  * PageBrowserBatchToolbar — batch-action toolbar for the Pages view
- * (#81 / PEND-57, CORE scope).
+ * (#81 / CORE scope).
  *
  * Sibling component of `PageBrowser`, mirroring the Trash/History batch
  * toolbars: it renders a shared `BatchActionToolbar` with the selection

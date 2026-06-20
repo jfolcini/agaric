@@ -9,7 +9,7 @@ use crate::error::AppError;
 // params per row → `MAX_SQL_PARAMS / 2 = 499` rows per chunk. The
 // chunked `INSERT OR IGNORE` writes 3 columns per row
 // (date, block_id, source) → `MAX_SQL_PARAMS / 3 = 333` rows per chunk.
-// Mirrors the constant in `cache/block_tag_refs.rs` (M-18).
+// Mirrors the constant in `cache/block_tag_refs.rs`.
 const DELETE_CHUNK: usize = MAX_SQL_PARAMS / 2; // 499
 const INSERT_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
 
@@ -21,9 +21,9 @@ const INSERT_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
 const STREAM_BATCH: usize = INSERT_CHUNK; // 333
 
 /// Apply an agenda diff inside an open transaction in chunks bounded by
-/// [`MAX_SQL_PARAMS`] (M-18).
+/// [`MAX_SQL_PARAMS`].
 ///
-/// Plan (a) from the M-18 fix: UPDATEs are folded into the merged
+/// Plan (a) from the fix: UPDATEs are folded into the merged
 /// DELETE + INSERT lists. The PK is `(date, block_id)` so DELETE+INSERT
 /// is equivalent to UPDATE on `source` — and avoids a specialised
 /// chunked UPDATE statement.
@@ -66,7 +66,7 @@ async fn apply_agenda_diff(
 }
 
 // ---------------------------------------------------------------------------
-// Desired-state SQL (L-27)
+// Desired-state SQL
 // ---------------------------------------------------------------------------
 
 /// 4-source UNION ALL projection that computes the desired state of
@@ -102,7 +102,7 @@ async fn apply_agenda_diff(
 /// `ORDER BY` resolves against the result-column list. Callers ignore
 /// the value beyond ordering.
 ///
-/// Template-page filter (FEAT-5a): every source excludes blocks whose
+/// Template-page filter: every source excludes blocks whose
 /// owning page (`b.page_id`, denormalised by migration 0027) carries a
 /// `template` property, so the agenda surface — and the Google Calendar
 /// push layer that consumes it — never sees template scaffolding.
@@ -418,7 +418,7 @@ async fn rebuild_agenda_cache_split_impl(
     // `read_pool` (desired stream + current stream); one writer
     // transaction from `write_pool` for the chunked DELETE / INSERT.
     //
-    // **TOCTOU window (L-25, M-19b).** Each read connection has its own
+    // **TOCTOU window (M-19b).** Each read connection has its own
     // snapshot started at `acquire()`-time, and the write tx is opened
     // after the streams finish. Between any of the three snapshots
     // another writer may mutate `agenda_cache` or `blocks`, so the diff

@@ -23,7 +23,7 @@ import { notify } from '@/lib/notify'
 // Lazy-load QrScanner to avoid bundling html5-qrcode on desktop
 const LazyQrScanner = lazy(() => import('./QrScanner').then((m) => ({ default: m.QrScanner })))
 
-// UX-263: Auto-resume window — even an idle user with focus in an input
+// Auto-resume window — even an idle user with focus in an input
 // must not keep the pairing countdown paused indefinitely. After this many
 // milliseconds without further keystrokes we notify the parent to resume.
 const TYPING_DEBOUNCE_MS = 5000
@@ -41,7 +41,7 @@ export interface PairingEntryFormProps {
   pairLoading: boolean
   isExpired: boolean
   /**
-   * UX-263: Notify the parent dialog when the user starts/stops typing in
+   * Notify the parent dialog when the user starts/stops typing in
    * a passphrase input so the countdown can be paused mid-keystroke. Fires
    * `true` on every keystroke; fires `false` on blur, after a 5s debounce
    * of no keystrokes, and on unmount.
@@ -70,10 +70,10 @@ export function PairingEntryForm({
   onTypingStateChange,
 }: PairingEntryFormProps): React.ReactElement {
   const { t } = useTranslation()
-  // UX-263: Stable id prefix so visible ordinal Labels can htmlFor each input.
+  // Stable id prefix so visible ordinal Labels can htmlFor each input.
   const inputIdPrefix = useId()
 
-  // UX-263: Track the typing-debounce timer so each keystroke resets the
+  // Track the typing-debounce timer so each keystroke resets the
   // 5-second auto-resume window. Stash the latest callback in a ref so the
   // unmount cleanup always sees the most-recent prop reference without
   // re-running on every parent render.
@@ -114,7 +114,7 @@ export function PairingEntryForm({
     [notifyTyping, armTypingDebounce, onWordChange],
   )
 
-  // UX-264: when the QR scanner fails to acquire the camera (typically a
+  // When the QR scanner fails to acquire the camera (typically a
   // permission denial), auto-switch back to manual word entry and surface
   // a toast so the user understands what happened. Without this fallback
   // the user would be stuck looking at an in-scanner error.
@@ -123,7 +123,7 @@ export function PairingEntryForm({
     notify.info(t('pairing.cameraDeniedFallback'))
   }, [onEntryModeChange, t])
 
-  // UX-263: Cleanup — if the form unmounts while the user is mid-typing
+  // Cleanup — if the form unmounts while the user is mid-typing
   // (e.g. parent closes the dialog), clear the pending debounce and tell
   // the parent typing has ended so the countdown isn't left paused.
   useEffect(
@@ -147,7 +147,7 @@ export function PairingEntryForm({
       </div>
 
       {/* Entry mode toggle: QR scan (recommended) vs manual passphrase.
-          UX-376: QR is faster and signposted as the recommended path. */}
+          QR is faster and signposted as the recommended path. */}
       <div className="pairing-entry-toggle flex gap-2 mb-4 justify-center">
         <Button
           variant={entryMode === 'scan' ? 'default' : 'outline'}
@@ -175,12 +175,12 @@ export function PairingEntryForm({
       {entryMode === 'manual' ? (
         <div className="pairing-word-inputs grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
           {(['first', 'second', 'third', 'fourth'] as const).map((slot, i) => {
-            // UX-7: ordinal labels come from i18n (`pairing.ordinal.<slot>`)
+            // Ordinal labels come from i18n (`pairing.ordinal.<slot>`)
             // so they can be localized rather than hardcoded English.
             const ordinal = t(`pairing.ordinal.${slot}`)
             const inputId = `${inputIdPrefix}-pairing-word-${i}`
             return (
-              // UX-263: Each word slot gets a visible ordinal Label so users
+              // Each word slot gets a visible ordinal Label so users
               // can confirm which position they're typing into without
               // relying on placeholders alone.
               <div key={slot} className="pairing-word-slot flex flex-col gap-1">

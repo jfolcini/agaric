@@ -1,5 +1,5 @@
 /**
- * useQuickCaptureShortcut — FEAT-12 OS-level quick-capture chord owner.
+ * UseQuickCaptureShortcut — OS-level quick-capture chord owner.
  *
  * Extracted from App.tsx (#754) so the register/unregister IPC calls can
  * be SEQUENCED. Registers the user-configured chord (default Ctrl+Alt+N
@@ -33,7 +33,7 @@ import {
 import { registerGlobalShortcut, unregisterGlobalShortcut } from '@/lib/tauri'
 
 export function useQuickCaptureShortcut(setQuickCaptureOpen: (open: boolean) => void): void {
-  // FEAT-12: lift the chord into state so the registration effect
+  // Lift the chord into state so the registration effect
   // re-runs when SettingsView changes it. Lazy-init from localStorage
   // so we don't read on every render. The storage-event listener
   // below feeds new chords into this state.

@@ -19,7 +19,7 @@ use crate::space::SpaceScope;
 /// transaction). Returns the originating `(device_id, seq)` pair if any,
 /// shaped to drop straight into [`EditBlockPayload::prev_edit`].
 ///
-/// MAINT-147 (b): extracted to deduplicate the identical query that used
+/// Extracted to deduplicate the identical query that used
 /// to live inline in [`edit_block_inner`] and `commands::drafts::flush_draft_inner`.
 /// Keeping it on a `&mut SqliteConnection` lets both callers pass either
 /// `&mut **CommandTx` (this file) or `&mut *Transaction` (drafts.rs)
@@ -28,7 +28,7 @@ pub(crate) async fn find_prev_edit_in_tx(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
 ) -> Result<Option<(String, i64)>, AppError> {
-    // PEND-20 B.1: query the native `block_id` column (migration 0030)
+    // B.1: query the native `block_id` column (migration 0030)
     // instead of `json_extract(payload, '$.block_id')` so the lookup is
     // index-supported by `idx_op_log_block_id` (migration 0030, line 23)
     // rather than a full op_log scan.
@@ -65,7 +65,7 @@ pub async fn create_block_inner(
     parent_id: Option<BlockId>,
     index: Option<i64>,
 ) -> Result<BlockRow, AppError> {
-    // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    // CommandTx couples commit + post-commit dispatch.
     let parent_id = parent_id.map(BlockId::into_string);
     let mut tx = CommandTx::begin_immediate(pool, "create_block").await?;
     let (block, op_record) =
@@ -75,9 +75,9 @@ pub async fn create_block_inner(
     Ok(block)
 }
 
-/// BUG-1 / H-3a — IPC-tightened `create_block`.
+/// IPC-tightened `create_block`.
 ///
-/// Wraps [`create_block_inner`] with the FEAT-3 invariant
+/// Wraps [`create_block_inner`] with the invariant
 /// "every page belongs to a space". When `block_type == "page"`:
 ///
 /// * `scope == SpaceScope::Global` → return [`AppError::Validation`];
@@ -108,7 +108,7 @@ pub async fn create_block_inner(
 ///   non-page block types.
 // 8 args (one over the clippy threshold of 7) — adding `scope` to the
 // existing 7-arg `create_block_inner` shape is the cleanest way to satisfy
-// the BUG-1 invariant without forcing every non-page caller to flip to a
+// The invariant without forcing every non-page caller to flip to a
 // builder pattern. Restructuring into an args struct would touch hundreds
 // of callsites for zero behavioural gain.
 #[allow(clippy::too_many_arguments)]
@@ -126,7 +126,7 @@ pub async fn create_block_inner_with_space(
     if block_type == "page" {
         let SpaceScope::Active(sid) = scope else {
             return Err(AppError::Validation(
-                "page blocks require space_id (BUG-1 / H-3a): \
+                "page blocks require space_id: \
                  use createPageInSpace or pass the active space's ULID"
                     .to_owned(),
             ));
@@ -135,14 +135,14 @@ pub async fn create_block_inner_with_space(
         // Delegate to the atomic 2-op helper. It emits `CreateBlock` +
         // `SetProperty(space = <sid>)` inside a single
         // `BEGIN IMMEDIATE` transaction so a page never exists without
-        // its space property — the FEAT-3 "nothing outside of spaces"
+        // Its space property — the "nothing outside of spaces"
         // invariant. `position` is intentionally NOT threaded through:
         // `create_page_in_space_inner` mirrors PageBrowser's "New page"
         // semantics (append after last sibling). If a future caller
         // needs explicit positioning for top-level pages we can extend
         // the helper; today no callsite uses it.
         //
-        // MAINT-112: `_inner` now dispatches background cache rebuilds
+        // `_inner` now dispatches background cache rebuilds
         // via `CommandTx::commit_and_dispatch`; the previous re-fetch
         // + loop is gone because the op records never leave the
         // transaction scope.
@@ -160,7 +160,7 @@ pub async fn create_block_inner_with_space(
         // Re-fetch the materialized BlockRow so the caller (Tauri IPC)
         // can return the same shape `create_block_inner` would.
         //
-        // M-98 — `get_active_block_inner` (not `get_block_inner`)
+        // `get_active_block_inner` (not `get_block_inner`)
         // because the row was just inserted by `create_page_in_space_inner`
         // and therefore is not soft-deleted. Using the active variant
         // is consistent with the rest of the public surface and means
@@ -223,7 +223,7 @@ pub async fn edit_block_inner(
     // All reads (block existence, prev_edit lookup) happen inside the tx
     // to prevent TOCTOU races (a concurrent delete_block could soft-delete
     // the block between validation and update, and another edit could make
-    // the prev_edit reference stale). MAINT-112: CommandTx couples commit
+    // The prev_edit reference stale). CommandTx couples commit
     // + post-commit dispatch via `enqueue_edit_background` (the
     // block-type-aware variant that restricts the cache rebuild fan-out).
     let mut tx = CommandTx::begin_immediate(pool, "edit_block").await?;
@@ -245,10 +245,10 @@ pub async fn edit_block_inner(
 
     // 2. Find prev_edit inside transaction (delegates to the shared
     //    helper — same query also used by `flush_draft_inner`; see
-    //    MAINT-147 (b)).
+    // (b)).
     let prev_edit = find_prev_edit_in_tx(&mut tx, &block_id).await?;
 
-    // PEND-76 F5 — referential cross-space integrity: reject an edit that
+    // Referential cross-space integrity: reject an edit that
     // introduces `[[ULID]]` / `#[ULID]` tokens pointing at a block in a
     // different space than this one.
     crate::spaces::cross_space_validation::validate_content_cross_space_refs(
@@ -274,7 +274,7 @@ pub async fn edit_block_inner(
     )
     .await?;
 
-    // 4. #1257 PR-3: route the content write through the SAME engine-apply +
+    // 4. #1257 route the content write through the SAME engine-apply +
     // projection the boot-replay / sync `ApplyOp` path uses, IN this CommandTx,
     // INSTEAD of an inline `UPDATE blocks SET content`. `apply_edit_block_via_loro`
     // resolves the block's space, applies the edit to the per-space Loro engine
@@ -296,7 +296,7 @@ pub async fn edit_block_inner(
     //    The `block_type` hint restricts the rebuild fan-out so content
     //    blocks skip tags/pages cache work.
     //
-    //    PEND-25 L9: wrap once in `Arc` so the dispatch queue borrows
+    // Wrap once in `Arc` so the dispatch queue borrows
     //    the record by refcount (atomic increment) rather than
     //    deep-cloning the owned `String` payloads.
     let op_record = Arc::new(op_record);
@@ -353,7 +353,7 @@ pub async fn delete_block_inner(
     // SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
     // and the actual mutation.
     //
-    // MAINT-30 + MAINT-112: `CommandTx::begin_immediate` inherits the
+    // + `CommandTx::begin_immediate` inherits the
     // slow-acquire tracing from `begin_immediate_logged` AND couples
     // commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "cmd_delete_block").await?;
@@ -369,7 +369,7 @@ pub async fn delete_block_inner(
         )));
     }
 
-    // FEAT-3p6 — refuse to delete a non-empty space. The frontend
+    // Refuse to delete a non-empty space. The frontend
     // SpaceManageDialog already disables the delete button until the space
     // is empty, but a concurrent device creating a page in the same space
     // between the frontend probe and this IPC would otherwise leave the
@@ -437,7 +437,7 @@ pub async fn delete_block_inner(
     .execute(&mut **tx)
     .await?;
 
-    // PEND-26 N2: warn when the cascade walk hit the depth-100 cap so
+    // Warn when the cascade walk hit the depth-100 cap so
     // an operator has a breadcrumb if a pathological tree silently
     // truncated the soft-delete. The cap itself is preserved (invariant
     // #9); we only ADD detection + surfacing here.
@@ -445,7 +445,7 @@ pub async fn delete_block_inner(
         tracing::warn!(
             block_id = %block_id,
             op = "delete_block",
-            "PEND-26 N2: cascade-depth cap reached (>=99 levels); descendants \
+            "cascade-depth cap reached (>=99 levels); descendants \
              below depth 100 were not soft-deleted. Tree is pathologically deep.",
         );
     }
@@ -569,7 +569,7 @@ async fn affected_pages_for_subtrees(
     Ok(unique.into_iter().collect())
 }
 
-/// PEND-35 Tier 2.1 — batch variant of [`delete_block_inner`].
+/// Batch variant of [`delete_block_inner`].
 ///
 /// Soft-deletes every block in `block_ids` plus all their descendants
 /// (via a single recursive CTE seeded from every root) inside one
@@ -586,7 +586,7 @@ async fn affected_pages_for_subtrees(
 /// (deleted_at IS NULL` in the recursive member,
 /// `depth < 100` bound). Because the seed already covers every root
 /// simultaneously, an ancestor's subtree subsumes any selected
-/// descendant — the FE's MAINT-173 ancestor-pre-walk becomes
+/// Descendant — the FE's ancestor-pre-walk becomes
 /// unnecessary (descendant ids that are also in the input set produce
 /// the same union via the recursive walk).
 ///
@@ -607,7 +607,7 @@ async fn affected_pages_for_subtrees(
 /// the cascade root was reached via single-delete or batch-delete).
 ///
 /// **Space-block guard**: the single-row path refuses to delete a
-/// non-empty space (FEAT-3p6). The batch path enforces the same guard
+/// Non-empty space. The batch path enforces the same guard
 /// per root — if any root in the batch is a non-empty space, the
 /// whole tx aborts with `InvalidOperation` (the safer choice: a
 /// "delete everything but skip the space" outcome would silently
@@ -653,7 +653,7 @@ pub async fn delete_blocks_by_ids_inner(
         return Ok(0);
     }
 
-    // FEAT-3p6 mirror — refuse the batch if any root is a non-empty
+    // Mirror — refuse the batch if any root is a non-empty
     // space. Same reasoning as `delete_block_inner`: a partial delete
     // would silently leak orphan pages whose `space` ref dangles. We
     // surface the FIRST offending space + its child count so the
@@ -703,7 +703,7 @@ pub async fn delete_blocks_by_ids_inner(
     // the materialised state) so revert / undo replay against the same
     // rows behaves identically regardless of whether they were deleted
     // via the single or batch path.
-    // #1257 PR-5 — CASCADE engine routing. We must capture each root's
+    // #1257 CASCADE engine routing. We must capture each root's
     // active subtree COHORT and resolve its SPACE *before* the SQL
     // soft-delete UPDATE runs below: `resolve_block_space` filters
     // `deleted_at IS NULL`, so a post-UPDATE resolve returns `None` for
@@ -754,8 +754,8 @@ pub async fn delete_blocks_by_ids_inner(
     // (idempotency). `d.depth < 100` bounds runaway recursion on
     // corrupted parent_id chains.
     //
-    // The seed-from-many shape is the key insight from the PEND-35
-    // audit (Tier 2.1): the FE's MAINT-173 ancestor-pre-walk used
+    // The seed-from-many shape is the key insight from the
+    // Audit (Tier 2.1): the FE's ancestor-pre-walk used
     // to filter selected descendants client-side because each root
     // ran in its own tx; a single CTE that already unions every
     // root's subtree subsumes the same set without the JS pre-walk.
@@ -782,7 +782,7 @@ pub async fn delete_blocks_by_ids_inner(
     .execute(&mut **tx)
     .await?;
 
-    // PEND-26 N2 — surface a per-root saturation warn so a
+    // Surface a per-root saturation warn so a
     // pathological tree under any single root in the batch is still
     // observable. The check itself is cheap (one CTE re-walk per root,
     // no UPDATE) and runs only when the cascade actually fired.
@@ -791,7 +791,7 @@ pub async fn delete_blocks_by_ids_inner(
             tracing::warn!(
                 block_id = %root,
                 op = "delete_blocks_by_ids",
-                "PEND-26 N2: cascade-depth cap reached (>=99 levels); descendants \
+                "cascade-depth cap reached (>=99 levels); descendants \
                  below depth 100 were not soft-deleted. Tree is pathologically deep.",
             );
         }
@@ -813,7 +813,7 @@ pub async fn delete_blocks_by_ids_inner(
 
     tx.commit_and_dispatch(materializer).await?;
 
-    // #1257 PR-5 — POST-COMMIT engine fan-out. Drive each root's
+    // #1257 POST-COMMIT engine fan-out. Drive each root's
     // pre-captured cohort (seed + active descendants) onto the per-space
     // Loro engine using the PRE-UPDATE-captured space id. Mirrors
     // `apply_op`'s `dispatch_delete_descendants` call: the engine's
@@ -822,7 +822,7 @@ pub async fn delete_blocks_by_ids_inner(
     // dead-space-resolution problem (post-delete `resolve_block_space`
     // returns None for every cohort row). Without this the engine would
     // keep the cohort alive while SQL reports it deleted — the #1257
-    // phantom the PR-1 freshness gate refuses to ship. Engine-absent
+    // Phantom the freshness gate refuses to ship. Engine-absent
     // (no `install_for_test` / production-uninit) is a no-op inside the
     // helper; the SQL cascade above stands as the durable outcome.
     for (op_record, cohort, delete_space_id) in &delete_fanout {
@@ -840,7 +840,7 @@ pub async fn delete_blocks_by_ids_inner(
     Ok(result.rows_affected().cast_signed())
 }
 
-/// Tauri command: batch-delete blocks by ids (PEND-35 Tier 2.1).
+/// Tauri command: batch-delete blocks by ids.
 ///
 /// Delegates to [`delete_blocks_by_ids_inner`]. Single IMMEDIATE tx
 /// covers the whole batch — collapses the legacy N-IPC loop in
@@ -858,7 +858,7 @@ pub async fn delete_blocks_by_ids(
         .map_err(sanitize_internal_error)
 }
 
-/// #81 / PEND-57 — bulk move N blocks to a target space (the Pages
+/// #81 / bulk move N blocks to a target space (the Pages
 /// multi-select "move selected to space" action).
 ///
 /// A "space" is a page block flagged `is_space = 'true'`; a block's
@@ -979,7 +979,7 @@ pub async fn move_blocks_to_space_inner(
     Ok(moved)
 }
 
-/// Tauri command: move N blocks to a target space (#81 / PEND-57).
+/// Tauri command: move N blocks to a target space (#81).
 /// Delegates to [`move_blocks_to_space_inner`]. Returns the number of
 /// blocks actually moved.
 #[tauri::command]
@@ -1028,8 +1028,8 @@ pub async fn restore_block_inner(
     // SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
     // and the actual mutation.
     //
-    // MAINT-30: slow-acquire timed via `begin_immediate_logged`.
-    // MAINT-30 + MAINT-112: CommandTx inherits slow-acquire tracing from
+    // Slow-acquire timed via `begin_immediate_logged`.
+    // + CommandTx inherits slow-acquire tracing from
     // begin_immediate_logged AND couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "cmd_restore_block").await?;
 
@@ -1083,7 +1083,7 @@ pub async fn restore_block_inner(
     .execute(&mut **tx)
     .await?;
 
-    // PEND-26 N2: warn when the cascade walk hit the depth-100 cap so
+    // Warn when the cascade walk hit the depth-100 cap so
     // an operator has a breadcrumb if a pathological tree silently
     // truncated the restore. The cap itself is preserved (invariant
     // #9); we only ADD detection + surfacing here.
@@ -1091,12 +1091,12 @@ pub async fn restore_block_inner(
         tracing::warn!(
             block_id = %block_id,
             op = "restore_block",
-            "PEND-26 N2: cascade-depth cap reached (>=99 levels); descendants \
+            "cascade-depth cap reached (>=99 levels); descendants \
              below depth 100 were not restored. Tree is pathologically deep.",
         );
     }
 
-    // PEND-24 M6: refresh `page_id` for the restored subtree synchronously,
+    // Refresh `page_id` for the restored subtree synchronously,
     // mirroring the recursive-CTE UPDATE in `move_block_inner` (see
     // `move_ops.rs:177-234`). The async `RebuildPageIds` task dispatched
     // via `commit_and_dispatch` below stays in place (idempotent — running
@@ -1165,10 +1165,10 @@ pub async fn purge_block_inner(
     // transactions, meaning a crash between them left the op_log recording a
     // purge that never happened.  Now everything is in one atomic tx.
     //
-    // MAINT-30: slow-acquire timed via `begin_immediate_logged`. Purge is
+    // Slow-acquire timed via `begin_immediate_logged`. Purge is
     // the most cascade-heavy write path and the most likely to show
     // contention under load.
-    // MAINT-30 + MAINT-112: CommandTx inherits slow-acquire tracing from
+    // + CommandTx inherits slow-acquire tracing from
     // begin_immediate_logged AND couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "cmd_purge_block").await?;
 
@@ -1189,7 +1189,7 @@ pub async fn purge_block_inner(
         Some(_) => {} // block is deleted, proceed with purge
     }
 
-    // PEND-26 N2: refuse to purge a tree that is so deep the cascade
+    // Refuse to purge a tree that is so deep the cascade
     // would saturate the depth-100 cap. Hard delete must be
     // all-or-nothing — a saturating cascade leaves dangling rows past
     // depth 100. Checked BEFORE the physical delete so the abort is
@@ -1319,7 +1319,7 @@ pub async fn restore_all_deleted_inner(
     device_id: &str,
     materializer: &Materializer,
 ) -> Result<BulkTrashResponse, AppError> {
-    // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "bulk_restore_trash").await?;
 
     // C9 (#345) — derive cascade roots from the op-log when one exists,
@@ -1409,7 +1409,7 @@ pub async fn restore_all_deleted_inner(
 
     let count = result.rows_affected();
 
-    // MAINT-214 (a) + P7 (#346): refresh `page_id` for every restored block
+    // (a) + P7 (#346): refresh `page_id` for every restored block
     // synchronously. The async `RebuildPageIds` materializer task dispatched
     // via `commit_and_dispatch` below stays in place (idempotent), but
     // without this sync update callers reading right after commit can see a
@@ -1485,7 +1485,7 @@ pub async fn purge_all_deleted_inner(
     device_id: &str,
     materializer: &Materializer,
 ) -> Result<BulkTrashResponse, AppError> {
-    // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "purge_all_deleted").await?;
 
     // C9 (#345) — derive cascade roots from the op-log when one exists
@@ -1561,7 +1561,7 @@ pub async fn purge_all_deleted_inner(
     // rebuilds are independent of the filesystem side effect).
     tx.commit_and_dispatch(materializer).await?;
 
-    // L-36 + #85 F2: post-commit attachment-file unlink on a blocking thread
+    // + #85 F2: post-commit attachment-file unlink on a blocking thread
     // (the per-file `unlink` syscalls must not hold up the IPC reply; the DB tx
     // has committed, so failures are best-effort warn-logs). Resolves paths
     // against the materializer's `app_data_dir` — no longer a CWD-relative
@@ -1573,7 +1573,7 @@ pub async fn purge_all_deleted_inner(
     })
 }
 
-/// PEND-35 Tier 2.2 — restore N soft-deleted blocks (and their cascaded
+/// Restore N soft-deleted blocks (and their cascaded
 /// descendants) in a single IMMEDIATE transaction.
 ///
 /// Mirrors [`restore_all_deleted_inner`]'s body but scopes the work to the
@@ -1621,7 +1621,7 @@ pub async fn restore_blocks_by_ids_inner(
     let block_ids: Vec<String> = block_ids.into_iter().map(BlockId::into_string).collect();
     let ids_json = serde_json::to_string(&block_ids)?;
 
-    // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "restore_blocks_by_ids").await?;
 
     // Resolve which input ids are actually soft-deleted "roots" — a
@@ -1646,7 +1646,7 @@ pub async fn restore_blocks_by_ids_inner(
     // One RestoreBlock op per root for sync compatibility (mirrors
     // `restore_all_deleted_inner`).
     //
-    // #1257 PR-5 — CASCADE engine routing. Capture each root's connected
+    // #1257 CASCADE engine routing. Capture each root's connected
     // delete cohort (the #1055 `deleted_at_ref`-scoped subtree) BEFORE the
     // UPDATE clears `deleted_at` — once the rows are alive again the
     // `deleted_at = deleted_at_ref` filter no longer identifies the cohort.
@@ -1745,7 +1745,7 @@ pub async fn restore_blocks_by_ids_inner(
     // Commit + drain enqueued background dispatches.
     tx.commit_and_dispatch(materializer).await?;
 
-    // #1257 PR-5 — POST-COMMIT engine fan-out. Restore each root's captured
+    // #1257 POST-COMMIT engine fan-out. Restore each root's captured
     // cohort on the per-space Loro engine (mirrors `apply_op`'s
     // `dispatch_restore_descendants`). The fan-out resolves the space inline
     // from the pool — valid because the cohort is alive again post-commit.
@@ -1759,7 +1759,7 @@ pub async fn restore_blocks_by_ids_inner(
     })
 }
 
-/// PEND-35 Tier 2.2 — permanently purge N soft-deleted blocks (and their
+/// Permanently purge N soft-deleted blocks (and their
 /// cascaded descendants) in a single IMMEDIATE transaction.
 ///
 /// Mirrors [`purge_all_deleted_inner`]'s ~13-table cleanup chain but
@@ -1800,7 +1800,7 @@ pub async fn purge_blocks_by_ids_inner(
     let block_ids: Vec<String> = block_ids.into_iter().map(BlockId::into_string).collect();
     let ids_json = serde_json::to_string(&block_ids)?;
 
-    // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "purge_blocks_by_ids").await?;
 
     // Audit Validator I11 note: the "all" variant's root-selection step
@@ -1837,7 +1837,7 @@ pub async fn purge_blocks_by_ids_inner(
              WHERE d.depth < 100 \
          ) ";
 
-    // PEND-26 N2 + R5 (#347) — refuse to purge if ANY root's subtree
+    // + R5 (#347) — refuse to purge if ANY root's subtree
     // saturates the depth-100 cap; mirroring the single-row guard. The
     // prior implementation ran `cascade_depth_saturated` once per root (up
     // to MAX_BATCH_BLOCK_IDS = 1000 separate recursive walks). Collapse it
@@ -1865,12 +1865,12 @@ pub async fn purge_blocks_by_ids_inner(
 
     // Emit one PurgeBlock op per root.
     //
-    // #1257 PR-5 — CASCADE engine routing. Capture each root's full purge
+    // #1257 CASCADE engine routing. Capture each root's full purge
     // subtree COHORT and its SPACE BEFORE the SQL cascade physically
     // removes the rows below: once the rows are gone we cannot reconstruct
     // the cohort or resolve its space. A purged block is SQL-ABSENT (not
     // soft-deleted), so it does not itself create the #1257
-    // engine-live-but-SQL-deleted phantom the PR-1 gate refuses; but the
+    // Engine-live-but-SQL-deleted phantom the gate refuses; but the
     // engine must still drop the purged subtree from its LoroDoc to stay in
     // lockstep. We drive the captured cohort onto the engine via a
     // post-commit `engine_apply(PurgeBlock)` fan-out (run after
@@ -1965,7 +1965,7 @@ pub async fn purge_blocks_by_ids_inner(
     // Commit + drain enqueued background dispatches.
     tx.commit_and_dispatch(materializer).await?;
 
-    // #1257 PR-5 — POST-COMMIT engine fan-out. Drop each purged subtree
+    // #1257 POST-COMMIT engine fan-out. Drop each purged subtree
     // from the per-space Loro engine using the PRE-CASCADE-captured cohort +
     // space (the SQL rows are physically gone now, so neither could be
     // recovered here). `engine_apply(PurgeBlock)` removes a block's
@@ -1998,7 +1998,7 @@ pub async fn purge_blocks_by_ids_inner(
         }
     }
 
-    // L-36 + #85 F2: post-commit attachment-file unlink (mirrors
+    // + #85 F2: post-commit attachment-file unlink (mirrors
     // `purge_all_deleted_inner`), resolved against the materializer's
     // `app_data_dir` rather than a CWD-relative `remove_file`.
     spawn_purged_attachment_cleanup(materializer.app_data_dir(), attachment_rows);
@@ -2057,7 +2057,7 @@ pub(crate) async fn delete_property_in_tx(
     )
     .await?;
 
-    // 3. #1257 PR-3: route the clear/delete through the SAME engine-apply +
+    // 3. #1257 route the clear/delete through the SAME engine-apply +
     // projection the boot-replay / sync `ApplyOp` path uses, IN this CommandTx,
     // INSTEAD of the inline reserved-column / `space` fan-out / `block_properties`
     // DELETE branches. `apply_delete_property_via_loro` resolves the block's
@@ -2078,9 +2078,9 @@ pub(crate) async fn delete_property_in_tx(
 }
 
 /// Tauri command: create a new block. Delegates to
-/// [`create_block_inner_with_space`] which enforces the FEAT-3
+/// [`create_block_inner_with_space`] which enforces the
 /// "every page has a space" invariant at the IPC boundary
-/// (BUG-1 / H-3a). The optional `space_id` is required when
+/// The optional `space_id` is required when
 /// `block_type == "page"` and ignored otherwise.
 #[tauri::command]
 #[specta::specta]
@@ -2187,7 +2187,7 @@ pub async fn purge_all_deleted(ctx: State<'_, WriteCtx>) -> Result<BulkTrashResp
         .map_err(sanitize_internal_error)
 }
 
-/// PEND-35 Tier 2.2 — restore a list of soft-deleted blocks in one IPC.
+/// Restore a list of soft-deleted blocks in one IPC.
 /// Delegates to [`restore_blocks_by_ids_inner`].
 #[tauri::command]
 #[specta::specta]
@@ -2200,7 +2200,7 @@ pub async fn restore_blocks_by_ids(
         .map_err(sanitize_internal_error)
 }
 
-/// PEND-35 Tier 2.2 — permanently purge a list of soft-deleted blocks in one IPC.
+/// Permanently purge a list of soft-deleted blocks in one IPC.
 /// Delegates to [`purge_blocks_by_ids_inner`].
 #[tauri::command]
 #[specta::specta]
@@ -2214,7 +2214,7 @@ pub async fn purge_blocks_by_ids(
 }
 
 // ===========================================================================
-// PEND-35 Tier 4.3 — create_blocks_batch
+// Create_blocks_batch
 // ===========================================================================
 
 /// One row of [`create_blocks_batch_inner`]'s input list.
@@ -2254,7 +2254,7 @@ pub struct CreateBlockSpec {
     pub properties: std::collections::HashMap<String, String>,
 }
 
-/// PEND-35 Tier 4.3 — atomically create N blocks (with optional
+/// Atomically create N blocks (with optional
 /// per-block properties) in a single `BEGIN IMMEDIATE` transaction.
 ///
 /// Replaces the per-block `create_block` IPC loop the FE used to drive
@@ -2308,7 +2308,7 @@ pub async fn create_blocks_batch_inner(
     let mut created: Vec<BlockRow> = Vec::with_capacity(specs.len());
 
     for spec in specs {
-        // L-30 contract — any failure here rolls back the whole tx via
+        // Contract — any failure here rolls back the whole tx via
         // `?`. Mirrors `import_markdown_inner`'s per-block loop.
         // #400: the spec keeps its stable 1-based `position` wire field;
         // `create_block_in_tx` now takes a 0-based `index`, so convert
@@ -2361,7 +2361,7 @@ pub async fn create_blocks_batch_inner(
 /// Tauri command: atomically create a batch of blocks. Delegates to
 /// [`create_blocks_batch_inner`].
 ///
-/// PEND-35 Tier 4.3 — collapses the per-block `create_block` IPC loop
+/// Collapses the per-block `create_block` IPC loop
 /// in `src/lib/template-utils.ts::insertTemplateBlocks` /
 /// `insertTemplateBlocksFromString` into one round-trip and one
 /// writer-lock window. A 10-line template that previously fired 10
@@ -2411,7 +2411,7 @@ pub(crate) fn anonymize_attachment_path(path: &str) -> (String, String) {
 
 /// Remove the on-disk files for a set of just-purged attachments.
 ///
-/// #85 (PEND-76 F2): attachment `fs_path`s are stored **app-data-relative**
+/// #85: attachment `fs_path`s are stored **app-data-relative**
 /// (e.g. `attachments/<ULID>`). This resolves each against `app_data_dir`
 /// (`app_data_dir.join(fs_path)`) — the proper absolute path, matching
 /// `delete_attachment_inner` — rather than the earlier bulk paths' bare

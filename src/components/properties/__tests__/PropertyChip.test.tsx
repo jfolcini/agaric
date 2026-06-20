@@ -100,7 +100,7 @@ describe('PropertyChip', () => {
     })
   })
 
-  it('root is a non-button <div role="group"> (TEST-4b)', () => {
+  it('root is a non-button <div role="group">', () => {
     const { container } = render(<PropertyChip propKey="effort" value="2h" onClick={() => {}} />)
 
     const chip = container.querySelector('.property-chip')
@@ -126,7 +126,7 @@ describe('PropertyChip', () => {
     expect(valueSpan?.textContent).toBe('2h')
   })
 
-  it('renders no nested <button> elements (TEST-4b)', () => {
+  it('renders no nested <button> elements', () => {
     const { container } = render(
       <PropertyChip propKey="effort" value="2h" onClick={() => {}} onKeyClick={() => {}} />,
     )
@@ -307,7 +307,7 @@ describe('PropertyChip', () => {
     expect(chipInteractive).toHaveAttribute('aria-label', 'Effort: 2h')
   })
 
-  it('wrapper shows a focus ring when either inner button has focus (UX-209)', () => {
+  it('wrapper shows a focus ring when either inner button has focus', () => {
     const { container } = render(<PropertyChip propKey="effort" value="2h" />)
 
     const chip = container.querySelector('.property-chip')
@@ -317,13 +317,13 @@ describe('PropertyChip', () => {
     expect(chip?.className).toContain('focus-within:ring-ring/50')
   })
 
-  // UX-1: each inner button now also paints the standard focus-visible ring
+  // Each inner button now also paints the standard focus-visible ring
   // alongside `focus-visible:outline-hidden`, so keyboard users see a clear
   // indicator on whichever zone is focused. The wrapper still carries a
   // focus-within ring; the per-button ring sits inside it (not a true
   // double ring because the wrapper one is `focus-within`, the inner one
   // is `focus-visible` — they target different states).
-  it('inner buttons paint the standard focus-visible ring (UX-1)', () => {
+  it('inner buttons paint the standard focus-visible ring', () => {
     render(<PropertyChip propKey="effort" value="2h" onClick={() => {}} onKeyClick={() => {}} />)
 
     const keyButton = screen.getByRole('button', { name: /Edit property/ })

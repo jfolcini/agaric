@@ -8,7 +8,7 @@
  * sites can opt in by passing `notifyUnknownNodeTypeToast` to
  * `serialize(doc, notifyUnknownNodeTypeToast)`.
  *
- * MAINT-183: extracted from `markdown-serialize.ts` so the serializer's
+ * Extracted from `markdown-serialize.ts` so the serializer's
  * "Zero external dependencies" header is accurate. The toast layer lives at
  * the call site now.
  */

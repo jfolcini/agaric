@@ -32,7 +32,7 @@ vi.mock('@/components/ui/chevron-toggle', () => ({
 
 vi.mock('@/components/pages/PageLink', () => ({
   // The real PageLink renders `children ?? title`. Mirror that contract
-  // so the namespaced-display tests (PEND-83 Bug 1) can verify the
+  // So the namespaced-display tests (Bug 1) can verify the
   // leaf/breadcrumb children the header passes in.
   PageLink: ({
     pageId,
@@ -564,10 +564,10 @@ describe('CollapsibleGroupList', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // PEND-83 Bug 1: namespaced titles render leaf + breadcrumb in the header
+  // Bug 1: namespaced titles render leaf + breadcrumb in the header
   // ---------------------------------------------------------------------------
 
-  describe('hierarchical page-title display (PEND-83 Bug 1)', () => {
+  describe('hierarchical page-title display (Bug 1)', () => {
     // Surface contract: when `group.page_title` is namespaced
     // (`Notes/2026/Quarterly`), the header renders the leaf as the
     // primary text and the joined ancestor segments as a smaller muted

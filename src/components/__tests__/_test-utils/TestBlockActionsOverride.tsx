@@ -1,5 +1,5 @@
 /**
- * TestBlockActionsOverride — test escape hatch for SortableBlock + descendants (PEND-30 D-1).
+ * TestBlockActionsOverride — test escape hatch for SortableBlock + descendants (D-1).
  *
  * Production code wires per-block action callbacks and reference resolvers
  * via `BlockActionsProvider` / `BlockResolversProvider` at the BlockTree

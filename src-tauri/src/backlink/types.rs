@@ -114,7 +114,7 @@ pub enum BacklinkSort {
 
 /// Response for a filtered backlink query, including total count.
 ///
-/// MAINT-113 M2 — `items` is `ActiveBlockRow`-typed because the backlink
+/// `items` is `ActiveBlockRow`-typed because the backlink
 /// resolver filters deleted_at IS NULL` on every
 /// candidate source block (`backlink/query.rs::eval_backlink_query`,
 /// `eval_backlink_query_grouped`, `eval_unlinked_references`).
@@ -129,7 +129,7 @@ pub struct BacklinkQueryResponse {
 
 /// A group of backlinks from the same source page.
 ///
-/// MAINT-113 M2 — `blocks` is `ActiveBlockRow`-typed; same rationale as
+/// `blocks` is `ActiveBlockRow`-typed; same rationale as
 /// [`BacklinkQueryResponse::items`].
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct BacklinkGroup {

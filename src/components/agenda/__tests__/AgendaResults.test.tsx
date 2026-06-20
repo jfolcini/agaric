@@ -670,9 +670,9 @@ describe('AgendaResults', () => {
     expect(screen.queryByTestId('dependency-indicator')).not.toBeInTheDocument()
   })
 
-  // PEND-35 Tier 2.4a: a single `getBatchProperties` IPC fires for N
+  // A single `getBatchProperties` IPC fires for N
   // agenda rows — replaces the previous N per-row `getProperties` IPCs.
-  it('PEND-35 Tier 2.4a: fires one getBatchProperties IPC for N rendered rows', async () => {
+  it('fires one getBatchProperties IPC for N rendered rows', async () => {
     mockGetBatchProperties.mockResolvedValue({})
     const blocks = Array.from({ length: 50 }, (_, i) =>
       makeBlock({ id: `B${i + 1}`, content: `Task ${i + 1}` }),
@@ -692,12 +692,12 @@ describe('AgendaResults', () => {
     expect(mockGetProperties).not.toHaveBeenCalled()
   })
 
-  // PEND-27 P6: properties batch must be invalidated on a
+  // Properties batch must be invalidated on a
   // property-change event so the dependency indicator picks up fresh
-  // data after a property edit. PEND-35 Tier 2.4a moved the
+  // Data after a property edit. moved the
   // invalidation signal from a `propertiesCacheRef.clear()` effect to
   // the `BatchPropertiesProvider`'s `invalidationKey` prop.
-  it('PEND-27 P6: refetches batch properties on block:properties-changed event', async () => {
+  it('refetches batch properties on block:properties-changed event', async () => {
     mockGetBatchProperties.mockResolvedValue({})
 
     const blocks = [makeBlock({ id: 'B1', content: 'Cached task' })]
@@ -725,9 +725,9 @@ describe('AgendaResults', () => {
     })
   })
 
-  // UX-195: the due date chip must get extra vertical padding on touch devices
+  // The due date chip must get extra vertical padding on touch devices
   //         so the pill meets the 44px hit-target when embedded in the list row.
-  it('UX-195: due date chip has touch padding override', () => {
+  it('due date chip has touch padding override', () => {
     const blocks = [makeBlock({ id: 'B1', content: 'Has deadline', due_date: '2025-04-15' })]
 
     render(<AgendaResults {...defaultProps({ blocks })} />)
@@ -738,9 +738,10 @@ describe('AgendaResults', () => {
     expect(chip?.className).toContain('[@media(pointer:coarse)]:py-1')
   })
 
-  // UX-197: agenda items no longer truncate content with line-clamp-2
-  it('UX-197: agenda content span has no line-clamp-2', () => {
-    const longContent = 'A long agenda item that would have been truncated before UX-197'.repeat(3)
+  // Agenda items no longer truncate content with line-clamp-2
+  it('agenda content span has no line-clamp-2', () => {
+    const longContent =
+      'A long agenda item that would previously have been clamped to two lines'.repeat(3)
     const blocks = [makeBlock({ id: 'B1', content: longContent })]
 
     render(<AgendaResults {...defaultProps({ blocks })} />)
@@ -749,9 +750,9 @@ describe('AgendaResults', () => {
     expect(contentSpan.className).not.toContain('line-clamp-2')
   })
 
-  // PEND-28b M3: priority badge text scales up on coarse pointer to match the
+  // Priority badge text scales up on coarse pointer to match the
   //              sibling due-date chip (text-xs → text-sm) for visual consistency.
-  it('PEND-28b M3: priority badge has text-sm override on coarse pointer', () => {
+  it('priority badge has text-sm override on coarse pointer', () => {
     const blocks = [makeBlock({ id: 'B1', priority: '1', content: 'Urgent task' })]
 
     render(<AgendaResults {...defaultProps({ blocks })} />)

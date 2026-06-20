@@ -120,7 +120,7 @@ export function TemplatePicker({
         // mounted while the picker is open (via EDITOR_PORTAL_SELECTORS).
         // Without it the editor unmounts on button-focus, clearing
         // `focusedBlockId`, so `handleTemplateSelect` bails out with no
-        // template inserted and no toast. See TEST-1c-B.
+        // Template inserted and no toast. See -B.
         data-editor-portal=""
         className="fixed z-50 rounded-md border bg-popover p-2 shadow-(--shadow-overlay) left-1/2 top-1/3 -translate-x-1/2 min-w-[200px] max-w-[calc(100vw-2rem)] sm:max-w-[300px] max-sm:left-2 max-sm:right-2 max-sm:translate-x-0"
       >

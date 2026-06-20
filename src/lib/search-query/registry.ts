@@ -1,5 +1,5 @@
 /**
- * PEND-54 — Token recogniser registry.
+ * Token recogniser registry.
  *
  * A recogniser is a pure function `(rawValue: string, valueSpan) ->
  * FilterToken`. The parser splits the input into whitespace-delimited
@@ -7,7 +7,7 @@
  * token belongs to it. The first matching prefix wins. Unknown
  * prefix-shaped tokens (e.g. `unknown:foo`) are surfaced as `invalid`.
  *
- * PEND-53 will register new prefixes (`state:`, `priority:`, `due:`,
+ * Will register new prefixes (`state:`, `priority:`, `due:`,
  * `scheduled:`, `prop:`, `not-prop:`) here without touching
  * `tokenize.ts` or `classify.ts`.
  */
@@ -86,7 +86,7 @@ export function looksLikeUnknownPrefix(raw: string): { key: string } | null {
   // convention here: `not-path:`).
   const m = /^([a-zA-Z][a-zA-Z0-9-]*):/.exec(raw)
   if (!m?.[1]) return null
-  // DSL-10: a pasted URL (`http://…`, `https://…`, `file://…`) matches
+  // A pasted URL (`http://…`, `https://…`, `file://…`) matches
   // the `key:` shape but is not a filter — the `:` is immediately
   // followed by `//`. Treat it as ordinary free-text instead of an
   // invalid chip so the URL isn't silently stripped from the query.

@@ -1,7 +1,7 @@
 /**
  * useGraphWorkerSimulation — owns the `workerFailed` flag and exposes a
  * stable `runWorker` callback. Extracted from `useGraphSimulation` per
- * MAINT-127 (originally BUG-45's runtime-failure recovery).
+ * (originally runtime-failure recovery).
  *
  * When the worker dispatches `error` / `messageerror`, `runWorker`'s
  * internal failure callback flips `workerFailed` to `true`; the

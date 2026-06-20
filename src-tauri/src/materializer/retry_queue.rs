@@ -1,4 +1,4 @@
-//! Persistent retry queue for failed background materializer tasks (BUG-22, PEND-03).
+//! Persistent retry queue for failed background materializer tasks.
 //!
 //! In-memory retries (`run_background` in `consumer.rs`) cover transient WAL
 //! lock contention, but a cache-rebuild task that keeps failing past the
@@ -13,13 +13,13 @@
 //! `RebuildAgendaCache`, `RebuildProjectedAgendaCache`,
 //! `RebuildTagInheritanceCache`, `RebuildPageIds`,
 //! `RebuildBlockTagRefsCache`). The latter were silently dropped on
-//! queue saturation prior to PEND-03 — they're now persisted under the
+//! queue saturation prior to they're now persisted under the
 //! sentinel `block_id = '__GLOBAL__'` so the sweeper re-enqueues them on
 //! the same exponential-backoff schedule.
 //!
 //! Backoff schedule: 1 min → 5 min → 30 min → 1 h (cap).
 //!
-//! ## Two-tier retry semantics (MAINT-148h)
+//! ## Two-tier retry semantics
 //!
 //! This persistent schedule is the **second tier** of the materializer's
 //! retry pipeline. The first tier — the in-memory
@@ -49,7 +49,7 @@ use std::sync::Arc;
 use tracing::instrument;
 
 /// Sentinel literal stored in the `block_id` column for global cache
-/// rebuild tasks (PEND-03). SQLite's `STRICT` mode forbids `NULL` in
+/// Rebuild tasks. SQLite's `STRICT` mode forbids `NULL` in
 /// `PRIMARY KEY` columns, so a literal stand-in is used instead. The
 /// sentinel cannot collide with a real ULID block id (ULIDs are
 /// 26-char Crockford base32 uppercase; the sentinel is lowercase
@@ -57,7 +57,7 @@ use tracing::instrument;
 pub(crate) const GLOBAL_TASK_SENTINEL: &str = "__GLOBAL__";
 
 /// Sentinel literal stored in the `block_id` column for foreground
-/// `ApplyOp` failure rows (PEND-24 H1). Mirrors [`GLOBAL_TASK_SENTINEL`]:
+/// `ApplyOp` failure rows. Mirrors [`GLOBAL_TASK_SENTINEL`]:
 /// the composite key for an apply-op failure is
 /// `(device_id, seq)`, packed into the `task_kind` column as
 /// `"ApplyOp:<seq>:<device_id>"`. The sentinel cannot collide with a
@@ -71,11 +71,11 @@ pub(crate) const APPLY_OP_TASK_SENTINEL: &str = "__APPLY_OP__";
 /// - **Per-block** idempotent tasks (`UpdateFtsBlock`,
 ///   `ReindexBlockLinks`, `ReindexBlockTagRefs`) — keyed by their
 ///   real block id.
-/// - **Global** cache rebuilds (PEND-03) — keyed by the
+///   **Global** cache rebuilds — keyed by the
 ///   [`GLOBAL_TASK_SENTINEL`] literal so the composite primary key
 ///   `(block_id, task_kind)` enforces dedup naturally without
 ///   requiring a NULL column.
-/// - **Foreground apply-op** failures (PEND-24 H1) — keyed by the
+///   **Foreground apply-op** failures — keyed by the
 ///   composite `(device_id, seq)` packed into the `task_kind` column
 ///   as `"ApplyOp:<seq>:<device_id>"`, with `block_id` set to
 ///   [`APPLY_OP_TASK_SENTINEL`]. Reconstruction requires a fresh
@@ -88,13 +88,13 @@ pub(crate) enum RetryKind {
     // --- Per-block ---
     UpdateFtsBlock,
     ReindexBlockLinks,
-    /// UX-250: incremental `#[ULID]` tag-ref reindex for a single block.
+    /// Incremental `#[ULID]` tag-ref reindex for a single block.
     ReindexBlockTagRefs,
     /// #676: scoped single-tag `usage_count` refresh. Keyed by `tag_id`
     /// (not a global sentinel) so failures of different tags' refreshes
     /// dedup independently and reconstruct the right scoped task.
     RefreshTagUsageCount,
-    // --- Global (PEND-03) ---
+    // --- Global ---
     /// Mirror of [`MaterializeTask::RebuildTagsCache`].
     RebuildTagsCache,
     /// Mirror of [`MaterializeTask::RebuildPagesCache`].
@@ -115,7 +115,7 @@ pub(crate) enum RetryKind {
     RebuildBlockTagRefsCache,
     /// Mirror of [`MaterializeTask::RebuildPageLinkCache`] (SQL-review §H-2).
     RebuildPageLinkCache,
-    // --- Foreground apply-op (PEND-24 H1) ---
+    // --- Foreground apply-op ---
     /// Mirror of a failed [`MaterializeTask::ApplyOp`] task whose
     /// foreground retry budget was exhausted. Identifies the op by
     /// its `(device_id, seq)` coordinates so the sweeper can re-load
@@ -175,7 +175,7 @@ impl RetryKind {
             "RebuildPageLinkCache" => return Some(Self::RebuildPageLinkCache),
             _ => {}
         }
-        // Composite-key path: PEND-24 H1 apply-op failures encoded as
+        // Composite-key path: apply-op failures encoded as
         // `"ApplyOp:<seq>:<device_id>"`. `splitn(3, ':')` keeps the
         // device_id intact even if it contains further `:` chars.
         let mut parts = s.splitn(3, ':');
@@ -267,7 +267,7 @@ impl RetryKind {
     /// variants, returns the [`GLOBAL_TASK_SENTINEL`] literal so the
     /// composite PK `(block_id, task_kind)` dedups failures of the
     /// same global task without ambiguity. For foreground apply-op
-    /// variants (PEND-24 H1), returns the [`APPLY_OP_TASK_SENTINEL`]
+    /// Variants, returns the [`APPLY_OP_TASK_SENTINEL`]
     /// literal — the per-op identity is encoded in the kind itself
     /// (`device_id` + `seq`) and surfaces via [`Self::task_kind_str`].
     ///
@@ -353,12 +353,12 @@ pub(crate) fn backoff_delay_for(attempts: i64) -> chrono::Duration {
 /// updates the existing row (incrementing `attempts`, extending the
 /// backoff). Non-retryable tasks are silently ignored.
 ///
-/// PEND-03: global cache rebuilds (`RebuildTagsCache`, etc.) are
+/// Global cache rebuilds (`RebuildTagsCache`, etc.) are
 /// recorded with `block_id = '__GLOBAL__'` so the composite PK
 /// `(block_id, task_kind)` dedups failures of the same rebuild without
 /// requiring a NULL column. Per-block tasks pass through unchanged.
 ///
-/// L-11: Implemented as a single `INSERT ... ON CONFLICT(block_id,
+/// Implemented as a single `INSERT... ON CONFLICT(block_id,
 /// task_kind) DO UPDATE` that increments `attempts` SQL-side via
 /// `materializer_retry_queue.attempts + 1` (instead of binding the new
 /// value from a prior `SELECT`). This eliminates the SELECT-then-INSERT
@@ -451,7 +451,7 @@ pub(crate) async fn record_failure(
     Ok(())
 }
 
-/// Count of pending retry rows — used for observability (MAINT-24 via
+/// Count of pending retry rows — used for observability (via
 /// `bg_dropped` / `StatusInfo`).
 ///
 /// I-Materializer-2: visibility tightened from `pub` to `pub(crate)` to
@@ -649,10 +649,10 @@ pub(crate) async fn lease_entry(
 
 /// Build a [`MaterializeTask`] from a persisted row. Returns `None` for
 /// unknown `task_kind` strings (migration-forward safety) **and** for
-/// PEND-24 H1 [`RetryKind::ApplyOp`] rows (which need an additional
+/// [`RetryKind::ApplyOp`] rows (which need an additional
 /// `OpRecord` lookup against `op_log` — handled inside [`sweep_once`]).
 ///
-/// PEND-03: for global rebuild kinds (`RebuildTagsCache`, etc.), the
+/// For global rebuild kinds (`RebuildTagsCache`, etc.), the
 /// row's `block_id` (which holds [`GLOBAL_TASK_SENTINEL`]) is passed
 /// through to `to_task` and ignored on reconstruction. Per-block kinds
 /// use the row's real block id.
@@ -747,7 +747,7 @@ pub async fn sweep_once(
             );
         }
 
-        // PEND-24 H1: ApplyOp rows are dispatched to the foreground
+        // ApplyOp rows are dispatched to the foreground
         // queue (matching the original task's routing). They need a
         // separate path because (a) `task_from_row` cannot reconstruct
         // them from the row alone — the `OpRecord` must be re-loaded
@@ -820,7 +820,7 @@ pub async fn sweep_once(
                         block_id = %row.block_id,
                         task_kind = %row.task_kind,
                         error = %e,
-                        "failed to re-enqueue PEND-24 H1 ApplyOp row — will try again next sweep"
+                        "failed to re-enqueue  ApplyOp row — will try again next sweep"
                     );
                 }
             }
@@ -894,7 +894,7 @@ enum ApplyOpSweepDisposition {
     SupersededByEdit,
 }
 
-/// PEND-24 H1: re-enqueue a previously-persisted [`MaterializeTask::ApplyOp`]
+/// Re-enqueue a previously-persisted [`MaterializeTask::ApplyOp`]
 /// failure onto the foreground queue.
 ///
 /// Steps:
@@ -1107,7 +1107,7 @@ mod tests {
             Some((RetryKind::ReindexBlockTagRefs, ref id)) if id == "B3"
         ));
 
-        // --- Global cache rebuilds (PEND-03): sentinel block_id ---
+        // --- Global cache rebuilds: sentinel block_id ---
         for (task, expected_kind) in [
             (
                 MaterializeTask::RebuildTagsCache,
@@ -1173,7 +1173,7 @@ mod tests {
         ));
     }
 
-    /// PEND-24 H1: round-trip a foreground apply-op failure through
+    /// Round-trip a foreground apply-op failure through
     /// `from_task` → row → `from_str`, asserting the composite-key
     /// packing into `task_kind` is reversible.
     #[test]
@@ -1201,7 +1201,7 @@ mod tests {
         assert!(parsed.to_task(sentinel.clone()).is_none());
     }
 
-    /// PEND-24 H1: malformed apply-op `task_kind` strings (extra
+    /// Malformed apply-op `task_kind` strings (extra
     /// segments, missing seq, non-numeric seq) must not panic and
     /// must yield `None` so the sweeper drops the row as unknown.
     #[test]
@@ -1323,7 +1323,7 @@ mod tests {
     async fn record_failure_ignores_non_retryable_tasks() {
         let (pool, _dir) = test_pool().await;
         // RebuildFtsIndex is non-retryable (no in-memory retry path; handled
-        // by FTS optimize logic). Distinct from PEND-03 global cache rebuilds
+        // By FTS optimize logic). Distinct global cache rebuilds
         // which ARE retryable under the GLOBAL_TASK_SENTINEL.
         record_failure(&pool, &MaterializeTask::RebuildFtsIndex, "boom")
             .await
@@ -1415,7 +1415,7 @@ mod tests {
         );
     }
 
-    /// L-11 regression: the SQL-side `attempts = materializer_retry_queue.attempts + 1`
+    /// Regression: the SQL-side `attempts = materializer_retry_queue.attempts + 1`
     /// increment must be atomic vs. concurrent callers. Two `record_failure`
     /// invocations issued in parallel for the same `(block_id, task_kind)`
     /// MUST produce `attempts == 2` — never `attempts == 1` (which would
@@ -1457,7 +1457,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             attempts, 2,
-            "L-11: SQL-side increment must accumulate across concurrent record_failure calls; \
+            "SQL-side increment must accumulate across concurrent record_failure calls; \
              a regression to SELECT-then-INSERT would race and drop one increment (attempts == 1)"
         );
     }
@@ -2323,9 +2323,9 @@ mod tests {
         mat.shutdown();
     }
 
-    // --- PEND-03: global cache rebuild persistence ---
+    // --- global cache rebuild persistence ---
 
-    /// PEND-03: round-trip a global cache rebuild through `record_failure`
+    /// Round-trip a global cache rebuild through `record_failure`
     /// → row → `task_from_row` and assert the reconstructed task matches
     /// the original. Repeats for all 7 global variants so adding a new
     /// `MaterializeTask::Rebuild*Cache` arm forces a corresponding
@@ -2388,7 +2388,7 @@ mod tests {
         }
     }
 
-    /// PEND-03: a global task failing repeatedly walks the same
+    /// A global task failing repeatedly walks the same
     /// 1m → 5m → 30m → 1h backoff schedule as per-block tasks.
     /// We assert via `attempts` increments and timestamp monotonicity;
     /// the exact wall-clock delay is enforced by `backoff_delay_for`
@@ -2446,7 +2446,7 @@ mod tests {
         );
     }
 
-    /// PEND-03: two failures of the same global task coalesce into a
+    /// Two failures of the same global task coalesce into a
     /// single row via the composite PK `(block_id, task_kind)` —
     /// `'__GLOBAL__' + 'RebuildTagsCache'` uniquely identifies the
     /// entry, so the second `record_failure` UPSERTs rather than
@@ -2480,7 +2480,7 @@ mod tests {
         assert_eq!(row.last_error.as_deref(), Some("e3"));
     }
 
-    /// PEND-03: a per-block `UpdateFtsBlock` failure and a global
+    /// A per-block `UpdateFtsBlock` failure and a global
     /// `RebuildTagsCache` failure must not collide on the PK — they
     /// land in two distinct rows because `block_id` differs (real ULID
     /// vs. `'__GLOBAL__'`).
@@ -2502,7 +2502,7 @@ mod tests {
         );
     }
 
-    /// PEND-03: schema snapshot — pin the post-migration shape of
+    /// Schema snapshot — pin the post-migration shape of
     /// `materializer_retry_queue` so any accidental future migration
     /// that reverts the column rename or the STRICT modifier surfaces
     /// as a snapshot diff.
@@ -2515,17 +2515,17 @@ mod tests {
                 .await
                 .unwrap();
         let sql = row.0.unwrap_or_default();
-        // STRICT modifier landed in PEND-03 (migration 0044).
+        // STRICT modifier landed in (migration 0044).
         assert!(
             sql.contains("STRICT"),
             "materializer_retry_queue must be a STRICT table; sql={sql}"
         );
-        // task_kind replaced task_type in PEND-03. Check the column
+        // Task_kind replaced task_type in. Check the column
         // declaration shape directly (avoids matching the inline migration
         // comment that still mentions the old column name historically).
         assert!(
             sql.contains("task_kind"),
-            "schema must use task_kind (PEND-03 rename); sql={sql}"
+            "schema must use task_kind (rename); sql={sql}"
         );
         // Strip line comments before checking — the migration's `--`
         // comment intentionally references `task_type` to document the
@@ -2540,7 +2540,7 @@ mod tests {
             .join("\n");
         assert!(
             !sql_no_comments.contains("task_type"),
-            "live column declarations must not reference task_type after PEND-03; sql={sql}"
+            "live column declarations must not reference task_type after ; sql={sql}"
         );
         // Composite PK shape must remain (block_id, task_kind).
         assert!(
@@ -2549,7 +2549,7 @@ mod tests {
         );
     }
 
-    /// SQL-review M-4 (migration 0063): the single-column
+    /// SQL-review (migration 0063): the single-column
     /// `idx_materializer_retry_queue_next` from migrations 0028 / 0044
     /// is replaced by the covering index
     /// `idx_materializer_retry_queue_due (next_attempt_at, block_id,

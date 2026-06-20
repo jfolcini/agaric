@@ -102,7 +102,7 @@ export function DeviceManagement(): React.ReactElement {
     return () => clearInterval(id)
   }, [])
 
-  // MAINT-120: load device id + peer list in parallel via the shared
+  // Load device id + peer list in parallel via the shared
   // useIpcCommand hook. Inline error display via `setError` (no toast —
   // matches existing behavior).
   const { execute: executeLoadData } = useIpcCommand<void, [string, PeerRefRow[]]>({
@@ -137,7 +137,7 @@ export function DeviceManagement(): React.ReactElement {
     loadData()
   }, [loadData])
 
-  // MAINT-120: unpair a peer device. The success path filters the row
+  // Unpair a peer device. The success path filters the row
   // out of the local list and closes the confirm dialog; on error we
   // surface an inline error banner (no toast — matches existing flow).
   const { execute: executeUnpair } = useIpcCommand<{ peerId: string }, void>({

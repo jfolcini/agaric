@@ -232,7 +232,7 @@ if (typeof window.matchMedia !== 'function') {
 // Shared mock for @tauri-apps/api/core — all component & store tests need this.
 // Individual tests can override via vi.mocked(invoke).mockResolvedValueOnce(...)
 //
-// PEND-06: a minimal `Channel<T>` stub is exported alongside `invoke` because
+// A minimal `Channel<T>` stub is exported alongside `invoke` because
 // `src/lib/tauri.ts::startSync` constructs a `new Channel(...)` at module
 // load time. Without a stub, every test that imports `tauri.ts` trips
 // vitest's "no Channel export on mock" guard at import time. The stub

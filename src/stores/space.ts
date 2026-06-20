@@ -1,5 +1,5 @@
 /**
- * Space store — Zustand state for the active space (FEAT-3 Phase 1).
+ * Space store — Zustand state for the active space (Phase 1).
  *
  * A "space" is a top-level page block tagged `is_space = true` that
  * partitions user content into independent contexts (`Personal`, `Work`,
@@ -26,7 +26,7 @@ import { listSpaces } from '../lib/tauri'
 const LOG_MODULE = 'stores/space'
 
 /**
- * FEAT-3p10 — fallback accent token used when no space is active yet
+ * Fallback accent token used when no space is active yet
  * (boot pre-bootstrap edge case) or when the active space carries no
  * `accent_color` property. `accent-blue` matches the Work seed default
  * and lines up with the brand `--primary` so the UI feels coherent
@@ -56,7 +56,7 @@ interface SpaceState {
   /** Fetch every space and reconcile `currentSpaceId` against the result. */
   refreshAvailableSpaces: () => Promise<void>
   /**
-   * FEAT-3p10 — derived selector returning the active space's
+   * Derived selector returning the active space's
    * `accent_color` token (e.g. `accent-emerald`, `accent-blue`), or
    * [`DEFAULT_ACCENT_TOKEN`] when no space is active or the active
    * space has no explicit accent. Reads `availableSpaces` so the
@@ -136,7 +136,7 @@ export const useSpaceStore = create<SpaceState>()(
               currentSpaceId: nextCurrent,
               isReady: true,
             })
-            // UX-266 — when the previously-active space disappeared from the
+            // When the previously-active space disappeared from the
             // server-truth list (e.g. deleted on another device and synced
             // down) we silently fall back to the first available space. Tell
             // the user once via a one-shot toast so they understand why the

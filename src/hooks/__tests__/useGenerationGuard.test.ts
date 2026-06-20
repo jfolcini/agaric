@@ -1,5 +1,5 @@
 /**
- * PEND-73 Phase 4.M3 — tests for useGenerationGuard.
+ * Phase 4.M3 — tests for useGenerationGuard.
  */
 
 import { renderHook } from '@testing-library/react'

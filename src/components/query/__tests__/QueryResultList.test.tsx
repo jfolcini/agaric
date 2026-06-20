@@ -243,7 +243,7 @@ describe('QueryResultList', () => {
   })
 
   // =========================================================================
-  // Home/End and PageUp/PageDown keyboard navigation (UX-138)
+  // Home/End and PageUp/PageDown keyboard navigation
   // =========================================================================
 
   it('Home key moves focus to first result, End to last', async () => {
@@ -296,7 +296,7 @@ describe('QueryResultList', () => {
     expect(options[0]).toHaveAttribute('aria-selected', 'true')
   })
 
-  it('listbox aria-label resolves via t() (UX-210)', () => {
+  it('listbox aria-label resolves via t()', () => {
     const results = [makeBlock({ id: 'B1', content: 'i18n test' })]
     render(<QueryResultList results={results} pageTitles={new Map()} />)
     const listbox = screen.getByRole('listbox', { name: t('query.resultsListLabel') })

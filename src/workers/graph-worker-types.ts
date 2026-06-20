@@ -1,5 +1,5 @@
 /**
- * Shared message types for the graph force-simulation WebWorker protocol (PERF-9b).
+ * Shared message types for the graph force-simulation WebWorker protocol.
  *
  * Imported by both `graph-worker.ts` (worker thread) and `GraphView.tsx` (main thread).
  */

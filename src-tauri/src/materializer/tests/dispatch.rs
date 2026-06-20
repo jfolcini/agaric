@@ -495,7 +495,7 @@ async fn dispatch_op_add_attachment() {
     .await;
     mat.dispatch_op(&r).await.unwrap();
     mat.flush_foreground().await.unwrap();
-    // M-1: AttachmentId (BlockId alias) auto-uppercases on construction, so
+    // AttachmentId (BlockId alias) auto-uppercases on construction, so
     // the materializer writes 'ATT-1' regardless of input casing.
     let row = sqlx::query_as::<_, (String, String)>(
         "SELECT filename, mime_type FROM attachments WHERE id = 'ATT-1'",
@@ -514,7 +514,7 @@ async fn dispatch_op_delete_attachment() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     insert_block_direct(&pool, "BLK-ATT-DEL", "content", "att block").await;
-    // M-1: store the row with the canonical-uppercase id so it matches the
+    // Store the row with the canonical-uppercase id so it matches the
     // bind value the materializer derives from the auto-normalized
     // AttachmentId in the payload.
     sqlx::query("INSERT INTO attachments (id, block_id, filename, fs_path, mime_type, size_bytes, created_at) VALUES ('ATT-2', 'BLK-ATT-DEL', 'f.txt', '/tmp/f.txt', 'text/plain', 10, 1735689600000)")

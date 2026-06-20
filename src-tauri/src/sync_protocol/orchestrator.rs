@@ -79,7 +79,7 @@ use crate::peer_refs;
 ///   back-filled from `expected_remote_id` (set by the daemon from
 ///   the mTLS / mDNS peer identity); if neither is available the
 ///   session transitions to [`SyncState::Failed`] rather than write a
-///   bogus `peer_id = ""` row to `peer_refs` (BUG-27).
+///   Bogus `peer_id = ""` row to `peer_refs`.
 ///
 /// * **`expected_remote_id`** is set once at construction by the
 ///   daemon (via [`SyncOrchestrator::with_expected_remote_id`]) and is
@@ -216,7 +216,7 @@ impl SyncOrchestrator {
     /// process-global registry installed at bootstrap.
     ///
     /// `pub(crate)` for the daemon layer: `run_sync_session` threads this
-    /// state into the FEAT-6 snapshot catch-up so the post-RESET engine
+    /// State into the snapshot catch-up so the post-RESET engine
     /// reload (#607) hits the same registry the session syncs against
     /// (override-aware in tests, process-global in production).
     pub(crate) fn loro_state(&self) -> Option<&'static crate::loro::shared::LoroState> {
@@ -271,7 +271,7 @@ impl SyncOrchestrator {
     pub async fn start(&mut self) -> Result<SyncMessage, AppError> {
         let heads = get_local_heads(&self.pool).await?;
         // Advertise our per-space Loro version vectors so the responder can
-        // ship deltas (Update) instead of full snapshots (MAINT-228 / #87 §10.5).
+        // Ship deltas (Update) instead of full snapshots (#87 §10.5).
         let loro_vvs = self.collect_local_loro_vvs();
         self.state = SyncState::ExchangingHeads;
         self.session.state = SyncState::ExchangingHeads;
@@ -290,7 +290,7 @@ impl SyncOrchestrator {
     /// state before dispatching.  Out-of-order messages transition to
     /// [`SyncState::Failed`] and return an error.
     ///
-    /// MAINT-21: instrumented with a `sync_msg` span tagged by current state
+    /// Instrumented with a `sync_msg` span tagged by current state
     /// and incoming message discriminant so protocol-level log lines can be
     /// correlated within an outer `sync{peer=ULID}` session span.
     #[tracing::instrument(
@@ -435,7 +435,7 @@ impl SyncOrchestrator {
                 // two-edited-device session degenerate to
                 // ResetRequired. Remote-frontier staleness is handled
                 // by the loro-vv reachability gate in `apply_remote`
-                // (MAINT-228 → SnapshotFallbackRequested).
+                // (→ SnapshotFallbackRequested).
                 if check_reset_required(&self.pool, &self.device_id, &heads).await? {
                     self.state = SyncState::ResetRequired;
                     self.session.state = SyncState::ResetRequired;
@@ -465,7 +465,7 @@ impl SyncOrchestrator {
             // spaces case, so the receiver always has real bytes to
             // import.
             //
-            // MAINT-228: `apply_remote` may return
+            // `apply_remote` may return
             // `ApplyOutcome::SnapshotFallbackRequested` when the
             // peer's `from_vv` is unreachable from our local
             // `oplog_vv()`.  In that case the engine import was NOT
@@ -522,7 +522,7 @@ impl SyncOrchestrator {
                                     // match this semantics.
                                     self.session.ops_received =
                                         self.session.ops_received.saturating_add(1);
-                                    // PEND-81 §2A #4: `apply_remote` wrote the
+                                    // #4: `apply_remote` wrote the
                                     // per-block SQL projection (core columns,
                                     // properties incl. reserved hot-path columns,
                                     // direct tag edges) and rebuilt
@@ -549,7 +549,7 @@ impl SyncOrchestrator {
                                     }
                                 }
                                 ApplyOutcome::SnapshotFallbackRequested { space_id, reason } => {
-                                    // MAINT-228: the import was NOT
+                                    // The import was NOT
                                     // attempted because the peer's
                                     // `from_vv` is not reachable from
                                     // our `oplog_vv()`.  Transition
@@ -617,7 +617,7 @@ impl SyncOrchestrator {
                 // this arm). Record `synced_at` so the scheduler stops
                 // marking us due every tick and re-pulling a full snapshot.
                 // Skip the write only when the peer was never identified —
-                // never fabricate a bogus empty-`peer_id` row (BUG-27).
+                // Never fabricate a bogus empty-`peer_id` row.
                 if let Some(peer_id) = self.resolve_remote_peer_id() {
                     self.record_pull_in_tx(&peer_id, &last_hash).await?;
                 } else {
@@ -643,7 +643,7 @@ impl SyncOrchestrator {
 
             // ---- SyncComplete -----------------------------------------------
             SyncMessage::SyncComplete { last_hash } => {
-                // BUG-27: `peer_refs::upsert_peer_ref` + `complete_sync` write
+                // `peer_refs::upsert_peer_ref` + `complete_sync` write
                 // rows keyed by `peer_id`. An empty string here silently
                 // creates / updates a bogus peer row, permanently corrupting
                 // the per-peer sync bookkeeping. If the remote device was
@@ -781,7 +781,7 @@ impl SyncOrchestrator {
     /// identity) and backfills `remote_device_id`/`session.remote_device_id`
     /// so the event sink sees a real id. Returns `None` when neither is
     /// available — the caller must then refuse to write a bogus
-    /// empty-`peer_id` row (BUG-27).
+    /// Empty-`peer_id` row.
     fn resolve_remote_peer_id(&mut self) -> Option<String> {
         if let Some(id) = self.remote_device_id.as_deref()
             && !id.is_empty()
@@ -811,7 +811,7 @@ impl SyncOrchestrator {
     /// The streamer (responder) must not, or it refreshes `synced_at` for a
     /// peer it never pulled from and starves the reverse direction.
     ///
-    /// PEND-24 M2: the ensure-row + record pair runs in one `BEGIN IMMEDIATE`
+    /// The ensure-row + record pair runs in one `BEGIN IMMEDIATE`
     /// transaction so a crash between the two writes cannot leave a peer row
     /// whose `last_hash` is stale relative to the ops actually applied. The
     /// orchestrator runs serially per peer, so lock contention is bounded;
@@ -913,7 +913,7 @@ impl SyncOrchestrator {
         // initiator advertised a version vector for a space, ship an
         // incremental Update (the delta since their vv); otherwise — a
         // space the initiator doesn't have, or an older peer that sent no
-        // vvs — ship a full Snapshot. The receiver's MAINT-228 reachability
+        // Vvs — ship a full Snapshot. The receiver's reachability
         // gate (`apply_remote`) catches an unreachable `from_vv` and falls
         // back to a snapshot, so a stale advertised vv is safe.
         let mut messages: VecDeque<LoroSyncMessage> = VecDeque::with_capacity(space_ids.len());
@@ -1062,7 +1062,7 @@ impl SyncOrchestrator {
         &self.session
     }
 
-    /// L-66: read the daemon-provided `expected_remote_id` so callers
+    /// Read the daemon-provided `expected_remote_id` so callers
     /// (snapshot catch-up) can mirror the [`SyncMessage::SyncComplete`]
     /// fallback when `session.remote_device_id` is empty. Returns
     /// `None` if no expected id was set (e.g., an in-process test

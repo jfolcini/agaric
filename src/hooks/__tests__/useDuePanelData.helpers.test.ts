@@ -1,5 +1,5 @@
 /**
- * Unit tests for the pure helpers extracted from useDuePanelData (MAINT-60).
+ * Unit tests for the pure helpers extracted from useDuePanelData.
  *
  * The helpers are small, side-effect-free, and deterministic — no Tauri
  * mocking, no React renderer. Each covers the happy path plus the
@@ -51,7 +51,7 @@ describe('applySourceFilter', () => {
     expect(applySourceFilter(items, date, 'column:due_date')).toHaveLength(3)
   })
 
-  it('filters empty, whitespace-only, and null content (UX-129)', () => {
+  it('filters empty, whitespace-only, and null content', () => {
     const items = [
       makeBlock({ id: 'B1', content: 'real task' }),
       makeBlock({ id: 'B2', content: null }),

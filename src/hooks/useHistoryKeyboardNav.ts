@@ -9,7 +9,7 @@
  * selection. Also installs the scroll-into-view effect that keeps the
  * focused row visible inside `listRef`.
  *
- * Extracted from `HistoryView` (MAINT-128).
+ * Extracted from `HistoryView`.
  */
 
 import { type Dispatch, type SetStateAction, useEffect } from 'react'

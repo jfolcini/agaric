@@ -312,7 +312,7 @@ mod tests {
         );
     }
 
-    // L-8: legacy `init_pool` should run `PRAGMA optimize` after migrations,
+    // Legacy `init_pool` should run `PRAGMA optimize` after migrations,
     // matching production `init_pools`. Real coverage: the call doesn't fail
     // and the pool is usable for a SELECT afterwards.
     #[tokio::test]
@@ -327,7 +327,7 @@ mod tests {
         assert_eq!(count, 0, "fresh DB should have zero blocks");
     }
 
-    /// BUG-73 regression: migrations 0073 and 0080 rebuild `blocks` by
+    /// Regression: migrations 0073 and 0080 rebuild `blocks` by
     /// creating `_new_blocks`, copying data, then `DROP TABLE blocks`.
     /// The original SQL declared `parent_id REFERENCES blocks(id)` and
     /// `page_id REFERENCES blocks(id)` inside `_new_blocks`. After the
@@ -741,7 +741,7 @@ mod tests {
     }
 
     // ======================================================================
-    // PEND-103 (issue #103): after migration 0072 dropped the redundant
+    // (issue #103): after migration 0072 dropped the redundant
     // idx_block_links_source, `WHERE source_id = ?` lookups must fall
     // through to the PK autoindex (sqlite_autoindex_block_links_1). Lock
     // that planner choice so a future schema change can't silently
@@ -796,7 +796,7 @@ mod tests {
     }
 
     // ======================================================================
-    // MAINT-30: Slow pool acquire logging
+    // Slow pool acquire logging
     // ======================================================================
 
     /// Thread-safe buffered writer usable as a `tracing_subscriber::fmt`
@@ -926,7 +926,7 @@ mod tests {
     }
 
     // ======================================================================
-    // MAINT-112: CommandTx newtype tests
+    // CommandTx newtype tests
     // ======================================================================
 
     use crate::op_log::OpRecord;
@@ -982,7 +982,7 @@ mod tests {
     async fn command_tx_deref_passes_through_to_in_tx_helpers() {
         // Prove that an existing `&mut sqlx::Transaction<'_, Sqlite>`
         // helper accepts `&mut *cmd_tx` unchanged. This is the
-        // load-bearing invariant for the MAINT-112 migration strategy.
+        // Load-bearing invariant for the migration strategy.
         async fn in_tx_style_helper(
             tx: &mut sqlx::Transaction<'_, Sqlite>,
             id: &str,
@@ -1003,7 +1003,7 @@ mod tests {
             .await
             .unwrap();
 
-        // The helper signature is unchanged from the pre-MAINT-112
+        // The helper signature is unchanged from the pre-
         // codebase — the Deref/DerefMut impls on CommandTx are what
         // makes `&mut *cmd_tx` match its expected `&mut Transaction`.
         in_tx_style_helper(&mut cmd_tx, "CMDTX_DEREF")
@@ -1214,7 +1214,7 @@ mod tests {
         );
     }
 
-    /// BUG-73 regression: when `blocks` is missing but `op_log` still has
+    /// Regression: when `blocks` is missing but `op_log` still has
     /// data (partial migration-73 DROP TABLE), `init_pool` must recreate
     /// `blocks` from `op_log` and then restore dependent tables after
     /// migrations so no user data is lost.
@@ -1384,7 +1384,7 @@ mod tests {
     /// `recover_derived_state_from_op_log` directly with the #616 positive
     /// corruption signal forced `true` (op_log non-empty + empty derived tables
     /// keep the secondary gate open), so this exercises the real production
-    /// replay path against a real schema — without the temp-table BUG-73 path
+    /// Replay path against a real schema — without the temp-table path
     /// that `DROP TABLE blocks` would trigger.
     #[cfg(test)]
     async fn seed_space_recovery_pool(ops: &[(i64, &str, &str)]) -> (SqlitePool, TempDir) {
@@ -1595,7 +1595,7 @@ mod tests {
         );
     }
 
-    /// #605 regression, full boot path (BUG-73 DROP-TABLE corruption): the
+    /// #605 regression, full boot path (DROP-TABLE corruption): the
     /// recreated temp `blocks` table must carry `space_id` (no later
     /// migration re-runs to add it — `_sqlx_migrations` already records
     /// 0086), so a valid `set_property(space)` op replays onto the column
@@ -2547,7 +2547,7 @@ mod tests {
         );
     }
 
-    /// #618 era parity (the pre-0080 population BUG-73/#429 originally
+    /// #618 era parity (the pre-0080 population /#429 originally
     /// served): with `_sqlx_migrations` recording only ≤0078, recovery must
     /// STILL write rfc3339 TEXT — 0080's julianday() backfill re-runs and is
     /// the designated converter. The op's instant must survive to head as the
@@ -2647,7 +2647,7 @@ mod tests {
         assert_eq!(space_id, None, "recovered block boots with space_id NULL");
     }
 
-    /// BUG-73 regression: derived-state recovery must not crash when op_log
+    /// Regression: derived-state recovery must not crash when op_log
     /// contains `set_property` / `add_tag` ops that reference blocks absent
     /// from the recovered `blocks` table (purged locally, or created on
     /// another device and never present in the local op_log).  Those ops'

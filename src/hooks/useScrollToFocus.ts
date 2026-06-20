@@ -4,7 +4,7 @@
  *
  * Two callsites used to inline this pattern with minor variations
  * (JournalPage's day/panel scroll, DailyView's `selectedBlockId` scroll
- * for UX-258). Each wrapped a `requestAnimationFrame` around an element
+ * For). Each wrapped a `requestAnimationFrame` around an element
  * lookup + `scrollIntoView`, returning a `cancelAnimationFrame` cleanup.
  *
  * The hook centralises:

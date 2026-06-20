@@ -1,5 +1,5 @@
 /**
- * MobileEscalationButton — PEND-58g UX-A1 prominent, always-visible
+ * MobileEscalationButton — prominent, always-visible
  * escalation CTA pinned beneath the CommandList on the mobile all-pages
  * sheet. Extracted from `PaletteBody` in CommandPalette.tsx.
  *

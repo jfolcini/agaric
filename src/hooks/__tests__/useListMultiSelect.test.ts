@@ -4,7 +4,7 @@
  * Validates:
  *  - toggleSelection adds/removes items
  *  - rangeSelect with targetState=true adds range
- *  - rangeSelect with targetState=false removes range (UX-140)
+ * RangeSelect with targetState=false removes range
  *  - selectAll respects filterPredicate
  *  - clearSelection empties set
  *  - handleRowClick with shift key triggers rangeSelect
@@ -80,7 +80,7 @@ describe('useListMultiSelect', () => {
     expect(result.current.selected.has('d')).toBe(false)
   })
 
-  it('rangeSelect with targetState=false removes range (UX-140)', () => {
+  it('rangeSelect with targetState=false removes range', () => {
     const { result } = renderHook(() =>
       useListMultiSelect<TestItem>({
         items,
@@ -207,7 +207,7 @@ describe('useListMultiSelect', () => {
     expect(result.current.lastClickedId).toBe(null)
   })
 
-  it('shift-click propagates removal state (UX-140)', () => {
+  it('shift-click propagates removal state', () => {
     const { result } = renderHook(() =>
       useListMultiSelect<TestItem>({
         items,
@@ -287,7 +287,7 @@ describe('useListMultiSelect', () => {
     expect(result.current.lastClickedId).toBe('d')
   })
 
-  it('toggleSelection identity is stable across items changes (FE-M-5)', () => {
+  it('toggleSelection identity is stable across items changes ()', () => {
     const getItemId = (item: TestItem) => item.id
     const { result, rerender } = renderHook(
       ({ hookItems }: { hookItems: TestItem[] }) =>

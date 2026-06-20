@@ -1,5 +1,5 @@
 /**
- * FEAT-12 — Quick-capture global-shortcut storage helpers.
+ * Quick-capture global-shortcut storage helpers.
  *
  * The user-configured chord lives in `localStorage` under
  * `agaric:quickCaptureShortcut`. Reads are SSR-safe (`typeof window`

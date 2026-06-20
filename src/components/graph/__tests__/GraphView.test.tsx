@@ -1,5 +1,5 @@
 /**
- * Tests for GraphView component (F-33 + PERF-9b).
+ * Tests for GraphView component (F-33 +).
  *
  * Validates:
  *  - Shows loading skeleton on mount
@@ -194,7 +194,7 @@ vi.mock('d3-drag', () => ({
 // (see src/__tests__/mocks/ui-select.tsx). Tests query the rendered native
 // <select> by its aria-label ("Filter by tag"), which the trigger forwards.
 
-// ── MockWorker for WebWorker tests (PERF-9b) ──────────────────────────
+// ── MockWorker for WebWorker tests ──────────────────────────
 
 type MessageHandler = (event: { data: any }) => void
 
@@ -340,7 +340,7 @@ describe('GraphView', () => {
       expect(graphView).toBeInTheDocument()
     })
 
-    // UX-270: SVG no longer has role="img"; query by data-testid instead.
+    // SVG no longer has role="img"; query by data-testid instead.
     const svg = screen.getByTestId('graph-svg')
     expect(svg).toBeInTheDocument()
     expect(svg.tagName).toBe('svg')
@@ -423,7 +423,7 @@ describe('GraphView', () => {
 
     render(<GraphView />)
 
-    // PEND-23 M9: error is now rendered via the shared EmptyState primitive
+    // Error is now rendered via the shared EmptyState primitive
     // (h2 heading), not a `role="alert"` div. Query by the localized message
     // to confirm the branch is taken.
     expect(
@@ -437,7 +437,7 @@ describe('GraphView', () => {
     )
   })
 
-  // PEND-23 M9 regression: when the IPC fetch rejects, the EmptyState
+  // Regression: when the IPC fetch rejects, the EmptyState
   // primitive should render with the localized error message and the graph
   // SVG should NOT be in the DOM (the error branch returns early).
   it('renders the EmptyState fallback (not the SVG) on fetch failure', async () => {
@@ -597,9 +597,9 @@ describe('GraphView', () => {
     expect(screen.getByRole('button', { name: /Fit to view/ })).toBeInTheDocument()
   })
 
-  // UX-356: zoom buttons must surface their keyboard shortcut binding via
+  // Zoom buttons must surface their keyboard shortcut binding via
   // the accessible name so users know the hotkey without opening settings.
-  describe('zoom button shortcut bindings (UX-356)', () => {
+  describe('zoom button shortcut bindings', () => {
     const pagesResponse = {
       items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
       next_cursor: null,
@@ -702,20 +702,20 @@ describe('GraphView', () => {
     expect(svg).toHaveAttribute('tabindex', '0')
   })
 
-  // UX-244: bare `h-full` on an inline SVG does not resolve against a
+  // Bare `h-full` on an inline SVG does not resolve against a
   // block-level flex-item parent in Chromium — it falls back to the SVG's
   // 150 px intrinsic height, which left graph nodes clustered in the top
   // 150 px of a much taller container. `absolute inset-0` positions the
   // SVG inside the `.graph-view` (relative) ancestor so it fills the full
   // available height regardless of the percentage-height resolution quirk.
   // Class-list regression — do not weaken.
-  // UX-270: dropping `role="img"` from the SVG. The graph's nodes are
+  // Dropping `role="img"` from the SVG. The graph's nodes are
   // interactive (`role="button"` + Enter/Space activation in
   // useGraphSimulation), and `role="img"` on a container of interactive
   // elements is incorrect — ATs treat the whole region as one opaque
   // graphic. The accessible name remains via `aria-label`, but no wrapper
   // role is set so the descendants surface naturally.
-  it('SVG has no wrapper role (UX-270 — interactive descendants)', async () => {
+  it('SVG has no wrapper role (interactive descendants)', async () => {
     const pagesResponse = {
       items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
       next_cursor: null,
@@ -741,10 +741,10 @@ describe('GraphView', () => {
     expect(svg).toHaveAttribute('aria-label', 'Page Relationships')
   })
 
-  // UX-355: keyboard users must discover that graph nodes are activatable.
+  // Keyboard users must discover that graph nodes are activatable.
   // The SVG's `aria-describedby` pairs with a visually-hidden hint paragraph
   // so ATs surface "Tab → Enter/Space" alongside the accessible name.
-  it('SVG is described by the visually-hidden keyboard hint (UX-355)', async () => {
+  it('SVG is described by the visually-hidden keyboard hint', async () => {
     const pagesResponse = {
       items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
       next_cursor: null,
@@ -775,7 +775,7 @@ describe('GraphView', () => {
     expect(hint).toHaveTextContent(t('graph.keyboardHint'))
   })
 
-  it('SVG is absolutely positioned to fill the relative parent (UX-244)', async () => {
+  it('SVG is absolutely positioned to fill the relative parent', async () => {
     const pagesResponse = {
       items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
       next_cursor: null,
@@ -1092,7 +1092,7 @@ describe('GraphView', () => {
 
       render(<GraphView />)
 
-      // PEND-23 M9: error renders via the EmptyState primitive (h2), not
+      // Error renders via the EmptyState primitive (h2), not
       // a `role="alert"` div.
       expect(
         await screen.findByRole('heading', { level: 2, name: 'Failed to load graph data' }),
@@ -1267,7 +1267,7 @@ describe('GraphView', () => {
       )
     })
 
-    // BUG-18: rebinding graph zoom shortcuts via keyboard-config
+    // Rebinding graph zoom shortcuts via keyboard-config
     it('rebinding graphZoomIn: new keys fire, old + does not', async () => {
       localStorage.setItem(
         'agaric-keyboard-shortcuts',
@@ -1321,7 +1321,7 @@ describe('GraphView', () => {
 
       render(<GraphView />)
 
-      // PEND-23 M9: wait for the EmptyState heading (h2) so we know the
+      // Wait for the EmptyState heading (h2) so we know the
       // error branch has been taken before asserting on logger.
       await screen.findByRole('heading', { level: 2, name: 'Failed to load graph data' })
 
@@ -1438,7 +1438,7 @@ describe('GraphView', () => {
     })
   })
 
-  describe('WebWorker (PERF-9b)', () => {
+  describe('WebWorker', () => {
     it('spawns a Worker and posts start message with graph data', async () => {
       const pagesResponse = {
         items: [
@@ -1545,8 +1545,8 @@ describe('GraphView', () => {
     })
   })
 
-  // BUG-45 regression — worker runtime failure must recover via main-thread fallback
-  describe('WebWorker runtime failure (BUG-45)', () => {
+  // Regression — worker runtime failure must recover via main-thread fallback
+  describe('WebWorker runtime failure', () => {
     it('falls back to main-thread simulation when worker dispatches error event', async () => {
       const pagesResponse = {
         items: [
@@ -1690,7 +1690,7 @@ describe('GraphView', () => {
     })
   })
 
-  describe('tag filter (PERF-9c / UX-205)', () => {
+  describe('tag filter ()', () => {
     it('renders the graph filter bar', async () => {
       const pagesResponse = {
         items: [

@@ -1,5 +1,5 @@
 /**
- * AgentAccessSettingsTab — Settings tab for the FEAT-4 MCP (Model Context
+ * AgentAccessSettingsTab — Settings tab for the MCP (Model Context
  * Protocol) agent-access surface.
  *
  * Sections (top to bottom):
@@ -99,7 +99,7 @@ export function AgentAccessSettingsTab(): React.ReactElement {
     void loadStatus()
   }, [loadStatus])
 
-  // MAINT-120: RO toggle. Optimistic flip; revert via the captured
+  // RO toggle. Optimistic flip; revert via the captured
   // `previous` snapshot if the IPC rejects. On success we refetch so
   // `active_connections` reflects the backend (disabling fires
   // disconnect_all).
@@ -133,7 +133,7 @@ export function AgentAccessSettingsTab(): React.ReactElement {
     [executeToggleRo, status],
   )
 
-  // MAINT-120: RW toggle. Same shape as RO but flips the RW status.
+  // RW toggle. Same shape as RO but flips the RW status.
   const { execute: executeToggleRw } = useIpcCommand<
     { enabled: boolean; previous: McpRwStatus | null },
     void
@@ -166,7 +166,7 @@ export function AgentAccessSettingsTab(): React.ReactElement {
     [executeToggleRw, rwStatus],
   )
 
-  // MAINT-120: RO kill switch — disconnect every active RO agent session.
+  // RO kill switch — disconnect every active RO agent session.
   const { execute: executeDisconnectAll } = useIpcCommand<void, void>({
     call: () => invoke('mcp_disconnect_all'),
     module: 'AgentAccessSettingsTab',
@@ -184,7 +184,7 @@ export function AgentAccessSettingsTab(): React.ReactElement {
     await executeDisconnectAll()
   }, [executeDisconnectAll])
 
-  // MAINT-120: RW kill switch — disconnect every active RW agent session.
+  // RW kill switch — disconnect every active RW agent session.
   const { execute: executeDisconnectAllRw } = useIpcCommand<void, void>({
     call: () => invoke('mcp_rw_disconnect_all'),
     module: 'AgentAccessSettingsTab',
@@ -204,7 +204,7 @@ export function AgentAccessSettingsTab(): React.ReactElement {
 
   const socketPath = status?.socket_path ?? ''
 
-  // The Claude Desktop config snippet. Docs-only per the FEAT-4 decision
+  // The Claude Desktop config snippet. Docs-only per the decision
   // — we copy the JSON to the clipboard and let the user paste it into
   // `claude_desktop_config.json` themselves.
   const claudeConfigJson = useMemo(

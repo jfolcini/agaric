@@ -77,7 +77,7 @@ async fn pages_cache_after_create_page() {
 
 #[tokio::test]
 async fn enqueue_inbound_sync_rebuilds_refreshes_derived_caches() {
-    // PEND-81 §2A #4: after an inbound sync writes the per-block SQL
+    // #4: after an inbound sync writes the per-block SQL
     // projection, the orchestrator enqueues this fan-out so the read-path
     // derived caches + FTS converge to the imported state. Seed a tag, a
     // page, and a content block directly (as `apply_remote`'s per-block

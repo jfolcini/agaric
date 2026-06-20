@@ -1,5 +1,5 @@
 /**
- * Tests for useAliasResolution (PEND-30 D-3).
+ * Tests for useAliasResolution (D-3).
  *
  * Validates:
  *  - Empty/whitespace query returns null + ''.
@@ -139,7 +139,7 @@ describe('useAliasResolution', () => {
     await waitFor(() => {
       expect(mockedResolveAlias).toHaveBeenCalled()
     })
-    // FE-12 — suppression is now a render-time derive (a changing
+    // Suppression is now a render-time derive (a changing
     // `results` array no longer re-fires the alias IPC). The card is
     // still hidden when the resolved page is already in results;
     // whether getBlock ran is an implementation detail.
@@ -169,7 +169,7 @@ describe('useAliasResolution', () => {
     const { result } = renderHook(() => useAliasResolution('apollo', EMPTY_RESULTS, 'SPACE_A'))
 
     await waitFor(() => {
-      // CR9 (PEND-70): the raw query is intentionally NOT logged (log hygiene);
+      // CR9: the raw query is intentionally NOT logged (log hygiene);
       // the context arg is now `undefined`.
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
         'SearchPanel',

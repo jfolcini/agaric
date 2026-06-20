@@ -1,5 +1,5 @@
 /**
- * Tests for NotificationsTab — FEAT-11 Settings slice (#138).
+ * Tests for NotificationsTab — Settings slice (#138).
  *
  * Validates:
  *  - Renders the enable toggle (off by default) + permission/test

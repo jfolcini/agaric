@@ -7,9 +7,9 @@ import { invoke as __TAURI_INVOKE, Channel } from "@tauri-apps/api/core";
 export const commands = {
 	/**
 	 *  Tauri command: create a new block. Delegates to
-	 *  [`create_block_inner_with_space`] which enforces the FEAT-3
+	 *  [`create_block_inner_with_space`] which enforces the
 	 *  "every page has a space" invariant at the IPC boundary
-	 *  (BUG-1 / H-3a). The optional `space_id` is required when
+	 *  The optional `space_id` is required when
 	 *  `block_type == "page"` and ignored otherwise.
 	 */
 	createBlock: (blockType: string, content: string, parentId: string | null, index: number | null, scope: SpaceScope) => typedError<BlockRow, AppError>(__TAURI_INVOKE("create_block", { blockType, content, parentId, index, scope })),
@@ -17,7 +17,7 @@ export const commands = {
 	 *  Tauri command: atomically create a batch of blocks. Delegates to
 	 *  [`create_blocks_batch_inner`].
 	 *
-	 *  PEND-35 Tier 4.3 — collapses the per-block `create_block` IPC loop
+	 *  Collapses the per-block `create_block` IPC loop
 	 *  in `src/lib/template-utils.ts::insertTemplateBlocks` /
 	 *  `insertTemplateBlocksFromString` into one round-trip and one
 	 *  writer-lock window. A 10-line template that previously fired 10
@@ -29,7 +29,7 @@ export const commands = {
 	/**  Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`]. */
 	deleteBlock: (blockId: BlockId) => typedError<DeleteResponse, AppError>(__TAURI_INVOKE("delete_block", { blockId })),
 	/**
-	 *  Tauri command: batch-delete blocks by ids (PEND-35 Tier 2.1).
+	 *  Tauri command: batch-delete blocks by ids.
 	 *
 	 *  Delegates to [`delete_blocks_by_ids_inner`]. Single IMMEDIATE tx
 	 *  covers the whole batch — collapses the legacy N-IPC loop in
@@ -39,7 +39,7 @@ export const commands = {
 	 */
 	deleteBlocksByIds: (blockIds: BlockId[]) => typedError<number, AppError>(__TAURI_INVOKE("delete_blocks_by_ids", { blockIds })),
 	/**
-	 *  Tauri command: move N blocks to a target space (#81 / PEND-57).
+	 *  Tauri command: move N blocks to a target space (#81).
 	 *  Delegates to [`move_blocks_to_space_inner`]. Returns the number of
 	 *  blocks actually moved.
 	 */
@@ -49,12 +49,12 @@ export const commands = {
 	/**  Tauri command: permanently purge a soft-deleted block. Delegates to [`purge_block_inner`]. */
 	purgeBlock: (blockId: BlockId) => typedError<PurgeResponse, AppError>(__TAURI_INVOKE("purge_block", { blockId })),
 	/**
-	 *  PEND-35 Tier 2.2 — restore a list of soft-deleted blocks in one IPC.
+	 *  Restore a list of soft-deleted blocks in one IPC.
 	 *  Delegates to [`restore_blocks_by_ids_inner`].
 	 */
 	restoreBlocksByIds: (blockIds: BlockId[]) => typedError<BulkTrashResponse, AppError>(__TAURI_INVOKE("restore_blocks_by_ids", { blockIds })),
 	/**
-	 *  PEND-35 Tier 2.2 — permanently purge a list of soft-deleted blocks in one IPC.
+	 *  Permanently purge a list of soft-deleted blocks in one IPC.
 	 *  Delegates to [`purge_blocks_by_ids_inner`].
 	 */
 	purgeBlocksByIds: (blockIds: BlockId[]) => typedError<BulkTrashResponse, AppError>(__TAURI_INVOKE("purge_blocks_by_ids", { blockIds })),
@@ -69,7 +69,7 @@ export const commands = {
 	 *
 	 *  The three agenda knobs (`date`, `date_range`, `source`) are bundled
 	 *  into a single [`AgendaQuery`] to keep this wrapper under the
-	 *  `tauri-specta` 10-arg limit after FEAT-3 Phase 2 added `space_id`.
+	 *  `tauri-specta` 10-arg limit after Phase 2 added `space_id`.
 	 *  The hand-written TS wrapper in `src/lib/tauri.ts` keeps the flat
 	 *  public API (accepts `agendaDate` / `agendaDateRange` / `agendaSource`
 	 *  at the top level and marshals them into this struct for the IPC
@@ -89,7 +89,7 @@ export const commands = {
 	 *  Tauri command: fetch a single block by ID. Delegates to
 	 *  [`get_active_block_inner`].
 	 *
-	 *  M-98 — the public IPC must never surface soft-deleted rows; the
+	 *  The public IPC must never surface soft-deleted rows; the
 	 *  frontend exposes them only via [`list_trash`] (the trash view).
 	 *  Switched from `get_block_inner` to [`get_active_block_inner`] so a
 	 *  soft-deleted block returns `NotFound` to the IPC caller instead of an
@@ -99,7 +99,7 @@ export const commands = {
 	/**
 	 *  Tauri command: batch-resolve block metadata. Delegates to [`batch_resolve_inner`].
 	 *
-	 *  FEAT-3 Phase 7 — `space_id` is required so the resolve store cannot
+	 *  Phase 7 — `space_id` is required so the resolve store cannot
 	 *  surface foreign-space titles. The frontend always knows the current
 	 *  space and threads it through `useResolveStore.preload(spaceId)`.
 	 */
@@ -107,7 +107,7 @@ export const commands = {
 	/**  Tauri command: add a tag to a block. Delegates to [`add_tag_inner`]. */
 	addTag: (blockId: BlockId, tagId: BlockId) => typedError<TagResponse, AppError>(__TAURI_INVOKE("add_tag", { blockId, tagId })),
 	/**
-	 *  Tauri command: add ONE tag to N blocks (#81 / PEND-57). Delegates to
+	 *  Tauri command: add ONE tag to N blocks (#81). Delegates to
 	 *  [`add_tags_by_ids_inner`]. Returns the number of blocks newly tagged.
 	 */
 	addTagsByIds: (blockIds: BlockId[], tagId: BlockId) => typedError<number, AppError>(__TAURI_INVOKE("add_tags_by_ids", { blockIds, tagId })),
@@ -129,7 +129,7 @@ export const commands = {
 	/**
 	 *  Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
 	 *
-	 *  PEND-50 Phase 0 — `parent_id` / `tag_ids` / `space_id` are bundled
+	 *  Phase 0 — `parent_id` / `tag_ids` / `space_id` are bundled
 	 *  into [`SearchFilter`] so the wrapper stays well under the
 	 *  `tauri-specta` 10-arg ceiling as follow-up plans append filter
 	 *  fields (`#[serde(default)]` keeps wire compat). The hand-written
@@ -140,7 +140,7 @@ export const commands = {
 	 */
 	searchBlocks: (query: string, cursor: string | null, limit: number | null, filter: SearchFilter) => typedError<PageResponse<SearchBlockRow>, AppError>(__TAURI_INVOKE("search_blocks", { query, cursor, limit, filter })),
 	/**
-	 *  Tauri command: PEND-61 partitioned full-text search. Returns two
+	 *  Tauri command: partitioned full-text search. Returns two
 	 *  partitions of the same FTS scan (pages-only + unrestricted) in a
 	 *  single round-trip, replacing the palette's two parallel
 	 *  [`search_blocks`] calls.
@@ -150,7 +150,7 @@ export const commands = {
 	 *  for [`SearchFilter`] compat.
 	 *
 	 *  See [`search_blocks_partitioned_inner`] for the partition + `has_more`
-	 *  contract, and the cancellation contract (PEND-70).
+	 *  Contract, and the cancellation contract.
 	 */
 	searchBlocksPartitioned: (query: string, pageLimit: number, blockLimit: number, filter: SearchFilter) => typedError<PartitionedSearchResponse, AppError>(__TAURI_INVOKE("search_blocks_partitioned", { query, pageLimit, blockLimit, filter })),
 	/**  Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`]. */
@@ -178,25 +178,25 @@ export const commands = {
 	 */
 	queryByProperty: (key: string, valueText: string | null, valueDate: string | null, operator: string | null, cursor: string | null, limit: number | null, scope: SpaceScope, extraFilters: {
 	/**
-	 *  PEND-35 Tier 1.5 — exclude rows whose `parent_id` matches.
+	 *  Exclude rows whose `parent_id` matches.
 	 *  `IS NOT` semantics so NULL parents are kept.
 	 */
 	excludeParentId: string | null,
 	/**
-	 *  PEND-35 Tier 1.5 — drop rows whose content is NULL, empty, or
+	 *  Drop rows whose content is NULL, empty, or
 	 *  whitespace-only (matches FE `!b.content?.trim()`).
 	 */
 	contentNonEmpty: boolean | null,
-	/**  PEND-35 Tier 3.4 — push `block_type = ?` into SQL. */
+	/**  Push `block_type = ?` into SQL. */
 	blockType: string | null,
 	/**
-	 *  PEND-35 Tier 3.4 — push `value_text IN (...)` into SQL via
+	 *  Push `value_text IN (...)` into SQL via
 	 *  `json_each`. Mutually exclusive with `value_text` on
 	 *  `query_by_property`.
 	 */
 	valueTextIn: string[] | null,
 	/**
-	 *  PEND-35 Tier 3.4 — push `value_date >= from AND value_date < to`
+	 *  Push `value_date >= from AND value_date < to`
 	 *  into SQL (half-open `[from, to)` range).
 	 */
 	valueDateRange: [string, string] | null,
@@ -256,7 +256,7 @@ export const commands = {
 	/**
 	 *  Tauri command: set (upsert) a property on a block. Delegates to [`set_property_inner`].
 	 *
-	 *  PEND-14: typed value fields are bundled into [`SetPropertyArgs`] so the
+	 *  Typed value fields are bundled into [`SetPropertyArgs`] so the
 	 *  IPC signature stays at 7 positional args (under specta's 10-arg cap).
 	 *  Adding `value_bool` as a 5th flat field would have exceeded the limit.
 	 */
@@ -264,7 +264,7 @@ export const commands = {
 	/**  Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`]. */
 	setTodoState: (blockId: BlockId, state: string | null) => typedError<BlockRow, AppError>(__TAURI_INVOKE("set_todo_state", { blockId, state })),
 	/**
-	 *  Tauri command: batch-set todo state on multiple blocks (PEND-35 Tier 2.1).
+	 *  Tauri command: batch-set todo state on multiple blocks.
 	 *
 	 *  Delegates to [`set_todo_state_batch_inner`]. Single IMMEDIATE tx
 	 *  covers every per-block write — collapses the legacy N-IPC loop the
@@ -274,17 +274,17 @@ export const commands = {
 	 *  Emits one `EVENT_PROPERTY_CHANGED` per successfully-updated block
 	 *  so existing per-block listeners (e.g. agenda recompute, property
 	 *  drawer) keep firing without protocol changes. Failed-emit
-	 *  breadcrumbs follow the established log-on-error pattern (L-33).
+	 *  Breadcrumbs follow the established log-on-error pattern.
 	 */
 	setTodoStateBatch: (blockIds: BlockId[], state: string | null) => typedError<number, AppError>(__TAURI_INVOKE("set_todo_state_batch", { blockIds, state })),
 	/**
 	 *  Tauri command: set priority on a block. Delegates to [`set_priority_inner`].
 	 *
-	 *  L-38: emits `EVENT_PROPERTY_CHANGED` after a successful set so the
+	 *  Emits `EVENT_PROPERTY_CHANGED` after a successful set so the
 	 *  frontend property-change listener fires for priority updates (parity
 	 *  with `set_todo_state` / `set_due_date` / `set_scheduled_date` /
 	 *  `delete_property` / `set_property`). The emit uses the
-	 *  log-on-error pattern (mirror of L-33) so a transient emit failure
+	 *  Log-on-error pattern (mirror of) so a transient emit failure
 	 *  does not propagate as a command error.
 	 */
 	setPriority: (blockId: BlockId, level: string | null) => typedError<BlockRow, AppError>(__TAURI_INVOKE("set_priority", { blockId, level })),
@@ -298,7 +298,7 @@ export const commands = {
 	getProperties: (blockId: BlockId) => typedError<PropertyRow[], AppError>(__TAURI_INVOKE("get_properties", { blockId })),
 	/**
 	 *  Tauri command: fetch a single property row by `(block_id, key)`
-	 *  primary key (PEND-35 Tier 2.4c). Delegates to [`get_property_inner`].
+	 *  Primary key. Delegates to [`get_property_inner`].
 	 */
 	getProperty: (blockId: BlockId, key: string) => typedError<{
 	key: string,
@@ -307,7 +307,7 @@ export const commands = {
 	value_date: string | null,
 	value_ref: string | null,
 	/**
-	 *  PEND-14: native boolean property storage. SQLite represents booleans
+	 *  Native boolean property storage. SQLite represents booleans
 	 *  as INTEGER (0/1, with a CHECK constraint allowing only NULL/0/1).
 	 */
 	value_bool: number | null,
@@ -325,7 +325,7 @@ export const commands = {
 	/**
 	 *  Tauri command: compute the size of the consecutive same-device,
 	 *  within-window undo group starting at the Nth-most-recent undoable op.
-	 *  Delegates to [`find_undo_group_inner`]. PEND-35 Tier 4.4.
+	 *  Delegates to [`find_undo_group_inner`]..
 	 */
 	findUndoGroup: (pageId: string, depth: number, windowMs: number) => typedError<number, AppError>(__TAURI_INVOKE("find_undo_group", { pageId, depth, windowMs })),
 	/**
@@ -362,7 +362,7 @@ export const commands = {
 	/**  Tauri command: create a property definition. Delegates to [`create_property_def_inner`]. */
 	createPropertyDef: (key: string, valueType: string, options: string | null) => typedError<PropertyDefinition, AppError>(__TAURI_INVOKE("create_property_def", { key, valueType, options })),
 	/**
-	 *  Tauri command: fetch a single property definition by key (PEND-35 Tier 2.6).
+	 *  Tauri command: fetch a single property definition by key.
 	 *  Delegates to [`get_property_def_inner`].
 	 */
 	getPropertyDef: (key: string) => typedError<{
@@ -372,7 +372,7 @@ export const commands = {
 	created_at: string,
 } | null, AppError>(__TAURI_INVOKE("get_property_def", { key })),
 	/**
-	 *  Tauri command: list all property definitions, paginated (M-85).
+	 *  Tauri command: list all property definitions, paginated.
 	 *  Delegates to [`list_property_defs_inner`].
 	 */
 	listPropertyDefs: (cursor: string | null, limit: number | null) => typedError<PageResponse<PropertyDefinition>, AppError>(__TAURI_INVOKE("list_property_defs", { cursor, limit })),
@@ -465,7 +465,7 @@ export const commands = {
 	 *  Tauri command: list projected future occurrences of repeating tasks.
 	 *  Delegates to [`list_projected_agenda_inner`].
 	 *
-	 *  Cursor-paginated (M-25) — pass `cursor = next_cursor` from the previous
+	 *  Cursor-paginated — pass `cursor = next_cursor` from the previous
 	 *  response to fetch the next page.
 	 */
 	listProjectedAgenda: (startDate: string, endDate: string, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<ActiveProjectedAgendaEntry>, AppError>(__TAURI_INVOKE("list_projected_agenda", { startDate, endDate, cursor, limit, scope })),
@@ -485,13 +485,13 @@ export const commands = {
 	 *  Tauri command: import a Logseq-style markdown file as a page with
 	 *  block hierarchy. Delegates to [`import_markdown_with_progress`].
 	 *
-	 *  PEND-35 Tier 1.1 — `space_id` is required. The imported page is
+	 *  `space_id` is required. The imported page is
 	 *  stamped with `space = ?space_id` inside the same transaction as the
 	 *  `CreateBlock` op, so an imported page can never exist in the op log
-	 *  without its space property (FEAT-3 invariant). Validation against a
+	 *  Without its space property (invariant). Validation against a
 	 *  live space block happens TOCTOU-safe inside the same transaction.
 	 *
-	 *  #128 (PEND-38 / PEND-06 Tier 3) — `progress` streams per-block import
+	 *  #128 — `progress` streams per-block import
 	 *  progress to the frontend. The frontend always supplies a
 	 *  `Channel<ImportProgressUpdate>` (mirroring `start_sync`); sends are
 	 *  best-effort, so a dropped channel never aborts the import.
@@ -527,7 +527,7 @@ export const commands = {
 	/**
 	 *  Tauri command: list all page-to-page links for graph visualization.
 	 *
-	 *  `tag_ids` (PEND-35 Tier 4.5) — when non-empty, restricts edges to
+	 *  `tag_ids` — when non-empty, restricts edges to
 	 *  those whose target page carries at least one of the listed tags. The
 	 *  frontend GraphView passes its active tag filter here so the backend
 	 *  no longer ships every space-wide edge for the renderer to discard.
@@ -554,7 +554,7 @@ export const commands = {
 	 *  Log a frontend message to the backend's daily-rolling log file.
 	 *  Fire-and-forget — the frontend never awaits this.
 	 *
-	 *  M-39: every `String` / `Option<String>` field is truncated at entry
+	 *  Every `String` / `Option<String>` field is truncated at entry
 	 *  to [`MAX_FRONTEND_LOG_FIELD_BYTES`] (64 KB) so a single oversized
 	 *  payload cannot stall the IPC thread or corrupt the daily log file.
 	 *  Truncation is unconditional — the FE rate-limiter is not in this
@@ -567,7 +567,7 @@ export const commands = {
 	 *
 	 *  Uses [`crate::log_dir_for_app_data`] so the path returned to the
 	 *  frontend ("Open logs folder") is guaranteed to match the directory
-	 *  the tracing-appender writes to — on every platform (BUG-34).
+	 *  The tracing-appender writes to — on every platform.
 	 */
 	getLogDir: () => typedError<string, AppError>(__TAURI_INVOKE("get_log_dir")),
 	/**  Tauri command: return op log compaction statistics for the UI. */
@@ -578,7 +578,7 @@ export const commands = {
 	 *  The frontend is responsible for confirming with the user before calling
 	 *  this command. `retention_days` controls how far back ops are retained.
 	 *
-	 *  MAINT-229: a successful compaction that actually deleted ops enqueues
+	 *  A successful compaction that actually deleted ops enqueues
 	 *  `CleanupOrphanedAttachments` so attachments whose owning block was
 	 *  just purged get swept. The complementary boot-time enqueue in
 	 *  `lib.rs` covers the case where the user never triggers compaction.
@@ -635,7 +635,7 @@ export const commands = {
 	fetched_at: number,
 	auth_required: boolean,
 	/**
-	 *  MAINT-213 (PEND-24 M4 follow-up): `true` when the most recent
+	 *  (follow-up): `true` when the most recent
 	 *  fetch saw a terminal "this resource is gone" status (HTTP 404 or
 	 *  410). Distinct from `auth_required` (401/403, transient
 	 *  sign-in) and from "transient" (5xx — both flags false plus
@@ -674,7 +674,7 @@ export const commands = {
 	 *  Tauri command: toggle the MCP RO enabled marker file and start / stop
 	 *  the serve task accordingly.
 	 *
-	 *  L-46: the inner toggle + spawn sequence is serialised through the
+	 *  The inner toggle + spawn sequence is serialised through the
 	 *  shared [`McpToggleGate`] (`tokio::sync::Mutex`) so rapid UI toggles
 	 *  cannot interleave and leave the server in an "enabled but not
 	 *  bound" stall. The lock is held for the full command body so a
@@ -689,7 +689,7 @@ export const commands = {
 	 *  signal is fire-and-forget; this command returns `Ok(())` as soon
 	 *  as the signal has been emitted.
 	 *
-	 *  L-51: the previous doc-comment promised this command "returns the
+	 *  The previous doc-comment promised this command "returns the
 	 *  connection count observed immediately after firing the signal", but
 	 *  the signature is `Result<(), AppError>`. The mismatch was a doc
 	 *  drift — the count was never surfaced. The Settings tab observes the
@@ -710,7 +710,7 @@ export const commands = {
 	 *  Tauri command: return the most recent MCP tool-call activity entries
 	 *  (oldest first, capped at the ring's 100-entry capacity).
 	 *
-	 *  #695 — read surface for the FEAT-4d activity ring. The ring is the
+	 *  #695 — read surface for the activity ring. The ring is the
 	 *  shared [`McpActivityRing`] managed state written by both the RO and
 	 *  RW serve tasks, so late subscribers (a Settings tab opened after
 	 *  the calls happened) and diagnostics can inspect recent history
@@ -729,7 +729,7 @@ export const commands = {
 	 *  the RW serve task accordingly. Mirrors [`mcp_set_enabled`] but binds
 	 *  the **writer** pool into the `ReadWriteTools` registry.
 	 *
-	 *  L-46: serialised through [`McpRwToggleGate`] — see `mcp_set_enabled`
+	 *  Serialised through [`McpRwToggleGate`] — see `mcp_set_enabled`
 	 *  for the rationale. RO and RW each hold their own gate so they do
 	 *  not block each other.
 	 */
@@ -836,7 +836,7 @@ export const commands = {
 export type ActiveBlockId = string;
 
 /**
- *  MAINT-113 M1.5 — Row returned by paginated block queries that filter
+ *  Row returned by paginated block queries that filter
  *  on `deleted_at IS NULL` in their SQL.
  *
  *  Mirror of [`BlockRow`] except `id` is typed [`crate::ulid::ActiveBlockId`]
@@ -875,7 +875,7 @@ export type ActiveBlockRow = {
 };
 
 /**
- *  MAINT-113 M1.5 — Active-id variant of [`ProjectedAgendaEntry`]. Used by
+ *  Active-id variant of [`ProjectedAgendaEntry`]. Used by
  *  `commands::agenda::list_projected_agenda_inner` and its on-the-fly
  *  fallback, both of which only emit projections of live, non-conflict
  *  blocks (the projector reads from `block_properties` joined against
@@ -952,14 +952,14 @@ export type ActivityEntry_Deserialize = {
 	 *  payload when `None`.
 	 *
 	 *  Multi-op tools surface their additional `OpRef`s on
-	 *  [`ActivityEntry::additional_op_refs`] — see L-114 for the
+	 *  [`ActivityEntry::additional_op_refs`] — for the
 	 *  rationale (forward-compat for `move_subtree` /
 	 *  `bulk_set_property` and similar future tools that append more
 	 *  than one op per call).
 	 */
 	opRef: OpRef | null,
 	/**
-	 *  L-114 forward-compat: any further `OpRef`s produced by the
+	 *  Forward-compat: any further `OpRef`s produced by the
 	 *  same tool call, in append order. Empty for the (current)
 	 *  single-op RW tools and for RO / failing tools. Defaults to
 	 *  `Vec::new()` for older clients / fixtures that don't set the
@@ -1017,14 +1017,14 @@ export type ActivityEntry_Serialize = {
 	 *  payload when `None`.
 	 *
 	 *  Multi-op tools surface their additional `OpRef`s on
-	 *  [`ActivityEntry::additional_op_refs`] — see L-114 for the
+	 *  [`ActivityEntry::additional_op_refs`] — for the
 	 *  rationale (forward-compat for `move_subtree` /
 	 *  `bulk_set_property` and similar future tools that append more
 	 *  than one op per call).
 	 */
 	opRef?: OpRef | null,
 	/**
-	 *  L-114 forward-compat: any further `OpRef`s produced by the
+	 *  Forward-compat: any further `OpRef`s produced by the
 	 *  same tool call, in append order. Empty for the (current)
 	 *  single-op RW tools and for RO / failing tools. Defaults to
 	 *  `Vec::new()` for older clients / fixtures that don't set the
@@ -1057,7 +1057,7 @@ export type ActivityResult =
 export type ActorKind =
 /**
  *  Tool call originated from a user action in the UI (today this never
- *  happens for the RO server; reserved for FEAT-4h's RW tools).
+ *  Happens for the RO server; reserved for RW tools).
  */
 "user" |
 /**
@@ -1175,7 +1175,7 @@ export type AdvancedQueryResponse = {
  *  Bundled agenda filter for the [`list_blocks`] Tauri command.
  *
  *  Exists purely to keep `list_blocks`'s argument count under the
- *  `tauri-specta` 10-arg limit after FEAT-3 Phase 2 added `space_id`.
+ *  `tauri-specta` 10-arg limit after Phase 2 added `space_id`.
  *  The three sub-fields were previously top-level parameters and are
  *  still threaded into `list_blocks_inner` as individual parameters —
  *  the bundling is a transport-layer concern. `None` means "no agenda
@@ -1341,7 +1341,7 @@ export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp;
 /**
  *  A group of backlinks from the same source page.
  *
- *  MAINT-113 M2 — `blocks` is `ActiveBlockRow`-typed; same rationale as
+ *  `blocks` is `ActiveBlockRow`-typed; same rationale as
  *  [`BacklinkQueryResponse::items`].
  */
 export type BacklinkGroup = {
@@ -1361,7 +1361,7 @@ export type BacklinkGroup = {
 /**
  *  Response for a filtered backlink query, including total count.
  *
- *  MAINT-113 M2 — `items` is `ActiveBlockRow`-typed because the backlink
+ *  `items` is `ActiveBlockRow`-typed because the backlink
  *  resolver filters deleted_at IS NULL` on every
  *  candidate source block (`backlink/query.rs::eval_backlink_query`,
  *  `eval_backlink_query_grouped`, `eval_unlinked_references`).
@@ -1393,7 +1393,7 @@ export type BlockId = string;
 /**
  *  Row returned by paginated block queries.
  *
- *  MAINT-113 took the parallel-types path (over the explored
+ *  Took the parallel-types path (over the explored
  *  `BlockRow<Id = String>` generic, which collided with two
  *  `specta-typescript` 0.0.11 constraints — no generic-default emit and
  *  `PLACEHOLDER_Id` codegen dropping `Id: Clone` bounds through embedded
@@ -1534,7 +1534,7 @@ export type DateField =
 "lastEdited";
 
 /**
- *  PEND-53 — Date-filter shape used by [`SearchFilter::due_filter`] /
+ *  Date-filter shape used by [`SearchFilter::due_filter`] /
  *  [`SearchFilter::scheduled_filter`].
  *
  *  Two variants:
@@ -1571,7 +1571,7 @@ export type DateFilter =
 } }) & { named?: never };
 
 /**
- *  PEND-53 — Comparison operator for [`DateFilter::Op`]. Mirrors the
+ *  Comparison operator for [`DateFilter::Op`]. Mirrors the
  *  frontend parser shape (`<`, `<=`, `=`, `>=`, `>`).
  */
 export type DateOp = "lt" | "lte" | "eq" | "gte" | "gt";
@@ -1667,9 +1667,9 @@ export type Draft = {
  *  Bundled extra filters for the [`query_by_property`] Tauri command.
  *
  *  Exists purely to keep `query_by_property`'s argument count under
- *  the `tauri-specta` 10-arg limit. PEND-35 Tier 1.5 added
+ *  The `tauri-specta` 10-arg limit. added
  *  `exclude_parent_id` / `content_non_empty` (pushing this command
- *  to 9 IPC args incl. `pool`); PEND-35 Tier 3.4 adds another three
+ *  To 9 IPC args incl. `pool`); adds another three
  *  (`block_type`, `value_text_in`, `value_date_range`). Bundling all
  *  five into one struct keeps the IPC arg count at 8.
  *
@@ -1687,25 +1687,25 @@ export type Draft = {
  */
 export type ExtraQueryFilters = {
 	/**
-	 *  PEND-35 Tier 1.5 — exclude rows whose `parent_id` matches.
+	 *  Exclude rows whose `parent_id` matches.
 	 *  `IS NOT` semantics so NULL parents are kept.
 	 */
 	excludeParentId: string | null,
 	/**
-	 *  PEND-35 Tier 1.5 — drop rows whose content is NULL, empty, or
+	 *  Drop rows whose content is NULL, empty, or
 	 *  whitespace-only (matches FE `!b.content?.trim()`).
 	 */
 	contentNonEmpty: boolean | null,
-	/**  PEND-35 Tier 3.4 — push `block_type = ?` into SQL. */
+	/**  Push `block_type = ?` into SQL. */
 	blockType: string | null,
 	/**
-	 *  PEND-35 Tier 3.4 — push `value_text IN (...)` into SQL via
+	 *  Push `value_text IN (...)` into SQL via
 	 *  `json_each`. Mutually exclusive with `value_text` on
 	 *  `query_by_property`.
 	 */
 	valueTextIn: string[] | null,
 	/**
-	 *  PEND-35 Tier 3.4 — push `value_date >= from AND value_date < to`
+	 *  Push `value_date >= from AND value_date < to`
 	 *  into SQL (half-open `[from, to)` range).
 	 */
 	valueDateRange: [string, string] | null,
@@ -1832,8 +1832,8 @@ export type FilterPrimitive =
  */
 { type: "Orphan" } |
 /**
- *  Pages-only — page has zero non-title descendants. Per PEND-58
- *  (pending/PEND-58-pages-view-compound-filters.md:142): "Page
+ *  Pages-only — page has zero non-title descendants. Per
+ *  "Page
  *  whose only block is its own title row (zero non-title
  *  descendants)". Backed by `pages_cache.child_block_count == 0`.
  */
@@ -1853,7 +1853,7 @@ export type FilterPrimitive =
  *  Result of [`flush_all_drafts_inner`]: how many drafts were processed
  *  inside the single transaction.
  *
- *  PEND-35 Tier 2.12: returned by the boot-recovery one-IPC flush so the
+ *  Returned by the boot-recovery one-IPC flush so the
  *  frontend can surface a recovery toast / log line.
  */
 export type FlushAllDraftsResult = {
@@ -1954,8 +1954,7 @@ export type HistoryEntry = {
 };
 
 /**
- *  Streaming progress payload for a single `import_markdown` call (#128,
- *  PEND-38 / PEND-06 Tier 3).
+ *  Streaming progress payload for a single `import_markdown` call (#128).
  *
  *  Carried over a Tauri `Channel<ImportProgressUpdate>` so a long import
  *  can render a per-block progress bar instead of a bare spinner. The
@@ -2012,8 +2011,8 @@ export type ImportResult = {
  *  `{ type: "Rolling", days } | { type: "Range", start, end }
  *  | { type: "OlderThan", days }`.
  *
- *  PEND-58 Phase 2 review — the existing variants already cover the
- *  plan's full bucket vocabulary (pending/PEND-58-pages-view-compound-
+ *  Phase 2 review — the existing variants already cover the
+ *  Plan's full bucket vocabulary (pending/-pages-view-compound-
  *  filters.md:144, lines 308-310). No `LastEditedBucket` variant is
  *  needed — the parser maps each chip token to one of these variants:
  *
@@ -2036,7 +2035,7 @@ export type LastEditedSpec =
 { type: "Range"; start: string; end: string } |
 /**
  *  Older than the given rolling N-days window (the inverse of
- *  `Rolling`). Used by PEND-58's `last-edited:older` chip.
+ *  `Rolling`). Used by `last-edited:older` chip.
  */
 { type: "OlderThan"; days: number };
 
@@ -2053,7 +2052,7 @@ export type LinkMetadata = {
 	fetched_at: number,
 	auth_required: boolean,
 	/**
-	 *  MAINT-213 (PEND-24 M4 follow-up): `true` when the most recent
+	 *  (follow-up): `true` when the most recent
 	 *  fetch saw a terminal "this resource is gone" status (HTTP 404 or
 	 *  410). Distinct from `auth_required` (401/403, transient
 	 *  sign-in) and from "transient" (5xx — both flags false plus
@@ -2072,9 +2071,9 @@ export type ListPagesWithMetadataFilter = {
 	sort?: PageSort,
 	spaceId: string,
 	/**
-	 *  PEND-58 Phase 3 — compound filter primitives applied server-side,
+	 *  Phase 3 — compound filter primitives applied server-side,
 	 *  AND-joined into the WHERE before the keyset/ORDER BY/LIMIT. Empty
-	 *  (the default) preserves the pre-PEND-58 "no filter" behaviour, so
+	 *  (the default) preserves the pre- "no filter" behaviour, so
 	 *  existing callers and the flag-off path are unaffected. Each
 	 *  primitive is gated against [`PagesProjection::allowed_keys`] and
 	 *  rejected with [`AppError::Validation`] if it is not a Pages-surface
@@ -2091,7 +2090,7 @@ export type LogFileEntry = {
 };
 
 /**
- *  Match span emitted by the PEND-55 toggle pipeline.
+ *  Match span emitted by the toggle pipeline.
  *
  *  The `start` / `end` indices are **UTF-16 code-unit offsets** into the
  *  block's content string — chosen to match JavaScript's native string
@@ -2100,7 +2099,7 @@ export type LogFileEntry = {
  *  pipeline converts to UTF-16 before serialising so the frontend can
  *  slice `row.content` directly. ASCII content has identical byte /
  *  UTF-16 indices; CJK and emoji content does not. See
- *  `pending/PEND-55-search-toggles-history.md` (UTF-8 → UTF-16 section)
+ *  (UTF-8 → UTF-16 section)
  *  for the rationale and the conversion helper.
  */
 export type MatchOffset = {
@@ -2143,7 +2142,7 @@ export type MoveResponse = {
 };
 
 /**
- *  PEND-53 — Named date buckets recognised by [`DateFilter::Named`].
+ *  Named date buckets recognised by [`DateFilter::Named`].
  *
  *  Resolution semantics (today = `chrono::Local::today()`):
  *
@@ -2204,7 +2203,7 @@ export type PageId = BlockId;
  *
  *  Both endpoints are [`ActiveBlockId`] — `list_page_links_inner` filters
  *  deleted_at IS NULL` on both source and target
- *  pages (MAINT-113 M1 lift of invariant #9 into the type system).
+ *  Pages (lift of invariant #9 into the type system).
  */
 export type PageLink = {
 	source_id: ActiveBlockId,
@@ -2368,7 +2367,7 @@ export type PageWithMetadataRow = {
 /**
  *  Response payload returned by [`start_pairing`].
  *
- *  M-34: the QR payload + [`PairingInfo`] both carry only the passphrase.
+ *  The QR payload + [`PairingInfo`] both carry only the passphrase.
  *  mDNS owns discovery + address resolution end-to-end; there is no
  *  scan-bootstrap path that would need a `host`/`port` here.
  */
@@ -2549,7 +2548,7 @@ export type PropertyRow = {
 	value_date: string | null,
 	value_ref: string | null,
 	/**
-	 *  PEND-14: native boolean property storage. SQLite represents booleans
+	 *  Native boolean property storage. SQLite represents booleans
 	 *  as INTEGER (0/1, with a CHECK constraint allowing only NULL/0/1).
 	 */
 	value_bool: number | null,
@@ -2683,11 +2682,11 @@ export type RestoreToOpResult = {
  *  match span. The web UI parses the sentinels into React nodes (no
  *  `dangerouslySetInnerHTML`); the MCP search tool converts them back to
  *  `<mark>` / `</mark>` so the agent-facing contract is unchanged. See
- *  `pending/PEND-50-search-vscode-ux.md` for the renderer contract.
+ *  For the renderer contract.
  *
- *  PEND-55 appends `match_offsets: Vec<MatchOffset>` for the
+ *  Appends `match_offsets: Vec<MatchOffset>` for the
  *  regex/whole-word offset rendering path; `#[serde(default)]` keeps
- *  the wire shape additive (pre-PEND-55 frontends see an empty array
+ *  The wire shape additive (pre- frontends see an empty array
  *  from absent payloads and fall through to the snippet path).
  *
  *  [`snippet`]: https://www.sqlite.org/fts5.html#the_snippet_function
@@ -2720,7 +2719,7 @@ export type SearchBlockRow = {
 	 */
 	snippet?: string | null,
 	/**
-	 *  PEND-55 — UTF-16 code-unit match offsets for the toggle
+	 *  UTF-16 code-unit match offsets for the toggle
 	 *  pipeline. Populated when any of the three search toggles
 	 *  (`case_sensitive` / `whole_word` / `is_regex`) is on and the
 	 *  post-FTS regex pass produced matches; empty otherwise. The
@@ -2736,7 +2735,7 @@ export type SearchBlockRow = {
 /**
  *  Optional filter bundle for `search_blocks_inner`.
  *
- *  PEND-50 Phase 0 collapses the previous positional `parent_id` /
+ *  Phase 0 collapses the previous positional `parent_id` /
  *  `tag_ids` / `space_id` args into a single struct so the `tauri-specta`
  *  10-arg ceiling stays comfortable as follow-up plans append filter
  *  fields. Every field carries `#[serde(default)]` — a missing key on
@@ -2744,12 +2743,12 @@ export type SearchBlockRow = {
  *  today's "no filter" behaviour. Follow-up plans append new fields the
  *  same way; they MUST NOT add positional args.
  *
- *  Future appendees (locked in by PEND-50's design section):
+ *  Future appendees (locked in by design section):
  *
- *  - PEND-54: `include_page_globs`, `exclude_page_globs` (`Vec<String>`).
- *  - PEND-55: `case_sensitive`, `whole_word`, `is_regex` (`bool`).
- *  - PEND-51: `block_type_filter` (`Option<String>`).
- *  - PEND-53: `state_filter`, `priority_filter`, `due_filter`,
+ *  `include_page_globs`, `exclude_page_globs` (`Vec<String>`).
+ *  `case_sensitive`, `whole_word`, `is_regex` (`bool`).
+ *  `block_type_filter` (`Option<String>`).
+ *  `state_filter`, `priority_filter`, `due_filter`,
  *    `scheduled_filter`, `property_filters`, `excluded_property_filters`.
  */
 export type SearchFilter = {
@@ -2761,14 +2760,14 @@ export type SearchFilter = {
 	 */
 	tagIds?: string[],
 	/**
-	 *  FEAT-3p4 — restrict to blocks whose owning page lives in this
+	 *  Restrict to blocks whose owning page lives in this
 	 *  space. Empty string is treated as "no match" by the SQL path
 	 *  (returns an empty page), matching pre-bootstrap callers that
 	 *  pass `''`.
 	 */
 	spaceId?: string | null,
 	/**
-	 *  PEND-54 — page-name glob include list. Each entry may use
+	 *  Page-name glob include list. Each entry may use
 	 *  SQLite `GLOB` syntax (`*`, `?`, `[...]`) and `{a,b}` brace
 	 *  expansion. Bare tokens are wrapped with `*…*` for a
 	 *  substring match. Resolved against `pages_cache.title` with
@@ -2777,32 +2776,32 @@ export type SearchFilter = {
 	 */
 	includePageGlobs?: string[],
 	/**
-	 *  PEND-54 — page-name glob exclude list. Same shape as
+	 *  Page-name glob exclude list. Same shape as
 	 *  [`Self::include_page_globs`]; AND-joined into a `NOT IN (...)`
 	 *  sub-select. A page matching both include and exclude is
 	 *  excluded.
 	 */
 	excludePageGlobs?: string[],
 	/**
-	 *  PEND-55 — case-sensitive search toggle. When `true`, results are
+	 *  Case-sensitive search toggle. When `true`, results are
 	 *  narrowed by a post-FTS regex pass that asserts case-sensitive
 	 *  match against `fts_blocks.stripped`. The FTS5 trigram tokenizer
 	 *  is `case_sensitive 0`, so the candidate set is still
 	 *  case-insensitive; this toggle forces the post-filter even when
 	 *  the other toggles are off (documented cost). `#[serde(default)]`
-	 *  keeps the wire shape additive — pre-PEND-55 frontends omit the
+	 *  Keeps the wire shape additive — pre- frontends omit the
 	 *  field and observe today's behaviour unchanged.
 	 */
 	caseSensitive?: boolean,
 	/**
-	 *  PEND-55 — whole-word search toggle. ASCII-only via the regex
+	 *  Whole-word search toggle. ASCII-only via the regex
 	 *  crate's `(?-u:\b)` predicate. CJK content does NOT match `\b`
 	 *  (no ASCII word boundary inside CJK runs); v1 documents this and
 	 *  a future plan revisits Unicode whole-word.
 	 */
 	wholeWord?: boolean,
 	/**
-	 *  PEND-55 — regex-mode search toggle. The query string is treated
+	 *  Regex-mode search toggle. The query string is treated
 	 *  as a Rust [`regex`] pattern verbatim; the FTS5 MATCH path is
 	 *  **bypassed entirely** (FTS5 cannot accept a regex) and the
 	 *  candidate set comes from a recency-ordered scan of
@@ -2811,20 +2810,20 @@ export type SearchFilter = {
 	 */
 	isRegex?: boolean,
 	/**
-	 *  PEND-51 — restrict matches to a specific `blocks.block_type`
+	 *  Restrict matches to a specific `blocks.block_type`
 	 *  value (e.g. `"page"`). `None` (the default) preserves the
 	 *  existing "no filter" behaviour. Empty string is rejected at the
 	 *  SQL layer the same way as any other no-match equality. The
 	 *  palette uses this to fire a separate page-only query in
 	 *  parallel with the unrestricted blocks query so the page-group
 	 *  rendering on the FE only needs to merge by `page_id`.
-	 *  `#[serde(default)]` keeps the wire shape additive — pre-PEND-51
+	 *  `#[serde(default)]` keeps the wire shape additive — pre-
 	 *  frontends omit the field and observe today's behaviour
 	 *  unchanged.
 	 */
 	blockTypeFilter?: string | null,
 	/**
-	 *  PEND-53 — restrict matches to blocks with `blocks.todo_state IN
+	 *  Restrict matches to blocks with `blocks.todo_state IN
 	 *  (...)`. Each entry is matched verbatim — the column is a
 	 *  free-form `TEXT` so custom states are allowed. The literal
 	 *  keyword `none` (case-insensitive) selects `todo_state IS NULL`
@@ -2834,30 +2833,30 @@ export type SearchFilter = {
 	 */
 	stateFilter?: string[],
 	/**
-	 *  PEND-53 — `blocks.priority IN (...)`. Same `none` sentinel
+	 *  `blocks.priority IN (...)`. Same `none` sentinel
 	 *  behaviour as `state_filter`.
 	 */
 	priorityFilter?: string[],
 	/**
-	 *  PEND-53 — date predicate on `blocks.due_date`. `None` means
+	 *  Date predicate on `blocks.due_date`. `None` means
 	 *  "no filter".
 	 */
 	dueFilter?: DateFilter | null,
-	/**  PEND-53 — date predicate on `blocks.scheduled_date`. */
+	/**  Date predicate on `blocks.scheduled_date`. */
 	scheduledFilter?: DateFilter | null,
 	/**
-	 *  PEND-53 — AND-joined property filters. Each entry adds an
+	 *  AND-joined property filters. Each entry adds an
 	 *  `EXISTS (SELECT 1 FROM block_properties …)` sub-select against
 	 *  `value_text` (locked in by plan #4).
 	 */
 	propertyFilters?: SearchPropertyFilter[],
 	/**
-	 *  PEND-53 — AND-joined property exclusions. Each entry adds a
+	 *  AND-joined property exclusions. Each entry adds a
 	 *  `NOT EXISTS (...)` sub-select.
 	 */
 	excludedPropertyFilters?: SearchPropertyFilter[],
 	/**
-	 *  PEND-63 — `blocks.todo_state IS NULL OR todo_state NOT IN
+	 *  `blocks.todo_state IS NULL OR todo_state NOT IN
 	 *  (...)`. Each entry is matched verbatim against the column. The
 	 *  inversion intentionally includes NULL: a "blocks not in DONE"
 	 *  query should return blocks with no state set at all, not
@@ -2865,11 +2864,11 @@ export type SearchFilter = {
 	 *  flips to `todo_state IS NOT NULL` (the `not-state:none` token);
 	 *  a custom state literally called `"none"` is treated as the
 	 *  sentinel — documented in `docs/SEARCH.md`. Empty list = no
-	 *  filter (preserves pre-PEND-63 wire compat).
+	 *  Filter (preserves pre- wire compat).
 	 */
 	excludedStateFilter?: string[],
 	/**
-	 *  PEND-63 — `blocks.priority IS NULL OR priority NOT IN (...)`.
+	 *  `blocks.priority IS NULL OR priority NOT IN (...)`.
 	 *  Same `none` sentinel behaviour as
 	 *  [`Self::excluded_state_filter`].
 	 */
@@ -2890,7 +2889,7 @@ export type SearchFilter = {
 };
 
 /**
- *  PEND-53 — Property predicate for [`SearchFilter::property_filters`] /
+ *  Property predicate for [`SearchFilter::property_filters`] /
  *  [`SearchFilter::excluded_property_filters`].
  *
  *  Named separately from the (existing) `PropertyFilter` struct used by
@@ -2917,7 +2916,7 @@ export type SearchPropertyFilter = {
 /**
  *  Input bundle for the `set_property` Tauri command — collects all
  *  possible typed values into a single struct so the IPC handler stays
- *  under specta's 10-positional-argument limit (PEND-14 added a 5th
+ *  Under specta's 10-positional-argument limit (added a 5th
  *  `value_bool` slot which would have made the flat signature exceed
  *  the cap). Exactly one field should be `Some` for non-reserved keys
  *  (the inner validator enforces this); reserved-key clears may pass
@@ -2928,7 +2927,7 @@ export type SetPropertyArgs = {
 	value_num?: number | null,
 	value_date?: string | null,
 	value_ref?: string | null,
-	/**  PEND-14: native boolean property value (`true` / `false`). */
+	/**  Native boolean property value (`true` / `false`). */
 	value_bool?: boolean | null,
 };
 
@@ -3031,7 +3030,7 @@ export type SortSource =
 /**
  *  Newtype wrapper around a space ULID for type-safety + IPC bindings.
  *
- *  Mirrors [`crate::ulid::ActiveBlockId`] (the strict MAINT-113 newtype):
+ *  Mirrors [`crate::ulid::ActiveBlockId`] (the strict newtype):
  *  transparent serde + transparent sqlx + `specta::Type` so the wire / DB
  *  layers see a plain string while Rust call sites get the named type.
  *
@@ -3055,7 +3054,7 @@ export type SpaceId = string;
 /**
  *  A space row returned by [`list_spaces_inner`] — the pieces the
  *  frontend needs to render the switcher (ULID + display name) plus
- *  the FEAT-3p10 visual-identity surface (`accent_color`).
+ *  The visual-identity surface (`accent_color`).
  *
  *  `accent_color` carries the free-form palette token (e.g.
  *  `accent-emerald`, `accent-blue`) stored under
@@ -3067,14 +3066,14 @@ export type SpaceId = string;
 export type SpaceRow = {
 	id: string,
 	name: string,
-	/**  FEAT-3p10 — accent palette token, or `None` if unset. */
+	/**  Accent palette token, or `None` if unset. */
 	accent_color: string | null,
 };
 
 /**
  *  The space scope a list / search query runs under.
  *
- *  `Global` — no `block_properties.space` filter is applied (pre-FEAT-3
+ *  `Global` — no `block_properties.space` filter is applied (pre-
  *  behaviour, plus journal / settings views that intentionally span all
  *  spaces). `Active(SpaceId)` — restrict results to blocks belonging to
  *  the given space.
@@ -3140,7 +3139,7 @@ export type StatusInfo = {
 	 */
 	fg_apply_dropped: number,
 	/**
-	 *  PEND-24 H1: subset of `fg_apply_dropped` whose retry row was
+	 *  Subset of `fg_apply_dropped` whose retry row was
 	 *  successfully persisted to `materializer_retry_queue`. The
 	 *  boot-time / periodic sweeper re-enqueues these onto the
 	 *  foreground queue so the apply-op is eventually retried. A
@@ -3156,7 +3155,7 @@ export type StatusInfo = {
 	 */
 	bg_dropped: number,
 	/**
-	 *  PEND-03: subset of `bg_dropped` attributable to global cache
+	 *  Subset of `bg_dropped` attributable to global cache
 	 *  rebuilds (`RebuildTagsCache`, `RebuildPagesCache`,
 	 *  `RebuildAgendaCache`, `RebuildProjectedAgendaCache`,
 	 *  `RebuildTagInheritanceCache`, `RebuildPageIds`,
@@ -3179,7 +3178,7 @@ export type StatusInfo = {
 	 */
 	fg_full_waits: number,
 	/**
-	 *  PEND-24 M1: count of failed `record_failure` calls (i.e. retry
+	 *  Count of failed `record_failure` calls (i.e. retry
 	 *  queue persistence writes that returned an error). Each
 	 *  dropped task that fails persistence twice contributes `+2`
 	 *  (first attempt + retry attempt). A non-zero value means the
@@ -3234,7 +3233,7 @@ export type StatusInfo = {
 	/**
 	 *  #1319: process-global, cross-session count of sync snapshot-fallbacks
 	 *  taken because a peer advertised a `from_vv` unreachable from our local
-	 *  `oplog_vv()` (MAINT-228). Monotonic, never reset. A steadily rising
+	 *  `oplog_vv()`. Monotonic, never reset. A steadily rising
 	 *  value means sync keeps falling back to snapshot catch-up instead of
 	 *  applying incremental updates — pair with `snapshot_fallback_last` (and
 	 *  the `target=sync_protocol::snapshot_fallback` debug lines) to see the
@@ -3256,7 +3255,7 @@ export type StatusInfo = {
 /**
  *  Streaming progress payload carried over the sync channel.
  *
- *  PEND-06 Tier 2 made this a tagged enum so a single channel per sync
+ *  Made this a tagged enum so a single channel per sync
  *  session carries both the orchestrator's state-transition stream
  *  (`Sync`) and the post-sync attachment-transfer stream (`Files`).
  *  Frontend consumers switch on `kind` and read the variant-specific

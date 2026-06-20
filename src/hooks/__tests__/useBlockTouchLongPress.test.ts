@@ -525,7 +525,7 @@ describe('useBlockTouchLongPress', () => {
     unmount()
   })
 
-  // BUG-37: the long-press timer must call preventDefault on the stored
+  // The long-press timer must call preventDefault on the stored
   // touchstart event so the native text-select / magnifier UI doesn't
   // race with the custom context menu on Android / iOS.
   it('calls preventDefault on the stored touchstart event when the long-press fires', () => {

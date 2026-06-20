@@ -1,6 +1,6 @@
 /**
  * Tests for `getPageDisplayName` — the shared hierarchical page-name
- * formatter (PEND-83 Bug 1).
+ * Formatter (Bug 1).
  *
  * Coverage targets the matrix from the module docstring plus the edge
  * cases the proposal called out: empty string, no slash, single slash,

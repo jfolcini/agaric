@@ -1,5 +1,5 @@
 /**
- * Help-mode body (PEND-67 Phase 3 — `?` prefix → keyboard shortcut
+ * Help-mode body (Phase 3 — `?` prefix → keyboard shortcut
  * catalog). Extracted from CommandPalette.tsx (#751).
  */
 

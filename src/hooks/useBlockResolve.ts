@@ -70,7 +70,7 @@ type PagesListRef = React.RefObject<Array<{ id: string; title: string }>>
 /**
  * Splits a `parent/child/leaf` title into `{ label: leaf, breadcrumb: 'parent / child' }`.
  *
- * PEND-83 Bug 1: delegates to the shared `getPageDisplayName` formatter so
+ * Bug 1: delegates to the shared `getPageDisplayName` formatter so
  * the picker is the canonical reference implementation for every other
  * "leaf + breadcrumb" surface (tabs, recents chip, inline link chip, group
  * headers). Behaviour is byte-identical to the inlined helper this
@@ -96,7 +96,7 @@ function makePagePickerItem(id: string, title: string): PickerItem {
  * Lazily falls back to `listAllPagesInSpace` when the cache is empty,
  * populating `pagesListRef` as a side effect for subsequent calls.
  *
- * FEAT-3 Phase 2 — the lazy fallback is scoped to the current space via
+ * Phase 2 — the lazy fallback is scoped to the current space via
  * `spaceId`. Cross-space `[[ULID]]` targets that are already in the
  * document continue to resolve via the shared resolve cache, they just
  * don't appear as new suggestions.
@@ -133,10 +133,10 @@ async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promi
  * than 5 results and the preloaded cache is non-empty, supplements the result
  * set from cache (deduped, capped at 20 total).
  *
- * FEAT-3 Phase 2 — the FTS call is scoped to the current space.
+ * Phase 2 — the FTS call is scoped to the current space.
  */
 async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise<PickerItem[]> {
-  // FEAT-3 Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
+  // Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
   // fallback is intentional pre-bootstrap behaviour (see
   // `searchPagesViaCache` for the rationale).
   const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
@@ -149,7 +149,7 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
     return matches
   }
   const ftsIds = new Set(matches.map((m) => m.id))
-  // UX-248 — Unicode-aware fold.  `matchesSearchFolded`'s ASCII fast
+  // Unicode-aware fold. `matchesSearchFolded`'s ASCII fast
   // path keeps this hot cache-lookup cheap when the query is ASCII.
   const cacheMatches = pagesListRef.current
     .filter((p) => matchesSearchFolded(p.title, q) && !ftsIds.has(p.id))
@@ -179,7 +179,7 @@ function populatePageResolveCache(matches: PickerItem[], requestSpaceId: string 
 }
 
 /**
- * Alias-prefix strategy (PEND-34): looks up the query against the
+ * Alias-prefix strategy: looks up the query against the
  * page-aliases table by prefix and folds matches into the result list.
  *
  * Each alias hit becomes its own picker item carrying both `isAlias`
@@ -191,7 +191,7 @@ function populatePageResolveCache(matches: PickerItem[], requestSpaceId: string 
  * Failure is logged at warn level — alias-service failure must never
  * abort the picker (see H-10 / H-11).
  *
- * Active-space scoping (PEND-34 Q3): the prefix command is scoped to
+ * Active-space scoping: the prefix command is scoped to
  * `useSpaceStore.getState().currentSpaceId` so the picker mirrors the
  * other strategies (`searchPagesViaCache` / `searchPagesViaFts`). The
  * `?? null` fallback is intentional pre-bootstrap behaviour — passing
@@ -242,7 +242,7 @@ function appendCreatePageOptionIfNeeded(
 ): void {
   if (q.length === 0) return
   const allSource = pagesListRef.current.length > 0 ? pagesListRef.current : matches
-  // UX-248 — fold both sides so the "exact match exists" check folds
+  // Fold both sides so the "exact match exists" check folds
   // Turkish / German / accented inputs the same way `matchesSearchFolded`
   // does in the filter above.  Without this, a page titled `İstanbul`
   // when queried as `istanbul` would appear as "no exact match" and the
@@ -297,7 +297,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
     [],
   )
 
-  // FEAT-3p7 — every cache lookup is composed against the active
+  // Every cache lookup is composed against the active
   // space's id so a chip resolved in space A is invisible from space B.
   // `useSpaceStore.getState()` is read at call-time (not hook-mount-time)
   // because the active space can change while the user is typing — the
@@ -359,7 +359,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // query doesn't exactly match an existing tag — this makes it the
       // default selection so pressing Enter auto-creates the tag (F-26).
       if (q.length > 0) {
-        // UX-248 — fold both sides so Turkish / German / accented tag
+        // Fold both sides so Turkish / German / accented tag
         // names match their ASCII-typed queries the same way as pages do.
         const qFolded = foldForSearch(q)
         const exactMatch = tags.some((t) => foldForSearch(t.name) === qFolded)
@@ -434,13 +434,13 @@ export function useBlockResolve(): UseBlockResolveReturn {
       const q = query.replace(/\)+$/, '').trim()
       if (q.length < 2) return []
 
-      // FEAT-3 Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
+      // Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
       // fallback is intentional pre-bootstrap behaviour: empty string
       // forces a no-match SQL filter rather than a runtime null deref.
       const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
       const resp = await searchBlocks({ query: q, limit: searchBlocksLimit(20), spaceId })
       // Show parent page title as breadcrumb when available.
-      // FEAT-3p7 — compose against current space so a foreign-space
+      // Compose against current space so a foreign-space
       // parent (which shouldn't appear in the picker anyway, but
       // could leak via stale cache) doesn't surface its title.
       // Read once before the per-row map (#1637) — the active space can't
@@ -477,7 +477,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
   }, [])
 
   const onCreatePage = useCallback(async (label: string): Promise<string> => {
-    // FEAT-3 Phase 2 — every page must belong to a space. Route the
+    // Phase 2 — every page must belong to a space. Route the
     // creation through the atomic `createPageInSpace` Tauri command so
     // CreateBlock + SetProperty('space') are committed together.
     // The `!isReady` branch is defensive — the roving editor doesn't

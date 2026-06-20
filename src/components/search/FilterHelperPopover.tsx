@@ -1,12 +1,12 @@
 /**
- * PEND-54 — `+ Filter ▾` helper popover.
+ * `+ Filter ▾` helper popover.
  *
  * Categorised picker for the structural filter types:
  *   - Tag — opens an inline tag-name list (server-side filtered).
  *   - Page path (include) — opens an inline text-entry form.
  *   - Page path (exclude) — same but produces a `not-path:` token.
  *   - State / Priority / Property — Select-based builder forms with an
- *     include/exclude toggle (PEND-58g UX-A5), producing
+ * Include/exclude toggle, producing
  *     `state`/`notState`, `priority`/`notPriority`, `prop`/`notProp`.
  *   - Due / Scheduled — bucket-or-comparison date builder (no not-
  *     variant). The forms live under `./filter-forms/` and hand a fully
@@ -16,7 +16,7 @@
  * popover *content* in place rather than opening a nested popover.
  * Avoids Radix focus-trap issues.
  *
- * The tag picker is an ARIA combobox/listbox (UX-A6) mirroring
+ * The tag picker is an ARIA combobox/listbox mirroring
  * `TagValuePicker`: the input owns `role="combobox"` +
  * `aria-activedescendant`, and the `<ul>` is a `role="listbox"` of
  * `role="option"` rows with ArrowUp/Down/Enter/Escape navigation.
@@ -77,7 +77,7 @@ export interface FilterHelperPopoverProps {
   /** Add a `not-path:` glob filter. */
   onAddPathExclude: (glob: string) => void
   /**
-   * PEND-58g UX-A5 — add a fully-built structural filter token
+   * Add a fully-built structural filter token
    * (state / priority / due / scheduled / prop and their not- variants).
    * The builder forms construct the token with `span: [0, 0]` and the
    * popover closes after calling this.
@@ -216,7 +216,7 @@ export function FilterHelperPopover({
     handleOpenChange(false)
   }
 
-  // PEND-58g UX-A5 — the structural builder forms hand back a finished
+  // The structural builder forms hand back a finished
   // token; route it to the parent and close the popover.
   function handleStructuralAdd(token: FilterToken) {
     onAddFilter(token)
@@ -248,7 +248,7 @@ export function FilterHelperPopover({
       <PopoverContent align="start" className="w-72" aria-label={t('search.addFilter')}>
         {mode === 'menu' && (
           <div data-testid="filter-helper-menu">
-            {/* UX-A6 — a role="menu" must contain only menuitem children
+            {/* a role="menu" must contain only menuitem children
                 (axe aria-required-children); the tip sits OUTSIDE it. */}
             <div role="menu" aria-label={t('search.addFilter')}>
               <PopoverMenuItem role="menuitem" tabIndex={0} onClick={openTagMode}>

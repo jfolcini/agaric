@@ -1,17 +1,17 @@
 /**
  * useAppBootRecovery — mount-only IPC hydration extracted from App.tsx
- * (MAINT-124 step 4 / stretch).
+ * (stretch).
  *
  * Two effects, both empty-deps (run once on mount), each retains its
  * original try/catch shape so failures stay non-fatal:
  *
  * 1. Orphan-draft flush — `flushAllDrafts()` consolidates every
  *    pending draft left behind by a previous crash into a single
- *    IPC + single `BEGIN IMMEDIATE` tx (PEND-35 Tier 2.12). Failures
+ * IPC + single `BEGIN IMMEDIATE` tx. Failures
  *    log a warn and let boot continue; the backend's all-or-nothing
  *    semantics mean a single bad draft rolls back the whole batch
  *    (the next user-driven `flushDraft` retries on demand).
- * 2. Priority-levels load (UX-201b) — read the `priority` property
+ * 2. Priority-levels load — read the `priority` property
  *    definition's `options` JSON and hydrate the shared
  *    `setPriorityLevels` cache so badge colours / sort / filter
  *    choices reflect the user's configured set. Defensive parsing —
@@ -29,7 +29,7 @@ import { flushAllDrafts, getPropertyDef } from '../lib/tauri'
 
 export function useAppBootRecovery(): void {
   // ── Boot recovery: flush orphaned drafts from previous crash ──────
-  // PEND-35 Tier 2.12 — one IPC, one `BEGIN IMMEDIATE` tx covering every
+  // One IPC, one `BEGIN IMMEDIATE` tx covering every
   // orphan draft. Was: `listDrafts` → N fire-and-forget `flushDraft`
   // calls (each opening its own tx that serialised on the writer lock).
   useEffect(() => {
@@ -37,7 +37,7 @@ export function useAppBootRecovery(): void {
       .then(({ flushed }) => {
         if (flushed > 0) {
           logger.info('boot', `Recovered ${flushed} unsaved draft(s)`)
-          // UX-303: surface the recovery to the user — silent recovery
+          // Surface the recovery to the user — silent recovery
           // means crashed-mid-edit users have no clue their work was
           // saved. Stay silent on count === 0 (no announcement needed).
           notify.info(i18n.t('boot.recoveredDrafts', { count: flushed }))
@@ -48,13 +48,13 @@ export function useAppBootRecovery(): void {
       })
   }, [])
 
-  // ── Load user-configured priority levels (UX-201b) ────────────────
+  // ── Load user-configured priority levels ────────────────
   // The `priority` property definition's `options` JSON is the source of
   // truth for the active level set. Parse defensively — malformed JSON
   // or a missing definition leaves the default `['1','2','3']` levels in
   // place.
   useEffect(() => {
-    // PEND-35 Tier 2.6: single-key PK lookup instead of paginating the
+    // Single-key PK lookup instead of paginating the
     // entire property-definition vocabulary just to read one row.
     getPropertyDef('priority')
       .then((priorityDef) => {

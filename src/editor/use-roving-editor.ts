@@ -295,9 +295,9 @@ export interface RovingEditorOptions {
   onPropertySelect?: (item: PickerItem) => void
   /** Return blocks matching query (for (( picker). */
   searchBlockRefs?: (query: string) => PickerItem[] | Promise<PickerItem[]>
-  /** PEND-15 Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
+  /** Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
   resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
-  /** PEND-15 Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
+  /** Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
   resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
 }
 
@@ -366,7 +366,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const {
     resolveTagName = (id: string) => `#${id.slice(0, 8)}...`,
     resolveBlockTitle = (id: string) => `[[${id.slice(0, 8)}...]]`,
-    // UX-309 / #544: callers own the placeholder text and pass the
+    // / #544: callers own the placeholder text and pass the
     // i18n-keyed translation (e.g. BlockTree → t('block.emptyPlaceholder')).
     // The default is empty rather than a hardcoded English string so a caller
     // that forgets to pass it shows no hint instead of bypassing i18n.
@@ -539,7 +539,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     content: INITIAL_CONTENT,
   })
 
-  // PEND-30 L-4: B-77 cleanup layer 5 — when the host component unmounts
+  // B-77 cleanup layer 5 — when the host component unmounts
   // (e.g. an exception during render that swaps the tree, fast tab switch),
   // TipTap's `useEditor` destroys the editor without going through the
   // suggestion plugin's `onExit`, which can leave orphan popup DOM. Sweep
@@ -577,7 +577,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
           suggTr.setMeta(key, { exit: true })
         }
         suggTr.setMeta('addToHistory', false)
-        // MAINT-176: dispatch can throw when the view is torn down between
+        // Dispatch can throw when the view is torn down between
         // block-switch frames. On the catch path we abort BEFORE the
         // replaceDocSilently below, since that would run against possibly
         // corrupt plugin state. isDestroyed distinguishes the expected race
@@ -603,7 +603,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
 
       // #727 — commit the identity refs ONLY after the abort gate above has
       // passed. They were previously written at the top of mount(), before the
-      // MAINT-176 guarded dispatch; when that dispatch threw and we returned, the
+      // Guarded dispatch; when that dispatch threw and we returned, the
       // refs already pointed at the NEW block while the document still held the
       // OLD block's content. The next blur/flush serializes the old doc and
       // attributes it to the new block's id (use-block-flush trusts
@@ -663,7 +663,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       }
       suggTr.setMeta('addToHistory', false)
       // #727 — guard the dispatch exactly like mount()'s identical exit
-      // dispatch (MAINT-176). It can throw when the view is torn down between
+      // Dispatch. It can throw when the view is torn down between
       // block-switch frames; unguarded, that throw escaped unmount() ENTIRELY,
       // skipping the serialize-with-plain-text-fallback below — the very
       // data-loss protection it exists for. Unlike mount we do NOT abort on

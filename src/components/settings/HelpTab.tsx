@@ -1,5 +1,5 @@
 /**
- * HelpTab — Help / Report-a-bug + Updates panel (FEAT-5 + updater wire-up).
+ * HelpTab — Help / Report-a-bug + Updates panel (+ updater wire-up).
  *
  * The bug-report dialog is mounted at App level (lazy) and listens for
  * `BUG_REPORT_EVENT`. This panel just exposes the trigger button and
@@ -132,7 +132,7 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
             oxlint-disable-next-line jsx-a11y/no-redundant-roles -- explicit
             role="list" is required because Safari + VoiceOver strip the
             implicit list role from a <ul> with `list-style: none`
-            (Tailwind `list-none`). Matches WelcomeModal / UX-278.
+            (Tailwind `list-none`). Matches WelcomeModal / .
           */}
           <ul role="list" className="grid list-none gap-4 pl-0">
             {GESTURE_ENTRIES.map((entry) => (

@@ -1,5 +1,5 @@
 /**
- * Tests for `useCommandPaletteStore` (PEND-61 — successor to
+ * Tests for `useCommandPaletteStore` (successor to
  * `useSearchPaletteStore`).
  */
 
@@ -78,7 +78,7 @@ describe('useCommandPaletteStore — open / close', () => {
   })
 })
 
-describe('useCommandPaletteStore — per-mode persistent query (PEND-67 Phase 6)', () => {
+describe('useCommandPaletteStore — per-mode persistent query (Phase 6)', () => {
   beforeEach(() => {
     useCommandPaletteStore.setState({
       open: true,

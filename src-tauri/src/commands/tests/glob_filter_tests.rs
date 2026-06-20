@@ -1,4 +1,4 @@
-//! PEND-54 — integration tests for the inline filter syntax's
+//! integration tests for the inline filter syntax's
 //! page-name glob filtering pipeline.
 //!
 //! These tests exercise the full chain: `SearchFilter.include_page_globs`
@@ -321,7 +321,7 @@ async fn legacy_tag_and_filter_still_works() {
     // must not change the behaviour of an unrelated filter.
     let (pool, _dir) = pool().await;
     seed_corpus(&pool).await;
-    // Use empty tag_ids — the pre-PEND-54 default; should return all
+    // Use empty tag_ids — the pre- default; should return all
     // alpha hits without filtering.
     let resp = search_blocks_inner(
         &pool,

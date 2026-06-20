@@ -24,7 +24,7 @@ use crate::ulid::{BlockId, PageId};
 use super::*;
 
 // ---------------------------------------------------------------------------
-// PEND-35 Tier 2.10b — `filtered_blocks_query` input shapes
+// `filtered_blocks_query` input shapes
 // ---------------------------------------------------------------------------
 
 /// One property predicate for [`filtered_blocks_query_inner`].
@@ -93,9 +93,9 @@ pub struct TagFilterExpr {
 
 /// List blocks that link to the given block (backlinks), with cursor pagination.
 ///
-/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the result set
+/// `scope` — [`SpaceScope::Active`] restricts the result set
 /// to source blocks whose owning page carries `space = ?space_id`.
-/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour
+/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour
 /// preserved for callsites that span every space.
 #[instrument(skip(pool), err)]
 pub async fn get_backlinks_inner(
@@ -119,7 +119,7 @@ pub async fn get_status_inner(
 }
 
 // ---------------------------------------------------------------------------
-// PEND-50 Phase 0 — `search_blocks` IPC struct migration
+// Phase 0 — `search_blocks` IPC struct migration
 // ---------------------------------------------------------------------------
 //
 // #642: the shared search row / filter types (`SearchBlockRow`,
@@ -136,7 +136,7 @@ pub use crate::domain::search_types::{
     SearchPropertyFilter,
 };
 
-/// BE-3 (PEND-58f) — marshalled filter parts shared by the cursor
+/// BE-3 — marshalled filter parts shared by the cursor
 /// (`search_blocks_inner`) and partitioned (`search_blocks_partitioned_inner`)
 /// search paths.
 ///
@@ -156,14 +156,14 @@ struct PreparedSearchFilter {
     metadata: fts::metadata_filter::MetadataPredicates,
 }
 
-/// BE-3 (PEND-58f) — marshal the shared filter fields once.
+/// BE-3 — marshal the shared filter fields once.
 ///
-/// - PEND-54 — brace-expand and validate page-name globs in Rust so we
+/// Brace-expand and validate page-name globs in Rust so we
 ///   surface `InvalidGlob:` typed errors at the IPC boundary.
-/// - PEND-55 — bundle the three toggle flags into a single value threaded
+/// Bundle the three toggle flags into a single value threaded
 ///   through the FTS / regex-mode pipelines. The default (all-off) value
-///   reproduces the pre-PEND-55 FTS-only behaviour.
-/// - PEND-53 — resolve state / priority / due / scheduled / property
+/// Reproduces the pre- FTS-only behaviour.
+/// Resolve state / priority / due / scheduled / property
 ///   metadata against today's date. Invalid dates / unknown bucket
 ///   keywords surface as `AppError::Validation` with the
 ///   `InvalidDateFilter:` prefix the frontend keys on.
@@ -189,13 +189,13 @@ fn prepare_search_filter(filter: &SearchFilter) -> Result<PreparedSearchFilter, 
 /// Returns an empty page if the query is blank. Otherwise delegates to
 /// [`fts::search_fts`] with cursor pagination.
 ///
-/// PEND-50 Phase 0 — the previous positional `parent_id` / `tag_ids` /
+/// Phase 0 — the previous positional `parent_id` / `tag_ids` /
 /// `space_id` args are bundled into [`SearchFilter`]. A
-/// default-constructed `SearchFilter` reproduces the pre-PEND-50
-/// "no filter" behaviour (apart from `space_id`, which the FEAT-3p4
+/// Default-constructed `SearchFilter` reproduces the pre-
+/// "no filter" behaviour (apart from `space_id`, which the
 /// path still requires the caller to supply).
 ///
-/// FEAT-3 Phase 4 — `filter.space_id` is required (not optional). The
+/// Phase 4 — `filter.space_id` is required (not optional). The
 /// filter is threaded through `fts::search_fts` so the FTS5 hits are
 /// restricted to blocks whose owning page carries `space =
 /// ?space_id`. The MCP path (`mcp::tools_ro::handle_search`) requires
@@ -218,14 +218,14 @@ pub async fn search_blocks_inner(
     filter: SearchFilter,
     snippet_len: Option<usize>,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
-    // PEND-58g NEW-3 — the empty-query decision now lives in
+    // NEW-3 — the empty-query decision now lives in
     // `fts::search_with_toggles`: a blank query with at least one
     // structural filter returns the filtered set (recency-ordered),
     // while a blank query with no filter returns empty. Let the empty
     // query flow through instead of short-circuiting here.
     let page = pagination::PageRequest::new(cursor, limit)?;
 
-    // SQL-A1 (PEND-58f) — align the over-cap contract with the
+    // SQL-A1 — align the over-cap contract with the
     // partitioned path (BE-2). `PageRequest::new` accepts `1..=200`, but
     // the FTS scan ceiling is `MAX_SEARCH_RESULTS` (100); without this
     // check a cursor caller passing 101–200 would have been silently
@@ -247,7 +247,7 @@ pub async fn search_blocks_inner(
     } else {
         Some(filter.tag_ids.as_slice())
     };
-    // BE-3 (PEND-58f) — marshal globs / toggles / metadata via the
+    // BE-3 — marshal globs / toggles / metadata via the
     // shared helper so the cursor and partitioned paths stay in lockstep.
     let prepared = prepare_search_filter(&filter)?;
 
@@ -274,18 +274,18 @@ pub async fn search_blocks_inner(
 /// When `value_text` is provided, only blocks whose property value matches are returned.
 /// Results are paginated using cursor-based pagination (by block_id).
 ///
-/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the result set
+/// `scope` — [`SpaceScope::Active`] restricts the result set
 /// to blocks whose owning page carries `space = ?space_id`.
-/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour
+/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour
 /// preserved for callsites that span every space.
 ///
-/// `exclude_parent_id` / `content_non_empty` (PEND-35 Tier 1.5) push the
+/// `exclude_parent_id` / `content_non_empty` push the
 /// DonePanel's two post-filters down into SQL so cursor pagination,
 /// `total_count`, and "Load more" reflect the visible set instead of
 /// the unfiltered page. `None` / `false` preserves the legacy
 /// behaviour (clauses short-circuit to no-ops).
 ///
-/// `block_type` / `value_text_in` / `value_date_range` (PEND-35 Tier
+/// `block_type` / `value_text_in` / `value_date_range` (Tier
 /// 3.4) push three more filters into SQL: a `block_type` equality, a
 /// JSON-array `value_text IN (...)`, and a half-open `[from, to)` date
 /// range. `value_text_in` and `value_text` are mutually exclusive
@@ -374,11 +374,11 @@ pub async fn list_unfinished_tasks_inner(
 /// Filters use AND semantics at the top level; use `And`/`Or`/`Not` filter
 /// variants for compound boolean logic.
 ///
-/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the result set
+/// `scope` — [`SpaceScope::Active`] restricts the result set
 /// to source blocks whose owning page carries `space = ?space_id`. The
 /// filter is applied at the base-set step so `total_count` and
 /// `filtered_count` reflect the post-space-filter universe.
-/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour.
+/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour.
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `block_id` is empty
@@ -409,11 +409,11 @@ pub async fn query_backlinks_filtered_inner(
 
 /// Query backlinks grouped by source page.
 ///
-/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the result set
+/// `scope` — [`SpaceScope::Active`] restricts the result set
 /// to source blocks whose owning page carries `space = ?space_id`. The
 /// filter is applied at the base-set step so `total_count` and
 /// `filtered_count` reflect the post-space-filter universe.
-/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour.
+/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour.
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `block_id` is empty
@@ -452,11 +452,11 @@ pub async fn list_backlinks_grouped_inner(
 /// `total_count` and `filtered_count` both reflect the post-filter,
 /// post-self-reference-exclusion block count (AGENTS.md pattern #4).
 ///
-/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts FTS-matched
+/// `scope` — [`SpaceScope::Active`] restricts FTS-matched
 /// blocks to those whose owning page carries `space = ?space_id`. The
 /// filter is applied at the base-set step so `total_count` and
 /// `filtered_count` reflect the post-space-filter universe.
-/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour.
+/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour.
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `page_id` is empty
@@ -490,14 +490,14 @@ pub async fn list_unlinked_references_inner(
 /// Returns a `HashMap<page_id, count>` for pages that have at least one
 /// incoming link whose source block is not soft-deleted and is not a conflict.
 ///
-/// `scope` (PEND-35 Tier 1.6) — [`SpaceScope::Active`] restricts the
+/// `scope` — [`SpaceScope::Active`] restricts the
 /// counted source blocks to those whose owning page carries
 /// `space = ?space_id`. Mirrors the `(?N IS NULL OR b.page_id IN (...))`
 /// clause used by every sibling backlink query (see
 /// `crate::backlink::query::eval_backlink_query`). Without this clause
 /// a page in space A could surface a non-zero badge count whose source
 /// blocks live in space B — backlinks the user can't actually see.
-/// [`SpaceScope::Global`] preserves the pre-PEND-35 unscoped count.
+/// [`SpaceScope::Global`] preserves the pre- unscoped count.
 ///
 /// # Errors
 ///
@@ -514,7 +514,7 @@ pub async fn count_backlinks_batch_inner(
     // `json_each(?1)` binds a JSON array of the canonical id strings.
     let id_strings: Vec<&str> = page_ids.iter().map(PageId::as_str).collect();
     let ids_json = serde_json::to_string(&id_strings)?;
-    // PEND-35 Tier 1.6 — `?2` carries the active space id (or NULL for
+    // `?2` carries the active space id (or NULL for
     // [`SpaceScope::Global`]). The shape mirrors
     // `crate::backlink::query::eval_backlink_query`:
     //   `(?N IS NULL OR b.space_id = ?N)`
@@ -573,7 +573,7 @@ pub async fn get_status(
 
 /// Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
 ///
-/// PEND-50 Phase 0 — `parent_id` / `tag_ids` / `space_id` are bundled
+/// Phase 0 — `parent_id` / `tag_ids` / `space_id` are bundled
 /// into [`SearchFilter`] so the wrapper stays well under the
 /// `tauri-specta` 10-arg ceiling as follow-up plans append filter
 /// fields (`#[serde(default)]` keeps wire compat). The hand-written
@@ -599,7 +599,7 @@ pub async fn search_blocks(
 }
 
 // ---------------------------------------------------------------------------
-// PEND-61 Phase 1 — `search_blocks_partitioned` IPC
+// Phase 1 — `search_blocks_partitioned` IPC
 // ---------------------------------------------------------------------------
 
 /// Response envelope for [`search_blocks_partitioned`].
@@ -629,7 +629,7 @@ pub struct PartitionedSearchResponse {
     pub blocks: PageResponse<SearchBlockRow>,
 }
 
-/// PEND-61 Phase 1 / PEND-69 F1 — partitioned search inner.
+/// Phase 1 / partitioned search inner.
 ///
 /// Two parallel FTS5 scans, two partitions:
 ///
@@ -646,7 +646,7 @@ pub struct PartitionedSearchResponse {
 /// `filter.block_type_filter` is **ignored** — partitioning by
 /// `block_type` IS what this function does. The field is left on the
 /// wire for `SearchFilter` compat and is silently dropped. **BE-4
-/// (PEND-58f) per-endpoint contract:** this is the one search endpoint
+/// Per-endpoint contract:** this is the one search endpoint
 /// that drops `block_type_filter`; the cursor [`search_blocks_inner`]
 /// path honours it. Both share the [`SearchFilter`] wire type, so the
 /// divergence is intentional and surface-specific — do not "fix" it by
@@ -655,7 +655,7 @@ pub struct PartitionedSearchResponse {
 /// All other `SearchFilter` fields are honoured exactly as
 /// [`search_blocks_inner`] honours them.
 ///
-/// ## Limit validation (BE-2, PEND-58f)
+/// ## Limit validation (BE-2)
 ///
 /// `page_limit` / `block_limit` must each be in `[0, MAX_SEARCH_RESULTS]`
 /// (100). An over-limit request is **rejected** with
@@ -666,10 +666,10 @@ pub struct PartitionedSearchResponse {
 ///
 /// ## `has_more` semantics
 ///
-/// PEND-69 F1 — `has_more` is derived from a `limit + 1` probe on
+/// `has_more` is derived from a `limit + 1` probe on
 /// each scan independently. Either partition is `true` iff its scan
 /// returned more rows than its cap (resolves Open Q3 — probe approach).
-/// SQL-3 (PEND-58f) — the probe fetches `min(limit, MAX_SEARCH_RESULTS)
+/// The probe fetches `min(limit, MAX_SEARCH_RESULTS)
 /// + 1`, so `has_more` is now correct even at exactly the cap.
 ///
 /// - `next_cursor = None` for both (palette doesn't paginate).
@@ -680,13 +680,13 @@ pub struct PartitionedSearchResponse {
 ///
 /// ## Failure semantics
 ///
-/// Resolves PEND-69 Open Q2 — fail-fast. The two parallel scans run
+/// Resolves Open Q2 — fail-fast. The two parallel scans run
 /// under `tokio::try_join!`; if either errors, the other is dropped
 /// and the error propagates without a partial response.
 ///
 /// ## Cancellation
 ///
-/// PEND-70 — `cancel` is an optional cancellation token threaded into
+/// `cancel` is an optional cancellation token threaded into
 /// the FTS path. The Tauri command wrapper stores a
 /// [`crate::cancellation::CancellationGuard`] in the
 /// [`crate::cancellation::CancellationRegistry`] extension state and
@@ -708,14 +708,14 @@ pub async fn search_blocks_partitioned_inner(
     filter: SearchFilter,
     cancel: Option<crate::cancellation::CancellationToken>,
 ) -> Result<PartitionedSearchResponse, AppError> {
-    // PEND-58g NEW-3 — the empty-query decision now lives in
+    // NEW-3 — the empty-query decision now lives in
     // `fts::search_with_toggles_partitioned`: a blank query with at
     // least one structural filter returns the filtered partitions
     // (recency-ordered), while a blank query with no filter returns two
     // empty partitions. Let the empty query flow through instead of
     // short-circuiting here.
 
-    // BE-2 (PEND-58f) — reject an over-limit request instead of silently
+    // BE-2 — reject an over-limit request instead of silently
     // capping it. The per-partition scan ceiling is `MAX_SEARCH_RESULTS`
     // (100); a caller asking for more would have had its request quietly
     // clamped, so the response cardinality / `has_more` would not match
@@ -736,11 +736,11 @@ pub async fn search_blocks_partitioned_inner(
         Some(filter.tag_ids.as_slice())
     };
 
-    // BE-3 (PEND-58f) — marshal globs / toggles / metadata via the shared
+    // BE-3 — marshal globs / toggles / metadata via the shared
     // helper (same path the cursor `search_blocks_inner` uses).
     let prepared = prepare_search_filter(&filter)?;
 
-    // PEND-69 F1 — `search_with_toggles_partitioned` runs the two
+    // `search_with_toggles_partitioned` runs the two
     // scans in parallel under `tokio::try_join!` and returns each
     // partition's `has_more` from a `limit + 1` probe. No further
     // partitioning needed in this caller.
@@ -776,7 +776,7 @@ pub async fn search_blocks_partitioned_inner(
     })
 }
 
-/// Tauri command: PEND-61 partitioned full-text search. Returns two
+/// Tauri command: partitioned full-text search. Returns two
 /// partitions of the same FTS scan (pages-only + unrestricted) in a
 /// single round-trip, replacing the palette's two parallel
 /// [`search_blocks`] calls.
@@ -786,7 +786,7 @@ pub async fn search_blocks_partitioned_inner(
 /// for [`SearchFilter`] compat.
 ///
 /// See [`search_blocks_partitioned_inner`] for the partition + `has_more`
-/// contract, and the cancellation contract (PEND-70).
+/// Contract, and the cancellation contract.
 #[tauri::command]
 #[specta::specta]
 pub async fn search_blocks_partitioned(
@@ -797,7 +797,7 @@ pub async fn search_blocks_partitioned(
     block_limit: u32,
     filter: SearchFilter,
 ) -> Result<PartitionedSearchResponse, AppError> {
-    // PEND-70 P1-A — extension-state guard architecture.
+    // -A — extension-state guard architecture.
     //
     // The guard lives in the [`CancellationRegistry`] keyed by a
     // server-generated `request_id`. The actual search work runs in a
@@ -1061,7 +1061,7 @@ pub async fn count_backlinks_batch(
 }
 
 // ---------------------------------------------------------------------------
-// PEND-35 Tier 2.10b — `filtered_blocks_query`
+// `filtered_blocks_query`
 // ---------------------------------------------------------------------------
 //
 // AND-intersection of property + tag predicates resolved entirely in
@@ -1091,7 +1091,7 @@ pub async fn count_backlinks_batch(
 /// the next free placeholder slots (the caller substitutes `?N`
 /// numbering at composition time).
 ///
-/// L-23 mirror: at most one of `value_text` / `value_text_in` /
+/// Mirror: at most one of `value_text` / `value_text_in` /
 /// `value_date` / `value_date_range` may be set per filter. Mixing
 /// returns [`AppError::Validation`] so the SQL contract stays
 /// single-shape per branch.
@@ -1101,7 +1101,7 @@ fn property_value_predicate_sql(
     next_param: &mut usize,
     binds: &mut Vec<String>,
 ) -> Result<String, AppError> {
-    // Reject mutually-exclusive value specifiers (mirrors the L-23
+    // Reject mutually-exclusive value specifiers (mirrors the
     // contract on `query_by_property_inner`).
     let n_text = i32::from(pf.value_text.is_some());
     let n_text_in = i32::from(!pf.value_text_in.is_empty());
@@ -1170,11 +1170,11 @@ fn property_value_predicate_sql(
 /// [`AppError::Validation`] so a misconfigured FE caller surfaces
 /// loudly rather than silently materialising the entire `blocks` table.
 ///
-/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the result set
+/// `scope` — [`SpaceScope::Active`] restricts the result set
 /// to blocks whose owning page carries `space = ?space_id`. Mirrors
 /// every sibling space-scoped read.
 ///
-/// `cursor` / `limit` — keyset pagination on `b.id ASC` (PEND-35
+/// `cursor` / `limit` — keyset pagination on `b.id ASC` (
 /// invariant #3 / AGENTS.md cursor pagination).
 #[instrument(skip(pool, property_filters, tag_filters), err)]
 #[allow(clippy::too_many_arguments)]
@@ -1330,7 +1330,7 @@ pub async fn filtered_blocks_query_inner(
 
     // Tag filter — one `AND EXISTS (…)` chain. The inner SQL UNIONs
     // `block_tags`, `block_tag_refs` (always), and `block_tag_inherited`
-    // (when `include_inherited`) — same UX-250 union semantics as
+    // (when `include_inherited`) — same union semantics as
     // `tag_query::resolve_tag_leaves`.
     let mut tag_binds: Vec<String> = Vec::new();
     if let Some(tf) = &tag_filters

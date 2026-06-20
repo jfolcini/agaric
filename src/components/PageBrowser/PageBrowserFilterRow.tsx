@@ -1,5 +1,5 @@
 /**
- * PageBrowserFilterRow — PEND-58 Phase 3. Renders the active compound-filter
+ * PageBrowserFilterRow — Phase 3. Renders the active compound-filter
  * chips for the Pages view plus the Add-Filter affordance.
  *
  * Each `FilterPrimitive` renders as a removable `FilterPill` (reused verbatim

@@ -1,6 +1,6 @@
 /**
  * SearchResultGroups — page-grouped result list for SearchPanel
- * (PEND-50 Phase 1).
+ * (Phase 1).
  *
  * Wraps `CollapsibleGroupList` (reused unchanged for the row/header
  * markup) with the search-specific a11y model:
@@ -10,7 +10,7 @@
  *    announce the area entry.
  *  - Each group's row list is a `role="listbox"` with its own
  *    `aria-activedescendant`. We deliberately render per-group listboxes
- *    rather than a single tree (see PEND-50 a11y rationale): trees
+ * Rather than a single tree (a11y rationale): trees
  *    require `aria-posinset` / `aria-setsize` / typeahead accounting,
  *    whereas per-group listboxes preserve the existing
  *    `useListKeyboardNavigation` roving model.
@@ -46,7 +46,7 @@ export interface SearchResultGroup {
   page_title: string | null
   /**
    * True when the page itself matched (e.g. title-only hit) and at
-   * least one of `blocks` represents that page. PEND-50: such hits are
+   * Least one of `blocks` represents that page. such hits are
    * surfaced as "1 match (in name)" in the per-group counter.
    */
   has_page_name_match: boolean
@@ -98,7 +98,7 @@ export function SearchResultGroups({
   }
 
   // Index of the focused row WITHIN a group's own `blocks` array, or `-1`
-  // when the focused row is not in this group. PEND-58f FE-3: the
+  // When the focused row is not in this group. the
   // virtualizer needs this to `scrollToIndex` the active row so it is
   // mounted and `aria-activedescendant` resolves to a real DOM node.
   function activeRowIndexFor(group: SearchResultGroup): number {
@@ -138,7 +138,7 @@ export function SearchResultGroups({
         defaultExpanded
         groupClassName="search-result-group"
         formatCount={(g) => {
-          // PEND-50 recommendation: page-name-only hits show as
+          // Recommendation: page-name-only hits show as
           // "1 match (in name)" so the user understands why the group
           // is there. We detect those as a group with one block that
           // matched on the page title rather than its content.
@@ -166,7 +166,7 @@ export function SearchResultGroups({
             loading={loadingResultId === block.id}
           />
         )}
-        // PEND-58f FE-3 — replace the eager per-group `<ul>` with a
+        // Replace the eager per-group `<ul>` with a
         // virtualized listbox so a group with up to the 5000-item cap of
         // rows mounts only its visible window. The roving a11y model is
         // preserved unchanged: per-group `role="listbox"`, per-group

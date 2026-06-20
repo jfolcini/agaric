@@ -4,7 +4,7 @@
  * Attaches pointer event handlers to the TipTap editor DOM to detect hover
  * over `.external-link` elements. Also attaches focusin/focusout handlers so
  * keyboard-only users (Tab navigation) get the same preview affordance as
- * mouse users (UX-273). Returns the hovered/focused URL, cached/fetched
+ * Mouse users. Returns the hovered/focused URL, cached/fetched
  * metadata, anchor rect for tooltip positioning, and loading state.
  *
  * Implements a 150ms debounce before triggering metadata fetches to avoid
@@ -16,7 +16,7 @@
  * additive — the editor's own Escape semantics (blur, cancel suggestion)
  * are preserved.
  *
- * UX-165, UX-273
+ *
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'

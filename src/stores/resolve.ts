@@ -5,7 +5,7 @@
  * Single source of truth for resolving block/tag ULIDs to display titles.
  * Preloaded once on app boot; updated incrementally as pages/tags are created.
  *
- * # FEAT-3p7 — Cache key encoding (cross-space link enforcement)
+ * # Cache key encoding (cross-space link enforcement)
  *
  * The cache `Map` is keyed by **flat composite strings**:
  *
@@ -24,7 +24,7 @@
  *     deletes any key with prefix `${prevSpaceId}::` — no nested-map
  *     bookkeeping.
  *
- * The locked-in policy (FEAT-3p7) is **no live links between spaces,
+ * The locked-in policy is **no live links between spaces,
  * ever**. With ULID-only keys, a chip resolved in space A could be
  * served from cache when the user is in space B → silent cross-space
  * leak. Composite keys make that impossible at the cache layer; the
@@ -106,7 +106,7 @@ interface ResolveStore {
    * Fetch all pages (in `spaceId`) + tags into the cache. Call once on
    * boot and again after sync.
    *
-   * `spaceId` (FEAT-3p7) — narrows the page fetch to the active space
+   * `spaceId` — narrows the page fetch to the active space
    * so only current-space pages enter the cache. FE-H-22 — passing
    * `null`/`undefined` is now a silent no-op: callers must wait for
    * the space store to hydrate before invoking preload, otherwise
@@ -137,7 +137,7 @@ interface ResolveStore {
   /** Resolve deleted status under the active space. */
   resolveStatus: (id: string) => 'active' | 'deleted'
   /**
-   * FEAT-3p7 — flush every cache entry whose composite key starts with
+   * Flush every cache entry whose composite key starts with
    * `${prevSpaceId}::`. Other spaces' entries (and the
    * `__global__::*` namespace, if anything ever lands there) survive.
    * Called from the App-level space-switch subscriber so foreign-space
@@ -164,7 +164,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
   async function runPreloadScan(spaceId: string): Promise<void> {
     try {
       // Fetch all pages with cursor-based pagination, scoped to the
-      // active space (FEAT-3p7).
+      // Active space.
       const fetchedPages = new Map<string, ResolveEntry>()
       let cursor: string | undefined
       let hasMore = true

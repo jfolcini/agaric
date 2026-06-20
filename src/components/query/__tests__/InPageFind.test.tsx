@@ -1,5 +1,5 @@
 /**
- * Component-level tests for the InPageFind toolbar (PEND-52).
+ * Component-level tests for the InPageFind toolbar.
  *
  * Covers:
  *  - Toolbar visibility flips with the store's `open` flag.

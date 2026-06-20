@@ -9,7 +9,7 @@ use sqlx::SqlitePool;
 // the trailing `WHERE id IN (?, ?, ...)` list — total 3 params per row,
 // so each statement binds at most `REBUILD_CHUNK * 3 ≤ MAX_SQL_PARAMS`.
 // Mirrors the chunk-size derivation in `cache/pages.rs`,
-// `cache/agenda.rs`, and the M-18 chunked-INSERT convention.
+// `cache/agenda.rs`, and the chunked-INSERT convention.
 const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
 
 /// Full rebuild of `page_id` for all blocks using a recursive CTE.
@@ -48,10 +48,10 @@ async fn rebuild_page_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
 }
 
 // ---------------------------------------------------------------------------
-// Read/write split variant (M-17)
+// Read/write split variant
 // ---------------------------------------------------------------------------
 
-/// Read/write split variant of [`rebuild_page_ids`] (M-17).
+/// Read/write split variant of [`rebuild_page_ids`].
 ///
 /// Runs the recursive ancestor-walk CTE as a SELECT on `read_pool`
 /// inside a snapshot-isolated transaction, materialises the
@@ -325,7 +325,7 @@ mod tests {
         .expect("seeding the owning page must succeed");
 
         // A child content block whose page_id points at the owning
-        // page (the normal denormalised shape post-MAINT-187).
+        // Page (the normal denormalised shape post-).
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
              VALUES ('CHILDCONTENT0000000000001', 'content', 'child', \

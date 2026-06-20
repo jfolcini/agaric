@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────
-// Tauri bindings ↔ wrapper parity check (PEND-08).
+// Tauri bindings ↔ wrapper parity check.
 //
 // Verifies that every IPC command emitted from `src/lib/bindings.ts`
 // (the auto-generated tauri-specta surface) has a corresponding
@@ -38,7 +38,7 @@ const TAURI = path.join(ROOT, 'src/lib/tauri.ts')
 // Commands intentionally consumed directly via `commands.*` rather
 // than through an ergonomic `tauri.ts` wrapper. Snapshot pinned by
 // running this script against the unmodified codebase at the time
-// PEND-08 landed (101 bindings vs 96 wrappers, leaving 15 unwrapped).
+// Landed (101 bindings vs 96 wrappers, leaving 15 unwrapped).
 //
 // Two flavours of entry below:
 //   (a) status / setter surfaces consumed directly because the

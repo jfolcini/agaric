@@ -53,7 +53,7 @@ use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use super::strip::{load_ref_maps, strip_for_fts_with_maps};
 use crate::error::AppError;
 
-/// L-92: chunk size for [`reindex_fts_references`].
+/// Chunk size for [`reindex_fts_references`].
 ///
 /// Renaming a popular tag (e.g. `#todo` referenced from 50 000+ blocks) used
 /// to hold a single writer transaction for the entire batch, blocking all
@@ -61,7 +61,7 @@ use crate::error::AppError;
 /// this many ids per transaction so other writers can interleave.
 pub(crate) const FTS_REINDEX_CHUNK: usize = 1000;
 
-/// PEND-25 L7: rows-per-statement for multi-row `INSERT INTO fts_blocks`.
+/// Rows-per-statement for multi-row `INSERT INTO fts_blocks`.
 ///
 /// SQLite's compiled-in expression-tree limit (`SQLITE_MAX_COMPOUND_SELECT`
 /// / `SQLITE_LIMIT_VARIABLE_NUMBER`) defaults to 999 bound variables per
@@ -71,7 +71,7 @@ pub(crate) const FTS_REINDEX_CHUNK: usize = 1000;
 /// loop paid for every block.
 const FTS_INSERT_BATCH: usize = 200;
 
-/// PEND-25 L7: emit a multi-row `INSERT INTO fts_blocks (block_id, stripped)
+/// Emit a multi-row `INSERT INTO fts_blocks (block_id, stripped)
 /// VALUES …` for `rows`, against an in-flight transaction, in chunks of
 /// [`FTS_INSERT_BATCH`].
 ///
@@ -107,7 +107,7 @@ async fn insert_fts_rows_tx(
 
 /// Update FTS index for a single block (convenience wrapper).
 ///
-/// PEND-20 E: this is the convenience entry point used by tests and
+/// E: this is the convenience entry point used by tests and
 /// one-off callers (recovery, manual rebuilds). It loads the
 /// tag/page reference maps from the DB on every call and delegates
 /// to [`update_fts_for_block_with_maps`].
@@ -124,7 +124,7 @@ pub async fn update_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(
 
 /// Update FTS for a single block, using pre-loaded reference maps.
 ///
-/// PEND-20 E: the materializer batch loop loads `tag_names` /
+/// E: the materializer batch loop loads `tag_names` /
 /// `page_titles` once per batch and reuses them across every
 /// `UpdateFtsBlock` task in the batch, eliminating the two
 /// `SELECT id, content FROM blocks WHERE block_type = …` queries
@@ -292,7 +292,7 @@ pub async fn remove_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(
 /// remains per-row (because `strip_for_fts_with_maps` processes each block
 /// differently).
 ///
-/// L-92: the work is split into chunks of [`FTS_REINDEX_CHUNK`] ids with a
+/// The work is split into chunks of [`FTS_REINDEX_CHUNK`] ids with a
 /// fresh transaction per chunk so a tag-rename touching tens of thousands of
 /// blocks does not hold a single writer transaction for many seconds. Chunks
 /// commit independently — partial failure of a later chunk leaves earlier
@@ -314,7 +314,7 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
     .fetch_all(pool)
     .await?;
 
-    // UX-250: find blocks whose content contains an inline `#[ULID]`
+    // Find blocks whose content contains an inline `#[ULID]`
     // reference to this tag. Without this, a block that only references
     // the renamed tag inline (no explicit block_tags row, no block_links
     // row) would keep the stale resolved name in its FTS entry.
@@ -342,7 +342,7 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
     // are reused across every chunk's transaction.
     let (tag_names, page_titles) = load_ref_maps(pool).await?;
 
-    // L-92: chunk the reindex into FTS_REINDEX_CHUNK-sized batches with a
+    // Chunk the reindex into FTS_REINDEX_CHUNK-sized batches with a
     // fresh transaction per chunk. See the function-level rustdoc for the
     // rationale and partial-failure semantics.
     for chunk in unique_ids.chunks(FTS_REINDEX_CHUNK) {
@@ -368,7 +368,7 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
         .execute(&mut *tx)
         .await?;
 
-        // PEND-25 L7: stage (id, stripped) pairs for the chunk, then emit
+        // Stage (id, stripped) pairs for the chunk, then emit
         // multi-row `INSERT INTO fts_blocks` via QueryBuilder. The previous
         // implementation issued one INSERT statement per row; on a tag
         // referenced by tens of thousands of blocks the per-statement
@@ -403,7 +403,7 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
 /// user request (e.g. "rebuild search index"), never incrementally —
 /// single-block updates go through [`update_fts_for_block`] instead.
 ///
-/// PEND-20 D: the rebuild is split into [`FTS_REINDEX_CHUNK`]-sized batches
+/// D: the rebuild is split into [`FTS_REINDEX_CHUNK`]-sized batches
 /// with a fresh `BEGIN…COMMIT` per chunk. Holding a single writer
 /// transaction for a 100k-block vault used to block all other writers
 /// for several seconds, which is bad for boot UX and worse on Android.
@@ -441,7 +441,7 @@ async fn rebuild_fts_index_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     // Pre-load tag/page name maps once — reused across every chunk.
     let (tag_names, page_titles) = load_ref_maps(pool).await?;
 
-    // PEND-20 D: clear the index in its own transaction so the writer
+    // D: clear the index in its own transaction so the writer
     // lock is released before we begin the (potentially long) chunked
     // INSERT loop. The DELETE itself is one statement and commits in
     // milliseconds.
@@ -464,7 +464,7 @@ async fn rebuild_fts_index_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     .fetch_all(pool)
     .await?;
 
-    // PEND-20 D: chunked INSERT loop, fresh transaction per chunk.
+    // D: chunked INSERT loop, fresh transaction per chunk.
     let mut total: u64 = 0;
     for chunk in blocks.chunks(FTS_REINDEX_CHUNK) {
         let mut to_insert: Vec<(String, String)> = Vec::with_capacity(chunk.len());
@@ -474,7 +474,7 @@ async fn rebuild_fts_index_impl(pool: &SqlitePool) -> Result<u64, AppError> {
             to_insert.push((row.id.clone(), stripped));
         }
         let mut tx = crate::db::begin_immediate_logged(pool, "fts_rebuild_index_chunk").await?;
-        // PEND-25 L7: multi-row INSERT.
+        // Multi-row INSERT.
         insert_fts_rows_tx(&mut tx, &to_insert).await?;
         tx.commit().await?;
         total += chunk.len() as u64;
@@ -524,7 +524,7 @@ async fn rebuild_fts_index_split_impl(
     .fetch_all(read_pool)
     .await?;
 
-    // PEND-20 D: clear in its own transaction (see `rebuild_fts_index_impl`).
+    // D: clear in its own transaction (see `rebuild_fts_index_impl`).
     {
         let mut tx =
             crate::db::begin_immediate_logged(write_pool, "fts_rebuild_index_clear_write").await?;
@@ -534,8 +534,8 @@ async fn rebuild_fts_index_split_impl(
         tx.commit().await?;
     }
 
-    // PEND-20 D: chunked INSERT loop, fresh transaction per chunk on the
-    // write pool. PEND-25 L7: multi-row INSERT per chunk.
+    // D: chunked INSERT loop, fresh transaction per chunk on the
+    // Write pool. multi-row INSERT per chunk.
     let mut total: u64 = 0;
     for chunk in blocks.chunks(FTS_REINDEX_CHUNK) {
         let mut to_insert: Vec<(String, String)> = Vec::with_capacity(chunk.len());

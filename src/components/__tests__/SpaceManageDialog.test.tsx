@@ -1,5 +1,5 @@
 /**
- * Tests for SpaceManageDialog (FEAT-3 Phase 6).
+ * Tests for SpaceManageDialog (Phase 6).
  *
  * Coverage:
  *  - Renders the title, close affordance, and one row per available
@@ -43,7 +43,7 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
-// MAINT-215: the dialog swaps to a bottom Sheet via `useDialogOrSheet`
+// The dialog swaps to a bottom Sheet via `useDialogOrSheet`
 // when `useIsMobile()` is true. Mock the hook so each test can pin the
 // viewport-state boolean.
 vi.mock('@/hooks/useIsMobile', () => ({
@@ -92,7 +92,7 @@ function setupDefaultIpcMocks() {
     if (cmd === 'edit_block') return null
     if (cmd === 'set_property') return null
     if (cmd === 'delete_property') return null
-    // FEAT-3p5b — per-space `journal_template` lookup. PEND-35 Tier
+    // Per-space `journal_template` lookup. Tier
     // 2.4b: collapsed N `get_properties(spaceId)` calls into one
     // `get_batch_properties(spaceIds)` call. Default to no properties
     // for any space so textareas start empty.
@@ -151,7 +151,7 @@ describe('SpaceManageDialog', () => {
     })
   })
 
-  // FEAT-3p6 — IPC error-path coverage. When a write IPC rejects, the
+  // IPC error-path coverage. When a write IPC rejects, the
   // dialog must not silently swallow the failure: the user-visible
   // surface (toast / banner / aria-live region) must fire so the user
   // knows the rename / accent / delete / create did NOT take effect.
@@ -214,11 +214,11 @@ describe('SpaceManageDialog', () => {
     })
   })
 
-  // UX-6 — colour-blind users cannot reliably tell which swatch is
+  // Colour-blind users cannot reliably tell which swatch is
   // selected by ring colour alone, so the selected swatch overlays a
   // <Check> icon as a non-colour signal. This test asserts the icon
   // is present on exactly the selected swatch and absent on the rest.
-  it('overlays a Check icon on the currently-selected accent swatch only (UX-6)', async () => {
+  it('overlays a Check icon on the currently-selected accent swatch only', async () => {
     const user = userEvent.setup()
     render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
 
@@ -253,11 +253,11 @@ describe('SpaceManageDialog', () => {
     expect(icon.getAttribute('aria-hidden')).toBe('true')
   })
 
-  // PEND-23 L3 — swatches paint via the CSS custom property tied to the
+  // Swatches paint via the CSS custom property tied to the
   // accent token, not a hardcoded Tailwind `bg-*-500` class. This keeps
   // theme switching (Solarized, Dracula, OneDarkPro) honest: the fill
   // follows the active theme's `--accent-*` value automatically.
-  it('renders accent swatches with CSS-var inline backgroundColor (PEND-23 L3)', async () => {
+  it('renders accent swatches with CSS-var inline backgroundColor', async () => {
     render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
 
     const groups = await screen.findAllByRole('group', {
@@ -306,14 +306,14 @@ describe('SpaceManageDialog', () => {
     })
   })
 
-  // UX-370 — when Delete is disabled because the space contains pages,
+  // When Delete is disabled because the space contains pages,
   // the only signal was the Tooltip-on-hover. Add an inline help line
   // under the row so the reason is visible at rest. The hint must
   // render only when there is a definite "non-empty" probe result for
   // a non-last space; it must NOT render for empty spaces (Delete is
   // enabled there) or for the last-remaining-space disabled path
   // (already covered by the `deleteLastTooltipDisabled` tooltip).
-  it('renders the inline-blocked hint when a non-last space has pages (UX-370)', async () => {
+  it('renders the inline-blocked hint when a non-last space has pages', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return nonEmptyPage
       if (cmd === 'list_spaces') return [PERSONAL, WORK]
@@ -334,7 +334,7 @@ describe('SpaceManageDialog', () => {
     })
   })
 
-  it('does not render the inline-blocked hint when the space is empty (UX-370)', async () => {
+  it('does not render the inline-blocked hint when the space is empty', async () => {
     // Default mocks return `emptyPage` for every space → Delete is
     // enabled and the inline hint must NOT mount.
     render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
@@ -502,7 +502,7 @@ describe('SpaceManageDialog', () => {
     expect(screen.queryByText(t('space.onboardingTitle'))).not.toBeInTheDocument()
   })
 
-  // ── Per-space journal template (FEAT-3p5b) ──────────────────────────
+  // ── Per-space journal template ──────────────────────────
 
   it('journal template textarea pre-populates from existing property', async () => {
     // Seed the batched `get_batch_properties` call so PERSONAL.id has
@@ -670,12 +670,12 @@ describe('SpaceManageDialog', () => {
     })
   })
 
-  // UX-375 — The journal-template textarea placeholder mentions
+  // The journal-template textarea placeholder mentions
   // `<% today %>` etc., but users had no concrete examples. A
   // collapsible <details> panel below the hint surfaces 1-2 sample
   // templates. Closed by default; native disclosure widget so it is
   // keyboard accessible without extra ARIA.
-  it('renders a collapsible Examples panel that expands to show templates with variables (UX-375)', async () => {
+  it('renders a collapsible Examples panel that expands to show templates with variables', async () => {
     const user = userEvent.setup()
     render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
 
@@ -704,7 +704,7 @@ describe('SpaceManageDialog', () => {
     expect(panel.textContent ?? '').toContain('<% today %>')
   })
 
-  // ── MAINT-180 / PEND-35 Tier 2.4b — IPC dedup contract ─────────────
+  // ── — IPC dedup contract ─────────────
   //
   // The emptiness probe (`list_blocks { spaceId, blockType:'page',
   // limit:1 }`) is owned by `SpaceManageDialog` and keyed by
@@ -712,12 +712,12 @@ describe('SpaceManageDialog', () => {
   // the whole lifetime of the dialog — not once per `SpaceRowEditor`
   // mount.
   //
-  // PEND-35 Tier 2.4b collapsed the previous per-space
+  // Collapsed the previous per-space
   // `get_properties(spaceId)` loop into a single
   // `get_batch_properties(spaceIds)` call covering every un-fetched
   // space in one IPC.
 
-  it('fires the emptiness probe per space.id and the journal-template fetch as ONE batch (MAINT-180 / PEND-35 Tier 2.4b)', async () => {
+  it('fires the emptiness probe per space.id and the journal-template fetch as ONE batch ()', async () => {
     useSpaceStore.setState({
       currentSpaceId: PERSONAL.id,
       availableSpaces: [PERSONAL, WORK, { id: 'SPACE_3', name: 'Side', accent_color: null }],
@@ -770,7 +770,7 @@ describe('SpaceManageDialog', () => {
     expect(new Set(batchedIds)).toEqual(new Set([PERSONAL.id, WORK.id, 'SPACE_3']))
   })
 
-  it('does not re-fetch on close + reopen with the same space.id set (MAINT-180)', async () => {
+  it('does not re-fetch on close + reopen with the same space.id set', async () => {
     const { rerender } = render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
 
     // Settle the initial probes so the cache is populated.
@@ -787,7 +787,7 @@ describe('SpaceManageDialog', () => {
       ([cmd]) => cmd === 'get_batch_properties',
     ).length
     expect(initialListBlocks).toBe(2)
-    // PEND-35 Tier 2.4b: a single batched IPC covers both spaces.
+    // A single batched IPC covers both spaces.
     expect(initialBatchProperties).toBe(1)
 
     // Close the dialog — this unmounts every `SpaceRowEditor` via
@@ -816,7 +816,7 @@ describe('SpaceManageDialog', () => {
     expect(finalBatchProperties).toBe(initialBatchProperties)
   })
 
-  // ── PEND-29 B-7 — cancellation guard on the per-space probe IIFEs ───
+  // ── B-7 — cancellation guard on the per-space probe IIFEs ───
   //
   // Both `void async` IIFEs inside the `useEffect` resolve into
   // `setEmptinessBySpace` / `setJournalTemplateBySpace` calls. Closing
@@ -826,7 +826,7 @@ describe('SpaceManageDialog', () => {
   // exercises the post-unmount resolution path: it must complete
   // cleanly with no React warnings on `console.error` and no logger
   // calls (success path returns early, never reaching the catch).
-  it('cancels in-flight emptiness/journal-template probes on unmount (PEND-29 B-7)', async () => {
+  it('cancels in-flight emptiness/journal-template probes on unmount (B-7)', async () => {
     let resolveBlocks!: (v: unknown) => void
     let resolveProps!: (v: unknown) => void
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -974,12 +974,12 @@ describe('SpaceManageDialog', () => {
     )
   })
 
-  // MAINT-215: the dialog mounts under both the desktop Dialog path and
+  // The dialog mounts under both the desktop Dialog path and
   // the mobile Sheet path. Assert on body content (the dialog title +
   // the per-space row inputs) being visible rather than the Dialog /
   // Sheet DOM specifics so the test stays decoupled from the underlying
   // primitive.
-  describe('mobile / desktop responsive surfaces (MAINT-215)', () => {
+  describe('mobile / desktop responsive surfaces', () => {
     it('renders the dialog header and per-space rows on the mobile Sheet path', async () => {
       mockedUseIsMobile.mockReturnValue(true)
       render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)

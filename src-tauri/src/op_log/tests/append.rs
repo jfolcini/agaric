@@ -181,7 +181,7 @@ async fn payload_json_roundtrips_via_db() {
     );
 }
 
-/// L-5 tripwire: documents the contract that `append_local_op_in_tx`
+/// Tripwire: documents the contract that `append_local_op_in_tx`
 /// requires its caller to open the transaction with `BEGIN IMMEDIATE`,
 /// and exercises the happy path end-to-end with two serial appends
 /// inside one IMMEDIATE tx.

@@ -1,5 +1,5 @@
 /**
- * Tests for MonthlyView component (UX-83 — calendar grid layout).
+ * Tests for MonthlyView component (calendar grid layout).
  *
  * Validates:
  *  1. Grid has 7 column headers (Mon-Sun for weekStartsOn=1)

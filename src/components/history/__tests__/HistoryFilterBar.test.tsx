@@ -7,9 +7,9 @@
  *  - Calls onFilterChange(null) when "All types" is selected
  *  - Calls onFilterChange with op type when a specific type is selected
  *  - a11y compliance
- *  - FEAT-3 Phase 8: "All spaces" Switch renders, toggles, composes with
+ * Phase 8: "All spaces" Switch renders, toggles, composes with
  *    the op-type filter, and is a11y-clean.
- *  - UX-350: ? help icon opens a popover legend listing every op type
+ * ? help icon opens a popover legend listing every op type
  *    with a one-line description.
  */
 
@@ -56,7 +56,7 @@ vi.mock('@/components/ui/popover', () => ({
   ),
 }))
 
-// Default props for the FEAT-3 Phase 8 "All spaces" toggle. Each test
+// Default props for the Phase 8 "All spaces" toggle. Each test
 // can override individual fields.
 const baseProps = {
   showAllSpaces: false,
@@ -209,9 +209,9 @@ describe('HistoryFilterBar', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // ── FEAT-3 Phase 8: "All spaces" toggle ────────────────────────────
+  // ── Phase 8: "All spaces" toggle ────────────────────────────
 
-  describe('"All spaces" toggle (FEAT-3 Phase 8)', () => {
+  describe('"All spaces" toggle (Phase 8)', () => {
     it('renders the Switch with its label', () => {
       const onFilterChange = vi.fn()
       const onShowAllSpacesChange = vi.fn()
@@ -307,9 +307,9 @@ describe('HistoryFilterBar', () => {
     })
   })
 
-  // ── UX-350: op-type legend popover ─────────────────────────────────
+  // ── op-type legend popover ─────────────────────────────────
 
-  describe('op-type legend popover (UX-350)', () => {
+  describe('op-type legend popover', () => {
     it('renders the help button with the correct aria-label', () => {
       const onFilterChange = vi.fn()
       render(
@@ -335,7 +335,7 @@ describe('HistoryFilterBar', () => {
       expect(screen.getByTestId('popover-content')).toBeInTheDocument()
     })
 
-    // PEND-23 M3: PopoverContent must carry an aria-label so screen readers
+    // PopoverContent must carry an aria-label so screen readers
     // announce the popover purpose, not a generic "dialog".
     it('labels the popover with history.opTypeLegendPopoverLabel', () => {
       const onFilterChange = vi.fn()

@@ -227,7 +227,7 @@ async fn concurrent_dispatch() {
         h.await.unwrap();
     }
     mat.flush().await.unwrap();
-    // L-17: every `dispatch_op` enqueues an internal `flush_foreground`
+    // Every `dispatch_op` enqueues an internal `flush_foreground`
     // Barrier between ApplyOp and the bg fan-out, so 10 dispatch_ops
     // emit 10 ApplyOps + 10 dispatch barriers, then `flush()` adds one
     // final barrier — 21 fg tasks total.

@@ -1,5 +1,5 @@
 /**
- * PEND-60 Phase 2 — Resolve `AutocompleteItem[]` for the caret-anchored
+ * Phase 2 — Resolve `AutocompleteItem[]` for the caret-anchored
  * autocomplete popover.
  *
  * Composes static value lists (state / priority / due / scheduled) with
@@ -78,7 +78,7 @@ export function useAutocompleteSources(
   const [tagItems, setTagItems] = useState<AutocompleteItem[]>([])
   const [tagLoading, setTagLoading] = useState(false)
 
-  // Property-key list comes from the shared MAINT-189 cache: space-keyed,
+  // Property-key list comes from the shared cache: space-keyed,
   // in-flight-dedup, invalidates on `block:properties-changed`. We
   // subscribe unconditionally (cheap — the snapshot is a stable array),
   // but only kick off the fetch when the user actually opens the
@@ -113,13 +113,13 @@ export function useAutocompleteSources(
   const selectOptionsRef = useRef(selectOptions)
   selectOptionsRef.current = selectOptions
 
-  // PEND-73 Phase 4.M3 — shared race-discard hook. The guard bumps on
+  // Phase 4.M3 — shared race-discard hook. The guard bumps on
   // every tag-anchor activation AND on every keystroke while active;
   // stale resolutions check it before writing state. Leaving the
   // `tag` anchor entirely also bumps the guard so an in-flight
   // resolution can't strand stale items for a later return-to-tag.
   const tagGen = useGenerationGuard()
-  // PEND-73 Phase 3.U1 — once-per-session failure surface.
+  // Phase 3.U1 — once-per-session failure surface.
   const surfaceFailureOnce = useFailedOnce()
   const { t } = useTranslation()
   const tagDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -210,10 +210,10 @@ export function useAutocompleteSources(
         })
         .catch((err: unknown) => {
           if (!tagGen.isCurrent(requestId)) return
-          // PEND-73 Phase 2 — see CommandPalette.tsx for the cancellation rationale.
+          // Phase 2 — see CommandPalette.tsx for the cancellation rationale.
           if (isCancellation(err)) return
           logger.warn('useAutocompleteSources', 'listTagsByPrefix failed', { prefix: query }, err)
-          // PEND-73 Phase 3.U1 — once-per-session toast for real failures.
+          // Phase 3.U1 — once-per-session toast for real failures.
           surfaceFailureOnce('autocomplete:tags', () => notify.error(t('search.failed')))
           setTagLoading(false)
         })

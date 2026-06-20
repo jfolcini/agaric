@@ -6,7 +6,7 @@ export default defineConfig({
   test: {
     environment: 'happy-dom',
     setupFiles: ['./src/test-setup.ts'],
-    // PEND-41 R25 — emit a warning when a single test exceeds 2 seconds.
+    // Emit a warning when a single test exceeds 2 seconds.
     // Catches regressions cheaply without altering test outcomes.
     slowTestThreshold: 2000,
     // The default 5s per-test timeout can be tripped by the longer
@@ -20,7 +20,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       // `json-summary` writes `coverage/coverage-summary.json` (aggregated
-      // totals), which `_validate.yml`'s coverage step (PEND-41 R17)
+      // Totals), which `_validate.yml`'s coverage step
       // parses to render the step-summary table.
       reporter: ['text', 'json', 'json-summary', 'html'],
       include: ['src/**/*.{ts,tsx}'],
@@ -31,7 +31,7 @@ export default defineConfig({
         'src/main.tsx',
         'src/test-setup.ts',
       ],
-      // PEND-44 — OpenSSF Best Practices Silver tier coverage gates.
+      // OpenSSF Best Practices Silver tier coverage gates.
       //
       // #749: THIS BLOCK IS THE SINGLE SOURCE OF TRUTH for the coverage
       // thresholds. The CI vitest job (`.github/workflows/_validate.yml`)

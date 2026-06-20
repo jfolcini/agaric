@@ -84,7 +84,7 @@ describe('ScrollArea', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // ── UX-226: viewportRef, viewportClassName, viewportProps, orientation ──
+  // ── viewportRef, viewportClassName, viewportProps, orientation ──
 
   it('forwards viewportRef to the scroll viewport element', () => {
     const viewportRef = React.createRef<HTMLDivElement>()

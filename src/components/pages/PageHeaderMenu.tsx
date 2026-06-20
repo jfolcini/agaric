@@ -46,7 +46,7 @@ export interface PageHeaderMenuProps {
   onDeleteRequest: () => void
   onOpenInNewTab?: (() => void) | undefined
   /**
-   * FEAT-3 Phase 2 — `t('space.moveTo')` support.
+   * Phase 2 — `t('space.moveTo')` support.
    *
    * `isSpaceBlock` — hide the menu entry when the page itself is a
    *   space block (spaces cannot be moved into other spaces).
@@ -82,12 +82,12 @@ export function PageHeaderMenu({
   onMoveToSpace,
 }: PageHeaderMenuProps) {
   const { t } = useTranslation()
-  // FEAT-7 item 7: hide the `t('tabs.openInNewTab')` affordance on mobile — the
+  // Item 7: hide the `t('tabs.openInNewTab')` affordance on mobile — the
   // hoisted TabBar is itself desktop-only, so the item would otherwise be
   // semantically misleading (the new tab is invisible on mobile).
   const isMobile = useIsMobile()
 
-  // FEAT-3 Phase 2 — the `t('space.moveTo')` entry expands inline (no nested
+  // Phase 2 — the `t('space.moveTo')` entry expands inline (no nested
   // Radix popover) to keep focus management simple and the a11y tree
   // flat. The sub-menu is keyboard-navigable via normal Tab order.
   const [moveSubmenuOpen, setMoveSubmenuOpen] = useState(false)
@@ -199,7 +199,7 @@ export function PageHeaderMenu({
             <Undo2 className="h-3.5 w-3.5" />
           </Button>
         </TooltipTrigger>
-        {/* UX-260 sub-fix 3: tier-aware undo tooltip. The same Ctrl+Z hits
+        {/*  sub-fix 3: tier-aware undo tooltip. The same Ctrl+Z hits
             either the editor-undo (within current block) when an editable
             field is focused or the page-undo (last op-log entry) when not.
             We expose this so users can predict which tier will fire. */}

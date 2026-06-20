@@ -22,7 +22,7 @@ use crate::ulid::BlockId;
 //   * Redo (`apply.rs::apply_restore_via_loro` path) then re-applies onto the
 //     EXISTING tombstoned node — a hard purge would have destroyed the node and
 //     forced redo to recreate it, breaking CRDT identity / convergence.
-//   * It mirrors `reverse_restore_block` (M-71) and `reverse_delete_block`: the
+// * It mirrors `reverse_restore_block` and `reverse_delete_block`: the
 //     whole reverse family operates on soft-delete state, never hard purge.
 //
 // The cost is a lingering soft-deleted row + tombstone after create-then-undo,
@@ -62,7 +62,7 @@ pub async fn reverse_edit_block(
     // DIFFERENT ancestor that the live edit had already superseded.
     //
     // Fall back to the timestamp-ordered `find_prior_text` only when:
-    //   * `prev_edit` is `None` (e.g. pre-MAINT-147 ops, or the first edit after
+    // * `prev_edit` is `None` (e.g. pre- ops, or the first edit after
     //     a create where the pointer was not recorded), or
     //   * the pointed-at op is missing (e.g. removed by op-log compaction) —
     //     the timestamp scan is the best remaining reconstruction.
@@ -168,7 +168,7 @@ pub async fn reverse_move_block(
     ))
 }
 
-// M-71: Reverse-of-restore is a bare `DeleteBlock(block_id)`. The
+// Reverse-of-restore is a bare `DeleteBlock(block_id)`. The
 // original `RestoreBlockPayload::deleted_at_ref` is intentionally
 // discarded — we do *not* propagate it into the reverse op.
 //
@@ -204,7 +204,7 @@ pub async fn find_prior_text(
     seq: i64,
     device_id: &str,
 ) -> Result<Option<String>, AppError> {
-    // M-63: use the indexed `block_id` column (migration 0030) instead of
+    // Use the indexed `block_id` column (migration 0030) instead of
     // `json_extract(payload, '$.block_id')` so undo of `edit_block` is
     // O(log N) on op_log size. AGENTS.md invariant #8: ULIDs are stored
     // uppercase for hash determinism, so normalize the bound parameter to
@@ -287,7 +287,7 @@ async fn find_prior_position(
     seq: i64,
     device_id: &str,
 ) -> Result<Option<PriorPlacement>, AppError> {
-    // M-63: see `find_prior_text` — use the indexed `block_id` column and
+    // See `find_prior_text` — use the indexed `block_id` column and
     // normalize to uppercase per AGENTS.md invariant #8.
     let bid_upper = block_id.to_ascii_uppercase();
     // #382: tie-break on the canonical `(created_at, seq, device_id)`
@@ -320,7 +320,7 @@ async fn find_prior_position(
                 let p: CreateBlockPayload = serde_json::from_str(&r.payload)?;
                 // #400: a new-scheme create carries a 0-based `index`; restore
                 // to it. A pre-#400 create carries a 1-based `position`.
-                // BUG-26: ancient `create_block` payloads predate the position
+                // Ancient `create_block` payloads predate the position
                 // wire field (both `index` and `position` absent); we cannot
                 // fabricate a valid reverse move for them — surface a
                 // `NonReversible` error (matching `DeleteAttachment` when the
@@ -348,7 +348,7 @@ async fn find_prior_position(
 
 #[cfg(test)]
 mod tests_m63 {
-    //! M-63 regression tests: ensure `find_prior_text` and
+    //! regression tests: ensure `find_prior_text` and
     //! `find_prior_position` use the indexed `op_log.block_id` column
     //! (migration 0030) and uppercase-normalize the bound parameter so
     //! lookups remain case-insensitive against AGENTS.md invariant #8.

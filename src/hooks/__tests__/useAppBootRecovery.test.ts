@@ -1,5 +1,5 @@
 /**
- * Unit tests for useAppBootRecovery (MAINT-124 step 4 stretch).
+ * Unit tests for useAppBootRecovery (stretch).
  *
  * Validates the two mount-only IPC effects in isolation. Integration
  * coverage (App-level boot path) remains in `App.test.tsx`.
@@ -42,7 +42,7 @@ afterEach(() => {
   __resetPriorityLevelsForTests()
 })
 
-describe('useAppBootRecovery — orphan-draft flush (PEND-35 Tier 2.12)', () => {
+describe('useAppBootRecovery — orphan-draft flush', () => {
   // The boot-recovery path is a single `flush_all_drafts` IPC instead
   // of `list_drafts` → N `flush_draft` fire-and-forget calls. Tests
   // mock the consolidated IPC and branch on the returned `flushed`
@@ -86,7 +86,7 @@ describe('useAppBootRecovery — orphan-draft flush (PEND-35 Tier 2.12)', () => 
     })
   })
 
-  // UX-303: orphan-draft flush is no longer silent. Recovery emits a
+  // Orphan-draft flush is no longer silent. Recovery emits a
   // localised toast when count > 0; zero recoveries stay silent so we
   // don't spam users on a clean boot.
   it('fires toast.info with the recovered count when ≥1 draft is flushed', async () => {
@@ -157,8 +157,8 @@ describe('useAppBootRecovery — orphan-draft flush (PEND-35 Tier 2.12)', () => 
   })
 })
 
-describe('useAppBootRecovery — priority levels (UX-201b)', () => {
-  // PEND-35 Tier 2.6: priority lookup now goes through the dedicated
+describe('useAppBootRecovery — priority levels', () => {
+  // Priority lookup now goes through the dedicated
   // `get_property_def(key)` PK SELECT instead of paginating the entire
   // property-definition vocabulary via `list_property_defs`.
   it('hydrates the priority-levels cache from get_property_def(priority)', async () => {

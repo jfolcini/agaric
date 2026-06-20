@@ -1,5 +1,5 @@
 /**
- * Unit tests for `useInPageFindStore` (PEND-52).
+ * Unit tests for `useInPageFindStore`.
  *
  * Covers:
  *  - open$/close lifecycle, including the locked-in selection-→-query /

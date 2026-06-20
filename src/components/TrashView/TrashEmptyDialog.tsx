@@ -1,7 +1,7 @@
 /**
  * TrashEmptyDialog — confirms permanently purging every trashed block
  * (the `t('trash.emptyTrashButton')` header action). Sibling extracted
- * from TrashView.tsx for MAINT-128.
+ * From TrashView.tsx for.
  */
 
 import type React from 'react'
@@ -13,7 +13,7 @@ interface TrashEmptyDialogProps {
   open: boolean
   itemCount: number
   /**
-   * UX-341: When `true`, the loaded `itemCount` understates the true backend
+   * When `true`, the loaded `itemCount` understates the true backend
    * count (more pages remain). The dialog switches to copy that doesn't claim
    * an exact number, since `purge_all_deleted` ignores pagination.
    */

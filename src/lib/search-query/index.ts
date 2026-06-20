@@ -1,5 +1,5 @@
 /**
- * PEND-54 — Inline filter syntax framework.
+ * Inline filter syntax framework.
  *
  * The query string is the canonical source of truth for the search
  * surface. `parse()` produces a `SearchQueryAST`; chips and IPC

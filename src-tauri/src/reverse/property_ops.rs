@@ -11,7 +11,7 @@ struct PriorPropertyRow {
     value_num: Option<f64>,
     value_date: Option<String>,
     value_ref: Option<String>,
-    /// PEND-14: undoing `set_property` / `delete_property` must restore the
+    /// Undoing `set_property` / `delete_property` must restore the
     /// prior typed value across all five columns. Dropping `value_bool` here
     /// would silently emit an all-None payload that fails
     /// `validate_set_property` (count == 0) when the prior op was a boolean.
@@ -88,14 +88,14 @@ async fn find_prior_property(
     seq: i64,
     device_id: &str,
 ) -> Result<Option<PriorPropertyRow>, AppError> {
-    // M-64: switch the block_id predicate from `json_extract(payload, '$.block_id')`
+    // Switch the block_id predicate from `json_extract(payload, '$.block_id')`
     // to the indexed `block_id` column added by migration 0030 (idx_op_log_block_id).
     // The key predicate stays on `json_extract` — there is no covering index for
     // (block_id, key), but the block_id filter alone narrows the scan dramatically.
     //
     // Per AGENTS.md invariant #8 (ULID uppercase normalization for blake3
     // determinism), uppercase the bound parameter before binding so it matches
-    // the canonical form stored in the indexed column. Mirrors the M-63 fix in
+    // The canonical form stored in the indexed column. Mirrors the fix in
     // block_ops.rs and recovery/draft_recovery.rs:84.
     let bid_upper = block_id.to_ascii_uppercase();
     // #181: the prior value of a property is whatever the MOST RECENT op
@@ -148,7 +148,7 @@ async fn find_prior_property(
 }
 
 // ---------------------------------------------------------------------------
-// M-64 — inline tests for the indexed `block_id` predicate switch.
+// Inline tests for the indexed `block_id` predicate switch.
 // ---------------------------------------------------------------------------
 //
 // These tests verify that `reverse_set_property` / `reverse_delete_property`

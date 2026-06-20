@@ -1,7 +1,7 @@
 use super::*;
 
 // ======================================================================
-// UX-250 — ReindexBlockTagRefs / RebuildBlockTagRefsCache
+// ReindexBlockTagRefs / RebuildBlockTagRefsCache
 // ======================================================================
 
 #[test]
@@ -289,8 +289,8 @@ async fn dispatch_delete_block_fires_rebuild_block_tag_refs_cache() {
     );
 }
 
-// UX-250: `full_cache_rebuild_tasks_has_seven_entries_in_canonical_order`
-// (above, in the MAINT-39 section) already asserts that
+// `full_cache_rebuild_tasks_has_seven_entries_in_canonical_order`
+// (above, in the section) already asserts that
 // FULL_CACHE_REBUILD_TASKS includes `RebuildBlockTagRefsCache` at slot 6.
 // Keep that single authoritative assertion rather than duplicating it
 // here.

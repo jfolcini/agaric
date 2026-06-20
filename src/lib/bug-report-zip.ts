@@ -1,5 +1,5 @@
 /**
- * ZIP composition for the bug-report export (FEAT-5).
+ * ZIP composition for the bug-report export.
  *
  * Mirrors `src/lib/export-graph.ts`: JSZip-based, no new Rust dep, no new
  * Tauri plugin. The returned `Blob` is handed to `downloadBlob` (same

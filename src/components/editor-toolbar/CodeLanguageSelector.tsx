@@ -3,7 +3,7 @@
  *
  * Extracted from FormattingToolbar to keep the main component focused.
  *
- * UX-300: a filter input is rendered at the top of the popover and
+ * A filter input is rendered at the top of the popover and
  * narrows the language list via `match-sorter` (same pattern as the
  * page/tag pickers in `useBlockResolve.ts`). The input is auto-focused
  * on open; ArrowUp / ArrowDown move a visual highlight across the

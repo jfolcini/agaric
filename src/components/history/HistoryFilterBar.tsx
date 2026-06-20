@@ -3,7 +3,7 @@
  *
  * Extracted from HistoryView for testability.
  *
- * FEAT-3 Phase 8 — also hosts the `t('history.allSpacesToggle')` toggle. The toggle is
+ * Phase 8 — also hosts the `t('history.allSpacesToggle')` toggle. The toggle is
  * controlled (state owned by HistoryView, *not* persisted) so every
  * History session starts current-space-only by design.
  */
@@ -29,7 +29,7 @@ import { Switch } from '@/components/ui/switch'
 // ---------------------------------------------------------------------------
 
 /**
- * UX-350 — convert backend op-type enum values (snake_case, e.g. `edit_block`)
+ * Convert backend op-type enum values (snake_case, e.g. `edit_block`)
  * to camelCase (`editBlock`) for i18n key lookup. The i18n key naming
  * convention (enforced by `src/lib/__tests__/i18n.test.ts`) requires
  * alphanumeric segments separated by dots; underscores are reserved for the
@@ -62,12 +62,12 @@ export interface HistoryFilterBarProps {
   opTypeFilter: string | null
   onFilterChange: (filter: string | null) => void
   /**
-   * FEAT-3 Phase 8 — controlled `t('history.allSpacesToggle')` toggle. Optional: when
+   * Phase 8 — controlled `t('history.allSpacesToggle')` toggle. Optional: when
    * BOTH `showAllSpaces` and `onShowAllSpacesChange` are provided the
    * toggle renders; otherwise it is hidden. The per-page consumer
    * (`HistoryPanel`) omits both because per-page mode already
    * implicitly scopes to a single space (the page's owning space) and
-   * the FEAT-3p8 SQL ignores `space_id` for non-`"__all__"` page IDs.
+   * The SQL ignores `space_id` for non-`"__all__"` page IDs.
    */
   showAllSpaces?: boolean
   /** Callback when the user flips the `t('history.allSpacesToggle')` switch. */
@@ -116,7 +116,7 @@ export function HistoryFilterBar({
           ))}
         </SelectContent>
       </Select>
-      {/* UX-350: ? help icon opens a popover legend explaining each
+      {/* ? help icon opens a popover legend explaining each
           op type — addresses the lack of in-UI explanation for the 12
           internal op-type values shown in the Select. */}
       <Popover>
@@ -150,7 +150,7 @@ export function HistoryFilterBar({
           </dl>
         </PopoverContent>
       </Popover>
-      {/* UX-275 sub-fix 3: inline ✕ to clear an active filter without
+      {/*  sub-fix 3: inline ✕ to clear an active filter without
           opening the dropdown. Sits next to the Select trigger so it
           reads as part of the same filter control. */}
       {opTypeFilter !== null && (
@@ -166,7 +166,7 @@ export function HistoryFilterBar({
           <X className="h-3.5 w-3.5" />
         </IconButton>
       )}
-      {/* FEAT-3 Phase 8 — "All spaces" toggle.
+      {/*  Phase 8 — "All spaces" toggle.
           Off by default in HistoryView; flipping on drops the
           space-membership filter from the IPC and surfaces ops from
           every space. State is controlled by the parent and not

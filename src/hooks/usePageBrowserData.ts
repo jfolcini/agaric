@@ -7,7 +7,7 @@
  *    the v2-cursor recovery wrapper and the `InvalidFilter:` toast path.
  *  - `usePaginatedQuery` wiring (pages / loading / hasMore / loadMore /
  *    reload / setPages / totalCount).
- *  - The locally-retained `displayTotalCount` (PEND-58d D6 + D20): adopts
+ * The locally-retained `displayTotalCount` (+ D20): adopts
  *    the hook's first-page total, ignores cursor-page `null`s, resets on a
  *    query-basis change, and decrements on an optimistic delete.
  *  - The delete flow via `usePageDelete`, with the count-decrementing
@@ -33,7 +33,7 @@ import { usePageDelete } from './usePageDelete'
 import { usePaginatedQuery } from './usePaginatedQuery'
 
 /**
- * PEND-56 Phase 3 — wrap a paginating IPC call so that a v2 cursor
+ * Phase 3 — wrap a paginating IPC call so that a v2 cursor
  * rejection (`AppError::Validation` with the `RequiresRefresh:` prefix)
  * automatically retries once with no cursor. The cursor format bumped
  * from v1 → v2 alongside the new sort modes, so a session that started
@@ -120,13 +120,13 @@ export function usePageBrowserData({
 
   const queryFn = useCallback(
     (cursor?: string) => {
-      // FEAT-3 Phase 4 — the IPC requires a `spaceId`. The `?? ''`
+      // Phase 4 — the IPC requires a `spaceId`. The `?? ''`
       // fallback is intentional pre-bootstrap behaviour: the empty
       // string forces a no-match SQL filter (returning an empty page)
       // instead of a runtime null deref. The `enabled: spaceIsReady`
       // gate below normally prevents this branch from firing.
       const spaceId = currentSpaceId ?? ''
-      // PEND-56 Phase 3 — metadata-rich payload + server-derived
+      // Phase 3 — metadata-rich payload + server-derived
       // sort. The wire sort enum is a 4-member subset of the
       // frontend's 7 (`pageSortWireFor` does the mapping); the
       // frontend-only sorts (`alphabetical`, `recent`, `created`,
@@ -175,7 +175,7 @@ export function usePageBrowserData({
     enabled: spaceIsReady,
   })
 
-  // PEND-58d D6 + D20 — locally-retained total for the count chip.
+  // + D20 — locally-retained total for the count chip.
   //
   // D6 (FE half): the backend now computes `total_count` only on the
   // first page (`req.after.is_none()`) and returns `null` on cursor
@@ -206,7 +206,7 @@ export function usePageBrowserData({
   // every field the deletion path reads (`id`), so we narrow at the
   // boundary with a typed cast instead of widening `usePageDelete`.
   //
-  // PEND-58d D20 — the delete path mutates `pages` directly (optimistic
+  // The delete path mutates `pages` directly (optimistic
   // filter-out on a successful `delete_block`) and never re-runs the
   // backend COUNT, so the count chip would over-report by one. We
   // intercept the delete-only setter here: when the hook's updater

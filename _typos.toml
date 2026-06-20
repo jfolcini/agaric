@@ -84,7 +84,7 @@ BA = "BA"
 # that simulate mid-typing of "tomorrow" / "hello" character by char.
 tomor = "tomor"
 hel = "hel"
-# `caf` — deliberate partial-typing fixture appearing in pending/PEND-34
+# `caf` — deliberate partial-typing fixture appearing in pending/
 # (alias-prefix matching example: `caf` → `café-notes`) and in editor
 # fold-for-search tests as a leading prefix of "café".
 caf = "caf"

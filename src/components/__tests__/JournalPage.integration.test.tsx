@@ -1,9 +1,9 @@
 /**
- * JournalPage / BlockTree integration tests — PEND-16.
+ * JournalPage / BlockTree integration tests —.
  *
  * These tests intentionally exercise the REAL `BlockTree` component
  * (specifically its `autoCreateFirstBlock` effect), which is mocked
- * out in `JournalPage.test.tsx`. The race fixed by PEND-16 only
+ * Out in `JournalPage.test.tsx`. The race fixed by only
  * surfaces when both `useJournalBlockCreation.handleAddBlock` and
  * `BlockTree.autoCreateFirstBlock` are alive at the same time —
  * mocking either side hides it.
@@ -148,7 +148,7 @@ function renderJournal() {
   )
 }
 
-describe('JournalPage / BlockTree integration — auto-create race (PEND-16)', () => {
+describe('JournalPage / BlockTree integration — auto-create race', () => {
   it('creates exactly one content block when auto-creating a fresh daily page', async () => {
     const todayStr = formatDate(new Date())
 
@@ -159,7 +159,7 @@ describe('JournalPage / BlockTree integration — auto-create race (PEND-16)', (
     let counter = 0
 
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      // BUG-48: the auto-create probe and calendar fetch route through
+      // The auto-create probe and calendar fetch route through
       // these new commands now. Default both to "no page exists" so the
       // hook progresses to creating the daily page.
       if (cmd === 'get_journal_page_by_date') return null
@@ -218,7 +218,7 @@ describe('JournalPage / BlockTree integration — auto-create race (PEND-16)', (
       await new Promise((r) => setTimeout(r, 0))
     })
 
-    // The whole point of PEND-16: exactly ONE create_block call.
+    // The whole point of exactly ONE create_block call.
     // Before the fix this received 2 (one from the no-template
     // fallback in `useJournalBlockCreation.handleAddBlock`, one from
     // `BlockTree.autoCreateFirstBlock` racing it).
@@ -243,7 +243,7 @@ describe('JournalPage / BlockTree integration — auto-create race (PEND-16)', (
   // settled to the post-fix state.
   it('has no a11y violations after the auto-create race settles', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      // BUG-48: see sibling test for rationale.
+      // See sibling test for rationale.
       if (cmd === 'get_journal_page_by_date') return null
       if (cmd === 'list_journal_pages_in_range') return []
       if (cmd === 'create_page_in_space') return 'DP_NEW'

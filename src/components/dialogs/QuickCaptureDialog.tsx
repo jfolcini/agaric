@@ -1,5 +1,5 @@
 /**
- * QuickCaptureDialog — FEAT-12 quick-capture modal.
+ * QuickCaptureDialog — quick-capture modal.
  *
  * A small Dialog with a single textarea + `t('quickCapture.saveButton')` /
  * `t('rename.cancel')` buttons.
@@ -26,7 +26,7 @@
  * unconditionally and the dialog only opens when the global shortcut
  * fires (which is itself a no-op on mobile per `registerGlobalShortcut`).
  *
- * MAINT-215: on phones < 768 px (`useIsMobile() === true`) the dialog
+ * On phones < 768 px (`useIsMobile() === true`) the dialog
  * renders as a bottom Sheet so the textarea + Capture / Cancel buttons
  * sit within thumb reach. The desktop path keeps the regular Radix
  * `Dialog` (not `AlertDialog`) so dismiss-on-outside-click / Escape
@@ -83,7 +83,7 @@ export function QuickCaptureDialog({
     if (isEmpty || submitting) return
     setSubmitting(true)
     try {
-      // FEAT-3p5: quick-capture lands on today's journal page in the
+      // Quick-capture lands on today's journal page in the
       // active space. The space store should always be hydrated by the
       // time the global shortcut fires (boot is gated on
       // `useSpaceStore.isReady`), but we surface a user-visible failure

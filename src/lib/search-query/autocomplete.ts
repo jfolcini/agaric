@@ -1,5 +1,5 @@
 /**
- * PEND-54 — Caret-anchored autocomplete detection.
+ * Caret-anchored autocomplete detection.
  *
  * Given the current query string and the caret position (column
  * offset, 0-indexed, end-exclusive — i.e. `input.selectionStart` from
@@ -29,7 +29,7 @@ export type AutocompleteAnchor =
   | { active: 'tag'; query: string; anchor: number }
   | { active: 'pathInclude'; query: string; anchor: number }
   | { active: 'pathExclude'; query: string; anchor: number }
-  // PEND-53 — state: / priority: value autocomplete.
+  // State: / priority: value autocomplete.
   | { active: 'state'; query: string; anchor: number }
   | { active: 'priority'; query: string; anchor: number }
   // #1682 — negated state:/priority: get distinct kinds so the anchor
@@ -39,10 +39,10 @@ export type AutocompleteAnchor =
   // option list), so this is purely an information-preserving change.
   | { active: 'notState'; query: string; anchor: number }
   | { active: 'notPriority'; query: string; anchor: number }
-  // PEND-53 — due: / scheduled: bucket-keyword + ISO-date autocomplete.
+  // Due: / scheduled: bucket-keyword + ISO-date autocomplete.
   | { active: 'due'; query: string; anchor: number }
   | { active: 'scheduled'; query: string; anchor: number }
-  // PEND-53 — prop:key autocomplete (before `=`); prop:key=value
+  // Prop:key autocomplete (before `=`); prop:key=value
   // autocomplete (after `=`).
   | { active: 'propKey'; query: string; anchor: number }
   | { active: 'propValue'; key: string; query: string; anchor: number }
@@ -83,7 +83,7 @@ export function detectAutocompleteAnchor(input: string, caret: number): Autocomp
     }
   }
   // tag: alone (no leading hash) — accept and treat the value as the
-  // query. DSL-2: a `#` *inside* the value (e.g. `tag:foo#bar`) must NOT
+  // Query. a `#` *inside* the value (e.g. `tag:foo#bar`) must NOT
   // close autocomplete: the classifier (`register.ts`) only strips a
   // *single leading* `#`, so a value like `foo#bar` is a legal tag name.
   // Mirror that here — drop the old `!slice.includes('#')` guard which
@@ -95,7 +95,7 @@ export function detectAutocompleteAnchor(input: string, caret: number): Autocomp
       anchor: start + 'tag:'.length,
     }
   }
-  // DSL-A7 — `slice === 'tag:#'` is already handled by the
+  // `slice === 'tag:#'` is already handled by the
   // `startsWith('tag:#')` arm above (which returns `query: ''`), so it
   // can never reach here. Only the bare-`tag:` case remains.
   if (slice === 'tag:') {
@@ -116,7 +116,7 @@ export function detectAutocompleteAnchor(input: string, caret: number): Autocomp
       anchor: start + 'path:'.length,
     }
   }
-  // PEND-53 — `not-prop:` must come before `prop:` (longer prefix
+  // `not-prop:` must come before `prop:` (longer prefix
   // wins) and before `not-state:` / `not-priority:` (each handled
   // separately below — disjoint prefixes).
   if (slice.startsWith('not-prop:')) {
@@ -125,7 +125,7 @@ export function detectAutocompleteAnchor(input: string, caret: number): Autocomp
   if (slice.startsWith('prop:')) {
     return propAutocomplete(slice, start, 'prop:')
   }
-  // PEND-53 — state / priority / due / scheduled value autocomplete.
+  // State / priority / due / scheduled value autocomplete.
   if (slice.startsWith('not-state:')) {
     return {
       active: 'notState',
@@ -172,7 +172,7 @@ export function detectAutocompleteAnchor(input: string, caret: number): Autocomp
 }
 
 /**
- * PEND-53 — `prop:` / `not-prop:` two-step autocomplete.
+ * `prop:` / `not-prop:` two-step autocomplete.
  *
  * Before the user has typed `=`, the popover lists known property
  * keys. After `=`, the popover lists known values for the
@@ -208,7 +208,7 @@ function propAutocomplete(
  * Returns true if `caret` falls inside a quoted `"…"` phrase, using the
  * *same* segmentation the tokenizer (`tokenize.ts`) applies.
  *
- * DSL-A6 — this used to count `"` characters odd/even up to the caret,
+ * This used to count `"` characters odd/even up to the caret,
  * which drifted from the tokenizer's model and gave wrong answers
  * whenever a stray/glued/unterminated quote was involved:
  *   - `"a"b" tag:#|` — the tokenizer closes the phrase at the

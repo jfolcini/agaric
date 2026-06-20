@@ -12,7 +12,7 @@ async fn new_creates_materializer_with_functional_queues() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// L-1 (PEND-25): the foreground / background sender accessors must
+// The foreground / background sender accessors must
 // hand out clones of the *same* tokio mpsc channel on every call.
 // Storage moved from `Arc<Mutex<Option<Sender>>>` to
 // `Arc<OnceLock<Sender>>` — repeated `fg_sender()` / `bg_sender()` calls
@@ -37,7 +37,7 @@ async fn fg_and_bg_sender_return_same_channel_across_calls() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// TEST-2: wait_for_initial_block_count_cache
+// Wait_for_initial_block_count_cache
 //
 // Deterministic synchronization point for tests that want to overwrite
 // `cached_block_count` with a simulated value. Verifies:
@@ -108,7 +108,7 @@ async fn wait_for_initial_block_count_cache_allows_simulated_overwrite() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// TEST-5: wait_for_pending_block_count_refreshes
+// Wait_for_pending_block_count_refreshes
 //
 // Counted sync primitive for the fire-and-forget refresh tasks spawned
 // after an FTS optimize (dispatch.rs:191). Unlike the one-shot
@@ -331,7 +331,7 @@ async fn wait_for_pending_block_count_refreshes_handles_overlapping_spawns() {
     );
 }
 
-/// PERF-24: the lifecycle-aware constructor must produce a fully
+/// The lifecycle-aware constructor must produce a fully
 /// functional materializer — it only changes the behaviour of the
 /// internal metrics-snapshot task, not of the main queues.
 #[tokio::test]
@@ -350,7 +350,7 @@ async fn with_read_pool_and_lifecycle_accepts_tasks() {
     mat.shutdown();
 }
 
-/// PERF-24: flipping the foreground flag must not corrupt the
+/// Flipping the foreground flag must not corrupt the
 /// materializer's queues. We flip the flag while actively enqueueing
 /// and verify shutdown still completes cleanly.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

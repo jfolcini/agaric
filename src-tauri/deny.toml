@@ -16,7 +16,7 @@ feature-depth = 1
 
 # ── Advisories (RustSec) ────────────────────────────────────────────────────
 #
-# OSSF-3 (issue #145): OSSF Scorecard's `Vulnerabilities` check runs against the
+# (issue #145): OSSF Scorecard's `Vulnerabilities` check runs against the
 # full OSV/RustSec set — it scans the entire Cargo.lock target-agnostically, the
 # same view as `cargo audit`. The bulk below are the gtk-rs GTK3 binding crates
 # (RUSTSEC-2024-0411..0420) reaching us transitively via `wry -> tauri` on Linux:
@@ -63,7 +63,7 @@ ignore = [
     # Loro transitive unmaintained crate (atomic-polyfill via heapless → postcard → loro)
     { id = "RUSTSEC-2023-0089", reason = "Loro transitive dep: atomic-polyfill (via heapless → postcard)" },
     # NOTE: RUSTSEC-2023-0071 (rsa Marvin Attack, via sqlx-mysql) was removed here
-    # in OSSF-3/#145 — current sqlx (0.8.x) no longer pulls the `rsa` crate at all
+    # In /#145 — current sqlx (0.8.x) no longer pulls the `rsa` crate at all
     # (absent from Cargo.lock), so the advisory is no longer reachable from any
     # target and both cargo-deny and cargo-audit confirm it as not-present. If a
     # future sqlx bump reintroduces `rsa`, re-add it with the SQLite-only rationale.
@@ -74,7 +74,7 @@ ignore = [
 
 # ── Licenses ────────────────────────────────────────────────────────────────
 #
-# PEND-41 R23 — GPL-3.0-or-later compatibility audit.
+# GPL-3.0-or-later compatibility audit.
 #
 # The repo itself is licensed GPL-3.0-or-later (see `LICENSE`), so every
 # entry below MUST be one-way-compatible with GPL-3.0-or-later (i.e.,

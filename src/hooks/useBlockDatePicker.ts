@@ -139,7 +139,7 @@ async function handleScheduleMode(ctx: DatePickContext): Promise<void> {
  */
 async function handleDateMode(ctx: DatePickContext): Promise<void> {
   try {
-    // BUG-1 / H-3b — date pages must own a `space` property to surface
+    // / H-3b — date pages must own a `space` property to surface
     // in PageBrowser. The legacy `createBlock({ blockType: 'page' })`
     // path leaks pages without `space`, so route through the atomic
     // `createPageInSpace` helper using the active space from the store.
@@ -210,7 +210,7 @@ export function useBlockDatePicker({
   const [datePickerMode, setDatePickerMode] = useState<DatePickerMode>('date')
   const datePickerCursorPos = useRef<number | undefined>(undefined)
 
-  // FE-M-7: invariant — `rovingEditor` is stable across the lifetime
+  // Invariant — `rovingEditor` is stable across the lifetime
   // of the BlockTree mount (the hook only ever runs inside a BlockTree
   // where the editor handle is created once and kept). Mirroring it
   // into a ref so `handleDatePick` reads the latest object without
@@ -223,7 +223,7 @@ export function useBlockDatePicker({
   const tRef = useRef(t)
   tRef.current = t
 
-  // `t` is read via `tRef` (FE-M-7 invariant above) so it is intentionally not listed. `pageStore` (a Zustand StoreApi) and `pagesListRef` (a ref object) are stable across renders, so listing them is safe and adds no extra runs — `handleDatePick` is only consumed as an event handler (BlockTree onSelect), never as another hook's dependency.
+  // `t` is read via `tRef` (invariant above) so it is intentionally not listed. `pageStore` (a Zustand StoreApi) and `pagesListRef` (a ref object) are stable across renders, so listing them is safe and adds no extra runs — `handleDatePick` is only consumed as an event handler (BlockTree onSelect), never as another hook's dependency.
   const handleDatePick = useCallback(
     async (d: Date) => {
       setDatePickerOpen(false)

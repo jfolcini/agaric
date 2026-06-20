@@ -1,5 +1,5 @@
 /**
- * Tests for AutocompletePopover (PEND-60 Phase 1).
+ * Tests for AutocompletePopover (Phase 1).
  *
  * Covers:
  *  - Hidden when `open=false`, `anchorRect=null`, or `items=[]`.

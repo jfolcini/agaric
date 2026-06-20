@@ -32,7 +32,7 @@ import { useSpaceStore } from '../../stores/space'
 import { selectPageStack, useTabsStore } from '../../stores/tabs'
 import { SearchPanel } from '../SearchPanel'
 
-// PEND-58f FE-3 — the per-group result listbox is now virtualized
+// The per-group result listbox is now virtualized
 // (`@tanstack/react-virtual`). jsdom gives the scroll container zero
 // height, which would collapse the virtual window to zero rows; mirror the
 // AgendaResults / HistoryView test mock so the virtualizer yields every row
@@ -40,7 +40,7 @@ import { SearchPanel } from '../SearchPanel'
 // (which capture `options` once and index into them) still see every row.
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
-// UX-153: Mock resolvePageByAlias separately so alias-resolution calls
+// Mock resolvePageByAlias separately so alias-resolution calls
 // don't consume values from the FIFO invoke mock queue.
 vi.mock('../../lib/tauri', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/tauri')>()
@@ -94,7 +94,7 @@ beforeEach(() => {
     recentPagesBySpace: {},
     rawKeysMerged: true,
   })
-  // FEAT-3 Phase 2 — SearchPanel now gates on `useSpaceStore.isReady`
+  // Phase 2 — SearchPanel now gates on `useSpaceStore.isReady`
   // and passes `currentSpaceId` to `searchBlocks`. Seed the store so
   // tests exercise the real code path (not the loading skeleton).
   useSpaceStore.setState({
@@ -162,9 +162,9 @@ describe('SearchPanel', () => {
     expect(screen.getByPlaceholderText(t('search.searchPlaceholder'))).toBeInTheDocument()
   })
 
-  // UX-338 — placeholder must mention the 3-character minimum so users see
+  // Placeholder must mention the 3-character minimum so users see
   // the requirement before they type, not only after.
-  it('placeholder does not promise a hard character minimum (UX-7)', () => {
+  it('placeholder does not promise a hard character minimum', () => {
     render(<SearchPanel />)
     const input = screen.getByLabelText(t('search.searchLabel')) as HTMLInputElement
     expect(input.placeholder).toBe(t('search.searchPlaceholder'))
@@ -439,7 +439,7 @@ describe('SearchPanel', () => {
     })
   })
 
-  // UX-246: SearchInput clear (✕) button appears when the field has content
+  // SearchInput clear (✕) button appears when the field has content
   // and clearing it resets the input value (and in turn the results).
   it('shows clear button when typing and resets on click', async () => {
     const user = userEvent.setup()
@@ -499,7 +499,7 @@ describe('SearchPanel', () => {
     fireEvent.change(input, { target: { value: '你好' } })
 
     expect(screen.getByText(t('search.cjkLimitationNote'))).toBeInTheDocument()
-    // UX-336 — notice surfaces the 3-character minimum workaround so CJK
+    // Notice surfaces the 3-character minimum workaround so CJK
     // users know how to widen matches.
     const notice = screen.getByTestId('cjk-notice')
     expect(notice.textContent).toMatch(/3/)
@@ -528,7 +528,7 @@ describe('SearchPanel', () => {
     expect(searchBtn).toBeDisabled()
   })
 
-  it('opens the search help dialog from the ? button (UX-1)', async () => {
+  it('opens the search help dialog from the ? button', async () => {
     const user = userEvent.setup()
     render(<SearchPanel />)
     expect(screen.queryByTestId('search-help-dialog')).toBeNull()
@@ -562,7 +562,7 @@ describe('SearchPanel', () => {
       expect(mockedInvoke).toHaveBeenCalledOnce()
     })
 
-    // UX-2 / E2E-2 — generic errors now render a visible error state
+    // / E2E-2 — generic errors now render a visible error state
     // (the raw message reaches `error` so the regex parser can work; no
     // toast clobbering it).
     await waitFor(() => {
@@ -662,7 +662,7 @@ describe('SearchPanel', () => {
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'page')
 
-    // PEND-50 Phase 1 — a page-type hit now appears twice in the
+    // Phase 1 — a page-type hit now appears twice in the
     // grouped layout: once as the page-link group header (clickable)
     // and once as the `role="option"` row body. Click the row itself
     // (the option, which is now a click-handling `<li>`) so we
@@ -758,7 +758,7 @@ describe('SearchPanel', () => {
     })
   })
 
-  // FE-4 — `navGenerationRef` guard. Clicking result B while result A's
+  // `navGenerationRef` guard. Clicking result B while result A's
   // `getBlock(parent_id)` is still in flight must let B win: when A's
   // (older) lookup finally resolves it is superseded and must NOT navigate
   // nor clobber the spinner. Determinism comes from controlled deferreds —
@@ -1139,7 +1139,7 @@ describe('SearchPanel', () => {
       expect(screen.getByText(textContent('child block'))).toBeInTheDocument()
     })
 
-    // PEND-50 Phase 1 — the row is a `role="option"` `<li>` (not a
+    // Phase 1 — the row is a `role="option"<li>` (not a
     // `<button>`); "disabled" surfaces via `aria-disabled` rather than
     // the disabled DOM property.
     const resultRow = screen.getByRole('option')
@@ -1194,13 +1194,13 @@ describe('SearchPanel', () => {
     })
   })
 
-  // PEND-50 Phase 1 — the flat listbox was replaced with per-group
+  // Phase 1 — the flat listbox was replaced with per-group
   // listboxes (one per page), wrapped in a `role="region"` with the
   // localised label. The per-group listbox `aria-label` resolves via
   // `t('search.groupExpandedLabel', { pageTitle: ... })`. We assert
   // both surfaces here to lock in the a11y model rather than the old
   // single-listbox label.
-  it('results region + per-group listbox aria-labels resolve via t() (UX-210 / PEND-50)', async () => {
+  it('results region + per-group listbox aria-labels resolve via t() ()', async () => {
     mockedInvoke.mockResolvedValueOnce({
       items: [makeSearchResult()],
       next_cursor: null,
@@ -1291,7 +1291,7 @@ describe('SearchPanel', () => {
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     typeAndSubmit(input, 'page')
 
-    // PEND-50 Phase 1 — click the row itself (the option, a
+    // Phase 1 — click the row itself (the option, a
     // click-handling `<li>`), not the page-link header, so we
     // exercise `handleResultClick` and its recent-page bookkeeping.
     const option = await screen.findByRole('option')
@@ -1587,7 +1587,7 @@ describe('SearchPanel', () => {
     it('supports ArrowDown/ArrowUp through results', async () => {
       const user = userEvent.setup()
 
-      // PEND-50 Phase 1 — results are page-grouped now. Share a
+      // Phase 1 — results are page-grouped now. Share a
       // `page_id` so both rows land in the same listbox; the
       // keyboard-nav assertion is unchanged.
       mockedInvoke.mockResolvedValueOnce({
@@ -1689,7 +1689,7 @@ describe('SearchPanel', () => {
     it('highlights focused result visually', async () => {
       const user = userEvent.setup()
 
-      // PEND-50 Phase 1 — share `page_id` so both rows are in one
+      // Phase 1 — share `page_id` so both rows are in one
       // listbox (page-grouped layout).
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -1728,14 +1728,14 @@ describe('SearchPanel', () => {
   })
 
   // =========================================================================
-  // Home/End and PageUp/PageDown keyboard navigation (UX-138)
+  // Home/End and PageUp/PageDown keyboard navigation
   // =========================================================================
 
   describe('Home/End and PageUp/PageDown navigation', () => {
     it('Home key moves focus to first result, End to last', async () => {
       const user = userEvent.setup()
 
-      // PEND-50 Phase 1 — single page-group so Home/End walk the same
+      // Phase 1 — single page-group so Home/End walk the same
       // listbox (the keyboard hook is per-group; Home/End within one
       // group covers the same behaviour).
       mockedInvoke.mockResolvedValueOnce({
@@ -1779,7 +1779,7 @@ describe('SearchPanel', () => {
     it('PageDown/PageUp navigate through results', async () => {
       const user = userEvent.setup()
 
-      // PEND-50 Phase 1 — single page-group so all 15 rows share one
+      // Phase 1 — single page-group so all 15 rows share one
       // listbox.
       const items = Array.from({ length: 15 }, (_, i) =>
         makeSearchResult({ id: `B${i}`, content: `result ${i}`, page_id: 'P_PG' }),
@@ -1816,11 +1816,11 @@ describe('SearchPanel', () => {
     })
   })
 
-  // UX-198: the search form used to live inside a `sticky top-0` wrapper.
+  // The search form used to live inside a `sticky top-0` wrapper.
   // It's now hoisted to the App-level outlet via <ViewHeader>. The form
   // must still render (via ViewHeader's inline fallback in isolated tests)
   // but the stale sticky classes must be gone from this component's subtree.
-  describe('UX-198 header outlet migration', () => {
+  describe(' header outlet migration', () => {
     it('has no sticky top-0 element and still renders the search form', () => {
       const { container } = render(<SearchPanel />)
       expect(screen.getByPlaceholderText(t('search.searchPlaceholder'))).toBeInTheDocument()
@@ -1830,12 +1830,12 @@ describe('SearchPanel', () => {
     })
   })
 
-  // FEAT-3 Phase 2 — scoping + loading gate. SearchPanel now consults
+  // Phase 2 — scoping + loading gate. SearchPanel now consults
   // `useSpaceStore.isReady` before firing `searchBlocks`, and passes
   // `currentSpaceId` through so the backend filters results to the
   // active space. When the store hasn't hydrated yet the component
   // renders a `LoadingSkeleton` instead of the search form.
-  describe('space scoping (FEAT-3 Phase 2)', () => {
+  describe('space scoping (Phase 2)', () => {
     it('renders a loading skeleton when the space store has not hydrated', () => {
       useSpaceStore.setState({
         currentSpaceId: null,
@@ -1901,9 +1901,9 @@ describe('SearchPanel', () => {
   })
 
   // =========================================================================
-  // UX-269: SearchPanel consolidation (6 sub-fixes)
+  // SearchPanel consolidation (6 sub-fixes)
   // =========================================================================
-  describe('UX-269 consolidation', () => {
+  describe(' consolidation', () => {
     // Sub-fix 1: Switch to shared LoadMoreButton (aria-busy when loading).
     it('uses the shared LoadMoreButton with aria-busy when fetching more', async () => {
       const user = userEvent.setup()
@@ -2087,10 +2087,10 @@ describe('SearchPanel', () => {
   })
 
   // =========================================================================
-  // UX-335: aria-live region must produce text in zero-result and
+  // Aria-live region must produce text in zero-result and
   // search-cleared states (not stay empty). Pre-search stays silent.
   // =========================================================================
-  describe('UX-335 aria-live status text', () => {
+  describe(' aria-live status text', () => {
     it('announces "No results" when a search returns zero results', async () => {
       mockedInvoke.mockResolvedValueOnce(emptyPage)
 

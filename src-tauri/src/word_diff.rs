@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn decomposed_combining_marks_pinned_behaviour() {
-        // TEST-50: decomposed (NFD) input — `e\u{0301}` is the base
+        // Decomposed (NFD) input — `e\u{0301}` is the base
         // letter `e` followed by U+0301 COMBINING ACUTE ACCENT, which
         // renders as `é` but is *not* the same scalar sequence as the
         // precomposed `é` (U+00E9). The `similar` crate does not
@@ -189,7 +189,7 @@ mod tests {
         );
     }
 
-    // PEND-77 A1: word-diff reconstruction invariants. The spans from
+    // Word-diff reconstruction invariants. The spans from
     // `compute_word_diff` must losslessly reconstruct both inputs — dropping
     // the Delete spans yields `new`, dropping the Insert spans yields `old` —
     // generalizing the hand-pinned example cases into universal properties.

@@ -28,7 +28,7 @@ export const MAX_REDO_STACK = 100
  * Time window (ms) within which consecutive same-device ops are grouped for
  * batch undo.
  *
- * MAINT-105: bumped from 200 ms → 500 ms. The original 200 ms window was
+ * Bumped from 200 ms → 500 ms. The original 200 ms window was
  * sized for the in-memory recurrence-op burst (8-10 ops fired
  * back-to-back). Under realistic load — slow disks, larger transactions,
  * mobile/Android backends — those bursts can stretch past 200 ms and the
@@ -294,7 +294,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         // Capture the initial undo depth before any undo calls
         const initialDepth = getOrCreatePage(get().pages, pageId).undoDepth
 
-        // PEND-35 Tier 4.4 — ask the backend for the full group size
+        // Ask the backend for the full group size
         // BEFORE issuing any undos. Replaces the prior `listPageHistory`
         // re-fetch with a growing window after each Ctrl+Z (one IPC per
         // op, payload growing as the user holds undo) with a single

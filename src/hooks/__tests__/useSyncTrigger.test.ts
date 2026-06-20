@@ -129,7 +129,7 @@ describe('useSyncTrigger', () => {
     })
 
     expect(mockListPeerRefs).toHaveBeenCalled()
-    // PEND-06: `startSync` is now invoked with a progress callback as
+    // `startSync` is now invoked with a progress callback as
     // its second arg so the hook can stream backend state into the
     // sync store. Assert peerId + that a function was passed.
     expect(mockStartSync).toHaveBeenCalledWith('PEER1', expect.any(Function))
@@ -156,13 +156,13 @@ describe('useSyncTrigger', () => {
       await result.current.syncAll()
     })
 
-    // PEND-06: `startSync` is now invoked with a progress callback as
+    // `startSync` is now invoked with a progress callback as
     // its second arg so the hook can stream backend state into the
     // sync store. Assert peerId + that a function was passed.
     expect(mockStartSync).toHaveBeenCalledWith('PEER1', expect.any(Function))
   })
 
-  it('PEND-06 Tier 2: routes Files-variant updates into the sync store', async () => {
+  it('routes Files-variant updates into the sync store', async () => {
     mockListPeerRefs.mockResolvedValue([
       {
         peer_id: 'PEER_FILES',
@@ -407,8 +407,8 @@ describe('useSyncTrigger', () => {
     )
   })
 
-  // UX-264: Retry action on transient per-peer sync failure
-  it('per-peer sync failure toast carries a Retry action that re-runs startSync (UX-264)', async () => {
+  // Retry action on transient per-peer sync failure
+  it('per-peer sync failure toast carries a Retry action that re-runs startSync', async () => {
     mockListPeerRefs.mockResolvedValue([
       {
         peer_id: 'PEER_RETRY_999',
@@ -432,7 +432,7 @@ describe('useSyncTrigger', () => {
 
     // Initial failure: startSync called once for the peer.
     expect(mockStartSync).toHaveBeenCalledTimes(1)
-    // PEND-06: callable now takes (peerId, onProgress).
+    // Callable now takes (peerId, onProgress).
     expect(mockStartSync).toHaveBeenCalledWith('PEER_RETRY_999', expect.any(Function))
 
     // Toast.error received the action with onClick.
@@ -682,14 +682,14 @@ describe('useSyncTrigger', () => {
     })
 
     expect(mockListPeerRefs).toHaveBeenCalled()
-    // PEND-06: `startSync` is now invoked with a progress callback as
+    // `startSync` is now invoked with a progress callback as
     // its second arg so the hook can stream backend state into the
     // sync store. Assert peerId + that a function was passed.
     expect(mockStartSync).toHaveBeenCalledWith('PEER1', expect.any(Function))
   })
 
-  // UX-264: Offline → online transition feedback
-  it('shows toast.info("Back online. Syncing…") when transitioning offline → online (UX-264)', async () => {
+  // Offline → online transition feedback
+  it('shows toast.info("Back online. Syncing…") when transitioning offline → online', async () => {
     // Arrange: prior offline state in the sync store.
     useSyncStore.getState().setState('offline')
     expect(useSyncStore.getState().state).toBe('offline')
@@ -707,7 +707,7 @@ describe('useSyncTrigger', () => {
     expect(toast.info).toHaveBeenCalledWith('Back online. Syncing\u2026')
   })
 
-  it('does NOT show "back online" toast when state was not offline (UX-264)', async () => {
+  it('does NOT show "back online" toast when state was not offline', async () => {
     // Arrange: idle (not offline) state.
     useSyncStore.getState().setState('idle')
 
@@ -722,8 +722,8 @@ describe('useSyncTrigger', () => {
     expect(toast.info).not.toHaveBeenCalled()
   })
 
-  // UX-282: screen-reader announcements paired with sync toast feedback
-  describe('screen reader announcements (UX-282)', () => {
+  // Screen-reader announcements paired with sync toast feedback
+  describe('screen reader announcements', () => {
     it('announces sync started and completed on successful sync', async () => {
       mockListPeerRefs.mockResolvedValue([
         {

@@ -359,7 +359,7 @@ describe('useDateInput setDateInput', () => {
   })
 })
 
-// UX-12 — `isParsing` exposes the in-flight NL-parse debounce so callers
+// `isParsing` exposes the in-flight NL-parse debounce so callers
 // can render a "parsing…" hint while the 300 ms timer is pending.
 describe('useDateInput isParsing', () => {
   it('is false initially', () => {

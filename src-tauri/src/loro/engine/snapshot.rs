@@ -225,7 +225,7 @@ impl LoroEngine {
     }
     /// Reject a legacy v1 (flat-map) snapshot loudly (#332).
     ///
-    /// PEND-80 Phase 3 (#331) moved the block hierarchy from a flat
+    /// Phase 3 (#331) moved the block hierarchy from a flat
     /// [`LEGACY_BLOCKS_ROOT`] `LoroMap` (format 1) to the [`BLOCKS_TREE_ROOT`]
     /// [`LoroTree`] (format 2), migrating old snapshots forward on every
     /// import. #332 retired that migration once every persisted snapshot had

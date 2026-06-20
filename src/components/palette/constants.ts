@@ -7,7 +7,7 @@
 
 import { partitionedSearchLimit, type SafeLimit } from '@/lib/safe-limit'
 
-/** Debounce window — palette UX is type-ahead; matches PEND-51's 80 ms. */
+/** Debounce window — palette UX is type-ahead; matches 80 ms. */
 export const PALETTE_DEBOUNCE_MS = 80
 
 /** Cap: page-groups rendered before the "see more" escalation. */

@@ -171,7 +171,7 @@
   --destructive-foreground: oklch(0.984 0.003 247.858);
   --border: oklch(0.929 0.013 255.508);
   --input: oklch(0.929 0.013 255.508);
-  /* PEND-23 L10 — focus ring is consumed at /50 opacity (`focus-visible:ring-ring/50`),
+  /* Focus ring is consumed at /50 opacity (`focus-visible:ring-ring/50`),
    * which composites the ring colour against the background. On light mode the L=0.55
    * red-orange at 50% alpha against L=1.0 white perceives at roughly L≈0.78, well below
    * the WCAG 2.4.7 3:1 non-text minimum if chroma is also middling. Lift chroma from
@@ -266,7 +266,7 @@
   /* Sync status */
   --sync-idle: oklch(0.7 0.17 162);
   --sync-active: oklch(0.77 0.19 70);
-  /* FEAT-3p10 — per-space accent palette tokens.
+  /* Per-space accent palette tokens.
    * Each space stores a free-form palette token (e.g. `accent-emerald`)
    * in `block_properties(key='accent_color', …)`. The active space's
    * token is bridged to `--accent-current` by the App-level effect on
@@ -298,7 +298,7 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  /* Typography scale tokens (UX-80) */
+  /* Typography scale tokens */
   --text-xs: 0.75rem; /* 12px */
   --text-sm: 0.875rem; /* 14px */
   --text-base: 1rem; /* 16px */
@@ -336,7 +336,7 @@
   --destructive-foreground: oklch(0.984 0.003 247.858);
   --border: oklch(0.279 0.041 260.031);
   --input: oklch(0.279 0.041 260.031);
-  /* PEND-23 L10 — dark theme background is `oklch(0.171 0.027 264.71)` (deep navy);
+  /* Dark theme background is `oklch(0.171 0.027 264.71)` (deep navy);
    * the original L=0.55 ring at /50 alpha composites toward L≈0.36 against it, leaving
    * the focus indicator visually muddy. Lift lightness to 0.68 (still red-orange, well
    * clear of the navy bg lightness) and chroma to 0.22 so the ring stays bright and
@@ -424,7 +424,7 @@
   /* Sync status */
   --sync-idle: oklch(0.7 0.17 162);
   --sync-active: oklch(0.77 0.19 70);
-  /* FEAT-3p10 — per-space accent palette tokens (dark theme).
+  /* Per-space accent palette tokens (dark theme).
    * Same palette as light, slightly lifted lightness so swatches keep
    * adequate contrast against the dark surface backgrounds. */
   --accent-emerald: oklch(0.74 0.17 162);
@@ -446,7 +446,7 @@
   --elevation-overlay: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
 }
 
-/* ── Solarized Light theme (UX-203) ────────────────────────────────── */
+/* ── Solarized Light theme ────────────────────────────────── */
 /* Palette reference: https://ethanschoonover.com/solarized/
    Approximated in OKLch space. Applied via `.theme-solarized-light` on
    `document.documentElement` (see useTheme hook). Source order: defined
@@ -555,7 +555,7 @@
   --sync-active: oklch(0.6 0.14 80);
 }
 
-/* ── Solarized Dark theme (UX-203) ─────────────────────────────────── */
+/* ── Solarized Dark theme ─────────────────────────────────── */
 /* Uses the dark base tones from the Solarized palette. Applied via
    `.dark .theme-solarized-dark` (both classes set together). */
 .theme-solarized-dark {
@@ -660,7 +660,7 @@
   /* Sync status */
   --sync-idle: oklch(0.7 0.16 125);
   --sync-active: oklch(0.75 0.16 80);
-  /* FEAT-3p10 — per-space accent palette tokens (Solarized Dark).
+  /* Per-space accent palette tokens (Solarized Dark).
    * Hues approximate the canonical Solarized accent series
    * (https://ethanschoonover.com/solarized) in OKLch space; chroma
    * stays in the muted 0.13–0.20 band the rest of this theme uses
@@ -676,7 +676,7 @@
   --accent-orange: oklch(0.65 0.17 45); /* orange */
 }
 
-/* ── Dracula theme (UX-203) ────────────────────────────────────────── */
+/* ── Dracula theme ────────────────────────────────────────── */
 /* Palette reference: https://draculatheme.com/contribute
    Applied via `.dark .theme-dracula`. */
 .theme-dracula {
@@ -783,7 +783,7 @@
   --sync-active: oklch(0.82 0.12 70);
 }
 
-/* ── One Dark Pro theme (UX-203) ───────────────────────────────────── */
+/* ── One Dark Pro theme ───────────────────────────────────── */
 /* Palette inspired by Atom One Dark / VSCode One Dark Pro.
    Applied via `.dark .theme-one-dark-pro`. */
 .theme-one-dark-pro {
@@ -906,7 +906,7 @@
     --block-row-gap: 0.375rem; /* 6px — desktop + one scale step */
   }
 }
-/* PEND-28b M6 — narrow-desktop / split-screen tablet windows in fine-pointer
+/* Narrow-desktop / split-screen tablet windows in fine-pointer
  * mode never trip the `pointer: coarse` query, so a 360 px responsive-mode
  * window keeps 24 px indent and a depth-5 block consumes 120 px before any
  * content. Catch viewport width independently from pointer type. Both queries
@@ -918,7 +918,7 @@
   }
 }
 
-/* ── Responsive typography scale (UX-80) ───────────────────────────── */
+/* ── Responsive typography scale ───────────────────────────── */
 @media (max-width: 640px) {
   :root {
     --text-2xl: 1.25rem; /* 20px on mobile (down from 24px) */
@@ -1255,7 +1255,7 @@
   @apply bg-block-ref/70;
 }
 
-/* Shared focus-visible affordance for all chip types (UX-209) */
+/* Shared focus-visible affordance for all chip types */
 .block-link-chip:focus-visible,
 .tag-ref-chip:focus-visible,
 .block-ref-chip:focus-visible {
@@ -1373,7 +1373,7 @@
     outline-offset: 2px;
   }
 
-  /* FEAT-3p10 — high-contrast siblings for the per-space accent palette.
+  /* High-contrast siblings for the per-space accent palette.
    * Boost chroma + push lightness toward the extremes so the
    * SpaceAccentBadge and SpaceTopStripe stay distinguishable for
    * users who request high-contrast UI (Windows High Contrast Mode,
@@ -1391,7 +1391,7 @@
     --accent-orange: oklch(0.6 0.22 50);
   }
 
-  /* UX-6 — token-coverage gap. Until this block landed, the
+  /* Token-coverage gap. Until this block landed, the
    * `prefers-contrast: more` query only re-keyed the per-space accent
    * palette; the StatusBadge / PriorityBadge / scheduled+repeat
    * indicator chips kept their normal-contrast values. The result was
@@ -1605,12 +1605,12 @@
   }
 }
 
-/* ── Focus ring utilities (UX-6) ───────────────────────────────────── */
-/* PEND-23 M6 (#995): the legacy `@utility focus-ring` (2px ring + offset) is
+/* ── Focus ring utilities ───────────────────────────────────── */
+/* (#995): the legacy `@utility focus-ring` (2px ring + offset) is
  * removed — BlockGutterControls was its last consumer and is now migrated to
  * `focus-ring-visible`. */
 
-/* PEND-23 M6: form-control / interactive-element focus ring. Replaces the
+/* Form-control / interactive-element focus ring. Replaces the
  * verbatim three-class string `focus-visible:outline-hidden
  * focus-visible:ring-[3px] focus-visible:ring-ring/50` that was previously
  * inlined across ~50 files. Consumers add this as a single `focus-ring-visible`
@@ -1642,7 +1642,7 @@
   }
 }
 
-/* UX-929 F4: single selection/focus recipe for block surfaces. Previously the
+/* Single selection/focus recipe for block surfaces. Previously the
  * keyboard-focus / selection feedback was spelled three different ways
  * (`ring-2 ring-primary/50 bg-primary/5` on StaticBlock/EditableBlock vs
  * `ring-2 ring-inset ring-ring/50 bg-accent/30` on BlockListItem). Consumers
@@ -1710,7 +1710,7 @@
   background-color: var(--muted-foreground);
 }
 
-/* ── Animation/transition token utilities (UX-81) ──────────────────── */
+/* ── Animation/transition token utilities ──────────────────── */
 @utility duration-fast {
   transition-duration: var(--duration-fast);
 }
@@ -1736,7 +1736,7 @@
   transition-timing-function: var(--ease-spring);
 }
 
-/* ── Typography scale utilities (UX-80) ────────────────────────────── */
+/* ── Typography scale utilities ────────────────────────────── */
 @utility text-scale-xs {
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
@@ -1766,7 +1766,7 @@
   line-height: var(--leading-tight);
 }
 
-/* ── Suggestion popup animation (UX-66) ────────────────────────────── */
+/* ── Suggestion popup animation ────────────────────────────── */
 .suggestion-list {
   animation: suggestion-appear var(--duration-fast) var(--ease-out);
 }
@@ -1782,7 +1782,7 @@
   }
 }
 
-/* ── Block expand animation (UX-79) ────────────────────────────────── */
+/* ── Block expand animation ────────────────────────────────── */
 .block-children-enter {
   animation: block-children-appear var(--duration-normal) var(--ease-out);
 }
@@ -1843,7 +1843,7 @@
   }
 }
 
-/* ── UX-238: main-content ScrollArea viewport wrapper height ──────────
+/* ── main-content ScrollArea viewport wrapper height ──────────
  *
  * Radix ScrollAreaPrimitive.Viewport wraps its children in an
  * internal `<div>` with `display: table` **as an inline style** and
@@ -1869,14 +1869,14 @@
   min-height: 100% !important;
 }
 
-/* ── PEND-50 Phase 1: snippet match highlighting ─────────────────────────────
+/* ── Phase 1: snippet match highlighting ─────────────────────────────
  *
  * `.search-result-mark` wraps each FTS5 match span inside the
  * `SnippetHighlight` React renderer (`src/components/search/SnippetHighlight.tsx`).
  * The component never invokes `dangerouslySetInnerHTML`; the highlight is
  * a real `<mark>` React node.
  *
- * Contrast pair (locked in by PEND-50 Open question #1):
+ * Contrast pair (locked in by Open question #1):
  *
  *   - Light: `--accent` (≈ oklch(0.93 0.02 28.71)) background on
  *     `--accent-foreground` (≈ oklch(0.377 0.136 28.584)) text. The
@@ -1910,7 +1910,7 @@
   margin-top: 0.5rem;
 }
 
-/* ── PEND-52: in-page find — CSS Custom Highlight Registry pseudos ───────────
+/* ── in-page find — CSS Custom Highlight Registry pseudos ───────────
  *
  * The `::highlight(find-match)` / `::highlight(find-match-current)` rules used
  * to live here, but lightningcss (the build's CSS minifier) does not recognise

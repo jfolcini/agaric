@@ -102,7 +102,7 @@ export function PageTitleEditor({
       >
         {/* PageTitleEditor wraps content in role="textbox"; keep chips inert
             to avoid nested-interactive. `onTagClick` is threaded so the gate
-            can be flipped later. See UX-249. */}
+            can be flipped later. See . */}
         {renderRichContent(title, { interactive: false, onTagClick, ...richCallbacks })}
       </div>
       <Pencil

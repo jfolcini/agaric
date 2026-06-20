@@ -1,17 +1,17 @@
 /**
  * usePropertyKeysCache — React adapter over the module-level cache in
- * `src/lib/property-keys-cache.ts` (PEND-35 Tier 2.5).
+ * `src/lib/property-keys-cache.ts`.
  *
  * Three components consume the property-key list to populate filter
  * pickers (`PropertyValuePicker`, `BacklinkFilterBuilder` inside
- * `LinkedReferences` / `UnlinkedReferences`). Before MAINT-189 each
+ * `LinkedReferences` / `UnlinkedReferences`). Before each
  * component fired its own `useEffect([])` IPC on mount, so a view
  * with a backlink panel + several filter rows hit the IPC N times
  * for identical data. The cache collapses every consumer of the same
  * `spaceId` to a single in-flight fetch and shares the cached result
  * across mounts.
  *
- * PEND-35 Tier 2.5 added a non-React caller (`searchPropertyKeys` in
+ * Added a non-React caller (`searchPropertyKeys` in
  * `src/lib/slash-commands.ts`) that bypassed the cache because the
  * primitives lived in this hook file. The cache state and the IPC
  * helpers were moved to a plain module so both worlds share the same

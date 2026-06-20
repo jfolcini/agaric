@@ -1,5 +1,5 @@
 /**
- * Tests for `PageBrowserHeader` (PEND-56 Phase 2 extension).
+ * Tests for `PageBrowserHeader` (Phase 2 extension).
  *
  * Coverage:
  *   1. Density change handler fires with the chosen `DensityMode` value.
@@ -42,7 +42,7 @@ function makeProps(overrides: Partial<PageBrowserHeaderProps> = {}): PageBrowser
   }
 }
 
-describe('PageBrowserHeader (PEND-56)', () => {
+describe('PageBrowserHeader', () => {
   it('fires onDensityChange with the chosen DensityMode', async () => {
     const onDensityChange = vi.fn()
     render(<PageBrowserHeader {...makeProps({ onDensityChange })} />)
@@ -105,7 +105,7 @@ describe('PageBrowserHeader (PEND-56)', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // ── PEND-58d D3 — frontend-only-sort-at-scale cue ───────────────────
+  // ── frontend-only-sort-at-scale cue ───────────────────
 
   it('renders the frontend-sort cue when frontendSortAtScale is true', () => {
     render(<PageBrowserHeader {...makeProps({ frontendSortAtScale: true })} />)
@@ -132,7 +132,7 @@ describe('PageBrowserHeader (PEND-56)', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // ── PEND-58d D11 / T-F1 — count-label branches ──────────────────────
+  // ── / T-F1 — count-label branches ──────────────────────
   //
   // The chip pairs a numerator and denominator that must share a basis:
   //  (a) no chips, no text → `countAll`     ("312 pages")
@@ -209,7 +209,7 @@ describe('PageBrowserHeader (PEND-56)', () => {
     })
   })
 
-  // ── PEND-58d D13 — header row wraps on narrow viewports ──────────────
+  // ── header row wraps on narrow viewports ──────────────
   it('the search/sort/density row carries flex-wrap so it can wrap on mobile', () => {
     const { container } = render(<PageBrowserHeader {...makeProps()} />)
     // The controls row is the second child of `.page-browser-header` (the

@@ -254,7 +254,7 @@ async fn test_undo_page_op_inner_rejects_undo_depth_exceeding_max() {
 }
 
 // ======================================================================
-// compute_block_vs_current_diff_inner (PEND-17 Part B)
+// Compute_block_vs_current_diff_inner (Part B)
 // ======================================================================
 //
 // The "block-vs-current" diff feeds the in-panel restore preview: given
@@ -432,7 +432,7 @@ async fn compute_block_vs_current_diff_returns_not_found_for_soft_deleted_block(
     );
 }
 
-/// MAINT-218: When two devices have `edit_block` ops at the same `seq`
+/// When two devices have `edit_block` ops at the same `seq`
 /// value for the same block, `compute_block_vs_current_diff_inner` must
 /// pick the latest-`created_at` op (cross-device tie-break) rather than
 /// leaving the `LIMIT 1` winner undefined.
@@ -623,7 +623,7 @@ async fn compute_block_vs_current_diff_bounds_by_created_at_not_bare_seq() {
 }
 
 // ======================================================================
-// find_undo_group_inner (PEND-35 Tier 4.4)
+// Find_undo_group_inner
 // ======================================================================
 //
 // `find_undo_group_inner` collapses the FE's growing-window
@@ -692,7 +692,7 @@ async fn seed_page_with_ops(
         });
         // #109 Phase 2: op_log.created_at is INTEGER epoch-ms; pass the
         // millisecond value directly (numeric ordering replaces the old
-        // lex-monotonic RFC3339 invariant L-98).
+        // Lex-monotonic RFC3339 invariant).
         let total_ms = base_secs * 1000 + offset_ms;
         op_log::append_local_op_at(pool, device_id, payload, total_ms)
             .await

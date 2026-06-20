@@ -12,15 +12,15 @@ export type AgendaFilterDimension =
   | 'property'
 
 /**
- * Fixed TODO states (UX-202). The cycle is locked to
- * `none -> TODO -> DOING -> DONE -> CANCELLED -> none` (UX-234); this array
+ * Fixed TODO states. The cycle is locked to
+ * `none -> TODO -> DOING -> DONE -> CANCELLED -> none`; this array
  * exposes the non-null members for filter dimension `choices`.
  */
 export const TASK_STATES: readonly string[] = ['TODO', 'DOING', 'DONE', 'CANCELLED']
 
 /**
  * Backwards-compatible accessor. Historically this read from localStorage;
- * the states are now fixed (UX-202).
+ * The states are now fixed.
  */
 export function getTaskStates(): string[] {
   return [...TASK_STATES]
@@ -28,7 +28,7 @@ export function getTaskStates(): string[] {
 
 /**
  * Priority filter choices. User-configurable via the `priority` property
- * definition's options (UX-201b) — returns a fresh copy of the active
+ * Definition's options — returns a fresh copy of the active
  * levels at call time.
  */
 export function getPriorityChoices(): string[] {
@@ -89,7 +89,7 @@ export const ALL_DIMENSIONS: AgendaFilterDimension[] = [
 ]
 
 /**
- * Visual grouping for the dimension picker (UX-323). The flat 8-item list
+ * Visual grouping for the dimension picker. The flat 8-item list
  * is hard to scan; grouping via `t('agendaFilter.group.taskMetadata')`,
  * `t('agendaFilter.group.dates')`, and `t('agendaFilter.group.organisation')`
  * lets users home in on the dimension family they want before reading

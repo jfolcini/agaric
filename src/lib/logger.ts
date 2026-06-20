@@ -107,7 +107,7 @@ function isRateLimited(module: string, message: string): boolean {
 
   if (!entry || now >= entry.resetAt) {
     // Opportunistic sweep of expired entries — avoids unbounded growth for
-    // long-running sessions that churn `module:message` keys (MAINT-31).
+    // Long-running sessions that churn `module:message` keys.
     if (rateLimitMap.size > RATE_LIMIT_MAP_SWEEP_THRESHOLD) {
       for (const [k, v] of rateLimitMap) {
         if (now >= v.resetAt) rateLimitMap.delete(k)

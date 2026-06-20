@@ -134,7 +134,7 @@ fn sync_start_pairing_returns_passphrase_and_qr() {
         "qr_svg must contain an SVG tag"
     );
 
-    // M-34: PairingInfo no longer carries host/port — mDNS owns
+    // PairingInfo no longer carries host/port — mDNS owns
     // discovery + address resolution end-to-end. Asserted here as a
     // compile-time + structural check via the new test below.
 
@@ -143,7 +143,7 @@ fn sync_start_pairing_returns_passphrase_and_qr() {
     assert!(session.is_some(), "pairing session must be stored in state");
 }
 
-/// M-34: parse the QR JSON embedded in the pairing flow and assert the
+/// Parse the QR JSON embedded in the pairing flow and assert the
 /// payload shape is exactly `{"v": 1, "passphrase": "..."}` — no `host`
 /// and no `port`. Locks down the wire format on the orchestration side
 /// (the unit-level encoder/parser test lives in `pairing.rs`).
@@ -157,30 +157,30 @@ fn start_pairing_qr_payload_carries_only_passphrase_m34() {
     // bytes, but `pairing_qr_payload` is what was rendered).
     let payload = crate::pairing::pairing_qr_payload(&info.passphrase);
     let parsed: serde_json::Value =
-        serde_json::from_str(&payload).expect("M-34: QR payload must be valid JSON");
+        serde_json::from_str(&payload).expect("QR payload must be valid JSON");
     let object = parsed
         .as_object()
-        .expect("M-34: QR payload must be a JSON object");
+        .expect("QR payload must be a JSON object");
 
     // Exact-count assertion: only `v` (schema version) and `passphrase`.
     assert_eq!(
         object.len(),
         2,
-        "M-34: QR payload must contain exactly two keys (v, passphrase), got: {:?}",
+        "QR payload must contain exactly two keys (v, passphrase), got: {:?}",
         object.keys().collect::<Vec<_>>()
     );
     assert_eq!(
         object.get("passphrase").and_then(|v| v.as_str()),
         Some(info.passphrase.as_str()),
-        "M-34: 'passphrase' field must round-trip"
+        "'passphrase' field must round-trip"
     );
     assert!(
         !object.contains_key("host"),
-        "M-34: QR payload must not contain 'host' — mDNS owns discovery"
+        "QR payload must not contain 'host' — mDNS owns discovery"
     );
     assert!(
         !object.contains_key("port"),
-        "M-34: QR payload must not contain 'port' — mDNS owns address resolution"
+        "QR payload must not contain 'port' — mDNS owns address resolution"
     );
 }
 
@@ -244,7 +244,7 @@ async fn sync_confirm_pairing_stores_peer_and_clears_session() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn confirm_pairing_empty_remote_id_sets_pending_marker_not_peer() {
-    // PEND-76 F3: production FE passes an empty remote_device_id (it doesn't
+    // Production FE passes an empty remote_device_id (it doesn't
     // know the peer's id at confirm time — mDNS + TOFU establish it later). That
     // must set the pending-pairing marker (so the dormant daemon wakes to accept
     // the first connection) and NOT write a junk empty-string peer_refs row.
@@ -615,7 +615,7 @@ fn sync_start_sync_after_backoff_reset_succeeds() {
 
 #[test]
 fn sync_start_sync_does_not_record_success_preemptively() {
-    // M-32 regression: `start_sync_inner` used to call
+    // Regression: `start_sync_inner` used to call
     // `scheduler.record_success(peer_id)` immediately after
     // `notify_change`, wiping per-peer backoff state before the
     // SyncDaemon had attempted (let alone succeeded at) a real sync.

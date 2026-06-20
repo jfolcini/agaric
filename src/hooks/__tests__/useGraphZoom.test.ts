@@ -1,5 +1,5 @@
 /**
- * Tests for useGraphZoom (MAINT-127 split from useGraphSimulation).
+ * Tests for useGraphZoom (split from useGraphSimulation).
  *
  * The hook owns the d3 zoom behavior + keyboard zoom listener and exposes
  * three imperative zoom callbacks plus `attach(svg, g)` for the

@@ -6,7 +6,7 @@
  * fire IPCs on every keystroke. Real (non-cancellation) failures are
  * RARE — SQLite/FTS would have to hit an actual fault mid-query — but
  * when they happen, the user gets zero feedback: the catch sites
- * `logger.warn` and otherwise sit silent (PEND-73 U1). Toasting on
+ * `logger.warn` and otherwise sit silent. Toasting on
  * EVERY failure is the obvious-wrong fix because a transient fault
  * (e.g. the DB pool saturating during a backup) would spam the user
  * with a toast per keystroke.

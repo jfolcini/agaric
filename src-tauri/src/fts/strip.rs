@@ -18,7 +18,7 @@ use crate::error::AppError;
 
 // Hardcoded regex patterns — compilation cannot fail for these constant strings.
 
-/// PEND-25 L6: combined alternation of the five inline-formatting patterns
+/// Combined alternation of the five inline-formatting patterns
 /// (bold, italic, code, strikethrough, highlight) in one compiled regex.
 ///
 /// The previous implementation chained five sequential
@@ -82,7 +82,7 @@ fn strip_inline_markup(content: &str) -> String {
     current.into_owned()
 }
 
-// MAINT-148e — `TAG_REF_RE` and `PAGE_LINK_RE` were canonicalised in
+// `TAG_REF_RE` and `PAGE_LINK_RE` were canonicalised in
 // `cache::mod` so the cache-rebuild and FTS-strip paths share a single
 // regex compilation. The re-exports below preserve this module's public
 // names (`crate::fts::TAG_REF_RE` / `crate::fts::PAGE_LINK_RE`) for
@@ -113,7 +113,7 @@ pub(crate) fn strip_for_fts_with_maps(
     tag_names: &HashMap<String, String>,
     page_titles: &HashMap<String, String>,
 ) -> String {
-    // PEND-25 L6: single combined alternation regex iterated to a fixed
+    // Single combined alternation regex iterated to a fixed
     // point, replaces five sequential `replace_all().to_string()` calls.
     let mut result = strip_inline_markup(content);
 
@@ -140,7 +140,7 @@ pub(crate) fn strip_for_fts_with_maps(
         .replace("\\~", "~")
         .replace("\\=", "=");
 
-    // PEND-73 B3 — NFC-normalise the stripped output before it enters
+    // NFC-normalise the stripped output before it enters
     // the FTS index. macOS volume content tends to land NFD (filename
     // decomposition; copy-paste from Safari can preserve NFD); an NFC
     // query (the default for typed input on most platforms) would
@@ -190,7 +190,7 @@ fn cap_indexed_text(block_id: &str, mut s: String) -> String {
     s
 }
 
-/// PEND-73 B3 — NFC normalisation helper. Allocates a fresh `String`
+/// NFC normalisation helper. Allocates a fresh `String`
 /// because `unicode-normalization` returns an iterator; we collect
 /// once at the FTS boundary (index-write or query-sanitise). The
 /// common case (input already NFC) still re-allocates; the cost is

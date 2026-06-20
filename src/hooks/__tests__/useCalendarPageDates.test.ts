@@ -2,11 +2,11 @@
  * Tests for useCalendarPageDates hook.
  *
  * Validates:
- *  - Loads pageMap from list_journal_pages_in_range on mount (BUG-48 follow-up)
+ * Loads pageMap from list_journal_pages_in_range on mount (follow-up)
  *  - highlightedDays derived from page-content YYYY-MM-DD strings
  *  - addPage merges a new entry without re-fetching
  *  - Multiple concurrent subscribers share ONE in-flight fetch (the
- *    perf bug MAINT-119 fixes)
+ * Perf bug fixes)
  *  - Toasts on error
  *  - Range parameters threaded through to the IPC call
  */
@@ -25,7 +25,7 @@ const RANGE = { startDate: '2025-06-01', endDate: '2025-06-30' }
 beforeEach(() => {
   vi.clearAllMocks()
   __resetCalendarPageDatesForTests()
-  // BUG-48 follow-up: the underlying fetch is `list_journal_pages_in_range`,
+  // Follow-up: the underlying fetch is `list_journal_pages_in_range`,
   // which returns a flat `BlockRow[]` (not a paginated envelope).
   mockedInvoke.mockResolvedValue([])
 })
@@ -170,8 +170,8 @@ describe('useCalendarPageDates', () => {
     expect(fetchCalls).toHaveLength(2)
   })
 
-  it('issues a single un-paginated fetch (BUG-48)', async () => {
-    // BUG-48: replaces the cursor-paginated `list_blocks` loop with a
+  it('issues a single un-paginated fetch', async () => {
+    // Replaces the cursor-paginated `list_blocks` loop with a
     // single `list_journal_pages_in_range` call.
     mockedInvoke.mockResolvedValue([
       { id: 'P1', block_type: 'page', content: '2025-06-01' },

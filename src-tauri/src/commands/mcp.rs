@@ -1,4 +1,4 @@
-//! FEAT-4e — Tauri commands backing the Settings "Agent access" tab.
+//! Tauri commands backing the Settings "Agent access" tab.
 //!
 //! Three commands are exposed to the frontend:
 //!
@@ -105,7 +105,7 @@ pub fn get_mcp_recent_activity_inner(ring: &McpActivityRing) -> Vec<ActivityEntr
 /// Shared body for [`mcp_set_enabled_inner`] and
 /// [`mcp_rw_set_enabled_inner`].
 ///
-/// L-47: the RO and RW markers used to live in two byte-identical
+/// The RO and RW markers used to live in two byte-identical
 /// helpers that differed only in the marker filename and the log
 /// strings. Any future change (e.g. closing the listener for the H-2
 /// fix) had to be applied twice. Parameterising on `marker_filename`
@@ -197,7 +197,7 @@ fn set_marker_enabled(
 /// `Ok(false)` when the requested state was already in effect (so the
 /// frontend can surface "already on / already off" without an error).
 ///
-/// L-47: thin wrapper around [`set_marker_enabled`].
+/// Thin wrapper around [`set_marker_enabled`].
 pub fn mcp_set_enabled_inner(
     app_data_dir: &Path,
     lifecycle: &McpLifecycle,
@@ -229,7 +229,7 @@ fn app_data_dir_from_handle<R: tauri::Runtime>(
 /// `is_running()` check + spawn cannot interleave with a concurrent
 /// disable.
 ///
-/// L-46: under fast UI toggling (double-click, power-user flicking the
+/// Under fast UI toggling (double-click, power-user flicking the
 /// Settings switch) the read-modify-spawn sequence inside
 /// [`mcp_set_enabled`] could race with itself — a previous serve loop's
 /// `task_running` flag could already be `false` while the listener was
@@ -257,7 +257,7 @@ impl Default for McpToggleGate {
     }
 }
 
-/// L-46: RW counterpart to [`McpToggleGate`]. Independent gate so RO
+/// RW counterpart to [`McpToggleGate`]. Independent gate so RO
 /// and RW toggles do not contend.
 pub struct McpRwToggleGate(pub Arc<tokio::sync::Mutex<()>>);
 
@@ -299,7 +299,7 @@ pub async fn get_mcp_socket_path(app: tauri::AppHandle) -> Result<String, AppErr
 /// signal is fire-and-forget; this command returns `Ok(())` as soon
 /// as the signal has been emitted.
 ///
-/// L-51: the previous doc-comment promised this command "returns the
+/// The previous doc-comment promised this command "returns the
 /// connection count observed immediately after firing the signal", but
 /// the signature is `Result<(), AppError>`. The mismatch was a doc
 /// drift — the count was never surfaced. The Settings tab observes the
@@ -326,7 +326,7 @@ pub async fn mcp_disconnect_all(
 /// Tauri command: return the most recent MCP tool-call activity entries
 /// (oldest first, capped at the ring's 100-entry capacity).
 ///
-/// #695 — read surface for the FEAT-4d activity ring. The ring is the
+/// #695 — read surface for the activity ring. The ring is the
 /// shared [`McpActivityRing`] managed state written by both the RO and
 /// RW serve tasks, so late subscribers (a Settings tab opened after
 /// the calls happened) and diagnostics can inspect recent history
@@ -342,7 +342,7 @@ pub async fn get_mcp_recent_activity(
 /// Tauri command: toggle the MCP RO enabled marker file and start / stop
 /// the serve task accordingly.
 ///
-/// L-46: the inner toggle + spawn sequence is serialised through the
+/// The inner toggle + spawn sequence is serialised through the
 /// shared [`McpToggleGate`] (`tokio::sync::Mutex`) so rapid UI toggles
 /// cannot interleave and leave the server in an "enabled but not
 /// bound" stall. The lock is held for the full command body so a
@@ -361,7 +361,7 @@ pub async fn mcp_set_enabled(
     activity_ring: tauri::State<'_, McpActivityRing>,
     enabled: bool,
 ) -> Result<bool, AppError> {
-    // L-46: serialise rapid toggles. Cloning the `Arc` lets us hold the
+    // Serialise rapid toggles. Cloning the `Arc` lets us hold the
     // gate across `await` without borrowing the `tauri::State`.
     let gate = toggle_gate.inner().0.clone();
     let _guard = gate.lock().await;
@@ -376,11 +376,11 @@ pub async fn mcp_set_enabled(
     // itself, so racing with a concurrent disable ends in a no-op rather
     // than a phantom serve loop.
     //
-    // FEAT-4c — the reader pool, materializer, and device_id are pulled
+    // The reader pool, materializer, and device_id are pulled
     // from managed state so the respawn rewires the real `ReadOnlyTools`
     // registry rather than a placeholder.
     //
-    // M-82 — also pull the writer pool from managed state because
+    // Also pull the writer pool from managed state because
     // `journal_for_date` (the lone RO tool with a write side-effect)
     // needs it whenever the requested date page does not yet exist.
     if enabled && !lc.is_running() {
@@ -402,7 +402,7 @@ pub async fn mcp_set_enabled(
 }
 
 // ---------------------------------------------------------------------------
-// Read-write parallel surface (FEAT-4h slice 2)
+// Read-write parallel surface (slice 2)
 // ---------------------------------------------------------------------------
 
 /// Snapshot of the MCP **read-write** server state surfaced to the
@@ -452,7 +452,7 @@ pub fn mcp_rw_disconnect_all_inner(lifecycle: &McpLifecycle) {
 /// path also fires [`McpLifecycle::shutdown`] (H-2) so the RW accept
 /// loop drops its listener instead of staying open until app restart.
 ///
-/// L-47: thin wrapper around [`set_marker_enabled`].
+/// Thin wrapper around [`set_marker_enabled`].
 pub fn mcp_rw_set_enabled_inner(
     app_data_dir: &Path,
     lifecycle: &McpLifecycle,
@@ -501,7 +501,7 @@ pub async fn mcp_rw_disconnect_all(
 /// the RW serve task accordingly. Mirrors [`mcp_set_enabled`] but binds
 /// the **writer** pool into the `ReadWriteTools` registry.
 ///
-/// L-46: serialised through [`McpRwToggleGate`] — see `mcp_set_enabled`
+/// Serialised through [`McpRwToggleGate`] — see `mcp_set_enabled`
 /// for the rationale. RO and RW each hold their own gate so they do
 /// not block each other.
 #[tauri::command]
@@ -517,7 +517,7 @@ pub async fn mcp_rw_set_enabled(
     activity_ring: tauri::State<'_, McpActivityRing>,
     enabled: bool,
 ) -> Result<bool, AppError> {
-    // L-46: serialise rapid toggles.
+    // Serialise rapid toggles.
     let gate = toggle_gate.inner().0.clone();
     let _guard = gate.lock().await;
 
@@ -749,7 +749,7 @@ mod tests {
         assert_eq!(lc.connection_count(), 0, "outer drop restores zero");
     }
 
-    // ── RW parity tests (FEAT-4h slice 2) ────────────────────────────────
+    // ── RW parity tests (slice 2) ────────────────────────────────
 
     #[test]
     fn rw_socket_path_is_non_empty() {
@@ -903,7 +903,7 @@ mod tests {
         assert!(!rw.is_running(), "deref reaches is_running()");
     }
 
-    // ── L-47: parameterised set_marker_enabled ──────────────────────────
+    // ── parameterised set_marker_enabled ──────────────────────────
 
     #[test]
     fn set_marker_enabled_works_for_both_ro_and_rw() {
@@ -1026,13 +1026,13 @@ mod tests {
         assert_eq!(entries[1].tool_name, "delete_block");
     }
 
-    // ── L-46: rapid-toggle gate serialises concurrent callers ───────────
+    // ── rapid-toggle gate serialises concurrent callers ───────────
 
     /// Verify the `tokio::sync::Mutex` inside `McpToggleGate` actually
     /// blocks a second async caller while the first holds the guard.
     /// This pins the wiring (gate + Arc + lock) without exercising the
     /// full Tauri command — the toggle-gate shape itself is the
-    /// load-bearing piece for L-46.
+    /// Load-bearing piece for.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn mcp_toggle_gate_serializes_concurrent_callers() {
         use std::sync::atomic::{AtomicU32, Ordering};
@@ -1094,11 +1094,11 @@ mod tests {
         drop(try_acquire);
     }
 
-    // ── L-118: end-to-end regression for the TOCTOU race ────────────────
+    // ── end-to-end regression for the TOCTOU race ────────────────
     //
-    // L-118 is the same race as L-46 but cited against the line numbers
+    // Is the same race as but cited against the line numbers
     // of a later audit (`mcp_set_enabled` line 361 — the `is_running()`
-    // check before `spawn_mcp_ro_task`). The L-46 fix already serialises
+    // Check before `spawn_mcp_ro_task`). The fix already serialises
     // the marker write + `is_running()` check + spawn under
     // [`McpToggleGate`], so the race cannot fire. These two tests
     // simulate the real command body (gate → inner toggle → spawn-on-
@@ -1110,7 +1110,7 @@ mod tests {
     /// branch must execute exactly once. Without the gate, multiple
     /// callers could each see `task_running == false` and double-spawn,
     /// which the production code observes as a silent "already bound"
-    /// noop on the second listener (L-118).
+    /// Noop on the second listener.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_enables_under_gate_spawn_exactly_once_l118() {
         use std::sync::atomic::{AtomicU32, Ordering};
@@ -1151,7 +1151,7 @@ mod tests {
             1,
             "exactly one spawn must occur for N concurrent enables; \
              double-spawn means the gate is no longer protecting the \
-             is_running() / spawn race (L-118)",
+             is_running() / spawn race",
         );
         assert!(
             mcp_ro_enabled(dir.path()),

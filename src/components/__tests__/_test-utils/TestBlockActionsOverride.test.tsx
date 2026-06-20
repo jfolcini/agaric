@@ -1,5 +1,5 @@
 /**
- * Tests for the `TestBlockActionsOverride` wrapper (PEND-30 D-1).
+ * Tests for the `TestBlockActionsOverride` wrapper (D-1).
  *
  * The wrapper publishes action / resolver bags through
  * `BlockActionsContext` / `BlockResolversContext` so SortableBlock and

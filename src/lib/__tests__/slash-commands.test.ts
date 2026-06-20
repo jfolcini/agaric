@@ -1,6 +1,6 @@
 /**
  * Tests for `src/lib/slash-commands.ts` `searchPropertyKeys`
- * (PEND-35 Tier 2.5).
+ *.
  *
  * The fix routes `searchPropertyKeys` through the shared module-level
  * cache in `src/lib/property-keys-cache.ts` instead of firing a fresh
@@ -43,7 +43,7 @@ function listPropertyKeysInvocationCount(): number {
   return mockedInvoke.mock.calls.filter((c) => c[0] === 'list_property_keys').length
 }
 
-describe('searchPropertyKeys (PEND-35 Tier 2.5)', () => {
+describe('searchPropertyKeys', () => {
   it('fires one IPC across many keystrokes (cached helper, not direct listPropertyKeys)', async () => {
     // Simulate the user typing "p", "pr", "pri", "prio", "prior".
     const queries = ['p', 'pr', 'pri', 'prio', 'prior']

@@ -19,7 +19,7 @@
 //! Both helpers are `pub(crate)` so only the MCP module tree can import
 //! them — they have no meaning outside the JSON-RPC dispatch path.
 //!
-//! Resolves MAINT-135.
+//! Resolves.
 
 use serde_json::Value;
 use sqlx::SqlitePool;
@@ -32,7 +32,7 @@ use crate::error::AppError;
 /// handler's arg parse so bad input maps to `-32602 invalid params` at
 /// the JSON-RPC layer.
 ///
-/// L-123: the user-facing message is a short structured category derived
+/// The user-facing message is a short structured category derived
 /// from [`serde_json::error::Category`] (e.g. "data shape mismatch") rather
 /// than the verbatim `serde_json::Error::Display`. The latter embeds
 /// line/column hints that point into the MCP wire JSON — meaningless to
@@ -57,7 +57,7 @@ pub(crate) fn parse_args<T: serde::de::DeserializeOwned>(
     })
 }
 
-/// L-121: normalise a ULID-shaped argument string to uppercase Crockford
+/// Normalise a ULID-shaped argument string to uppercase Crockford
 /// base32 at the MCP boundary.
 ///
 /// AGENTS.md invariant #8 says ULIDs are uppercase Crockford base32 for
@@ -93,7 +93,7 @@ pub(crate) fn normalize_ulid_arg(s: &str) -> String {
     }
 }
 
-/// PEND-24 C2 — validate that `block_id`'s owning page lives in
+/// Validate that `block_id`'s owning page lives in
 /// `space_id`, rejecting cross-space writes at the MCP boundary.
 ///
 /// The owning page is `b.id` if `b` is itself a page block (where
@@ -112,7 +112,7 @@ pub(crate) fn normalize_ulid_arg(s: &str) -> String {
 /// - [`AppError::Validation`] if the owning page exists in a different
 ///   space, or has a NULL `space_id` / no owning page at all (e.g. the
 ///   caller passed a tag block ID, or a corrupted page that escaped the
-///   BUG-1 / H-3a IPC tightening).
+///   IPC tightening).
 ///
 /// # TOCTOU — transactional read on the writer path (#1544)
 ///
@@ -203,7 +203,7 @@ pub(crate) async fn validate_block_in_space(
 /// the JSON-RPC dispatcher expects on the wire.
 ///
 /// Preserves the original `?`-on-`serde_json::Error` semantics from the
-/// pre-MAINT-135 handlers: a serialisation failure converts to
+/// Pre- handlers: a serialisation failure converts to
 /// [`AppError::Json`] via the `#[from] serde_json::Error` impl, which the
 /// dispatcher in `server.rs` then maps to a JSON-RPC internal error. In
 /// practice this branch is unreachable for the typed `*Resp` structs the
@@ -217,7 +217,7 @@ pub(crate) fn to_tool_result<T: serde::Serialize>(value: &T) -> Result<Value, Ap
 
 #[cfg(test)]
 mod tests {
-    //! L-123: pin the user-facing `parse_args` error message format so
+    //! pin the user-facing `parse_args` error message format so
     //! the activity feed stays short and structured. The verbose
     //! `serde_json::Error::Display` (with line/column hints into the MCP
     //! wire JSON) must NOT leak into `AppError::Validation`.
@@ -245,11 +245,11 @@ mod tests {
                 );
                 assert!(
                     !msg.contains("line"),
-                    "L-123: must NOT include serde_json line/column: {msg}"
+                    "must NOT include serde_json line/column: {msg}"
                 );
                 assert!(
                     !msg.contains("column"),
-                    "L-123: must NOT include serde_json line/column: {msg}"
+                    "must NOT include serde_json line/column: {msg}"
                 );
             }
             _ => panic!("expected Validation, got {err:?}"),
@@ -277,7 +277,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // L-121: normalize_ulid_arg
+    // Normalize_ulid_arg
     // ---------------------------------------------------------------
 
     #[test]
@@ -310,7 +310,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // #1666 / PEND-24 C2: validate_block_in_space three-state guard.
+    // #1666 / validate_block_in_space three-state guard.
     //
     // The cross-space guard distinguishes three states off a single
     // LEFT JOIN: no row (defer to downstream NotFound), row with a

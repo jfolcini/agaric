@@ -6,7 +6,7 @@
  * - DONE checkbox syntax detection (`- [x] ` and `- [X] `)
  * - No match returns original content with null state
  * - Partial/malformed checkbox patterns are not matched
- * - INTERNAL_PROPERTY_KEYS membership (MAINT-187)
+ * INTERNAL_PROPERTY_KEYS membership
  */
 
 import { describe, expect, it } from 'vitest'

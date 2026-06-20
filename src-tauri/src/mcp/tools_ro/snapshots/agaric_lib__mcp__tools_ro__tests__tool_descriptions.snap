@@ -35,7 +35,7 @@ expression: wire
       - page_id
     type: object
   name: get_page
-- description: "Full-text search across block content (FTS5). Returns BlockRow records; content is truncated to 512 chars per result. PEND-65 — pass `filter` for structured narrowing (state / priority / due / scheduled / property / page-name globs / block-type / case-sensitive / whole-word / regex toggles)."
+- description: "Full-text search across block content (FTS5). Returns BlockRow records; content is truncated to 512 chars per result. pass `filter` for structured narrowing (state / priority / due / scheduled / property / page-name globs / block-type / case-sensitive / whole-word / regex toggles)."
   inputSchema:
     additionalProperties: false
     properties:
@@ -43,18 +43,18 @@ expression: wire
         type: string
       filter:
         additionalProperties: false
-        description: "PEND-65 — structured filter set mirroring the user-facing `SearchFilter` (omit for a query-string-only search)."
+        description: "Structured filter set mirroring the user-facing `SearchFilter` (omit for a query-string-only search)."
         properties:
           block_type_filter:
-            description: "PEND-51 — restrict to a single `blocks.block_type` value (e.g. `'page'`)."
+            description: "Restrict to a single `blocks.block_type` value (e.g. `'page'`)."
             type: string
           case_sensitive:
             type: boolean
           due_filter:
-            description: "PEND-53 — date predicate on `blocks.due_date`. One of `{ \"named\": \"today\"|\"this-week\"|... }` or `{ \"op\": { \"op\": \"lt\"|..., \"date\": \"YYYY-MM-DD\" } }`."
+            description: "Date predicate on `blocks.due_date`. One of `{ \"named\": \"today\"|\"this-week\"|... }` or `{ \"op\": { \"op\": \"lt\"|..., \"date\": \"YYYY-MM-DD\" } }`."
             type: object
           exclude_page_globs:
-            description: PEND-54 — page-name glob exclude list.
+            description: Page-name glob exclude list.
             items:
               type: string
             type: array
@@ -75,24 +75,24 @@ expression: wire
               type: object
             type: array
           excluded_state_filter:
-            description: "PEND-63 — `(todo_state IS NULL OR todo_state NOT IN (...))`. Literal `'none'` flips to `todo_state IS NOT NULL`."
+            description: "`(todo_state IS NULL OR todo_state NOT IN (...))`. Literal `'none'` flips to `todo_state IS NOT NULL`."
             items:
               type: string
             type: array
           include_page_globs:
-            description: "PEND-54 — page-name glob include list (SQLite GLOB syntax, `{a,b}` brace expansion). Bare tokens are wrapped with `*…*`."
+            description: "Page-name glob include list (SQLite GLOB syntax, `{a,b}` brace expansion). Bare tokens are wrapped with `*…*`."
             items:
               type: string
             type: array
           is_regex:
-            description: "PEND-55 — treat `query` as a regex (FTS5 bypassed)."
+            description: "Treat `query` as a regex (FTS5 bypassed)."
             type: boolean
           priority_filter:
             items:
               type: string
             type: array
           property_filters:
-            description: "PEND-53 — AND-joined property predicates. PEND-64 matches across `value_text` / `value_num` / `value_date` / `value_ref` with type coercion."
+            description: "AND-joined property predicates. Matches across `value_text` / `value_num` / `value_date` / `value_ref` with type coercion."
             items:
               properties:
                 key:
@@ -105,10 +105,10 @@ expression: wire
               type: object
             type: array
           scheduled_filter:
-            description: "PEND-53 — same shape as `due_filter` but on `blocks.scheduled_date`."
+            description: "Same shape as `due_filter` but on `blocks.scheduled_date`."
             type: object
           state_filter:
-            description: "PEND-53 — `todo_state IN (...)`. Literal `'none'` means `todo_state IS NULL`."
+            description: "`todo_state IN (...)`. Literal `'none'` means `todo_state IS NULL`."
             items:
               type: string
             type: array
@@ -127,7 +127,7 @@ expression: wire
         description: FTS5 MATCH query string.
         type: string
       space_id:
-        description: "FEAT-3p4 — ULID of the space the search runs inside. Required: every FTS5 hit is restricted to blocks whose owning page carries `space = ?space_id`."
+        description: "ULID of the space the search runs inside. Required: every FTS5 hit is restricted to blocks whose owning page carries `space = ?space_id`."
         type: string
       tag_ids:
         description: Optional list of tag ULIDs to intersect the result set with.
@@ -165,7 +165,7 @@ expression: wire
         minimum: 1
         type: integer
       space_id:
-        description: FEAT-3p4 — optional ULID of the space to scope backlinks to. Omit for the unscoped (cross-space) view.
+        description: Optional ULID of the space to scope backlinks to. Omit for the unscoped (cross-space) view.
         type: string
     required:
       - block_id
@@ -176,7 +176,7 @@ expression: wire
     additionalProperties: false
     properties:
       cursor:
-        description: Opaque pagination cursor from a prior response (M-85).
+        description: Opaque pagination cursor from a prior response.
         type: string
       limit:
         description: Max tags per response (capped at 100).
@@ -190,7 +190,7 @@ expression: wire
     additionalProperties: false
     properties:
       cursor:
-        description: Opaque pagination cursor from a prior response (M-85).
+        description: Opaque pagination cursor from a prior response.
         type: string
       limit:
         description: Max definitions per response (capped at 100).
@@ -204,7 +204,7 @@ expression: wire
     additionalProperties: false
     properties:
       cursor:
-        description: "Opaque cursor returned by a previous response's `next_cursor` to fetch the next page (M-25)."
+        description: "Opaque cursor returned by a previous response's `next_cursor` to fetch the next page."
         type: string
       end_date:
         description: Inclusive YYYY-MM-DD upper bound.
@@ -215,7 +215,7 @@ expression: wire
         minimum: 1
         type: integer
       space_id:
-        description: FEAT-3p4 — optional ULID of the space to scope the agenda to. Omit for the unscoped (cross-space) view.
+        description: Optional ULID of the space to scope the agenda to. Omit for the unscoped (cross-space) view.
         type: string
       start_date:
         description: Inclusive YYYY-MM-DD lower bound.
@@ -233,7 +233,7 @@ expression: wire
         description: YYYY-MM-DD date string.
         type: string
       space_id:
-        description: ULID of the space the daily journal belongs to (FEAT-3p5).
+        description: ULID of the space the daily journal belongs to.
         type: string
     required:
       - date

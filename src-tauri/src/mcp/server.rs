@@ -1,15 +1,15 @@
 //! MCP server lifecycle and accept-loop driver.
 //!
-//! As of MAINT-111 M3 the per-connection JSON-RPC framing and
+//! As of the per-connection JSON-RPC framing and
 //! `tools/call` dispatch live in [`super::rmcp_adapter::RmcpAdapter`]
 //! (the rmcp adapter). This module owns the bits that the rmcp adapter
 //! does not touch:
 //!
 //! - [`serve`] / [`serve_unix`] / [`serve_pipe`] — accept-loop with the
-//!   H-2 enable/disable gate and the FEAT-4e disconnect signal.
+//!   H-2 enable/disable gate and the disconnect signal.
 //! - [`run_connection`] — per-connection lifecycle wrapper around the
 //!   rmcp adapter, threading [`super::McpLifecycle`]'s connection
-//!   counter and the L-113 disconnect grace period.
+//!   counter and the disconnect grace period.
 //! - [`handle_connection`] — the thin rmcp-adapter entry point that
 //!   `run_connection` drives.
 //!
@@ -24,7 +24,7 @@ use crate::error::AppError;
 // Re-export the registry types so external callers (tests, mod.rs's
 // `spawn_mcp_ro_task` default path) that still refer to
 // `server::ToolRegistry` / `server::PlaceholderRegistry` keep compiling
-// after FEAT-4b moved the real trait into the `registry` submodule.
+// After moved the real trait into the `registry` submodule.
 pub use super::registry::{PlaceholderRegistry, ToolDescription, ToolRegistry};
 
 // ---------------------------------------------------------------------------
@@ -36,7 +36,7 @@ pub use super::registry::{PlaceholderRegistry, ToolDescription, ToolRegistry};
 /// "the *resource* named by the call arguments was not found" (unknown
 /// tool name under `tools/call`, unknown block id inside a tool handler,
 /// etc.). Picked from the JSON-RPC 2.0 "server-defined" error range
-/// (−32000..=−32099) per the FEAT-4c decision. Agents that want to
+/// (−32000..=−32099) per the decision. Agents that want to
 /// surface a separate UX for "you asked for something that does not
 /// exist" versus "you called an undefined method" rely on this split.
 pub const JSONRPC_RESOURCE_NOT_FOUND: i64 = -32001;
@@ -51,7 +51,7 @@ pub const JSONRPC_RESOURCE_NOT_FOUND: i64 = -32001;
 /// underlying error message contains multi-byte codepoints.
 pub(crate) const ERROR_CLIP_CAP: usize = 200;
 
-/// L-113 grace period: when [`super::McpLifecycle::disconnect_all`]
+/// Grace period: when [`super::McpLifecycle::disconnect_all`]
 /// fires while a `tools/call` is mid-dispatch, the per-connection task
 /// waits up to this long for the in-flight future to finish before
 /// dropping it. Without the grace period the agent received no
@@ -63,7 +63,7 @@ pub(crate) const MCP_DISCONNECT_GRACE_PERIOD: std::time::Duration =
     std::time::Duration::from_secs(2);
 
 /// #636 — maximum back-off for consecutive `accept()` failures.
-/// Mirrors the sync daemon's M-53 accept-loop hardening
+/// Mirrors the sync daemon's accept-loop hardening
 /// (`sync_net/websocket.rs::ACCEPT_BACKOFF_CAP`, 30 s) — that helper
 /// lives in a private module, so the schedule is mirrored here rather
 /// than imported.
@@ -72,7 +72,7 @@ const ACCEPT_BACKOFF_CAP: std::time::Duration = std::time::Duration::from_secs(3
 /// #636 — back-off duration before the *next* accept attempt after a
 /// run of consecutive `accept()` failures.
 ///
-/// Schedule mirrors the sync daemon's M-53 `compute_accept_backoff_duration`:
+/// Schedule mirrors the sync daemon's `compute_accept_backoff_duration`:
 /// `100ms × 2^(n-1)` capped at [`ACCEPT_BACKOFF_CAP`], where `n` is the
 /// 1-based count of consecutive failures; `0` means "no recent
 /// failure" and yields zero so a healthy loop never sleeps.
@@ -101,7 +101,7 @@ pub(crate) fn compute_accept_backoff_duration(failure_count: u32) -> std::time::
 
 /// Drive a single MCP connection to completion via the `rmcp` adapter.
 ///
-/// `activity_ctx` is the FEAT-4d activity-emission seam. Pass `None`
+/// `activity_ctx` is the activity-emission seam. Pass `None`
 /// when no activity tracking is desired (stub binary, tests); pass
 /// `Some(ActivityContext::from_app_handle(...))` in production. When
 /// `Some`, successful tool dispatches will emit `mcp:activity` events
@@ -145,7 +145,7 @@ where
 /// not care about activity (stub binary, tests); pass
 /// `Some(ActivityContext::from_app_handle(...))` in production.
 ///
-/// `lifecycle` is the FEAT-4e shared state. When `Some`, each per-
+/// `lifecycle` is the shared state. When `Some`, each per-
 /// connection task bumps `active_connections` on entry (decrementing on
 /// drop via [`ConnectionCounterGuard`]) and `select!`s on
 /// `disconnect_signal.notified()` so the `mcp_disconnect_all` command
@@ -242,7 +242,7 @@ where
                 // ECONNABORTED) must NOT kill the serve loop: the old
                 // `res?` propagated it out, leaving the socket dead
                 // until the user toggled the setting off and on. Log,
-                // back off (M-53 schedule), and retry. The sleep races
+                // Back off (schedule), and retry. The sleep races
                 // the disconnect signal so a disable during back-off
                 // still tears the loop down promptly via the gate
                 // re-check at the top.
@@ -309,7 +309,7 @@ where
 {
     use tokio::net::windows::named_pipe::ServerOptions;
 
-    // M-83: the pipe path is threaded through from the bound listener
+    // The pipe path is threaded through from the bound listener
     // (captured on the `SocketKind::Pipe` variant) rather than being
     // recovered from `super::MCP_RO_PIPE_PATH`. The previous version
     // hard-coded the RO constant here, which silently routed RW
@@ -416,7 +416,7 @@ where
     }
 }
 
-/// Wrap [`handle_connection`] with the FEAT-4e lifecycle bookkeeping:
+/// Wrap [`handle_connection`] with the lifecycle bookkeeping:
 /// increment / decrement the shared connection counter via an RAII guard
 /// and `select!` on `disconnect_signal.notified()` so a `mcp_disconnect_all`
 /// call exits the handler promptly. When `lifecycle` is `None` this is a
@@ -449,7 +449,7 @@ async fn run_connection<S, R>(
             tokio::select! {
                 r = &mut fut => r,
                 () = async move { notify.notified().await } => {
-                    // L-113: do not drop the in-flight future
+                    // Do not drop the in-flight future
                     // immediately. Give the current `tools/call` a
                     // bounded chance to return its JSON-RPC reply and
                     // emit its `mcp:activity` entry before the stream
@@ -490,7 +490,7 @@ async fn run_connection<S, R>(
 }
 
 // ---------------------------------------------------------------------------
-// #636 — accept-loop back-off tests (mirrors sync_net M-53 coverage)
+// #636 — accept-loop back-off tests (mirrors sync_net coverage)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -545,7 +545,7 @@ mod tests;
 mod tests_rmcp;
 
 // ---------------------------------------------------------------------------
-// M-83 regression tests
+// Regression tests
 // ---------------------------------------------------------------------------
 //
 // `serve_pipe` previously hard-coded the successor pipe path to
@@ -557,7 +557,7 @@ mod tests_rmcp;
 //
 // Linux / macOS see no behaviour change — Windows named pipes are the
 // only platform that recreates per-instance servers, so the tests here
-// are gated `#[cfg(windows)]`. On Linux/macOS the M-83 module compiles
+// Are gated `#[cfg(windows)]`. On Linux/macOS the module compiles
 // to nothing; the existing `serve_unix` path is unaffected.
 #[cfg(test)]
 mod tests_m83 {
@@ -591,7 +591,7 @@ mod tests_m83 {
             )
         }
 
-        /// M-83 acceptance test. Bind a `NamedPipeServer` on a custom
+        /// Acceptance test. Bind a `NamedPipeServer` on a custom
         /// path that differs from both the RO and RW constants, hand
         /// the listener to `serve()` via `SocketKind::Pipe { server,
         /// path }`, and verify that after the first client connects
@@ -640,7 +640,7 @@ mod tests_m83 {
             // loop hands the connection off to a per-connection task
             // and then creates the next server instance via
             // `ServerOptions::new().create(pipe_path)` — this is the
-            // line M-83 fixes.
+            // Line fixes.
             let _client_1 = ClientOptions::new()
                 .open(pipe_path.as_str())
                 .expect("first client connects to the custom-path pipe");
@@ -671,7 +671,7 @@ mod tests_m83 {
             }
             assert!(
                 second.is_some(),
-                "second client must connect to the SAME custom pipe path the server was bound on (M-83)",
+                "second client must connect to the SAME custom pipe path the server was bound on",
             );
 
             // Tear down cleanly so the test process does not leak the

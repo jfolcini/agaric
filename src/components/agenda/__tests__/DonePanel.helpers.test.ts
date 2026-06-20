@@ -1,5 +1,5 @@
 /**
- * Unit tests for DonePanel pure helpers (MAINT-58).
+ * Unit tests for DonePanel pure helpers.
  *
  * These cover the building blocks used by `DonePanel`'s data-fetch effects and
  * its render-time grouping pass. Keeping them pure makes the effects testable
@@ -16,7 +16,7 @@ import {
 } from '@/components/agenda/DonePanel.helpers'
 import type { ResolvedBlock } from '@/lib/tauri'
 
-// PEND-35 Tier 1.5 — `filterDoneBlocks` and its tests retired. The
+// `filterDoneBlocks` and its tests retired. The
 // empty-content / excluded-parent filters now live in SQL via
 // `query_by_property`'s `content_non_empty` / `exclude_parent_id`
 // parameters; the DonePanel test suite covers the new behaviour

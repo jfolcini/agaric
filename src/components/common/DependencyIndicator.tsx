@@ -7,7 +7,7 @@
  *   propertiesCache — optional shared ref-based cache (legacy fallback path)
  *
  * The component reads properties from a parent-mounted
- * `BatchPropertiesProvider` (PEND-35 Tier 2.4a) when present, collapsing
+ * `BatchPropertiesProvider` when present, collapsing
  * what was previously N per-row `getProperties` IPCs on initial mount
  * into a single batched query at the `AgendaResults` parent.
  *

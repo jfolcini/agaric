@@ -1,5 +1,5 @@
 /**
- * In-page find matcher — PEND-52.
+ * In-page find matcher —.
  *
  * Walks the DOM under a host container collecting text-node matches.
  * Returns a flat list of `{ node, start, end }` triples suitable for
@@ -8,7 +8,7 @@
  *
  * ## Architecture call (deviation from the plan's "ProseMirror Decoration")
  *
- * The PEND-52 plan describes match highlighting via ProseMirror
+ * The plan describes match highlighting via ProseMirror
  * Decorations on a single editor document. Agaric uses a **roving
  * editor** pattern: only the currently-focused block holds a
  * ProseMirror instance; every other block renders as static DOM (see

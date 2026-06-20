@@ -18,21 +18,21 @@ pub use coordinator::Materializer;
 // rather than duplicating the correlated-subquery SQL.
 #[cfg(test)]
 use dedup::dedup_tasks;
-// #1257 PR-2: re-export the engine-apply-+-dense-projection helper so the
+// #1257 re-export the engine-apply-+-dense-projection helper so the
 // LOCAL create_block command core (`domain::block_ops::create_block_in_tx`)
 // can route a create through the engine IN-TRANSACTION without advancing the
 // apply cursor.
 pub(crate) use handlers::apply_create_block_via_loro;
-// #1257 PR-3: re-export the simple-op engine helpers so the LOCAL command paths
+// #1257 re-export the simple-op engine helpers so the LOCAL command paths
 // (edit_block / set_property / delete_property / add_tag / remove_tag) can route
 // through the engine IN-TRANSACTION without advancing the apply cursor.
-// #1257 PR-4: re-export the engine-move-+-dense-reprojection helper so the
+// #1257 re-export the engine-move-+-dense-reprojection helper so the
 // LOCAL move_block command core (`commands::blocks::move_ops::move_block_inner`)
 // can route a move through the engine IN-TRANSACTION (dense-reprojecting both
 // the source and target sibling groups) without advancing the apply cursor.
 pub(crate) use handlers::apply_move_block_via_loro;
 pub(crate) use handlers::recompute_pages_cache_counts_for_pages;
-// #1257 PR-5: re-export the cohort collectors + the post-commit descendant
+// #1257 re-export the cohort collectors + the post-commit descendant
 // fan-out so the LOCAL delete / restore command paths (`commands::blocks::crud`)
 // PRE-CAPTURE each root's subtree cohort + space BEFORE the SQL soft-delete (a
 // post-delete `resolve_block_space` returns None — the #1257 phantom) and then
@@ -40,7 +40,7 @@ pub(crate) use handlers::recompute_pages_cache_counts_for_pages;
 // the SAME engine apply the boot-replay / sync `ApplyOp` path uses. The apply
 // cursor is never advanced (boot-replay / `dispatch_op` concern). The
 // `apply_*_via_loro` CASCADE helpers' visibility is also raised to `pub(crate)`
-// (re-exported via `handlers::mod`) to complete the engine-apply surface PR-2
+// (re-exported via `handlers::mod`) to complete the engine-apply surface
 // established and which `merge::engine_apply` mirrors; the multi-root command
 // path drives the engine through the fan-out + `engine_apply` rather than the
 // per-seed in-tx helper (the helper's single-root SQL projection would
@@ -63,9 +63,9 @@ pub enum MaterializeTask {
     /// so that cloning the task (e.g. for the foreground/background
     /// retry arms in `consumer.rs`) is a refcount bump rather than a
     /// deep clone of the record's owned `String` payloads. Pairs with
-    /// the M-10 fix on `BatchApplyOps`.
+    /// The fix on `BatchApplyOps`.
     ApplyOp(Arc<OpRecord>),
-    /// M-10: the inner `Vec<OpRecord>` is wrapped in an `Arc` so that
+    /// The inner `Vec<OpRecord>` is wrapped in an `Arc` so that
     /// cloning the task (e.g. for the foreground/background retry arms in
     /// `consumer.rs`) is a refcount bump rather than a deep clone of a
     /// potentially multi-thousand-op chunk during sync catch-up. Mobile
@@ -99,7 +99,7 @@ pub enum MaterializeTask {
     ReindexBlockLinks {
         block_id: Arc<str>,
     },
-    /// UX-250: incremental reindex of `block_tag_refs` for a single
+    /// Incremental reindex of `block_tag_refs` for a single
     /// block after a content mutation. Mirrors `ReindexBlockLinks`.
     ReindexBlockTagRefs {
         block_id: Arc<str>,
@@ -125,7 +125,7 @@ pub enum MaterializeTask {
     SetBlockPageId {
         block_id: Arc<str>,
     },
-    /// UX-250: full-vault recompute of `block_tag_refs`. Fires on
+    /// Full-vault recompute of `block_tag_refs`. Fires on
     /// delete / restore / purge and from `apply_snapshot` / boot-time
     /// "table is empty" fallback.
     RebuildBlockTagRefsCache,
@@ -162,7 +162,7 @@ pub(super) struct TagOpHint {
     pub(super) tag_id: String,
 }
 
-// L-13 (2026-04): the former `BlockIdHint` type was used by
+// (2026-04): the former `BlockIdHint` type was used by
 // `dispatch::enqueue_background_tasks` to deserialise just `block_id`
 // from `record.payload` for the edit/delete/restore/purge arms. Those
 // sites now read from the cached `OpRecord::block_id` sidecar
@@ -170,4 +170,4 @@ pub(super) struct TagOpHint {
 // completely unused and was deleted along with the dispatch parse.
 // `CreateBlockHint` survives because the `create_block` arm also needs
 // `block_type` (tag vs. page vs. content); caching that on `OpRecord`
-// would be a larger sidecar than L-13's `block_id`-only scope.
+// Would be a larger sidecar than `block_id`-only scope.

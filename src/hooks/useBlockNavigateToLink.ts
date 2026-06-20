@@ -8,7 +8,7 @@
  * `useRovingEditor` so the returned ref is available to wire into the
  * editor; the handler itself reads `rovingEditorRef.current` and
  * `handleFlushRef.current` lazily, both of which are populated by
- * BlockTree later in the render. Extracted for MAINT-128.
+ * BlockTree later in the render. Extracted for.
  */
 
 import type { TFunction } from 'i18next'

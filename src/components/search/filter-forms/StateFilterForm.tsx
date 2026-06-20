@@ -1,5 +1,5 @@
 /**
- * PEND-58g UX-A5 — `state:` / `not-state:` builder form.
+ * `state:` / `not-state:` builder form.
  *
  * Issue #1647 follow-up — the State vocabulary is now the SINGLE canonical
  * task-state set shared with the backlink "Status" form via
@@ -33,7 +33,7 @@ export function StateFilterForm({ onAddFilter, onBack }: StateFilterFormProps): 
   const [value, setValue] = useState<string>(STATE_FILTER_VALUES[0])
   const [negate, setNegate] = useState(false)
 
-  // PEND-58g UX-A5 — move focus into the sub-form on open so keyboard users
+  // Move focus into the sub-form on open so keyboard users
   // aren't stranded on document.body when the clicked menu item unmounts.
   // (Radix's PopoverContent only auto-focuses on the initial open, not on
   // in-place content swaps, and `autoFocus` is unreliable on the Select

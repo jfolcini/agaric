@@ -60,7 +60,7 @@ describe('renderGraphElements — dedicated paint layers (#758 item 4)', () => {
   })
 })
 
-describe('renderGraphElements — UX-357 native SVG <title> tooltip', () => {
+describe('renderGraphElements —  native SVG <title> tooltip', () => {
   it('appends a <title> child carrying the full label inside each node <g>', () => {
     const svg = makeSvg()
     const longLabel = 'A very long page title that exceeds twenty characters'
@@ -158,7 +158,7 @@ describe('renderGraphElements \u2014 #1725 accessible name + roving tabindex', (
 
 // \u2500\u2500 createZoomKeyHandler \u2014 keyboard zoom (graphZoomIn/Out/Reset, #1172) \u2500\u2500\u2500\u2500\u2500\u2500
 //
-// BUG-18 moved the graph zoom chords out of GraphView into rebindable catalog
+// Moved the graph zoom chords out of GraphView into rebindable catalog
 // entries (`graphZoomIn = '+ / =', graphZoomOut = '-', graphZoomReset = '0'`).
 // `createZoomKeyHandler` is the keydown listener that routes each catalog
 // binding to the matching d3-zoom transform. We drive real KeyboardEvents

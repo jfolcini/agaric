@@ -209,7 +209,7 @@ describe('TagFilterPanel', () => {
     ).not.toBeInTheDocument()
   })
 
-  // UX-272 sub-fix 2 — each AND/OR/NOT button must surface its tooltip so
+  // Sub-fix 2 — each AND/OR/NOT button must surface its tooltip so
   // the chosen variant isn't the only thing distinguishing them visually.
   it('exposes a tooltip on each AND/OR/NOT mode button', async () => {
     render(<TagFilterPanel />)
@@ -398,11 +398,11 @@ describe('TagFilterPanel', () => {
     expect(screen.getByText(t('tagFilter.noMatchesFound'))).toBeInTheDocument()
   })
 
-  // UX-340: switching tag filter mode (AND/OR/NOT) used to leave stale results
+  // Switching tag filter mode (AND/OR/NOT) used to leave stale results
   // on screen with no loading indicator. Verify the spinner overlay appears and
   // the stale results stay visible (dimmed) while the mode-switch query is in
   // flight.
-  it('shows loading spinner over dimmed stale results during mode switch (UX-340)', async () => {
+  it('shows loading spinner over dimmed stale results during mode switch', async () => {
     // list_tags_by_prefix response
     mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
 
@@ -977,7 +977,7 @@ describe('TagFilterPanel', () => {
   })
 
   // -----------------------------------------------------------------------
-  // UX-246: SearchInput clear (✕) button clears the prefix search
+  // SearchInput clear (✕) button clears the prefix search
   // -----------------------------------------------------------------------
   it('SearchInput clear button clears prefix and hides matching tags', async () => {
     mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
@@ -1035,7 +1035,7 @@ describe('TagFilterPanel', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // -- UX-71: Breadcrumb tests ---------------------------------------------------
+  // -- Breadcrumb tests ---------------------------------------------------
 
   it('renders page breadcrumbs for results', async () => {
     // list_tags_by_prefix response

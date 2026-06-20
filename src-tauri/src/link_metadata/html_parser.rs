@@ -4,7 +4,7 @@
 //! on `&str` inputs and return owned strings or `Option<String>`.
 
 // ---------------------------------------------------------------------------
-// Auth-detection heuristics (MAINT-152(c))
+// Auth-detection heuristics ((c))
 // ---------------------------------------------------------------------------
 //
 // `detect_auth_required` scans the response body for two ladders of fingerprints
@@ -101,7 +101,7 @@ pub fn detect_auth_required(status: u16, original_url: &str, final_url: &str, bo
             return true;
         }
         // Check for login-related form actions or URL paths.
-        // MAINT-152(c): driven by `AUTH_FORM_ACTION_BASES`; each base is
+        // (c): driven by `AUTH_FORM_ACTION_BASES`; each base is
         // matched against both the `"` and `'` quote variants so the
         // heuristic survives templating engines that pick either style.
         if AUTH_FORM_ACTION_BASES.iter().any(|base| {
@@ -133,7 +133,7 @@ pub fn detect_auth_required(status: u16, original_url: &str, final_url: &str, bo
     }
 
     // Title contains auth-related keywords (case-insensitive).
-    // MAINT-152(c): driven by `AUTH_TITLE_KEYWORDS` so a new keyword is a
+    // (c): driven by `AUTH_TITLE_KEYWORDS` so a new keyword is a
     // one-line array push.
     if let Some(title) = parse_title(body) {
         let title_lower = title.to_lowercase();
@@ -168,7 +168,7 @@ fn extract_title_tag(html: &str) -> Option<String> {
     }
 }
 
-/// MAINT-152(f) / 08-MISC-010 — iterate every `<tag …>` element in `html`,
+/// (f) / 08-MISC-010 — iterate every `<tag …>` element in `html`,
 /// calling `f` with the **lowercased** element string (suitable for
 /// predicate matching) and the **original-case** element string (suitable
 /// for attribute-value extraction). The first `Some(value)` returned by
@@ -300,7 +300,7 @@ pub(super) fn extract_meta_refresh_url(html: &str) -> Option<String> {
 
 /// Strip the userinfo (`user:pwd@`) prefix from a URL authority slice.
 ///
-/// L-96: `extract_origin` / `extract_domain` previously preserved
+/// `extract_origin` / `extract_domain` previously preserved
 /// userinfo, surfacing the user's own credentials in cached
 /// `link_metadata.favicon_url` rows and tracing output. This helper
 /// removes them at the parse step before any caller can persist them.
@@ -328,7 +328,7 @@ pub(super) fn extract_origin(url: &str) -> Option<String> {
     // Find end of host (first / or end of string)
     let host_end = rest.find('/').unwrap_or(rest.len());
     let host = &rest[..host_end];
-    // L-96: drop any `user:pwd@` so cached favicon URLs and traces
+    // Drop any `user:pwd@` so cached favicon URLs and traces
     // never carry the user's credentials.
     let host = strip_userinfo(host);
     if host.is_empty() {
@@ -343,7 +343,7 @@ pub(super) fn extract_domain(url: &str) -> Option<String> {
     let rest = &url[scheme_end + 3..];
     let host_end = rest.find('/').unwrap_or(rest.len());
     let host = &rest[..host_end];
-    // L-96: drop any `user:pwd@` before port-stripping so the rfind(':')
+    // Drop any `user:pwd@` before port-stripping so the rfind(':')
     // lookup below cannot land inside the userinfo and so the returned
     // domain never carries credentials.
     let host = strip_userinfo(host);

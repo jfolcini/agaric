@@ -1,7 +1,7 @@
 /**
  * Tests for the `ViewDispatcher` component + the helper hooks
  * (`useHeaderLabel`, `useTrashCount`) that were extracted from App.tsx
- * in MAINT-124 step 4.
+ * In.
  *
  * Pins the new public surface in isolation; full integration scenarios
  * remain covered by the existing App.test.tsx.

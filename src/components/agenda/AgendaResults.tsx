@@ -95,13 +95,13 @@ export function AgendaResults({
     untitledLabel: t('agenda.untitled'),
   })
 
-  // PEND-35 Tier 2.4a: properties for every visible agenda row are
+  // Properties for every visible agenda row are
   // fetched in a single `getBatchProperties` IPC mounted via
   // `BatchPropertiesProvider` below. The previous per-row
   // `getProperties` fan-out (deduped only across re-renders, not
   // across initial mount of N rows) is gone.
   //
-  // PEND-27 P6: the provider re-fetches whenever
+  // The provider re-fetches whenever
   // `useBlockPropertyEvents().invalidationKey` bumps OR the active
   // space switches, so the dependency indicator reflects fresh data
   // after edits. We pass a stable composite key into the provider
@@ -110,7 +110,7 @@ export function AgendaResults({
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const batchInvalidationKey = `${propertyInvalidationKey}|${currentSpaceId ?? ''}`
 
-  // ── Keyboard navigation (UX-138) ────────────────────────────────────
+  // ── Keyboard navigation ────────────────────────────────────
   const listRef = useRef<HTMLDivElement>(null)
   // perf-review Tier 2 #6 (2026-05-14) — scroll container ref for the
   // virtualizer. Distinct from `listRef` (the keyboard-nav container
@@ -123,7 +123,7 @@ export function AgendaResults({
   // Sort once for the flat (no-group) display path. The grouping helpers
   // (groupByDate / groupByPriority / groupByState / groupByPage) all re-sort
   // internally with their own group-specific key chains, so feeding them a
-  // pre-sorted list would just be thrown away. Per FE-M-9 we picked option
+  // Pre-sorted list would just be thrown away. Per we picked option
   // (a) — keep the helpers' internal sort and feed every grouping branch
   // raw `blocks` — because option (b) would require changing helper sort
   // behaviour, which the task forbids. `sortedBlocks` is therefore consumed
@@ -235,7 +235,7 @@ export function AgendaResults({
     return rows
   }, [groups, sortedBlocks, GROUP_I18N, t])
 
-  // PEND-30 L-5 style: stable estimateSize identity so option-identity
+  // Style: stable estimateSize identity so option-identity
   // changes don't trigger a re-measure when `virtualRows` is unchanged.
   // Header rows are ~36px (`px-3 py-1` + sm text); item rows render a
   // `BlockListItem` whose default touch min-height is 44px, but with

@@ -1,10 +1,10 @@
 /**
- * FEAT-3p5 — per-space journal store tests.
+ * Per-space journal store tests.
  *
  * Verifies the `currentDateBySpace` / `modeBySpace` slices, the
  * `useSpaceStore` flush/pull subscriber, the rehydrate-after-deletion
  * fallback, and the persistence partialize round-trip. Mirrors the
- * `useNavigationStore` per-space tab tests (FEAT-3 Phase 3).
+ * `useNavigationStore` per-space tab tests (Phase 3).
  *
  * The subscriber is module-scoped (registered when `journal.ts` first
  * imports), so each test must drive `useSpaceStore.setState` to fire it.
@@ -39,7 +39,7 @@ beforeEach(() => {
   localStorage.clear()
 })
 
-describe('useJournalStore — per-space slices (FEAT-3p5)', () => {
+describe('useJournalStore — per-space slices', () => {
   // ------------------------------------------------------------------
   // Slice update on action
   // ------------------------------------------------------------------

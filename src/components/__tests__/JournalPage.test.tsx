@@ -106,7 +106,7 @@ vi.mock('@/components/agenda/AgendaResults', () => ({
   ),
 }))
 
-// ── Mock SpaceManageDialog (UX-371) ─────────────────────────────────
+// ── Mock SpaceManageDialog ─────────────────────────────────
 // Render a sentinel only when `open === true` so the new
 // configure-template entry can be exercised without pulling the dialog's
 // internals into this suite.
@@ -118,7 +118,7 @@ vi.mock('../SpaceManageDialog', () => ({
     ) : null,
 }))
 
-// ── Mock MonthlyDayCell (UX-83) ─────────────────────────────────────
+// ── Mock MonthlyDayCell ─────────────────────────────────────
 vi.mock('../journal/MonthlyDayCell', () => ({
   MonthlyDayCell: (props: Record<string, unknown>) => {
     const entry = props['entry'] as { dateStr: string; displayDate: string }
@@ -179,7 +179,7 @@ if (!HTMLElement.prototype.scrollIntoView) {
 }
 
 /**
- * BUG-48: return the canonical empty shape for the new journal commands
+ * Return the canonical empty shape for the new journal commands
  * (`get_journal_page_by_date` → `null`, `list_journal_pages_in_range` →
  * `[]`). Returns the sentinel `BUG48_NOT_HANDLED` for anything else so
  * callers can fall through to their own dispatch logic.
@@ -192,11 +192,11 @@ function bug48EmptyResponse(cmd: string): unknown {
 }
 
 /**
- * BUG-48: install a smart default mock that returns the right empty
+ * Install a smart default mock that returns the right empty
  * shapes for the new journal commands and `emptyPage` for every other
  * command. Replaces the previous `mockedInvoke.mockResolvedValue(emptyPage)`
  * one-liner — that pattern still works for legacy paginated commands
- * but breaks the BUG-48 commands which expect non-envelope shapes.
+ * But breaks the commands which expect non-envelope shapes.
  */
 function mockEmptyResponses(): void {
   mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -207,7 +207,7 @@ function mockEmptyResponses(): void {
 }
 
 /**
- * BUG-48: install a default mock that exposes `pages` to both
+ * Install a default mock that exposes `pages` to both
  * `list_journal_pages_in_range` (the calendar map fetch) and
  * `get_journal_page_by_date` (the auto-create probe). Other commands
  * fall through to `emptyPage`. Use in tests that previously primed the
@@ -232,7 +232,7 @@ beforeEach(() => {
     focusedBlockId: null,
     selectedBlockIds: [],
   })
-  // Reset journal store to defaults — FEAT-3p5 adds per-space slices
+  // Reset journal store to defaults — adds per-space slices
   // that we also reset so each test starts from a clean state.
   useJournalStore.setState({
     mode: 'daily',
@@ -242,7 +242,7 @@ beforeEach(() => {
     scrollToDate: null,
     scrollToPanel: null,
   })
-  // BUG-1 / H-3b — JournalPage now routes page creation through
+  // / H-3b — JournalPage now routes page creation through
   // `createPageInSpace`, which reads `useSpaceStore.getState().currentSpaceId`.
   // Seed the store so the addBlock path doesn't bail with "No active space".
   useSpaceStore.setState({
@@ -373,7 +373,7 @@ function templateCreateBlockResponse(args: unknown, todayStr: string): unknown {
 }
 
 /**
- * PEND-35 Tier 4.3: `create_blocks_batch` response. Returns one
+ * `create_blocks_batch` response. Returns one
  * BlockRow per spec, mirroring the per-spec creation that the legacy
  * per-line `create_block` loop produced. Test code can find the spec
  * for a given content string via the same `mockedInvoke.mock.calls`
@@ -402,11 +402,11 @@ function makeJournalTemplateMockImpl(todayStr: string) {
     if (cmd === 'list_blocks') return templateListBlocksResponse(args)
     if (cmd === 'load_page_subtree') return templateLoadPageSubtreeResponse(args)
     if (cmd === 'query_by_property') return templateQueryByPropertyResponse(args)
-    // BUG-1 / H-3b — JournalPage now routes page creation through
+    // / H-3b — JournalPage now routes page creation through
     // `create_page_in_space`. The IPC returns the new page ULID as a
     // plain string (see backend `create_page_in_space` Tauri command).
     if (cmd === 'create_page_in_space') return 'DP-TMPL'
-    // PEND-35 Tier 4.3 — `insertTemplateBlocks` issues one
+    // `insertTemplateBlocks` issues one
     // `create_blocks_batch` IPC per depth level instead of N
     // `create_block` calls.
     if (cmd === 'create_blocks_batch') return templateCreateBlocksBatchResponse(args)
@@ -788,9 +788,9 @@ describe('JournalPage', () => {
     })
   })
 
-  // ── MAINT-119: page-list fetch dedupe ────────────────────────────────
+  // ── page-list fetch dedupe ────────────────────────────────
 
-  describe('page-list fetch dedupe (MAINT-119)', () => {
+  describe('page-list fetch dedupe', () => {
     it('issues exactly ONE list_journal_pages_in_range fetch when JournalPage + JournalControls mount together', async () => {
       mockEmptyResponses()
 
@@ -800,13 +800,13 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      // BUG-48: the page-list fetch is now `list_journal_pages_in_range`
+      // The page-list fetch is now `list_journal_pages_in_range`
       // (a single un-paginated call) instead of the cursor-paginated
       // `list_blocks` loop.
       const pageFetchCalls = mockedInvoke.mock.calls.filter(
         ([cmd]) => cmd === 'list_journal_pages_in_range',
       )
-      // Pre-MAINT-119 this was 2 (one in JournalPage, one in JournalControls).
+      // Pre- this was 2 (one in JournalPage, one in JournalControls).
       // After consolidation it must be exactly 1.
       expect(pageFetchCalls).toHaveLength(1)
     })
@@ -840,7 +840,7 @@ describe('JournalPage', () => {
 
   describe('add block', () => {
     it('creates daily page when no page exists for the day', async () => {
-      // PEND-16 — when the user clicks "Add block" on a day with no page
+      // When the user clicks "Add block" on a day with no page
       // yet, `useJournalBlockCreation.handleAddBlock` creates the page
       // but no longer creates the seed block itself in the no-template
       // case. `BlockTree.autoCreateFirstBlock` owns that. BlockTree is
@@ -858,7 +858,7 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      // BUG-1 / H-3b — page creation routes through `create_page_in_space`
+      // / H-3b — page creation routes through `create_page_in_space`
       // (returns the new page ULID as a plain string), not `create_block`.
       // Use a command-dispatched implementation so the responses are
       // deterministic regardless of call order.
@@ -914,7 +914,7 @@ describe('JournalPage', () => {
           spaceId: 'SPACE_TEST',
         })
       })
-      // PEND-16 — `handleAddBlock` no longer issues a `create_block` IPC
+      // `handleAddBlock` no longer issues a `create_block` IPC
       // for the fresh page. `BlockTree.autoCreateFirstBlock` is the
       // single owner of seed-block creation; it's mocked out here, so we
       // assert the absence of the IPC instead.
@@ -965,7 +965,7 @@ describe('JournalPage', () => {
         })
       })
 
-      // BUG-1 / H-3b — page creation now routes through `create_page_in_space`,
+      // / H-3b — page creation now routes through `create_page_in_space`,
       // so a `create_block({blockType:'page'})` call is impossible
       // by construction. Verify no `create_page_in_space` call fired
       // (the page already existed).
@@ -992,7 +992,7 @@ describe('JournalPage', () => {
       // mockResolvedValueOnce queue: under full-suite parallel load,
       // background mount-time invokes can race with the Once queue and
       // consume the planned responses out of order, leaving `block.id`
-      // undefined (TEST-3 flake). Dispatching by command name makes the
+      // Undefined (flake). Dispatching by command name makes the
       // click-time responses deterministic regardless of call order.
       mockedInvoke.mockImplementation(async (cmd: string) => {
         const bug48 = bug48EmptyResponse(cmd)
@@ -1020,7 +1020,7 @@ describe('JournalPage', () => {
       // Under full-suite parallel load, the post-mutation focus update is
       // scheduled as a React 19 microtask and the default 1s waitFor
       // timeout can expire before the store reflects the new focused
-      // block (TEST-3 flake). 3s waitFor fits well below the 10s
+      // Block (flake). 3s waitFor fits well below the 10s
       // test-level timeout.
       await waitFor(
         () => {
@@ -1474,7 +1474,7 @@ describe('JournalPage', () => {
 
   describe('date navigation boundaries', () => {
     // #757 — getMaxJournalDate() is computed from the wall clock on every
-    // call. Freeze Date (only Date — see UX-235 describe for why faking
+    // Call. Freeze Date (only Date — describe for why faking
     // all timers deadlocks userEvent/waitFor) so the boundary computed in
     // the test matches the one computed inside JournalControls' render to
     // the millisecond.
@@ -1655,7 +1655,7 @@ describe('JournalPage', () => {
       })
     })
 
-    it('default agenda loads TODO+DOING tasks via filteredBlocksQuery with todo_state (UX-196)', async () => {
+    it('default agenda loads TODO+DOING tasks via filteredBlocksQuery with todo_state', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
         const bug48 = bug48EmptyResponse(cmd)
@@ -1720,7 +1720,7 @@ describe('JournalPage', () => {
       const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
       await user.click(agendaTab)
 
-      // UX-196: default filter is { status: ['TODO', 'DOING'] }, not empty.
+      // Default filter is { status: ['TODO', 'DOING'] }, not empty.
       // Audit H3: active filters dispatch ONE `filtered_blocks_query`
       // carrying the AND-intersected PropertyFilters; status rides
       // through as `valueTextIn`.
@@ -1745,7 +1745,7 @@ describe('JournalPage', () => {
       })
     })
 
-    it('hides prev/next arrows in agenda mode but keeps Today + calendar visible (UX-235)', async () => {
+    it('hides prev/next arrows in agenda mode but keeps Today + calendar visible', async () => {
       const user = userEvent.setup()
       mockEmptyResponses()
 
@@ -1762,7 +1762,7 @@ describe('JournalPage', () => {
       expect(screen.queryByRole('button', { name: /previous day/i })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /next day/i })).not.toBeInTheDocument()
 
-      // Today button and calendar trigger remain accessible (UX-235)
+      // Today button and calendar trigger remain accessible
       expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /open calendar picker/i })).toBeInTheDocument()
     })
@@ -2189,7 +2189,7 @@ describe('JournalPage', () => {
     })
 
     it('LinkedReferences not rendered when pageId is null', async () => {
-      // BUG-48 follow-up: DuePanel and DonePanel are date-keyed
+      // Follow-up: DuePanel and DonePanel are date-keyed
       // agenda queries, so they render even when no journal page
       // exists for the day (e.g. navigating to a past date that was
       // never written into). Only LinkedReferences is gated on
@@ -2306,7 +2306,7 @@ describe('JournalPage', () => {
 
       const pageRows = pages.map((p) => makeDailyPage({ id: p.id, content: p.dateStr }))
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-        // BUG-48: the calendar fetch + auto-create probe both come
+        // The calendar fetch + auto-create probe both come
         // from the new journal commands now.
         if (cmd === 'list_journal_pages_in_range') return pageRows
         if (cmd === 'get_journal_page_by_date') {
@@ -2500,7 +2500,7 @@ describe('JournalPage', () => {
 
   describe('auto-create today page (#629)', () => {
     it("auto-creates today's page on mount when no page exists", async () => {
-      // PEND-16 — `useJournalAutoCreate` triggers `handleAddBlock` on
+      // `useJournalAutoCreate` triggers `handleAddBlock` on
       // mount, which creates the daily page. The seed block is no
       // longer created here; `BlockTree.autoCreateFirstBlock` owns that
       // step. BlockTree is mocked in this file, so we assert just the
@@ -2514,11 +2514,11 @@ describe('JournalPage', () => {
         if (cmd === 'list_blocks') {
           return emptyPage
         }
-        // BUG-1 / H-3b — page creation goes through `create_page_in_space`,
+        // / H-3b — page creation goes through `create_page_in_space`,
         // returning the new ULID as a string.
         if (cmd === 'create_page_in_space') return 'DP-AUTO'
         if (cmd === 'create_block') {
-          // Defensive — see PEND-16 note above. Returning a real row
+          // Defensive — note above. Returning a real row
           // keeps the failure mode "explicit assertion below" rather
           // than a downstream null-deref if a regression re-introduces
           // the no-template fallback in `handleAddBlock`.
@@ -2546,7 +2546,7 @@ describe('JournalPage', () => {
         })
       })
 
-      // PEND-16 — `handleAddBlock` no longer issues `create_block` for
+      // `handleAddBlock` no longer issues `create_block` for
       // a fresh page in the no-template case; BlockTree owns that and
       // is mocked here. Flush microtasks so a hypothetical mis-firing
       // call would still be observable in the assertion below.
@@ -2611,7 +2611,7 @@ describe('JournalPage', () => {
         )
       })
 
-      // PEND-35 Tier 4.3 — `insertTemplateBlocks` collapses the per-child
+      // `insertTemplateBlocks` collapses the per-child
       // `create_block` loop into a single `create_blocks_batch` per
       // depth level. The two top-level template children land in one
       // batch; assert on the `specs` array.
@@ -2639,9 +2639,9 @@ describe('JournalPage', () => {
     })
   })
 
-  // ── Per-space journal template (FEAT-3p5b) ──────────────────────────
+  // ── Per-space journal template ──────────────────────────
 
-  describe('per-space journal template (FEAT-3p5b)', () => {
+  describe('per-space journal template', () => {
     /**
      * Build an IPC dispatcher modelling: per-space `journal_template`
      * property + optional legacy `journal-template` page. Both
@@ -2659,7 +2659,7 @@ describe('JournalPage', () => {
         if (cmd === 'list_blocks') return templateListBlocksResponse(args)
         if (cmd === 'load_page_subtree') return templateLoadPageSubtreeResponse(args)
         if (cmd === 'get_property') {
-          // PEND-35 Tier 2.4c: single-key PK lookup. Returns PropertyRow | null.
+          // Single-key PK lookup. Returns PropertyRow | null.
           const a = (args as { blockId: string; key: string } | undefined) ?? {
             blockId: '',
             key: '',
@@ -2680,7 +2680,7 @@ describe('JournalPage', () => {
         }
         if (cmd === 'create_page_in_space') return 'DP-PS'
         if (cmd === 'create_blocks_batch') {
-          // PEND-35 Tier 4.3 — `insertTemplateBlocksFromString`
+          // `insertTemplateBlocksFromString`
           // (per-space) and `insertTemplateBlocks` (legacy page) both
           // call this batch IPC. Return one BlockRow per spec.
           return templateCreateBlocksBatchResponse(args)
@@ -2725,7 +2725,7 @@ describe('JournalPage', () => {
         })
       })
 
-      // PEND-35 Tier 4.3 — `insertTemplateBlocksFromString` collapses
+      // `insertTemplateBlocksFromString` collapses
       // the per-line `create_block` loop into a single
       // `create_blocks_batch` IPC. Both lines must land in one batch's
       // `specs` array.
@@ -2762,7 +2762,7 @@ describe('JournalPage', () => {
 
       renderJournal()
 
-      // PEND-35 Tier 4.3 — both surfaces use `create_blocks_batch`.
+      // Both surfaces use `create_blocks_batch`.
       // The per-space content blocks must land in some batch's specs.
       await waitFor(() => {
         const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
@@ -2796,7 +2796,7 @@ describe('JournalPage', () => {
 
       // Legacy path: query_by_property('journal-template') is hit AND
       // its child blocks (`## Morning Review`, `## Tasks`) are copied
-      // via PEND-35 Tier 4.3's `create_blocks_batch`.
+      // Via `create_blocks_batch`.
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith(
           'query_by_property',
@@ -2839,7 +2839,7 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      // BUG-1 / H-3b — page creation routes through `create_page_in_space`.
+      // / H-3b — page creation routes through `create_page_in_space`.
       mockedInvoke.mockImplementation(async (cmd: string) => {
         const bug48 = bug48EmptyResponse(cmd)
         if (bug48 !== BUG48_NOT_HANDLED) return bug48
@@ -2936,7 +2936,7 @@ describe('JournalPage', () => {
       expect(parent.className).toContain('sm:flex-row')
     })
 
-    // PEND-28 M11: the previous shape (`min-w-[100px] sm:min-w-[140px]`)
+    // The previous shape (`min-w-[100px] sm:min-w-[140px]`)
     // reserved 100 px (~28 % of a 360 px viewport) on phones for the date
     // readout. The min-width is now gated on `sm:` so phones let the date
     // determine its own width, while sm+ still gets a 100 px floor.
@@ -2959,7 +2959,7 @@ describe('JournalPage', () => {
   // ── H-1: Auto-creation for any date in daily mode ───────────────────
 
   describe('auto-creation of first block', () => {
-    // BUG-1 / H-3b — page creation routes through `create_page_in_space`.
+    // / H-3b — page creation routes through `create_page_in_space`.
     // All tests in this group assert the new IPC name + payload shape.
     it('auto-creates page+block for today in daily mode', async () => {
       const todayStr = formatDate(new Date())
@@ -2982,7 +2982,7 @@ describe('JournalPage', () => {
     })
 
     it('does NOT auto-create on mount for a past date in daily mode', async () => {
-      // BUG-48 follow-up: the mount-effect is restricted to today so the
+      // Follow-up: the mount-effect is restricted to today so the
       // calendar can't silently spawn empty journal pages for any day the
       // user merely navigates to. Past dates require an explicit
       // `n`/`Enter` shortcut or the Add block button to backfill.
@@ -3008,7 +3008,7 @@ describe('JournalPage', () => {
     })
 
     it('does NOT auto-create on mount for a future date in daily mode', async () => {
-      // BUG-48 follow-up: same rationale as the past-date test — only
+      // Follow-up: same rationale as the past-date test — only
       // today's page is conjured for free; the user opts in for any
       // other day.
       const futureDate = addDays(new Date(), 5)
@@ -3105,7 +3105,7 @@ describe('JournalPage', () => {
     })
 
     it('does NOT re-trigger auto-creation when navigating to a different date', async () => {
-      // BUG-48 follow-up: navigating off today no longer eagerly spawns
+      // Follow-up: navigating off today no longer eagerly spawns
       // pages. Today's auto-create still fires on mount; clicking
       // previous-day must not result in a fresh `create_page_in_space`
       // for yesterday.
@@ -3393,8 +3393,8 @@ describe('JournalPage', () => {
     })
   })
 
-  // ── UX-235: agenda-mode date controls (Today + calendar) ─────────────
-  describe('JournalControls agenda-mode date controls (UX-235)', () => {
+  // ── agenda-mode date controls (Today + calendar) ─────────────
+  describe('JournalControls agenda-mode date controls', () => {
     // Fixed system time so "today" is deterministic: Mon, April 20, 2026.
     // Only fake `Date` (not timers) so userEvent's internal setTimeouts run
     // normally — faking all timers would deadlock async user.click() here.
@@ -3486,8 +3486,8 @@ describe('JournalPage', () => {
     })
   })
 
-  // ── UX-236: redundant header buttons hidden when they are no-ops ─────
-  describe('redundant header buttons (UX-236)', () => {
+  // ── redundant header buttons hidden when they are no-ops ─────
+  describe('redundant header buttons', () => {
     beforeEach(() => {
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(new Date('2026-04-20T12:00:00'))
@@ -3795,7 +3795,7 @@ describe('JournalPage', () => {
     })
   })
 
-  // ── FEAT-3p5 — per-space currentDate / mode integration ─────────────
+  // ── per-space currentDate / mode integration ─────────────
   //
   // The journal store's space-switch subscriber flushes the outgoing
   // space's flat fields into a slice and pulls the incoming space's
@@ -3803,7 +3803,7 @@ describe('JournalPage', () => {
   // the flat fields, so the date display + mode tab tracking should
   // follow the active space without any prop-drilling.
 
-  describe('per-space slices (FEAT-3p5)', () => {
+  describe('per-space slices', () => {
     it('switching from a space at 2025-01-15 to a fresh space falls back to today', async () => {
       // Arrange: Personal active, viewing 2025-01-15 in weekly mode.
       useSpaceStore.setState({
@@ -3884,9 +3884,9 @@ describe('JournalPage', () => {
     })
   })
 
-  // ── Configure journal template entry (UX-371) ───────────────────────
+  // ── Configure journal template entry ───────────────────────
 
-  describe('configure journal template entry (UX-371)', () => {
+  describe('configure journal template entry', () => {
     it('renders the entry and clicking it opens the SpaceManageDialog', async () => {
       const user = userEvent.setup()
       mockEmptyResponses()

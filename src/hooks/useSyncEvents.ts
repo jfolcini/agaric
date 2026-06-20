@@ -6,7 +6,7 @@
  * - sync:error — sets error state, shows error toast
  *
  * Per-state-transition progress (`sync:progress` in Phase 1) was dropped
- * by PEND-06 Phase 2 — `useSyncTrigger` now consumes the Channel<T>
+ * By Phase 2 — `useSyncTrigger` now consumes the Channel<T>
  * `onProgress` callback set up by `startSync` for that. The two event
  * listeners that remain carry post-sync side effects (toast / page reload
  * on complete; error toast on failure) that the channel-stream callback
@@ -83,7 +83,7 @@ export function mapBackendState(backendState: string): 'idle' | 'syncing' | 'err
  * No-op in browser mode (when Tauri APIs are unavailable).
  * Call once at app root (App.tsx).
  *
- * MAINT-122: lifecycle (`listen()` → `unlisten()` + unmount race) lives
+ * Lifecycle (`listen()` → `unlisten()` + unmount race) lives
  * in `useTauriEventListener`; this hook owns the per-event handler
  * bodies and the Tauri-only gate (`enabled`).
  */
@@ -92,7 +92,7 @@ export function useSyncEvents(): void {
   // registration entirely.
   const enabled = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
-  // PEND-06 Phase 2 — `sync:progress` listener removed. The
+  // Phase 2 — `sync:progress` listener removed. The
   // Channel<SyncProgressUpdate> opened by `startSync` is now the
   // canonical source for per-state-transition progress; see
   // `useSyncTrigger` for the consumer.
@@ -160,7 +160,7 @@ export function useSyncEvents(): void {
           // condition is "we had something to reconcile", which is true in
           // both branches inside this `ops_received > 0` block.
           //
-          // FEAT-3p7 — preload takes the active space id so the post-sync
+          // Preload takes the active space id so the post-sync
           // re-fetch only re-keys current-space pages into the cache.
           // Foreign-space rows synced from the peer never land in the cache
           // here; they are filtered by the next BlockTree-level batchResolve

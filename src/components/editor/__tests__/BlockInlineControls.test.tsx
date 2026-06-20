@@ -70,7 +70,7 @@ vi.mock('@/components/ui/chevron-toggle', () => ({
   ),
 }))
 
-// PropertyChip mock — mirrors the TEST-4b shape: a non-button wrapper with
+// PropertyChip mock — mirrors the shape: a non-button wrapper with
 // two sibling buttons. We attach onClick to the wrapper (not a hidden third
 // button) so `user.click(getByTestId('property-chip-${key}'))` still
 // exercises the value-edit path without reintroducing nested buttons.
@@ -215,7 +215,7 @@ describe('TaskCheckbox', () => {
     expect(screen.getByTestId('check-icon')).toBeInTheDocument()
   })
 
-  it('renders CANCELLED style with X icon (UX-202)', () => {
+  it('renders CANCELLED style with X icon', () => {
     const { container } = render(<TaskCheckbox state="CANCELLED" />)
     const checkbox = container.querySelector('.task-checkbox-cancelled')
     expect(checkbox).toBeInTheDocument()
@@ -500,7 +500,7 @@ describe('BlockInlineControls', () => {
     expect(screen.getByTestId('repeat-icon')).toBeInTheDocument()
   })
 
-  it('renders the repeat indicator as a non-interactive status span (UX-5)', () => {
+  it('renders the repeat indicator as a non-interactive status span', () => {
     const { container } = renderControls(
       makeProps({
         properties: [{ key: 'repeat', value: 'weekly' }],
@@ -531,7 +531,7 @@ describe('BlockInlineControls', () => {
     expect(screen.getByText('+1')).toBeInTheDocument()
   })
 
-  describe('property overflow button (UX-229)', () => {
+  describe('property overflow button', () => {
     const fourProps = [
       { key: 'a', value: 'v1' },
       { key: 'b', value: 'v2' },
@@ -640,7 +640,7 @@ describe('BlockInlineControls', () => {
       )
     })
 
-    // UX-321b: a chevron icon signals that the chip is click-through to the
+    // A chevron icon signals that the chip is click-through to the
     // properties drawer (rather than a static count badge).
     it('renders a ChevronRight icon inside the overflow chip', () => {
       renderControls(makeProps({ filteredProperties: fourProps }))
@@ -650,7 +650,7 @@ describe('BlockInlineControls', () => {
       expect(overflow.contains(chevron)).toBe(true)
     })
 
-    // UX-321a: aria-label and tooltip text mention the keyboard shortcut so
+    // Aria-label and tooltip text mention the keyboard shortcut so
     // screen-reader users learn the binding alongside the count.
     it('aria-label mentions the Ctrl+Shift+P keyboard shortcut', () => {
       renderControls(makeProps({ filteredProperties: fourProps }))
@@ -779,8 +779,8 @@ describe('BlockInlineControls', () => {
     expect(onToggle).toHaveBeenCalledOnce()
   })
 
-  // UX-308: badge plays a one-shot bump animation on count change.
-  describe('attachment badge bump animation (UX-308)', () => {
+  // Badge plays a one-shot bump animation on count change.
+  describe('attachment badge bump animation', () => {
     it('does not apply animate-in classes on initial mount', () => {
       renderControls(makeProps({ attachmentCount: 2 }))
       const badge = screen.getByTestId('attachment-badge')

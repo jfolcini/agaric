@@ -1,5 +1,5 @@
 /**
- * Tests for useAutocompleteSources (PEND-60 Phase 2).
+ * Tests for useAutocompleteSources (Phase 2).
  *
  * Validates:
  *  - Null anchor returns empty.

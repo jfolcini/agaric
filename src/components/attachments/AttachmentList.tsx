@@ -45,7 +45,7 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   // Tracks the pendingDeleteId reset setTimeout so we can cancel it on unmount
-  // and avoid calling setState on an unmounted component (#MAINT-48).
+  // And avoid calling setState on an unmounted component (#).
   const pendingDeleteClearRef = useRef<number | null>(null)
 
   // Clear any pending reset timer on unmount.

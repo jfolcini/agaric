@@ -36,7 +36,7 @@ pub(crate) fn serialize_inner_payload(op_payload: &OpPayload) -> Result<String, 
 /// the value of `field` as an owned `String`, or `None` on missing field or
 /// parse error.
 ///
-/// L-1: surfaces JSON parse failures as a warn-level log instead of silently
+/// Surfaces JSON parse failures as a warn-level log instead of silently
 /// returning `None`. AGENTS.md "Anti-patterns" forbids the silent-swallow
 /// pattern — corruption would lose the indexed column entry and produce
 /// hard-to-attribute "queries miss this op" bugs. Warn-and-continue keeps the

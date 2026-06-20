@@ -1,5 +1,5 @@
 /**
- * #82 (PEND-66) — active-editor registry.
+ * #82 — active-editor registry.
  *
  * Each `BlockTree` runs one roving TipTap instance (AGENTS.md invariant
  * 4), but the app can mount several BlockTrees at once (the journal

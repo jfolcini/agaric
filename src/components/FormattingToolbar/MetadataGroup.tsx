@@ -1,6 +1,6 @@
 /**
  * Custom render for the cycle-priority button in Group 2 of
- * `FormattingToolbar` (MAINT-219).
+ * `FormattingToolbar`.
  *
  * The priority button is a single icon-less Button whose visible label
  * is the current priority badge (`P` / `P1`–`P3` with a colour dot).

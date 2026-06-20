@@ -1,5 +1,5 @@
 /**
- * Static catalog of keyboard shortcuts (MAINT-127).
+ * Static catalog of keyboard shortcuts.
  * Owns the `ShortcutBinding` shape and the `DEFAULT_SHORTCUTS` array — the
  * canonical, unmodified default bindings keyed by stable shortcut id.
  */
@@ -474,7 +474,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
   },
 
   // Global
-  // PEND-52 — Ctrl+F reclaims the universal in-page-find binding;
+  // Ctrl+F reclaims the universal in-page-find binding;
   // the global find-in-files view moves to Ctrl+Shift+F (matching VSCode).
   {
     id: 'findInPage',
@@ -488,7 +488,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.global',
     description: 'keyboard.focusSearch',
   },
-  // PEND-51 — Cmd/Ctrl+K opens the quick-navigation palette. Distinct
+  // Cmd/Ctrl+K opens the quick-navigation palette. Distinct
   // from `focusSearch` (the find-in-files view) and `findInPage` (the
   // in-page find toolbar) — the three keyboard surfaces map 1:1 to the
   // three search surfaces.
@@ -498,7 +498,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.global',
     description: 'keyboard.paletteOpen',
   },
-  // PEND-52 — F3 / Shift+F3 cycle matches in the in-page-find toolbar.
+  // F3 / Shift+F3 cycle matches in the in-page-find toolbar.
   // The matcher is responsible for actually wiring these (it listens
   // while the toolbar is open); listing them here makes them discoverable
   // in the KeyboardShortcuts help dialog and rebindable in Settings.
@@ -556,7 +556,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     // wildcard always-on listener uses still surfaces.
     condition: 'keyboard.condition.whenOverlayOpen',
   },
-  // PEND-67 Phase 8 — re-run the most recently invoked palette command
+  // Phase 8 — re-run the most recently invoked palette command
   // without opening the dialog. Mirrors Raycast's `⌘.` shortcut. When
   // there is no recent command yet the binding falls through to
   // opening the palette in commands mode (see `useAppKeyboardShortcuts`).
@@ -572,7 +572,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.runLastCommand',
   },
 
-  // Graph View (BUG-18): zoom controls previously hardcoded in GraphView.tsx
+  // Graph View: zoom controls previously hardcoded in GraphView.tsx
   {
     id: 'graphZoomIn',
     keys: '+ / =',
@@ -601,7 +601,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     condition: 'keyboard.condition.inPageEditor',
   },
 
-  // Tabs — after FEAT-7 the TabBar is shell-wide on desktop, so the
+  // Tabs — after the TabBar is shell-wide on desktop, so the
   // tab-management shortcuts apply everywhere, not just inside the editor.
   // The `desktopOnly` condition matches the runtime `useIsMobile() === false`
   // gate in App.tsx.
@@ -742,7 +742,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     rebindable: false,
   },
 
-  // Spaces (FEAT-3p11) — digit hotkeys for instant space switching.
+  // Spaces — digit hotkeys for instant space switching.
   // `Ctrl+1`…`Ctrl+9` (`Cmd+1`…`Cmd+9` on macOS — `matchesShortcutBinding`
   // already accepts `metaKey` in place of `ctrlKey`) jump straight to the
   // Nth space in the alphabetical `availableSpaces` order. Out-of-range

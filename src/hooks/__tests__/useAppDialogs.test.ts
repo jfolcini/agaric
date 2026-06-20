@@ -1,5 +1,5 @@
 /**
- * Unit tests for useAppDialogs (MAINT-124 step 3).
+ * Unit tests for useAppDialogs.
  *
  * Validates the hook in isolation: each of the 4 dialog states is
  * initialized closed, each setter writes through, the two custom-event

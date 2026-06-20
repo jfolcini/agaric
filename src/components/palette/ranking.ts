@@ -1,7 +1,7 @@
 /**
  * Palette result ranking — merge the two FTS partitions into capped,
  * 4-band-ordered palette groups. Extracted from CommandPalette.tsx
- * (#751); migrated verbatim from PEND-51 so the visual contract stays
+ * (#751); migrated verbatim so the visual contract stays
  * stable across the rewrite. Re-exported from CommandPalette.tsx for
  * the existing test import path.
  */
@@ -18,14 +18,14 @@ import type { PaletteGroup } from './types'
  * - Each `pages` row seeds a group (page-name match band).
  * - Each `blocks` row appends to the existing group keyed by `page_id`,
  *   or seeds a content-only group when no page row exists for it.
- * - Groups are ordered by **4-band rule** (PEND-51 §"Result grouping"):
+ * Groups are ordered by **4-band rule** (grouping"):
  *   exact title → prefix title → contains-in-title → content-only,
  *   tiebroken by the FTS-band + fuzzy blend score.
  * - Group count capped at `MAX_PAGE_GROUPS` (8).
  * - Matches per group capped at `MAX_MATCHES_PER_GROUP` (2); surplus
  *   surfaces as a "+N more" pill row.
  *
- * Migrated verbatim from PEND-51's `mergeAndRankGroups` — same input
+ * Migrated verbatim `mergeAndRankGroups` — same input
  * shape, same output shape, same scoring. Tests carry over unchanged.
  */
 export function mergeAndRankGroups(

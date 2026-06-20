@@ -13,14 +13,14 @@ use crate::sql_utils::escape_like;
 
 /// Evaluate a boolean tag expression and return a paginated set of blocks.
 ///
-/// `space_id` (FEAT-3p4) — when `Some`, the final projection restricts
+/// `space_id` — when `Some`, the final projection restricts
 /// results to blocks whose owning page (`b.page_id`)
-/// carries `space = ?space_id`. `None` is the unscoped (pre-FEAT-3)
+/// Carries `space = ?space_id`. `None` is the unscoped (pre-)
 /// behaviour. The space filter is applied at the projection step (after
 /// the tag resolver) so the tag expression continues to operate on the
 /// full universe and only the visible result set is space-scoped.
 ///
-/// `block_type` (PEND-35 Tier 3.4) — when `Some`, restricts the result
+/// `block_type` — when `Some`, restricts the result
 /// set to blocks whose `block_type` equals the supplied value. `None`
 /// is the unfiltered (pre-Tier-3.4) behaviour. Pushes GraphView's
 /// JS-side `pagesResp.items.filter(p => p.block_type === 'page')`
@@ -168,11 +168,11 @@ fn prefix_leaf_candidate_clause(include_inherited: bool) -> String {
 /// a future candidate clause that re-includes the universe cannot
 /// surface a soft-deleted row.
 ///
-/// FEAT-3p4 — `(? IS NULL OR b.page_id IN (…))` mirrors
+/// `(? IS NULL OR b.page_id IN (…))` mirrors
 /// `crate::space_filter_clause!`; the single `?` is bound twice (NULL
 /// guard + value comparison) to keep the short-circuit.
 ///
-/// PEND-35 Tier 3.4 — `(? IS NULL OR b.block_type = ?)` push-down.
+/// `(? IS NULL OR b.block_type = ?)` push-down.
 ///
 /// Issue #112 sub-item 1 — `(? IS NULL OR b.id > ?)` is the cursor walk;
 /// combined with `ORDER BY b.id ASC LIMIT ?` it replaces the Rust-side
@@ -221,7 +221,7 @@ async fn run_projection<'a>(
     // count query — mirrors the pre-pushdown behaviour.
     let fetch_limit = page.limit.saturating_add(1);
 
-    // MAINT-113 M2 — query the rows as ActiveBlockRow directly. The SQL
+    // Query the rows as ActiveBlockRow directly. The SQL
     // filters `deleted_at IS NULL`, so every row sqlx hydrates is active.
     let mut q = sqlx::query_as::<_, ActiveBlockRow>(sqlx::AssertSqlSafe(query_str));
     for v in candidate_binds {
@@ -730,7 +730,7 @@ mod tests {
         assert_eq!(result[0].name, "100%_done");
     }
 
-    /// PEND-35 Tier 3.3 — the LIKE-prefix query in `list_tags_by_prefix`
+    /// The LIKE-prefix query in `list_tags_by_prefix`
     /// (`WHERE name LIKE ?1 ESCAPE '\' ORDER BY name LIMIT ?2`) is hit
     /// on every keystroke of every tag picker. SQLite's default LIKE is
     /// case-insensitive on ASCII, so the implicit BINARY index from
@@ -1618,7 +1618,7 @@ mod tests {
 
     /// A block associated to the tag ONLY via `block_tag_refs` (inline
     /// ref, no `block_tags` row) MUST appear in the fast-path result —
-    /// this is the easiest UX-250 union semantic to drop.
+    /// This is the easiest union semantic to drop.
     #[tokio::test]
     async fn fast_path_includes_block_tag_refs_only_block() {
         let (pool, _dir) = test_pool().await;

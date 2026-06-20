@@ -1,5 +1,5 @@
 /**
- * Tests for `useSpaceStore` (FEAT-3 Phase 1).
+ * Tests for `useSpaceStore` (Phase 1).
  *
  * Covers:
  *  - Fresh-state defaults
@@ -106,11 +106,11 @@ describe('useSpaceStore', () => {
       expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
     })
 
-    // UX-266 — sub-fix 3: when sync brings down the deletion of the
+    // Sub-fix 3: when sync brings down the deletion of the
     // active space we silently switch to the first available one.
     // Surface a one-shot toast so the user understands why they're now
     // looking at a different space without having clicked anything.
-    describe('active-space-deleted toast (UX-266)', () => {
+    describe('active-space-deleted toast', () => {
       it('fires a warning toast when the active space disappears mid-session', async () => {
         useSpaceStore.setState({ currentSpaceId: WORK.id })
         // Sync brings down a list that no longer contains WORK.
@@ -195,7 +195,7 @@ describe('useSpaceStore', () => {
     })
   })
 
-  describe('getCurrentAccent (FEAT-3p10)', () => {
+  describe('getCurrentAccent', () => {
     it('returns the active space accent token', () => {
       useSpaceStore.setState({
         currentSpaceId: PERSONAL.id,

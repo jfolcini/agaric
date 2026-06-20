@@ -1,7 +1,7 @@
 /**
  * Tests for FormattingToolbar component.
  *
- * Validates the always-visible toolbar (post PEND-33 Layer A) — refs +
+ * Validates the always-visible toolbar (post Layer A) — refs +
  * structure + metadata + history. Mark toggles + External Link are tested
  * separately in `SelectionBubbleMenu.test.tsx`.
  *
@@ -83,7 +83,7 @@ vi.mock('../ui/separator', () => ({
 }))
 
 // Mock Tooltip primitives — Radix portals tooltip content lazily; render
-// the label inline so tests can assert on tooltip text (UX-301).
+// The label inline so tests can assert on tooltip text.
 vi.mock('../ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -250,7 +250,7 @@ describe('FormattingToolbar', () => {
     it('does not render the moved mark toggles or external link', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       // Bold / Italic / Code / Strike / Highlight / External Link all live in
-      // SelectionBubbleMenu now (PEND-33 Layer A).
+      // SelectionBubbleMenu now (Layer A).
       expect(screen.queryByRole('button', { name: t('toolbar.bold') })).toBeNull()
       expect(screen.queryByRole('button', { name: t('toolbar.italic') })).toBeNull()
       expect(screen.queryByRole('button', { name: t('toolbar.code') })).toBeNull()
@@ -262,7 +262,7 @@ describe('FormattingToolbar', () => {
     it('renders separators between button groups', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const seps = screen.getAllByTestId('separator')
-      // After PEND-33 Layer A: refs+blocks → structure → priority+metadata
+      // After Layer A: refs+blocks → structure → priority+metadata
       // → history. Three separators between four groups.
       expect(seps).toHaveLength(3)
       for (const sep of seps) {
@@ -619,7 +619,7 @@ describe('FormattingToolbar', () => {
     })
   })
 
-  // ── UX-90: Structure buttons (Ordered List, Divider, Callout) ─────────
+  // ── Structure buttons (Ordered List, Divider, Callout) ─────────
 
   describe('structure buttons', () => {
     it('renders Ordered list button with aria-label', () => {
@@ -756,7 +756,7 @@ describe('FormattingToolbar', () => {
 
     it('does not render the More overflow trigger when nothing overflows', () => {
       // Default jsdom container width is 0 → hook returns all visible,
-      // no overflow trigger rendered (PEND-33 Layer B).
+      // No overflow trigger rendered (Layer B).
       render(<FormattingToolbar editor={makeEditor()} />)
       expect(screen.queryByRole('button', { name: t('toolbar.more') })).toBeNull()
     })
@@ -775,9 +775,9 @@ describe('FormattingToolbar', () => {
     })
   })
 
-  // ── PEND-33 L9: Overflow popover (priority-driven) ────────────────────
+  // ── Overflow popover (priority-driven) ────────────────────
 
-  describe('PEND-33 Layer B overflow popover', () => {
+  describe(' Layer B overflow popover', () => {
     /**
      * Force the `useToolbarOverflow` hook into the overflowed branch by
      * injecting a non-no-op `ResizeObserver` that fires a tight content
@@ -959,7 +959,7 @@ describe('FormattingToolbar', () => {
       }
     })
 
-    it('heading popover inside overflow closes both popovers on H2 selection (MAINT-221)', async () => {
+    it('heading popover inside overflow closes both popovers on H2 selection', async () => {
       const restore = withTightLayout(120)
       try {
         render(<FormattingToolbar editor={makeEditor()} />)
@@ -995,7 +995,7 @@ describe('FormattingToolbar', () => {
       }
     })
 
-    it('code block popover inside overflow closes both popovers on Plain text selection (MAINT-221)', async () => {
+    it('code block popover inside overflow closes both popovers on Plain text selection', async () => {
       const restore = withTightLayout(120)
       try {
         render(<FormattingToolbar editor={makeEditor()} />)
@@ -1031,7 +1031,7 @@ describe('FormattingToolbar', () => {
     })
   })
 
-  // ── UX-62: Code block language popover ────────────────────────────────
+  // ── Code block language popover ────────────────────────────────
 
   describe('code block language popover', () => {
     it('renders code block language popover button', () => {
@@ -1058,7 +1058,7 @@ describe('FormattingToolbar', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const popoverContents = screen.getAllByTestId('popover-content')
       // The code block popover is the first PopoverContent now (External Link
-      // moved to SelectionBubbleMenu in PEND-33 Layer A).
+      // Moved to SelectionBubbleMenu in Layer A).
       const codeBlockPopover = popoverContents[0] as HTMLElement
       expect(codeBlockPopover).toBeInTheDocument()
       for (const lang of ['javascript', 'typescript', 'python', 'rust', 'bash', 'sql']) {
@@ -1154,16 +1154,16 @@ describe('FormattingToolbar', () => {
     })
   })
 
-  // ── PEND-28 H5: editor portals carry viewport-clamp ───────────────────
+  // ── editor portals carry viewport-clamp ───────────────────
   // Each `data-editor-portal` PopoverContent must declare
   // `max-w-[calc(100vw-2rem)]` so it never overflows the viewport on
   // narrow screens (mirrors the Radix baseline in `ui/popover.tsx`).
-  describe('viewport-clamp class on editor portals (PEND-28 H5)', () => {
+  describe('viewport-clamp class on editor portals', () => {
     it('code-block language popover carries max-w-[calc(100vw-2rem)]', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const popovers = screen.getAllByTestId('popover-content')
       // Code-block popover is the first PopoverContent (External link moved
-      // to SelectionBubbleMenu in PEND-33 Layer A).
+      // To SelectionBubbleMenu in Layer A).
       expect(popovers[0]?.className).toContain('max-w-[calc(100vw-2rem)]')
     })
 

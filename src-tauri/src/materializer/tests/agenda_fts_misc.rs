@@ -1,7 +1,7 @@
 use super::*;
 
 // ======================================================================
-// PEND-25 L2 + L9: `DeferredNotification.record` is `Arc<OpRecord>` and
+// + L9: `DeferredNotification.record` is `Arc<OpRecord>` and
 // the `enqueue_*_background` family on `CommandTx` accepts
 // `impl Into<Arc<OpRecord>>`. Together these let the producer wrap
 // once and the dispatch + post-commit borrow share the record by
@@ -54,14 +54,14 @@ async fn apply_op_arc_record_does_not_leak_strong_count() {
     assert_eq!(
         StdArc::strong_count(&record),
         1,
-        "PEND-25 L2/L9: ApplyOp dispatch must not leak Arc<OpRecord> clones \
+        "/L9: ApplyOp dispatch must not leak Arc<OpRecord> clones \
          beyond the handler invocation (got strong_count = {})",
         StdArc::strong_count(&record)
     );
 }
 
 // ======================================================================
-// M-15: RemoveTag runs under transaction (via apply_op)
+// RemoveTag runs under transaction (via apply_op)
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -143,7 +143,7 @@ async fn remove_tag_handler_cleans_inherited() {
 }
 
 // ======================================================================
-// UX-159: create_block dispatch enqueues RebuildProjectedAgendaCache
+// Create_block dispatch enqueues RebuildProjectedAgendaCache
 // ======================================================================
 
 #[tokio::test]
@@ -180,7 +180,7 @@ async fn dispatch_create_block_enqueues_projected_agenda_cache() {
     );
 }
 
-// BUG-12: Barrier race — tasks after a barrier in the same batch must
+// Barrier race — tasks after a barrier in the same batch must
 // complete before the barrier signals the caller.
 // ======================================================================
 
@@ -246,7 +246,7 @@ async fn flush_background_completes_tasks_after_barrier() {
 }
 
 // ======================================================================
-// PERF-11: Adaptive FTS optimize threshold — scales with corpus size
+// Adaptive FTS optimize threshold — scales with corpus size
 // ======================================================================
 
 #[tokio::test]
@@ -263,7 +263,7 @@ async fn adaptive_fts_threshold_small_db() {
     // holds for a small DB.
     //
     // Previously this was a 1-second polling loop on `> 0`, which raced
-    // under nextest parallelism (TEST-2).
+    // Under nextest parallelism.
     mat.wait_for_initial_block_count_cache().await;
     let cached = mat
         .metrics()
@@ -329,7 +329,7 @@ async fn adaptive_fts_threshold_large_corpus() {
     // actual block count from the DB and writes it to `cached_block_count`.
     // Wait for that deterministically before simulating the 10M-block
     // count below — otherwise the stale writer races our `.store(10M)` and
-    // clobbers it with the real count (TEST-2).
+    // Clobbers it with the real count.
     mat.wait_for_initial_block_count_cache().await;
 
     // Simulate a 10 M-block corpus.
@@ -408,7 +408,7 @@ async fn adaptive_fts_threshold_large_corpus() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// dispatch_background_or_warn (MAINT-47)
+// Dispatch_background_or_warn
 // ──────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -480,7 +480,7 @@ async fn dispatch_background_or_warn_handles_unknown_op_type_gracefully() {
     mat.shutdown();
 }
 
-/// M-11: `dispatch_background_or_warn`'s `tracing::warn!` must include
+/// `dispatch_background_or_warn`'s `tracing::warn!` must include
 /// `seq` and `device_id` so triage on the user's own device can find
 /// the offending row in `op_log` (mirrors the `dedup.rs` parse-error
 /// pattern). With a malformed `create_block` payload `enqueue_background_tasks`
@@ -563,7 +563,7 @@ async fn dispatch_background_or_warn_logs_seq_and_device_id_on_serde_error() {
 }
 
 // ---------------------------------------------------------------------------
-// MAINT-39: enqueue_full_cache_rebuild helper
+// Enqueue_full_cache_rebuild helper
 // ---------------------------------------------------------------------------
 
 /// The canonical fan-out list must contain the eight block-referencing
@@ -574,7 +574,7 @@ async fn dispatch_background_or_warn_logs_seq_and_device_id_on_serde_error() {
 #[test]
 fn full_cache_rebuild_tasks_has_eight_entries_in_canonical_order() {
     let tasks = &super::super::dispatch::FULL_CACHE_REBUILD_TASKS;
-    // UX-250 extended the array with `RebuildBlockTagRefsCache` (7th);
+    // Extended the array with `RebuildBlockTagRefsCache` (7th);
     // SQL-review §H-2 added `RebuildPageLinkCache` (8th).
     assert_eq!(
         tasks.len(),
@@ -747,7 +747,7 @@ async fn dispatch_purge_block_enqueues_full_cache_rebuild_plus_fts_removal() {
     );
 }
 
-// BUG-46 regression for the materializer's `OpType::PurgeBlock` path:
+// Regression for the materializer's `OpType::PurgeBlock` path:
 // before the fix, the DELETE FROM block_tag_inherited only matched
 // block_id / inherited_from, so rows whose `tag_id` column pointed at
 // the purged tag were left behind and triggered FK error 787 when the

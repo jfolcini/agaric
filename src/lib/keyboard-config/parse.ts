@@ -134,7 +134,7 @@ export function normalizeBinding(input: string): string {
 
 /**
  * Validate a user-typed binding the same way the matcher will read it
- * (UX-391 semantics, now sharing the matcher's tokenizer). Each ` / `
+ * (semantics, now sharing the matcher's tokenizer). Each ` / `
  * alternative must parse to a chord with a real key.
  */
 export function validateBindingInput(input: string): 'empty' | 'modifierOnly' | null {

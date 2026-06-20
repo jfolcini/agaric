@@ -126,9 +126,9 @@ describe('TagRef Backspace deletes the chip cleanly (#1739)', () => {
   })
 })
 
-// -- TagRef NodeView click behaviour (UX-249) --------------------------------
+// -- TagRef NodeView click behaviour --------------------------------
 
-describe('TagRef NodeView click activation (UX-249)', () => {
+describe('TagRef NodeView click activation', () => {
   let editor: Editor
 
   afterEach(() => {

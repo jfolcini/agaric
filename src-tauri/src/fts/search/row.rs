@@ -22,7 +22,7 @@ pub(super) struct FtsSearchRow {
     pub(super) due_date: Option<String>,
     pub(super) scheduled_date: Option<String>,
     pub(super) page_id: Option<String>,
-    // PEND-50 Phase 1 — FTS5 `snippet()` window with #828 PUA sentinel
+    // Phase 1 — FTS5 `snippet()` window with #828 PUA sentinel
     // boundaries (U+E000 open / U+E001 close). May be `NULL` from SQLite
     // when the matched row has `content IS NULL` (page-title hits etc.).
     pub(super) snippet: Option<String>,
@@ -57,7 +57,7 @@ pub(in crate::fts) fn content_select_expr(snippet_len: Option<usize>) -> String 
 /// pipeline's responsibility (see `super::super::toggle_filter`).
 pub(super) fn fts_row_to_block_row(r: FtsSearchRow) -> SearchBlockRow {
     SearchBlockRow {
-        // MAINT-113 M1.5 — boundary cast: the FTS SQL filters
+        // Boundary cast: the FTS SQL filters
         // `deleted_at IS NULL`, so every surviving row is active.
         // `from_trusted_active` records the claim in the type system
         // without re-running the predicate.

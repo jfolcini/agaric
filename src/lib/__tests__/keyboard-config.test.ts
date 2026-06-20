@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// PEND-37: same Storage-prototype-spy pattern as useBlockCollapse /
+// Same Storage-prototype-spy pattern as useBlockCollapse /
 // useLocalStoragePreference — pin to jsdom until the spies target the
 // instance directly.
 
@@ -72,13 +72,13 @@ describe('keyboard-config', () => {
     const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'exportPageMarkdown')
     expect(shortcut).toBeDefined()
     expect(shortcut?.keys).toBe('Ctrl + Shift + E')
-    // BUG-30: handler is page-editor-scoped, not global
+    // Handler is page-editor-scoped, not global
     expect(shortcut?.category).toBe('keyboard.category.pageEditor')
     expect(shortcut?.description).toBe('keyboard.exportPageMarkdown')
     expect(shortcut?.condition).toBe('keyboard.condition.inPageEditor')
   })
 
-  it('DEFAULT_SHORTCUTS includes zoomOut (UX-214) under blockTree', () => {
+  it('DEFAULT_SHORTCUTS includes zoomOut under blockTree', () => {
     const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'zoomOut')
     expect(shortcut).toBeDefined()
     expect(shortcut?.keys).toBe('Escape')
@@ -220,9 +220,9 @@ describe('keyboard-config', () => {
     expect(getCustomOverrides()).toEqual({})
   })
 
-  it('findConflicts does NOT flag Backspace defaults with different conditions (UX-394)', () => {
+  it('findConflicts does NOT flag Backspace defaults with different conditions', () => {
     // Backspace appears twice in editing (deleteBlock & mergeWithPrevious) with
-    // different conditions (onEmptyBlock vs atStartOfBlock). Per UX-394,
+    // Different conditions (onEmptyBlock vs atStartOfBlock). Per,
     // findConflicts now respects the `condition` field, so these are NOT
     // conflicts — they fire under disjoint editor states.
     const conflicts = findConflicts()
@@ -232,7 +232,7 @@ describe('keyboard-config', () => {
   it('findConflicts does NOT flag prevBlock/nextBlock when rebound to the same keys (different conditions)', () => {
     // prevBlock fires only at the start of a block; nextBlock fires only at the
     // end. They have different defined conditions, so even when bound to the
-    // same key they cannot fire together — UX-394 expects no conflict here.
+    // Same key they cannot fire together — expects no conflict here.
     const nextDefault = DEFAULT_SHORTCUTS.find((s) => s.id === 'nextBlock')
     setCustomShortcut('prevBlock', nextDefault?.keys ?? '')
 
@@ -259,7 +259,7 @@ describe('keyboard-config', () => {
     expect(editingConflict?.category).toBe('keyboard.category.editing')
   })
 
-  it('findConflicts flags two wildcard shortcuts on same (keys, category) — UX-394 Pass 1', () => {
+  it('findConflicts flags two wildcard shortcuts on same (keys, category) —  Pass 1', () => {
     // indentBlock and dedentBlock both have NO condition. Bind them to the
     // same brand-new key combo: wildcard×wildcard → conflict.
     setCustomShortcut('indentBlock', 'Ctrl + Alt + W')
@@ -272,7 +272,7 @@ describe('keyboard-config', () => {
     expect(c?.category).toBe('keyboard.category.editing')
   })
 
-  it('findConflicts flags wildcard×conditioned cross-conflict on same (keys, category) — UX-394 Pass 2', () => {
+  it('findConflicts flags wildcard×conditioned cross-conflict on same (keys, category) —  Pass 2', () => {
     // indentBlock has no condition (wildcard); mergeWithPrevious has condition
     // `atStartOfBlock`. Rebinding indentBlock to 'Backspace' puts a wildcard
     // alongside a conditioned binding on the same (keys, category) — wildcard
@@ -288,7 +288,7 @@ describe('keyboard-config', () => {
     expect(c?.category).toBe('keyboard.category.editing')
   })
 
-  it('findConflicts does NOT flag two conditioned shortcuts with different conditions on same (keys, category) — UX-394', () => {
+  it('findConflicts does NOT flag two conditioned shortcuts with different conditions on same (keys, category) — ', () => {
     // deleteBlock (onEmptyBlock) and mergeWithPrevious (atStartOfBlock) share
     // keys+category but have disjoint defined conditions. They never fire
     // together, so they must NOT be reported as a conflict.
@@ -333,7 +333,7 @@ describe('keyboard-config', () => {
     // findInPageNext (global, condition findInPageOpen) rebound onto
     // closeActiveTab's chord (tabs, condition desktopOnly). Both
     // conditions are defined and differ → assumed disjoint, not flagged
-    // (UX-394 rule carried over to pass 3).
+    // (rule carried over to pass 3).
     setCustomShortcut('findInPageNext', 'Ctrl + W')
 
     const conflicts = findConflicts()
@@ -1133,9 +1133,9 @@ describe('keyboard-config', () => {
     })
   })
 
-  // ── BUG-18: graph zoom + arrow normalization + ` / ` alternatives ──
+  // ── graph zoom + arrow normalization + ` / ` alternatives ──
 
-  describe('Graph zoom shortcuts (BUG-18)', () => {
+  describe('Graph zoom shortcuts', () => {
     it('graphZoomIn exists with `+ / =` default in global category', () => {
       const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'graphZoomIn')
       expect(s).toBeDefined()
@@ -1243,10 +1243,10 @@ describe('keyboard-config', () => {
     })
   })
 
-  // BUG-18 post-review: narrow the isSymbolKey whitelist to only +?@= so that
+  // Post-review: narrow the isSymbolKey whitelist to only +?@= so that
   // rebinding to non-Shift-produced symbols (e.g. [, ], ;, ') keeps strict
   // Shift matching.
-  describe('Symbol-key shift relaxation is narrow (BUG-18)', () => {
+  describe('Symbol-key shift relaxation is narrow', () => {
     it('`[` binding requires exact shift state (no shift)', () => {
       setCustomShortcut('graphZoomIn', '[')
       // Without shift matches
@@ -1317,7 +1317,7 @@ describe('keyboard-config', () => {
     })
   })
 
-  describe('Arrow key normalization (BUG-18)', () => {
+  describe('Arrow key normalization', () => {
     it('`Alt + ←` matches ArrowLeft with altKey', () => {
       expect(
         matchesShortcutBinding(
@@ -1361,9 +1361,9 @@ describe('keyboard-config', () => {
     })
   })
 
-  describe('Global shortcut rebinding (BUG-18)', () => {
+  describe('Global shortcut rebinding', () => {
     it('rebinding focusSearch to Ctrl+Shift+Q fires on new binding and not on old', () => {
-      // PEND-52 — the default focusSearch binding is now Ctrl+Shift+F.
+      // The default focusSearch binding is now Ctrl+Shift+F.
       // (Ctrl+F was reclaimed for the in-page find toolbar.)
       expect(
         matchesShortcutBinding(
@@ -1407,7 +1407,7 @@ describe('keyboard-config', () => {
     })
   })
 
-  describe('Tab shortcut bindings (BUG-18)', () => {
+  describe('Tab shortcut bindings', () => {
     it('Ctrl+Tab matches nextTab', () => {
       expect(
         matchesShortcutBinding(
@@ -1480,7 +1480,7 @@ describe('keyboard-config', () => {
     })
   })
 
-  describe('Journal shortcut rebinding (BUG-18)', () => {
+  describe('Journal shortcut rebinding', () => {
     it('rebinding prevDayWeekMonth to Ctrl+PageUp fires on new and not old', () => {
       // Default Alt+← fires
       expect(
@@ -1525,7 +1525,7 @@ describe('keyboard-config', () => {
     })
   })
 
-  describe('` / ` alternative splitting (BUG-18)', () => {
+  describe('` / ` alternative splitting', () => {
     it('custom `/` alternatives match either side', () => {
       setCustomShortcut('focusSearch', 'Ctrl + F / Ctrl + Shift + F')
       expect(

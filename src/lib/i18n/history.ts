@@ -178,7 +178,7 @@ export const history: Record<string, string> = {
   'history.revertPanelFailed': 'Failed to revert',
   'history.notRestorable': "This entry can't be restored",
   'history.loadDiffFailed': 'Failed to load diff',
-  // PEND-17 Part B — segmented control + primary button in the per-block
+  // Part B — segmented control + primary button in the per-block
   // history panel's expanded preview state.
   'history.diffMode.justThisChange': 'Just this change',
   'history.diffMode.comparedToCurrent': 'Compared to current',

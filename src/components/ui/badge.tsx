@@ -22,7 +22,7 @@ import { cn } from '@/lib/utils'
  *
  * Tone-specific colour data passes through the dedicated props:
  *  - `tone="priority"` → reads `priorityLevel` and delegates to
- *    `priorityColor()` (UX-201b: index-based, theme-aware).
+ * `priorityColor()` (index-based, theme-aware).
  *  - `tone="status"`   → reads `statusState` and applies the matching
  *    `bg-status-*` / `bg-alert-*` token pair.
  *

@@ -64,7 +64,7 @@ function closeCombobox(dom: HTMLElement): void {
 /**
  * Mobile / touch viewports get a larger flip+shift padding (16px) plus a
  * `size()` middleware that caps the popup height at 60vh. Desktop keeps the
- * original 8px padding and natural sizing (UX-273). Detection is via
+ * Original 8px padding and natural sizing. Detection is via
  * `(pointer: coarse)` so it matches the rest of the design system's
  * touch-target rules.
  */
@@ -109,7 +109,7 @@ async function updatePosition(
 
   // Mobile/touch viewports get a larger padding so popups don't clip near
   // the bottom of narrow viewports, plus a `size()` middleware that caps
-  // the popup at 60vh. Desktop behavior is unchanged (UX-273).
+  // The popup at 60vh. Desktop behavior is unchanged.
   const isCoarsePointer =
     typeof window !== 'undefined' &&
     typeof window.matchMedia === 'function' &&
@@ -137,7 +137,7 @@ async function updatePosition(
     middleware,
   })
 
-  // MAINT-175: shared helper applies coordinates; `position: 'fixed'` and
+  // Shared helper applies coordinates; `position: 'fixed'` and
   // `zIndex: '50'` are set during initial popup creation in `onStart`.
   applySafePosition(el, { x, y })
 }
@@ -167,7 +167,7 @@ export function createSuggestionRenderer(
   let outsideClickHandler: ((e: PointerEvent) => void) | null = null
   let editorRef: Editor | null = null
   let deferredRegistrationId: number | null = null
-  // PEND-27 P7: pending rAF id used to coalesce `onUpdate` position
+  // Pending rAF id used to coalesce `onUpdate` position
   // recomputes. The popup must track the cursor, but if the user types
   // multiple characters within a single frame we only need one
   // `computePosition` per frame. Cancelled in every teardown path so the
@@ -270,7 +270,7 @@ export function createSuggestionRenderer(
       popup.setAttribute('role', 'region')
       popup.setAttribute('aria-label', label ?? 'Suggestions')
       // Start off-screen to avoid flash at (0,0) before positioning settles.
-      // MAINT-175: shared helper for the off-screen fallback.
+      // Shared helper for the off-screen fallback.
       Object.assign(popup.style, {
         position: 'fixed',
         zIndex: '50',
@@ -281,14 +281,14 @@ export function createSuggestionRenderer(
       const popupRef = popup
       updatePosition(popup, props).catch((err: unknown) => {
         logger.warn('SuggestionRenderer', 'Position update failed', { label }, err)
-        // MAINT-175: keep popup off-screen on failure rather than at the
+        // Keep popup off-screen on failure rather than at the
         // last computed coordinates, which would orphan it mid-page.
         applySafePosition(popupRef, null)
       })
 
       // Dismiss popup on outside click (capture phase, like BlockContextMenu).
       // Defer listener registration by one frame to avoid catching pointer events
-      // from the same event loop tick that triggered the popup (BUG-2 fix).
+      // From the same event loop tick that triggered the popup (fix).
       outsideClickHandler = (e: PointerEvent) => {
         if (popup && !popup.contains(e.target as Node)) {
           logger.warn('SuggestionRenderer', 'outside click — deactivating plugin', { label })
@@ -324,7 +324,7 @@ export function createSuggestionRenderer(
       }
       renderer.updateProps(props)
       if (!popup) return
-      // PEND-27 P7: coalesce per-frame so burst typing (>1 keystroke per
+      // Coalesce per-frame so burst typing (>1 keystroke per
       // frame) collapses to a single `computePosition` call. Cancel any
       // previously-scheduled frame before scheduling a new one.
       if (pendingPositionFrame !== null) {
@@ -339,7 +339,7 @@ export function createSuggestionRenderer(
         if (!popup) return
         updatePosition(popupRef, props).catch((err: unknown) => {
           logger.warn('SuggestionRenderer', 'Position update failed', { label }, err)
-          // MAINT-175: keep popup off-screen on failure rather than at the
+          // Keep popup off-screen on failure rather than at the
           // last computed coordinates, which would orphan it mid-page.
           applySafePosition(popupRef, null)
         })

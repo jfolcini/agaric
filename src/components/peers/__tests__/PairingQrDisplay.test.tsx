@@ -28,7 +28,7 @@ vi.mock('@/lib/clipboard', () => ({
 }))
 const mockedWriteText = vi.mocked(writeText)
 
-// UX-377: capture announce() calls fired by the pause/resume transition effect
+// Capture announce() calls fired by the pause/resume transition effect
 vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
@@ -170,7 +170,7 @@ describe('PairingQrDisplay', () => {
     expect(srOnly?.textContent).toBe(t('pairing.srCountdownMinutes', { count: 2 }))
     expect(srOnly?.textContent).toBe('Session expires in 2 minutes')
 
-    // Singular form via the i18n plural rules, not manual 's' suffixing.
+    // Singular form via the i18n plural rules, not manual' suffixing.
     rerender(<PairingQrDisplay {...defaultProps} countdown={60} countdownDisplay="1:00" />)
     expect(srOnly?.textContent).toBe(t('pairing.srCountdownMinutes', { count: 1 }))
     expect(srOnly?.textContent).toBe('Session expires in 1 minute')
@@ -198,8 +198,8 @@ describe('PairingQrDisplay', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // ── UX-12: passphrase copy button + visible pause indicator ─────────
-  describe('passphrase copy button (UX-12)', () => {
+  // ── passphrase copy button + visible pause indicator ─────────
+  describe('passphrase copy button', () => {
     it('renders a copy button with the localized aria-label', () => {
       render(<PairingQrDisplay {...defaultProps} />)
 
@@ -240,12 +240,12 @@ describe('PairingQrDisplay', () => {
     })
   })
 
-  it('renders the visible pause indicator with text-foreground emphasis (UX-12)', () => {
+  it('renders the visible pause indicator with text-foreground emphasis', () => {
     const { container } = render(<PairingQrDisplay {...defaultProps} pausedByTyping={true} />)
 
     const paused = container.querySelector('.pairing-countdown-paused')
     expect(paused).toBeTruthy()
-    // UX-12 bumped the indicator from muted italic to text-foreground +
+    // Bumped the indicator from muted italic to text-foreground +
     // medium weight + Pause icon.
     expect(paused?.className).toContain('text-foreground')
     expect(paused?.className).toContain('font-medium')
@@ -262,8 +262,8 @@ describe('PairingQrDisplay', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // ── UX-377: pause/resume transitions are announced to SR users ──────
-  describe('SR pause/resume announcements (UX-377)', () => {
+  // ── pause/resume transitions are announced to SR users ──────
+  describe('SR pause/resume announcements', () => {
     it('does not announce on initial mount when not paused', () => {
       render(<PairingQrDisplay {...defaultProps} pausedByTyping={false} />)
 

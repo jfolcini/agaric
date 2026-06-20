@@ -8,10 +8,10 @@
  *  - `handleCreatePage`: creates a page in the active space, then either
  *    optimistically prepends a `BlockRow` + bumps the count chip (the
  *    common unfiltered case) or `reload()`s when chips are active
- *    (PEND-58d D10), and finally selects the new page. Distinguishes
+ *and finally selects the new page. Distinguishes
  *    duplicate-name conflicts from generic failures for the toast.
  *  - `handleCreateUnder`: seeds the input with a namespace prefix and
- *    focuses it after a 0ms timer (cancelled on unmount, #MAINT-14).
+ * Focuses it after a 0ms timer (cancelled on unmount, #).
  *
  * Extracted verbatim from `PageBrowser.tsx` (#1263). Pure move — same
  * effects, same deps, same timing, same optimistic-update behaviour.
@@ -69,10 +69,10 @@ export function usePageCreation({
   const newPageInputRef = useRef<HTMLInputElement>(null)
   // Register the "new page" input as the primary-focus target for this view
   // so switching to Pages via sidebar lands the cursor in the create form
-  // instead of the generic #main-content container (UX-220).
+  // Instead of the generic #main-content container.
   useRegisterPrimaryFocus(newPageInputRef)
   // Tracks the handleCreateUnder focus setTimeout so we can cancel it on
-  // unmount and avoid focusing a stale DOM node (#MAINT-14).
+  // Unmount and avoid focusing a stale DOM node (#).
   const pendingFocusRef = useRef<number | null>(null)
 
   // Clear any pending focus timer on unmount.
@@ -88,7 +88,7 @@ export function usePageCreation({
 
   const handleCreatePage = useCallback(async () => {
     const name = newPageName.trim() || t('pageBrowser.untitled')
-    // FEAT-3 Phase 2 — a page must belong to a space. On the rare
+    // Phase 2 — a page must belong to a space. On the rare
     // first-boot path where `SpaceStore` has not yet hydrated we
     // refuse to create and surface a toast rather than silently
     // creating an unscoped page. The `isReady` gate above normally
@@ -102,7 +102,7 @@ export function usePageCreation({
     try {
       const newId = await createPageInSpace({ content: name, spaceId: activeSpaceId })
       setNewPageName('')
-      // PEND-58d D10 — the optimistic prepend assumes the new page belongs
+      // The optimistic prepend assumes the new page belongs
       // at the top of the *current* result set. That only holds when no
       // compound-filter chips are active: with chips the server decides
       // membership (the new page may or may not match), and the prepended

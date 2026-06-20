@@ -1,10 +1,10 @@
 /**
- * PEND-55 — tests for `<SearchToggleRow>`.
+ * Tests for `<SearchToggleRow>`.
  *
  * Coverage:
  * - `role="toolbar"` on the container.
  * - Each toggle exposes its full label as `aria-label` (accessible name).
- * - Each toggle shows its always-visible abbreviation (#154 UX-A8 —
+ * Each toggle shows its always-visible abbreviation (#154 —
  *   touch-safe, no tooltip reliance).
  * - `aria-pressed` reflects the controlled state and flips on click.
  * - All three toggles render distinct SVG icons (regression guard
@@ -37,7 +37,7 @@ describe('SearchToggleRow', () => {
     expect(buttons[2]).toHaveAttribute('aria-label', expect.stringMatching(/Regex/))
   })
 
-  it('shows an always-visible abbreviation on each toggle (#154 UX-A8)', () => {
+  it('shows an always-visible abbreviation on each toggle (#154)', () => {
     // The abbreviation text is what makes the mode legible on touch,
     // where the old hover tooltip never fired. It is decorative
     // (aria-hidden) since the button already carries the full aria-label.
@@ -103,7 +103,7 @@ describe('SearchToggleRow', () => {
     }
   })
 
-  it('renders a non-colour active indicator only on pressed toggles (UX-15)', () => {
+  it('renders a non-colour active indicator only on pressed toggles', () => {
     render(
       <SearchToggleRow
         toggles={{ caseSensitive: true, wholeWord: false, isRegex: false }}

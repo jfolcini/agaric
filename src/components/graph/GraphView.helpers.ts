@@ -1,5 +1,5 @@
 /**
- * GraphView helpers — data-fetch extraction (MAINT-56) and shared types.
+ * GraphView helpers — data-fetch extraction and shared types.
  *
  * `fetchGraphData` consolidates the tag-dimension-driven page/link/template
  * fetch into a single helper that returns a normalised `{ nodes, edges }`
@@ -70,15 +70,15 @@ function countBacklinks(
  * The only server-side filter this applies is tag membership; every other
  * dimension is handled client-side via `applyGraphFilters`.
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, every IPC request is restricted
- * to the active space. Pass `null` to keep the pre-FEAT-3 cross-space
+ * `spaceId` (Phase 4) — when set, every IPC request is restricted
+ * To the active space. Pass `null` to keep the pre- cross-space
  * behaviour (used by tests that don't seed a space).
  */
 export async function fetchGraphData(
   tagFilterIds: readonly string[],
   spaceId: string | null,
 ): Promise<GraphFetchResult> {
-  // PEND-35 Tier 4.5 — push the active tag filter into `list_page_links`
+  // Push the active tag filter into `list_page_links`
   // so the backend ships only edges whose **target page** carries one
   // of the requested tags. Pre-Tier-4.5 the renderer fetched every
   // space-wide edge then dropped any whose endpoint was not in the

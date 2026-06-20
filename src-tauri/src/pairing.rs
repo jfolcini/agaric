@@ -79,7 +79,7 @@ pub fn generate_passphrase() -> String {
 // QR Code Payload & SVG Generation
 // ---------------------------------------------------------------------------
 
-/// L-59: current pairing QR payload schema version. Increment whenever
+/// Current pairing QR payload schema version. Increment whenever
 /// the JSON shape changes in a way that would confuse older joiners.
 pub const PAIRING_QR_VERSION: u32 = 1;
 
@@ -87,11 +87,11 @@ pub const PAIRING_QR_VERSION: u32 = 1;
 ///
 /// Returns: `{"v":1,"passphrase":"w1 w2 w3 w4"}`.
 ///
-/// L-59: the leading `"v"` field tags the schema version so the joining
+/// The leading `"v"` field tags the schema version so the joining
 /// device fails fast on a payload it cannot parse — a stale QR or an
 /// unrecognised future shape — rather than silently dropping fields.
 ///
-/// M-34: the QR carries only the passphrase. Discovery and address
+/// The QR carries only the passphrase. Discovery and address
 /// resolution are owned end-to-end by mDNS — there is no scan-bootstrap
 /// path, so the QR never embeds host/port.
 pub fn pairing_qr_payload(passphrase: &str) -> String {
@@ -104,14 +104,14 @@ pub fn pairing_qr_payload(passphrase: &str) -> String {
 
 /// Decoded payload extracted from a pairing QR code.
 ///
-/// M-34: only the passphrase travels in the QR — mDNS owns discovery and
+/// Only the passphrase travels in the QR — mDNS owns discovery and
 /// address resolution end-to-end, so no host/port fields exist here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PairingQrPayload {
     pub passphrase: String,
 }
 
-/// L-59: parse a pairing QR JSON payload, validating its schema version.
+/// Parse a pairing QR JSON payload, validating its schema version.
 ///
 /// Returns [`AppError::InvalidOperation`] tagged with
 /// `pairing_qr.unsupported_version` when `v` is missing or not equal to
@@ -395,44 +395,41 @@ mod tests {
         let payload = pairing_qr_payload("alpha bravo charlie delta");
         let parsed: serde_json::Value =
             serde_json::from_str(&payload).expect("payload must be valid JSON");
-        // L-59: payload must declare its schema version explicitly.
-        assert_eq!(parsed["v"], 1, "L-59: payload must include \"v\":1");
+        // Payload must declare its schema version explicitly.
+        assert_eq!(parsed["v"], 1, "payload must include \"v\":1");
         assert_eq!(parsed["passphrase"], "alpha bravo charlie delta");
-        // M-34: host and port are no longer part of the QR payload —
+        // Host and port are no longer part of the QR payload —
         // mDNS owns discovery + address resolution end-to-end.
         let object = parsed
             .as_object()
-            .expect("M-34: QR payload must be a JSON object");
+            .expect("QR payload must be a JSON object");
         assert_eq!(
             object.len(),
             2,
-            "M-34: QR payload must contain exactly {{v, passphrase}}, got: {:?}",
+            "QR payload must contain exactly {{v, passphrase}}, got: {:?}",
             object.keys().collect::<Vec<_>>()
         );
         assert!(
             !object.contains_key("host"),
-            "M-34: QR payload must not contain 'host'"
+            "QR payload must not contain 'host'"
         );
         assert!(
             !object.contains_key("port"),
-            "M-34: QR payload must not contain 'port'"
+            "QR payload must not contain 'port'"
         );
     }
 
-    /// L-59: encoded payload must always include `"v":1`.
+    /// Encoded payload must always include `"v":1`.
     #[test]
     fn pairing_qr_payload_includes_version_field() {
         let payload = pairing_qr_payload("a b c d");
         let parsed: serde_json::Value =
             serde_json::from_str(&payload).expect("payload must be valid JSON");
-        assert_eq!(
-            parsed["v"], 1,
-            "L-59: every QR payload must carry the version"
-        );
+        assert_eq!(parsed["v"], 1, "every QR payload must carry the version");
         assert_eq!(parsed["v"].as_u64(), Some(u64::from(PAIRING_QR_VERSION)));
     }
 
-    /// L-59: `parse_pairing_qr` must accept the encoder's own output —
+    /// `parse_pairing_qr` must accept the encoder's own output —
     /// round-trip safety is the primary contract.
     #[test]
     fn parse_pairing_qr_round_trips_encoded_payload() {
@@ -442,7 +439,7 @@ mod tests {
         assert_eq!(decoded.passphrase, "alpha bravo charlie delta");
     }
 
-    /// L-59: a payload missing `v` must be rejected with the
+    /// A payload missing `v` must be rejected with the
     /// `pairing_qr.unsupported_version` tag so the joiner can show a
     /// version-mismatch message instead of silently parsing unknown
     /// fields.
@@ -458,14 +455,14 @@ mod tests {
             AppError::InvalidOperation(msg) => {
                 assert_eq!(
                     msg, "pairing_qr.unsupported_version",
-                    "L-59: error tag must be pairing_qr.unsupported_version, got {msg}"
+                    "error tag must be pairing_qr.unsupported_version, got {msg}"
                 );
             }
             other => panic!("expected InvalidOperation, got {other:?}"),
         }
     }
 
-    /// L-59: an unknown future `"v":2` must be rejected with the same
+    /// An unknown future `"v":2` must be rejected with the same
     /// `pairing_qr.unsupported_version` tag, matching the missing-version
     /// case above.
     #[test]
@@ -481,7 +478,7 @@ mod tests {
             AppError::InvalidOperation(msg) => {
                 assert_eq!(
                     msg, "pairing_qr.unsupported_version",
-                    "L-59: error tag must be pairing_qr.unsupported_version, got {msg}"
+                    "error tag must be pairing_qr.unsupported_version, got {msg}"
                 );
             }
             other => panic!("expected InvalidOperation, got {other:?}"),
@@ -523,10 +520,10 @@ mod tests {
         );
     }
 
-    /// M-34: the QR payload carries only `{v, passphrase}` — no `host`
+    /// The QR payload carries only `{v, passphrase}` — no `host`
     /// and no `port`. Discovery + address resolution are owned end-to-end
     /// by mDNS; embedding bind-address fields in the QR was the
-    /// drift fixed by M-34.
+    /// Drift fixed by.
     #[test]
     fn start_pairing_qr_payload_carries_only_passphrase_m34() {
         let payload = pairing_qr_payload("alpha bravo charlie delta");
@@ -534,30 +531,30 @@ mod tests {
             serde_json::from_str(&payload).expect("payload must be valid JSON");
         let object = parsed
             .as_object()
-            .expect("M-34: QR payload must be a JSON object");
+            .expect("QR payload must be a JSON object");
 
         // Exactly two keys: `v` (schema version) and `passphrase`.
         assert_eq!(
             object.len(),
             2,
-            "M-34: QR payload must contain exactly two keys, got: {:?}",
+            "QR payload must contain exactly two keys, got: {:?}",
             object.keys().collect::<Vec<_>>()
         );
         assert!(
             object.contains_key("v"),
-            "M-34: QR payload must contain 'v' (schema version)"
+            "QR payload must contain 'v' (schema version)"
         );
         assert!(
             object.contains_key("passphrase"),
-            "M-34: QR payload must contain 'passphrase'"
+            "QR payload must contain 'passphrase'"
         );
         assert!(
             !object.contains_key("host"),
-            "M-34: QR payload must not contain 'host' — mDNS owns discovery"
+            "QR payload must not contain 'host' — mDNS owns discovery"
         );
         assert!(
             !object.contains_key("port"),
-            "M-34: QR payload must not contain 'port' — mDNS owns address resolution"
+            "QR payload must not contain 'port' — mDNS owns address resolution"
         );
     }
 

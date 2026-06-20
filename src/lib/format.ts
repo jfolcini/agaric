@@ -35,7 +35,7 @@ export function truncateId(id: string, len = 12): string {
 }
 
 /**
- * Format a byte count for human display (UX-384). Uses 1024-based units
+ * Format a byte count for human display. Uses 1024-based units
  * because file sizes coming from `File.size` are byte counts of file
  * content, and the import progress UI is comparing against on-disk
  * markdown that file managers also display in KB/MB.

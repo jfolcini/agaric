@@ -13,10 +13,10 @@ use super::draft_recovery::recover_single_draft;
 use super::replay::{heal_orphaned_apply_cursor, replay_unmaterialized_ops};
 
 // ---------------------------------------------------------------------------
-// L-103: once-only guard
+// Once-only guard
 // ---------------------------------------------------------------------------
 
-/// L-103 once-only flag. The module docs (`recovery/mod.rs`) state that
+/// Once-only flag. The module docs (`recovery/mod.rs`) state that
 /// `recover_at_boot` MUST be called exactly once at application start-up,
 /// before any user operations are allowed, and is **not safe** to run
 /// concurrently with normal user operations. Today every caller honours
@@ -38,7 +38,7 @@ use super::replay::{heal_orphaned_apply_cursor, replay_unmaterialized_ops};
 /// `test_pool()`.
 static RECOVERY_DONE: AtomicBool = AtomicBool::new(false);
 
-/// Reset the L-103 once-only guard. **Test-only.** Production callers
+/// Reset the once-only guard. **Test-only.** Production callers
 /// must never reset the flag — the contract is "exactly once per
 /// process".
 #[cfg(test)]
@@ -82,7 +82,7 @@ pub async fn recover_at_boot(
     materializer: &Materializer,
     registry: &crate::loro::registry::LoroEngineRegistry,
 ) -> Result<RecoveryReport, AppError> {
-    // L-103: enforce the once-per-process contract. `compare_exchange`
+    // Enforce the once-per-process contract. `compare_exchange`
     // atomically flips `false -> true` on the first call; subsequent
     // calls see `true` and return `InvalidOperation` BEFORE touching
     // the pool. The guard is reset in tests via `reset_recovery_guard`.
@@ -93,7 +93,7 @@ pub async fn recover_at_boot(
         return Err(AppError::InvalidOperation(
             "recover_at_boot called more than once per process — \
              must be called exactly once at start-up before any user \
-             operations (L-103)"
+             operations"
                 .to_string(),
         ));
     }
@@ -197,7 +197,7 @@ pub async fn recover_at_boot(
     // dynamic IN clauses, so we use runtime sqlx::query() here. This is
     // acceptable — the query is straightforward and only runs once at boot.
     //
-    // L-104: SQLite caps bind parameters at `MAX_SQL_PARAMS` (999) per query.
+    // SQLite caps bind parameters at `MAX_SQL_PARAMS` (999) per query.
     // A multi-thousand-block paste crash can leave > 999 rows in
     // `block_drafts`; building one giant IN clause would fail with "too many
     // SQL variables". Chunk the IN clause and accumulate the result set

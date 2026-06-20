@@ -4,7 +4,7 @@
  * CommandPalette.tsx (#751) so the prefix vocabulary is unit-testable
  * in isolation from the React body.
  *
- * Prefix vocabulary (PEND-61 / PEND-67 Phase 3):
+ * Prefix vocabulary (Phase 3):
  *   - `[[…`  → page-link autocomplete (a sub-mode of `'search'`)
  *   - `>`    → commands mode
  *   - `#`    → tags mode (block_type=tag search)
@@ -36,7 +36,7 @@ export function commandsModeQuery(input: string): string {
   return input.slice(1).trimStart()
 }
 
-/** PEND-67 Phase 3 — `#` prefix enters tags mode (block_type=tag search). */
+/** Phase 3 — `#` prefix enters tags mode (block_type=tag search). */
 export function isTagsModeInput(input: string): boolean {
   return input.startsWith('#')
 }
@@ -46,7 +46,7 @@ export function tagsModeQuery(input: string): string {
   return input.slice(1).trimStart()
 }
 
-/** PEND-67 Phase 3 — `?` prefix enters help mode (shortcut catalog). */
+/** Phase 3 — `?` prefix enters help mode (shortcut catalog). */
 export function isHelpModeInput(input: string): boolean {
   return input.startsWith('?')
 }
@@ -57,7 +57,7 @@ export function helpModeQuery(input: string): string {
 }
 
 /**
- * PEND-67 Phase 3 — map a prefix-bearing search-mode query to the
+ * Phase 3 — map a prefix-bearing search-mode query to the
  * target mode + stripped query. Pulled out of `PaletteBody`'s
  * useEffect so the body stays under oxlint's eslint/complexity
  * budget as more prefixes are added.

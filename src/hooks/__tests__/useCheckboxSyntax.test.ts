@@ -23,7 +23,7 @@ import { useCheckboxSyntax } from '../useCheckboxSyntax'
 
 vi.mock('../../lib/tauri', () => ({
   setTodoState: vi.fn(),
-  // PEND-35 Tier 2.4c — checkbox-syntax DONE path now reads
+  // Checkbox-syntax DONE path now reads
   // `blocked_by` via the single-key `getProperty` command.
   getProperty: vi.fn(),
 }))
@@ -67,7 +67,7 @@ describe('useCheckboxSyntax', () => {
     mockedSetTodoState.mockRejectedValue(failure)
 
     const pageStore = {
-      // PEND-20 G — `useCheckboxSyntax` reads via `blocksById.get(...)`.
+      // G — `useCheckboxSyntax` reads via `blocksById.get(...)`.
       getState: () => ({ blocks: [], blocksById: new Map() }),
       setState: vi.fn(),
     } as unknown as StoreApi<PageBlockState>
@@ -103,7 +103,7 @@ describe('useCheckboxSyntax', () => {
     const initialBlocks = [makeBlock({ id: 'B1', todo_state: 'TODO' })]
     const pageStore = createStore<PageBlockState>()(() => ({
       blocks: initialBlocks,
-      // PEND-20 G — keep Map in sync with `blocks`.
+      // G — keep Map in sync with `blocks`.
       blocksById: new Map(initialBlocks.map((b) => [b.id, b])),
       rootParentId: 'R1',
       loading: false,

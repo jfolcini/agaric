@@ -1,5 +1,5 @@
 /**
- * Tests for LinkPreviewTooltip component (UX-165).
+ * Tests for LinkPreviewTooltip component.
  *
  * Validates:
  *  - Returns null when no link is hovered
@@ -207,11 +207,11 @@ describe('LinkPreviewTooltip', () => {
     expect(tooltip.querySelector('img')).toBeNull()
     expect(tooltip.querySelector('svg')).toBeInTheDocument()
     // auth_required must NOT trigger the not-found tag (those two
-    // states are visually distinct — MAINT-213).
+    // States are visually distinct).
     expect(screen.queryByTestId('link-preview-not-found-tag')).toBeNull()
   })
 
-  // MAINT-213: 404/410 must produce a visually distinct presentation
+  // 404/410 must produce a visually distinct presentation
   // from auth_required (sign-in) and from transient 5xx. The tooltip
   // shows the same Globe icon + URL but appends a muted "(not found)"
   // tag so the user knows the page is terminally gone.
@@ -263,7 +263,7 @@ describe('LinkPreviewTooltip', () => {
     expect(tooltip).toHaveAttribute('role', 'tooltip')
   })
 
-  it('logs a warning and applies fallback position when computePosition rejects (BUG-32)', async () => {
+  it('logs a warning and applies fallback position when computePosition rejects', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const computePositionErr = new Error('computePosition boom')
     vi.mocked(computePosition).mockRejectedValueOnce(computePositionErr)
@@ -296,7 +296,7 @@ describe('LinkPreviewTooltip', () => {
     warnSpy.mockRestore()
   })
 
-  // ── Keyboard / focus support (UX-273) ──────────────────────────────
+  // ── Keyboard / focus support ──────────────────────────────
   // The hook is mocked in this file, so these tests verify that the tooltip
   // renders the same presentational output regardless of whether the hook
   // state was triggered by hover (pointerenter) or focus (focusin). The

@@ -10,14 +10,14 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
 
-/// L-1: shared shape of [`Materializer::fg_sender`] /
+/// Shared shape of [`Materializer::fg_sender`] /
 /// [`Materializer::bg_sender`].
 ///
 /// The senders live in `OnceLock`s and are populated once during
 /// construction. Reads are lock-free; the `shutdown_flag` short-circuit
 /// preserves the prior `Channel("…queue closed")` error semantics so
 /// callers (notably `try_enqueue_background`) keep behaving as before
-/// the L-1 refactor.
+/// The refactor.
 fn sender_or_closed(
     cell: &std::sync::OnceLock<mpsc::Sender<MaterializeTask>>,
     is_shutdown: bool,
@@ -39,7 +39,7 @@ fn sender_or_closed(
 /// Adding a new block-referencing cache should only require appending to
 /// this array — the three dispatch arms pick up the change automatically.
 ///
-/// ## Ordering semantics (MAINT-148h)
+/// ## Ordering semantics
 ///
 /// Each arm is enqueued in this order via `try_enqueue_background`, then
 /// the background queue's [`super::dedup::dedup_tasks`] pass collapses
@@ -75,7 +75,7 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 8] = [
     MaterializeTask::RebuildProjectedAgendaCache,
     MaterializeTask::RebuildTagInheritanceCache,
     MaterializeTask::RebuildPageIds,
-    // UX-250: inline `#[ULID]` references may disappear when a block
+    // Inline `#[ULID]` references may disappear when a block
     // (or a subtree containing referencing blocks) is deleted; the
     // full recompute picks that up on the same queue drain as the
     // other caches.
@@ -188,7 +188,7 @@ impl Materializer {
     /// Order is fixed by [`FULL_CACHE_REBUILD_TASKS`] so tests can assert
     /// the exact sequence against `BackgroundQueue::inspect()` / metrics.
     ///
-    /// PEND-28a M4: production dispatch now reads
+    /// Production dispatch now reads
     /// [`FULL_CACHE_REBUILD_TASKS`] directly from
     /// [`invalidations_for_op`] instead of round-tripping through this
     /// method, so the helper survives only as a test affordance for
@@ -204,7 +204,7 @@ impl Materializer {
     }
 
     /// Enqueue the read-path derived-cache + FTS rebuild fan-out after an
-    /// inbound sync import (PEND-81 §2A #4).
+    /// Inbound sync import (#4).
     ///
     /// The loro-sync receiver ([`crate::sync_protocol::loro_sync::apply_remote`])
     /// writes each changed block's per-block SQL projection — core columns,
@@ -290,7 +290,7 @@ impl Materializer {
     /// for `record`, ensuring the bg tasks land **after** ApplyOp has
     /// drained.
     ///
-    /// L-17: the fg and bg queues have independent consumers, so naively
+    /// The fg and bg queues have independent consumers, so naively
     /// enqueueing bg right after fg let the bg consumer pull e.g.
     /// `RebuildTagsCache` and execute it against pre-`CreateBlock` state.
     /// Awaiting `flush_foreground` (which appends a Barrier and blocks
@@ -311,7 +311,7 @@ impl Materializer {
     /// metric-driven side effects (FTS optimize threshold) that aren't
     /// captured by the pure dispatch table.
     ///
-    /// PEND-28a M4: the per-op-type → required-task matrix lives in
+    /// The per-op-type → required-task matrix lives in
     /// [`invalidations_for_op`] as a focused, side-effect-free function
     /// returning `Vec<MaterializeTask>` so tests can pin "every op of
     /// kind X invalidates cache Y" without driving the full materializer.
@@ -380,7 +380,7 @@ impl Materializer {
 /// for `edit_block`) to the ordered list of background
 /// [`MaterializeTask`]s that should be enqueued for it.
 ///
-/// PEND-28a M4: lifted out of the former imperative match in
+/// Lifted out of the former imperative match in
 /// [`Materializer::enqueue_background_tasks`] so the per-op-type cache
 /// invalidation matrix is auditable and testable as data. Adding a new
 /// op type or changing which caches an existing op invalidates is a
@@ -438,7 +438,7 @@ fn invalidations_for_op(
                 tasks.push(MaterializeTask::UpdateFtsBlock {
                     block_id: Arc::clone(&block_id),
                 });
-                // UX-250: a freshly created block can already contain
+                // A freshly created block can already contain
                 // inline `#[ULID]` tag refs if the creator passed
                 // non-empty content (imports, paste, programmatic
                 // creates). Scan for them.
@@ -461,7 +461,7 @@ fn invalidations_for_op(
             tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
         }
         OpType::EditBlock => {
-            // L-13: use the cached `OpRecord::block_id` sidecar
+            // Use the cached `OpRecord::block_id` sidecar
             // populated at append-time (or parsed once on the sync
             // ingress in `From<OpTransfer> for OpRecord`) so this
             // dispatch path no longer re-parses `record.payload`
@@ -475,7 +475,7 @@ fn invalidations_for_op(
                 tasks.push(MaterializeTask::ReindexBlockLinks {
                     block_id: Arc::from(block_id),
                 });
-                // UX-250: reindex inline tag refs regardless of
+                // Reindex inline tag refs regardless of
                 // `block_type_hint` — every content edit may gain or
                 // lose `#[ULID]` tokens. Tag/page blocks typically
                 // don't contain inline refs themselves but the cost
@@ -519,7 +519,7 @@ fn invalidations_for_op(
             // after the caller has drained this vec.
         }
         OpType::DeleteBlock => {
-            // L-13: use the cached sidecar instead of re-parsing
+            // Use the cached sidecar instead of re-parsing
             // `record.payload`.  Same rationale as the `edit_block`
             // arm above.
             let block_id = record.block_id.as_deref().unwrap_or_default();
@@ -531,7 +531,7 @@ fn invalidations_for_op(
             }
         }
         OpType::RestoreBlock => {
-            // L-13: cached sidecar — no JSON re-parse.
+            // Cached sidecar — no JSON re-parse.
             let block_id = record.block_id.as_deref().unwrap_or_default();
             tasks.extend(FULL_CACHE_REBUILD_TASKS.iter().cloned());
             if !block_id.is_empty() {
@@ -541,7 +541,7 @@ fn invalidations_for_op(
             }
         }
         OpType::PurgeBlock => {
-            // L-13: cached sidecar — no JSON re-parse.
+            // Cached sidecar — no JSON re-parse.
             let block_id = record.block_id.as_deref().unwrap_or_default();
             tasks.extend(FULL_CACHE_REBUILD_TASKS.iter().cloned());
             if !block_id.is_empty() {
@@ -641,7 +641,7 @@ fn invalidations_for_op(
 
 #[cfg(test)]
 mod tests {
-    //! PEND-28a M4: pinning tests for the per-op-type cache invalidation
+    //! pinning tests for the per-op-type cache invalidation
     //! matrix. Each test asserts the exact ordered list of background
     //! tasks that [`invalidations_for_op`] returns for a given op-type
     //! (and `block_type_hint`, where applicable). These are the

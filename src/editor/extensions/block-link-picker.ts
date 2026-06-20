@@ -37,7 +37,7 @@ declare module '@tiptap/core' {
  * Exact-match predicate for the BlockLink resolve paths.
  *
  * Look for an exact match: case-insensitive label OR exact alias text.
- * With prefix-alias matching now in `searchPages` (PEND-34), multiple items
+ * With prefix-alias matching now in `searchPages`, multiple items
  * can carry `isAlias: true` for prefixes that aren't `text` exactly — only
  * the alias whose `aliasText === text` should auto-resolve from the input
  * rule / selection-resolve path. Using `aliasText` instead of the dropped
@@ -80,7 +80,7 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           const insertPos = from
           editor.chain().focus().deleteRange({ from, to }).run()
 
-          // MAINT-203: shared FE-M-15 race-guard.
+          // Shared race-guard.
           void resolveAndInsertPickerToken({
             editor,
             text: selectedText,
@@ -115,9 +115,9 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           // Delete the [[text]] range immediately so the raw text doesn't linger
           state.tr.delete(range.from, range.to)
 
-          // MAINT-203: shared FE-M-15 race-guard. Token shape `block_link`;
+          // Shared race-guard. Token shape `block_link`;
           // exact-match recognises `aliasText === text` so `[[my-alias]]`
-          // resolves to its target page (PEND-34).
+          // Resolves to its target page.
           void resolveAndInsertPickerToken({
             editor,
             text: innerText,

@@ -19,7 +19,7 @@ use crate::op_log::{
     serialize_inner_payload,
 };
 
-/// M-4: hard cap on the number of `prev_edit` chain steps `find_lca` will
+/// Hard cap on the number of `prev_edit` chain steps `find_lca` will
 /// walk before giving up.  docs/ARCHITECTURE.md §4 documents this 10,000-step
 /// cap as the cycle-detection ceiling; both the CTE's `depth < MAX_LCA_STEPS`
 /// recursion bound AND the Rust-side HashSet check below enforce it so a
@@ -179,7 +179,7 @@ where
         }
     }
 
-    // L-10 (PEND-25): borrow `device_id` from `rows` for the visited
+    // Borrow `device_id` from `rows` for the visited
     // set so we no longer materialise an owned `String` per visited
     // entry. The hot-path LCA in `find_lca` already uses
     // `HashSet<(&str, i64)>`; this aligns the cold-path walker with the
@@ -301,7 +301,7 @@ async fn walk_edit_chain_oracle<F>(
 where
     F: FnMut(&str, i64) -> bool,
 {
-    // L-10 (PEND-25): mirror the production walker's `(&str, i64)`
+    // Mirror the production walker's `(&str, i64)`
     // predicate signature. The oracle still walks one step at a time
     // (no batched CTE), so it cannot share the borrowed-`&str` visited
     // set without a lifetime headache for the per-iteration owned
@@ -434,7 +434,7 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
         ));
     }
 
-    // M-5: verify every `(device_id, seq)` entry in `parent_seqs` already
+    // Verify every `(device_id, seq)` entry in `parent_seqs` already
     // exists in `op_log` before landing this row.  Without the check, a
     // buggy peer or a corrupted stream can insert a row whose parent
     // pointer dangles, silently breaking later DAG walks (`find_lca`,
@@ -526,7 +526,7 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
     // INSERT OR IGNORE — duplicate delivery is a no-op.
     // Returns true if a row was inserted, false if it was a duplicate.
     //
-    // PERF-26: populate the indexed block_id column (migration 0030) from
+    // Populate the indexed block_id column (migration 0030) from
     // the JSON payload so sync'd remote ops participate in fast block-scoped
     // lookups. Local ops use OpPayload::block_id() directly; here we only
     // have the serialized payload string.
@@ -574,7 +574,7 @@ pub async fn append_merge_op(
     parent_entries: Vec<(String, i64)>,
 ) -> Result<OpRecord, AppError> {
     // Sort lexicographically for deterministic hashing, then dedup.
-    // PEND-24 M5 — `parent_entries` is caller-supplied and we have seen
+    // `parent_entries` is caller-supplied and we have seen
     // no contract preventing duplicate `(device_id, seq)` pairs from
     // reaching here. A duplicate parent collapses to a single distinct
     // entry post-dedup, so we re-check `< 2` after the dedup as well —
@@ -617,7 +617,7 @@ pub async fn append_merge_op(
         &payload_json,
     );
 
-    // PERF-26: populate indexed block_id column from the typed payload.
+    // Populate indexed block_id column from the typed payload.
     let block_id: Option<&str> = op_payload.block_id();
 
     // SQL-review B-4 / migration 0064: same denormalisation pattern as
@@ -651,7 +651,7 @@ pub async fn append_merge_op(
         op_type,
         payload: payload_json,
         created_at,
-        // L-13: cache the typed payload's block_id sidecar — same
+        // Cache the typed payload's block_id sidecar — same
         // sidecar populated on the local-append path.
         block_id: block_id.map(str::to_owned),
     })

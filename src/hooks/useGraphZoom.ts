@@ -1,6 +1,6 @@
 /**
  * useGraphZoom — owns the d3 zoom behavior + keyboard zoom shortcut for
- * the graph canvas. Extracted from `useGraphSimulation` per MAINT-127.
+ * The graph canvas. Extracted from `useGraphSimulation`.
  *
  * Returns three imperative zoom callbacks (used by GraphView's zoom
  * buttons) plus an `attach` function the orchestrator calls inside its

@@ -53,7 +53,7 @@ pub use agenda::{
     count_agenda_batch_inner, list_projected_agenda, list_projected_agenda_inner,
     list_undated_tasks, list_undated_tasks_inner,
 };
-// MAINT-164: `_on_the_fly` exposed for date-clock-pinned regression tests.
+// `_on_the_fly` exposed for date-clock-pinned regression tests.
 // Tests bypass the cache (which itself reads `chrono::Local::now()` and
 // produces today-anchored rows that drift over time) and call this path
 // directly with a fixed `today`. Production callers use
@@ -453,7 +453,7 @@ pub struct DateRange {
 /// Bundled agenda filter for the [`list_blocks`] Tauri command.
 ///
 /// Exists purely to keep `list_blocks`'s argument count under the
-/// `tauri-specta` 10-arg limit after FEAT-3 Phase 2 added `space_id`.
+/// `tauri-specta` 10-arg limit after Phase 2 added `space_id`.
 /// The three sub-fields were previously top-level parameters and are
 /// still threaded into `list_blocks_inner` as individual parameters —
 /// the bundling is a transport-layer concern. `None` means "no agenda
@@ -479,9 +479,9 @@ pub struct AgendaQuery {
 /// Bundled extra filters for the [`query_by_property`] Tauri command.
 ///
 /// Exists purely to keep `query_by_property`'s argument count under
-/// the `tauri-specta` 10-arg limit. PEND-35 Tier 1.5 added
+/// The `tauri-specta` 10-arg limit. added
 /// `exclude_parent_id` / `content_non_empty` (pushing this command
-/// to 9 IPC args incl. `pool`); PEND-35 Tier 3.4 adds another three
+/// To 9 IPC args incl. `pool`); adds another three
 /// (`block_type`, `value_text_in`, `value_date_range`). Bundling all
 /// five into one struct keeps the IPC arg count at 8.
 ///
@@ -499,19 +499,19 @@ pub struct AgendaQuery {
 #[derive(Debug, Clone, Default, serde::Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtraQueryFilters {
-    /// PEND-35 Tier 1.5 — exclude rows whose `parent_id` matches.
+    /// Exclude rows whose `parent_id` matches.
     /// `IS NOT` semantics so NULL parents are kept.
     pub exclude_parent_id: Option<String>,
-    /// PEND-35 Tier 1.5 — drop rows whose content is NULL, empty, or
+    /// Drop rows whose content is NULL, empty, or
     /// whitespace-only (matches FE `!b.content?.trim()`).
     pub content_non_empty: Option<bool>,
-    /// PEND-35 Tier 3.4 — push `block_type = ?` into SQL.
+    /// Push `block_type = ?` into SQL.
     pub block_type: Option<String>,
-    /// PEND-35 Tier 3.4 — push `value_text IN (...)` into SQL via
+    /// Push `value_text IN (...)` into SQL via
     /// `json_each`. Mutually exclusive with `value_text` on
     /// `query_by_property`.
     pub value_text_in: Option<Vec<String>>,
-    /// PEND-35 Tier 3.4 — push `value_date >= from AND value_date < to`
+    /// Push `value_date >= from AND value_date < to`
     /// into SQL (half-open `[from, to)` range).
     pub value_date_range: Option<(String, String)>,
     /// #738 sub-2 — push `b.todo_state NOT IN (...)` into SQL so the
@@ -566,14 +566,14 @@ pub struct PropertyRow {
     pub value_num: Option<f64>,
     pub value_date: Option<String>,
     pub value_ref: Option<String>,
-    /// PEND-14: native boolean property storage. SQLite represents booleans
+    /// Native boolean property storage. SQLite represents booleans
     /// as INTEGER (0/1, with a CHECK constraint allowing only NULL/0/1).
     pub value_bool: Option<i64>,
 }
 
 /// Input bundle for the `set_property` Tauri command — collects all
 /// possible typed values into a single struct so the IPC handler stays
-/// under specta's 10-positional-argument limit (PEND-14 added a 5th
+/// Under specta's 10-positional-argument limit (added a 5th
 /// `value_bool` slot which would have made the flat signature exceed
 /// the cap). Exactly one field should be `Some` for non-reserved keys
 /// (the inner validator enforces this); reserved-key clears may pass
@@ -588,7 +588,7 @@ pub struct SetPropertyArgs {
     pub value_date: Option<String>,
     #[serde(default)]
     pub value_ref: Option<String>,
-    /// PEND-14: native boolean property value (`true` / `false`).
+    /// Native boolean property value (`true` / `false`).
     #[serde(default)]
     pub value_bool: Option<bool>,
 }
@@ -689,7 +689,7 @@ pub struct PropertyDefinition {
 
 /// Response payload returned by [`start_pairing`].
 ///
-/// M-34: the QR payload + [`PairingInfo`] both carry only the passphrase.
+/// The QR payload + [`PairingInfo`] both carry only the passphrase.
 /// mDNS owns discovery + address resolution end-to-end; there is no
 /// scan-bootstrap path that would need a `host`/`port` here.
 #[derive(Debug, Clone, Serialize, Type)]
@@ -739,7 +739,7 @@ struct ResolvedBlockRow {
 
 /// List op-log history entries for a specific block, with cursor pagination.
 ///
-/// PEND-35 Tier 1.3 — `op_type_filter` is pushed into SQL so the FE no
+/// `op_type_filter` is pushed into SQL so the FE no
 /// longer drops rows post-pagination. Mirrors `list_page_history_inner`.
 ///
 /// #663 — takes a [`BlockId`] (not a raw `String`) so the ULID is
@@ -770,7 +770,7 @@ async fn delete_property_core(
     block_id: String,
     key: String,
 ) -> Result<(), AppError> {
-    // 1. Begin IMMEDIATE transaction (MAINT-112: CommandTx couples
+    // 1. Begin IMMEDIATE transaction (CommandTx couples
     //    commit + post-commit dispatch so a failed commit never leaks
     //    an op_record to the materializer).
     let mut tx = CommandTx::begin_immediate(pool, "delete_property_core").await?;
@@ -805,7 +805,7 @@ async fn delete_property_core(
     )
     .await?;
 
-    // 4. #1257 PR-3: route the clear/delete through the SAME engine-apply +
+    // 4. #1257 route the clear/delete through the SAME engine-apply +
     // projection the boot-replay / sync `ApplyOp` path uses, IN this CommandTx,
     // INSTEAD of the inline reserved-column / `space` fan-out / `block_properties`
     // DELETE branches. `apply_delete_property_via_loro` resolves the block's

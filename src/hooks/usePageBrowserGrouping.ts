@@ -5,7 +5,7 @@
  * `sortTopLevelUnits` comparator, plus a thin `useMemo` wrapper that
  * picks the right branch based on the current vault shape.
  *
- * Extracted from `PageBrowser.tsx` (MAINT-128).
+ * Extracted from `PageBrowser.tsx`.
  */
 
 import { useMemo } from 'react'
@@ -17,7 +17,7 @@ import type { BlockRow } from '../lib/tauri'
 import type { SortOption } from './usePageBrowserSort'
 
 /**
- * FEAT-14 — Unified `Starred` + `Pages` row model.
+ * Unified `Starred` + `Pages` row model.
  *
  * The virtualizer renders a single ordered list of rows produced by the
  * grouping memo. Three row kinds:
@@ -84,7 +84,7 @@ export interface GroupedRowsResult {
 }
 
 /**
- * Single-page (or empty) flat-vault branch — preserved from FEAT-12,
+ * Single-page (or empty) flat-vault branch — preserved,
  * avoids visual noise on a brand-new vault. Only kicks in when the
  * lone page is non-namespaced; a single namespaced page falls
  * through to the multi-page branch so the tree shape renders
@@ -116,7 +116,7 @@ export function buildSinglePageBranch(
 
 /**
  * Multi-page branch — produces the unified `Starred` + `Pages` row
- * model described in the FEAT-14 doc-comment on `PageBrowserRow`.
+ * Model described in the doc-comment on `PageBrowserRow`.
  * Extracted from the grouping memo to keep oxlint's eslint/complexity
  * below 25 per function.
  */

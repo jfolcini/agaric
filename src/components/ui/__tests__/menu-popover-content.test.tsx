@@ -1,5 +1,5 @@
 /**
- * Tests for the MenuPopoverContent wrapper (PEND-23 L9).
+ * Tests for the MenuPopoverContent wrapper.
  *
  * Validates:
  *  - displayName is set

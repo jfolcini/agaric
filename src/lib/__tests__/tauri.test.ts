@@ -153,7 +153,7 @@ describe('createBlock', () => {
       content: 'hello',
       parentId: 'PARENT01',
       index: 3,
-      // BUG-1 / H-3a + PEND-18 Phase 3: every `create_block` IPC call
+      // / H-3a + Phase 3: every `create_block` IPC call
       // carries the `scope` tagged-enum. For non-page block types
       // `{ kind: 'global' }` is correct (the backend ignores it).
       scope: { kind: 'global' },
@@ -178,7 +178,7 @@ describe('createBlock', () => {
       content: 'test',
       parentId: null,
       index: null,
-      // BUG-1 / H-3a + PEND-18 Phase 3: in production a page-typed
+      // / H-3a + Phase 3: in production a page-typed
       // `createBlock` MUST pass an active scope; this unit test exercises
       // only the wrapper's payload shape, so `{ kind: 'global' }` here
       // documents that the wrapper forwards `undefined` → Global (the
@@ -194,7 +194,7 @@ describe('createBlock', () => {
 })
 
 // ---------------------------------------------------------------------------
-// createBlocksBatch (PEND-35 Tier 4.3)
+// CreateBlocksBatch
 // ---------------------------------------------------------------------------
 
 describe('createBlocksBatch', () => {
@@ -283,7 +283,7 @@ describe('deleteBlock', () => {
 })
 
 // ---------------------------------------------------------------------------
-// deleteBlocksByIds (PEND-35 Tier 2.1)
+// DeleteBlocksByIds
 // ---------------------------------------------------------------------------
 
 describe('deleteBlocksByIds', () => {
@@ -424,13 +424,13 @@ describe('listBlocks', () => {
     expect(args['agenda']).toBeNull()
     expect(args['cursor']).toBeNull()
     expect(args['limit']).toBeNull()
-    // FEAT-3 Phase 4 — `spaceId` is required and forwarded as-is.
+    // Phase 4 — `spaceId` is required and forwarded as-is.
     expect(args['spaceId']).toBe('TEST_SPACE_01')
     // blockType should be the value we passed
     expect(args['blockType']).toBe('page')
   })
 
-  it('forwards spaceId verbatim to the binding (FEAT-3 Phase 4)', async () => {
+  it('forwards spaceId verbatim to the binding (Phase 4)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await listBlocks({ spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
@@ -452,7 +452,7 @@ describe('listUndatedTasks', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('list_undated_tasks', {
       cursor: 'abc',
       limit: 10,
-      // PEND-18 Phase 3: omitted spaceId → `SpaceScope::Global`.
+      // Phase 3: omitted spaceId → `SpaceScope::Global`.
       scope: { kind: 'global' },
     })
     expect(result).toEqual(emptyPage)
@@ -467,7 +467,7 @@ describe('listUndatedTasks', () => {
     expect(callArgs['scope']).toEqual({ kind: 'global' })
   })
 
-  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
+  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await listUndatedTasks({ spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
@@ -589,7 +589,7 @@ describe('removeTag', () => {
 describe('searchBlocks', () => {
   const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 
-  // PEND-50 Phase 0 — the IPC payload is now a struct: `{ query, cursor, limit, filter }`
+  // Phase 0 — the IPC payload is now a struct: `{ query, cursor, limit, filter }`
   // where `filter` carries the previously-positional `parentId`, `tagIds`, and
   // `spaceId`. The wrapper's public API stays flat — these tests verify the
   // marshalling at the IPC boundary.
@@ -607,16 +607,16 @@ describe('searchBlocks', () => {
         parentId: null,
         tagIds: [],
         spaceId: 'TEST_SPACE_01',
-        // PEND-54 — additive fields default to empty arrays.
+        // Additive fields default to empty arrays.
         includePageGlobs: [],
         excludePageGlobs: [],
-        // PEND-55 — additive toggle fields default to false.
+        // Additive toggle fields default to false.
         caseSensitive: false,
         wholeWord: false,
         isRegex: false,
-        // PEND-51 — additive `block_type_filter` defaults to null.
+        // Additive `block_type_filter` defaults to null.
         blockTypeFilter: null,
-        // PEND-53 — additive metadata fields default to empty / null.
+        // Additive metadata fields default to empty / null.
         stateFilter: [],
         priorityFilter: [],
         dueFilter: null,
@@ -664,16 +664,16 @@ describe('searchBlocks', () => {
         parentId: null,
         tagIds: [],
         spaceId: 'TEST_SPACE_01',
-        // PEND-54 — additive fields default to empty arrays.
+        // Additive fields default to empty arrays.
         includePageGlobs: [],
         excludePageGlobs: [],
-        // PEND-55 — additive toggle fields default to false.
+        // Additive toggle fields default to false.
         caseSensitive: false,
         wholeWord: false,
         isRegex: false,
-        // PEND-51 — additive `block_type_filter` defaults to null.
+        // Additive `block_type_filter` defaults to null.
         blockTypeFilter: null,
-        // PEND-53 — additive metadata fields default to empty / null.
+        // Additive metadata fields default to empty / null.
         stateFilter: [],
         priorityFilter: [],
         dueFilter: null,
@@ -687,7 +687,7 @@ describe('searchBlocks', () => {
     expect(result).toEqual(pageResp)
   })
 
-  it('forwards spaceId verbatim to the binding inside `filter` (FEAT-3 Phase 4)', async () => {
+  it('forwards spaceId verbatim to the binding inside `filter` (Phase 4)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await searchBlocks({ query: 'q', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
@@ -711,16 +711,16 @@ describe('searchBlocks', () => {
         parentId: 'PAGE1',
         tagIds: ['TAG1', 'TAG2'],
         spaceId: 'SPACE_42',
-        // PEND-54 — additive fields default to empty arrays.
+        // Additive fields default to empty arrays.
         includePageGlobs: [],
         excludePageGlobs: [],
-        // PEND-55 — additive toggle fields default to false.
+        // Additive toggle fields default to false.
         caseSensitive: false,
         wholeWord: false,
         isRegex: false,
-        // PEND-51 — additive `block_type_filter` defaults to null.
+        // Additive `block_type_filter` defaults to null.
         blockTypeFilter: null,
-        // PEND-53 — additive metadata fields default to empty / null.
+        // Additive metadata fields default to empty / null.
         stateFilter: [],
         priorityFilter: [],
         dueFilter: null,
@@ -758,9 +758,9 @@ describe('queryByTags', () => {
       includeInherited: null,
       cursor: null,
       limit: null,
-      // PEND-18 Phase 3: omitted spaceId → `SpaceScope::Global`.
+      // Phase 3: omitted spaceId → `SpaceScope::Global`.
       scope: { kind: 'global' },
-      // PEND-35 Tier 3.4: omitted blockType → null (no push-down).
+      // Omitted blockType → null (no push-down).
       blockType: null,
     })
     expect(result).toEqual(emptyPage)
@@ -805,7 +805,7 @@ describe('queryByTags', () => {
     expect(result).toEqual(pageResp)
   })
 
-  // PEND-35 Tier 3.4 — blockType push-down round-trips through the wrapper.
+  // BlockType push-down round-trips through the wrapper.
   it('forwards blockType through to the binding', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await queryByTags({ tagIds: ['TAG01'], prefixes: [], mode: 'or', blockType: 'page' })
@@ -813,7 +813,7 @@ describe('queryByTags', () => {
     expect(args['blockType']).toBe('page')
   })
 
-  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
+  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await queryByTags({ tagIds: [], prefixes: [], mode: 'and', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
@@ -829,7 +829,7 @@ describe('queryByTags', () => {
 })
 
 // ---------------------------------------------------------------------------
-// filteredBlocksQuery (PEND-35 Tier 2.10b)
+// FilteredBlocksQuery
 // ---------------------------------------------------------------------------
 
 describe('filteredBlocksQuery', () => {
@@ -988,7 +988,7 @@ describe('batchResolve', () => {
     const result = await batchResolve(['B1', 'B2'])
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    // FEAT-3p7 + PEND-18 Phase 3 — wrapper always forwards a `scope`;
+    // + Phase 3 — wrapper always forwards a `scope`;
     // `{ kind: 'global' }` when the caller omits spaceId.
     expect(mockedInvoke).toHaveBeenCalledWith('batch_resolve', {
       ids: ['B1', 'B2'],
@@ -997,7 +997,7 @@ describe('batchResolve', () => {
     expect(result).toEqual(expected)
   })
 
-  it('forwards spaceId as an active scope when provided (FEAT-3p7 + PEND-18 Phase 3)', async () => {
+  it('forwards spaceId as an active scope when provided (+  Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce([])
 
     await batchResolve(['B1'], 'SPACE_X')
@@ -1063,7 +1063,7 @@ describe('getBacklinks', () => {
     })
   })
 
-  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
+  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await getBacklinks({ blockId: 'TARGET', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
@@ -1170,7 +1170,7 @@ describe('setProperty', () => {
     })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    // PEND-14: typed values are bundled under `value: SetPropertyArgs` so the
+    // Typed values are bundled under `value: SetPropertyArgs` so the
     // IPC stays under specta's 10-positional-argument cap.
     expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
       blockId: 'BLK001',
@@ -1258,7 +1258,7 @@ describe('getProperties', () => {
 })
 
 // ---------------------------------------------------------------------------
-// getProperty (PEND-35 Tier 2.4c)
+// GetProperty
 // ---------------------------------------------------------------------------
 
 describe('getProperty', () => {
@@ -1347,7 +1347,7 @@ describe('listPageHistory', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
       pageId: 'PAGE1',
       opTypeFilter: 'edit_block',
-      // FEAT-3p8 + PEND-18 Phase 3: `scope` is threaded through every
+      // + Phase 3: `scope` is threaded through every
       // history call; `{ kind: 'global' }` here means "all spaces"
       // since this test doesn't pass a spaceId.
       scope: { kind: 'global' },
@@ -1365,7 +1365,7 @@ describe('listPageHistory', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
       pageId: 'PAGE1',
       opTypeFilter: null,
-      // FEAT-3p8 + PEND-18 Phase 3: `scope` defaults to
+      // + Phase 3: `scope` defaults to
       // `{ kind: 'global' }` (= all spaces) when the caller omits
       // spaceId, matching the other optional knobs.
       scope: { kind: 'global' },
@@ -1429,7 +1429,7 @@ describe('queryByProperty', () => {
     })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    // PEND-35 Tier 3.4 — push-down knobs are bundled into
+    // Push-down knobs are bundled into
     // `extraFilters` on the IPC boundary; with no extras supplied the
     // wrapper sends `null` so the backend's `Option<ExtraQueryFilters>`
     // short-circuits.
@@ -1463,14 +1463,14 @@ describe('queryByProperty', () => {
     })
   })
 
-  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
+  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
     await queryByProperty({ key: 'status', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
     expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
   })
 
-  // PEND-35 Tier 1.5 — push-down filters reach the binding through
+  // Push-down filters reach the binding through
   // `extraFilters`.
   it('forwards excludeParentId and contentNonEmpty into extraFilters', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
@@ -1489,7 +1489,7 @@ describe('queryByProperty', () => {
     expect(extra['valueDateRange']).toBeNull()
   })
 
-  // PEND-35 Tier 3.4 — block_type / valueTextIn / valueDateRange
+  // Block_type / valueTextIn / valueDateRange
   // round-trip through the extraFilters bundle.
   it('forwards blockType / valueTextIn / valueDateRange into extraFilters', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
@@ -1536,7 +1536,7 @@ describe('undoPageOp', () => {
 })
 
 // ---------------------------------------------------------------------------
-// findUndoGroup (PEND-35 Tier 4.4)
+// FindUndoGroup
 // ---------------------------------------------------------------------------
 
 describe('findUndoGroup', () => {
@@ -1736,7 +1736,7 @@ describe('getDeviceId', () => {
 
 describe('startPairing', () => {
   it('invokes start_pairing and returns pairing info', async () => {
-    // M-34: PairingInfo carries only passphrase + qr_svg. mDNS owns
+    // PairingInfo carries only passphrase + qr_svg. mDNS owns
     // discovery + address resolution end-to-end, so the response has no
     // host/port fields.
     const expected = {
@@ -1788,7 +1788,7 @@ describe('cancelPairing', () => {
 
 describe('startSync', () => {
   it('invokes start_sync with peerId and a Channel<SyncProgressUpdate>', async () => {
-    // PEND-06 — `startSync` now passes a `tauri::ipc::Channel<T>` as the
+    // `startSync` now passes a `tauri::ipc::Channel<T>` as the
     // second argument so the backend can stream progress updates back
     // through a single IPC. The wrapper constructs the channel
     // internally, so the test asserts the IPC carries `{ peerId,
@@ -1891,7 +1891,7 @@ describe('queryBacklinksFiltered', () => {
     })
   })
 
-  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
+  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyResponse)
     await queryBacklinksFiltered({ blockId: 'TARGET', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
@@ -1980,7 +1980,7 @@ describe('thin fixed-field commands', () => {
     })
   })
 
-  // PEND-35 Tier 2.1 — single-IPC batch wrapper.
+  // Single-IPC batch wrapper.
   it('setTodoStateBatch passes the id list + state through to set_todo_state_batch', async () => {
     mockedInvoke.mockResolvedValueOnce(3)
 
@@ -2077,7 +2077,7 @@ describe('countAgendaBatch', () => {
     expect(result).toEqual(expected)
   })
 
-  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
+  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce({})
     await countAgendaBatch({ dates: ['2025-01-15'], spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
@@ -2107,7 +2107,7 @@ describe('countAgendaBatchBySource', () => {
     expect(result).toEqual(expected)
   })
 
-  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
+  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce({})
     await countAgendaBatchBySource({ dates: ['2025-01-15'], spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
@@ -2134,7 +2134,7 @@ describe('countBacklinksBatch', () => {
     expect(result).toEqual(expected)
   })
 
-  // PEND-35 Tier 1.6 — spaceId is forwarded as an active scope so the
+  // SpaceId is forwarded as an active scope so the
   // backend can filter source blocks by owning page's space.
   it('forwards spaceId as an active scope to the binding', async () => {
     mockedInvoke.mockResolvedValueOnce({})
@@ -2262,7 +2262,7 @@ describe('listBacklinksGrouped', () => {
     })
   })
 
-  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
+  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyResponse)
     await listBacklinksGrouped({ blockId: 'PAGE1', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
@@ -2316,7 +2316,7 @@ describe('listUnlinkedReferences', () => {
     })
   })
 
-  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
+  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyResponse)
     await listUnlinkedReferences({ pageId: 'PAGE1', spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
@@ -2377,8 +2377,8 @@ describe('createPropertyDef', () => {
 // ---------------------------------------------------------------------------
 
 describe('listPropertyDefs', () => {
-  it('invokes list_property_defs with cursor + limit and returns the PageResponse envelope (M-85)', async () => {
-    // M-85: `list_property_defs` is now cursor-paginated.
+  it('invokes list_property_defs with cursor + limit and returns the PageResponse envelope', async () => {
+    // `list_property_defs` is now cursor-paginated.
     const defs = [
       {
         key: 'status',
@@ -2400,7 +2400,7 @@ describe('listPropertyDefs', () => {
     expect(result).toEqual(expected)
   })
 
-  it('forwards explicit cursor + limit to the IPC layer (M-85)', async () => {
+  it('forwards explicit cursor + limit to the IPC layer', async () => {
     const expected = { items: [], next_cursor: 'next-page-cursor', has_more: true }
     mockedInvoke.mockResolvedValueOnce(expected)
 
@@ -2415,7 +2415,7 @@ describe('listPropertyDefs', () => {
 })
 
 // ---------------------------------------------------------------------------
-// getPropertyDef (PEND-35 Tier 2.6)
+// GetPropertyDef
 // ---------------------------------------------------------------------------
 
 describe('getPropertyDef', () => {
@@ -2627,7 +2627,7 @@ describe('purgeAllDeleted', () => {
 })
 
 // ---------------------------------------------------------------------------
-// PEND-35 Tier 2.2 — restoreBlocksByIds / purgeBlocksByIds
+// RestoreBlocksByIds / purgeBlocksByIds
 // ---------------------------------------------------------------------------
 
 describe('restoreBlocksByIds', () => {
@@ -2696,7 +2696,7 @@ describe('trashDescendantCounts', () => {
 })
 
 // ---------------------------------------------------------------------------
-// firstChildForBlocks (PEND-35 Tier 2.8)
+// FirstChildForBlocks
 // ---------------------------------------------------------------------------
 
 describe('firstChildForBlocks', () => {
@@ -2738,7 +2738,7 @@ describe('firstChildForBlocks', () => {
 })
 
 // ---------------------------------------------------------------------------
-// PEND-35 Tier 2.3 — getBlocks
+// GetBlocks
 // ---------------------------------------------------------------------------
 
 describe('getBlocks', () => {
@@ -2781,7 +2781,7 @@ describe('getBlocks', () => {
 
 describe('listProjectedAgenda', () => {
   it('invokes list_projected_agenda with all parameters', async () => {
-    // M-25: response is now a cursor-paginated `PageResponse`.
+    // Response is now a cursor-paginated `PageResponse`.
     const expected = {
       items: [
         {
@@ -2839,7 +2839,7 @@ describe('listProjectedAgenda', () => {
     })
   })
 
-  it('forwards an explicit cursor for page-2 fetches (M-25)', async () => {
+  it('forwards an explicit cursor for page-2 fetches', async () => {
     mockedInvoke.mockResolvedValueOnce({
       items: [],
       next_cursor: null,
@@ -2863,7 +2863,7 @@ describe('listProjectedAgenda', () => {
     })
   })
 
-  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
+  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce({
       items: [],
       next_cursor: null,
@@ -2895,7 +2895,7 @@ describe('listPageLinks', () => {
     const result = await listPageLinks()
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    // PEND-35 Tier 4.5 — `tagIds: null` is forwarded so the backend's
+    // `tagIds: null` is forwarded so the backend's
     // `(?2 IS NULL OR …)` short-circuit evaluates to TRUE, preserving
     // the pre-Tier-4.5 unfiltered behaviour.
     expect(mockedInvoke).toHaveBeenCalledWith('list_page_links', {
@@ -2913,7 +2913,7 @@ describe('listPageLinks', () => {
     expect(result).toEqual([])
   })
 
-  it('forwards spaceId as an active scope to the binding (PEND-18 Phase 3)', async () => {
+  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
     mockedInvoke.mockResolvedValueOnce([])
     await listPageLinks('SPACE_42')
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
@@ -2921,7 +2921,7 @@ describe('listPageLinks', () => {
     expect(args['tagIds']).toBeNull()
   })
 
-  it('forwards tagIds when provided via the param-object shape (PEND-35 Tier 4.5)', async () => {
+  it('forwards tagIds when provided via the param-object shape', async () => {
     mockedInvoke.mockResolvedValueOnce([])
     await listPageLinks({ spaceId: 'SPACE_42', tagIds: ['TAG_A', 'TAG_B'] })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
@@ -2929,7 +2929,7 @@ describe('listPageLinks', () => {
     expect(args['tagIds']).toEqual(['TAG_A', 'TAG_B'])
   })
 
-  it('normalises an empty tagIds array to null (PEND-35 Tier 4.5)', async () => {
+  it('normalises an empty tagIds array to null', async () => {
     mockedInvoke.mockResolvedValueOnce([])
     await listPageLinks({ spaceId: 'SPACE_42', tagIds: [] })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
@@ -3117,7 +3117,7 @@ describe('importMarkdown', () => {
     const result = await importMarkdown('# Title\n\nBody', 'my-page.md', 'SPACE_A')
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    // PEND-35 Tier 1.1 — `space_id` is required; the FE wrapper threads
+    // `space_id` is required; the FE wrapper threads
     // it through as `spaceId` (camelCase per the Tauri arg convention).
     expect(mockedInvoke).toHaveBeenCalledWith('import_markdown', {
       content: '# Title\n\nBody',
@@ -3150,7 +3150,7 @@ describe('importMarkdown', () => {
   })
 
   it('forwards streamed progress events to the onProgress callback (#128)', async () => {
-    // #128 (PEND-38 / PEND-06 Tier 3) — when `onProgress` is supplied the
+    // #128 — when `onProgress` is supplied the
     // wrapper wires it to `channel.onmessage`. Capture the Channel the
     // wrapper hands to `invoke`, push a `started` event through it, and
     // assert the callback fires.
@@ -3213,7 +3213,7 @@ describe('flushDraft', () => {
 })
 
 // ---------------------------------------------------------------------------
-// flushAllDrafts (PEND-35 Tier 2.12)
+// FlushAllDrafts
 // ---------------------------------------------------------------------------
 
 describe('flushAllDrafts', () => {
@@ -3544,7 +3544,7 @@ describe('createPageInSpace', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Autostart (FEAT-13)
+// Autostart
 // ---------------------------------------------------------------------------
 //
 // `enableAutostart`, `disableAutostart`, and `isAutostartEnabled` thin-wrap
@@ -3554,7 +3554,7 @@ describe('createPageInSpace', () => {
 // `clipboard.test.ts` / `relaunch-app.test.ts` pattern: `vi.doMock(...)`
 // before re-importing the wrappers via `vi.resetModules()`.
 
-describe('autostart wrappers (FEAT-13)', () => {
+describe('autostart wrappers', () => {
   const mockEnable = vi.fn()
   const mockDisable = vi.fn()
   const mockIsEnabled = vi.fn()
@@ -3815,7 +3815,7 @@ describe('cross-cutting', () => {
 })
 
 // ---------------------------------------------------------------------------
-// FEAT-12: quickCaptureBlock + global-shortcut wrappers
+// QuickCaptureBlock + global-shortcut wrappers
 // ---------------------------------------------------------------------------
 //
 // `registerGlobalShortcut` / `unregisterGlobalShortcut` /
@@ -3832,7 +3832,7 @@ vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
   isRegistered: mockIsRegistered,
 }))
 
-// FEAT-11 — `ensureNotificationPermission` dynamically imports the
+// `ensureNotificationPermission` dynamically imports the
 // notification plugin's permission API; mock the module factory at file
 // scope so the hoisted import resolves to spies.
 const mockIsPermissionGranted = vi.fn()
@@ -3864,7 +3864,7 @@ describe('quickCaptureBlock', () => {
     const result = await quickCaptureBlock('captured note', 'SPACE_PERSONAL')
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    // FEAT-3p5: spaceId is required so quick-capture lands on the
+    // SpaceId is required so quick-capture lands on the
     // active-space's daily journal page.
     expect(mockedInvoke).toHaveBeenCalledWith('quick_capture_block', {
       content: 'captured note',
@@ -3873,7 +3873,7 @@ describe('quickCaptureBlock', () => {
     expect(result).toEqual(expected)
   })
 
-  // MAINT-99: every IPC wrapper must have at least one mockRejectedValue
+  // Every IPC wrapper must have at least one mockRejectedValue
   // test so the failure path is covered.
   it('propagates errors from invoke', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('quick_capture_block failed'))
@@ -4028,7 +4028,7 @@ describe('isGlobalShortcutRegistered', () => {
 })
 
 // ---------------------------------------------------------------------------
-// notifyTask (FEAT-11)
+// NotifyTask
 // ---------------------------------------------------------------------------
 
 describe('notifyTask', () => {
@@ -4060,7 +4060,7 @@ describe('notifyTask', () => {
 })
 
 // ---------------------------------------------------------------------------
-// ensureNotificationPermission (FEAT-11)
+// EnsureNotificationPermission
 // ---------------------------------------------------------------------------
 
 describe('ensureNotificationPermission', () => {

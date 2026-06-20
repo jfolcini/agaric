@@ -1,6 +1,6 @@
 /**
- * Component-level tests for the Cmd/Ctrl+K palette (PEND-61 —
- * `CommandPalette`, successor to PEND-51's `SearchPalette`).
+ * Component-level tests for the Cmd/Ctrl+K palette (
+ * `CommandPalette`, successor to `SearchPalette`).
  *
  * Port matrix (vs `SearchPalette.test.tsx`):
  *  - visibility ……………………………… verbatim, renamed test ids.
@@ -46,7 +46,7 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/tauri')>()
   return {
     ...actual,
-    // PEND-61 CR — linkMode now fires `searchBlocks({blockTypeFilter:
+    // LinkMode now fires `searchBlocks({blockTypeFilter:
     // 'page'})` for the page-only guarantee; non-linkMode still fires
     // `searchBlocksPartitioned`. Both must be mocked.
     searchBlocks: vi.fn(),
@@ -54,7 +54,7 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
   }
 })
 
-// PEND-58g UX-A1 — pin the viewport boolean so mobile-escalation tests
+// Pin the viewport boolean so mobile-escalation tests
 // can flip it. Default `false` matches jsdom's 1024px innerWidth, so
 // the desktop suite keeps the query-gated inline cmdk footer.
 vi.mock('@/hooks/useIsMobile', () => ({
@@ -134,7 +134,7 @@ function partitionedResp(
 beforeEach(() => {
   vi.clearAllMocks()
   // `clearAllMocks` wipes the mock implementation, so re-pin the
-  // default desktop viewport (PEND-58g UX-A1). Mobile tests override.
+  // Default desktop viewport. Mobile tests override.
   mockedUseIsMobile.mockReturnValue(false)
   localStorage.clear()
   resetStore()
@@ -233,7 +233,7 @@ describe('CommandPalette — empty state', () => {
   })
 })
 
-describe('CommandPalette — recents pinning (PEND-67 Phase 4)', () => {
+describe('CommandPalette — recents pinning (Phase 4)', () => {
   it('clicking the pin button toggles the pinned state without navigating', async () => {
     seedRecentPagesStore([{ pageId: 'PAGE_A', title: 'Alpha', visitedAt: '2026-05-19T00:00:00Z' }])
     render(<CommandPalette />)
@@ -264,7 +264,7 @@ describe('CommandPalette — recents pinning (PEND-67 Phase 4)', () => {
   })
 })
 
-describe('CommandPalette — action menu (PEND-67 Phase 5)', () => {
+describe('CommandPalette — action menu (Phase 5)', () => {
   function seedRecents() {
     seedRecentPagesStore([{ pageId: 'PAGE_R', title: 'Recent', visitedAt: '2026-05-19T00:00:00Z' }])
   }
@@ -363,7 +363,7 @@ describe('CommandPalette — action menu (PEND-67 Phase 5)', () => {
     }
   })
 
-  it('selecting "Remove from recents" deletes the entry (PEND-67 Phase 5 expansion)', async () => {
+  it('selecting "Remove from recents" deletes the entry (Phase 5 expansion)', async () => {
     seedRecents()
     render(<CommandPalette />)
     openPalette()
@@ -376,7 +376,7 @@ describe('CommandPalette — action menu (PEND-67 Phase 5)', () => {
     expect(useCommandPaletteStore.getState().open).toBe(true)
   })
 
-  it('selecting "Reveal in Pages view" seeds the filter and flips the view (PEND-67 Phase 5 expansion)', async () => {
+  it('selecting "Reveal in Pages view" seeds the filter and flips the view (Phase 5 expansion)', async () => {
     seedRecents()
     render(<CommandPalette />)
     openPalette()
@@ -389,7 +389,7 @@ describe('CommandPalette — action menu (PEND-67 Phase 5)', () => {
     expect(useCommandPaletteStore.getState().open).toBe(false)
   })
 
-  it('block-row menu surfaces "Copy block link" with the Roam syntax (PEND-67 Phase 5 expansion)', async () => {
+  it('block-row menu surfaces "Copy block link" with the Roam syntax (Phase 5 expansion)', async () => {
     mockedSearchBlocksPartitioned.mockResolvedValue(
       partitionedResp(
         [makePageRow('PAGE_X', 'Alpha')],
@@ -464,7 +464,7 @@ describe('CommandPalette — partitioned query', () => {
 
     await waitFor(() => {
       // Only ONE IPC per debounce window — the old design fired two
-      // parallel calls; PEND-61 collapses them.
+      // Parallel calls; collapses them.
       expect(mockedSearchBlocksPartitioned).toHaveBeenCalled()
       const call = mockedSearchBlocksPartitioned.mock.calls.at(-1)?.[0]
       expect(call).toBeDefined()
@@ -750,10 +750,10 @@ describe('CommandPalette — escalation footer', () => {
 })
 
 // ───────────────────────────────────────────────────────────────────
-// PEND-58g UX-A1 — mobile "Filters & regex" escalation CTA
+// Mobile "Filters & regex" escalation CTA
 // ───────────────────────────────────────────────────────────────────
 
-describe('CommandPalette — mobile escalation CTA (PEND-58g UX-A1)', () => {
+describe('CommandPalette — mobile escalation CTA ', () => {
   it('renders the always-visible CTA in the all-pages sheet with an EMPTY query', async () => {
     mockedUseIsMobile.mockReturnValue(true)
     render(<CommandPalette />)
@@ -822,8 +822,8 @@ describe('CommandPalette — mobile escalation CTA (PEND-58g UX-A1)', () => {
 })
 
 describe('CommandPalette — [[page]] autocomplete', () => {
-  it('fires a single partitioned IPC with blockLimit=0 in link mode (PEND-69 two-scan guarantees page coverage)', async () => {
-    // PEND-69 F1 — the partitioned IPC now runs two parallel SQL
+  it('fires a single partitioned IPC with blockLimit=0 in link mode (two-scan guarantees page coverage)', async () => {
+    // The partitioned IPC now runs two parallel SQL
     // scans (page-only + unrestricted) each with its own `limit + 1`
     // probe, so the pages partition is guaranteed to surface matching
     // pages regardless of content-row rank. Link mode no longer needs
@@ -1048,7 +1048,7 @@ describe('CommandPalette — commands mode', () => {
   })
 })
 
-describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', () => {
+describe('CommandPalette — commands mode recent commands (Phase 2)', () => {
   it('does NOT render the Recent group on a cold open with no run history', async () => {
     render(<CommandPalette />)
     openPalette()
@@ -1104,7 +1104,7 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     expect(parsed[0]?.id).toBe('go-tags')
   })
 
-  it('preserves the search query when chip-toggling to commands and back (PEND-67 Phase 6)', async () => {
+  it('preserves the search query when chip-toggling to commands and back (Phase 6)', async () => {
     render(<CommandPalette />)
     openPalette()
     const input = screen.getByTestId('command-palette-input') as HTMLInputElement
@@ -1143,7 +1143,7 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     expect(useCommandPaletteStore.getState().query).toBe('set')
   })
 
-  it('numeric prefix 1-9 jumps to the Nth visible item (PEND-67 Phase 7)', async () => {
+  it('numeric prefix 1-9 jumps to the Nth visible item (Phase 7)', async () => {
     render(<CommandPalette />)
     openPalette()
     fireEvent.click(screen.getByTestId('palette-mode-chip'))
@@ -1156,7 +1156,7 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     expect(useCommandPaletteStore.getState().open).toBe(false)
   })
 
-  it('numeric prefix is ignored when the input has content (PEND-67 Phase 7)', async () => {
+  it('numeric prefix is ignored when the input has content (Phase 7)', async () => {
     render(<CommandPalette />)
     openPalette()
     fireEvent.click(screen.getByTestId('palette-mode-chip'))
@@ -1174,7 +1174,7 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     expect(useCommandPaletteStore.getState().open).toBe(true)
   })
 
-  it('numeric prefix 0 does nothing (PEND-67 Phase 7)', async () => {
+  it('numeric prefix 0 does nothing (Phase 7)', async () => {
     render(<CommandPalette />)
     openPalette()
     fireEvent.click(screen.getByTestId('palette-mode-chip'))
@@ -1187,7 +1187,7 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     expect(useCommandPaletteStore.getState().open).toBe(true)
   })
 
-  it('typing `#alpha` flips to tags mode, strips prefix, fires IPC (PEND-67 Phase 3)', async () => {
+  it('typing `#alpha` flips to tags mode, strips prefix, fires IPC (Phase 3)', async () => {
     mockedSearchBlocks.mockResolvedValue({
       items: [makePageRow('TAG_ALPHA', 'alpha')],
       next_cursor: null,
@@ -1209,7 +1209,7 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     })
   })
 
-  it('selecting a tag escalates with `tag:#<name>` to the search view (PEND-67 Phase 3)', async () => {
+  it('selecting a tag escalates with `tag:#<name>` to the search view (Phase 3)', async () => {
     mockedSearchBlocks.mockResolvedValue({
       items: [makePageRow('TAG_URGENT', 'urgent')],
       next_cursor: null,
@@ -1228,7 +1228,7 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     expect(useCommandPaletteStore.getState().open).toBe(false)
   })
 
-  it('typing `?` flips to help mode and renders the shortcut catalog (PEND-67 Phase 3)', async () => {
+  it('typing `?` flips to help mode and renders the shortcut catalog (Phase 3)', async () => {
     render(<CommandPalette />)
     openPalette()
     fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: '?' } })
@@ -1239,7 +1239,7 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     expect(screen.getByTestId('palette-help-focusSearch')).toBeInTheDocument()
   })
 
-  it('help mode filters by description text (PEND-67 Phase 3)', async () => {
+  it('help mode filters by description text (Phase 3)', async () => {
     render(<CommandPalette />)
     openPalette()
     fireEvent.change(screen.getByTestId('command-palette-input'), {
@@ -1255,7 +1255,7 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     expect(screen.queryByTestId('palette-help-focusSearch')).toBeNull()
   })
 
-  it('mode chip returns to search from tags / help in one click (PEND-67 Phase 3)', async () => {
+  it('mode chip returns to search from tags / help in one click (Phase 3)', async () => {
     render(<CommandPalette />)
     openPalette()
     fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: '?' } })
@@ -1266,7 +1266,7 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     expect(useCommandPaletteStore.getState().mode).toBe('search')
   })
 
-  it('numeric prefix is ignored with modifier keys (PEND-67 Phase 7)', async () => {
+  it('numeric prefix is ignored with modifier keys (Phase 7)', async () => {
     render(<CommandPalette />)
     openPalette()
     fireEvent.click(screen.getByTestId('palette-mode-chip'))
@@ -1283,7 +1283,7 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     expect(useCommandPaletteStore.getState().open).toBe(true)
   })
 
-  it('does not loop when the `>` prefix routes to commands mode (PEND-67 Phase 6)', async () => {
+  it('does not loop when the `>` prefix routes to commands mode (Phase 6)', async () => {
     render(<CommandPalette />)
     openPalette()
     const input = screen.getByTestId('command-palette-input')
@@ -1305,7 +1305,7 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     expect(useCommandPaletteStore.getState().query).toBe('')
   })
 
-  it('renders an inline shortcut chip for commands with a shortcutId (PEND-67 Phase 1)', async () => {
+  it('renders an inline shortcut chip for commands with a shortcutId (Phase 1)', async () => {
     render(<CommandPalette />)
     openPalette()
     fireEvent.click(screen.getByTestId('palette-mode-chip'))
@@ -1333,7 +1333,7 @@ describe('CommandPalette — commands mode recent commands (PEND-67 Phase 2)', (
     expect(screen.queryByTestId('palette-cmd-shortcut-go-pages')).toBeNull()
   })
 
-  it('picks up a rebound shortcut on the next render (PEND-67 Phase 1)', async () => {
+  it('picks up a rebound shortcut on the next render (Phase 1)', async () => {
     // Seed an override BEFORE the palette opens — `getShortcutKeys`
     // reads localStorage on every call, so a rebind takes effect on
     // the next render without forcing a remount.
@@ -1419,10 +1419,10 @@ describe('CommandPalette — a11y', () => {
 })
 
 // ───────────────────────────────────────────────────────────────────
-// PEND-72 — external-query sync (search-sheet bridge seed)
+// External-query sync (search-sheet bridge seed)
 // ───────────────────────────────────────────────────────────────────
 
-describe('CommandPalette — PEND-72 external query sync', () => {
+describe('CommandPalette —  external query sync', () => {
   it('fires the IPC immediately when the store query is set externally', async () => {
     // Simulates the mobile search sheet seeding the palette on
     // segment switch: write to the store AFTER PaletteBody mounts,
@@ -1442,7 +1442,7 @@ describe('CommandPalette — PEND-72 external query sync', () => {
   })
 
   it('respects the 80 ms debounce for user typing (no immediate fire per keystroke)', async () => {
-    // PEND-72 sync effect must NOT short-circuit the debounce when
+    // Sync effect must NOT short-circuit the debounce when
     // changes come from the input. Type three characters synchronously
     // via fireEvent; without the lastUserQueryRef guard the sync
     // effect would fire setDebouncedQuery on every render and bypass
@@ -1474,12 +1474,12 @@ describe('CommandPalette — PEND-72 external query sync', () => {
 })
 
 // ───────────────────────────────────────────────────────────────────
-// PEND-61 CR regression tests
+// Regression tests
 // ───────────────────────────────────────────────────────────────────
 
-describe('CommandPalette — PEND-61 CR regressions', () => {
+describe('CommandPalette —  regressions', () => {
   it('linkMode page-only guarantee — page surfaces even when many content rows outrank it', async () => {
-    // PEND-69 F1 — the partitioned IPC's two-scan shape guarantees
+    // The partitioned IPC's two-scan shape guarantees
     // per-partition page coverage. linkMode now uses the same IPC
     // with `blockLimit: 0`; the pages partition is filled by the
     // dedicated page-only SQL scan, independent of content-row rank.
@@ -1511,12 +1511,12 @@ describe('CommandPalette — PEND-61 CR regressions', () => {
   })
 
   it('cold-open [[page]] Enter falls through to plain navigation when no editor focus was captured', async () => {
-    // PEND-61 CR (UX-must-3): cold-open `[[page]]` (no previously
+    // (UX-must-3): cold-open `[[page]]` (no previously
     // focused element) used to silently close. Fall through to
     // `navigateToPage` so the user gets something.
     const navigateToPage = vi.fn()
     useTabsStore.setState({ navigateToPage })
-    // PEND-69 F1 — linkMode now uses the partitioned IPC (blockLimit=0).
+    // LinkMode now uses the partitioned IPC (blockLimit=0).
     mockedSearchBlocksPartitioned.mockResolvedValue({
       pages: {
         items: [makePageRow('PAGE_X', 'Xenial')],
@@ -1547,7 +1547,7 @@ describe('CommandPalette — PEND-61 CR regressions', () => {
   })
 
   it('shows a welcome empty copy on cold open with no recents', () => {
-    // PEND-61 CR (UX-should-5): the welcome state has its own copy
+    // (UX-should-5): the welcome state has its own copy
     // distinct from the no-results-for-typed-query state.
     render(<CommandPalette />)
     openPalette()
@@ -1555,7 +1555,7 @@ describe('CommandPalette — PEND-61 CR regressions', () => {
   })
 
   it('shows a "no results for query" copy when the typed query has zero matches', async () => {
-    // PEND-61 CR (UX-should-2): typed query → empty partitions →
+    // (UX-should-2): typed query → empty partitions →
     // dedicated copy (not the generic welcome message).
     mockedSearchBlocksPartitioned.mockResolvedValue({
       pages: emptyPartition(),
@@ -1571,7 +1571,7 @@ describe('CommandPalette — PEND-61 CR regressions', () => {
   })
 
   it('mode chip click flips mode WITHOUT writing a literal "> " into the input', async () => {
-    // PEND-61 CR (UX-should-6): toggling via the chip used to fake-
+    // (UX-should-6): toggling via the chip used to fake-
     // type `'> '` into the user-visible input. The mode flag is
     // authoritative now; the prefix is only an entry shortcut.
     render(<CommandPalette />)
@@ -1585,7 +1585,7 @@ describe('CommandPalette — PEND-61 CR regressions', () => {
   })
 
   it('renders the footer hint with new-tab affordance copy in search mode', () => {
-    // PEND-61 CR (UX-should-3): the new footer hint surfaces the
+    // (UX-should-3): the new footer hint surfaces the
     // ⌘↵ new-tab affordance + ↵ + esc shortcuts.
     render(<CommandPalette />)
     openPalette()
@@ -1593,11 +1593,11 @@ describe('CommandPalette — PEND-61 CR regressions', () => {
   })
 
   // ─────────────────────────────────────────────────────────────────
-  // PEND-61 CR-2 regressions
+  // Regressions
   // ─────────────────────────────────────────────────────────────────
 
   it('commands-mode filter does NOT double-strip ">" — typing ">set" matches go-settings', async () => {
-    // PEND-61 CR-2 (tech-must-1): the mode router already strips the
+    // (tech-must-1): the mode router already strips the
     // leading ">" from the store query when typed as the entry
     // shortcut, so CommandsModeBody must filter by `query` directly
     // (not `commandsModeQuery(query)`). Previously typing `>set`
@@ -1615,7 +1615,7 @@ describe('CommandPalette — PEND-61 CR regressions', () => {
   })
 
   it('Backspace on empty input in commands mode returns to search mode', async () => {
-    // PEND-61 CR-2 (UX-should-3): VSCode's Cmd+P ↔ Cmd+Shift+P
+    // (UX-should-3): VSCode's Cmd+P ↔ Cmd+Shift+P
     // parity. Empty input + Backspace in commands mode flips back
     // to search so the user has a keyboard-only return path.
     render(<CommandPalette />)
@@ -1631,7 +1631,7 @@ describe('CommandPalette — PEND-61 CR regressions', () => {
   })
 
   it('renders the loading status (sr-only) while the IPC is in flight', async () => {
-    // PEND-61 CR-2 (UX-should-9): visible loading affordance during
+    // (UX-should-9): visible loading affordance during
     // the debounce → IPC window. The shimmer is decorative; SR users
     // get the polite live-region announcement.
     let resolve: (v: Awaited<ReturnType<typeof searchBlocksPartitioned>>) => void = () => {}
@@ -1658,7 +1658,7 @@ describe('CommandPalette — PEND-61 CR regressions', () => {
   })
 
   it('command-mode rows render a leading Lucide icon (not plain text)', async () => {
-    // PEND-61 CR-2 (UX-should-2): every command row carries a leading
+    // (UX-should-2): every command row carries a leading
     // glyph so power-user scan-ability matches Raycast/Linear. We
     // verify the SVG presence inside the CommandItem rather than
     // pinning a specific icon (which would couple the test to

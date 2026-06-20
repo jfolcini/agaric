@@ -156,7 +156,7 @@ describe('DuePanel', () => {
     expect(await screen.findByText(t('duePanel.headerOne'))).toBeInTheDocument()
   })
 
-  // 2. Returns null when all sources are empty (UX-152)
+  // 2. Returns null when all sources are empty
   it('returns null when all sources are empty', async () => {
     mockedListBlocks.mockResolvedValue(emptyResponse)
 
@@ -166,7 +166,7 @@ describe('DuePanel', () => {
       expect(mockedListBlocks).toHaveBeenCalled()
     })
 
-    // UX-152: Panel returns null when ALL tabs are empty
+    // Panel returns null when ALL tabs are empty
     await waitFor(() => {
       expect(container.innerHTML).toBe('')
     })
@@ -924,7 +924,7 @@ describe('DuePanel', () => {
     expect(await screen.findByText(t('duePanel.header', { count: 2 }))).toBeInTheDocument()
   })
 
-  // 20. Panel returns null when all sources are empty (UX-152 supersedes B-43)
+  // 20. Panel returns null when all sources are empty (supersedes B-43)
   it('returns null when all data sources return empty', async () => {
     // All data sources return empty
     mockedListBlocks.mockResolvedValue(emptyResponse)
@@ -943,7 +943,7 @@ describe('DuePanel', () => {
       expect(mockedListBlocks).toHaveBeenCalled()
     })
 
-    // UX-152: Panel returns null when ALL tabs are empty
+    // Panel returns null when ALL tabs are empty
     await waitFor(() => {
       expect(container.innerHTML).toBe('')
     })
@@ -978,7 +978,7 @@ describe('DuePanel', () => {
       render(<DuePanel date="2026-04-13" />)
 
       // "Projected" appears in both the section header and the per-entry badge
-      // (UX-10), so use getAllByText.
+      // So use getAllByText.
       const projectedLabels = await screen.findAllByText('Projected')
       expect(projectedLabels.length).toBeGreaterThanOrEqual(1)
       expect(screen.getByText(/Projected task/)).toBeInTheDocument()
@@ -1001,7 +1001,7 @@ describe('DuePanel', () => {
       })
     })
 
-    // UX-10: per-entry "Projected" badge so users don't misread projected
+    // Per-entry "Projected" badge so users don't misread projected
     // entries as real tasks due today.
     it('renders a per-entry "Projected" badge for each projected entry', async () => {
       mockedListBlocks.mockResolvedValue(emptyResponse)
@@ -1048,7 +1048,7 @@ describe('DuePanel', () => {
       expect(projectedBadges).toHaveLength(2)
     })
 
-    // UX-10: truncated content gets a `title=` so long names are previewable.
+    // Truncated content gets a `title=` so long names are previewable.
     it('sets title attribute on truncated projected content', async () => {
       const longContent = 'A very long projected task content that will be truncated visually'
       mockedListBlocks.mockResolvedValue(emptyResponse)
@@ -1170,7 +1170,7 @@ describe('DuePanel', () => {
       })
     })
 
-    // UX-274: keyboard nav threads projected entries into the flat-items array
+    // Keyboard nav threads projected entries into the flat-items array
     it('keyboard nav reaches projected entries via ArrowDown', async () => {
       // 2 real (TODO) + 1 projected → flat-items length 3.
       // focusedIndex starts at 0. ArrowDown ArrowDown lands on index 2 (projected).
@@ -1547,7 +1547,7 @@ describe('DuePanel', () => {
 
   // --- Error paths ---
   describe('error paths', () => {
-    it('listBlocks rejection on initial load returns null (UX-152)', async () => {
+    it('listBlocks rejection on initial load returns null', async () => {
       mockedListBlocks.mockRejectedValueOnce(new Error('network failure'))
 
       const { container } = render(<DuePanel date="2025-06-15" />)
@@ -1557,7 +1557,7 @@ describe('DuePanel', () => {
         expect(container.innerHTML).toBe('')
       })
 
-      // UX-152: Panel returns null when all sources are empty
+      // Panel returns null when all sources are empty
       expect(screen.queryByLabelText(t('duePanel.duePanelLabel'))).not.toBeInTheDocument()
     })
 
@@ -1646,7 +1646,7 @@ describe('DuePanel', () => {
       })
     })
 
-    it('queryByProperty rejection for overdue fetch returns null when all empty (UX-152)', async () => {
+    it('queryByProperty rejection for overdue fetch returns null when all empty', async () => {
       const today = new Date()
       const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
 
@@ -1665,13 +1665,13 @@ describe('DuePanel', () => {
         expect(screen.queryByText(t('duePanel.overdueTitle'))).not.toBeInTheDocument()
       })
 
-      // UX-152: Panel returns null when all sources are empty
+      // Panel returns null when all sources are empty
       await waitFor(() => {
         expect(container.innerHTML).toBe('')
       })
     })
 
-    it('queryByProperty rejection for upcoming fetch returns null when all empty (UX-152)', async () => {
+    it('queryByProperty rejection for upcoming fetch returns null when all empty', async () => {
       localStorage.setItem('agaric:deadlineWarningDays', '7')
       const today = new Date()
       const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
@@ -1693,7 +1693,7 @@ describe('DuePanel', () => {
       // Upcoming section should not appear
       expect(screen.queryByText(t('duePanel.upcomingTitle'))).not.toBeInTheDocument()
 
-      // UX-152: Panel returns null when all sources are empty
+      // Panel returns null when all sources are empty
       await waitFor(() => {
         expect(container.innerHTML).toBe('')
       })

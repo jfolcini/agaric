@@ -87,7 +87,7 @@ fn bench_add_attachment(c: &mut Criterion) {
         let mat = rt.block_on(async { Materializer::new(pool.clone()) });
         let ids = rt.block_on(seed_blocks_bulk(&pool, size));
 
-        // M-29: `add_attachment_inner` now stat-checks the file under
+        // `add_attachment_inner` now stat-checks the file under
         // `app_data_dir`, so create the bench fixture once and reuse it
         // for every iteration. The bench measures DB-write cost, not
         // filesystem cost — a single zero-byte file is enough.

@@ -10,7 +10,7 @@
  *  - The `tag:` chip resolver (resolves a tag id to its human-readable
  *    name via the resolve cache).
  *  - The free-text filter input, seeded from the navigation handoff slot
- *    (PEND-67) and the per-render alias resolution (PEND-29 B-2
+ * And the per-render alias resolution (B-2
  *    stale-fetch guard).
  *  - The add/remove/clear screen-reader announcement *prefix* (P1-F1).
  *    The settled result-count suffix is appended by
@@ -67,7 +67,7 @@ interface UsePageBrowserFiltersResult {
 export function usePageBrowserFilters(currentSpaceId: string | null): UsePageBrowserFiltersResult {
   const { t } = useTranslation()
 
-  // PEND-58 Phase 3 — compound filters. Chips live in a per-space store
+  // Phase 3 — compound filters. Chips live in a per-space store
   // (`usePageBrowserFiltersStore`) rather than local component state so they
   // survive a navigation round-trip — creating a page opens the editor, which
   // unmounts this view (`ViewDispatcher` is a `switch` over `currentView`) —
@@ -89,14 +89,14 @@ export function usePageBrowserFilters(currentSpaceId: string | null): UsePageBro
     (index: number) => removeFilterForSpace(filterSpaceKey, index),
     [removeFilterForSpace, filterSpaceKey],
   )
-  // PEND-58d D12 — clear every active chip in one shot. Wired to the
+  // Clear every active chip in one shot. Wired to the
   // chip row's `onClearAll` prop (the FilterRow renders the control;
   // this provides the behaviour). No-op when already empty.
   const handleClearAllFilters = useCallback(
     () => clearFiltersForSpace(filterSpaceKey),
     [clearFiltersForSpace, filterSpaceKey],
   )
-  // PEND-58e E5 — resolve a `tag:` chip's tag id to its human-readable
+  // Resolve a `tag:` chip's tag id to its human-readable
   // name. The tags are preloaded into the global resolve cache on boot
   // (and re-fetched per space), the same source the editor uses to render
   // `#[ULID]` tag refs. Subscribe to `version` so the chip re-renders when
@@ -130,7 +130,7 @@ export function usePageBrowserFilters(currentSpaceId: string | null): UsePageBro
   )
   const wireFiltersKey = useMemo(() => JSON.stringify(wireFilters), [wireFilters])
 
-  // PEND-67 Phase 5 follow-up — consume the palette's "Reveal in Pages
+  // Phase 5 follow-up — consume the palette's "Reveal in Pages
   // view" handoff slot on mount. The slot is single-shot: we read it,
   // seed the filter, then clear it so a subsequent natural navigation
   // to Pages does not re-apply the old filter.
@@ -155,14 +155,14 @@ export function usePageBrowserFilters(currentSpaceId: string | null): UsePageBro
   // pre-existing filters doesn't fire a spurious "filter added" announcement.
   const prevFiltersRef = useRef<PageFilterWithKey[]>(filters)
   const [aliasMatchId, setAliasMatchId] = useState<string | null>(null)
-  // PEND-29 B-2: monotonic request id for alias resolution. When the user
+  // B-2: monotonic request id for alias resolution. When the user
   // types fast, the older `resolvePageByAlias` promise can resolve after the
   // newer one and overwrite `aliasMatchId` with stale data; the request-id
-  // pattern (mirrors `useQueryExecution` post-PEND-22) discards results from
+  // Pattern (mirrors `useQueryExecution` post-) discards results from
   // any but the most recent in-flight request.
   const aliasReqIdRef = useRef(0)
 
-  // Alias resolution for filter (PEND-29 B-2: stale-fetch guard via
+  // Alias resolution for filter (B-2: stale-fetch guard via
   // request-id ref so an older promise resolving after a newer one cannot
   // overwrite `aliasMatchId` with stale data).
   useEffect(() => {
@@ -172,7 +172,7 @@ export function usePageBrowserFilters(currentSpaceId: string | null): UsePageBro
     }
     const myReqId = ++aliasReqIdRef.current
     const query = filterText.trim()
-    // PEND-35 Tier 1.2 — pass `spaceId: currentSpaceId` so an alias
+    // Pass `spaceId: currentSpaceId` so an alias
     // pointing at a foreign-space page does not surface here.
     resolvePageByAlias({ alias: query, spaceId: currentSpaceId })
       .then((result) => {

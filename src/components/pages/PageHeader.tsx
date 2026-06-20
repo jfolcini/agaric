@@ -52,7 +52,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const { t } = useTranslation()
   const pageStore = usePageBlockStoreApi()
 
-  // --- Page-delete flow (PEND-68 Part A) ---
+  // --- Page-delete flow (Part A) ---
   // `usePageDeleteAction` owns the confirm dialog + success-toast-with-
   // Undo wiring. The header has TWO delete entry points — the dedicated
   // trash button in the quick-actions cluster AND the kebab "Delete
@@ -272,7 +272,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     setKebabOpen(false)
   }, [pageId, editableTitle, title])
 
-  // --- FEAT-3 Phase 2 — Move to space ---
+  // --- Phase 2 — Move to space ---
   // Subscribe to `availableSpaces` so the sub-menu updates live when a
   // peer creates/renames a space over sync. The list passed into the
   // menu is already sorted (the space store guarantees alphabetical
@@ -426,7 +426,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   ]
   const availableTags = allTags
     .filter((t_) => !appliedTagIds.has(t_.id))
-    // UX-248 — Unicode-aware fold.
+    // Unicode-aware fold.
     .filter((t_) => matchesSearchFolded(t_.name, tagQuery))
 
   const handleTagAdd = useCallback(
@@ -485,7 +485,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
             >
               <Smile className="h-4 w-4" />
             </IconButton>
-            {/* PEND-68 Part A — unified star + dedicated delete affordance.
+            {/*  Part A — unified star + dedicated delete affordance.
                 The kebab below KEEPS its "Delete page" item as a secondary
                 path; both routes call `requestDelete()` on the shared
                 `usePageDeleteAction` so only one ConfirmDialog mounts. */}
@@ -519,7 +519,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
             />
           </div>
 
-          {/* Breadcrumb for namespaced page titles (UX-257). Consumes the
+          {/* Breadcrumb for namespaced page titles. Consumes the
               shared `Breadcrumb` primitive — chevron separators, no
               `touch-target` per-crumb (the primitive handles 44 px hit-area
               on touch via `[@media(pointer:coarse)]:py-2`). */}
@@ -568,7 +568,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         </div>
       </ViewHeader>
 
-      {/* Single delete-confirm dialog (PEND-68 Part A) — both the dedicated
+      {/* Single delete-confirm dialog (Part A) — both the dedicated
           trash button in the quick-actions cluster and the kebab "Delete
           page" item route through `usePageDeleteAction.requestDelete`, so
           only this dialog mounts. */}

@@ -74,7 +74,7 @@ describe('HighlightMatch', () => {
     })
   })
 
-  // UX-247 — Unicode-aware folding regression tests.  Plain
+  // Unicode-aware folding regression tests. Plain
   // `.toLowerCase()` fails these cases; `indexOfFolded` handles them.
 
   it('highlights Turkish İstanbul when filter is istanbul', () => {

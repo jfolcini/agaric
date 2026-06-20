@@ -192,7 +192,7 @@ export const shortcuts: Record<string, string> = {
   'keyboard.switchSpace7': 'Switch to space 7',
   'keyboard.switchSpace8': 'Switch to space 8',
   'keyboard.switchSpace9': 'Switch to space 9',
-  // Quick capture (FEAT-12) — announced in the help panel so the global
+  // Quick capture — announced in the help panel so the global
   // hotkey is discoverable. The actual binding is sourced at runtime
   // from `loadQuickCaptureShortcut()` (platform-specific default, user
   // overridable in Settings → General).

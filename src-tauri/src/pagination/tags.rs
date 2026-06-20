@@ -10,9 +10,9 @@ use crate::error::AppError;
 /// Uses covering index `idx_block_tags_tag_block(tag_id, block_id)`, so the
 /// order is index-supplied and no temp B-tree is built (audit #425).
 ///
-/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to blocks
+/// `space_id` — when `Some`, restricts the result set to blocks
 /// whose owning page (`b.page_id`) carries `space = ?space_id`.
-/// `None` keeps the pre-FEAT-3 behaviour (no filter). See
+/// `None` keeps the pre- behaviour (no filter). See
 /// [`crate::space_filter_clause`] for the shared SQL fragment definition.
 pub async fn list_by_tag(
     pool: &SqlitePool,
@@ -27,7 +27,7 @@ pub async fn list_by_tag(
         None => (None, ""),
     };
 
-    // FEAT-3p4 — ?5 (space_id) drives the shared space-filter clause.
+    // ?5 (space_id) drives the shared space-filter clause.
     // Mirrors `crate::space_filter_clause!` — kept inline because
     // `sqlx::query_as!` requires a string literal directly.
     let rows = sqlx::query_as!(

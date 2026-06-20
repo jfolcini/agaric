@@ -29,7 +29,7 @@ mod tests;
 // Regex for [[ULID]], ((ULID)), and #[ULID] tokens (canonical home)
 // ---------------------------------------------------------------------------
 //
-// MAINT-148e — the three ULID-token regexes are defined once here and
+// The three ULID-token regexes are defined once here and
 // re-exported by [`crate::fts`] so the materializer pipeline (cache
 // rebuilds + FTS strip) shares a single source of truth. Pre-refactor,
 // `TAG_REF_RE` and `PAGE_LINK_RE` were duplicated in `fts/strip.rs` with
@@ -88,7 +88,7 @@ fn tag_ref_re() -> &'static Regex {
 }
 
 // ---------------------------------------------------------------------------
-// Shared cache-rebuild logging helper (MAINT-148b)
+// Shared cache-rebuild logging helper
 // ---------------------------------------------------------------------------
 
 /// Wrap a cache-rebuild closure with the standard tracing instrumentation.
@@ -159,7 +159,7 @@ pub use pages::{rebuild_pages_cache, rebuild_pages_cache_counts, rebuild_pages_c
 #[cfg(test)]
 pub(crate) use pages::recompute_all_pages_cache_counts;
 pub use projected_agenda::{rebuild_projected_agenda_cache, rebuild_projected_agenda_cache_split};
-// MAINT-196 — pinned-today variant for the on-the-fly / cached parity test.
+// Pinned-today variant for the on-the-fly / cached parity test.
 #[cfg(test)]
 pub(crate) use projected_agenda::rebuild_projected_agenda_cache_with_today;
 pub use tags::{rebuild_tags_cache, rebuild_tags_cache_split, refresh_tag_usage_count};
@@ -185,9 +185,9 @@ use sqlx::SqlitePool;
 /// included here — they operate on a single block and are called
 /// per-block during materialisation.
 ///
-/// Ordering note: `rebuild_page_ids` runs **first** (M-15) because
+/// Ordering note: `rebuild_page_ids` runs **first** because
 /// `rebuild_agenda_cache` and `rebuild_projected_agenda_cache` both
-/// consult `b.page_id` to apply the FEAT-5a template-page exclusion
+/// Consult `b.page_id` to apply the template-page exclusion
 /// (`NOT EXISTS (... tp.block_id = b.page_id AND tp.key = 'template')`).
 /// Running them before page_ids is populated would silently include or
 /// exclude template-page blocks until something else triggered another
@@ -200,7 +200,7 @@ use sqlx::SqlitePool;
 /// rows first lets the tags-cache rebuild observe them on the same
 /// invocation.
 ///
-/// Test-only (L-19): production paths (snapshot restore, materializer)
+/// Test-only: production paths (snapshot restore, materializer)
 /// enqueue individual `MaterializeTask::Rebuild*` variants per cache
 /// rather than calling this convenience wrapper. Gating it behind
 /// `#[cfg(test)]` keeps the test ergonomics while preventing accidental

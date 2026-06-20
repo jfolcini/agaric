@@ -2,7 +2,7 @@
  * Serialize half of the markdown serializer (PM doc → Markdown).
  *
  * Extracted from the original `markdown-serializer.ts` monolith
- * (MAINT-117). The public API is still exposed via the
+ *. The public API is still exposed via the
  * `markdown-serializer.ts` barrel — every existing
  * `import { serialize } from './markdown-serializer'` site continues to
  * resolve unchanged.
@@ -13,7 +13,7 @@
  * are dropped from the output. Callers who want a user-facing notification
  * pass an `onUnknownNode` callback to `serialize`; see the
  * `markdown-serialize-toast` helper for the production wiring (toast +
- * structured log + per-session dedup) that MAINT-183 extracted out of
+ * Structured log + per-session dedup) that extracted out of
  * this file.
  */
 

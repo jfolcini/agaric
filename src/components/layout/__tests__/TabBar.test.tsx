@@ -425,8 +425,8 @@ describe('TabBar', () => {
       expect(closeIcons).toHaveLength(2)
     })
 
-    // UX-226: horizontal ScrollArea replaces bare overflow-x-auto
-    it('renders inside a horizontal ScrollArea (UX-226)', () => {
+    // Horizontal ScrollArea replaces bare overflow-x-auto
+    it('renders inside a horizontal ScrollArea', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
       })
@@ -457,9 +457,9 @@ describe('TabBar', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // UX-230 responsive layout
+  // Responsive layout
   // ---------------------------------------------------------------------------
-  describe('UX-230 responsive layout', () => {
+  describe(' responsive layout', () => {
     function setupThreeTabs() {
       useNavigationStore.setState({
         currentView: 'page-editor',
@@ -498,9 +498,9 @@ describe('TabBar', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // FEAT-7 shell-level hoist
+  // Shell-level hoist
   // ---------------------------------------------------------------------------
-  describe('FEAT-7 shell-level hoist', () => {
+  describe(' shell-level hoist', () => {
     function setupThreeTabs(currentView: 'page-editor' | 'journal' | 'pages' = 'page-editor') {
       useNavigationStore.setState({
         currentView,
@@ -597,9 +597,9 @@ describe('TabBar', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // FEAT-8 active-tab dropdown switcher
+  // Active-tab dropdown switcher
   // ---------------------------------------------------------------------------
-  describe('FEAT-8 active-tab dropdown switcher', () => {
+  describe(' active-tab dropdown switcher', () => {
     function setupThreeTabs(activeTabIndex = 1) {
       useNavigationStore.setState({
         currentView: 'page-editor',
@@ -706,9 +706,9 @@ describe('TabBar', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // UX-254 chevron visual polish (discoverability of active-tab dropdown)
+  // Chevron visual polish (discoverability of active-tab dropdown)
   // ---------------------------------------------------------------------------
-  describe('UX-254 chevron visual polish', () => {
+  describe(' chevron visual polish', () => {
     function setupActiveInEditor() {
       useNavigationStore.setState({
         currentView: 'page-editor',
@@ -758,9 +758,9 @@ describe('TabBar', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // UX-255 active-tab dropdown trigger aria-label
+  // Active-tab dropdown trigger aria-label
   // ---------------------------------------------------------------------------
-  describe('UX-255 active-tab dropdown trigger aria-label', () => {
+  describe(' active-tab dropdown trigger aria-label', () => {
     it('active tab in page-editor view has aria-label hinting the tab switcher', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
@@ -864,10 +864,10 @@ describe('TabBar', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // UX-262 dropdown a11y — flatten nested interactive (close button no longer
+  // Dropdown a11y — flatten nested interactive (close button no longer
   // nested inside role="menuitemradio")
   // ---------------------------------------------------------------------------
-  describe('UX-262 dropdown a11y — flat menu items', () => {
+  describe(' dropdown a11y — flat menu items', () => {
     function setupThreeTabs(activeTabIndex = 1) {
       useNavigationStore.setState({
         currentView: 'page-editor',
@@ -901,7 +901,7 @@ describe('TabBar', () => {
       // The activate items still carry role="menuitemradio".
       const activateItems = screen.getAllByRole('menuitemradio')
       expect(activateItems).toHaveLength(3)
-      // None of them contains a nested <button> — that was the UX-262 violation.
+      // None of them contains a nested <button> — that was the violation.
       for (const item of activateItems) {
         expect(item.querySelector('button')).toBeNull()
       }

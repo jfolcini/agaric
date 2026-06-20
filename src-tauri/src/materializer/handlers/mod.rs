@@ -13,7 +13,7 @@
 //! - `task_handlers`: foreground/background queue task dispatch.
 //! - `apply`: the per-op apply transaction, apply cursor, and
 //!   Restore/Delete cascade fan-out + cohort collectors.
-//! - `pages_cache`: PEND-56b `pages_cache.{inbound_link_count,
+//!   `pages_cache`: `pages_cache.{inbound_link_count,
 //!   child_block_count}` maintenance (the canonical recompute SELECT).
 //! - `loro_apply`: engine-routed `apply_*_via_loro` + the SQL purge cascade.
 //! - `sql_only`: the `apply_*_sql_only` projection fallbacks.
@@ -56,13 +56,13 @@ use sql_only::*;
 // External re-exports — preserve the pre-split paths so callers outside
 // this module (materializer/mod.rs, consumer.rs, tests.rs) do not change.
 pub(crate) use attachments::cleanup_orphaned_attachments;
-// #1257 PR-2: the LOCAL create_block command path drives the engine-apply +
+// #1257 the LOCAL create_block command path drives the engine-apply +
 // dense-position projection through this helper IN-TRANSACTION (without
 // advancing the apply cursor — that stays a boot-replay / dispatch_op concern),
 // so a fresh local create is engine-fresh and densely-positioned immediately
 // instead of waiting for the next boot replay (#1245 / #1249).
 pub(crate) use loro_apply::apply_create_block_via_loro;
-// #1257 PR-3: the LOCAL edit_block / set_property / delete_property / add_tag /
+// #1257 the LOCAL edit_block / set_property / delete_property / add_tag /
 // remove_tag command paths drive their engine-apply + projection (and tag
 // inheritance fan-out for add/remove_tag) through these helpers IN-TRANSACTION,
 // without advancing the apply cursor (boot-replay re-applies idempotently — the
@@ -71,14 +71,14 @@ pub(crate) use loro_apply::{
     apply_add_tag_via_loro, apply_delete_property_via_loro, apply_edit_block_via_loro,
     apply_remove_tag_via_loro, apply_set_property_via_loro,
 };
-// #1257 PR-4: the LOCAL move_block command path drives the engine-move +
+// #1257 the LOCAL move_block command path drives the engine-move +
 // dense-position reprojection (of BOTH the source and target sibling groups)
 // through this helper IN-TRANSACTION (without advancing the apply cursor — that
 // stays a boot-replay / dispatch_op concern), so a fresh local move is
 // engine-fresh and densely-positioned in both parents immediately instead of
 // waiting for the next boot replay (#1245 / #1249).
 pub(crate) use loro_apply::apply_move_block_via_loro;
-// #1257 PR-5: the LOCAL delete / restore / purge command paths PRE-CAPTURE each
+// #1257 the LOCAL delete / restore / purge command paths PRE-CAPTURE each
 // root's subtree COHORT + SPACE below the SQL soft-delete (these collectors)
 // and then drive the captured cohort onto the per-space Loro engine via the
 // post-commit fan-out (`dispatch_*_descendants`) — mirroring `apply_op_tx` +
@@ -88,7 +88,7 @@ pub(crate) use loro_apply::apply_move_block_via_loro;
 // `dispatch_op` concern only). The `apply_*_via_loro` CASCADE helpers are also
 // raised to `pub(crate)` at their definitions (consumed crate-internally via
 // the `use loro_apply::*` glob below) so they sit on the same engine-apply
-// surface PR-2 established; the multi-root command path itself routes the
+// Surface established; the multi-root command path itself routes the
 // engine through the fan-out + `merge::engine_apply` rather than the per-seed
 // helper (the helper's single-root SQL projection would double-count the
 // multi-root cascade; a post-cascade call hits dead space resolution).

@@ -200,7 +200,7 @@ async fn cleanup_orphaned_attachments_uses_read_pool() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cleanup_orphaned_attachments_subdir_walk() {
     // C-3c subdirectory walk: a file under `attachments/sub/` must be
-    // walked into and removed if unreferenced. FEAT-3 large-vault
+    // Walked into and removed if unreferenced. large-vault
     // layouts may organize attachments into subdirectories.
     let (pool, dir) = test_pool().await;
     let sub = dir.path().join("attachments").join("sub");

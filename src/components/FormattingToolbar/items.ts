@@ -2,7 +2,7 @@
  * Pure helper that flattens the four `ToolbarButtonConfig` groups plus
  * the three custom buttons (heading-level popover trigger, code-block
  * popover trigger, cycle-priority badge) into the ordered
- * `ToolbarItem[]` consumed by `useToolbarOverflow` (MAINT-219).
+ * `ToolbarItem[]` consumed by `useToolbarOverflow`.
  *
  * Group ids: 0 = refs+blocks+heading/codeBlock, 1 = structure,
  * 2 = priority+metadata, 3 = history. Separators sit between groups.

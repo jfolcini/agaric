@@ -1,5 +1,5 @@
 /**
- * PEND-73 Phase 5.T2 — desktop palette end-to-end spec.
+ * Phase 5.T2 — desktop palette end-to-end spec.
  *
  * Exercises the Cmd/Ctrl+K palette's full keyboard happy path against
  * the production-shape build: open via shortcut, type a partial page
@@ -22,7 +22,7 @@ import {
   waitForBoot,
 } from './helpers'
 
-test.describe('desktop palette (PEND-73 Phase 5.T2)', () => {
+test.describe('desktop palette (Phase 5.T2)', () => {
   test.beforeEach(async ({ page }) => {
     registerConsoleErrorWatcher(page)
     await waitForBoot(page)
@@ -34,7 +34,7 @@ test.describe('desktop palette (PEND-73 Phase 5.T2)', () => {
 
   test('Ctrl+K opens, query → page result, Enter navigates', async ({ page }) => {
     // Move focus out of the editor (the palette shortcut is gated on
-    // "focus is outside any TipTap surface" per PEND-51's context-aware
+    // "focus is outside any TipTap surface" context-aware
     // dispatch). Clicking the sidebar's Pages button takes focus there.
     await page
       .locator('[data-slot="sidebar"]')
@@ -48,7 +48,7 @@ test.describe('desktop palette (PEND-73 Phase 5.T2)', () => {
 
     const paletteInput = page.getByTestId('command-palette-input')
     await expect(paletteInput).toBeVisible()
-    // Auto-focus contract (PEND-73 Phase 3.U4): the input must be the
+    // Auto-focus contract (Phase 3.U4): the input must be the
     // active element on first paint via useLayoutEffect — no caret-jump
     // flash.
     await expect(paletteInput).toBeFocused()
@@ -96,7 +96,7 @@ test.describe('desktop palette (PEND-73 Phase 5.T2)', () => {
   })
 
   test('palette opens from an editor view when focus is on the sidebar first', async ({ page }) => {
-    // PEND-51's context-aware dispatch: opening while in an editor
+    // context-aware dispatch: opening while in an editor
     // surface is gated; navigating to a page first puts focus in the
     // editor, but clicking the sidebar header re-takes focus, and
     // Ctrl+K then opens cleanly. This guards the gating logic.

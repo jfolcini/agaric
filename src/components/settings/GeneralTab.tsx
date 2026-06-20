@@ -1,9 +1,9 @@
 /**
  * GeneralTab — General settings panel.
  *
- * Composes the deadline-warning section (UX-202) with the desktop-only
- * autostart (FEAT-13) and quick-capture-shortcut (FEAT-12) rows, plus
- * the spaces-onboarding reset (UX-374). Each row owns its own state +
+ * Composes the deadline-warning section with the desktop-only
+ * Autostart and quick-capture-shortcut rows, plus
+ * The spaces-onboarding reset. Each row owns its own state +
  * IPC; this wrapper is layout-only.
  */
 

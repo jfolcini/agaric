@@ -14,7 +14,7 @@ export function buildPageTree(
   pages: Array<{ id: string; content: string | null }>,
 ): PageTreeNode[] {
   const root: PageTreeNode[] = []
-  // PEND-27 P8: keep a parallel `name → node` index per level so the inner
+  // Keep a parallel `name → node` index per level so the inner
   // lookup is O(1) instead of `current.find(...)` over `current.length`.
   // The index is keyed off the `children` array reference (using the root
   // array as the top-level key) and never escapes this function, so the

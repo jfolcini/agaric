@@ -35,7 +35,7 @@ export async function applyContentEdit(
 ): Promise<void> {
   try {
     await editBlock(ctx.blockId, newContent)
-    // MAINT-116: heading/callout/numbered-list/divider slash commands
+    // Heading/callout/numbered-list/divider slash commands
     // must clear the redo stack just like every other content-edit
     // mutation in `pageStore.edit()`. Pre-fix this was missing, so a
     // user could `Cmd+Z` past a slash command and `Cmd+Shift+Z` would
@@ -58,7 +58,7 @@ export function openDatePicker(ctx: SlashCommandContext, mode: DatePickerMode): 
 }
 
 export function warnIfBlocked(ctx: SlashCommandContext): void {
-  // PEND-35 Tier 2.4c — single-key PK lookup against the `blocked_by`
+  // Single-key PK lookup against the `blocked_by`
   // row instead of fetching every property on the block.
   getProperty(ctx.blockId, 'blocked_by')
     .then((row) => {

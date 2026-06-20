@@ -154,7 +154,7 @@ const arbDoc: fc.Arbitrary<DocNode> = fc
  * of backticks of various lengths (3, 4, 5+) at arbitrary positions, including
  * stand-alone fence-shaped lines like "```", "````python", "```\n```". This
  * exercises the variable-length CommonMark fence logic in
- * serializeCodeBlock / parseCodeBlock (BUG-1).
+ * SerializeCodeBlock / parseCodeBlock.
  */
 const arbCodeBlockContent: fc.Arbitrary<string> = fc
   .array(
@@ -164,7 +164,7 @@ const arbCodeBlockContent: fc.Arbitrary<string> = fc
         .array(fc.constantFrom(...'abcXY 012'.split('')), { minLength: 0, maxLength: 8 })
         .map((chars) => chars.join('')),
       // A line that is exactly a backtick fence of length 3-6, optionally with
-      // a fake info string. These are the adversarial inputs for BUG-1.
+      // A fake info string. These are the adversarial inputs for.
       fc
         .tuple(
           fc.integer({ min: 3, max: 6 }),
@@ -725,9 +725,9 @@ describe('property: structural invariants', () => {
   })
 })
 
-// -- code block fence variable-length (BUG-1) ---------------------------------
+// -- code block fence variable-length ---------------------------------
 
-describe('property: code block round-trip handles backtick content (BUG-1)', () => {
+describe('property: code block round-trip handles backtick content', () => {
   it('serialize(parse(serialize(codeBlock))) is a fixed point — no truncation', () => {
     fc.assert(
       fc.property(arbCodeBlock, (block) => {
@@ -869,7 +869,7 @@ describe('property: hardBreak full-doc round-trip (#1333)', () => {
   })
 })
 
-// -- parse recursion depth guard (MAINT-11) -----------------------------------
+// -- parse recursion depth guard -----------------------------------
 
 describe('property: parse recursion depth guard', () => {
   /**

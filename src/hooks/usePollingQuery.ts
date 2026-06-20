@@ -7,7 +7,7 @@
  *
  * Polling pauses while the page is hidden (`document.hidden === true`, e.g.
  * backgrounded tab or minimised window) so Tauri IPC isn't flooded with
- * useless queries (PERF-21). A `visibilitychange` listener triggers a fresh
+ * Useless queries. A `visibilitychange` listener triggers a fresh
  * load as soon as the page becomes visible again, so the caller never waits
  * up to a full interval to see fresh data on return.
  */
@@ -63,7 +63,7 @@ export function usePollingQuery<T>(
 
   const load = useCallback(
     async (loadOpts?: { force?: boolean }): Promise<void> => {
-      // PERF-21: skip work when the page is hidden — we'll catch up via
+      // Skip work when the page is hidden — we'll catch up via
       // the visibilitychange handler once the user returns. Guarded via
       // `typeof` so the hook still works in non-browser test environments
       // that might not expose `document`.
@@ -112,7 +112,7 @@ export function usePollingQuery<T>(
     }
     const id = setInterval(tick, intervalMs)
     if (refetchOnFocus) window.addEventListener('focus', tick)
-    // PERF-21: reload the moment the page becomes visible again so stale
+    // Reload the moment the page becomes visible again so stale
     // state (conflict counts, badges) freshens without the user waiting
     // up to `intervalMs` for the next tick.
     const onVisibilityChange = (): void => {

@@ -163,7 +163,7 @@ describe('BlockHistoryItem (extracted sibling)', () => {
       await waitFor(() => {
         expect(screen.queryByTestId('block-history-diff-error-0')).not.toBeInTheDocument()
       })
-      // Insert is flipped to Delete in comparedToCurrent mode (MAINT-217),
+      // Insert is flipped to Delete in comparedToCurrent mode,
       // so the recovered span renders inside a <del>.
       await waitFor(() => {
         expect(document.querySelector('del')?.textContent).toBe('recovered')

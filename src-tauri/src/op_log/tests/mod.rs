@@ -158,7 +158,7 @@ pub(super) fn all_op_payloads() -> Vec<(&'static str, OpPayload)> {
             }),
         ),
         // #652: keep RenameAttachment exercised through the append /
-        // L-13 sidecar / canonical-JSON-ordering harnesses too.
+        // Sidecar / canonical-JSON-ordering harnesses too.
         (
             "rename_attachment",
             OpPayload::RenameAttachment(RenameAttachmentPayload {

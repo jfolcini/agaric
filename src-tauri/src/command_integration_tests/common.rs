@@ -62,7 +62,7 @@ pub async fn insert_block(
 }
 
 /// Synthetic space ULID for integration tests that need to satisfy the
-/// FEAT-3 Phase 7 space-scoped query path (e.g. `batch_resolve_inner`,
+/// Phase 7 space-scoped query path (e.g. `batch_resolve_inner`,
 /// `get_page_inner`) without going through the full `bootstrap_spaces`
 /// flow.
 pub const TEST_SPACE_ID: &str = "01TESTSPACE000000000000001";
@@ -106,10 +106,10 @@ pub async fn assign_to_test_space(pool: &SqlitePool, block_id: &str) {
         .unwrap();
 }
 
-/// FEAT-3p4 — bulk-assign every block currently in the DB (excluding the
+/// Bulk-assign every block currently in the DB (excluding the
 /// space block itself and any block whose owning page already carries a
 /// `space_id`) to [`TEST_SPACE_ID`]. Use this at the end of a test's seed
-/// phase so the FEAT-3p4 hard-filter paths (`list_blocks_inner`,
+/// Phase so the hard-filter paths (`list_blocks_inner`,
 /// `search_blocks_inner`) return everything the test set up. Idempotent —
 /// the page-`space_id` guard skips blocks already assigned to any space
 /// (so cross-space tests still work).
@@ -158,7 +158,7 @@ pub async fn settle(mat: &Materializer) {
     mat.flush_background().await.unwrap();
 }
 
-/// FEAT-3p5 test helper: create a single space and return its ULID.
+/// Test helper: create a single space and return its ULID.
 /// Tests that exercise the per-space journal lookup (and any other
 /// per-space command surface) need a live `is_space = 'true'` block
 /// to scope under; this helper emits the same atomic CreateBlock +

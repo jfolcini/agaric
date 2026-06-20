@@ -1,5 +1,5 @@
 /**
- * Tests for PagesTreeSection (PEND-83 Bug 2).
+ * Tests for PagesTreeSection (Bug 2).
  *
  * Validates:
  *  1. Descendants render under the parent title.

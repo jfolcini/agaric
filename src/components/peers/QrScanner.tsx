@@ -14,7 +14,7 @@ interface QrScannerProps {
   onScan: (data: string) => void
   onError?: (error: string) => void
   /**
-   * UX-264: fired when camera initialization fails (typically a permission
+   * Fired when camera initialization fails (typically a permission
    * denial). The parent can react by auto-switching to a manual entry mode
    * so the user is never stuck staring at the in-scanner error message.
    */
@@ -104,7 +104,7 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
       setScanning(false)
       scannerInstanceRef.current = null
       onError?.(message)
-      // UX-264: notify the parent so it can fall back to manual entry rather
+      // Notify the parent so it can fall back to manual entry rather
       // than leave the user staring at the in-scanner error indefinitely.
       onCameraDenied?.()
     }

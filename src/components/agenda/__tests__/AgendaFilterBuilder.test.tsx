@@ -50,7 +50,7 @@ function renderBuilder(overrides?: Partial<AgendaFilterBuilderProps>) {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // MAINT-189: PropertyValuePicker reads from a module-level shared
+  // PropertyValuePicker reads from a module-level shared
   // cache. Reset between tests so each case observes its own
   // `invoke('list_property_keys')` fetch.
   _resetPropertyKeysCacheForTest()
@@ -142,7 +142,7 @@ describe('AgendaFilterBuilder', () => {
 
     await user.click(screen.getByRole('button', { name: /Add filter/i }))
 
-    // UX-323: outer container moved from <ul> to <div> when grouping
+    // Outer container moved from <ul> to <div> when grouping
     // landed; query by accessible name instead of role.
     const picker = screen.getByLabelText(t('agendaFilter.filterDimensions'))
     expect(within(picker).getByText(t('agendaFilter.status'))).toBeInTheDocument()
@@ -153,9 +153,9 @@ describe('AgendaFilterBuilder', () => {
   })
 
   // -----------------------------------------------------------------------
-  // UX-323: dimension picker is visually grouped into 3 categories
+  // Dimension picker is visually grouped into 3 categories
   // -----------------------------------------------------------------------
-  it('dimension picker renders all 3 group headings (UX-323)', async () => {
+  it('dimension picker renders all 3 group headings', async () => {
     const user = userEvent.setup()
     renderBuilder()
 
@@ -167,7 +167,7 @@ describe('AgendaFilterBuilder', () => {
     expect(within(picker).getByText(t('agendaFilter.group.organisation'))).toBeInTheDocument()
   })
 
-  it('dimension picker still surfaces all 8 dimensions after grouping (UX-323)', async () => {
+  it('dimension picker still surfaces all 8 dimensions after grouping', async () => {
     const user = userEvent.setup()
     renderBuilder()
 
@@ -184,7 +184,7 @@ describe('AgendaFilterBuilder', () => {
     expect(within(picker).getByText(t('agendaFilter.property'))).toBeInTheDocument()
   })
 
-  it('dimensions appear under the correct group heading (UX-323)', async () => {
+  it('dimensions appear under the correct group heading', async () => {
     const user = userEvent.setup()
     renderBuilder()
 
@@ -222,9 +222,9 @@ describe('AgendaFilterBuilder', () => {
   })
 
   // -----------------------------------------------------------------------
-  // UX-9: dimension picker carries a Tooltip describing each dimension
+  // Dimension picker carries a Tooltip describing each dimension
   // -----------------------------------------------------------------------
-  it('renders a tooltip describing each dimension when hovered (UX-9)', async () => {
+  it('renders a tooltip describing each dimension when hovered', async () => {
     const user = userEvent.setup()
     renderBuilder()
 
@@ -423,7 +423,7 @@ describe('AgendaFilterBuilder', () => {
   })
 
   // -----------------------------------------------------------------------
-  // 13b. (UX-274) Disabled apply button surfaces visual feedback via Button
+  // 13b. Disabled apply button surfaces visual feedback via Button
   //     primitive's `disabled:` Tailwind modifiers.
   // -----------------------------------------------------------------------
   it('apply button shows disabled visual styling (opacity + cursor)', async () => {
@@ -556,14 +556,14 @@ describe('AgendaFilterBuilder', () => {
   })
 
   // -----------------------------------------------------------------------
-  // 19. getTaskStates returns the fixed locked cycle (UX-202)
+  // 19. getTaskStates returns the fixed locked cycle
   // -----------------------------------------------------------------------
   describe('getTaskStates', () => {
-    it('returns the locked fixed cycle TODO/DOING/DONE/CANCELLED (UX-234)', () => {
+    it('returns the locked fixed cycle TODO/DOING/DONE/CANCELLED', () => {
       expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED'])
     })
 
-    it('ignores legacy localStorage values (UX-202)', () => {
+    it('ignores legacy localStorage values', () => {
       localStorage.setItem('task_cycle', JSON.stringify([null, 'TODO', 'DOING', 'DONE', 'LEGACY']))
       try {
         expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED'])
@@ -574,9 +574,9 @@ describe('AgendaFilterBuilder', () => {
   })
 
   // -----------------------------------------------------------------------
-  // 20. Status filter shows the fixed cycle (UX-202: includes CANCELLED)
+  // 20. Status filter shows the fixed cycle (includes CANCELLED)
   // -----------------------------------------------------------------------
-  it('status filter shows the fixed cycle including CANCELLED (UX-202)', async () => {
+  it('status filter shows the fixed cycle including CANCELLED', async () => {
     const user = userEvent.setup()
     renderBuilder()
 
@@ -690,7 +690,7 @@ describe('AgendaFilterBuilder', () => {
   })
 
   // -----------------------------------------------------------------------
-  // 24f. UX-12 — non-property filter chips also get a `title=` attribute so
+  // 24f. non-property filter chips also get a `title=` attribute so
   // long values that truncate in the pill are still discoverable.
   // -----------------------------------------------------------------------
   it('non-property filter chip has title attribute with full label', () => {
@@ -706,7 +706,7 @@ describe('AgendaFilterBuilder', () => {
   // from the AddFilterPopover dimension dedup), but `key={filter.dimension}`
   // produced duplicate React keys: React warned and chip recycling could
   // target the wrong filter after a re-render. Keys now come from the
-  // stamped `_addId` (FilterPillRow's MAINT-190 pattern).
+  // Stamped `_addId` (FilterPillRow's pattern).
   // -----------------------------------------------------------------------
   describe('duplicate property filter chips (#757)', () => {
     const twoPropertyFilters: AgendaFilter[] = [

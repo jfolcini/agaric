@@ -3,12 +3,12 @@
  *
  * Validates:
  *  - Renders with 9 tabs
- *  - General tab shows deadline warning section (UX-202: TaskStatesSection removed)
+ * General tab shows deadline warning section (TaskStatesSection removed)
  *  - Properties tab shows property definitions
  *  - Appearance tab shows theme toggle
  *  - Sync tab shows device management
- *  - Agent access tab (FEAT-4e)
- *  - Google Calendar tab (FEAT-5f, experimental)
+ * Agent access tab
+ * Google Calendar tab (experimental)
  *  - Tab switching works
  *  - Theme toggle changes localStorage and document class
  *  - Font size selector updates localStorage and CSS variable
@@ -25,7 +25,7 @@ import { SettingsView } from '@/components/pages/SettingsView'
 import { t } from '@/lib/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 
-// FEAT-13: mock @tauri-apps/plugin-autostart so the AutostartRow's
+// Mock @tauri-apps/plugin-autostart so the AutostartRow's
 // dynamic import (via @/lib/tauri's wrappers) hits a controllable stub.
 // Per-test `mockResolvedValueOnce` / `mockRejectedValueOnce` overrides
 // drive the desktop-available / mobile-unavailable / IPC-error paths.
@@ -38,7 +38,7 @@ vi.mock('@tauri-apps/plugin-autostart', () => ({
   isEnabled: mockIsEnabled,
 }))
 
-// FEAT-12: mock @tauri-apps/plugin-global-shortcut for the
+// Mock @tauri-apps/plugin-global-shortcut for the
 // QuickCaptureRow tests. Per-test overrides drive the success / failure
 // paths.
 const mockShortcutRegister = vi.fn()
@@ -50,7 +50,7 @@ vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
   isRegistered: mockShortcutIsRegistered,
 }))
 
-// FEAT-12: mock the useIsMobile hook so the desktop / mobile branches
+// Mock the useIsMobile hook so the desktop / mobile branches
 // of the QuickCaptureRow are deterministic in jsdom.
 const mockUseIsMobile = vi.fn(() => false)
 vi.mock('@/hooks/useIsMobile', () => ({
@@ -83,7 +83,7 @@ vi.mock('@/components/DataSettingsTab', () => ({
   DataSettingsTab: () => <div data-testid="data-settings-tab">Data Settings Content</div>,
 }))
 
-// FEAT-4e: AgentAccessSettingsTab is rendered inside the "Agent access"
+// AgentAccessSettingsTab is rendered inside the "Agent access"
 // tab panel. Mock it as an inert marker so the SettingsView tests stay
 // focused on tab routing / theme / font-size behaviour.
 vi.mock('@/components/AgentAccessSettingsTab', () => ({
@@ -109,14 +109,14 @@ beforeEach(() => {
   localStorage.removeItem('journal-date-format')
   for (const cls of ALL_THEME_CLASSES) document.documentElement.classList.remove(cls)
   document.documentElement.style.removeProperty('--agaric-font-size')
-  // UX-276: ensure URL state from a previous test doesn't leak in via the
+  // Ensure URL state from a previous test doesn't leak in via the
   // `?settings=…` deep-link param (each test that needs a specific URL
   // sets it explicitly).
   window.history.replaceState(null, '', '/')
   // #734: clear the pending-tab handoff slot so a value left by a prior
   // test can't flip the active tab here.
   useNavigationStore.setState({ pendingSettingsTab: null })
-  // FEAT-13: default the autostart plugin to "unavailable" so tests
+  // Default the autostart plugin to "unavailable" so tests
   // that don't care about the launch-on-login row don't have to mock
   // it explicitly. Tests that exercise the row override per-call with
   // `mockResolvedValueOnce(...)` / `mockRejectedValueOnce(...)`.
@@ -124,7 +124,7 @@ beforeEach(() => {
   mockDisable.mockReset()
   mockIsEnabled.mockReset()
   mockIsEnabled.mockRejectedValue(new Error('autostart unavailable'))
-  // FEAT-12: reset global-shortcut + isMobile mocks each test.
+  // Reset global-shortcut + isMobile mocks each test.
   mockShortcutRegister.mockReset()
   mockShortcutUnregister.mockReset()
   mockShortcutIsRegistered.mockReset()
@@ -136,8 +136,8 @@ beforeEach(() => {
 })
 
 describe('SettingsView', () => {
-  // ── UX-381: breadcrumb naming the active tab ──────────────────────
-  describe('breadcrumb (UX-381)', () => {
+  // ── breadcrumb naming the active tab ──────────────────────
+  describe('breadcrumb', () => {
     it('renders a <nav> landmark labelled with the Settings section name', () => {
       render(<SettingsView />)
 
@@ -343,7 +343,7 @@ describe('SettingsView', () => {
     }
   })
 
-  it('General tab shows deadline warning section by default (UX-202: no TaskStatesSection)', () => {
+  it('General tab shows deadline warning section by default (no TaskStatesSection)', () => {
     render(<SettingsView />)
 
     expect(screen.queryByTestId('task-states-section')).not.toBeInTheDocument()
@@ -446,9 +446,9 @@ describe('SettingsView', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(false)
   })
 
-  // ── UX-203: VSCode-inspired themes ─────────────────────────────────
+  // ── VSCode-inspired themes ─────────────────────────────────
 
-  describe('VSCode-inspired theme options (UX-203)', () => {
+  describe('VSCode-inspired theme options', () => {
     async function openAppearance() {
       const user = userEvent.setup()
       render(<SettingsView />)
@@ -569,8 +569,8 @@ describe('SettingsView', () => {
     })
   })
 
-  // ── UX-9: week-start preference Select ─────────────────────────────
-  describe('week-start preference (UX-9)', () => {
+  // ── week-start preference Select ─────────────────────────────
+  describe('week-start preference', () => {
     beforeEach(() => {
       localStorage.removeItem('week-start-preference')
     })
@@ -637,7 +637,7 @@ describe('SettingsView', () => {
       expect(screen.getByLabelText(t('settings.weekStartLabel'))).toHaveValue('0')
     })
 
-    // UX-329 — week-start change must produce a user-visible toast that
+    // Week-start change must produce a user-visible toast that
     // names the chosen day, otherwise the only cue is calendar grids
     // silently re-laying out.
     it('shows a success toast naming the chosen day on change', async () => {
@@ -750,9 +750,9 @@ describe('SettingsView', () => {
     expect(document.documentElement.style.getPropertyValue('--agaric-font-size')).toBe('14px')
   })
 
-  // ── UX-276: active tab persistence ─────────────────────────────────
+  // ── active tab persistence ─────────────────────────────────
 
-  describe('active tab persistence (UX-276)', () => {
+  describe('active tab persistence', () => {
     it('renders with the persisted active tab on first render', () => {
       localStorage.setItem('agaric-settings-active-tab', 'keyboard')
       render(<SettingsView />)
@@ -799,9 +799,9 @@ describe('SettingsView', () => {
     })
   })
 
-  // ── UX-276: URL deep-link support ─────────────────────────────────
+  // ── URL deep-link support ─────────────────────────────────
 
-  describe('URL deep-link support (UX-276)', () => {
+  describe('URL deep-link support', () => {
     it('initialises the active tab from the ?settings= query param', async () => {
       window.history.replaceState(null, '', '/?settings=keyboard')
       render(<SettingsView />)
@@ -1019,9 +1019,9 @@ describe('SettingsView', () => {
     expect(screen.getByText('Keyboard Settings Content')).toBeInTheDocument()
   })
 
-  // ── FEAT-13: Launch-on-login toggle (General tab) ──────────────────
+  // ── Launch-on-login toggle (General tab) ──────────────────
 
-  describe('Launch-on-login toggle (FEAT-13)', () => {
+  describe('Launch-on-login toggle', () => {
     it('hides the toggle on mobile / browser-dev when the plugin rejects', async () => {
       // Default `beforeEach` already rejects `isEnabled()` with
       // "autostart unavailable", simulating Android / iOS where the
@@ -1110,7 +1110,7 @@ describe('SettingsView', () => {
     it('reverts the optimistic update and toasts the failure when enable() rejects', async () => {
       mockIsEnabled.mockReset()
       mockIsEnabled.mockResolvedValue(false)
-      // MAINT-99 ipc-error-path-coverage: the new component test must
+      // Ipc-error-path-coverage: the new component test must
       // include at least one mockRejectedValue* path.
       mockEnable.mockRejectedValueOnce(new Error('IPC denied'))
       const user = userEvent.setup()
@@ -1148,8 +1148,8 @@ describe('SettingsView', () => {
     })
   })
 
-  // ── FEAT-12: Quick-capture shortcut row (General tab) ─────────────
-  describe('Quick capture shortcut (FEAT-12)', () => {
+  // ── Quick-capture shortcut row (General tab) ─────────────
+  describe('Quick capture shortcut', () => {
     it('renders with the default chord on first paint and exposes an Edit button', () => {
       render(<SettingsView />)
 
@@ -1223,7 +1223,7 @@ describe('SettingsView', () => {
       expect(screen.getByTestId('quick-capture-shortcut-binding')).toHaveTextContent('Ctrl+Shift+J')
     })
 
-    // MAINT-99: every component that calls IPC must have a mockRejectedValue path.
+    // Every component that calls IPC must have a mockRejectedValue path.
     it('shows a toast and does NOT persist the new chord when probe register() rejects', async () => {
       const user = userEvent.setup()
       mockShortcutUnregister.mockResolvedValue(undefined)

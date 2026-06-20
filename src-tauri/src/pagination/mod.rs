@@ -54,7 +54,7 @@ const DEFAULT_PAGE_SIZE: i64 = 50;
 /// Maximum page size the client may request.
 const MAX_PAGE_SIZE: i64 = 200;
 
-/// Current cursor schema version (L-18).
+/// Current cursor schema version.
 ///
 /// The encoded JSON cursor carries a `version` field so that any future
 /// reordering or semantic change of the [`Cursor`] fields can reject stale
@@ -66,7 +66,7 @@ const MAX_PAGE_SIZE: i64 = 200;
 const CURRENT_CURSOR_VERSION: u8 = 1;
 
 // ---------------------------------------------------------------------------
-// FEAT-3 Phase 2 — shared space-filter SQL fragment.
+// Phase 2 — shared space-filter SQL fragment.
 // ---------------------------------------------------------------------------
 //
 // Every paginated list / search query that honours the active space must
@@ -282,7 +282,7 @@ pub(crate) fn split_position_keyset_page<T: PositionKeyRow>(
 
 /// Row returned by paginated block queries.
 ///
-/// MAINT-113 took the parallel-types path (over the explored
+/// Took the parallel-types path (over the explored
 /// `BlockRow<Id = String>` generic, which collided with two
 /// `specta-typescript` 0.0.11 constraints — no generic-default emit and
 /// `PLACEHOLDER_Id` codegen dropping `Id: Clone` bounds through embedded
@@ -322,7 +322,7 @@ pub struct ProjectedAgendaEntry {
     pub source: String, // "due_date" or "scheduled_date"
 }
 
-/// MAINT-113 M1.5 — Row returned by paginated block queries that filter
+/// Row returned by paginated block queries that filter
 /// on `deleted_at IS NULL` in their SQL.
 ///
 /// Mirror of [`BlockRow`] except `id` is typed [`crate::ulid::ActiveBlockId`]
@@ -407,7 +407,7 @@ impl From<ActiveBlockRow> for BlockRow {
     }
 }
 
-/// MAINT-113 M1.5 — Active-id variant of [`ProjectedAgendaEntry`]. Used by
+/// Active-id variant of [`ProjectedAgendaEntry`]. Used by
 /// `commands::agenda::list_projected_agenda_inner` and its on-the-fly
 /// fallback, both of which only emit projections of live, non-conflict
 /// blocks (the projector reads from `block_properties` joined against
@@ -524,7 +524,7 @@ impl Cursor {
     ///
     /// The encoded JSON includes a `version` key set to
     /// [`CURRENT_CURSOR_VERSION`] so that future schema bumps can reject
-    /// stale cursors on decode (L-18).  The version is injected via a
+    /// Stale cursors on decode. The version is injected via a
     /// `serde_json::Value` intermediate rather than a struct field so
     /// that the many `Cursor { … }` literal call sites across the crate
     /// (`tag_query`, `fts`, `commands`, `backlink`) remain unchanged —
@@ -549,7 +549,7 @@ impl Cursor {
     /// function rejects any cursor whose version is not
     /// [`CURRENT_CURSOR_VERSION`] with [`AppError::Validation`] so clients
     /// re-paginate from page 1 instead of silently consuming a cursor that
-    /// was encoded against a different field layout (L-18).
+    /// Was encoded against a different field layout.
     ///
     /// **Backwards compatibility:** pre-versioning cursors (no `version`
     /// key in their JSON) are treated as version 1.  This is the desired
@@ -592,7 +592,7 @@ impl Cursor {
     }
 
     // -------------------------------------------------------------------
-    // Constructors (MAINT-148c)
+    // Constructors
     // -------------------------------------------------------------------
     //
     // The optional fields on `Cursor` are populated in a small number of

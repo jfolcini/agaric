@@ -63,7 +63,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
   const [editingOptionsKey, setEditingOptionsKey] = useState<string | null>(null)
   const [editOptionsValue, setEditOptionsValue] = useState('')
 
-  // UX-339: derive inline JSON parse error so the user gets immediate
+  // Derive inline JSON parse error so the user gets immediate
   // feedback (and Save is disabled) instead of only seeing a toast on
   // failed save. Empty input is treated as valid (clears options).
   const jsonError = useMemo<string | null>(() => {
@@ -79,14 +79,14 @@ export function PropertyDefinitionsList(): React.ReactElement {
   const loadDefinitions = useCallback(async () => {
     setLoading(true)
     try {
-      // M-85: `listPropertyDefs` is paginated. The settings panel is
+      // `listPropertyDefs` is paginated. The settings panel is
       // single-page-by-design — it surfaces the seeded vocabulary
       // (~19 built-ins plus user-authored entries), which fits well
       // under one page; we destructure `.items` and ignore the cursor.
       const { items: defs } = await listPropertyDefs()
       setDefinitions(defs)
     } catch (error) {
-      // FE-M-8: replace bespoke `String(error)` toast with the unified
+      // Replace bespoke `String(error)` toast with the unified
       // helper — error detail goes to the structured log; the user sees
       // the localized message.
       reportIpcError('PropertyDefinitionsList', 'property.errorLoad', error, t)
@@ -109,7 +109,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       setNewType('text')
       notify.success(t('propertiesView.created'))
     } catch (error) {
-      // FE-M-8: see loadDefinitions above — unified error reporting.
+      // See loadDefinitions above — unified error reporting.
       reportIpcError('PropertyDefinitionsList', 'property.errorCreate', error, t)
     }
     setIsCreating(false)
@@ -123,7 +123,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
         setDeleteTarget(null)
         notify.success(t('propertiesView.deleted'))
       } catch (error) {
-        // FE-M-8: see loadDefinitions above — unified error reporting.
+        // See loadDefinitions above — unified error reporting.
         reportIpcError('PropertyDefinitionsList', 'property.errorDelete', error, t, { key })
       }
     },
@@ -142,7 +142,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
         const updated = await updatePropertyDefOptions(key, editOptionsValue)
         setDefinitions((prev) => prev.map((d) => (d.key === key ? updated : d)))
         setEditingOptionsKey(null)
-        // UX-201b: sync the active priority level cache when the user
+        // Sync the active priority level cache when the user
         // edits `priority.options`. Other property keys are untouched.
         if (key === 'priority' && updated.options != null) {
           try {
@@ -163,14 +163,14 @@ export function PropertyDefinitionsList(): React.ReactElement {
           }
         }
       } catch (err) {
-        // FE-M-8: see loadDefinitions above — unified error reporting.
+        // See loadDefinitions above — unified error reporting.
         reportIpcError('PropertyDefinitionsList', 'property.errorUpdate', err, t, { key })
       }
     },
     [editOptionsValue, t],
   )
 
-  // UX-248 — Unicode-aware fold.
+  // Unicode-aware fold.
   const filteredDefs = definitions.filter((d) => matchesSearchFolded(d.key, searchFilter))
 
   return (

@@ -7,7 +7,7 @@
  * batch-revert IPC. Non-reversible ops (`purge_block`,
  * `delete_attachment`) are skipped via the filter predicate.
  *
- * Extracted from `HistoryView` (MAINT-128).
+ * Extracted from `HistoryView`.
  */
 
 import type React from 'react'

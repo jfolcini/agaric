@@ -9,7 +9,7 @@
  *     `useSlashCommandTemplate` sub-hook)
  *   - checkbox-syntax TODO/DONE handler → `useCheckboxSyntax`
  *
- * PEND-30 D-4 — the per-category handlers themselves are split across four
+ * D-4 — the per-category handlers themselves are split across four
  * sub-hooks under `./useBlockSlashCommands/`:
  *   - `useSlashCommandTemplate` — `/template` (+ picker state passthrough)
  *   - `useSlashCommandDate`     — `/date`, `/due`, `/schedule`, `/repeat-until`
@@ -144,7 +144,7 @@ export function useBlockSlashCommands({
   // Bundle every per-call dispatcher input into a single ref. This is what
   // lets `handleSlashCommand` keep a stable identity (only `focusedBlockId`
   // gates it) without needing an `oxlint-disable react-hooks/exhaustive-deps` —
-  // refs are not subject to the rule. The MAINT-10 stability test in
+  // Refs are not subject to the rule. The stability test in
   // `__tests__/useBlockSlashCommands.test.ts` pins the contract.
   const inputsRef = useRef({
     rootParentId,

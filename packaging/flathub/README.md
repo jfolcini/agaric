@@ -5,7 +5,7 @@
 This directory holds the Flatpak manifest and AppStream MetaInfo for an
 eventual [Flathub](https://flathub.org) submission. It is part of the
 OpenSSF Best Practices Silver-tier [`installation_common`](https://www.bestpractices.dev/en/criteria/2#2.installation_common)
-roadmap (`PEND-49 §5c`). Flathub is the recommended Linux-side
+roadmap (). Flathub is the recommended Linux-side
 deliverable because it reaches every major desktop without per-distro
 maintenance work.
 
@@ -79,17 +79,17 @@ hit each in order rather than discovering them mid-review.
 
 ## Why not winget / Homebrew Cask first?
 
-Per `PEND-49 §5c`'s sequencing recommendation, Flathub covers the
+Per ` sequencing recommendation, Flathub covers the
 largest non-Play-Store install base AND the Linux maintainer
 demographic the README targets. winget and Homebrew Cask come after
 Flathub.
 
 ## Cross-references
 
-- `OSSF-1` (lookup) → `pending/PEND-49`
+- (lookup) → `pending/`
   is the broader Silver roadmap; this directory is §5c's
   deliverable.
-- `pending/PEND-36-play-store-publishing.md` is the parallel
+- is the parallel
   Android-side `installation_common` track.
 - `.github/workflows/release.yml` builds the `.deb` this manifest
   unpacks.

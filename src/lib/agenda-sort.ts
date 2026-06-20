@@ -128,7 +128,7 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
 
 /**
  * Group blocks by priority level. Returns groups in level order
- * (configurable via UX-201b), with the `No priority` key last (renderer
+ * (configurable via), with the `No priority` key last (renderer
  * translates via t('agenda.noPriority')). Within each group,
  * blocks are sorted by date ASC then state.
  *

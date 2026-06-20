@@ -122,7 +122,7 @@ function HistoryListItemInner({
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell in an aria grid; <td> requires table ancestry and breaks the flex layout */}
       <div role="gridcell" className="flex items-center gap-3 w-full">
         {/* Checkbox.
-            UX-275 sub-fix 5: keep both row-click and checkbox-click as active
+             sub-fix 5: keep both row-click and checkbox-click as active
             selection paths (matches the existing test contract), but surface
             a clearly visible focus-ring on the checkbox so keyboard users
             can see when it owns focus and Space-toggle works deterministically. */}
@@ -152,7 +152,7 @@ function HistoryListItemInner({
         />
 
         {/* Restore to here button — only for reversible ops.
-            UX-275 sub-fix 6: tooltips don't fire on touch (no hover), so an
+             sub-fix 6: tooltips don't fire on touch (no hover), so an
             icon-only affordance is unlabelled there. The trailing span is
             sr-only on pointer:fine and not-sr-only on pointer:coarse — the
             text appears beside the icon on touch devices only, preserving
@@ -189,7 +189,7 @@ function HistoryListItemInner({
         )}
 
         {/* Lock icon + visible "Non-reversible" label for non-reversible ops.
-            UX-351: opacity-50 alone is a single visual cue (WCAG concern); the
+            opacity-50 alone is a single visual cue (WCAG concern); the
             visible text label adds a second cue for both visual and SR users. */}
         {isNonReversible && (
           <Tooltip>

@@ -26,7 +26,7 @@ import { cn } from '@/lib/utils'
 /**
  * #1104 — append the current keyboard binding (if any) to a label so the
  * icon-only zoom buttons surface their hotkey via the accessible name. Mirrors
- * GraphView's `withShortcut` (UX-356); returns the bare label when no binding
+ * GraphView's `withShortcut`; returns the bare label when no binding
  * is configured to avoid a stray "()". The lightbox shares the graph's `+/-/0`
  * bindings, so it reuses the `graphZoom*` shortcut ids.
  */

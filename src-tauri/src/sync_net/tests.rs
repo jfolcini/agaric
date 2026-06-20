@@ -186,7 +186,7 @@ fn parse_service_event_returns_none_for_unhandled_kinds() {
     );
 }
 
-/// L-63: `ServiceRemoved` events must surface as
+/// `ServiceRemoved` events must surface as
 /// `ServiceEventKind::Removed { device_id }` so the daemon can evict
 /// the entry from the discovered HashMap immediately. The device_id
 /// is recovered from the service fullname produced by `MdnsService::announce`.
@@ -203,14 +203,14 @@ fn parse_service_event_returns_removed_for_service_removed() {
         ServiceEventKind::Removed { device_id } => {
             assert_eq!(
                 device_id, "PEER42",
-                "L-63: device_id must be recovered from the service fullname"
+                "device_id must be recovered from the service fullname"
             );
         }
         other => panic!("expected ServiceEventKind::Removed, got {other:?}"),
     }
 }
 
-/// L-63: a `ServiceRemoved` whose fullname does not match the announce
+/// A `ServiceRemoved` whose fullname does not match the announce
 /// shape returns `None` so we never evict an unrelated entry.
 #[test]
 fn parse_service_event_returns_none_for_unknown_removed_fullname() {
@@ -220,15 +220,15 @@ fn parse_service_event_returns_none_for_unknown_removed_fullname() {
     );
     assert!(
         parse_service_event(event).is_none(),
-        "L-63: a removed event whose fullname does not match \
+        "a removed event whose fullname does not match \
          <{MDNS_SERVICE_NAME}>_<id>.<...> must return None so we don't \
          evict the wrong peer"
     );
 }
 
-// -- 3a. L-65: mDNS interface filter ----------------------------------
+// -- 3a. mDNS interface filter ----------------------------------
 //
-// `filter_announceable_addrs` is the pure-function core of the L-65
+// `filter_announceable_addrs` is the pure-function core of the
 // fix: it shrinks the set of addresses advertised in the mDNS service
 // info from "every routable interface" (the previous
 // `enable_addr_auto()` behaviour) down to "RFC 1918 private IPv4
@@ -236,7 +236,7 @@ fn parse_service_event_returns_none_for_unknown_removed_fullname() {
 // addresses so the policy can be exercised without invoking the
 // host's `getifaddrs(3)`.
 
-/// L-65: loopback (`127.0.0.0/8`, `::1`) and link-local
+/// Loopback (`127.0.0.0/8`, `::1`) and link-local
 /// (`169.254.0.0/16`, `fe80::/10`) addresses must be dropped — they
 /// are useless to announce and `mdns-sd` would only see them if
 /// `enable_addr_auto()` were re-enabled.
@@ -257,12 +257,12 @@ fn filter_announceable_addrs_drops_loopback_and_link_local() {
     assert_eq!(
         kept,
         vec!["192.168.1.5".parse::<IpAddr>().unwrap()],
-        "L-65: only the RFC 1918 private IPv4 address should be kept; \
+        "only the RFC 1918 private IPv4 address should be kept; \
          loopback and link-local must not appear in the announce set"
     );
 }
 
-/// L-65: public IPv4 addresses (anything outside RFC 1918) must be
+/// Public IPv4 addresses (anything outside RFC 1918) must be
 /// dropped — this is the "guest WiFi / coffee-shop network" leak the
 /// fix exists to prevent.
 #[test]
@@ -291,12 +291,12 @@ fn filter_announceable_addrs_drops_public_ipv4() {
 
     assert_eq!(
         kept, expected,
-        "L-65: public IPv4 (incl. CGNAT) must be dropped; only RFC 1918 \
+        "public IPv4 (incl. CGNAT) must be dropped; only RFC 1918 \
          (10/8, 172.16/12, 192.168/16) addresses survive"
     );
 }
 
-/// L-65: IPv6 addresses are dropped wholesale — global IPv6 unicast
+/// IPv6 addresses are dropped wholesale — global IPv6 unicast
 /// (`2000::/3`) routes onto cellular / VPN / ISP-tunnel interfaces
 /// that the user did not necessarily intend to advertise on, and IPv4
 /// LAN discovery is sufficient for Agaric's deployment model.
@@ -315,11 +315,11 @@ fn filter_announceable_addrs_drops_all_ipv6() {
     let kept = filter_announceable_addrs(inputs);
     assert!(
         kept.is_empty(),
-        "L-65: IPv6 must be dropped wholesale, got: {kept:?}"
+        "IPv6 must be dropped wholesale, got: {kept:?}"
     );
 }
 
-/// L-65: the announce address set must be bounded — under no
+/// The announce address set must be bounded — under no
 /// circumstances should the filter pass through "every interface".
 /// This is the core invariant the fix is enforcing.
 #[test]
@@ -347,14 +347,14 @@ fn filter_announceable_addrs_set_is_bounded() {
 
     assert!(
         kept.len() < total,
-        "L-65: filter must drop at least one address; the announce set \
+        "filter must drop at least one address; the announce set \
          must never be the full interface list (got {} of {} kept)",
         kept.len(),
         total,
     );
     assert!(
         !kept.is_empty(),
-        "L-65: filter should still keep RFC 1918 private IPv4 addresses; \
+        "filter should still keep RFC 1918 private IPv4 addresses; \
          got an empty result"
     );
     assert!(
@@ -362,12 +362,12 @@ fn filter_announceable_addrs_set_is_bounded() {
             IpAddr::V4(v4) => v4.is_private(),
             IpAddr::V6(_) => false,
         }),
-        "L-65: every surviving address must be RFC 1918 private IPv4, \
+        "every surviving address must be RFC 1918 private IPv4, \
          got: {kept:?}"
     );
 }
 
-/// L-65: an empty interface list yields an empty announce set — the
+/// An empty interface list yields an empty announce set — the
 /// caller (`MdnsService::announce`) treats this as the trigger to
 /// fall back to `enable_addr_auto()` so peer discovery still works
 /// on hosts where `getifaddrs(3)` fails or returns nothing useful.
@@ -379,7 +379,7 @@ fn filter_announceable_addrs_empty_input_yields_empty_output() {
     let kept = filter_announceable_addrs(Vec::<IpAddr>::new());
     assert!(
         kept.is_empty(),
-        "L-65: empty input must yield empty output (caller falls back \
+        "empty input must yield empty output (caller falls back \
          to enable_addr_auto)"
     );
 }
@@ -937,9 +937,9 @@ fn cn_verification_rejects_unparseable_cert() {
     );
 }
 
-// -- 8b. M-56 / M-57 regressions --------------------------------------
+// -- 8b. regressions --------------------------------------
 
-/// M-56 regression: when the caller declares which device they expect
+/// Regression: when the caller declares which device they expect
 /// to reach via `expected_remote_id`, a cert whose CN is `agaric-{other}`
 /// (well-formed, not pinned to a hash, valid otherwise) **must** be
 /// rejected at the TLS handshake. Previously, on first-pair flows
@@ -973,7 +973,7 @@ fn m56_verifier_rejects_cn_for_unexpected_device_id() {
     );
     assert!(
         result.is_err(),
-        "M-56: cert with CN agaric-DEVICE_B must be rejected when \
+        "cert with CN agaric-DEVICE_B must be rejected when \
          expected_remote_id = Some(\"DEVICE_A\"), got Ok"
     );
     let err_msg = format!("{:?}", result.unwrap_err());
@@ -981,11 +981,11 @@ fn m56_verifier_rejects_cn_for_unexpected_device_id() {
         err_msg.contains("device id mismatch")
             && err_msg.contains("DEVICE_A")
             && err_msg.contains("DEVICE_B"),
-        "M-56: error must name expected and observed device ids, got: {err_msg}"
+        "error must name expected and observed device ids, got: {err_msg}"
     );
 }
 
-/// M-56 happy path: when `expected_remote_id` matches the cert CN,
+/// Happy path: when `expected_remote_id` matches the cert CN,
 /// verification proceeds (subject to other checks). This pins the
 /// non-rejection branch so a future refactor that accidentally inverts
 /// the comparison would fail loudly.
@@ -1015,12 +1015,12 @@ fn m56_verifier_accepts_cn_for_matching_device_id() {
     );
     assert!(
         result.is_ok(),
-        "M-56: cert with CN agaric-DEVICE_A must pass when \
+        "cert with CN agaric-DEVICE_A must pass when \
          expected_remote_id = Some(\"DEVICE_A\"), got: {result:?}"
     );
 }
 
-/// M-57 regression: the verifier's `observed_hash` channel is now an
+/// Regression: the verifier's `observed_hash` channel is now an
 /// `Arc<OnceLock<String>>`. The first successful `verify_server_cert`
 /// must populate the cell with the leaf cert's hex SHA-256, and a
 /// subsequent verify call (e.g. for an intermediate in a chain) must
@@ -1060,11 +1060,11 @@ fn m57_observed_hash_is_set_once_and_survives_repeated_verify() {
         &[],
         now,
     )
-    .expect("M-57: first verify must succeed for a valid agaric-* cert");
+    .expect("first verify must succeed for a valid agaric-* cert");
     assert_eq!(
         observed.get().map(String::as_str),
         Some(cert_leaf.cert_hash.as_str()),
-        "M-57: leaf cert hash must be recorded on first verify"
+        "leaf cert hash must be recorded on first verify"
     );
 
     // Second call — different cert. Must NOT overwrite the first
@@ -1084,12 +1084,12 @@ fn m57_observed_hash_is_set_once_and_survives_repeated_verify() {
     assert_eq!(
         observed.get().map(String::as_str),
         Some(cert_leaf.cert_hash.as_str()),
-        "M-57: second verify call must not overwrite the leaf cert hash"
+        "second verify call must not overwrite the leaf cert hash"
     );
     assert_ne!(
         observed.get().map(String::as_str),
         Some(cert_other.cert_hash.as_str()),
-        "M-57: OnceLock must hold first writer, not the second"
+        "OnceLock must hold first writer, not the second"
     );
 }
 
@@ -1665,7 +1665,7 @@ async fn recv_times_out_when_peer_is_silent() {
     let (mut client, server) = test_connection_pair().await;
 
     // Hold the server connection open longer than `RECV_TIMEOUT`
-    // (180 s after L-64) so the client side fires its single-recv
+    // (180 s after) so the client side fires its single-recv
     // timeout before the holder drops the server. Tokio's
     // `start_paused = true` auto-advances time, so this is virtual.
     let _hold = tokio::spawn(async move {
@@ -1735,9 +1735,9 @@ async fn recv_fails_after_graceful_close_by_peer() {
     );
 }
 
-// -- 8. M-53: SyncServer accept backoff -------------------------------
+// -- 8. SyncServer accept backoff -------------------------------
 
-/// M-53: a `failure_count` of zero (post-accept-success) must yield zero
+/// A `failure_count` of zero (post-accept-success) must yield zero
 /// back-off so the next accept call runs immediately.
 #[test]
 fn accept_backoff_is_zero_after_successful_accept() {
@@ -1745,7 +1745,7 @@ fn accept_backoff_is_zero_after_successful_accept() {
     assert_eq!(compute_accept_backoff_duration(0), Duration::ZERO);
 }
 
-/// M-53: documented schedule starts at 100 ms and doubles each step
+/// Documented schedule starts at 100 ms and doubles each step
 /// (100, 200, 400, 800, …) until the 30 s cap kicks in.
 #[test]
 fn accept_backoff_doubles_each_step_until_cap() {
@@ -1778,7 +1778,7 @@ fn accept_backoff_doubles_each_step_until_cap() {
     );
 }
 
-/// M-53: schedule must cap at 30 s so a runaway accept loop cannot stall
+/// Schedule must cap at 30 s so a runaway accept loop cannot stall
 /// the runtime indefinitely between retries.
 #[test]
 fn accept_backoff_caps_at_thirty_seconds() {
@@ -1799,7 +1799,7 @@ fn accept_backoff_caps_at_thirty_seconds() {
     );
 }
 
-/// M-53: server keeps accepting after a successful accept resets the
+/// Server keeps accepting after a successful accept resets the
 /// counter — the existing TLS round-trip already exercises a clean
 /// accept; this test simply asserts that calling accept twice in
 /// succession both succeed (so the failure counter stays at zero, the
@@ -1818,7 +1818,7 @@ async fn accept_loop_handles_multiple_successive_connections() {
         let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert).await;
         assert!(
             conn.is_ok(),
-            "M-53: attempt {attempt} must succeed, got {:?}",
+            "attempt {attempt} must succeed, got {:?}",
             conn.err()
         );
         if let Ok(c) = conn {

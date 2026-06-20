@@ -1,7 +1,7 @@
 import { activePopover, expect, openAddFilter, test, waitForBoot } from './helpers'
 
 /**
- * E2E coverage for PEND-58 — Pages-view compound-filter chip-row.
+ * E2E coverage for Pages-view compound-filter chip-row.
  *
  * The chip-row is the Pages experience: every page row renders via the
  * metadata-rich `list_pages_with_metadata` path with the compound-filter
@@ -72,7 +72,7 @@ async function scrollGridToBottom(page: import('@playwright/test').Page): Promis
   })
 }
 
-test.describe('PEND-58 — Pages compound-filter chip-row', () => {
+test.describe('Pages compound-filter chip-row', () => {
   test('renders the chip row', async ({ page }) => {
     await bootPages(page)
     await expect(page.getByRole('button', { name: 'Add filter' })).toBeVisible()
@@ -92,7 +92,7 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
     // Shared value-facets — these menu items carry only their label, so an
     // exact accessible-name match is correct.
     for (const facet of ['Tag', 'Page path', 'Has property']) {
-      // PEND-58e E19 added a muted description inside each value-facet menu
+      // Added a muted description inside each value-facet menu
       // item (matching the boolean facets below), so the accessible name is
       // now `<label> <description>` — anchor on the label prefix.
       await expect(pop.getByRole('button', { name: new RegExp(`^${facet}`) })).toBeVisible()
@@ -340,7 +340,7 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
 
   test('shows the soft-cap warning once the chip limit is reached', async ({ page }) => {
     await bootPages(page)
-    // The chip set dedupes structurally-identical primitives (PEND-58d D22),
+    // The chip set dedupes structurally-identical primitives,
     // so eight *distinct* chips are needed to reach MAX_PAGE_FILTERS (8). Use
     // eight different path globs — each is a unique `PathGlob{pattern}` so none
     // collapse, and none narrow the seed to zero in a way that hides the row.
@@ -360,7 +360,7 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
 
   test('dedupes a structurally-identical chip (re-adding Orphan is a no-op)', async ({ page }) => {
     await bootPages(page)
-    // PEND-58d D22 — re-applying the same boolean facet must not stack a
+    // Re-applying the same boolean facet must not stack a
     // duplicate pill (an AND of a condition with itself is pure noise).
     await addBooleanFacet(page, 'Orphan')
     await expect(page.getByRole('group', { name: 'Filter: Orphan' })).toHaveCount(1)

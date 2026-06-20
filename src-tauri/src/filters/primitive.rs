@@ -1,4 +1,4 @@
-//! PEND-58 — `FilterPrimitive` enum + `Projection` trait.
+//! `FilterPrimitive` enum + `Projection` trait.
 //!
 //! See `crate::filters` module docs for the broader rationale. This file
 //! defines the types; per-surface implementations live in their own
@@ -113,8 +113,8 @@ pub enum FilterPrimitive {
     /// Pages-only — page has no inbound links AND no outbound links.
     /// (`HasNoInboundLinks` is the looser inbound-only sibling.)
     Orphan,
-    /// Pages-only — page has zero non-title descendants. Per PEND-58
-    /// (pending/PEND-58-pages-view-compound-filters.md:142): "Page
+    /// Pages-only — page has zero non-title descendants. Per
+    /// "Page
     /// whose only block is its own title row (zero non-title
     /// descendants)". Backed by `pages_cache.child_block_count == 0`.
     Stub,
@@ -322,8 +322,8 @@ fn next_day_iso(date: &str) -> String {
 /// `{ type: "Rolling", days } | { type: "Range", start, end }
 /// | { type: "OlderThan", days }`.
 ///
-/// PEND-58 Phase 2 review — the existing variants already cover the
-/// plan's full bucket vocabulary (pending/PEND-58-pages-view-compound-
+/// Phase 2 review — the existing variants already cover the
+/// Plan's full bucket vocabulary (pending/-pages-view-compound-
 /// filters.md:144, lines 308-310). No `LastEditedBucket` variant is
 /// needed — the parser maps each chip token to one of these variants:
 ///
@@ -344,7 +344,7 @@ pub enum LastEditedSpec {
     /// Absolute date range (ISO 8601 dates, inclusive on both ends).
     Range { start: String, end: String },
     /// Older than the given rolling N-days window (the inverse of
-    /// `Rolling`). Used by PEND-58's `last-edited:older` chip.
+    /// `Rolling`). Used by `last-edited:older` chip.
     OlderThan { days: u32 },
 }
 
@@ -556,7 +556,7 @@ pub trait Projection {
 }
 
 impl FilterPrimitive {
-    /// PEND-58 §Performance — relative SQL-plan cost, used to order the
+    /// Relative SQL-plan cost, used to order the
     /// compiled WHERE fragments so the index-backed primitives narrow the
     /// row set before the full-scan ones run. Lower = cheaper = emitted
     /// first.
@@ -593,7 +593,7 @@ impl FilterPrimitive {
     ///   counterpart yet** — see `compile_orphan`. That outbound term
     ///   dominates the clause, so `Orphan` ranks in the expensive tier and
     ///   is emitted *after* any genuinely index-backed clause that can
-    ///   pre-narrow the page set (PEND-58e E11; matches the cost-ordering
+    ///   Pre-narrow the page set (; matches the cost-ordering
     ///   rationale in `docs/architecture/filters.md`). The Search-only
     ///   toggles are never seen on the Pages surface (allowed-keys gate
     ///   rejects them) but rank here too so they never precede a SARGable
@@ -635,7 +635,7 @@ impl FilterPrimitive {
             // nothing. Ranked highest among the SQL primitives.
             FilterPrimitive::PathGlob { .. } => 2,
             // `Orphan`'s outbound half is a 3-table correlated subquery with
-            // no materialised counterpart (PEND-58e E11) — expensive tier,
+            // No materialised counterpart — expensive tier,
             // emitted after any index-backed clause that can pre-narrow.
             FilterPrimitive::Orphan
             // #1455 — `HasParentMatching` is a correlated `EXISTS` over a
@@ -650,7 +650,7 @@ impl FilterPrimitive {
         }
     }
 
-    /// PEND-58 — the allowed-keys token for this primitive, used by the
+    /// The allowed-keys token for this primitive, used by the
     /// per-surface allow-list gate. Mirrors the `&'static str` keys in
     /// [`PAGES_ALLOWED_KEYS`] / [`SEARCH_ALLOWED_KEYS`].
     #[must_use]
@@ -888,7 +888,7 @@ impl Projection for PagesProjection {
     }
     fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause {
         // #1320-A — Pages now uses the SAME `LOWER(title) GLOB ?` dialect as
-        // Search (after #1320 PR-2), so both surfaces share `GLOB` + brace +
+        // Search (after #1320), so both surfaces share `GLOB` + brace +
         // `[class]` semantics. This is the SINGLE-pattern fragment for ONE
         // already-prepared pattern: the caller (`compile_pages_filters`)
         // runs `prepare_globs` to brace-expand / substring-wrap /
@@ -957,7 +957,7 @@ impl Projection for PagesProjection {
         // (`MAX(op_log.created_at)`). A future phase may swap to a
         // materialised `pages_cache.last_edited_at` column.
         //
-        // **No-op-log ⇒ epoch rule (PEND-58d D7):** a page with no `op_log`
+        // **No-op-log ⇒ epoch rule:** a page with no `op_log`
         // row has a NULL `MAX(created_at)`. All three variants COALESCE that
         // NULL to a common epoch sentinel (`0`, i.e. 1970-01-01 in the
         // #109 Phase 2 INTEGER-epoch-ms scheme) so the
@@ -972,10 +972,10 @@ impl Projection for PagesProjection {
         // Before this fix Rolling/Range silently dropped the no-op-log page
         // (NULL comparisons → NULL → false) while OlderThan included it via
         // a `'0001-01-01'` COALESCE — an asymmetry. The dates Range binds
-        // are validated upstream (PEND-58d D15) in
+        // Are validated upstream in
         // `commands::pages::compile_pages_filters`.
         //
-        // **End-of-day inclusivity (PEND-58e E3):** the Range `end` bound is
+        // **End-of-day inclusivity:** the Range `end` bound is
         // a *user-facing calendar window* — selecting `… AND 2026-03-01`
         // means "up to and including all of March 1st". `op_log.created_at`
         // is INTEGER epoch-ms (#109 Phase 2), so we convert each bound to an
@@ -1027,7 +1027,7 @@ impl Projection for PagesProjection {
             LastEditedSpec::Range { start, end } => {
                 // A bare-date `end` (no `T`) is extended to the end of that
                 // calendar day so daytime edits on the end day are INCLUDED
-                // (PEND-58e E3). A bare-date `start` is anchored at midnight.
+                // A bare-date `start` is anchored at midnight.
                 // Both are then converted to epoch-ms to match the column.
                 let start_ms = to_ms(&if start.contains('T') {
                     start.clone()
@@ -1163,18 +1163,18 @@ impl Projection for PagesProjection {
         // here, and file a follow-up to materialise an
         // `outbound_link_count` if measurement shows this term dominating.
         //
-        // **Page-wide outbound semantic** (PEND-58 Phase-2 / PEND-56b
+        // **Page-wide outbound semantic** (Phase-2 /
         // alignment): `block_links.source_id` is the *content* block that
         // authored the link, not the page block. Links normally live in the
         // body, so the outbound `NOT EXISTS` MUST cover every non-deleted
         // block on the page (`src.page_id = b.id`), mirroring the page-wide
         // inbound semantic below — not just edges typed on the page's title
         // row (`source_id = b.id`). Spec
-        // `pending/PEND-58-pages-view-compound-filters.md:141` requires
+        // Requires
         // `source_id IN (SELECT id FROM blocks WHERE page_id = …)`.
         //
-        // **Inbound semantic** (PEND-58 Phase-2 alignment with PEND-56b;
-        // refined by PEND-58d D2 / migration 0070 to exclude same-page,
+        // **Inbound semantic** (Phase-2 alignment, refined by migration 0070
+        // to exclude same-page,
         // self, and deleted-source edges — mirroring `backlink/grouped.rs`):
         // `pc.inbound_link_count` aggregates `block_links` edges whose
         // target is the page block *or any non-deleted descendant block*
@@ -1187,7 +1187,7 @@ impl Projection for PagesProjection {
         // the `MostLinked` sort, so a user clicking `orphan:` after
         // seeing "0 ↗" on a row always agrees with the surfaced count.
         //
-        // **Outbound target filtering (PEND-58d D19):** the outbound `NOT
+        // **Outbound target filtering:** the outbound `NOT
         // EXISTS` also joins the link's *target* block and requires
         // `tgt.deleted_at IS NULL` (a link into a soft-deleted target is
         // moot — the edge no longer reaches a live block) and excludes
@@ -1212,9 +1212,9 @@ impl Projection for PagesProjection {
     }
     fn compile_stub(&self) -> WhereClause {
         // Stub: a page whose only block is its own title row, i.e. zero
-        // non-title descendants. Matches the PEND-58 vocabulary spec
+        // Non-title descendants. Matches the vocabulary spec
         // verbatim ("Page whose only block is its own title row (zero
-        // non-title descendants)", pending/PEND-58-pages-view-compound-
+        // Non-title descendants)", pending/-pages-view-compound-
         // filters.md:142). The prior `< 3` threshold was a Phase-1
         // placeholder. The new comparison is served by the materialised
         // `pc.child_block_count` column.
@@ -1224,9 +1224,9 @@ impl Projection for PagesProjection {
         // Looser companion to Orphan: zero inbound block-link edges,
         // outbound side ignored. Same materialised column — and same
         // "page OR any non-deleted descendant" semantic, with same-page /
-        // self / deleted sources excluded (PEND-58d D2) — as the inbound
+        // Self / deleted sources excluded — as the inbound
         // half of Orphan; see that fn's doc comment for the
-        // PEND-58 / PEND-56b alignment rationale.
+        // Alignment rationale.
         WhereClause::new("COALESCE(pc.inbound_link_count, 0) = 0", Vec::new())
     }
 }
@@ -1247,7 +1247,7 @@ impl Projection for SearchProjection {
         )
     }
     fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause {
-        // #1320 PR-2 — Search keeps the LEGACY `LOWER(title) GLOB ?`
+        // #1320 Search keeps the LEGACY `LOWER(title) GLOB ?`
         // dialect verbatim (NOT the Pages `COLLATE NOCASE LIKE` form), so
         // routing the FTS path-glob filter through `SearchProjection` is a
         // ZERO-behaviour-change cutover: search users keep their current
@@ -1375,7 +1375,7 @@ mod tests {
         }
     }
 
-    /// PEND-58b P2-C — exhaustive consistency check across the three
+    /// -C — exhaustive consistency check across the three
     /// hand-written allowed-key sites (`allowed_key()`,
     /// `PAGES_ALLOWED_KEYS`, `SEARCH_ALLOWED_KEYS`). Every
     /// `FilterPrimitive` variant's `allowed_key()` token MUST appear in at
@@ -1538,10 +1538,10 @@ mod tests {
         }
     }
 
-    /// PEND-58 Phase 2 — snapshot the exact SQL fragments emitted by
+    /// Phase 2 — snapshot the exact SQL fragments emitted by
     /// the three Pages-only grooming primitives. These reference the
-    /// materialised `pages_cache` columns (PEND-56b), not the
-    /// pre-PEND-56b correlated subqueries. The composition site MUST
+    /// Materialised `pages_cache` columns, not the
+    /// Pre- correlated subqueries. The composition site MUST
     /// have `LEFT JOIN pages_cache pc ON pc.page_id = b.id` in scope.
     #[test]
     fn pages_only_primitives_emit_materialised_pages_cache_sql() {
@@ -1560,14 +1560,14 @@ mod tests {
              )",
             "Orphan must read the materialised inbound count from pages_cache, \
              scope its outbound NOT EXISTS page-wide (every non-deleted block), \
-             and filter the target (PEND-58d D19): live target + not same-page"
+             and filter the target: live target + not same-page"
         );
         assert!(orphan.binds.is_empty(), "Orphan takes no binds");
 
         let stub = p.compile(&FilterPrimitive::Stub);
         assert_eq!(
             stub.sql, "COALESCE(pc.child_block_count, 0) = 0",
-            "Stub must compare child_block_count == 0 (PEND-58 \"zero non-title descendants\")"
+            "Stub must compare child_block_count == 0 (\"zero non-title descendants\")"
         );
         assert!(stub.binds.is_empty(), "Stub takes no binds");
 
@@ -1578,7 +1578,7 @@ mod tests {
         );
         assert!(hnil.binds.is_empty(), "HasNoInboundLinks takes no binds");
 
-        // Regression guard — the pre-PEND-56b shapes must NOT reappear.
+        // Regression guard — the pre- shapes must NOT reappear.
         for w in [&orphan, &stub, &hnil] {
             assert!(
                 !w.sql.contains("d.page_id = b.id"),
@@ -1598,7 +1598,7 @@ mod tests {
         );
     }
 
-    /// PEND-58 Phase 2 — confirms the LastEditedSpec variants already
+    /// Phase 2 — confirms the LastEditedSpec variants already
     /// cover the plan's bucket vocabulary so no new variant is needed.
     /// See the doc comment on `LastEditedSpec` for the chip-token map.
     #[test]
@@ -1766,7 +1766,7 @@ mod tests {
 
     #[test]
     fn last_edited_range_extends_bare_end_date_to_end_of_day() {
-        // PEND-58e E3 — a bare `YYYY-MM-DD` `end` is extended to the last
+        // A bare `YYYY-MM-DDend` is extended to the last
         // instant of that day so daytime edits on the end day are INCLUDED.
         // #109 Phase 2: bounds are converted to INTEGER epoch-ms (matching
         // `op_log.created_at`); a bare `start` is anchored at midnight. The
@@ -1812,7 +1812,7 @@ mod tests {
 
     #[test]
     fn last_edited_all_variants_coalesce_no_op_log_to_common_epoch() {
-        // PEND-58d D7 — the "no op-log ⇒ epoch" rule must be uniform: ALL
+        // The "no op-log ⇒ epoch" rule must be uniform: ALL
         // three variants COALESCE the page's last-edited expression to the
         // SAME epoch sentinel so a no-op-log page is handled consistently
         // (excluded by Rolling/Range, included by OlderThan). Before the fix
@@ -1926,7 +1926,7 @@ mod tests {
         );
         // `Orphan` ranks in the expensive tier (3): its outbound half is a
         // 3-table correlated subquery with no materialised counterpart yet
-        // (PEND-58e E11; matches docs/architecture/filters.md). It must
+        // (; matches docs/architecture/filters.md). It must
         // sort AFTER the genuinely index-backed clauses so they pre-narrow.
         assert_eq!(FilterPrimitive::Orphan.cost_hint(), 3);
         // Search-only post-filters are ranked last (3).
@@ -2044,7 +2044,7 @@ mod tests {
     fn pages_state_exclude_keeps_null_outside_the_in_list() {
         let p = PagesProjection;
         // Exclude values → `(col IS NULL OR col NOT IN (?, ?))`. The IS NULL
-        // branch is OUTSIDE the IN list (legacy SQL-6 / 3-valued NOT IN trap
+        // Branch is OUTSIDE the IN list (legacy / 3-valued NOT IN trap
         // guard) so NULL-state rows are KEPT, not dropped.
         let w = p.compile(&FilterPrimitive::State {
             values: vec!["DONE".into(), "CANCELLED".into()],
@@ -2420,9 +2420,9 @@ mod tests {
 
 // ── EXPLAIN QUERY PLAN tests (async, real DB) ────────────────────────────
 //
-// PEND-58 Phase 2 — assert each Pages-only grooming primitive composes
+// Phase 2 — assert each Pages-only grooming primitive composes
 // into a query plan that hits an indexed `pages_cache` row read rather
-// than the pre-PEND-56b correlated-subquery shape. Mirrors the
+// Than the pre- correlated-subquery shape. Mirrors the
 // `most_linked_query_plan_uses_pages_cache_not_block_links` snapshot in
 // `commands::tests::list_pages_with_metadata_tests`.
 //
@@ -2503,7 +2503,7 @@ mod explain_query_plan_tests {
         seed_pages(&pool, 16).await;
         let frag = PagesProjection.compile(&FilterPrimitive::Orphan).sql;
         let plan = explain_for(&pool, &frag).await;
-        eprintln!("[PEND-58 EXPLAIN Orphan]\n{plan}");
+        eprintln!("[ EXPLAIN Orphan]\n{plan}");
         assert!(
             plan.to_lowercase().contains("pages_cache"),
             "Orphan plan must reference pages_cache; got:\n{plan}"
@@ -2513,7 +2513,7 @@ mod explain_query_plan_tests {
         // blocks tgt ON bl.target_id = tgt.id WHERE src.page_id = b.id` —
         // that subquery IS allowed to touch block_links (it drives from
         // `source_id` via the PK autoindex on (source_id, target_id),
-        // then joins the target block by integer PK). The PEND-58d D19 `tgt` join filters
+        // Then joins the target block by integer PK). The `tgt` join filters
         // deleted / same-page targets. The previous *inbound* `target_id`
         // index scan (driving the subquery from `block_links.target_id`)
         // must NOT appear — inbound is served by the materialised
@@ -2532,12 +2532,12 @@ mod explain_query_plan_tests {
         seed_pages(&pool, 16).await;
         let frag = PagesProjection.compile(&FilterPrimitive::Stub).sql;
         let plan = explain_for(&pool, &frag).await;
-        eprintln!("[PEND-58 EXPLAIN Stub]\n{plan}");
+        eprintln!("[ EXPLAIN Stub]\n{plan}");
         assert!(
             plan.to_lowercase().contains("pages_cache"),
             "Stub plan must reference pages_cache; got:\n{plan}"
         );
-        // The pre-PEND-56b shape `(SELECT COUNT(*) FROM blocks d WHERE
+        // The pre- shape `(SELECT COUNT(*) FROM blocks d WHERE
         // d.page_id = b.id ...) < 3` produced a `SCAN blocks AS d`
         // alias in the plan. The materialised shape never aliases
         // `blocks` as `d`.
@@ -2560,7 +2560,7 @@ mod explain_query_plan_tests {
             .compile(&FilterPrimitive::HasNoInboundLinks)
             .sql;
         let plan = explain_for(&pool, &frag).await;
-        eprintln!("[PEND-58 EXPLAIN HasNoInboundLinks]\n{plan}");
+        eprintln!("[ EXPLAIN HasNoInboundLinks]\n{plan}");
         assert!(
             plan.to_lowercase().contains("pages_cache"),
             "HasNoInboundLinks plan must reference pages_cache; got:\n{plan}"
@@ -2588,13 +2588,13 @@ mod explain_query_plan_tests {
             p.compile(&FilterPrimitive::HasNoInboundLinks).sql,
         );
         let plan = explain_for(&pool, &frag).await;
-        eprintln!("[PEND-58 EXPLAIN composite]\n{plan}");
+        eprintln!("[ EXPLAIN composite]\n{plan}");
         assert!(
             plan.to_lowercase().contains("pages_cache"),
             "composite plan must reference pages_cache; got:\n{plan}"
         );
         // Orphan's page-wide outbound `NOT EXISTS (... src.page_id =
-        // b.id)` is the only allowed block_links access; its PEND-58d D19
+        // B.id)` is the only allowed block_links access; its
         // `tgt` join reaches the target block by integer PK, not by driving
         // from the `target_id` index. The plan must not regress to an
         // inbound `target_id` index scan (inbound is the materialised count).
@@ -2605,7 +2605,7 @@ mod explain_query_plan_tests {
     }
 
     /// #1320-A — `PagesProjection::compile_path_glob` now pins the SAME
-    /// `LOWER(title) GLOB ?` dialect as Search (after #1320 PR-2), NOT the
+    /// `LOWER(title) GLOB ?` dialect as Search (after #1320), NOT the
     /// former `title COLLATE NOCASE LIKE ? ESCAPE '\'` form. This is a
     /// maintainer-authorised user-visible behaviour change: the Pages
     /// path-glob filter now supports `GLOB` + brace + `[class]` semantics
@@ -2660,7 +2660,7 @@ mod explain_query_plan_tests {
         );
     }
 
-    /// #1320 PR-2 — `SearchProjection::compile_path_glob` pins the LEGACY
+    /// #1320 `SearchProjection::compile_path_glob` pins the LEGACY
     /// `LOWER(title) GLOB ?` dialect (NOT the Pages `COLLATE NOCASE LIKE`
     /// form), proving the FTS path-glob cutover is byte-for-byte the same
     /// SQL the legacy `append_page_glob_subselect` emits for one pattern.

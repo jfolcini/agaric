@@ -8,7 +8,7 @@ import { logger } from '@/lib/logger'
 
 /**
  * Insert a `[[Page Title]]` link into the previously focused element,
- * if any. Three branches (#82 / PEND-66):
+ * If any. Three branches (#82):
  *   - `<input>` / `<textarea>` — native `value` splice + `input` event.
  *   - TipTap-managed contenteditable (a `.ProseMirror` descendant, the
  *     block editor's primary surface) — `editor.chain().focus()
@@ -19,7 +19,7 @@ import { logger } from '@/lib/logger'
  *     (`range.insertNode`), which does NOT join the undo stack ("Path A"
  *     trade-off); such surfaces are rare.
  *
- * PEND-73 Phase 3.U8 — when the palette opened, the store snapshotted
+ * Phase 3.U8 — when the palette opened, the store snapshotted
  * the live selection range BEFORE focus moved into the palette input.
  * The TipTap branch does not need it (ProseMirror restores its own
  * selection on `.focus()`); the Range fallback restores the snapshot so
@@ -48,7 +48,7 @@ export function insertPageLinkInto(
     return true
   }
 
-  // #82 (PEND-66) — TipTap-managed block editor (the common case).
+  // #82 — TipTap-managed block editor (the common case).
   // Use the editor's own command so the insertion joins the undo history;
   // `document.execCommand('insertText')` is deprecated. TipTap preserves
   // its ProseMirror selection across the palette focus excursion, so
@@ -75,7 +75,7 @@ export function insertPageLinkInto(
   // trade-off), but such surfaces are rare and forward-compatibility
   // beats undo fidelity here.
   if (target.isContentEditable) {
-    // PEND-73 Phase 3.U8 — restore the snapshotted caret position first,
+    // Phase 3.U8 — restore the snapshotted caret position first,
     // but only if its container is still in the live DOM (the user may
     // have edited the document while the palette was open).
     if (snapshotRange != null) {

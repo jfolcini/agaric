@@ -147,7 +147,7 @@ export function DuePanel({
     return counts
   }, [visibleBlocks, date])
 
-  // ── Keyboard navigation (UX-138) ────────────────────────────────────
+  // ── Keyboard navigation ────────────────────────────────────
 
   // Group blocks for display (computed early so flatItems can be derived).
   // FE-H-19: memoized to keep reference-stable across renders — otherwise the
@@ -180,7 +180,7 @@ export function DuePanel({
 
   // Deduplicate: exclude projected entries whose block already appears in real
   // agenda. Computed once here so the result is shared by the keyboard nav
-  // flat-items array AND the rendered projected `<li>`s (UX-274).
+  // Flat-items array AND the rendered projected `<li>`s.
   const uniqueProjected = useMemo(() => {
     const realBlockIds = new Set(blocks.map((b) => b.id))
     return projectedEntries.filter((e) => !realBlockIds.has(e.block.id))
@@ -292,7 +292,7 @@ export function DuePanel({
     virtualizer.scrollToIndex(idx, { align: 'auto' })
   }, [focusedIndex, virtualizer, flatToVirtualIndex])
 
-  // UX-152: Don't render when ALL sources are empty (not loading).
+  // Don't render when ALL sources are empty (not loading).
   // When a source filter is active, always keep the panel visible so the
   // user can switch back to `t('duePanel.filterAll')` — otherwise the filter pills vanish.
   if (!loading && !projectedLoading && allDisplayItems.length === 0 && sourceFilter === null) {
@@ -482,7 +482,7 @@ export function DuePanel({
                 )}
 
                 {/* Projected future occurrences from repeating tasks.
-                    UX-274: each `<li>` is part of the keyboard-nav flat-items
+                    each `<li>` is part of the keyboard-nav flat-items
                     array so arrow keys reach projected entries at the tail. */}
                 {uniqueProjected.length > 0 && (
                   <div className="mt-3 border-t border-dashed border-muted-foreground/30 pt-3">

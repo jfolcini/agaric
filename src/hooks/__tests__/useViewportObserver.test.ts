@@ -1,7 +1,7 @@
 /**
  * Tests for useViewportObserver — IntersectionObserver lifecycle,
  * offscreen tracking, height caching, and per-id unobserve on null
- * ref transitions (BUG-29 regression).
+ * Ref transitions (regression).
  */
 
 import { act } from '@testing-library/react'
@@ -254,7 +254,7 @@ describe('useViewportObserver', () => {
     container.remove()
   })
 
-  // ── BUG-29 regression: per-id unobserve on null transition ────────────────
+  // ── regression: per-id unobserve on null transition ────────────────
 
   it('unobserves exactly the unmounted element when one of many blocks unmounts', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())

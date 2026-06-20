@@ -37,14 +37,14 @@ export const NON_DELETABLE_PROPERTIES = new Set([
  * Properties whose `options` list is locked — users cannot edit them from
  * the Properties tab. Currently only `todo_state`: the task cycle
  * (`none → TODO → DOING → DONE → CANCELLED → none`) is intentionally fixed
- * per UX-202 (reordered by UX-234), and the DB-side `options` are kept in
+ * (reordered by), and the DB-side `options` are kept in
  * sync with the in-code cycle via migrations 0029 and 0031. Editing them
  * from the UI would let the DB drift out of sync with `TASK_CYCLE` in
  * `useBlockProperties.ts`, silently breaking the status filter dimension
  * in AgendaFilterBuilder.
  *
  * `priority` is NOT locked here even though its cycle is also fixed today
- * (`null → 1 → 2 → 3 → null`); unlocking priority is UX-201b's scope.
+ * (`null → 1 → 2 → 3 → null`); unlocking priority is scope.
  */
 export const LOCKED_PROPERTY_OPTIONS = new Set(['todo_state'])
 
@@ -72,7 +72,7 @@ export function buildInitParams(
     case 'ref':
       return { blockId, key: def.key, valueRef: null }
     case 'boolean':
-      // PEND-14: a freshly-added boolean property defaults to false.
+      // A freshly-added boolean property defaults to false.
       return { blockId, key: def.key, valueBool: false }
     default:
       return null
@@ -107,7 +107,7 @@ export function buildPropertyParams(
     return { ok: true, params: { blockId, key, valueDate: value || null } }
   }
   if (valueType === 'boolean') {
-    // PEND-14: boolean values are passed in as 'true'/'false' (or '' to clear).
+    // Boolean values are passed in as 'true'/'false' (or '' to clear).
     if (value === '') {
       return { ok: true, params: { blockId, key, valueBool: null } }
     }

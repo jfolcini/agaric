@@ -28,7 +28,7 @@ fn test_ctx_agent() -> ActorContext {
     }
 }
 
-/// PEND-24 C1+C2: create a fresh space and return its ULID. Every rw
+/// +C2: create a fresh space and return its ULID. Every rw
 /// tool now requires a `space_id` argument, so the per-test fixture
 /// seeds at least one real space block (with `is_space = 'true'`) so
 /// the helper's `validate_block_in_space` lookup has something to
@@ -41,14 +41,14 @@ async fn mk_space(pool: &SqlitePool, name: &str) -> String {
         .into_string()
 }
 
-/// PEND-24: shorthand for the per-test fixture. Returns
+/// Shorthand for the per-test fixture. Returns
 /// `(tools, materializer, pool, space_id, tempdir)` so every test
 /// can thread a real space ULID through the rw tool calls.
 async fn mk_tools() -> (ReadWriteTools, Materializer, SqlitePool, String, TempDir) {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let tools = ReadWriteTools::new(pool.clone(), mat.clone(), DEV.to_string());
-    let space_id = mk_space(&pool, "PEND-24 test space").await;
+    let space_id = mk_space(&pool, " test space").await;
     (tools, mat, pool, space_id, dir)
 }
 
@@ -334,7 +334,7 @@ async fn update_block_content_rejects_unknown_field() {
 // set_property
 // -------------------------------------------------------------------
 
-/// PEND-24: helper that creates a parent page in `space` and a content
+/// Helper that creates a parent page in `space` and a content
 /// block under it, returning the content block's row. Used by every
 /// set_property / delete_block test that needs an in-space target.
 async fn mk_in_space_content_block(
@@ -435,13 +435,13 @@ async fn set_property_rejects_multiple_value_fields() {
 
 /// #697 happy path: `value_bool` is accepted at the MCP boundary and
 /// threads through to a `value_type = 'boolean'` definition. Before
-/// the fix, `deny_unknown_fields` rejected the very slot the L-122
+/// The fix, `deny_unknown_fields` rejected the very slot the
 /// error message told the agent to use.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_property_accepts_value_bool_697() {
     let (tools, mat, pool, space, _dir) = mk_tools().await;
     let block = mk_in_space_content_block(&pool, &mat, &space, "task").await;
-    // PEND-14 boolean-typed definition so the value lands in value_bool.
+    // Boolean-typed definition so the value lands in value_bool.
     crate::commands::create_property_def_inner(&pool, "archived".into(), "boolean".into(), None)
         .await
         .expect("boolean property def");
@@ -473,7 +473,7 @@ async fn set_property_accepts_value_bool_697() {
     assert_eq!(stored, Some(true), "value_bool must land in the bool slot");
 }
 
-/// #697 schema/message coherence: the L-122 error for a zero-value call
+/// #697 schema/message coherence: the error for a zero-value call
 /// advertises value_bool — assert the advertised slot now parses (i.e.
 /// the schema lists it and serde accepts it alongside the other four).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -495,7 +495,7 @@ async fn set_property_error_message_slots_match_schema_697() {
     };
     assert!(
         msg.contains("value_bool"),
-        "L-122 message advertises value_bool: {msg}"
+        " message advertises value_bool: {msg}"
     );
 
     // Every slot named in the message must be a schema property —
@@ -513,7 +513,7 @@ async fn set_property_error_message_slots_match_schema_697() {
     ] {
         assert!(
             msg.contains(slot),
-            "L-122 message must advertise `{slot}`: {msg}"
+            " message must advertise `{slot}`: {msg}"
         );
         assert!(
             props.contains_key(slot),
@@ -643,7 +643,7 @@ async fn add_tag_happy_path() {
     let tag = create_block_inner(&pool, DEV, &mat, "tag".into(), "work".into(), None, None)
         .await
         .unwrap();
-    // PEND-15 Phase 2: tags must be in the same space as the source block
+    // Phase 2: tags must be in the same space as the source block
     set_property_inner(
         &pool,
         DEV,
@@ -786,10 +786,10 @@ async fn create_page_rejects_unknown_field() {
 }
 
 // -------------------------------------------------------------------
-// PEND-24 C1 — create_page enforces space_id
+// Create_page enforces space_id
 // -------------------------------------------------------------------
 
-/// PEND-24 C1: invoking `create_page` with no `space_id` argument must
+/// Invoking `create_page` with no `space_id` argument must
 /// fail at parse_args (`-32602 invalid params`) — `space_id` is a
 /// required field on the wire schema.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -809,7 +809,7 @@ async fn create_page_without_space_rejected() {
     );
 }
 
-/// PEND-24 C1: the page row must carry its space after a successful
+/// The page row must carry its space after a successful
 /// create_page call. The bug this regression-tests for is the MCP path
 /// bypassing `create_block_inner_with_space` so the page landed without
 /// its space membership and dropped out of every space-scoped query
@@ -838,7 +838,7 @@ async fn create_page_writes_space_property() {
     assert_eq!(
         stamped.as_deref(),
         Some(space.as_str()),
-        "create_page must stamp the page with `space_id = <space_id>` (BUG-1 / H-3a)",
+        "create_page must stamp the page with `space_id = <space_id>`",
     );
 }
 
@@ -912,7 +912,7 @@ async fn delete_block_already_deleted_is_invalid_operation() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_block_is_reversible_via_restore() {
-    // The whole FEAT-4h contract hinges on "agents only get
+    // The whole contract hinges on "agents only get
     // reversible ops" — pin that every delete_block output can be
     // fed straight back to `restore_block_inner` to recover the
     // block.
@@ -954,7 +954,7 @@ async fn unknown_tool_returns_not_found() {
 }
 
 // -------------------------------------------------------------------
-// End-to-end attribution — FEAT-4h slice 1 + slice 2 integration
+// End-to-end attribution — slice 1 + slice 2 integration
 // -------------------------------------------------------------------
 
 /// The whole point of slice 2: a write-tool invocation against an
@@ -1034,14 +1034,14 @@ async fn delete_block_stamps_origin_agent_in_op_log() {
     );
 }
 
-/// FEAT-4h slice 3: every RW-tool-written op must populate the
+/// Slice 3: every RW-tool-written op must populate the
 /// `LAST_APPEND` task-local so the dispatch layer can attach an
 /// `OpRef` to the emitted `mcp:activity` entry. This test pins the
 /// invariant by driving `append_block` inside an explicit
 /// `LAST_APPEND.scope(...)` and draining the captured list after
 /// the call.
 ///
-/// L-114: today `append_block` is a single-op tool, so the drained
+/// Today `append_block` is a single-op tool, so the drained
 /// list contains exactly one entry. The test asserts the `len ==
 /// 1` shape directly so a future regression that drops appends
 /// (or doubles them) is caught here, not in the dispatch layer.
@@ -1097,7 +1097,7 @@ async fn append_block_populates_last_append_inside_scope() {
 }
 
 // -------------------------------------------------------------------
-// L-124: MCP-level concurrent-write stress test
+// MCP-level concurrent-write stress test
 //
 // The RW handlers are 1:1 with `*_inner` calls, each opening its
 // own `BEGIN IMMEDIATE` transaction. The inner-test level exercises
@@ -1108,7 +1108,7 @@ async fn append_block_populates_last_append_inside_scope() {
 // subverted `BEGIN IMMEDIATE` — would surface as duplicate-seq
 // failures or FK violations under contention.
 //
-// Closes L-124.
+// Closes.
 // -------------------------------------------------------------------
 
 /// 4 agent connections × 6 iterations × `append_block + add_tag` plus
@@ -1130,7 +1130,7 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
         DEV,
         &mat,
         "page".into(),
-        "L-124 stress page".into(),
+        " stress page".into(),
         None,
         Some(1),
         &SpaceScope::Active(SpaceId::from_trusted(&space)),
@@ -1148,7 +1148,7 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
     )
     .await
     .unwrap();
-    // PEND-15 Phase 2: tags must be in the same space as the source block
+    // Phase 2: tags must be in the same space as the source block
     set_property_inner(
         &pool,
         DEV,
@@ -1247,7 +1247,7 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
 
     // Assert exact final block count: 1 space + 1 page + 1 tag + 4×6
     // agent blocks + 12 frontend blocks = 39. The space block comes
-    // from `mk_space` (PEND-24 fixture seed).
+    // From `mk_space` (fixture seed).
     let total_blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
         .fetch_one(&pool)
         .await
@@ -1311,7 +1311,7 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
 }
 
 // -------------------------------------------------------------------
-// PEND-24 C2 — cross-space write rejection
+// Cross-space write rejection
 //
 // One regression test per rw tool that takes a block ID input. Each
 // test seeds two spaces (A and B), creates a target block in space B,
@@ -1323,12 +1323,12 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
 // global.)
 // -------------------------------------------------------------------
 
-/// PEND-24 C2: an agent scoped to space A must not be able to append
+/// An agent scoped to space A must not be able to append
 /// content under a parent block whose owning page lives in space B.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn append_block_cross_space_rejected() {
     let (tools, mat, pool, space_a, _dir) = mk_tools().await;
-    let space_b = mk_space(&pool, "PEND-24 space B").await;
+    let space_b = mk_space(&pool, " space B").await;
     // Parent page lives in space B.
     let parent_b = create_block_inner_with_space(
         &pool,
@@ -1359,11 +1359,11 @@ async fn append_block_cross_space_rejected() {
     );
 }
 
-/// PEND-24 C2: agent in space A, target block in space B → reject.
+/// Agent in space A, target block in space B → reject.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn update_block_cross_space_rejected() {
     let (tools, mat, pool, space_a, _dir) = mk_tools().await;
-    let space_b = mk_space(&pool, "PEND-24 space B").await;
+    let space_b = mk_space(&pool, " space B").await;
     let block_b = mk_in_space_content_block(&pool, &mat, &space_b, "B-block").await;
     settle(&mat).await;
 
@@ -1381,7 +1381,7 @@ async fn update_block_cross_space_rejected() {
     );
 }
 
-/// PEND-24 C2: agent in space A, target block in space B → reject.
+/// Agent in space A, target block in space B → reject.
 /// Pinned: validation must fire BEFORE the exactly-one-value check
 /// inside `set_property_inner` (the latter would otherwise leak a
 /// false-negative path where the cross-space write succeeded
@@ -1389,7 +1389,7 @@ async fn update_block_cross_space_rejected() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_property_cross_space_rejected() {
     let (tools, mat, pool, space_a, _dir) = mk_tools().await;
-    let space_b = mk_space(&pool, "PEND-24 space B").await;
+    let space_b = mk_space(&pool, " space B").await;
     let block_b = mk_in_space_content_block(&pool, &mat, &space_b, "B-block").await;
     settle(&mat).await;
 
@@ -1412,13 +1412,13 @@ async fn set_property_cross_space_rejected() {
     );
 }
 
-/// PEND-24 C2: agent in space A, target block in space B, tag is
+/// Agent in space A, target block in space B, tag is
 /// global → reject. Verifies the helper checks the *target* block
 /// (`block_id`) and not the global `tag_id`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn add_tag_cross_space_rejected() {
     let (tools, mat, pool, space_a, _dir) = mk_tools().await;
-    let space_b = mk_space(&pool, "PEND-24 space B").await;
+    let space_b = mk_space(&pool, " space B").await;
     let block_b = mk_in_space_content_block(&pool, &mat, &space_b, "B-block").await;
     let tag = create_block_inner(&pool, DEV, &mat, "tag".into(), "global".into(), None, None)
         .await
@@ -1439,11 +1439,11 @@ async fn add_tag_cross_space_rejected() {
     );
 }
 
-/// PEND-24 C2: agent in space A, target block in space B → reject.
+/// Agent in space A, target block in space B → reject.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_block_cross_space_rejected() {
     let (tools, mat, pool, space_a, _dir) = mk_tools().await;
-    let space_b = mk_space(&pool, "PEND-24 space B").await;
+    let space_b = mk_space(&pool, " space B").await;
     let block_b = mk_in_space_content_block(&pool, &mat, &space_b, "B-doomed").await;
     settle(&mat).await;
 

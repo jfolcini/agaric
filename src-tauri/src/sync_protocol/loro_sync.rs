@@ -13,7 +13,7 @@
 //!   [`ApplyOutcome`] discriminating between successful import and a
 //!   snapshot-fallback request (see below).
 //!
-//! ## Snapshot-fallback path (MAINT-228)
+//! ## Snapshot-fallback path
 //!
 //! Before importing a [`LoroSyncMessage::Update`], [`apply_remote`]
 //! verifies that the peer's declared `from_vv` is **reachable** from
@@ -58,7 +58,7 @@ use loro::VersionVector;
 /// Outcome of [`apply_remote`].  Discriminates between a successful
 /// engine import and a `from_vv`-unreachable snapshot-fallback signal.
 ///
-/// MAINT-228: callers (the orchestrator) must `match` on this to
+/// Callers (the orchestrator) must `match` on this to
 /// decide whether to transition into `Complete` (after a successful
 /// import) or `ResetRequired` (to trigger the snapshot catch-up
 /// sub-flow at the daemon layer).
@@ -230,7 +230,7 @@ pub async fn prepare_outgoing(
     if let Some(stale_id) = first_engine_live_block_sql_deleted(pool, &live_block_ids).await? {
         // Refuse + signal rebuild. Emit NO payload this round; a future
         // caller can trigger a rebuild-from-op-log to reconcile the engine
-        // with SQL. Do NOT repair inline (that is PR-2/PR-3 territory).
+        // With SQL. Do NOT repair inline (that is territory).
         tracing::warn!(
             space_id = %space_id.as_str(),
             device_id = %device_id,
@@ -311,7 +311,7 @@ async fn first_engine_live_block_sql_deleted(
 /// * [`ApplyOutcome::Imported`] — engine import + SQL projection
 ///   succeeded; the carried [`SpaceId`] lets the caller invalidate
 ///   per-space caches (FE event emission, agenda recompute, etc.).
-/// * [`ApplyOutcome::SnapshotFallbackRequested`] (MAINT-228) — the
+/// * [`ApplyOutcome::SnapshotFallbackRequested`] — the
 ///   message was a [`LoroSyncMessage::Update`] whose `from_vv` is
 ///   ahead of (or concurrent with) our `oplog_vv()`.  The engine
 ///   import is **not** attempted; the caller MUST request a fresh
@@ -329,7 +329,7 @@ pub async fn apply_remote(
     message: LoroSyncMessage,
 ) -> Result<ApplyOutcome, AppError> {
     // Validate protocol version + extract bytes / space_id.  For
-    // Update, also gate the import on the MAINT-228 reachability
+    // Update, also gate the import on the reachability
     // check — if the peer's `from_vv` is unreachable from our local
     // `oplog_vv()`, short-circuit with `SnapshotFallbackRequested`
     // instead of letting `import_with_changed_blocks` surface an
@@ -360,7 +360,7 @@ pub async fn apply_remote(
                      (this build speaks {LORO_SYNC_PROTOCOL_VERSION})",
                 )));
             }
-            // MAINT-228: verify peer's `from_vv` is reachable from
+            // Verify peer's `from_vv` is reachable from
             // our current `oplog_vv()`.  Read the local vv off the
             // engine BEFORE the import — and BEFORE any SQL tx — so
             // a miss returns without side-effects.
@@ -615,12 +615,12 @@ pub(crate) async fn import_and_project(
             .collect();
     for (block_id, (snapshot_opt, props, _, _)) in changed_blocks.iter().zip(&block_states) {
         project_block_full_to_sql(&mut tx, space_id, block_id, snapshot_opt.as_ref()).await?;
-        // Re-project the block's properties (PEND-76 F1): mirrors remote
+        // Re-project the block's properties: mirrors remote
         // SetProperty / DeleteProperty changes into `block_properties`.
         reproject_block_properties_from_engine(&mut tx, block_id, props, &value_types).await?;
     }
 
-    // Pass B — tags (PEND-81 §2A).  Mirrors remote AddTag / RemoveTag
+    // Pass B — tags. Mirrors remote AddTag / RemoveTag
     // changes into `block_tags`.  Runs AFTER Pass A so every referenced
     // tag block already has its `blocks` row (FK ordering, see above).
     // Read the tag list under the guard, then write in the tx — same
@@ -629,7 +629,7 @@ pub(crate) async fn import_and_project(
         reproject_block_tags_from_engine(&mut tx, block_id, tag_ids).await?;
     }
 
-    // Pass C — soft-delete state (PEND-80 Phase 2).  Mirrors remote
+    // Pass C — soft-delete state (Phase 2). Mirrors remote
     // DeleteBlock / RestoreBlock changes into `blocks.deleted_at`.  Runs
     // AFTER Pass A so every changed block's `parent_id` row exists — the
     // helper's descendant-cascade / ancestor-guard CTE walks depend on
@@ -654,7 +654,7 @@ pub(crate) async fn import_and_project(
 
     tx.commit().await?;
 
-    // Rebuild the derived `block_tag_inherited` cache (PEND-81 §2A).
+    // Rebuild the derived `block_tag_inherited` cache.
     // `block_tags` only carries direct edges; inherited tags are a
     // derived recursive-CTE projection over `(block_tags, blocks.parent_id)`,
     // so a remote tag change to any block can shift inherited rows for its
@@ -681,7 +681,7 @@ pub(crate) async fn import_and_project(
 ///
 /// #792 / #1054: before the import, two guards mirror `apply_remote`'s
 /// pre-import gates and DROP the slot (their own small DELETE) rather than
-/// import it: the own-peer fork guard (#792) and the MAINT-228 `from_vv`
+/// Import it: the own-peer fork guard (#792) and the `from_vv`
 /// reachability gate (#1054). Both routes leave the next live sync session to
 /// re-detect the condition in `apply_remote` and fall back to snapshot
 /// catch-up — preventing a permanent poison row that would re-error at every
@@ -725,7 +725,7 @@ pub(crate) async fn replay_inbox_row(
         return Ok(Vec::new());
     }
 
-    // #1054 (MAINT-228): mirror `apply_remote`'s live reachability gate.
+    // #1054: mirror `apply_remote`'s live reachability gate.
     // `apply_remote` refuses to import an `Update` whose declared `from_vv`
     // is unreachable from our `oplog_vv()` — returning `SnapshotFallbackRequested`
     // BEFORE any side-effect — because such an update would otherwise surface
@@ -1001,7 +1001,7 @@ mod tests {
         assert_eq!(row.4, 1);
     }
 
-    /// PEND-76 F1 regression (end-to-end): an inbound sync that
+    /// Regression (end-to-end): an inbound sync that
     /// re-projects an already-materialised block must NOT cascade-wipe
     /// that block's tags / properties. The bug was `INSERT OR REPLACE`,
     /// which deletes the `blocks` row first so the `ON DELETE CASCADE`
@@ -1025,7 +1025,7 @@ mod tests {
         // Pre-seed a page block so BLOCK_A can carry a `page_id` — the
         // genuine F1 cascade witness. `page_id` is rebuilt by NO inbound
         // re-projection (not by the core upsert, the property pass, or the
-        // PEND-80 Phase-2 deleted_at pass) and is in the `ON DELETE CASCADE`
+        // Phase-2 deleted_at pass) and is in the `ON DELETE CASCADE`
         // set, so it survives a correct UPSERT but a REPLACE regression
         // (delete + re-insert the row) resets it to NULL.
         sqlx::query(
@@ -1036,12 +1036,12 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        // `deleted_at` is now re-projected by the PEND-80 Phase-2 pass
+        // `deleted_at` is now re-projected by the Phase-2 pass
         // (Pass C): A's engine carries BLOCK_A alive, so the pre-seeded
         // soft-delete must be cleared on inbound sync (the converged engine
         // state wins). Asserted below.
         //
-        // `todo_state` is a reserved hot-path column the PEND-81 §2A
+        // `todo_state` is a reserved hot-path column the
         // reserved-key pass re-projects under authoritative-replace: A's
         // engine carries none for BLOCK_A, so the stale SQL-only value must
         // be NULLed (same authoritative-replace semantics as the `sql_only`
@@ -1092,7 +1092,7 @@ mod tests {
         // A edits X's content and sends a snapshot.  A's engine carries
         // the same `effort` property AND the same tag edge B already
         // materialised (both derived from the same CRDT) — so the inbound
-        // property/tag re-projections (PEND-76 F1 / PEND-81 §2A) re-affirm
+        // Property/tag re-projections (re-affirm
         // those rows rather than sweeping them.  The point of this test is
         // that the *core* upsert does not cascade-wipe the block's derived
         // tags/properties.
@@ -1144,12 +1144,12 @@ mod tests {
         // re-projection, so it must survive the core upsert. A REPLACE
         // regression would delete + re-insert the row, resetting it to NULL.
         //
-        // `deleted_at`, by contrast, is now re-projected by the PEND-80
+        // `deleted_at`, by contrast, is now re-projected by the
         // Phase-2 pass (Pass C): A's engine carries BLOCK_A alive, so the
         // pre-seeded soft-delete must be cleared (the converged engine state
         // wins on inbound sync).
         //
-        // `todo_state` is a reserved hot-path column the PEND-81 §2A
+        // `todo_state` is a reserved hot-path column the
         // reserved-key pass re-projects under authoritative-replace: A's
         // engine carries none for BLOCK_A, so the stale SQL-only value must be
         // NULLed (same authoritative-replace semantics as the `sql_only`
@@ -1292,7 +1292,7 @@ mod tests {
         );
     }
 
-    /// PEND-80 Phase 2: a remote `DeleteBlock` of a subtree seed
+    /// Phase 2: a remote `DeleteBlock` of a subtree seed
     /// propagates the soft-delete to SQL for the seed AND its
     /// descendants — even though the engine marks only the seed.
     /// `apply_remote`'s deleted_at pass re-derives the SQL descendant
@@ -1343,7 +1343,7 @@ mod tests {
         }
     }
 
-    /// PEND-80 Phase 2: a remote `RestoreBlock` of a subtree seed clears
+    /// Phase 2: a remote `RestoreBlock` of a subtree seed clears
     /// the soft-delete in SQL for the whole cohort.
     #[tokio::test]
     async fn apply_remote_propagates_remote_subtree_restore_to_sql() {
@@ -1410,7 +1410,7 @@ mod tests {
         }
     }
 
-    /// PEND-80 Phase 2 centerpiece: re-importing a snapshot whose seed is
+    /// Phase 2 centerpiece: re-importing a snapshot whose seed is
     /// soft-deleted must NOT resurrect the already-soft-deleted
     /// descendants. The engine marks only the seed, so a naive per-block
     /// re-projection would read each descendant's `deleted_at` as `None`
@@ -1723,14 +1723,14 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // MAINT-228 — `from_vv` reachability check + snapshot-fallback
+    // `from_vv` reachability check + snapshot-fallback
     // -----------------------------------------------------------------
 
     /// Happy-path: peer's `from_vv` is exactly our current
     /// `oplog_vv()`.  Reachability passes; `apply_remote` performs the
     /// engine import and returns `ApplyOutcome::Imported`.
     ///
-    /// Locks the wire-shape pin for MAINT-228 normal flow — every
+    /// Locks the wire-shape pin for normal flow — every
     /// in-band incremental sync between two peers that have been
     /// continuously paired hits this path.
     #[tokio::test]
@@ -1814,7 +1814,7 @@ mod tests {
     /// fails; `apply_remote` returns `SnapshotFallbackRequested`
     /// **without** attempting the engine import.
     ///
-    /// MAINT-228 invariant.  Pre-fix the engine raised an opaque Loro
+    /// Invariant. Pre-fix the engine raised an opaque Loro
     /// decode error from `import_with_changed_blocks`; the new path
     /// emits a typed fallback signal the orchestrator can route to
     /// the snapshot catch-up sub-flow.
@@ -2039,7 +2039,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // #1054 — boot-replay reachability gate (mirrors the live MAINT-228
+    // #1054 — boot-replay reachability gate (mirrors the live
     // gate in the inbox replay path).
     // -----------------------------------------------------------------
 
@@ -2305,7 +2305,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // PEND-76 F1 — inbound property re-projection (end-to-end).
+    // Inbound property re-projection (end-to-end).
     // -----------------------------------------------------------------
 
     /// Seed the `property_definitions` rows the re-projection consults to
@@ -2488,7 +2488,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // PEND-81 §2A — inbound tag re-projection (end-to-end).
+    // Inbound tag re-projection (end-to-end).
     // -----------------------------------------------------------------
 
     /// A remote engine creates a tag block and tags a content block;

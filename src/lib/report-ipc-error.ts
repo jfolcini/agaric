@@ -9,7 +9,7 @@ import { logger } from './logger'
  *
  * Logs a structured error (with stack, cause chain, and context) AND shows a
  * user-visible toast translated via i18n. Replaces the `catch { notify.error(...) }`
- * pattern that previously lacked any logging — see MAINT-115.
+ * Pattern that previously lacked any logging —.
  *
  * @param module    - Logger module name (typically the component / hook name).
  * @param messageKey - i18n key whose translation is shown to the user.

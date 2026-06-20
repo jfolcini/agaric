@@ -163,7 +163,7 @@ fn resolve_ulids_for_export(
 /// `page_id` column (`idx_blocks_page_id`) and accumulates every page of
 /// rows into a single `Vec<BlockRow>` — there is no silent truncation.
 /// Tag and page reference targets are resolved with one batched
-/// `json_each(?)` query (M-27): pre-fix the function loaded *every*
+/// `json_each(?)` query: pre-fix the function loaded *every*
 /// non-deleted tag and page in the vault on every export.
 ///
 /// # Errors
@@ -178,7 +178,7 @@ pub async fn export_page_markdown_inner(
     use crate::fts::{PAGE_LINK_RE, TAG_REF_RE};
     use std::collections::HashSet;
 
-    // L-136: validate ULID format upfront so malformed inputs surface
+    // Validate ULID format upfront so malformed inputs surface
     // `AppError::Ulid` rather than the imprecise `AppError::NotFound`
     // that the SQL `WHERE id = ?` lookup would otherwise produce.
     BlockId::from_string(page_id)?;
@@ -199,7 +199,7 @@ pub async fn export_page_markdown_inner(
 
     // 1. Get the page
     //
-    // M-98 — filter `deleted_at IS NULL` (mirrors `get_active_block_inner`)
+    // Filter `deleted_at IS NULL` (mirrors `get_active_block_inner`)
     // so a soft-deleted page surfaces as `NotFound` instead of exporting
     // as `# Title\n\n` with no descendants. The descendant walk below
     // already filters `deleted_at IS NULL`, so prior to this fix the page
@@ -228,7 +228,7 @@ pub async fn export_page_markdown_inner(
     //    Loops through every page of results — `next_cursor = None`
     //    ends the walk. Pre-fix this used `list_children` with a hard
     //    `limit = 1000` direct-children cap and silently dropped every
-    //    descendant beyond it (M-27).
+    // Descendant beyond it.
     //
     //    Page size of 200 matches `MAX_PAGE_SIZE` in the pagination
     //    layer; the `+ 1` fetch-limit + `truncate` shape mirrors
@@ -308,7 +308,7 @@ pub async fn export_page_markdown_inner(
     //    `#[ULID]` and `[[ULID]]` tokens from descendant content, then
     //    issue ONE `json_each(?)` query for the deduped ULID set.
     //    Pre-fix two full-table scans loaded every non-deleted tag /
-    //    page in the vault on each export (M-27).
+    // Page in the vault on each export.
     //
     //    The block_type discriminator is applied in Rust rather than in
     //    SQL: the union query returns `(id, block_type, content)` and
@@ -623,7 +623,7 @@ pub async fn export_page_markdown_inner(
 /// blocks following the indentation hierarchy. Properties are set via
 /// SetProperty ops. Returns import statistics.
 ///
-/// #662 — Chunked, atomic-subtree semantics (relaxes the original L-30
+/// #662 — Chunked, atomic-subtree semantics (relaxes the original
 /// single-transaction contract). The import is split into a sequence of
 /// `BEGIN IMMEDIATE` transactions so the single SQLite writer lock is
 /// acquired and released per chunk rather than held for the whole
@@ -658,8 +658,7 @@ pub async fn import_markdown_inner(
     .await
 }
 
-/// Progress-streaming core of [`import_markdown_inner`] (#128, PEND-38 /
-/// PEND-06 Tier 3).
+/// Progress-streaming core of [`import_markdown_inner`] (#128).
 ///
 /// # #662 — chunked writer-lock release
 ///
@@ -694,7 +693,7 @@ pub async fn import_markdown_inner(
 /// page plus a **prefix of its complete top-level subtrees** — every
 /// committed subtree is whole and navigable, and no half-written subtree,
 /// orphaned child, or parent-missing-children state is ever exposed. This
-/// relaxes the original L-30 "all-or-nothing for the whole file" contract
+/// Relaxes the original "all-or-nothing for the whole file" contract
 /// to "all-or-nothing per chunk" (a deliberate trade for the lock-hold fix
 /// — see #662). Imports small enough to fit in a single chunk (the common
 /// case, `<= IMPORT_CHUNK_BLOCKS` blocks) keep the original whole-import
@@ -735,7 +734,7 @@ pub async fn import_markdown_with_progress(
     space_id: String,
     progress: Option<&dyn ImportProgressSink>,
 ) -> Result<ImportResult, AppError> {
-    // PEND-35 Tier 1.1 — normalize ULID to uppercase per AGENTS.md
+    // Normalize ULID to uppercase per AGENTS.md
     // invariant #8. Mirrors `create_page_in_space_inner` so a raw String
     // arg from MCP tools / sync replay / scripted imports can never land
     // a page whose `space` ref disagrees with the case-sensitive
@@ -771,7 +770,7 @@ pub async fn import_markdown_with_progress(
     }
 
     // --- Chunked IMMEDIATE transactions (#662) ---
-    // MAINT-112: CommandTx couples commit + post-commit dispatch; op
+    // CommandTx couples commit + post-commit dispatch; op
     // records enqueue per chunk and drain in FIFO order on that chunk's
     // commit. Pre-#662 this was a *single* IMMEDIATE transaction spanning
     // the whole (unbounded) import, so a multi-MB file held the single
@@ -785,7 +784,7 @@ pub async fn import_markdown_with_progress(
     // `?`, rolling back the *current* chunk (committed chunks survive).
     let mut tx = CommandTx::begin_immediate(pool, "import_markdown").await?;
 
-    // PEND-35 Tier 1.1 — validate `space_id` upfront inside the tx,
+    // Validate `space_id` upfront inside the tx,
     // identically to `create_page_in_space_inner`. The target must
     // exist as a live, non-conflict block carrying `is_space = 'true'`.
     // Inside the tx the check is TOCTOU-safe against a concurrent
@@ -825,7 +824,7 @@ pub async fn import_markdown_with_progress(
     tx.enqueue_background(page_op);
     let page_id = page.id.clone().into_string();
 
-    // PEND-35 Tier 1.1 — stamp the `space` ref property on the imported
+    // Stamp the `space` ref property on the imported
     // page. Mirrors `create_page_in_space_inner`: ops are emitted in
     // the order (create-page → set-space) so a sync peer materializes
     // them in the same order and never observes a page without its
@@ -1164,13 +1163,13 @@ pub async fn export_page_markdown(
 /// Tauri command: import a Logseq-style markdown file as a page with
 /// block hierarchy. Delegates to [`import_markdown_with_progress`].
 ///
-/// PEND-35 Tier 1.1 — `space_id` is required. The imported page is
+/// `space_id` is required. The imported page is
 /// stamped with `space = ?space_id` inside the same transaction as the
 /// `CreateBlock` op, so an imported page can never exist in the op log
-/// without its space property (FEAT-3 invariant). Validation against a
+/// Without its space property (invariant). Validation against a
 /// live space block happens TOCTOU-safe inside the same transaction.
 ///
-/// #128 (PEND-38 / PEND-06 Tier 3) — `progress` streams per-block import
+/// #128 — `progress` streams per-block import
 /// progress to the frontend. The frontend always supplies a
 /// `Channel<ImportProgressUpdate>` (mirroring `start_sync`); sends are
 /// best-effort, so a dropped channel never aborts the import.

@@ -18,7 +18,7 @@ use crate::sync_scheduler::SyncScheduler;
 
 use super::*;
 
-/// L-58: Acquire the pairing-state mutex, mapping a poisoned-lock failure
+/// Acquire the pairing-state mutex, mapping a poisoned-lock failure
 /// to a stable [`AppError::InvalidOperation`]. The error message is fixed
 /// at `"pairing state lock poisoned"` so callers and tests can pattern-match
 /// on it.
@@ -77,7 +77,7 @@ pub async fn set_peer_address_inner(
     address: String,
 ) -> Result<(), AppError> {
     // Validate the address format.
-    // M-35: Accepts host:port — host may be an IP literal or a hostname
+    // Accepts host:port — host may be an IP literal or a hostname
     // (e.g. mDNS `*.local`). Splits on the LAST `:` so bracketed IPv6
     // literals (`[::1]:1234`) parse correctly. Resolution is deferred to
     // the daemon at connect time.
@@ -89,7 +89,7 @@ pub async fn set_peer_address_inner(
         return Err(AppError::NotFound(format!("peer '{peer_id}' not found")));
     }
 
-    // L-86: `update_last_address` now returns `NotFound` if the peer row is
+    // `update_last_address` now returns `NotFound` if the peer row is
     // gone. We just verified it exists above, so a `NotFound` here is a
     // TOCTOU race with `delete_peer_ref` — log and swallow per the documented
     // threat model (peer is the user's own device, not a hostile actor).
@@ -110,7 +110,7 @@ pub async fn set_peer_address_inner(
     Ok(())
 }
 
-/// M-35: Validate a `host:port` string for [`set_peer_address_inner`].
+/// Validate a `host:port` string for [`set_peer_address_inner`].
 ///
 /// Accepts `host:port` — host may be an IP literal or a hostname (e.g. mDNS
 /// `*.local`). Splits on the LAST `:` to handle bracketed IPv6 literals
@@ -147,7 +147,7 @@ pub fn get_device_id_inner(device_id: &DeviceId) -> String {
 /// stores the session in `pairing_state`, and returns the pairing info
 /// to the frontend.
 ///
-/// M-34: the QR payload + [`PairingInfo`] both carry only the passphrase.
+/// The QR payload + [`PairingInfo`] both carry only the passphrase.
 /// mDNS owns discovery + address resolution end-to-end; the QR is not a
 /// scan-bootstrap channel for a direct `host:port` connection.
 #[instrument(skip(pairing_state), err)]
@@ -183,7 +183,7 @@ pub fn start_pairing_inner(
 ///
 /// On success: stores the peer reference and clears the slot.
 ///
-/// PERF-25: After persisting the peer, signals the scheduler so the
+/// After persisting the peer, signals the scheduler so the
 /// dormant sync daemon (if any) transitions to active mode without
 /// waiting for the next poll interval.
 #[instrument(skip(pool, pairing_state, scheduler), err)]
@@ -245,7 +245,7 @@ pub async fn confirm_pairing_inner(
 
     // No session state persisted at confirm time.
 
-    // PEND-76 F3: the FE has no remote device_id at confirm time — the QR
+    // The FE has no remote device_id at confirm time — the QR
     // carries only the passphrase, and mDNS + TOFU establish the real peer on
     // the first authenticated connection. So in the (current) empty case we set
     // a persistent pending-pairing marker that wakes the dormant daemon to
@@ -262,7 +262,7 @@ pub async fn confirm_pairing_inner(
     // Clear pairing session
     *lock_pairing_state(pairing_state)? = None;
 
-    // PERF-25: Wake a dormant daemon (if any). Harmless if the daemon is
+    // Wake a dormant daemon (if any). Harmless if the daemon is
     // already active — `notify_change` is debounced by
     // `wait_for_debounced_change`.
     scheduler.notify_change();
@@ -298,7 +298,7 @@ pub fn start_sync_inner(
         ));
     }
 
-    // M-33: HEALTH CHECK ONLY — this is *not* a real exclusion lock.
+    // HEALTH CHECK ONLY — this is *not* a real exclusion lock.
     //
     // The `Some` vs `None` result of `try_lock_peer` is used as a probe
     // for "is the daemon currently syncing this peer?" and the early
@@ -331,7 +331,7 @@ pub fn start_sync_inner(
     // Wake the SyncDaemon to sync now (#382). The wrapper does NOT
     // pre-credit `record_success` — the daemon's own success path calls
     // `scheduler.record_success(peer_id)` after a real network sync
-    // succeeds. Pre-crediting here (M-32) wiped per-peer backoff state
+    // Succeeds. Pre-crediting here wiped per-peer backoff state
     // before the daemon had even attempted the sync, defeating the
     // backoff invariant documented in docs/ARCHITECTURE.md §18 ("`record_failure(id)`
     // Doubles backoff: 1s → 2s → 4s → … → 60s max"). The wrapper's job
@@ -488,7 +488,7 @@ pub async fn cancel_sync(cancel_flag: State<'_, crate::SyncCancelFlag>) -> Resul
 
 #[cfg(test)]
 mod tests_m35 {
-    //! M-35: `set_peer_address_inner` previously rejected hostnames despite
+    //! `set_peer_address_inner` previously rejected hostnames despite
     //! advertising "host:port" semantics. The validator now accepts arbitrary
     //! `host:port` (host opaque, port a non-zero u16), so mDNS `*.local`
     //! hosts and other DNS names round-trip without resolution at the

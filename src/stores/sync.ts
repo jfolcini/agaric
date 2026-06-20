@@ -40,7 +40,7 @@ interface SyncStore {
   lastSyncedAt: string | null
   opsReceived: number
   opsSent: number
-  // PEND-06 Tier 2 — attachment-transfer progress (post-op-sync phase).
+  // Attachment-transfer progress (post-op-sync phase).
   // `filesTotal === 0` is the steady-state "nothing to transfer" case
   // and the UI should hide the file progress affordance.
   filePhase: FilePhase

@@ -3,7 +3,7 @@
 
 use super::*;
 
-/// PEND-28a H2: per-variant body for [`OpType::AddAttachment`].
+/// Per-variant body for [`OpType::AddAttachment`].
 pub(super) async fn apply_add_attachment_tx(
     conn: &mut sqlx::SqliteConnection,
     p: AddAttachmentPayload,
@@ -28,7 +28,7 @@ pub(super) async fn apply_add_attachment_tx(
     Ok(())
 }
 
-/// PEND-28a H2: per-variant body for [`OpType::DeleteAttachment`].
+/// Per-variant body for [`OpType::DeleteAttachment`].
 pub(super) async fn apply_delete_attachment_tx(
     conn: &mut sqlx::SqliteConnection,
     p: DeleteAttachmentPayload,
@@ -94,7 +94,7 @@ pub(super) const CLEANUP_BATCH_SLEEP_MS: u64 = 10;
 /// - Subdirectories under `attachments/` are walked recursively. The
 ///   `add_attachment_inner` path validator
 ///   (`check_attachment_fs_path_shape`) accepts subdirectories, and
-///   FEAT-3 large-vault layouts may organize attachments in subdirs.
+///   Large-vault layouts may organize attachments in subdirs.
 ///
 /// Returns `Ok(())` always — failures are logged, never propagated,
 /// because a partial GC pass is strictly better than no GC pass.

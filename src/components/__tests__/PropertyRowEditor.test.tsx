@@ -600,9 +600,9 @@ describe('PropertyRowEditor select options editing', () => {
     })
   })
 
-  // ── UX-272 sub-fix 5: Options count badge ────────────────────────────
+  // ── sub-fix 5: Options count badge ────────────────────────────
 
-  it('UX-272 sub-fix 5 — renders a Badge with the option count', async () => {
+  it(' sub-fix 5 — renders a Badge with the option count', async () => {
     const user = userEvent.setup()
     render(
       <PropertyRowEditor
@@ -620,9 +620,9 @@ describe('PropertyRowEditor select options editing', () => {
     expect(badge).toHaveTextContent(t('properties.optionsCount', { count: 3 }))
   })
 
-  // ── UX-272 sub-fix 5: Reorder buttons (up/down) ──────────────────────
+  // ── sub-fix 5: Reorder buttons (up/down) ──────────────────────
 
-  it('UX-272 sub-fix 5 — moves an option down via the Move Down button', async () => {
+  it(' sub-fix 5 — moves an option down via the Move Down button', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockResolvedValue({
       key: 'stage',
@@ -660,7 +660,7 @@ describe('PropertyRowEditor select options editing', () => {
     })
   })
 
-  it('UX-272 sub-fix 5 — disables Move Up on first row and Move Down on last row', async () => {
+  it(' sub-fix 5 — disables Move Up on first row and Move Down on last row', async () => {
     const user = userEvent.setup()
     render(
       <PropertyRowEditor
@@ -683,9 +683,9 @@ describe('PropertyRowEditor select options editing', () => {
     expect(moveDownLast).toBeDisabled()
   })
 
-  // ── UX-272 sub-fix 6: Disabled Add option button when input empty ────
+  // ── sub-fix 6: Disabled Add option button when input empty ────
 
-  it('UX-272 sub-fix 6 — disables the Add option button when input is empty', async () => {
+  it(' sub-fix 6 — disables the Add option button when input is empty', async () => {
     const user = userEvent.setup()
     render(
       <PropertyRowEditor
@@ -793,7 +793,7 @@ describe('PropertyRowEditor accessibility', () => {
   })
 })
 
-// PEND-14: native boolean property type renders a checkbox toggle and routes
+// Native boolean property type renders a checkbox toggle and routes
 // edits through onSave with a 'true' / 'false' string (which the parent's
 // buildPropertyParams maps to value_bool).
 describe('PropertyRowEditor boolean type', () => {
@@ -887,7 +887,7 @@ describe('PropertyRowEditor ref picker', () => {
   })
 
   it('displays resolved page title when value_ref is set', async () => {
-    // FEAT-3p7 — cache is now keyed by composite `${spaceId}::${ulid}`.
+    // Cache is now keyed by composite `${spaceId}::${ulid}`.
     // No active space is set up here, so the default `__global__`
     // sentinel is used (lookup falls back to it via `keyFor(null, id)`).
     const { useResolveStore, keyFor } = await import('../../stores/resolve')
@@ -971,7 +971,7 @@ describe('PropertyRowEditor ref picker', () => {
     })
   })
 
-  // UX-248 — Unicode-aware fold via `matchesSearchFolded`.
+  // Unicode-aware fold via `matchesSearchFolded`.
   it('ref picker matches Turkish İstanbul when query is lowercase istanbul', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -1035,7 +1035,7 @@ describe('PropertyRowEditor ref picker', () => {
     await user.click(screen.getByText('Target Page'))
 
     await waitFor(() => {
-      // PEND-14: typed values are bundled under `value: SetPropertyArgs`.
+      // Typed values are bundled under `value: SetPropertyArgs`.
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'BLOCK_1',
         key: 'linked_page',
@@ -1081,7 +1081,7 @@ describe('PropertyRowEditor ref picker', () => {
     })
   })
 
-  it('shows error toast when page list fails to load and keeps picker closed (MAINT-181)', async () => {
+  it('shows error toast when page list fails to load and keeps picker closed', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockRejectedValue(new Error('backend error'))
 
@@ -1100,7 +1100,7 @@ describe('PropertyRowEditor ref picker', () => {
       expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.loadPagesFailed'))
     })
 
-    // MAINT-181: the picker must NOT open on rejection — the user
+    // The picker must NOT open on rejection — the user
     // would otherwise see an empty "Select page" list with no
     // indication that the load actually failed. The toast is the
     // only failure surface; the picker's search input must be
@@ -1122,9 +1122,9 @@ describe('PropertyRowEditor ref picker', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // ── UX-272 sub-fix 1: EmptyState + Create new page CTA ───────────────
+  // ── sub-fix 1: EmptyState + Create new page CTA ───────────────
 
-  describe('UX-272 sub-fix 1 — ref picker empty state', () => {
+  describe(' sub-fix 1 — ref picker empty state', () => {
     it('renders the EmptyState primitive when no pages match (with description)', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -1238,9 +1238,9 @@ describe('PropertyRowEditor ref picker', () => {
     })
   })
 
-  // ── UX-272 sub-fix 8: Spinner during ref save ────────────────────────
+  // ── sub-fix 8: Spinner during ref save ────────────────────────
 
-  describe('UX-272 sub-fix 8 — spinner during ref save', () => {
+  describe(' sub-fix 8 — spinner during ref save', () => {
     it('shows a Spinner gated on the save promise', async () => {
       const user = userEvent.setup()
       // Pre-initialize with a no-op so TS narrows the type without losing the
@@ -1286,7 +1286,7 @@ describe('PropertyRowEditor ref picker', () => {
       })
     })
 
-    // UX-12 — disabling all rows while one saves is intentional (prevents
+    // Disabling all rows while one saves is intentional (prevents
     // concurrent set_property calls). The list container exposes
     // `aria-busy` so screen readers announce the busy state.
     it('marks the ref-picker list container aria-busy while a save is pending', async () => {
@@ -1382,10 +1382,10 @@ describe('PropertyRowEditor ref picker', () => {
     })
   })
 
-  // UX-201a: todo_state's options are locked — the edit-options button must
+  // Todo_state's options are locked — the edit-options button must
   // not appear on the block-level property editor either. Keeps
   // `property_definitions.todo_state.options` in lockstep with TASK_CYCLE.
-  describe('locked options for todo_state (UX-201a)', () => {
+  describe('locked options for todo_state', () => {
     it('does NOT render the edit options button for todo_state', () => {
       render(
         <PropertyRowEditor
@@ -1415,7 +1415,7 @@ describe('PropertyRowEditor ref picker', () => {
       expect(locked).toHaveTextContent(t('propertiesView.optionsLocked'))
     })
 
-    it('priority (not locked yet, UX-201b) still shows the edit options button', () => {
+    it('priority (not locked yet,) still shows the edit options button', () => {
       render(
         <PropertyRowEditor
           blockId="BLOCK_1"
@@ -1445,9 +1445,9 @@ describe('PropertyRowEditor ref picker', () => {
     })
   })
 
-  // UX-201b: saving options on the `priority` definition must refresh the
+  // Saving options on the `priority` definition must refresh the
   // shared priority-levels cache from the block-level editor too.
-  describe('priority level refresh (UX-201b)', () => {
+  describe('priority level refresh', () => {
     it('updates getPriorityLevels() after saving new priority options', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce(makeDef('priority', 'select', '["1","2","3","4"]'))

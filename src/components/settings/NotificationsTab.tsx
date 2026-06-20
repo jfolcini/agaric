@@ -1,5 +1,5 @@
 /**
- * NotificationsTab — OS notification settings (FEAT-11, Settings slice).
+ * NotificationsTab — OS notification settings (Settings slice).
  *
  * A bounded, shippable slice of the larger notification feature (#138):
  * an enable/disable preference plus permission + test affordances. The

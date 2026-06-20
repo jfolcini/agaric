@@ -17,7 +17,7 @@
  *  - Clickable tag names (onTagClick callback)
  *  - Error feedback via toast on failed operations
  *  - Disabled state styling for Add Tag button
- *  - Tag color picker (UX-87)
+ * Tag color picker
  *  - a11y compliance
  */
 
@@ -695,8 +695,8 @@ describe('TagList', () => {
     })
   })
 
-  // UX-87: Tag color picker
-  describe('tag color picker (UX-87)', () => {
+  // Tag color picker
+  describe('tag color picker', () => {
     it('renders color button for each tag', async () => {
       mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'alpha'), makeTag('T2', 'beta')])
 
@@ -897,8 +897,8 @@ describe('TagList', () => {
     })
   })
 
-  // UX-211: placeholder resolves via t()
-  it('new tag input placeholder resolves via t() (UX-211)', async () => {
+  // Placeholder resolves via t()
+  it('new tag input placeholder resolves via t()', async () => {
     mockedInvoke.mockResolvedValueOnce([])
 
     render(<TagList />)

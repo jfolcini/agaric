@@ -6,7 +6,7 @@
  *  2. Shows nothing when block has no `blocked_by` property
  *  3. Tooltip shows "Blocked by" text
  *  4. axe a11y audit
- *  5. PEND-35 Tier 2.4a — when wrapped in `BatchPropertiesProvider`,
+ * 5. when wrapped in `BatchPropertiesProvider`,
  *     the indicator does NOT fire its own `getProperties` IPC; it reads
  *     from the provider instead.
  */
@@ -233,7 +233,7 @@ describe('DependencyIndicator', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // ─── PEND-35 Tier 2.4a — provider-backed batch path ──────────────────
+  // ─── provider-backed batch path ──────────────────
   describe('with BatchPropertiesProvider', () => {
     it('reads properties from the provider instead of firing per-block getProperties', async () => {
       mockGetBatchProperties.mockResolvedValue({

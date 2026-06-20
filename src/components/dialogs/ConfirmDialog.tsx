@@ -24,19 +24,19 @@
  *    between Cancel and Confirm — used by the Google Calendar disconnect
  *    flow (Delete-Calendar vs Keep-Calendar vs Cancel).
  *
- * UX-259: when `variant === 'destructive'`, initial focus lands on the
+ * When `variant === 'destructive'`, initial focus lands on the
  * Cancel button (not the Action button) so that a reflex Enter keypress
  * dismisses the dialog instead of confirming the destructive action.
  * Non-destructive callers retain action-button focus.
  *
  * The 500 ms "arming" grace period that was originally proposed for
  * destructive dialogs was intentionally NOT implemented — the focus-flip
- * alone closes UX-259 (reflex Enter no longer fires destructive actions
+ * Alone closes (reflex Enter no longer fires destructive actions
  * because focus starts on Cancel), and the additional aria-disabled gate
  * created brittle interaction timing for every existing destructive-
  * dialog test in the suite.
  *
- * PEND-23 H3: on phones < 768 px (`useIsMobile() === true`) the dialog
+ * On phones < 768 px (`useIsMobile() === true`) the dialog
  * renders as a bottom Sheet so action buttons sit within thumb reach.
  * Both paths share the same controlled `open` / `onOpenChange` API and
  * the same a11y semantics (Radix Dialog + AlertDialog both trap focus
@@ -104,7 +104,7 @@ export interface ConfirmDialogProps {
   cancelLabel?: string
 
   // ─── Visual + behavior ────────────────────────────────────────────────
-  /** Styles the confirm button. `'destructive'` also flips initial focus to Cancel (UX-259). */
+  /** Styles the confirm button. `'destructive'` also flips initial focus to Cancel. */
   variant?: 'default' | 'destructive'
 
   /**
@@ -299,7 +299,7 @@ export function ConfirmDialog({
                 variant="outline"
                 disabled={isPending}
                 onClick={handleCancel}
-                // UX-259: destructive dialogs auto-focus Cancel.
+                // Destructive dialogs auto-focus Cancel.
                 // oxlint-disable-next-line jsx-a11y/no-autofocus -- destructive confirm dialog (mobile Sheet): focus the safe Cancel action on open so a reflexive Enter dismisses rather than confirms the destructive action
                 autoFocus={isDestructive}
                 data-testid={cancelTestId}
@@ -320,7 +320,7 @@ export function ConfirmDialog({
                 variant={isDestructive ? 'destructive' : 'default'}
                 disabled={isPending}
                 onClick={handleConfirmClick}
-                // UX-259: only auto-focus Action for non-destructive variants.
+                // Only auto-focus Action for non-destructive variants.
                 // oxlint-disable-next-line jsx-a11y/no-autofocus -- non-destructive confirm dialog (mobile Sheet): focus the primary Action on open so Enter confirms the expected, safe choice
                 autoFocus={!isDestructive}
                 data-testid={actionTestId}
@@ -338,7 +338,7 @@ export function ConfirmDialog({
                 // through while a confirm is in flight even if `disabled` is
                 // bypassed. handleCancel calls onCancel?.() then onOpenChange.
                 onClick={handleCancel}
-                // UX-259: destructive dialogs auto-focus Cancel so reflex Enter dismisses.
+                // Destructive dialogs auto-focus Cancel so reflex Enter dismisses.
                 // oxlint-disable-next-line jsx-a11y/no-autofocus -- destructive confirm dialog (desktop AlertDialog): focus the safe Cancel action on open so a reflexive Enter dismisses rather than confirms the destructive action
                 autoFocus={isDestructive}
                 data-testid={cancelTestId}
@@ -359,7 +359,7 @@ export function ConfirmDialog({
                 className={cn(isDestructive && buttonVariants({ variant: 'destructive' }))}
                 onClick={handleConfirmClick}
                 disabled={isPending}
-                // UX-259: only auto-focus Action for non-destructive variants.
+                // Only auto-focus Action for non-destructive variants.
                 // oxlint-disable-next-line jsx-a11y/no-autofocus -- non-destructive confirm dialog (desktop AlertDialog): focus the primary Action on open so Enter confirms the expected, safe choice
                 autoFocus={!isDestructive}
                 data-testid={actionTestId}

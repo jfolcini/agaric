@@ -1,7 +1,7 @@
 /**
  * useLocalStoragePreference — typed, defensive localStorage-backed
  * `useState`. Replaces three inconsistent ad-hoc variants in DuePanel /
- * useAgendaPreferences / DeadlineWarningSection (MAINT-129).
+ * UseAgendaPreferences / DeadlineWarningSection.
  *
  * Defensive against the three failure modes localStorage exhibits:
  *   1. Read throws (e.g. SecurityError in private mode) → fall back to

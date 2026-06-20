@@ -29,7 +29,7 @@
  *
  * Undo is wired to the existing `restoreBlocksByIds` IPC, which accepts
  * a list and cascade-restores the root + descendants in a single
- * transaction (PEND-35 Tier 2.2). For a single page that's effectively a
+ * Transaction. For a single page that's effectively a
  * one-element call.
  */
 

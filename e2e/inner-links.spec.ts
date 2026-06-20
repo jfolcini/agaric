@@ -162,7 +162,7 @@ async function typeLinkTrigger(page: import('@playwright/test').Page) {
   // Move to end of content, then type [[
   await page.keyboard.press('End')
   await page.keyboard.type(' [[', { delay: 30 })
-  // TEST-1b: scope to the active suggestion-list (the TipTap ReactRenderer
+  // Scope to the active suggestion-list (the TipTap ReactRenderer
   // popup can transiently coexist with a stale one from the previous test).
   await expect(activeSuggestionList(page)).toBeVisible({ timeout: 5000 })
 }
@@ -419,7 +419,7 @@ test.describe('Inner links — link persistence', () => {
     await expect(chip).toBeVisible()
 
     // Navigate away to another sidebar view (sidebar scope avoids the Tags tab
-    // button in the page body AND the quick-access Tags chip — PEND-68 B).
+    // Button in the page body AND the quick-access Tags chip — B).
     await page
       .locator('[data-slot="sidebar"]')
       .getByRole('button', { name: 'Tags', exact: true })

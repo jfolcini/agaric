@@ -78,7 +78,7 @@ export const common: Record<string, string> = {
   'space.journalTemplateExample1': '# <% today %>\n\nNotes:\n\nTasks:\n',
   'space.journalTemplateExample2Title': 'Standup template',
   'space.journalTemplateExample2': '## <% today %> standup\n\nYesterday:\n\nToday:\n\nBlockers:',
-  // UX-371 — entry from JournalPage that deep-links into SpaceManageDialog.
+  // Entry from JournalPage that deep-links into SpaceManageDialog.
   'space.configureJournalTemplate': 'Configure journal template',
   'space.createSpaceLabel': 'Create new space',
   'space.createSpaceCta': 'Create',
@@ -108,7 +108,7 @@ export const common: Record<string, string> = {
   'announce.jumpedToToday': 'Jumped to today',
   'announce.searchOpened': 'Search opened',
   'announce.newPageCreated': 'New page created',
-  // PEND-67 Phase 8 — runLastCommand global shortcut announcement.
+  // Phase 8 — runLastCommand global shortcut announcement.
   'announce.ranLastCommand': 'Re-ran last command',
   'announce.overlaysClosed': 'Overlays closed',
   'announce.editingBlock': 'Editing block: {{preview}}',
@@ -352,7 +352,7 @@ export const common: Record<string, string> = {
   'spaceSwitcher.shortcutHint': 'Tip: Ctrl+1–9 to switch spaces',
   'spaceSwitcher.createAnotherHint': 'Create another space\u2026',
 
-  // PEND-52 \u2014 in-page find toolbar.
+  // \u2014 in-page find toolbar.
   'findInPage.toolbarLabel': 'Find in page',
   'findInPage.inputPlaceholder': 'Find in page\u2026',
   'findInPage.inputLabel': 'Find in page',
@@ -369,11 +369,11 @@ export const common: Record<string, string> = {
   'findInPage.skippedLongPassages_one': '{{count}} long passage skipped',
   'findInPage.skippedLongPassages_other': '{{count}} long passages skipped',
   'announce.findInPageOpened': 'Find in page opened',
-  // PEND-62 — mobile unified search sheet. The single touch entry point
+  // Mobile unified search sheet. The single touch entry point
   // collapses Ctrl+F (in-page find) + Cmd+K (palette) + Ctrl+Shift+F
   // (find-in-files) into one sheet with two segments. The in-page
-  // segment embeds the PEND-52 toolbar; the all-pages segment embeds
-  // the PEND-61 palette with its existing escalation footer routing
+  // Segment embeds the toolbar; the all-pages segment embeds
+  // The palette with its existing escalation footer routing
   // to the find-in-files view.
   'searchSheet.openButton': 'Search',
   'searchSheet.title': 'Search',
@@ -383,7 +383,7 @@ export const common: Record<string, string> = {
   'searchSheet.segmentAllPages': 'All pages',
   'searchSheet.emptyInPage': 'No page open yet — try All pages instead.',
   'searchSheet.emptyInPageSwitchCta': 'Switch to All pages',
-  // PEND-58g UX-A1 — the mobile escalation is a prominent, two-line
+  // The mobile escalation is a prominent, two-line
   // CTA (title + hint) rather than a muted footer row, so touch users
   // discover that filters / regex / history live in the full search
   // view. `escalateLabel` is the descriptive aria-label for the button;

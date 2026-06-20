@@ -18,7 +18,7 @@ use specta::Type;
 
 use crate::filters::primitive::LastEditedSpec;
 
-/// PEND-53 — Date-filter shape used by [`SearchFilter::due_filter`] /
+/// Date-filter shape used by [`SearchFilter::due_filter`] /
 /// [`SearchFilter::scheduled_filter`].
 ///
 /// Two variants:
@@ -52,7 +52,7 @@ pub enum DateFilter {
     },
 }
 
-/// PEND-53 — Named date buckets recognised by [`DateFilter::Named`].
+/// Named date buckets recognised by [`DateFilter::Named`].
 ///
 /// Resolution semantics (today = `chrono::Local::today()`):
 ///
@@ -78,7 +78,7 @@ pub enum NamedDateRange {
     None,
 }
 
-/// PEND-53 — Comparison operator for [`DateFilter::Op`]. Mirrors the
+/// Comparison operator for [`DateFilter::Op`]. Mirrors the
 /// frontend parser shape (`<`, `<=`, `=`, `>=`, `>`).
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, Type, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -104,7 +104,7 @@ impl DateOp {
     }
 }
 
-/// PEND-53 — Property predicate for [`SearchFilter::property_filters`] /
+/// Property predicate for [`SearchFilter::property_filters`] /
 /// [`SearchFilter::excluded_property_filters`].
 ///
 /// Named separately from the (existing) `PropertyFilter` struct used by
@@ -129,7 +129,7 @@ pub struct SearchPropertyFilter {
 
 /// Optional filter bundle for `search_blocks_inner`.
 ///
-/// PEND-50 Phase 0 collapses the previous positional `parent_id` /
+/// Phase 0 collapses the previous positional `parent_id` /
 /// `tag_ids` / `space_id` args into a single struct so the `tauri-specta`
 /// 10-arg ceiling stays comfortable as follow-up plans append filter
 /// fields. Every field carries `#[serde(default)]` — a missing key on
@@ -137,12 +137,12 @@ pub struct SearchPropertyFilter {
 /// today's "no filter" behaviour. Follow-up plans append new fields the
 /// same way; they MUST NOT add positional args.
 ///
-/// Future appendees (locked in by PEND-50's design section):
+/// Future appendees (locked in by design section):
 ///
-/// - PEND-54: `include_page_globs`, `exclude_page_globs` (`Vec<String>`).
-/// - PEND-55: `case_sensitive`, `whole_word`, `is_regex` (`bool`).
-/// - PEND-51: `block_type_filter` (`Option<String>`).
-/// - PEND-53: `state_filter`, `priority_filter`, `due_filter`,
+/// `include_page_globs`, `exclude_page_globs` (`Vec<String>`).
+/// `case_sensitive`, `whole_word`, `is_regex` (`bool`).
+/// `block_type_filter` (`Option<String>`).
+/// `state_filter`, `priority_filter`, `due_filter`,
 ///   `scheduled_filter`, `property_filters`, `excluded_property_filters`.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -154,13 +154,13 @@ pub struct SearchFilter {
     /// (`ALL` semantics — see `fts::search_fts`).
     #[serde(default)]
     pub tag_ids: Vec<String>,
-    /// FEAT-3p4 — restrict to blocks whose owning page lives in this
+    /// Restrict to blocks whose owning page lives in this
     /// space. Empty string is treated as "no match" by the SQL path
     /// (returns an empty page), matching pre-bootstrap callers that
     /// pass `''`.
     #[serde(default)]
     pub space_id: Option<String>,
-    /// PEND-54 — page-name glob include list. Each entry may use
+    /// Page-name glob include list. Each entry may use
     /// SQLite `GLOB` syntax (`*`, `?`, `[...]`) and `{a,b}` brace
     /// expansion. Bare tokens are wrapped with `*…*` for a
     /// substring match. Resolved against `pages_cache.title` with
@@ -168,29 +168,29 @@ pub struct SearchFilter {
     /// `fts::glob_filter::prepare_globs` for the parsing pipeline.
     #[serde(default)]
     pub include_page_globs: Vec<String>,
-    /// PEND-54 — page-name glob exclude list. Same shape as
+    /// Page-name glob exclude list. Same shape as
     /// [`Self::include_page_globs`]; AND-joined into a `NOT IN (...)`
     /// sub-select. A page matching both include and exclude is
     /// excluded.
     #[serde(default)]
     pub exclude_page_globs: Vec<String>,
-    /// PEND-55 — case-sensitive search toggle. When `true`, results are
+    /// Case-sensitive search toggle. When `true`, results are
     /// narrowed by a post-FTS regex pass that asserts case-sensitive
     /// match against `fts_blocks.stripped`. The FTS5 trigram tokenizer
     /// is `case_sensitive 0`, so the candidate set is still
     /// case-insensitive; this toggle forces the post-filter even when
     /// the other toggles are off (documented cost). `#[serde(default)]`
-    /// keeps the wire shape additive — pre-PEND-55 frontends omit the
+    /// Keeps the wire shape additive — pre- frontends omit the
     /// field and observe today's behaviour unchanged.
     #[serde(default)]
     pub case_sensitive: bool,
-    /// PEND-55 — whole-word search toggle. ASCII-only via the regex
+    /// Whole-word search toggle. ASCII-only via the regex
     /// crate's `(?-u:\b)` predicate. CJK content does NOT match `\b`
     /// (no ASCII word boundary inside CJK runs); v1 documents this and
     /// a future plan revisits Unicode whole-word.
     #[serde(default)]
     pub whole_word: bool,
-    /// PEND-55 — regex-mode search toggle. The query string is treated
+    /// Regex-mode search toggle. The query string is treated
     /// as a Rust [`regex`] pattern verbatim; the FTS5 MATCH path is
     /// **bypassed entirely** (FTS5 cannot accept a regex) and the
     /// candidate set comes from a recency-ordered scan of
@@ -198,19 +198,19 @@ pub struct SearchFilter {
     /// [`AppError::Validation`] with an `InvalidRegex:` prefix.
     #[serde(default)]
     pub is_regex: bool,
-    /// PEND-51 — restrict matches to a specific `blocks.block_type`
+    /// Restrict matches to a specific `blocks.block_type`
     /// value (e.g. `"page"`). `None` (the default) preserves the
     /// existing "no filter" behaviour. Empty string is rejected at the
     /// SQL layer the same way as any other no-match equality. The
     /// palette uses this to fire a separate page-only query in
     /// parallel with the unrestricted blocks query so the page-group
     /// rendering on the FE only needs to merge by `page_id`.
-    /// `#[serde(default)]` keeps the wire shape additive — pre-PEND-51
+    /// `#[serde(default)]` keeps the wire shape additive — pre-
     /// frontends omit the field and observe today's behaviour
     /// unchanged.
     #[serde(default)]
     pub block_type_filter: Option<String>,
-    /// PEND-53 — restrict matches to blocks with `blocks.todo_state IN
+    /// Restrict matches to blocks with `blocks.todo_state IN
     /// (...)`. Each entry is matched verbatim — the column is a
     /// free-form `TEXT` so custom states are allowed. The literal
     /// keyword `none` (case-insensitive) selects `todo_state IS NULL`
@@ -219,27 +219,27 @@ pub struct SearchFilter {
     /// `state:none` into a distinct sentinel (see the SQL composition).
     #[serde(default)]
     pub state_filter: Vec<String>,
-    /// PEND-53 — `blocks.priority IN (...)`. Same `none` sentinel
+    /// `blocks.priority IN (...)`. Same `none` sentinel
     /// behaviour as `state_filter`.
     #[serde(default)]
     pub priority_filter: Vec<String>,
-    /// PEND-53 — date predicate on `blocks.due_date`. `None` means
+    /// Date predicate on `blocks.due_date`. `None` means
     /// "no filter".
     #[serde(default)]
     pub due_filter: Option<DateFilter>,
-    /// PEND-53 — date predicate on `blocks.scheduled_date`.
+    /// Date predicate on `blocks.scheduled_date`.
     #[serde(default)]
     pub scheduled_filter: Option<DateFilter>,
-    /// PEND-53 — AND-joined property filters. Each entry adds an
+    /// AND-joined property filters. Each entry adds an
     /// `EXISTS (SELECT 1 FROM block_properties …)` sub-select against
     /// `value_text` (locked in by plan #4).
     #[serde(default)]
     pub property_filters: Vec<SearchPropertyFilter>,
-    /// PEND-53 — AND-joined property exclusions. Each entry adds a
+    /// AND-joined property exclusions. Each entry adds a
     /// `NOT EXISTS (...)` sub-select.
     #[serde(default)]
     pub excluded_property_filters: Vec<SearchPropertyFilter>,
-    /// PEND-63 — `blocks.todo_state IS NULL OR todo_state NOT IN
+    /// `blocks.todo_state IS NULL OR todo_state NOT IN
     /// (...)`. Each entry is matched verbatim against the column. The
     /// inversion intentionally includes NULL: a "blocks not in DONE"
     /// query should return blocks with no state set at all, not
@@ -247,10 +247,10 @@ pub struct SearchFilter {
     /// flips to `todo_state IS NOT NULL` (the `not-state:none` token);
     /// a custom state literally called `"none"` is treated as the
     /// sentinel — documented in `docs/SEARCH.md`. Empty list = no
-    /// filter (preserves pre-PEND-63 wire compat).
+    /// Filter (preserves pre- wire compat).
     #[serde(default)]
     pub excluded_state_filter: Vec<String>,
-    /// PEND-63 — `blocks.priority IS NULL OR priority NOT IN (...)`.
+    /// `blocks.priority IS NULL OR priority NOT IN (...)`.
     /// Same `none` sentinel behaviour as
     /// [`Self::excluded_state_filter`].
     #[serde(default)]
@@ -269,7 +269,7 @@ pub struct SearchFilter {
     pub last_edited: Option<LastEditedSpec>,
 }
 
-/// Match span emitted by the PEND-55 toggle pipeline.
+/// Match span emitted by the toggle pipeline.
 ///
 /// The `start` / `end` indices are **UTF-16 code-unit offsets** into the
 /// block's content string — chosen to match JavaScript's native string
@@ -278,7 +278,7 @@ pub struct SearchFilter {
 /// pipeline converts to UTF-16 before serialising so the frontend can
 /// slice `row.content` directly. ASCII content has identical byte /
 /// UTF-16 indices; CJK and emoji content does not. See
-/// `pending/PEND-55-search-toggles-history.md` (UTF-8 → UTF-16 section)
+/// (UTF-8 → UTF-16 section)
 /// for the rationale and the conversion helper.
 #[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -298,11 +298,11 @@ pub struct MatchOffset {
 /// match span. The web UI parses the sentinels into React nodes (no
 /// `dangerouslySetInnerHTML`); the MCP search tool converts them back to
 /// `<mark>` / `</mark>` so the agent-facing contract is unchanged. See
-/// `pending/PEND-50-search-vscode-ux.md` for the renderer contract.
+/// For the renderer contract.
 ///
-/// PEND-55 appends `match_offsets: Vec<MatchOffset>` for the
+/// Appends `match_offsets: Vec<MatchOffset>` for the
 /// regex/whole-word offset rendering path; `#[serde(default)]` keeps
-/// the wire shape additive (pre-PEND-55 frontends see an empty array
+/// The wire shape additive (pre- frontends see an empty array
 /// from absent payloads and fall through to the snippet path).
 ///
 /// [`snippet`]: https://www.sqlite.org/fts5.html#the_snippet_function
@@ -331,7 +331,7 @@ pub struct SearchBlockRow {
     /// to `<mark>` / `</mark>`.
     #[serde(default)]
     pub snippet: Option<String>,
-    /// PEND-55 — UTF-16 code-unit match offsets for the toggle
+    /// UTF-16 code-unit match offsets for the toggle
     /// pipeline. Populated when any of the three search toggles
     /// (`case_sensitive` / `whole_word` / `is_regex`) is on and the
     /// post-FTS regex pass produced matches; empty otherwise. The

@@ -5,7 +5,7 @@
  * `restoreTarget` (the entry the user picked) and an `onSuccess`
  * callback that reloads the list.
  *
- * Extracted from `HistoryView` (MAINT-128).
+ * Extracted from `HistoryView`.
  */
 
 import type React from 'react'

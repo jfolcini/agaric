@@ -46,7 +46,7 @@ import { SpaceManageDialog } from './SpaceManageDialog'
 export type { DayEntry } from '../lib/date-utils'
 // Re-export for backward compatibility
 export { getMaxJournalDate, MIN_JOURNAL_DATE } from '../lib/date-utils'
-// MAINT-119 — Re-export sibling components so existing imports
+// Re-export sibling components so existing imports
 // (`import { GlobalDateControls, JournalControls } from '../JournalPage'`)
 // continue to work.
 export { GlobalDateControls } from '@/components/agenda/GlobalDateControls'
@@ -82,7 +82,7 @@ export function JournalPage({
   // the ISO `dateStr` (see makeDayEntry); only the rendered `displayDate` honors
   // this preference.
   const { journalDateFormat } = useJournalDateFormat()
-  // UX-371 — surface the per-space journal-template configuration from the
+  // Surface the per-space journal-template configuration from the
   // Journal view itself; previously only reachable through Manage Spaces.
   // SpaceManageDialog has no scroll-to-section prop, so the dialog opens at
   // the top and the user navigates to the template field from there.
@@ -137,7 +137,7 @@ export function JournalPage({
   })
 
   // ── Link preview tooltip — covers all blocks in the journal view ────
-  // PEND-52 — same container element also doubles as the in-page-find
+  // Same container element also doubles as the in-page-find
   // host so the Ctrl+F toolbar can walk every block in the active mode
   // (daily section, weekly grid, monthly cells, agenda panels).
   const setFindContainer = useInPageFindStore((s) => s.setContainer)
@@ -166,7 +166,7 @@ export function JournalPage({
   // PEND-UX item 5 — the configure-journal-template action moves from a
   // free-floating right-aligned button row into the shared
   // `FeaturePageHeader` `actions` slot. The same agenda-mode visibility
-  // guard is preserved (UX-371: templates don't apply in agenda mode).
+  // Guard is preserved (templates don't apply in agenda mode).
   const showConfigureTemplateAction = !loading && mode !== 'agenda'
 
   return (
@@ -239,7 +239,7 @@ export function JournalPage({
       {/* Link preview tooltip — covers all external links in journal */}
       <LinkPreviewTooltip container={journalContainerEl} />
 
-      {/* UX-371 — manage-spaces dialog hosts the per-space `journal_template`
+      {/* manage-spaces dialog hosts the per-space `journal_template`
           textarea (see SpaceManageDialog L425-444). */}
       <SpaceManageDialog open={manageOpen} onOpenChange={setManageOpen} />
     </div>

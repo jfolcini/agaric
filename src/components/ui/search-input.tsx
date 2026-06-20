@@ -1,6 +1,6 @@
 /**
  * SearchInput — Input wrapper that renders a clear (✕) button when the
- * field has content (UX-221). Replaces the bare `Input` primitive for
+ * Field has content. Replaces the bare `Input` primitive for
  * filter / search use cases across the app (SearchPanel, TagFilterPanel,
  * TrashView, BacklinkFilterBuilder, PageBrowser).
  *
@@ -13,7 +13,7 @@
  *  - Clearing emits a real native `input` event on the `<input>` (via
  *    the React-aware native value setter) so `onChange` callers see
  *    `e.target.value === ''` without any synthetic-event sleight of
- *    hand. MAINT-207 (e): callers that need an explicit clear signal
+ * Hand. callers that need an explicit clear signal
  *    can opt into `onClear` (preferred — no synthetic event, no
  *    dependency on the change pipeline). The previous synthetic
  *    `onChange({ target, currentTarget })` fallback was removed
@@ -41,7 +41,7 @@ export interface SearchInputProps extends Omit<React.ComponentProps<'input'>, 'o
    */
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
   /**
-   * MAINT-207 (e): optional explicit clear signal. Preferred over
+   * Optional explicit clear signal. Preferred over
    * reading `e.target.value === ''` inside `onChange` — fires exactly
    * once per clear-button click, doesn't depend on the change pipeline,
    * and is safe to call alongside `onChange`. Both fire on clear when

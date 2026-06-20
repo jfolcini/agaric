@@ -6,7 +6,7 @@ import type { SearchBlockRow } from '@/lib/tauri'
 
 /**
  * Merged palette group: a page header + ≤ N block hits + a surplus
- * count. Migrated verbatim from PEND-51 so the visual contract stays
+ * Count. Migrated verbatim so the visual contract stays
  * stable across the rewrite.
  */
 export interface PaletteGroup {

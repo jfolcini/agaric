@@ -1,6 +1,6 @@
 //! Pages-view metadata listing command handlers (#644 split).
 //!
-//! PEND-56 / PEND-58 — `list_pages_with_metadata` and its `*_inner` core,
+//! `list_pages_with_metadata` and its `*_inner` core,
 //! the per-sort keyset descriptors, the compound-filter compiler, and the
 //! cursor/sort helpers.
 
@@ -21,13 +21,13 @@ use crate::ulid::{BlockId, PageId};
 use super::super::*;
 
 // ───────────────────────────────────────────────────────────────────────────
-// PEND-56 — list_pages_with_metadata
+// List_pages_with_metadata
 //
 // Sibling IPC to `list_pages_inner`. Returns the same column shape as
 // `BlockRow` PLUS four metadata columns:
 //
 //   - `last_modified_at`: max(`op_log.created_at`) over the page itself.
-//     Page-only (not subtree-aware) per PEND-56 open-question 1 — the
+// Page-only (not subtree-aware) open-question 1 — the
 //     recursive-CTE variant is deferred until a benchmark says it's
 //     worth the cost.
 //   - `inbound_link_count`: COUNT of distinct source blocks linking to
@@ -78,7 +78,7 @@ pub enum PageSort {
     /// Title ascending, case-insensitive. Default for "browse my pages".
     #[default]
     Alphabetical,
-    // Perf ceiling (PEND-58d D5): unlike `MostLinked` / `MostContent`
+    // Perf ceiling: unlike `MostLinked` / `MostContent`
     // (which read materialised `pages_cache` columns), `RecentlyModified`
     // computes `MAX(op_log.created_at)` per page via a correlated subquery
     // across the space *before* the LIMIT — it is NOT materialised. The
@@ -113,9 +113,9 @@ pub struct ListPagesWithMetadataFilter {
     #[serde(default)]
     pub sort: PageSort,
     pub space_id: String,
-    /// PEND-58 Phase 3 — compound filter primitives applied server-side,
+    /// Phase 3 — compound filter primitives applied server-side,
     /// AND-joined into the WHERE before the keyset/ORDER BY/LIMIT. Empty
-    /// (the default) preserves the pre-PEND-58 "no filter" behaviour, so
+    /// (the default) preserves the pre- "no filter" behaviour, so
     /// existing callers and the flag-off path are unaffected. Each
     /// primitive is gated against [`PagesProjection::allowed_keys`] and
     /// rejected with [`AppError::Validation`] if it is not a Pages-surface
@@ -200,7 +200,7 @@ fn sort_discriminator(sort: PageSort) -> i64 {
 /// Reject a cursor whose `position` slot doesn't match the requested
 /// sort. Returns `AppError::Validation` with the `RequiresRefresh:`
 /// prefix the frontend uses to render a "Sort changed — refresh to
-/// continue" toast (PEND-56 acceptance criterion #3).
+/// Continue" toast (acceptance criterion #3).
 fn validate_pages_metadata_cursor(cursor: &Cursor, sort: PageSort) -> Result<(), AppError> {
     match cursor.position {
         Some(d) if d == sort_discriminator(sort) => Ok(()),
@@ -253,7 +253,7 @@ impl<'a> SqlBind<'a> {
     }
 
     /// Bind this value onto a `sqlx::query_scalar::<…>` chain. The
-    /// `total_count` COUNT query (PEND-58b P1-D) reuses the same compiled
+    /// `total_count` COUNT query (D) reuses the same compiled
     /// filter binds as the fetch but returns a single scalar, so it needs
     /// a `QueryScalar`-shaped sibling of [`Self::bind_to`].
     fn bind_to_scalar<'q, O>(
@@ -279,7 +279,7 @@ impl<'a> SqlBind<'a> {
 /// variants and the IPC consumes the descriptor via a single shared
 /// `apply` method.
 ///
-/// **Bind contract:** `?1 = filter.space_id` always. PEND-58 splices
+/// **Bind contract:** `?1 = filter.space_id` always. splices
 /// compound-filter clauses (with their own `?` binds) into the WHERE
 /// between space_id and the keyset; `SortKeyset::apply` therefore numbers
 /// its placeholders from a runtime `base` offset (`1 + filter_bind_count`)
@@ -323,7 +323,7 @@ enum SortKeyset {
     /// `pages_cache` (materialised by the materializer) so the
     /// expression is a column reference, not a subquery.
     I64Desc {
-        /// SQL expression for the sort key. After PEND-56b this is
+        /// SQL expression for the sort key. After this is
         /// `pc.inbound_link_count` or `pc.child_block_count` — a
         /// materialised column reached via the LEFT JOIN to
         /// `pages_cache pc`.
@@ -339,7 +339,7 @@ fn keyset_for(sort: PageSort) -> SortKeyset {
         PageSort::Alphabetical => SortKeyset::StringAsc {
             key_expr: "COALESCE(b.content,'') COLLATE NOCASE",
         },
-        // PEND-58d D5 perf ceiling: this key is the UN-materialised
+        // Perf ceiling: this key is the UN-materialised
         // `MAX(op_log.created_at)` correlated subquery (served by
         // `idx_op_log_block_id`), evaluated per page before the LIMIT — the
         // heaviest sort key. Gated by `recently_modified_perf_gate_20k_pages`
@@ -349,7 +349,7 @@ fn keyset_for(sort: PageSort) -> SortKeyset {
             key_expr_template: "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?{S})",
             null_sentinel: LAST_MOD_NULL_SENTINEL,
         },
-        // PEND-56b: read from the materialised `pages_cache` column
+        // Read from the materialised `pages_cache` column
         // instead of the per-row `COUNT(DISTINCT bl.source_id) FROM
         // block_links` correlated subquery. The materializer keeps
         // `pc.inbound_link_count` byte-identical to the canonical
@@ -358,7 +358,7 @@ fn keyset_for(sort: PageSort) -> SortKeyset {
         PageSort::MostLinked => SortKeyset::I64Desc {
             key_expr: "COALESCE(pc.inbound_link_count, 0)",
         },
-        // PEND-56b: see above; reads `pc.child_block_count` via the
+        // See above; reads `pc.child_block_count` via the
         // same LEFT JOIN.
         PageSort::MostContent => SortKeyset::I64Desc {
             key_expr: "COALESCE(pc.child_block_count, 0)",
@@ -384,7 +384,7 @@ impl SortKeyset {
     /// Append the keyset predicate + ORDER BY + LIMIT and return the
     /// keyset binds in order.
     ///
-    /// **PEND-58 — `base` bind offset:** the keyset's placeholders used to
+    /// **`base` bind offset:** the keyset's placeholders used to
     /// be hardcoded `?2 .. ?5` on the assumption that `?1 = space_id` was
     /// the only bind before them. Phase 3 splices compound-filter clauses
     /// (each with its own `?` binds) into the WHERE *between* the space_id
@@ -509,7 +509,7 @@ impl SortKeyset {
     }
 }
 
-/// PEND-58d D15 — validate a `LastEdited` `Range` date bound, matching the
+/// Validate a `LastEditedRange` date bound, matching the
 /// legacy Search date contract (`fts::metadata_filter::resolve_date_filter`,
 /// `InvalidDateFilter:` prefix the frontend keys on).
 ///
@@ -538,7 +538,7 @@ fn validate_last_edited_date(label: &str, value: &str) -> Result<(), AppError> {
     )))
 }
 
-/// PEND-58 Phase 3 — compile the compound-filter primitives for the Pages
+/// Phase 3 — compile the compound-filter primitives for the Pages
 /// surface into a single AND-joined SQL fragment plus its ordered binds.
 ///
 /// Returns `(sql_fragment, binds)` where `sql_fragment` is either empty
@@ -546,13 +546,13 @@ fn validate_last_edited_date(label: &str, value: &str) -> Result<(), AppError> {
 /// after the base WHERE and `binds` are the bind values in the SAME
 /// left-to-right order their `?` placeholders appear in the fragment.
 ///
-/// Steps (mirrors PEND-58 §"Filter primitive contract" / §Performance):
+/// Steps (mirrors primitive contract" / §Performance):
 ///
 /// 1. **Allowed-keys gate** — reject any primitive whose token is not in
 ///    [`PagesProjection::allowed_keys`] with [`AppError::Validation`]
 ///    (`InvalidFilter:` prefix). Defence-in-depth: the frontend never
 ///    sends Search-only primitives, but the backend must not trust that.
-/// 2. **Date validation (PEND-58d D15)** — `LastEdited::Range` bounds are
+/// 2. **Date validation** — `LastEdited::Range` bounds are
 ///    validated against the legacy Search date contract (`InvalidDateFilter:`
 ///    prefix); empty or malformed dates are rejected here rather than
 ///    silently returning zero rows.
@@ -587,7 +587,7 @@ fn compile_pages_filters(
         }
     }
 
-    // PEND-58d D15 — validate `LastEdited::Range` date bounds before they
+    // Validate `LastEdited::Range` date bounds before they
     // reach SQL. A malformed bound silently compare-fails every row
     // (zero results); reject it loudly with the `InvalidDateFilter:` prefix.
     for prim in filters {
@@ -660,14 +660,14 @@ fn compile_pages_filters(
         // The allowed-keys gate above admits only Pages-surface tokens, but
         // a primitive could still compile to `unsupported()` via the
         // cross-surface default trait methods if a future variant lands on
-        // the wrong surface (after PEND-58d D8 + D26, `HasProperty` itself
+        // The wrong surface (after + D26, `HasProperty` itself
         // never returns `unsupported()` — every predicate × value combo
         // compiles, and invalid combos are unrepresentable). In release
         // builds a bare `debug_assert!` would be compiled out and the
         // splice would emit a silent `1=0`, returning zero rows for what is
         // really an invalid filter shape. Reject it loudly in **all** build
-        // profiles instead (PEND-58b P2-A). `is_unsupported()` reads the
-        // explicit boolean flag on `WhereClause` (PEND-58d D18), not a SQL
+        // Profiles instead (A). `is_unsupported()` reads the
+        // Explicit boolean flag on `WhereClause`, not a SQL
         // substring.
         if wc.is_unsupported() {
             return Err(AppError::Validation(format!(
@@ -710,7 +710,7 @@ fn compile_pages_filters(
 /// The base SELECT for `list_pages_with_metadata_inner` (everything up to
 /// but NOT including the compound-filter fragment, the keyset, the ORDER BY,
 /// and the LIMIT). Hoisted to a `const` so the test-only
-/// [`compose_list_pages_with_metadata_sql`] accessor (PEND-58e E9) composes
+/// [`compose_list_pages_with_metadata_sql`] accessor composes
 /// the SAME real SQL the IPC emits rather than a hand-rebuilt copy — a plan
 /// regression in the IPC's actual query is then caught by the EXPLAIN tests.
 ///
@@ -784,7 +784,7 @@ const PAGES_METADATA_BASE_SELECT: &str = r#"SELECT
              AND b.space_id = ?1
         "#;
 
-/// PEND-58e E9 — test-only accessor that composes the **real** first-page
+/// Test-only accessor that composes the **real** first-page
 /// (no cursor) SQL `list_pages_with_metadata_inner` emits for the given
 /// `filter`, so EXPLAIN-plan tests run against the IPC's actual statement
 /// instead of a hand-rebuilt copy that could silently drift from it.
@@ -823,9 +823,9 @@ pub(crate) fn compose_list_pages_with_metadata_sql(
 /// pass `cursor = None`. A stale cursor (e.g. from `list_blocks`) is
 /// rejected with `AppError::Validation("RequiresRefresh: …")` so the
 /// frontend can render a "Sort changed — refresh to continue" toast
-/// (PEND-56 acceptance criterion #3).
+/// (acceptance criterion #3).
 ///
-/// **PEND-56b — materialised counts:** `inbound_link_count` and
+/// **materialised counts:** `inbound_link_count` and
 /// `child_block_count` are read from `pages_cache.{inbound_link_count,
 /// child_block_count}` via a LEFT JOIN, NOT computed per-row via the
 /// `COUNT(DISTINCT …) FROM block_links` / `COUNT(*) FROM blocks`
@@ -867,7 +867,7 @@ pub async fn list_pages_with_metadata_inner(
 
     // SELECT shape — the two count aggregates (inbound_link_count,
     // child_block_count) are now reads from the materialised
-    // `pages_cache` columns (PEND-56b). The remaining metadata
+    // `pages_cache` columns. The remaining metadata
     // aggregates stay as correlated subqueries — out of scope for this
     // refactor:
     //   - last_modified_at via `idx_op_log_block_id` (migration 0030)
@@ -880,7 +880,7 @@ pub async fn list_pages_with_metadata_inner(
     // bodies.
     let mut sql = String::from(PAGES_METADATA_BASE_SELECT);
 
-    // PEND-58 — splice the compound-filter WHERE clauses BEFORE the
+    // Splice the compound-filter WHERE clauses BEFORE the
     // keyset/ORDER BY/LIMIT. Their `?` placeholders land at positions
     // `?2 .. ?{1 + filter_bind_count}` (right after `?1 = space_id`); the
     // keyset then numbers its own placeholders from `base` so SQLite's
@@ -890,7 +890,7 @@ pub async fn list_pages_with_metadata_inner(
     sql.push_str(&filter_sql);
     let base = 1 + filter_binds.len();
 
-    // PEND-58b P1-D — compute a real `total_count` so the "X of Y"
+    // -D — compute a real `total_count` so the "X of Y"
     // header chip survives the `densityV1` default-on flip (the prior
     // `total_count: None` silently dropped it for every user). The COUNT
     // reuses the SAME space-membership predicate + compiled compound-filter
@@ -901,7 +901,7 @@ pub async fn list_pages_with_metadata_inner(
     // The `LEFT JOIN pages_cache pc` is retained because the Pages-only
     // filter fragments (Orphan / Stub / HasNoInboundLinks) read `pc.*`.
     //
-    // PEND-58d D6 — the COUNT only runs on the FIRST page (`req.after`
+    // The COUNT only runs on the FIRST page (`req.after`
     // is None). The total of the filtered set does not change as the user
     // loads more pages with the same filters, so recomputing it on every
     // cursor page is wasted work (the COUNT scans the whole filtered set
@@ -1025,7 +1025,7 @@ fn build_metadata_response(
         items: rows,
         next_cursor,
         has_more,
-        // PEND-58b P1-D / PEND-58d D6 — the COUNT over the same space +
+        // -D / the COUNT over the same space +
         // compiled filter predicates (computed in
         // `list_pages_with_metadata_inner`) so the FE "X of Y" header chip
         // renders on the metadata path. `Some(n)` on the first page;

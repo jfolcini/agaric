@@ -43,7 +43,7 @@ async fn list_blocks_with_agenda_source_filter_due_date() {
         Some("column:due_date".into()),
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -92,7 +92,7 @@ async fn list_blocks_with_agenda_source_filter_scheduled_date() {
         Some("column:scheduled_date".into()),
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -153,7 +153,7 @@ async fn list_blocks_with_agenda_no_source_returns_all() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -218,7 +218,7 @@ async fn list_blocks_with_date_range_returns_blocks_in_range() {
         Some("column:due_date".into()),
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -272,7 +272,7 @@ async fn list_blocks_with_date_range_single_day() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -301,7 +301,7 @@ async fn list_blocks_with_date_range_validates_format() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
 
@@ -322,7 +322,7 @@ async fn list_blocks_with_date_range_validates_format() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
 
@@ -343,7 +343,7 @@ async fn list_blocks_with_date_range_validates_format() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
 
@@ -388,7 +388,7 @@ async fn list_blocks_date_range_with_source_filter() {
         Some("column:due_date".into()),
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -415,7 +415,7 @@ async fn list_blocks_date_range_with_source_filter() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -656,7 +656,7 @@ async fn count_agenda_batch_by_source_excludes_deleted() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_by_source_single_date_returns_expected_counts() {
-    // Regression test for PERF-17: json_each conversion preserves single-date semantics.
+    // Regression test for json_each conversion preserves single-date semantics.
     let (pool, _dir) = test_pool().await;
 
     insert_block(&pool, "SGL_BLK1", "content", "t1", None, None).await;
@@ -694,7 +694,7 @@ async fn count_agenda_batch_by_source_single_date_returns_expected_counts() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_by_source_missing_dates_not_in_result() {
-    // Regression test for PERF-17: dates with no agenda entries are omitted.
+    // Regression test for dates with no agenda entries are omitted.
     let (pool, _dir) = test_pool().await;
 
     insert_block(&pool, "MIS_BLK", "content", "t", None, None).await;
@@ -735,7 +735,7 @@ async fn count_agenda_batch_by_source_missing_dates_not_in_result() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_by_source_large_input_beyond_sqlite_param_limit() {
-    // Regression test for PERF-17: json_each avoids the SQLite ~999 bind-parameter
+    // Regression test for json_each avoids the SQLite ~999 bind-parameter
     // limit that the old `IN (?, ?, …)` format-string approach hit at scale.
     let (pool, _dir) = test_pool().await;
 
@@ -1019,7 +1019,7 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
     mat.shutdown();
 }
 
-// MAINT-164: re-enabled in session 559 — `list_projected_agenda_on_the_fly`
+// Re-enabled in session 559 — `list_projected_agenda_on_the_fly`
 // no longer reads `chrono::Local::now()` directly; `today` is threaded in
 // from `list_projected_agenda_inner_with_today` so this test can pin a
 // fake today and the assertion stops drifting as the system clock advances.
@@ -1121,7 +1121,7 @@ async fn projected_agenda_respects_repeat_count_end_condition() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    // MAINT-164: bypass the projected_agenda_cache (which itself reads
+    // Bypass the projected_agenda_cache (which itself reads
     // `chrono::Local::now()` during rebuild and was populated as a side
     // effect of the `set_property` ops above). Calling `_on_the_fly`
     // directly with a pinned `today` keeps the assertion stable across
@@ -1776,11 +1776,11 @@ async fn projected_agenda_limit_caps_results() {
 }
 
 // ======================================================================
-// Template-page filtering (FEAT-5a — spec line 812)
+// Template-page filtering (spec line 812)
 // ======================================================================
 //
 // `list_projected_agenda_inner` — and by extension every downstream
-// agenda consumer, including the FEAT-5 Google Calendar push — must
+// Agenda consumer, including the Google Calendar push — must
 // exclude blocks whose owning page carries a `template` property so
 // template scaffolding never surfaces in agenda output.
 // These tests pin the filter in place on both branches of
@@ -2260,12 +2260,12 @@ async fn list_undated_tasks_pagination() {
 }
 
 // ======================================================================
-// M-25 — list_projected_agenda cursor pagination
+// List_projected_agenda cursor pagination
 // ======================================================================
 //
 // Pre-M-25 the inner returned a flat `Vec<ProjectedAgendaEntry>` clamped
 // to 500 entries with no escape hatch — entries beyond the cap were
-// silently dropped. M-25 changes the return type to a cursor-paginated
+// Silently dropped. changes the return type to a cursor-paginated
 // `PageResponse` so callers can page past the cap, matching AGENTS.md
 // invariant #3.
 //
@@ -2356,11 +2356,11 @@ async fn list_projected_agenda_returns_next_cursor_when_capped_m25() {
     );
     assert!(
         page1.has_more,
-        "has_more must be true when more entries remain past the page cap (M-25)"
+        "has_more must be true when more entries remain past the page cap"
     );
     assert!(
         page1.next_cursor.is_some(),
-        "next_cursor must be populated when has_more is true so callers can page (M-25)"
+        "next_cursor must be populated when has_more is true so callers can page"
     );
 
     mat.shutdown();
@@ -2451,10 +2451,10 @@ async fn list_projected_agenda_walks_pages_correctly_m25() {
 }
 
 // ======================================================================
-// FEAT-3p4 — shared fixture helper for the cross-space scoping tests
+// Shared fixture helper for the cross-space scoping tests
 // ======================================================================
 
-/// Fixture for the FEAT-3p4 cross-space scoping tests below. Seeds the
+/// Fixture for the cross-space scoping tests below. Seeds the
 /// two test space blocks (skipping space B when `b_ids` is empty so
 /// the "nonexistent space" tests can reuse the helper without seeding
 /// space B), then for each id in `a_ids` / `b_ids` invokes `seed` and
@@ -2464,7 +2464,7 @@ async fn list_projected_agenda_walks_pages_correctly_m25() {
 /// `seed` is responsible for the per-block setup the test needs
 /// (insert_block + todo_state, seed_repeating_task, agenda_cache row,
 /// etc.). The helper deliberately stays agnostic about block content
-/// so all four FEAT-3p4 sections can share it.
+/// So all four sections can share it.
 async fn seed_two_space_blocks<F>(pool: &sqlx::SqlitePool, a_ids: &[&str], b_ids: &[&str], seed: F)
 where
     F: AsyncFn(&sqlx::SqlitePool, &str),
@@ -2484,7 +2484,7 @@ where
 }
 
 // ======================================================================
-// FEAT-3p4 — space scoping for list_undated_tasks_inner
+// Space scoping for list_undated_tasks_inner
 // ======================================================================
 //
 // These tests cover the `Some(space_id)` branch of
@@ -2629,7 +2629,7 @@ async fn list_undated_tasks_disjointness_feat3p4() {
 }
 
 // ======================================================================
-// FEAT-3p4 — space scoping for list_projected_agenda_inner
+// Space scoping for list_projected_agenda_inner
 // ======================================================================
 //
 // These tests pin the on-the-fly fallback's space filter (the cache
@@ -2791,7 +2791,7 @@ async fn list_projected_agenda_disjointness_feat3p4() {
 }
 
 // ======================================================================
-// FEAT-3p4 — space scoping for count_agenda_batch_inner
+// Space scoping for count_agenda_batch_inner
 // ======================================================================
 //
 // Seed agenda_cache rows for blocks in two distinct spaces. The
@@ -2912,11 +2912,11 @@ async fn count_agenda_batch_disjointness_feat3p4() {
 }
 
 // ======================================================================
-// PEND-18 Phase 2 — parity: SpaceScope::Global ≡ pre-migration None-shape
+// Phase 2 — parity: SpaceScope::Global ≡ pre-migration None-shape
 // ======================================================================
 //
 // `count_agenda_batch_inner` migrated from `space_id: Option<String>` to
-// `scope: &SpaceScope` in PEND-18 Phase 2. The bind site uses
+// `scope: &SpaceScope` in Phase 2. The bind site uses
 // `scope.as_filter_param()` which returns `Option<&str>` — the same
 // shape the pre-migration code passed to the SQL `?N IS NULL OR ...`
 // idiom. This test pins that equivalence: with the count fn now
@@ -2988,7 +2988,7 @@ async fn count_agenda_batch_inner_global_equals_pre_migration_none() {
 }
 
 // ======================================================================
-// FEAT-3p4 — space scoping for count_agenda_batch_by_source_inner
+// Space scoping for count_agenda_batch_by_source_inner
 // ======================================================================
 
 /// Seed an `agenda_cache` row for `block_id` on `date` with an explicit
@@ -3104,7 +3104,7 @@ async fn count_agenda_batch_by_source_disjointness_feat3p4() {
 }
 
 // ======================================================================
-// PEND-05 — projected agenda parity: cached path vs on-the-fly path
+// Projected agenda parity: cached path vs on-the-fly path
 // ======================================================================
 //
 // `list_projected_agenda_inner` has two independent code paths that
@@ -3123,7 +3123,7 @@ async fn count_agenda_batch_by_source_disjointness_feat3p4() {
 // return identical `(block_id, projected_date, source)` tuples for the
 // same range. Visibility note: `list_projected_agenda_on_the_fly` is
 // already `pub(crate)` and re-exported under `#[cfg(test)]` from
-// `commands::mod` (see MAINT-164), so no production-code visibility lift
+// `commands::mod`, so no production-code visibility lift
 // is required for this test.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn projected_agenda_cached_equals_on_the_fly() {
@@ -3140,7 +3140,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
     // Block D — due_date=2050-04-20, repeat=.+1w   (completion-based mode)
     // Block E — due_date=2050-04-25, repeat=++1w   (skip-past-today mode)
     //
-    // Note: the PEND-05 plan wrote `.+ 1w` / `++ 1w` (with a space).
+    // Note: the plan wrote `.+ 1w` / `++ 1w` (with a space).
     // `recurrence::parser::shift_date_once` does not accept that format —
     // after the `.+` / `++` prefix is stripped, the residual ` 1w` fails
     // to parse (leading space). The supported formats are `.+1w` / `++1w`
@@ -3399,7 +3399,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
     .unwrap();
     settle(&mat).await;
 
-    // 1. Rebuild the cache with a pinned `today` (MAINT-196). Without
+    // 1. Rebuild the cache with a pinned `today`. Without
     //    this, the cache rebuild reads `chrono::Local::now()` and the
     //    fixture's 2050 dates fall outside the cache's 365-day horizon
     //    anchored at the device's wall clock — so the cache-or-fallback
@@ -3407,7 +3407,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
     //    through to on-the-fly and the test would be comparing two
     //    on-the-fly runs (with different `today` values). The
     //    `_with_today` variant mirrors `list_projected_agenda_inner_with_today`
-    //    (MAINT-164).
+    // .
     let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
     crate::cache::rebuild_projected_agenda_cache_with_today(&pool, pinned_today)
         .await
@@ -3469,14 +3469,14 @@ async fn projected_agenda_cached_equals_on_the_fly() {
     //    source) tuples in the same order. Mismatch ⇒ drift between the
     //    cache rebuild and the on-the-fly projector.
     //
-    // First-run discovery (recorded as MAINT-196): Block D (`.+1w`
+    // First-run discovery (recorded as): Block D (`.+1w`
     // completion-based mode) emitted 112 entries via the cached path
     // but only 110 via on-the-fly across the original 390-day window —
     // a 2-entry drift in the dot-plus projection logic. The root cause
     // was duplicated per-block recurrence math: the cache clipped to
     // `today..horizon` while the on-the-fly path clipped to
     // `range_start..range_end`, and `today` was `Local::now()` in the
-    // cache vs the pinned fixture date in on-the-fly. MAINT-196
+    // Cache vs the pinned fixture date in on-the-fly.
     // consolidated both into `recurrence::project_block_dates` so the
     // clip / mode / pre-emit semantics are now a single function the
     // two paths share — the drift surface is gone.
@@ -3506,7 +3506,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
 }
 
 // ======================================================================
-// PEND-24 M3 — agenda projection silently skips malformed dates
+// Agenda projection silently skips malformed dates
 // ======================================================================
 
 /// Inject a block whose `due_date` column carries a malformed value (not
@@ -3519,7 +3519,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
 ///
 /// Best-effort warn-emission: this crate has no `tracing_test` /
 /// `TestSubscriber` fixtures wired up (verified by grep prior to landing
-/// PEND-24 M3 — see the comment in `commands/logging.rs` near the M-40
+/// See the comment in `commands/logging.rs` near the
 /// dispatch tests), so we cannot assert on `tracing::warn!` output here.
 /// The warn is emitted by `list_projected_agenda_on_the_fly` immediately
 /// before each `continue` in the date-parse-failure paths; manual verify
@@ -3640,7 +3640,7 @@ async fn malformed_repeat_until_is_warned_and_skipped() {
 }
 
 // ======================================================================
-// PEND-18 Phase 2 — SpaceScope parity test
+// Phase 2 — SpaceScope parity test
 // ======================================================================
 //
 // Asserts that `count_agenda_batch_inner` honours the `&SpaceScope`

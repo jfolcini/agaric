@@ -285,9 +285,9 @@ describe('SuggestionList', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // -- MAINT-186: Touch target spec matches docs/UX.md "Touch Target Sizing" --------
+  // -- Touch target spec matches docs/UX.md "Touch Target Sizing" --------
 
-  it('list items declare both [@media(pointer:coarse)]:min-h-[44px] and touch-target classes (MAINT-186)', async () => {
+  it('list items declare both [@media(pointer:coarse)]:min-h-[44px] and touch-target classes', async () => {
     const command = vi.fn()
     const { container } = render(<SuggestionList items={sampleItems} command={command} />)
 
@@ -369,14 +369,14 @@ describe('SuggestionList', () => {
     expect(el).toHaveAttribute('aria-live', 'polite')
   })
 
-  // -- UX-66: Popup animation --------------------------------------------------
+  // -- Popup animation --------------------------------------------------
 
-  it('popup container has "suggestion-list" class for CSS animation (UX-66)', () => {
+  it('popup container has "suggestion-list" class for CSS animation', () => {
     const command = vi.fn()
     const { container } = render(<SuggestionList items={sampleItems} command={command} />)
 
     // The animation/popover shell class is applied to the outer popup container
-    // (ancestor of the listbox). UX-207 moved the inner list inside a ScrollArea
+    // (ancestor of the listbox). moved the inner list inside a ScrollArea
     // so the animation now lives on the outer shell rather than the listbox.
     const popup = container.querySelector('.suggestion-list')
     expect(popup).toBeInTheDocument()
@@ -386,9 +386,9 @@ describe('SuggestionList', () => {
     expect(popup).toContainElement(listbox)
   })
 
-  // -- UX-207: ScrollArea wrapper replaces bare overflow-y-auto -----------------
+  // -- ScrollArea wrapper replaces bare overflow-y-auto -----------------
 
-  it('wraps the list in a ScrollArea (no bare overflow-y-auto) (UX-207)', () => {
+  it('wraps the list in a ScrollArea (no bare overflow-y-auto)', () => {
     const command = vi.fn()
     const { container } = render(<SuggestionList items={sampleItems} command={command} />)
 
@@ -405,7 +405,7 @@ describe('SuggestionList', () => {
     expect(anyOverflowY).toBeNull()
   })
 
-  it('keyboard navigation still scrolls the selected item into view under ScrollArea (UX-207)', () => {
+  it('keyboard navigation still scrolls the selected item into view under ScrollArea', () => {
     const ref = createRef<SuggestionListRef>()
     const command = vi.fn()
     render(<SuggestionList ref={ref} items={sampleItems} command={command} />)
@@ -425,9 +425,9 @@ describe('SuggestionList', () => {
     expect(options[1]?.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
   })
 
-  // -- UX-67: "Create new" prominence ------------------------------------------
+  // -- "Create new" prominence ------------------------------------------
 
-  it('"Create new" item renders a Plus SVG icon with text-primary class (UX-67)', () => {
+  it('"Create new" item renders a Plus SVG icon with text-primary class', () => {
     const command = vi.fn()
     const items: PickerItem[] = [
       { id: '1', label: 'Existing Page' },
@@ -443,9 +443,9 @@ describe('SuggestionList', () => {
     expect(svgIcon).toBeInTheDocument()
   })
 
-  // -- UX-50: Category grouping and icons --------------------------------------
+  // -- Category grouping and icons --------------------------------------
 
-  it('renders category headers when items have categories (UX-50)', () => {
+  it('renders category headers when items have categories', () => {
     const command = vi.fn()
     const items: PickerItem[] = [
       { id: '1', label: 'TODO', category: 'slashCommand.categories.tasks' },
@@ -461,7 +461,7 @@ describe('SuggestionList', () => {
     expect(categoryHeaders[1]).toHaveTextContent('Dates')
   })
 
-  it('category headers render as <h3> elements with implicit level=3 (UX-281)', () => {
+  it('category headers render as <h3> elements with implicit level=3', () => {
     const command = vi.fn()
     const items: PickerItem[] = [
       { id: '1', label: 'TODO', category: 'slashCommand.categories.tasks' },
@@ -484,7 +484,7 @@ describe('SuggestionList', () => {
     }
   })
 
-  it('keyboard nav skips category headers and only iterates option items (UX-281)', () => {
+  it('keyboard nav skips category headers and only iterates option items', () => {
     const ref = createRef<SuggestionListRef>()
     const command = vi.fn()
     const items: PickerItem[] = [
@@ -513,7 +513,7 @@ describe('SuggestionList', () => {
     expect(screen.getByText('TODO')).toHaveAttribute('aria-selected', 'true')
   })
 
-  it('renders icons inline before item labels (UX-50)', () => {
+  it('renders icons inline before item labels', () => {
     const command = vi.fn()
     const MockIcon = ({ className }: { className?: string | undefined }) => (
       <svg data-testid="mock-icon" className={className} />
@@ -532,7 +532,7 @@ describe('SuggestionList', () => {
     expect(cls).toContain('text-muted-foreground')
   })
 
-  it('does not show empty category headers when filtering removes all items in a group (UX-50)', () => {
+  it('does not show empty category headers when filtering removes all items in a group', () => {
     const command = vi.fn()
     // Simulate a filtered result where only "Tasks" items match
     const items: PickerItem[] = [
@@ -548,7 +548,7 @@ describe('SuggestionList', () => {
     expect(screen.queryByText('Dates')).not.toBeInTheDocument()
   })
 
-  it('keyboard navigation works across category groups (UX-50)', () => {
+  it('keyboard navigation works across category groups', () => {
     const ref = createRef<SuggestionListRef>()
     const command = vi.fn()
     const items: PickerItem[] = [
@@ -582,7 +582,7 @@ describe('SuggestionList', () => {
     expect(command).toHaveBeenCalledWith(items[2])
   })
 
-  it('renders separator between category groups but not before the first group (UX-50)', () => {
+  it('renders separator between category groups but not before the first group', () => {
     const command = vi.fn()
     const items: PickerItem[] = [
       { id: '1', label: 'TODO', category: 'slashCommand.categories.tasks' },
@@ -597,7 +597,7 @@ describe('SuggestionList', () => {
     expect(separators).toHaveLength(2)
   })
 
-  it('does not render category headers for items without categories (UX-50)', () => {
+  it('does not render category headers for items without categories', () => {
     const command = vi.fn()
     // Plain items without categories (like tag picker items)
     render(<SuggestionList items={sampleItems} command={command} />)
@@ -606,9 +606,9 @@ describe('SuggestionList', () => {
     expect(screen.queryByRole('separator')).not.toBeInTheDocument()
   })
 
-  // -- UX-65: Breadcrumbs -------------------------------------------------------
+  // -- Breadcrumbs -------------------------------------------------------
 
-  it('renders breadcrumb text below the label when present (UX-65)', () => {
+  it('renders breadcrumb text below the label when present', () => {
     const command = vi.fn()
     const items: PickerItem[] = [{ id: '1', label: 'standup', breadcrumb: 'work / meetings' }]
 
@@ -622,7 +622,7 @@ describe('SuggestionList', () => {
     expect(breadcrumb.className).toContain('text-muted-foreground')
   })
 
-  it('does not render breadcrumb when not present (UX-65)', () => {
+  it('does not render breadcrumb when not present', () => {
     const command = vi.fn()
     const items: PickerItem[] = [{ id: '1', label: 'Simple Item' }]
 
@@ -632,7 +632,7 @@ describe('SuggestionList', () => {
     expect(screen.queryByTestId('suggestion-breadcrumb')).not.toBeInTheDocument()
   })
 
-  it('renders icon with breadcrumb together (UX-65)', () => {
+  it('renders icon with breadcrumb together', () => {
     const command = vi.fn()
     const MockIcon = ({ className }: { className?: string | undefined }) => (
       <svg data-testid="breadcrumb-icon" className={className} />
@@ -648,9 +648,9 @@ describe('SuggestionList', () => {
     expect(screen.getByTestId('suggestion-breadcrumb')).toHaveTextContent('work / meetings')
   })
 
-  // -- UX-219: Truncated labels and breadcrumbs expose full text via title -----
+  // -- Truncated labels and breadcrumbs expose full text via title -----
 
-  it('adds title={item.label} to the label span when the item has a breadcrumb (UX-219)', () => {
+  it('adds title={item.label} to the label span when the item has a breadcrumb', () => {
     const command = vi.fn()
     const items: PickerItem[] = [
       { id: '1', label: 'work/2024/q1/very-long-name', breadcrumb: 'workspace / personal' },
@@ -662,7 +662,7 @@ describe('SuggestionList', () => {
     expect(labelEl).toHaveAttribute('title', 'work/2024/q1/very-long-name')
   })
 
-  it('adds title={item.breadcrumb} to the breadcrumb span (UX-219)', () => {
+  it('adds title={item.breadcrumb} to the breadcrumb span', () => {
     const command = vi.fn()
     const items: PickerItem[] = [
       { id: '1', label: 'standup', breadcrumb: 'workspace / team / very / deep / path' },
@@ -674,7 +674,7 @@ describe('SuggestionList', () => {
     expect(breadcrumb).toHaveAttribute('title', 'workspace / team / very / deep / path')
   })
 
-  it('does not add title attribute to items without a breadcrumb (UX-219)', () => {
+  it('does not add title attribute to items without a breadcrumb', () => {
     const command = vi.fn()
     const items: PickerItem[] = [{ id: '1', label: 'simple label' }]
 
@@ -687,7 +687,7 @@ describe('SuggestionList', () => {
   })
 
   // =========================================================================
-  // Home/End and PageUp/PageDown keyboard navigation (UX-138)
+  // Home/End and PageUp/PageDown keyboard navigation
   // =========================================================================
 
   it('Home key moves selection to first item, End to last via imperative ref', () => {
@@ -782,9 +782,9 @@ describe('SuggestionList', () => {
     expect(existingBtn.className).not.toContain('bg-accent/15')
   })
 
-  // -- UX-312: Context-aware empty state ---------------------------------------
+  // -- Context-aware empty state ---------------------------------------
 
-  it('empty state for `[[` trigger suggests creating a new page (UX-312)', () => {
+  it('empty state for `[[` trigger suggests creating a new page', () => {
     const command = vi.fn()
     render(<SuggestionList items={[]} command={command} triggerChar="[[" />)
 
@@ -793,7 +793,7 @@ describe('SuggestionList', () => {
     )
   })
 
-  it('empty state for `@` trigger suggests creating a new tag (UX-312)', () => {
+  it('empty state for `@` trigger suggests creating a new tag', () => {
     const command = vi.fn()
     render(<SuggestionList items={[]} command={command} triggerChar="@" />)
 
@@ -802,7 +802,7 @@ describe('SuggestionList', () => {
     )
   })
 
-  it('empty state for `((` trigger explains block refs need an existing block (UX-312)', () => {
+  it('empty state for `((` trigger explains block refs need an existing block', () => {
     const command = vi.fn()
     render(<SuggestionList items={[]} command={command} triggerChar="((" />)
 
@@ -837,7 +837,7 @@ describe('SuggestionList', () => {
     )
   })
 
-  it('empty state for unmapped triggers (e.g. "/", "::") falls back to "No results" (UX-312)', () => {
+  it('empty state for unmapped triggers (e.g. "/", "::") falls back to "No results"', () => {
     const command = vi.fn()
     const { rerender } = render(<SuggestionList items={[]} command={command} triggerChar="/" />)
     expect(screen.getByRole('status')).toHaveTextContent('No results')
@@ -847,15 +847,15 @@ describe('SuggestionList', () => {
     expect(screen.getByRole('status').textContent).toBe('No results')
   })
 
-  it('empty state with no triggerChar prop falls back to "No results" (UX-312)', () => {
+  it('empty state with no triggerChar prop falls back to "No results"', () => {
     const command = vi.fn()
     render(<SuggestionList items={[]} command={command} />)
     expect(screen.getByRole('status').textContent).toBe('No results')
   })
 
-  // -- UX-315: Inline keyboard hint footer -------------------------------------
+  // -- Inline keyboard hint footer -------------------------------------
 
-  it('renders an aria-hidden footer with navigate/select/close hints (UX-315)', () => {
+  it('renders an aria-hidden footer with navigate/select/close hints', () => {
     const command = vi.fn()
     render(<SuggestionList items={sampleItems} command={command} />)
 

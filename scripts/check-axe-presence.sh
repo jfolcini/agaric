@@ -18,7 +18,7 @@
 # Opt-out (#818): a test file that genuinely renders no DOM (e.g. a
 # hook-wiring test that only asserts store/event plumbing) may carry a
 # `// axe-exempt: <reason>` marker — same allow-marker idiom as
-# `// allow-raw-tx:` / `# MAINT-99-allow-*`. The reason is mandatory:
+# `// allow-raw-tx:` / `# snapshot-allow-*`. The reason is mandatory:
 # a bare `// axe-exempt:` with nothing after the colon does not count.
 #
 # Usage: scripts/check-axe-presence.sh

@@ -7,11 +7,11 @@
  * so the strip telegraphs "row of clickable navigation items" before the
  * pointer arrives. `Button variant="ghost"` is the inverse pattern (chrome
  * fades into the background until hover) and was the wrong rest-state for
- * a row the user is *expected* to scan (PEND-19).
+ * A row the user is *expected* to scan.
  *
  * `shrink-0` on the chip prevents flex-children from compressing chip
  * widths when the row overflows; the parent `<ScrollArea orientation="horizontal">`
- * in `QuickAccessBar` (recents zone) is what surfaces the overflow (PEND-32).
+ * In `QuickAccessBar` (recents zone) is what surfaces the overflow.
  *
  * Class composition mirrors the CVA pattern used by Badge / Button (single
  * base class string composed via `cn()`); this chip has only one variant
@@ -46,7 +46,7 @@ const chipClass = cn(
   'hover:border-accent hover:bg-accent hover:text-accent-foreground',
   // focus — standard 3 px ring per AGENTS.md (this is a chip, not a link)
   'focus-ring-visible',
-  // UX-284 keyboard-traversal indicator
+  // Keyboard-traversal indicator
   'focus-visible:bg-accent/60',
 )
 

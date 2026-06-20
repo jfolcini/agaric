@@ -1,7 +1,7 @@
 /**
  * Tests for useDialogOrSheet — the Dialog/Sheet swap hook used by
  * ConfirmDialog (kind='alert', default) and the 6 form-style dialogs
- * migrated under MAINT-215 (kind='dialog').
+ * Migrated under (kind='dialog').
  *
  * Validates:
  *  - Desktop+alert returns the AlertDialog set.
@@ -81,7 +81,7 @@ describe('useDialogOrSheet', () => {
     expect(result.current.Root).toBe(AlertDialog)
   })
 
-  it('returns Dialog primitives on desktop when kind="dialog" (MAINT-215)', () => {
+  it('returns Dialog primitives on desktop when kind="dialog"', () => {
     mockedUseIsMobile.mockReturnValue(false)
 
     const { result } = renderHook(() => useDialogOrSheet('dialog'))

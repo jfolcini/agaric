@@ -26,7 +26,7 @@ export interface PickerItem {
   /**
    * When true, this item was matched via a page alias (not direct
    * title). Used for visual differentiation only — exact-vs-prefix
-   * disambiguation lives on `aliasText` (PEND-34).
+   * Disambiguation lives on `aliasText`.
    */
   isAlias?: boolean
   /**
@@ -34,7 +34,7 @@ export interface PickerItem {
    * alias-source result, exact and prefix alike. Used by the
    * `[[text]]` input rule to tell whether the typed text is exactly
    * an alias and should auto-resolve, vs. a prefix that should not
-   * (PEND-34).
+   *.
    */
   aliasText?: string
   /** Category for grouping in the slash command menu (e.g. "Tasks", "Dates"). */
@@ -71,7 +71,7 @@ export interface SuggestionListProps {
   label?: string
   /**
    * Trigger character that opened this picker (e.g. '@', '[[', '((', '/', '::').
-   * Used to pick a context-appropriate empty-state message (UX-312).
+   * Used to pick a context-appropriate empty-state message.
    */
   triggerChar?: string
   /**
@@ -200,7 +200,7 @@ export const SuggestionList = ({
     // resolver's normalisation (strip trailing ')' + trim).
     const blockRefBelowThreshold =
       triggerChar === '((' && query != null && query.replace(/\)+$/, '').trim().length < 2
-    // UX-312: pick a context-appropriate empty-state message based on the
+    // Pick a context-appropriate empty-state message based on the
     // trigger character. Falls back to the generic "No results" for triggers
     // without a tailored copy (e.g. '/', '::').
     const emptyKey = blockRefBelowThreshold

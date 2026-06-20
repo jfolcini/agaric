@@ -7,12 +7,12 @@ use super::recovery::{ensure_blocks_table_exists, recover_derived_state_from_op_
 
 /// Threshold (ms) above which [`acquire_logged`] emits a `warn` log.
 ///
-/// MAINT-30: a `busy_timeout` of 5000ms on the SqlitePool can make callers
+/// A `busy_timeout` of 5000ms on the SqlitePool can make callers
 /// wait silently on write contention. 100ms is a generous floor that ignores
 /// normal cold-start acquires but surfaces anything pathological.
 pub const SLOW_ACQUIRE_WARN_MS: u128 = 100;
 
-/// PEND-70 — threshold (ms) above which [`search_pool_acquire_logged`]
+/// Threshold (ms) above which [`search_pool_acquire_logged`]
 /// emits a `warn` log on the **read** pool. Lower than
 /// [`SLOW_ACQUIRE_WARN_MS`] (100 ms) because the read pool's
 /// `max_connections(4)` ceiling is smaller and saturation surfaces
@@ -54,7 +54,7 @@ pub const MAX_SQL_PARAMS: usize = 999;
 /// - SQLite INTEGER columns sort and range-scan natively without
 ///   relying on every writer producing the same `YYYY-MM-DDTHH:MM:SS.sssZ`
 ///   shape.
-/// - The PEND-09 tables (`loro_doc_state.updated_at` and
+///   The tables (`loro_doc_state.updated_at` and
 ///   `app_settings.updated_at`, migrations 0052 / 0053) already use
 ///   this encoding; this helper formalises what was previously a
 ///   per-callsite `chrono::Utc::now().timestamp_millis()` open-code.
@@ -167,7 +167,7 @@ pub async fn acquire_logged(
     Ok(conn)
 }
 
-/// PEND-70 — read-pool sibling of [`acquire_logged`] with a tighter
+/// Read-pool sibling of [`acquire_logged`] with a tighter
 /// 50 ms threshold (see [`SLOW_SEARCH_ACQUIRE_WARN_MS`]). The search
 /// surface (`search_blocks` / `search_blocks_partitioned`) competes
 /// with the page browser and backlinks queries for the read pool's
@@ -421,7 +421,7 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
         .connect_with(write_opts)
         .await?;
 
-    // BUG-73 recovery: if a prior crash left blocks missing, recreate it
+    // Recovery: if a prior crash left blocks missing, recreate it
     // from op_log so migrations have a target table to rebuild.
     let blocks_recovered = ensure_blocks_table_exists(&write_pool).await?;
 
@@ -430,7 +430,7 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
     sqlx::migrate!("./migrations").run(&write_pool).await?;
     tracing::info!("database migrations complete");
 
-    // BUG-73 recovery part 2: restore properties and tags that migration 73's
+    // Recovery part 2: restore properties and tags that migration 73's
     // DROP TABLE would have CASCADE-deleted. #616: gated on the positive
     // corruption signal from `ensure_blocks_table_exists` (this boot's flag
     // or the persisted pending marker), never on empty-table inference.
@@ -520,7 +520,7 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, crate::error::AppEr
         .connect_with(connect_options)
         .await?;
 
-    // BUG-73 recovery
+    // Recovery
     let blocks_recovered = ensure_blocks_table_exists(&pool).await?;
 
     // Run migrations
@@ -528,10 +528,10 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, crate::error::AppEr
     sqlx::migrate!("./migrations").run(&pool).await?;
     tracing::info!("database migrations complete");
 
-    // BUG-73 recovery part 2 (#616: see `init_pools` for the gate rationale)
+    // Recovery part 2 (#616: see `init_pools` for the gate rationale)
     recover_derived_state_from_op_log(&pool, blocks_recovered).await?;
 
-    // L-8: match `init_pools` — refresh planner stats after migrations.
+    // Match `init_pools` — refresh planner stats after migrations.
     sqlx::query("PRAGMA optimize").execute(&pool).await?;
 
     Ok(pool)

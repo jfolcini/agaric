@@ -1133,7 +1133,7 @@ describe('useBlockDnD', () => {
     })
   })
 
-  // ── 13. Sentinel drop handling (UX-176) ──────────────────────────────
+  // ── 13. Sentinel drop handling ──────────────────────────────
 
   describe('handleDragEnd (sentinel)', () => {
     it('calls reorder when dropping on sentinel at the same parent (R5 #404)', () => {
@@ -1205,9 +1205,9 @@ describe('useBlockDnD', () => {
     })
   })
 
-  // ── 14. UX-241: focus restore after drag ─────────────────────────────
+  // ── 14. focus restore after drag ─────────────────────────────
 
-  describe('handleDragEnd (UX-241 focus restore)', () => {
+  describe('handleDragEnd (focus restore)', () => {
     it('restores focus on the dragged block after a successful moveToParent', async () => {
       const blocks = [
         makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),

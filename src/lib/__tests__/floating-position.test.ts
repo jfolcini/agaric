@@ -1,7 +1,7 @@
 /**
  * Tests for the `applySafePosition` Floating-UI fallback helper.
  *
- * MAINT-175: validates the shared helper used by `BlockPropertyEditor`
+ * Validates the shared helper used by `BlockPropertyEditor`
  * and `suggestion-renderer.ts` to apply computed coordinates on success
  * and push the popup off-screen on failure.
  */

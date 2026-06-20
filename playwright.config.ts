@@ -31,7 +31,7 @@ export default defineConfig({
   // browser install that share the 30-min cell. Effectively unbounded locally
   // for a full unsharded run, so only the CI path is constrained.
   globalTimeout: process.env['CI'] ? 25 * 60_000 : 0,
-  // PEND-41 R14: file-level parallelism via `fullyParallel: true`, with
+  // File-level parallelism via `fullyParallel: true`, with
   // per-suite `test.describe.configure({ mode: 'serial' })` annotations on
   // the specs whose tests share global state (op-log, pairing mock, kebab
   // popover chains). The workers cap below is per-shard — the CI sharding

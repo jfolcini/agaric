@@ -380,9 +380,9 @@ describe('useBlockKeyboardHandlers handleMoveUpById/DownById', () => {
   })
 })
 
-// ── UX-241: scrollIntoView after keyboard move ───────────────────────────
+// ── scrollIntoView after keyboard move ───────────────────────────
 
-describe('useBlockKeyboardHandlers UX-241 scrollIntoView', () => {
+describe('useBlockKeyboardHandlers  scrollIntoView', () => {
   let scrollSpy: ReturnType<typeof vi.spyOn>
   let blockEl: HTMLDivElement
 
@@ -822,10 +822,10 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
   })
 
   // ------------------------------------------------------------------------
-  // MAINT-15: post-merge setTimeout(setTextSelection) must be cancelled on
+  // Post-merge setTimeout(setTextSelection) must be cancelled on
   // unmount to avoid moving the cursor on a stale (next-mounted) editor.
   // ------------------------------------------------------------------------
-  describe('post-merge setTimeout cleanup (#MAINT-15)', () => {
+  describe('post-merge setTimeout cleanup (#)', () => {
     it('does not call setTextSelection after hook unmount', async () => {
       vi.useFakeTimers()
       try {

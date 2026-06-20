@@ -5,7 +5,7 @@
  * already-sorted (newest-first) `selectedEntries` and an `onSuccess`
  * callback that performs the post-revert reload.
  *
- * Extracted from `HistoryView` (MAINT-128).
+ * Extracted from `HistoryView`.
  */
 
 import type React from 'react'

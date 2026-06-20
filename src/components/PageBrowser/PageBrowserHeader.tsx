@@ -5,7 +5,7 @@
  * dropdown. All state lives in the orchestrator (`PageBrowser`) and is
  * passed in as props — this sibling is layout-only.
  *
- * Extracted from `PageBrowser.tsx` (MAINT-128).
+ * Extracted from `PageBrowser.tsx`.
  */
 
 import { Plus, Rows3, Search } from 'lucide-react'
@@ -43,7 +43,7 @@ export interface PageBrowserHeaderProps {
   sortOption: SortOption
   onSortChange: (value: SortOption) => void
   /**
-   * Current density mode (PEND-56). Persisted in localStorage via
+   * Current density mode. Persisted in localStorage via
    * `usePageBrowserDensity`; passed in by `PageBrowser` orchestrator.
    */
   density: DensityMode
@@ -59,7 +59,7 @@ export interface PageBrowserHeaderProps {
    */
   filteredCount?: number | undefined
   /**
-   * PEND-58d D11 — true when the free-text search box is non-empty. The
+   * True when the free-text search box is non-empty. The
    * text box narrows the loaded set client-side, so its count chip is
    * "X of Y matching" (loaded-narrowed numerator over the filtered
    * total). Distinct from `hasChipFilters` so the count chip can pick a
@@ -67,14 +67,14 @@ export interface PageBrowserHeaderProps {
    */
   hasTextQuery?: boolean
   /**
-   * PEND-58d D11 — true when ≥1 compound-filter chip is active. Chips
+   * True when ≥1 compound-filter chip is active. Chips
    * narrow server-side, so their count chip is "{{count}} matching
    * pages" using the filtered total (`totalCount`), avoiding the skew of
    * pairing a loaded numerator with a filtered-total denominator.
    */
   hasChipFilters?: boolean
   /**
-   * PEND-58d D3 — true when a frontend-only sort (`alphabetical`,
+   * True when a frontend-only sort (`alphabetical`,
    * `recent`, `created`) is active AND more pages remain to load. The
    * client-side reorder only covers the loaded pages, so we surface a
    * subtle cue near the sort control to set expectations. Never set for
@@ -104,7 +104,7 @@ export function PageBrowserHeader({
   frontendSortAtScale,
 }: PageBrowserHeaderProps): React.ReactElement {
   const { t } = useTranslation()
-  // PageBrowser pagination UX + PEND-58d D11 — small muted text near
+  // PageBrowser pagination UX + small muted text near
   // the search input so users always know roughly how many pages
   // they're looking at. Three forms, each with a basis-consistent
   // numerator/denominator:
@@ -166,7 +166,7 @@ export function PageBrowserHeader({
       </form>
 
       {/* Search/filter input + sort dropdown */}
-      {/* PEND-58d D13 — `flex-wrap` lets the search/sort/density controls
+      {/* `flex-wrap` lets the search/sort/density controls
           stack onto a second line on narrow viewports instead of
           overflowing. The search field keeps a sensible min-width so it
           never collapses to an unusable sliver before wrapping. */}
@@ -219,7 +219,7 @@ export function PageBrowserHeader({
               <SelectItem value="default">{t('pageBrowser.sortDefault')}</SelectItem>
             </SelectContent>
           </Select>
-          {/* PEND-58d D3 — frontend-only sorts reorder just the loaded
+          {/* frontend-only sorts reorder just the loaded
               pages; while more remain, surface a muted cue so the user
               knows the visible order isn't the global order yet. */}
           {frontendSortAtScale && (

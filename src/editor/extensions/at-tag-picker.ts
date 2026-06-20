@@ -47,7 +47,7 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
           const insertPos = range.from
           state.tr.delete(range.from, range.to)
 
-          // MAINT-203: shared FE-M-15 race-guard. Token shape `tag_ref`;
+          // Shared race-guard. Token shape `tag_ref`;
           // exact-match keys on case-insensitive label (no alias path).
           void resolveAndInsertPickerToken({
             editor,

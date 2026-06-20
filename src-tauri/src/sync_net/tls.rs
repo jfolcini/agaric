@@ -188,14 +188,14 @@ pub(super) fn build_server_tls_config(cert: &SyncCert) -> Result<rustls::ServerC
 /// The observed hash is stored in `observed_hash` so the caller can retrieve
 /// it after the TLS handshake.
 ///
-/// `expected_remote_id` (M-56): when `Some(eid)`, the verifier additionally
+/// `expected_remote_id`: when `Some(eid)`, the verifier additionally
 /// requires the certificate CN to be exactly `agaric-{eid}` — i.e. the TLS
 /// handshake is bound to the specific device the caller intended to reach.
 /// On first-pair flows where the peer device id is not yet known, callers
 /// pass `None` to preserve TOFU semantics (the existing `agaric-` prefix
 /// check still applies in either case).
 ///
-/// `observed_hash` (M-57): a single-write/single-read channel from the
+/// `observed_hash`: a single-write/single-read channel from the
 /// verifier (called from inside the rustls handshake task) back to the
 /// caller (which reads after the handshake completes). Implemented with
 /// `OnceLock` rather than `Mutex<Option<...>>` so a panic inside the
@@ -223,7 +223,7 @@ impl rustls::client::danger::ServerCertVerifier for PinningCertVerifier {
         let hash = Sha256::digest(end_entity.as_ref());
         let hex_hash: String = hash.iter().map(|b| format!("{b:02x}")).collect();
 
-        // M-57: record observed hash for the caller. `set` only succeeds
+        // Record observed hash for the caller. `set` only succeeds
         // once; a second call on the same `OnceLock` (e.g. for an
         // intermediate cert in a chain) returns `Err(value)`, which we
         // discard — the leaf cert is the first one passed and that's the
@@ -240,7 +240,7 @@ impl rustls::client::danger::ServerCertVerifier for PinningCertVerifier {
         }
 
         // Verify CN matches expected device ID format (S-2: defense-in-depth).
-        // M-56: when the caller knows which device they expect to reach
+        // When the caller knows which device they expect to reach
         // (`expected_remote_id = Some(eid)`), additionally bind the TLS
         // handshake to that identity by requiring CN == `agaric-{eid}`.
         // Without this, on first connect (no stored hash), any peer with

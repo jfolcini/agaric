@@ -13,7 +13,7 @@ import { announce } from '../lib/announcer'
 import type { FlatBlock } from '../lib/tree-utils'
 
 /**
- * UX-241: scroll the block's DOM node into view after a reorder so the
+ * Scroll the block's DOM node into view after a reorder so the
  * viewport tracks the moved block instead of jumping to the top. Wrapped
  * in requestAnimationFrame to let React commit the new layout before we
  * read it. Uses `block: 'nearest'` (not smooth, not center) to keep
@@ -204,7 +204,7 @@ export function useBlockKeyboardHandlers({
   // Tracks the post-merge setTextSelection setTimeout so we can cancel it on
   // unmount. Without this, a late-firing callback could call
   // `setTextSelection` on a stale editor instance and move the user's cursor
-  // on the NEXT mounted block (#MAINT-15).
+  // On the NEXT mounted block (#).
   const pendingMergeSelectionRef = useRef<number | null>(null)
 
   useEffect(

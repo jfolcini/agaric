@@ -17,7 +17,7 @@ import type { BacklinkFilter, CompareOp } from '@/lib/tauri'
 
 /**
  * Filter object augmented with a frontend-only `_addId` React key
- * (MAINT-190; resolves FE-L-14).
+ * (; resolves FE-L-14).
  *
  * `BacklinkFilterBuilder` stamps every newly-added filter with a monotonic
  * `_addId`; we use it as the React `key` on each pill `<li>` to give
@@ -116,7 +116,7 @@ export function FilterPillRow({
     <ul aria-label={t('backlink.appliedFiltersLabel')} className="contents list-none m-0 p-0">
       {filters.map((filter, index) => (
         // `_addId` is a stable per-filter key stamped at creation
-        // (MAINT-190 / FE-L-14) — see `FilterWithKey` above.
+        // (FE-L-14) — see `FilterWithKey` above.
         <li key={filter._addId} className="contents">
           <FilterPill
             label={filterSummary(filter, tagResolver, t)}

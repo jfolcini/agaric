@@ -19,7 +19,7 @@ async fn test_pool() -> (SqlitePool, TempDir) {
 }
 
 /// Build a `Materializer` for tests that need to pass one to
-/// `apply_snapshot` (BUG-42). The tests that don't care about cache
+/// `apply_snapshot`. The tests that don't care about cache
 /// rebuild behaviour can still use this — the enqueued tasks are
 /// harmless and will just process against the restored DB.
 fn test_materializer(pool: &SqlitePool) -> Materializer {
@@ -391,7 +391,7 @@ fn decode_rejects_corrupt_data() {
     let garbage: [u8; 7] = [0xDE, 0xAD, 0xBE, 0xEF, 0x42, 0x42, 0x42];
     let err = decode_snapshot(&garbage[..]).unwrap_err();
     let msg = err.to_string();
-    // L-67: with the streaming decoder, the zstd error can surface in
+    // With the streaming decoder, the zstd error can surface in
     // either layer:
     //   • `zstd decompress` if `Decoder::new` rejects the magic bytes
     //     up front, OR
@@ -633,13 +633,13 @@ async fn apply_snapshot_wipes_and_restores() {
 }
 
 // =======================================================================
-// 7b. M-66 — apply_snapshot warns on dropped drafts
+// 7b. apply_snapshot warns on dropped drafts
 // =======================================================================
 //
 // Pre-fix `apply_snapshot` issued `DELETE FROM block_drafts` with no
 // count read and no log line. Any draft a peer saved AFTER its
 // snapshot was taken (mid-edit when the snapshot fired or when the
-// FEAT-6 catch-up arrived) was silently lost — making "where did my
+// Catch-up arrived) was silently lost — making "where did my
 // typing go?" a true mystery to debug.
 //
 // The fix counts the rows + samples up to 8 ids inside the same tx
@@ -667,7 +667,7 @@ async fn apply_snapshot_drops_drafts_observably_m66() {
     .unwrap();
     let snap_data = snap_row.data;
 
-    // M-93 / migration 0038: `block_drafts.block_id` now has a FK to
+    // / migration 0038: `block_drafts.block_id` now has a FK to
     // `blocks(id) ON DELETE CASCADE`. Seed parent rows for each draft
     // before staging them — the drafts themselves are still wiped
     // unconditionally by `apply_snapshot`, which is what this test
@@ -683,7 +683,7 @@ async fn apply_snapshot_drops_drafts_observably_m66() {
         .unwrap();
     }
 
-    // Seed THREE drafts that will be silently dropped without M-66.
+    // Seed THREE drafts that will be silently dropped without.
     // Mix block_ids so the sample_ids vector has > 1 entry (proves
     // the LIMIT 8 sample read works for non-trivial cases).
     sqlx::query(
@@ -713,15 +713,15 @@ async fn apply_snapshot_drops_drafts_observably_m66() {
         .unwrap();
     assert_eq!(
         drafts_after, 0,
-        "block_drafts must be empty after apply_snapshot (RESET semantics unchanged by M-66)"
+        "block_drafts must be empty after apply_snapshot (RESET semantics unchanged by)"
     );
 
-    // The M-66 warn line itself is best verified via tracing-test
+    // The warn line itself is best verified via tracing-test
     // capture, which this crate does not currently wire up; the value
     // of this test is that the count read + DELETE are atomically
     // ordered inside the wipe tx (a regression that re-orders them
     // — say, DELETE first then COUNT — would always count zero and
-    // silently re-introduce M-66's silent-drop).
+    // Silently re-introduce silent-drop).
 }
 
 // =======================================================================
@@ -1323,10 +1323,10 @@ async fn apply_snapshot_rejects_fk_violation() {
 }
 
 // =======================================================================
-// 17b. TEST-50: apply_snapshot_rejects_null_in_not_null_column
+// 17b. apply_snapshot_rejects_null_in_not_null_column
 // =======================================================================
 
-/// TEST-50: a snapshot blob whose CBOR payload encodes `null` for a
+/// A snapshot blob whose CBOR payload encodes `null` for a
 /// NOT NULL column (here `block_type`) must not be silently accepted.
 /// The canonical `BlockSnapshot.block_type` is `String`, so the rejection
 /// surfaces during CBOR deserialization in `decode_snapshot` rather than
@@ -1348,7 +1348,7 @@ async fn apply_snapshot_rejects_null_in_not_null_column() {
         parent_id: Option<&'a str>,
         position: Option<i64>,
         deleted_at: Option<i64>,
-        // MAINT-133: keep this struct in lock-step with `BlockSnapshot`
+        // Keep this struct in lock-step with `BlockSnapshot`
         // so the encoded CBOR map covers every field the real decoder
         // expects.
         todo_state: Option<&'a str>,
@@ -1416,10 +1416,10 @@ async fn apply_snapshot_rejects_null_in_not_null_column() {
 }
 
 // =======================================================================
-// 17c. TEST-50: apply_snapshot_rejects_invalid_block_type
+// 17c. apply_snapshot_rejects_invalid_block_type
 // =======================================================================
 
-/// TEST-50: `block_type` is constrained by the `block_type_valid` CHECK
+/// `block_type` is constrained by the `block_type_valid` CHECK
 /// (migration 0085, which replaced the migration-0005 BEFORE INSERT/UPDATE
 /// triggers) to one of `content` / `tag` / `page`. A value outside that
 /// enum (here `"banana"`) must abort the apply.
@@ -1515,10 +1515,10 @@ async fn block_type_valid_check_replaces_triggers() {
 }
 
 // =======================================================================
-// 17d. TEST-50: apply_snapshot_rejects_malformed_ulid_block_id
+// 17d. apply_snapshot_rejects_malformed_ulid_block_id
 // =======================================================================
 
-/// TEST-50: a malformed ULID (non-Crockford text, wrong length) used
+/// A malformed ULID (non-Crockford text, wrong length) used
 /// as a block-id reference must not silently leak in. The blocks
 /// schema has no CHECK on ULID format, so the rejection surfaces as a
 /// deferred FK violation when the malformed string is referenced as a
@@ -1811,7 +1811,7 @@ async fn double_compaction() {
 /// with op_log.created_at. This tests the edge case where the inserted
 /// timestamp has zero sub-second precision (`...:00Z`) vs the cutoff's
 /// millisecond-precision form (`...:00.000Z`) — both share the
-/// L-98 `Z`-suffix invariant, so lexicographic comparison must still
+/// `Z`-suffix invariant, so lexicographic comparison must still
 /// classify the older op as old.
 #[tokio::test]
 async fn compact_op_log_timestamp_format_consistency() {
@@ -2440,7 +2440,7 @@ async fn cleanup_old_snapshots_mixed_pending_and_complete() {
 /// #706 item 3: the pending-delete arm is age-gated. A pending row inside
 /// the grace window (a snapshot that *could* be mid-write under a
 /// hypothetical split-tx interleave) is spared; only a leftover older than
-/// the grace window is purged. This is defense in depth on top of M-69's
+/// The grace window is purged. This is defense in depth on top of
 /// single-tx INSERT-pending → UPDATE-complete invariant.
 #[tokio::test]
 async fn cleanup_spares_recent_pending_but_deletes_old_pending() {
@@ -2486,7 +2486,7 @@ async fn cleanup_spares_recent_pending_but_deletes_old_pending() {
 
 #[tokio::test]
 async fn cleanup_old_snapshots_with_zero_keep_is_noop() {
-    // M-68 regression: a naive `LIMIT 0` on the subquery would cause
+    // Regression: a naive `LIMIT 0` on the subquery would cause
     // SQLite's `NOT IN (empty)` to evaluate TRUE for every row, deleting
     // every complete snapshot. The function now short-circuits on keep==0.
     let (pool, _dir) = test_pool().await;
@@ -2739,7 +2739,7 @@ fn snapshot_version_0_rejected() {
 }
 
 // =======================================================================
-// compact_op_log_transaction_happy_path (M-30)
+// Compact_op_log_transaction_happy_path
 // =======================================================================
 
 /// Verify that `compact_op_log` works correctly with its transaction
@@ -2785,7 +2785,7 @@ async fn compact_op_log_transaction_happy_path() {
         result.is_some(),
         "compaction should return Some(snapshot_id) when old ops exist"
     );
-    // L-42: `compact_op_log` now returns `(snapshot_id, deleted_count)`.
+    // `compact_op_log` now returns `(snapshot_id, deleted_count)`.
     let (snapshot_id, _deleted_count) = result.unwrap();
     assert!(!snapshot_id.is_empty(), "snapshot id should not be empty");
 
@@ -2970,10 +2970,10 @@ fn version_gate_rejects_incompatible_version_before_decoding_tables() {
 }
 
 // =======================================================================
-// Snapshot restore cache verification (BUG-42 regression)
+// Snapshot restore cache verification (regression)
 // =======================================================================
 
-/// Regression test for BUG-42: after `apply_snapshot()`, cache-rebuild
+/// Regression test for after `apply_snapshot()`, cache-rebuild
 /// tasks must be enqueued on the materializer so the UI doesn't see an
 /// empty agenda / tag list / page list / search until the next unrelated
 /// op triggers rebuilds by side-effect.
@@ -3191,13 +3191,13 @@ async fn apply_snapshot_rebuilds_caches() {
 }
 
 // =======================================================================
-// apply_snapshot_excludes_template_page_blocks_from_agenda (M-15)
+// Apply_snapshot_excludes_template_page_blocks_from_agenda
 // =======================================================================
 
-/// M-15 regression: after `apply_snapshot()`, the agenda must immediately
+/// Regression: after `apply_snapshot()`, the agenda must immediately
 /// exclude blocks whose page is template-tagged (a page with property
 /// `template`). Both `rebuild_agenda_cache` and `rebuild_projected_agenda_cache`
-/// consult `b.page_id` to apply the FEAT-5a template-page exclusion via
+/// Consult `b.page_id` to apply the template-page exclusion via
 /// `NOT EXISTS (... tp.block_id = b.page_id AND tp.key = 'template')`.
 ///
 /// Before the fix the snapshot/restore enqueue array placed
@@ -3255,7 +3255,7 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
             ],
             block_tags: vec![],
             // The page is template-tagged via property `template` — the
-            // FEAT-5a NOT EXISTS predicate keys off `tp.key = 'template'`
+            // NOT EXISTS predicate keys off `tp.key = 'template'`
             // alone (any value). Use the cheapest typed slot.
             block_properties: vec![BlockPropertySnapshot {
                 block_id: BlockId::test_id("TPL-PAGE"),
@@ -3290,7 +3290,7 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
             .unwrap();
     assert!(
         agenda_rows.iter().all(|(_, b)| b != "TPL-CHILD"),
-        "M-15: agenda_cache must exclude blocks whose page is template-tagged \
+        "agenda_cache must exclude blocks whose page is template-tagged \
          immediately after restore (no further events). RebuildPageIds must \
          run before RebuildAgendaCache so b.page_id is populated when the \
          agenda's `NOT EXISTS (... tp.block_id = b.page_id AND tp.key = 'template')` \
@@ -3315,10 +3315,10 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
 }
 
 // =======================================================================
-// apply_snapshot_uses_awaiting_enqueue_background (M-67)
+// Apply_snapshot_uses_awaiting_enqueue_background
 // =======================================================================
 
-/// M-67 regression: `apply_snapshot` must enqueue every cache-rebuild
+/// Regression: `apply_snapshot` must enqueue every cache-rebuild
 /// task via the awaiting `enqueue_background` variant — never the
 /// `try_enqueue_background` variant that silently drops tasks when the
 /// bounded background channel is saturated.
@@ -3413,7 +3413,7 @@ async fn apply_snapshot_uses_awaiting_enqueue_background() {
     let processed_delta = bg_processed_after - bg_processed_before;
     assert!(
         processed_delta >= 9,
-        "M-67: expected at least 9 background tasks processed after \
+        "expected at least 9 background tasks processed after \
          apply_snapshot + flush_background (9 cache rebuilds + 1 barrier), \
          got delta = {processed_delta}"
     );
@@ -3424,7 +3424,7 @@ async fn apply_snapshot_uses_awaiting_enqueue_background() {
     // `try_enqueue_background`.
     assert_eq!(
         bg_dropped_after, bg_dropped_before,
-        "M-67: bg_dropped must not increment during apply_snapshot — the \
+        "bg_dropped must not increment during apply_snapshot — the \
          awaiting `enqueue_background` variant has no drop path. A non-zero \
          delta means apply_snapshot regressed to `try_enqueue_background` \
          (which silently drops on a saturated channel)"
@@ -3434,7 +3434,7 @@ async fn apply_snapshot_uses_awaiting_enqueue_background() {
 }
 
 // =======================================================================
-// apply_snapshot_rejects_traversal_attachment_fs_path (BUG-35)
+// Apply_snapshot_rejects_traversal_attachment_fs_path
 // =======================================================================
 
 /// Belt-and-suspenders: ensure a snapshot that contains an attachment
@@ -3521,7 +3521,7 @@ async fn apply_snapshot_rejects_traversal_attachment_fs_path() {
 }
 
 // =======================================================================
-// compact_read_phase_collects_data (PERF-10a)
+// Compact_read_phase_collects_data
 // =======================================================================
 
 /// Verify that the read-phase helpers (`collect_tables`, `collect_frontier`)
@@ -3595,7 +3595,7 @@ async fn compact_read_phase_collects_data() {
 }
 
 // =======================================================================
-// compact_stale_read_safety (PERF-10a)
+// Compact_stale_read_safety
 // =======================================================================
 
 /// Verify stale-read safety: ops written between Phase 1 (read) and
@@ -3654,7 +3654,7 @@ async fn compact_stale_read_safety() {
 }
 
 // =======================================================================
-// compact_stale_read_seq_guard (PERF-10a)
+// Compact_stale_read_seq_guard
 // =======================================================================
 
 /// Directly verify the seq-bounded DELETE guard: manually execute the
@@ -3895,7 +3895,7 @@ mod proptest_tests {
 }
 
 // =======================================================================
-// UX-250: apply_snapshot rebuilds block_tag_refs from restored content
+// Apply_snapshot rebuilds block_tag_refs from restored content
 // =======================================================================
 
 /// Restore a vault that contains a tag + a content block whose content
@@ -4192,7 +4192,7 @@ async fn apply_snapshot_repairs_unregistered_space_refs_708() {
 }
 
 // =======================================================================
-// L-111: apply_snapshot must roll back chunk-1 inserts when chunk-2 fails
+// Apply_snapshot must roll back chunk-1 inserts when chunk-2 fails
 // =======================================================================
 //
 // `apply_snapshot` batch-INSERTs each table in chunks of
@@ -4323,7 +4323,7 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
         .unwrap();
     assert_eq!(
         prop_count, 0,
-        "L-111: chunk-1 block_properties rows must roll back when chunk-2 fails; \
+        "chunk-1 block_properties rows must roll back when chunk-2 fails; \
          got {prop_count} rows still present, expected 0"
     );
 
@@ -4335,17 +4335,17 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
         .unwrap();
     assert_eq!(
         blk_count, 0,
-        "L-111: blocks inserted before the failing chunk must also roll back"
+        "blocks inserted before the failing chunk must also roll back"
     );
 
     mat.shutdown();
 }
 
 // =======================================================================
-// L-109: compaction preserves snapshot atomicity on injected DELETE failure
+// Compaction preserves snapshot atomicity on injected DELETE failure
 // =======================================================================
 
-/// L-109: `compact_op_log`'s entire write phase is wrapped in `BEGIN
+/// `compact_op_log`'s entire write phase is wrapped in `BEGIN
 /// IMMEDIATE`; on any failure, both the `INSERT INTO log_snapshots` and the
 /// `DELETE FROM op_log` must roll back together.
 ///
@@ -4355,7 +4355,7 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
 ///
 ///   - the call returns `Err(...)`,
 ///   - **the snapshot row exists with `status = 'complete'`** — per SQL-review
-///     M-6, the snapshot create commits in TX 1 before the op_log purge
+/// The snapshot create commits in TX 1 before the op_log purge
 ///     runs in TX 2 so a purge crash leaves the snapshot durable instead
 ///     of forcing the next boot to re-encode the same byte payload,
 ///   - every `op_log` row is intact (the `DELETE` was rolled back when
@@ -4363,7 +4363,7 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
 ///
 /// Pre-M-6 this test asserted "no snapshot row exists" — both INSERT and
 /// DELETE ran inside the same tx so any DELETE abort wiped the snapshot.
-/// M-6 split the txs to stop that retry-thrash; the test now guards the
+/// Split the txs to stop that retry-thrash; the test now guards the
 /// new contract: snapshot durable, op_log intact.
 #[tokio::test]
 async fn compact_op_log_rolls_back_on_injected_delete_failure_l109() {
@@ -4396,7 +4396,7 @@ async fn compact_op_log_rolls_back_on_injected_delete_failure_l109() {
         "CREATE TRIGGER l109_inject_delete_failure \
          AFTER DELETE ON op_log \
          BEGIN \
-             SELECT RAISE(ABORT, 'L-109 injected: DELETE FROM op_log not allowed'); \
+             SELECT RAISE(ABORT, ' injected: DELETE FROM op_log not allowed'); \
          END",
     )
     .execute(&pool)
@@ -4407,13 +4407,13 @@ async fn compact_op_log_rolls_back_on_injected_delete_failure_l109() {
     let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS).await;
     assert!(
         result.is_err(),
-        "L-109: compaction must fail when DELETE FROM op_log aborts; got {result:?}"
+        "compaction must fail when DELETE FROM op_log aborts; got {result:?}"
     );
 
     // Snapshot row MUST exist with status='complete' — TX 1 committed the
     // snapshot before TX 2 attempted the DELETE; the injected DELETE abort
     // only rolled back TX 2 (op_log purge + old-snapshot cleanup), leaving
-    // the snapshot durable. This is the M-6 contract: don't retry-thrash
+    // The snapshot durable. This is the contract: don't retry-thrash
     // by throwing away a perfectly-good snapshot just because the purge
     // hit a transient disk error.
     let complete_snaps: i64 =
@@ -4423,7 +4423,7 @@ async fn compact_op_log_rolls_back_on_injected_delete_failure_l109() {
             .unwrap();
     assert_eq!(
         complete_snaps, 1,
-        "M-6: exactly one 'complete' snapshot must remain after a rolled-back \
+        "exactly one 'complete' snapshot must remain after a rolled-back \
          purge — the snapshot tx committed before the purge tx attempted DELETE"
     );
     let pending_snaps: i64 =
@@ -4433,7 +4433,7 @@ async fn compact_op_log_rolls_back_on_injected_delete_failure_l109() {
             .unwrap();
     assert_eq!(
         pending_snaps, 0,
-        "M-6: no 'pending' snapshot row may leak — TX 1 always flips to \
+        "no 'pending' snapshot row may leak — TX 1 always flips to \
          'complete' before committing"
     );
 
@@ -4444,7 +4444,7 @@ async fn compact_op_log_rolls_back_on_injected_delete_failure_l109() {
         .unwrap();
     assert_eq!(
         ops_after, ops_before,
-        "M-6: op_log row count must be unchanged after a rolled-back purge — \
+        "op_log row count must be unchanged after a rolled-back purge — \
          TX 2's DELETE was aborted along with the whole purge tx"
     );
 
@@ -4458,14 +4458,14 @@ async fn compact_op_log_rolls_back_on_injected_delete_failure_l109() {
 }
 
 // =======================================================================
-// L-105 — `compact_op_log` warns when op_log buffering would approach
+// `compact_op_log` warns when op_log buffering would approach
 // the platform memory ceiling
 // =======================================================================
 //
 // `collect_tables` + `encode_snapshot` buffer the entire derived state
 // in memory before encoding; on a 1M-block vault this can exceed the
 // per-process heap budget on Android (24 MB release-APK ceiling). The
-// L-105 fix is a heads-up `warn!` keyed off two op_log dimensions
+// Fix is a heads-up `warn!` keyed off two op_log dimensions
 // (row count + total payload bytes), not an abort. This test pins:
 //
 //   1. The threshold constants haven't drifted (`SNAPSHOT_WARN_ROW_COUNT`
@@ -4492,12 +4492,12 @@ async fn compact_op_log_logs_warn_when_row_count_exceeds_threshold_l105() {
     // 1. Threshold constants — pinned values, not just "non-zero".
     assert_eq!(
         SNAPSHOT_WARN_ROW_COUNT, 100_000,
-        "L-105: row threshold must remain 100k — see create.rs doc comment for rationale"
+        "row threshold must remain 100k — see create.rs doc comment for rationale"
     );
     assert_eq!(
         SNAPSHOT_WARN_PAYLOAD_BYTES,
         64 * 1024 * 1024,
-        "L-105: byte threshold must remain 64 MiB — see create.rs doc comment for rationale"
+        "byte threshold must remain 64 MiB — see create.rs doc comment for rationale"
     );
 
     // 2. `measure_op_log_size` returns COUNT/SUM matching the seeded
@@ -4516,11 +4516,11 @@ async fn compact_op_log_logs_warn_when_row_count_exceeds_threshold_l105() {
 
     assert_eq!(
         row_count, 3,
-        "L-105: measure_op_log_size must report the exact COUNT(*) of op_log rows"
+        "measure_op_log_size must report the exact COUNT(*) of op_log rows"
     );
     assert!(
         payload_bytes > 0,
-        "L-105: measure_op_log_size must report a non-zero SUM(LENGTH(payload)) when ops exist; got {payload_bytes}"
+        "measure_op_log_size must report a non-zero SUM(LENGTH(payload)) when ops exist; got {payload_bytes}"
     );
 
     // The seeded scenario must NOT exceed either threshold (sanity:
@@ -4528,11 +4528,11 @@ async fn compact_op_log_logs_warn_when_row_count_exceeds_threshold_l105() {
     // with a handful of ops).
     assert!(
         row_count <= SNAPSHOT_WARN_ROW_COUNT,
-        "L-105: 3 seeded ops must not exceed the 100k row threshold"
+        "3 seeded ops must not exceed the 100k row threshold"
     );
     assert!(
         payload_bytes <= SNAPSHOT_WARN_PAYLOAD_BYTES,
-        "L-105: 3 seeded ops must not exceed the 64 MiB byte threshold"
+        "3 seeded ops must not exceed the 64 MiB byte threshold"
     );
 
     // 3. Boundary check — strictly `>`. If either bound were ever
@@ -4544,19 +4544,19 @@ async fn compact_op_log_logs_warn_when_row_count_exceeds_threshold_l105() {
     };
     assert!(
         !exceeds(SNAPSHOT_WARN_ROW_COUNT, 0),
-        "L-105: at exactly the row threshold, warn must NOT fire (strict >)"
+        "at exactly the row threshold, warn must NOT fire (strict >)"
     );
     assert!(
         exceeds(SNAPSHOT_WARN_ROW_COUNT + 1, 0),
-        "L-105: at row threshold + 1, warn MUST fire"
+        "at row threshold + 1, warn MUST fire"
     );
     assert!(
         !exceeds(0, SNAPSHOT_WARN_PAYLOAD_BYTES),
-        "L-105: at exactly the byte threshold, warn must NOT fire (strict >)"
+        "at exactly the byte threshold, warn must NOT fire (strict >)"
     );
     assert!(
         exceeds(0, SNAPSHOT_WARN_PAYLOAD_BYTES + 1),
-        "L-105: at byte threshold + 1, warn MUST fire"
+        "at byte threshold + 1, warn MUST fire"
     );
 
     // 4. End-to-end: `compact_op_log` runs cleanly with the new
@@ -4564,22 +4564,22 @@ async fn compact_op_log_logs_warn_when_row_count_exceeds_threshold_l105() {
     //    the committed `.sqlx/` cache and not perturb the existing
     //    Phase 1 read transaction. We don't assert on logs here (no
     //    tracing capture); a successful return proves the production
-    //    path now contains and exercises the L-105 probe.
+    // Path now contains and exercises the probe.
     insert_block(&pool, "BLK-L105-A", "content").await;
     let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS).await;
     assert!(
         result.is_ok(),
-        "L-105: compact_op_log must not regress on the new measure_op_log_size pre-flight; got {result:?}"
+        "compact_op_log must not regress on the new measure_op_log_size pre-flight; got {result:?}"
     );
 }
 
 // =======================================================================
-// M-70 — apply_snapshot followed by anchor yields consistent prev_hash
+// Apply_snapshot followed by anchor yields consistent prev_hash
 // =======================================================================
 //
 // `apply_snapshot` performs `DELETE FROM op_log` and commits without
 // persisting the snapshot's `up_to_hash` anywhere as the post-restore
-// anchor. The FEAT-6 sync orchestrator at
+// Anchor. The sync orchestrator at
 // `sync_daemon::snapshot_transfer::try_receive_snapshot_catchup` calls
 // `peer_refs::update_on_sync` immediately after, so the happy path is
 // covered — but the contract is caller-enforced.
@@ -4624,7 +4624,7 @@ async fn apply_snapshot_followed_by_anchor_yields_consistent_prev_hash() {
     let snap_up_to_hash = snap_row.up_to_hash;
     assert!(
         !snap_up_to_hash.is_empty(),
-        "M-70: `up_to_hash` must be non-empty for a snapshot built over a non-empty op_log — \
+        "`up_to_hash` must be non-empty for a snapshot built over a non-empty op_log — \
          the test premise depends on having a real anchor to compare against"
     );
 
@@ -4642,12 +4642,12 @@ async fn apply_snapshot_followed_by_anchor_yields_consistent_prev_hash() {
         .unwrap();
     assert_eq!(
         op_log_count_after_apply, 0,
-        "M-70 premise: apply_snapshot must wipe op_log (the absence of a stored prev_hash \
+        " premise: apply_snapshot must wipe op_log (the absence of a stored prev_hash \
          is exactly what makes the peer_refs anchor load-bearing)"
     );
     assert_eq!(
         restored.up_to_hash, snap_up_to_hash,
-        "M-70 sanity: the decoded SnapshotData's up_to_hash must match the log_snapshots \
+        " sanity: the decoded SnapshotData's up_to_hash must match the log_snapshots \
          row's up_to_hash"
     );
 
@@ -4661,12 +4661,12 @@ async fn apply_snapshot_followed_by_anchor_yields_consistent_prev_hash() {
         .unwrap();
     crate::peer_refs::update_on_sync(&dst_pool, src_device, &snap_up_to_hash, "")
         .await
-        .expect("M-70: peer_refs::update_on_sync must succeed against a freshly upserted peer");
+        .expect("peer_refs::update_on_sync must succeed against a freshly upserted peer");
 
     // ── Now write a local op on the post-restore pool. After the wipe
     //    the destination's own chain restarts at seq=1 with no parent
     //    (genesis). What anchors this restart to the snapshot's tip is
-    //    the peer_refs row above — that is the contract M-70 guards.
+    // The peer_refs row above — that is the contract guards.
     let dst_local_device = "dev-local";
     let new_op = append_local_op_at(
         &dst_pool,
@@ -4692,27 +4692,27 @@ async fn apply_snapshot_followed_by_anchor_yields_consistent_prev_hash() {
     //    NULL, breaking the equality check below.
     assert_eq!(
         new_op.seq, 1,
-        "M-70: post-restore local chain must restart at seq=1 (op_log was wiped)"
+        "post-restore local chain must restart at seq=1 (op_log was wiped)"
     );
     assert!(
         new_op.parent_seqs.is_none(),
-        "M-70: the first local op after apply_snapshot has no parent in op_log — the chain \
+        "the first local op after apply_snapshot has no parent in op_log — the chain \
          anchor lives in peer_refs, not in op_log.parent_seqs (which is why the contract \
          is caller-enforced and why this regression test exists)"
     );
 
     // The load-bearing assertion: the persisted anchor for the source
-    // peer matches the snapshot's `up_to_hash`. Phrased the way M-70
+    // Peer matches the snapshot's `up_to_hash`. Phrased the way
     // describes it, this is "the resulting chain's `prev_hash` for the
     // snapshot's source device equals `snapshot.up_to_hash`".
     let anchored_peer_ref = crate::peer_refs::get_peer_ref(&dst_pool, src_device)
         .await
         .unwrap()
-        .expect("M-70: peer_refs row for the snapshot source device must exist after anchor");
+        .expect("peer_refs row for the snapshot source device must exist after anchor");
     assert_eq!(
         anchored_peer_ref.last_hash.as_deref(),
         Some(snap_up_to_hash.as_str()),
-        "M-70: peer_refs[{src_device}].last_hash must equal snapshot.up_to_hash after the \
+        "peer_refs[{src_device}].last_hash must equal snapshot.up_to_hash after the \
          orchestrator-style anchor — this is the chain `prev_hash` future cross-device \
          hash-chain validation will consult. A regression where apply_snapshot's caller \
          forgets the update_on_sync would leave this NULL and silently break sync."
@@ -4738,7 +4738,7 @@ async fn apply_snapshot_followed_by_anchor_yields_consistent_prev_hash() {
     );
     assert_eq!(
         new_op.hash, expected_hash,
-        "M-70: the post-restore local op's hash must reproduce via compute_op_hash over \
+        "the post-restore local op's hash must reproduce via compute_op_hash over \
          (device_id, seq, parent_seqs=None, op_type, payload) — proves the chain is \
          well-formed and reconcilable with the peer_refs anchor"
     );
@@ -5136,7 +5136,7 @@ async fn apply_snapshot_reset_then_new_ops_reach_peer_792() {
 /// absent from the `CACHE_TABLES` rebuild inventory — so after a snapshot
 /// catch-up the page-links/backlinks roll-up stayed EMPTY until some
 /// unrelated delete/restore/purge triggered the next full fan-out
-/// (exactly the BUG-42 stale-cache class the inventory exists to prevent).
+/// (exactly the stale-cache class the inventory exists to prevent).
 ///
 /// Pre-fix: the final assertion fails — the cache stays empty after
 /// `flush_background()` because no `RebuildPageLinkCache` task was ever
@@ -5248,7 +5248,7 @@ async fn apply_snapshot_rebuilds_page_link_cache_617() {
 /// #793 regression: `apply_snapshot` wipes the CRDT sidecar but left
 /// `log_snapshots` intact — pre-reset local snapshots remained offerable
 /// via `get_latest_snapshot`, so `try_offer_snapshot_catchup` could serve
-/// the PRE-RESET vault to a device still on the old lineage (M-58 only
+/// The PRE-RESET vault to a device still on the old lineage (only
 /// checks seq coverage of the requester's heads, which the old snapshot
 /// trivially satisfies). A post-reset device has nothing valid to offer
 /// until it snapshots its new state.

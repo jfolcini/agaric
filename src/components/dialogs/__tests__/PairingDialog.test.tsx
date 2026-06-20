@@ -37,7 +37,7 @@ vi.mock('react-qr-code', () => ({
   ),
 }))
 
-// UX-263: capture announce() calls from the SR threshold effect
+// Capture announce() calls from the SR threshold effect
 vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
@@ -871,10 +871,10 @@ describe('PairingDialog', () => {
   })
 
   // ------------------------------------------------------------------------
-  // MAINT-12: paste-focus setTimeout must be cleared on unmount so the
+  // Paste-focus setTimeout must be cleared on unmount so the
   // scheduled callback never runs against a detached DOM.
   // ------------------------------------------------------------------------
-  it('does not throw if unmounted between paste-focus setTimeout and fire (#MAINT-12)', async () => {
+  it('does not throw if unmounted between paste-focus setTimeout and fire (#)', async () => {
     mockInvokeByCommand({
       start_pairing: mockPairingInfo,
       list_peer_refs: [],
@@ -908,9 +908,9 @@ describe('PairingDialog', () => {
   })
 
   // -----------------------------------------------------------------------
-  // UX-263: Countdown SR-only announcer thresholds (60s / 30s / 10s / expired)
+  // Countdown SR-only announcer thresholds (60s / 30s / 10s / expired)
   // -----------------------------------------------------------------------
-  it('announces countdown only at SR-relevant thresholds (UX-263)', async () => {
+  it('announces countdown only at SR-relevant thresholds', async () => {
     vi.useFakeTimers()
     const announceMock = vi.mocked(announce)
     announceMock.mockClear()
@@ -960,9 +960,9 @@ describe('PairingDialog', () => {
   })
 
   // -----------------------------------------------------------------------
-  // UX-263: Mid-pair close guard — confirm before aborting in-flight pairing
+  // Mid-pair close guard — confirm before aborting in-flight pairing
   // -----------------------------------------------------------------------
-  it('shows close-guard ConfirmDialog when Esc is pressed mid-pair (UX-263)', async () => {
+  it('shows close-guard ConfirmDialog when Esc is pressed mid-pair', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
 
@@ -1025,7 +1025,7 @@ describe('PairingDialog', () => {
     resolveConfirm(undefined)
   })
 
-  it('closes immediately without guard when not mid-pair (UX-263)', async () => {
+  it('closes immediately without guard when not mid-pair', async () => {
     const user = userEvent.setup()
     mockInvokeByCommand({
       start_pairing: mockPairingInfo,
@@ -1049,11 +1049,11 @@ describe('PairingDialog', () => {
   })
 
   // -----------------------------------------------------------------------
-  // UX-263: Pause the countdown while the user is typing the passphrase so
+  // Pause the countdown while the user is typing the passphrase so
   // a tick boundary doesn't expire the session mid-handshake. Auto-resumes
   // on blur or after 5s of keystroke idleness.
   // -----------------------------------------------------------------------
-  it('pauses the countdown while the user is typing in a passphrase input (UX-263)', async () => {
+  it('pauses the countdown while the user is typing in a passphrase input', async () => {
     vi.useFakeTimers()
     mockInvokeByCommand({
       start_pairing: mockPairingInfo,
@@ -1089,7 +1089,7 @@ describe('PairingDialog', () => {
     vi.useRealTimers()
   })
 
-  it('resumes the countdown when the passphrase input is blurred (UX-263)', async () => {
+  it('resumes the countdown when the passphrase input is blurred', async () => {
     vi.useFakeTimers()
     mockInvokeByCommand({
       start_pairing: mockPairingInfo,
@@ -1130,7 +1130,7 @@ describe('PairingDialog', () => {
     vi.useRealTimers()
   })
 
-  it('auto-resumes the countdown after 5s of idle keystrokes (UX-263)', async () => {
+  it('auto-resumes the countdown after 5s of idle keystrokes', async () => {
     vi.useFakeTimers()
     mockInvokeByCommand({
       start_pairing: mockPairingInfo,
@@ -1165,7 +1165,7 @@ describe('PairingDialog', () => {
     vi.useRealTimers()
   })
 
-  it('shows "Paused while typing…" indicator while typing (UX-263)', async () => {
+  it('shows "Paused while typing…" indicator while typing', async () => {
     vi.useFakeTimers()
     mockInvokeByCommand({
       start_pairing: mockPairingInfo,
@@ -1194,7 +1194,7 @@ describe('PairingDialog', () => {
     vi.useRealTimers()
   })
 
-  it('announces countdown pause and resume so SR users hear the state change (UX-263)', async () => {
+  it('announces countdown pause and resume so SR users hear the state change', async () => {
     vi.useFakeTimers()
     mockInvokeByCommand({
       start_pairing: mockPairingInfo,

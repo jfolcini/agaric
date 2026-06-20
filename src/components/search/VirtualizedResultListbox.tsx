@@ -1,8 +1,8 @@
 /**
  * VirtualizedResultListbox — one page-group's `role="listbox"`, windowed
- * with `@tanstack/react-virtual` (PEND-58f FE-3).
+ * With `@tanstack/react-virtual`.
  *
- * Why per-group virtualization?  The search a11y model (PEND-50) renders
+ * Why per-group virtualization? The search a11y model renders
  * ONE `<ul role="listbox">` per expanded page-group, each with its own
  * `aria-activedescendant`. We keep that model exactly — this component is
  * a drop-in replacement for the single group `<ul>` formerly produced by
@@ -161,7 +161,7 @@ export function VirtualizedResultListbox({
       // inner spacer was removed).
       className="search-result-listbox ml-4 mt-1 list-none p-0 relative max-h-[max(calc(100dvh-320px),12rem)] overflow-y-auto before:content-[''] before:block before:w-px before:h-[var(--vrl-total-size)]"
       aria-label={ariaLabel}
-      // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role, jsx-a11y/prefer-tag-over-role -- `<ul role="listbox">` is the canonical WAI-ARIA listbox container; the search a11y model (PEND-50) requires per-group listboxes. Keyboard activation flows through `aria-activedescendant`, so the `<ul>` itself is the right host. A virtualized custom listbox can't be a <datalist>/<select> (those can't host the absolutely-positioned virtual rows).
+      // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role, jsx-a11y/prefer-tag-over-role -- `<ul role="listbox">` is the canonical WAI-ARIA listbox container; the search a11y model requires per-group listboxes. Keyboard activation flows through `aria-activedescendant`, so the `<ul>` itself is the right host. A virtualized custom listbox can't be a <datalist>/<select> (those can't host the absolutely-positioned virtual rows).
       role="listbox"
       aria-activedescendant={activeRowId}
       tabIndex={tabIndex}

@@ -556,7 +556,7 @@ async function resolveTagFilters(
  *   OR together (#720); tag filters union via `mode: 'or'` across
  *   resolved tag IDs.
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, scopes every dispatched IPC
+ * `spaceId` (Phase 4) — when set, scopes every dispatched IPC
  * to the active space; when `null` the call is cross-space (legacy).
  * Normalized to `''` at this boundary so internal helpers can take
  * `spaceId: string` (see FE-L-12).

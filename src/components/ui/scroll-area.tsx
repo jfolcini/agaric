@@ -3,7 +3,7 @@ import type * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
-// UX-226: Added optional `orientation` + `viewportRef` / `viewportClassName`
+// Added optional `orientation` + `viewportRef` / `viewportClassName`
 // / `viewportProps` props so ScrollArea can be used as the one-and-only
 // scroll primitive per AGENTS.md § "Mandatory patterns" (ScrollArea for
 // every scrollable container, bare `overflow-*` forbidden). Defaults

@@ -20,7 +20,7 @@ use super::*;
 /// `space_id`. The lookup is idempotent per-space: calling this multiple
 /// times on the same day with the same space always returns the same page.
 ///
-/// FEAT-3p5 — daily journal pages are scoped per-space (J1). Two devices
+/// Daily journal pages are scoped per-space (J1). Two devices
 /// in different spaces both create today's journal page without colliding
 /// because the `(content, space)` pair is the unique key, not just
 /// `content`.
@@ -46,7 +46,7 @@ pub async fn today_journal_inner(
 /// Thin delegator to [`resolve_or_create_journal_page`] — kept as a named
 /// public symbol so existing call sites (Tauri command wrapper,
 /// [`today_journal_inner`], the command-integration tests) continue to
-/// compile unchanged. New code (MCP `journal_for_date` tool, FEAT-4c) should
+/// Compile unchanged. New code (MCP `journal_for_date` tool) should
 /// prefer [`journal_for_date_inner`].
 ///
 /// # Errors
@@ -64,7 +64,7 @@ pub async fn navigate_journal_inner(
     resolve_or_create_journal_page(pool, device_id, materializer, &date, space_id).await
 }
 
-/// Typed-date variant of the journal-for-date lookup used by the FEAT-4c
+/// Typed-date variant of the journal-for-date lookup used by the
 /// MCP `journal_for_date` tool.
 ///
 /// Takes a parsed [`NaiveDate`] rather than a string so MCP callers can
@@ -74,7 +74,7 @@ pub async fn navigate_journal_inner(
 /// sites share one implementation so behaviour cannot drift between the
 /// frontend and the MCP surface.
 ///
-/// FEAT-3p5 — `space_id` is required to scope the journal lookup.
+/// `space_id` is required to scope the journal lookup.
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn journal_for_date_inner(
     pool: &SqlitePool,
@@ -98,9 +98,9 @@ pub async fn journal_for_date_inner(
 /// `CreateBlock` + `SetProperty(space)` pattern as
 /// [`crate::commands::create_page_in_space_inner`] so the new page
 /// never exists in the op log without its `space` property — the
-/// FEAT-3 invariant "nothing outside of spaces".
+/// Invariant "nothing outside of spaces".
 ///
-/// # M-22 — TOCTOU race fix
+/// # TOCTOU race fix
 ///
 /// The lookup-then-create sequence runs inside a single
 /// `BEGIN IMMEDIATE` transaction so concurrent IPC calls serialise on
@@ -110,7 +110,7 @@ pub async fn journal_for_date_inner(
 /// caller blocks until the first commits; its SELECT then sees the
 /// newly-created page and returns it instead of creating a duplicate.
 ///
-/// # FEAT-3p5 — per-space lookup
+/// # per-space lookup
 ///
 /// The lookup query filters `blocks` on `b.space_id = <space_id>` (#533,
 /// migration 0086 — `space_id` is a first-class column). The same date can
@@ -131,13 +131,13 @@ async fn resolve_or_create_journal_page(
 ) -> Result<BlockRow, AppError> {
     validate_date_format(date)?;
 
-    // M-22: BEGIN IMMEDIATE eagerly acquires the writer lock, serialising
+    // BEGIN IMMEDIATE eagerly acquires the writer lock, serialising
     // concurrent calls for the same date so the SELECT and the eventual
-    // INSERT are atomic with respect to each other. MAINT-112: CommandTx
+    // INSERT are atomic with respect to each other. CommandTx
     // couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "resolve_or_create_journal_page").await?;
 
-    // FEAT-3p5: look for an existing page whose content matches the date
+    // Look for an existing page whose content matches the date
     // exactly AND whose `space` ref property points at the requested
     // space. Two spaces with the same date keep distinct daily notes.
     let existing: Option<BlockRow> = sqlx::query_as!(
@@ -168,7 +168,7 @@ async fn resolve_or_create_journal_page(
         return Ok(row);
     }
 
-    // FEAT-3p5: validate `space_id` upfront inside the tx (TOCTOU-safe
+    // Validate `space_id` upfront inside the tx (TOCTOU-safe
     // against a concurrent space delete). The target must exist as a
     // live, non-conflict block AND carry `is_space = 'true'`. Mirrors
     // the check in `create_page_in_space_inner`.
@@ -198,7 +198,7 @@ async fn resolve_or_create_journal_page(
     // SELECT will observe this new page and they will fall through the
     // `if let Some(row)` branch above instead of inserting a duplicate.
     //
-    // FEAT-3p5: emit the same `CreateBlock` + `SetProperty(space=<sid>)`
+    // Emit the same `CreateBlock` + `SetProperty(space=<sid>)`
     // op pair as `create_page_in_space_inner` so a sync peer materializes
     // the new daily page with its space property in one step. We inline
     // the two helpers (rather than calling `create_page_in_space_inner`)
@@ -236,7 +236,7 @@ async fn resolve_or_create_journal_page(
     Ok(block)
 }
 
-/// FEAT-12 — Quick-capture a single content block onto today's journal page.
+/// Quick-capture a single content block onto today's journal page.
 ///
 /// Resolves today's journal page in `space_id` (creating it if it doesn't
 /// exist via [`today_journal_inner`]) and then appends a new `content`
@@ -250,7 +250,7 @@ async fn resolve_or_create_journal_page(
 /// the journal-page level — only the first call on a given day creates
 /// the page; subsequent calls reuse it.
 ///
-/// FEAT-3p5 — `space_id` is required to scope the capture to a single
+/// `space_id` is required to scope the capture to a single
 /// space. Two devices sharing the same OS hotkey but bound to different
 /// spaces will append into their own daily notes without colliding.
 ///
@@ -447,8 +447,8 @@ pub async fn list_journal_pages_in_range(
 
 #[cfg(test)]
 mod tests {
-    //! Unit tests for the journal command surface — focused on the M-22
-    //! TOCTOU fix and the FEAT-3p5 per-space lookup in
+    //! Unit tests for the journal command surface — focused on the
+    //! TOCTOU fix and the per-space lookup in
     //! [`resolve_or_create_journal_page`]. The broader contract
     //! (today_journal/navigate_journal idempotency, quick-capture
     //! happy path) is covered by the
@@ -475,7 +475,7 @@ mod tests {
         (pool, dir)
     }
 
-    /// FEAT-3p5: create a single test space and return its ULID. Used by
+    /// Create a single test space and return its ULID. Used by
     /// every test in this module so the resolver always has a valid
     /// space to scope under.
     async fn mk_space(pool: &SqlitePool, name: &str) -> String {
@@ -488,7 +488,7 @@ mod tests {
 
     /// Count non-deleted, non-conflict journal pages whose content
     /// matches `date` AND whose `space` ref points at `space_id`. Used
-    /// by both the M-22 regression test and the FEAT-3p5 per-space
+    /// By both the regression test and the per-space
     /// scoping tests.
     async fn count_journal_pages_for_date_in_space(
         pool: &SqlitePool,
@@ -581,7 +581,7 @@ mod tests {
             "idempotent resolve must leave exactly one journal page in the DB"
         );
 
-        // FEAT-3p5: the new page must carry a `space` ref property
+        // The new page must carry a `space` ref property
         // pointing at the requested space.
         let space_prop =
             sqlx::query_scalar!(r#"SELECT space_id FROM blocks WHERE id = ?"#, first.id,)
@@ -598,7 +598,7 @@ mod tests {
         mat.shutdown();
     }
 
-    /// M-22 regression guard.
+    /// Regression guard.
     ///
     /// Spawns three concurrent `resolve_or_create_journal_page` calls for
     /// the same date and asserts:
@@ -648,14 +648,14 @@ mod tests {
         for id in &ids {
             assert_eq!(
                 id, &first_id,
-                "M-22: all concurrent resolves must return the same page id, got {ids:?}"
+                "all concurrent resolves must return the same page id, got {ids:?}"
             );
         }
 
         let count = count_journal_pages_for_date_in_space(&pool, TEST_DATE, &space).await;
         assert_eq!(
             count, 1,
-            "M-22 regression: exactly ONE journal page must exist for {TEST_DATE} after \
+            " regression: exactly ONE journal page must exist for {TEST_DATE} after \
              three concurrent resolves, got {count} (ids = {ids:?})"
         );
 
@@ -675,7 +675,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             op_count, 1,
-            "M-22 regression: exactly ONE create_block op for the journal page must \
+            " regression: exactly ONE create_block op for the journal page must \
              be in the op_log, got {op_count}"
         );
 
@@ -689,7 +689,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // FEAT-3p5 — per-space lookup tests
+    // Per-space lookup tests
     // ------------------------------------------------------------------
 
     /// Two spaces, both with a journal page for the same date. The
@@ -711,7 +711,7 @@ mod tests {
 
         assert_ne!(
             page_a.id, page_b.id,
-            "FEAT-3p5: same date in two spaces must produce two distinct pages"
+            "same date in two spaces must produce two distinct pages"
         );
 
         // Re-lookup each — must return the same page (idempotent per-space).
@@ -773,7 +773,7 @@ mod tests {
 
         assert_ne!(
             page_a.id, page_b.id,
-            "FEAT-3p5: missing-in-space-b must create a NEW page, not return space_a's"
+            "missing-in-space-b must create a NEW page, not return space_a's"
         );
         assert_eq!(page_b.content.as_deref(), Some(TEST_DATE));
 
@@ -803,7 +803,7 @@ mod tests {
         mat.shutdown();
     }
 
-    /// FEAT-3p5: validation guard. Calling the resolver with a non-space
+    /// Validation guard. Calling the resolver with a non-space
     /// `space_id` (e.g. a content block, or a missing id) must fail with
     /// `AppError::Validation` rather than silently creating an unscoped
     /// page.
@@ -831,7 +831,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // BUG-48 — get_journal_page_by_date / list_journal_pages_in_range
+    // Get_journal_page_by_date / list_journal_pages_in_range
     // ------------------------------------------------------------------
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

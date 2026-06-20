@@ -2,7 +2,7 @@
  * Smoke tests for AppSidebar.
  *
  * Pins the basic rendering contract of the new component extracted
- * from App.tsx (MAINT-124 step 2). Full integration scenarios remain
+ * From App.tsx. Full integration scenarios remain
  * covered by App.test.tsx; these tests cover the new prop API in
  * isolation.
  */
@@ -40,7 +40,7 @@ function defaultProps(overrides: Partial<AppSidebarProps> = {}): AppSidebarProps
 }
 
 /**
- * PERF-19 — `syncState`, `syncPeers`, `lastSyncedAt`, `availableSpaces`,
+ * `syncState`, `syncPeers`, `lastSyncedAt`, `availableSpaces`,
  * `currentSpaceId`, and the `trashCount` badge are read directly from
  * the zustand stores inside the sidebar rather than forwarded as props.
  * Tests now seed those stores instead of injecting prop overrides.
@@ -76,7 +76,7 @@ beforeEach(() => {
 
   // Seed the space store the same way App.test.tsx does so the embedded
   // SpaceSwitcher / SpaceAccentBadge render against a deterministic
-  // active space. PERF-19 — AppSidebar now reads `availableSpaces` /
+  // Active space. AppSidebar now reads `availableSpaces` /
   // `currentSpaceId` directly from the space store rather than via
   // props, so the seed here doubles as the prop equivalent.
   useSpaceStore.setState({
@@ -85,7 +85,7 @@ beforeEach(() => {
     isReady: true,
   })
 
-  // PERF-19 — reset the sync store so each test starts from a
+  // Reset the sync store so each test starts from a
   // deterministic `idle` / no-peers / never-synced state. Individual
   // tests override via `seedSyncStore({…})`.
   useSyncStore.getState().reset()
@@ -187,12 +187,12 @@ describe('AppSidebar', () => {
     expect(onShowShortcuts).toHaveBeenCalledTimes(1)
   })
 
-  // UX-380 — "offline" (network problem) and "no peers" (pairing
+  // "offline" (network problem) and "no peers" (pairing
   // problem) used to share `bg-muted-foreground`, so users couldn't
   // tell whether to fix the network or pair a device. Pin the
   // distinction here so the two states keep diverging tokens.
-  it('uses distinct sync dot colors for offline vs no-peers states (UX-380)', () => {
-    // PERF-19 — sync state lives in the store now; seed instead of
+  it('uses distinct sync dot colors for offline vs no-peers states', () => {
+    // Sync state lives in the store now; seed instead of
     // passing as props.
     seedSyncStore({ state: 'offline', peers: [] })
     const { rerender, props } = renderSidebar()
@@ -237,13 +237,13 @@ describe('AppSidebar', () => {
     expect(unpairedClass).not.toContain('bg-sync-idle')
   })
 
-  // UX-379 — the visible "last synced" timestamp is hidden in
+  // The visible "last synced" timestamp is hidden in
   // icon-collapsed mode (`group-data-[collapsible=icon]:hidden`).
   // Pin that the same text is folded into the sync button tooltip
   // so the affordance survives the collapse.
-  it('includes the last synced status in the sync button tooltip (UX-379)', async () => {
+  it('includes the last synced status in the sync button tooltip', async () => {
     const user = userEvent.setup()
-    // PERF-19 — `lastSyncedAt` lives in the store now; the default
+    // `lastSyncedAt` lives in the store now; the default
     // reset in `beforeEach` already leaves it as `null`, so no extra
     // seed call is required.
     render(
@@ -272,11 +272,11 @@ describe('AppSidebar', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // UX-387 — the theme-toggle button cycles auto → dark → light, but the
+  // The theme-toggle button cycles auto → dark → light, but the
   // generic "Toggle theme" tooltip gave no signal of the current state.
   // The tooltip must now show the resolved theme name so the next click's
   // outcome is predictable.
-  it('shows the current theme name in the theme-toggle tooltip (UX-387)', async () => {
+  it('shows the current theme name in the theme-toggle tooltip', async () => {
     const user = userEvent.setup()
     render(
       <SidebarProvider defaultOpen={false}>
@@ -296,7 +296,7 @@ describe('AppSidebar', () => {
     })
   })
 
-  // UX-396 — the shortcuts button must surface the current keyboard
+  // The shortcuts button must surface the current keyboard
   // binding in its tooltip so the affordance is discoverable without
   // first opening the cheatsheet. The default binding is `?`.
   it('shows the keyboard binding in the shortcuts button tooltip', async () => {

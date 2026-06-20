@@ -1,5 +1,5 @@
 /**
- * PEND-68 — tests for useHasHardwareKeyboard.
+ * Tests for useHasHardwareKeyboard.
  */
 
 import { fireEvent, render, renderHook } from '@testing-library/react'

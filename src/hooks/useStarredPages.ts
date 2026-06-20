@@ -3,7 +3,7 @@
  *
  * Replaces the per-component `starredRevision` counter pattern that
  * `PageBrowser` and `PageHeader` previously used to force re-renders
- * after a bare `toggleStarred()` lib call (MAINT-130 sub-item b).
+ * After a bare `toggleStarred()` lib call (sub-item b).
  *
  * The localStorage shape is owned by `src/lib/starred-pages.ts` (a JSON
  * array under the `starred-pages` key). The hook sits on top: it reads

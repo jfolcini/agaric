@@ -180,7 +180,7 @@ pub async fn apply_reverse_in_tx(
             // < 100` bounds the walk. Shared CTE lives in
             // `crate::block_descendants`.
             //
-            // MAINT-214 (b): page_id is invariant under re-delete; the
+            // Page_id is invariant under re-delete; the
             // descendants keep their existing `page_id` and on next
             // restore the M6/restore-path (`restore_block_inner` or
             // `OpPayload::RestoreBlock` below) picks them up. No
@@ -379,7 +379,7 @@ pub async fn apply_reverse_in_tx(
 /// List all ops for blocks descended from a page, with cursor pagination
 /// and optional op_type filter.
 ///
-/// FEAT-3 Phase 8 — `scope` narrows the global (`page_id == "__all__"`)
+/// Phase 8 — `scope` narrows the global (`page_id == "__all__"`)
 /// query. [`SpaceScope::Active`] restricts the result set to ops whose
 /// `payload.block_id` belongs to the named space.
 /// [`SpaceScope::Global`] is the unscoped (cross-space) view.
@@ -422,7 +422,7 @@ pub async fn revert_ops_inner(
     // Open the IMMEDIATE write transaction, run the whole revert inside it,
     // then commit + fire dispatches.
     //
-    // MAINT-112: `CommandTx` couples the BEGIN IMMEDIATE + commit +
+    // `CommandTx` couples the BEGIN IMMEDIATE + commit +
     // post-commit `dispatch_background_or_warn` steps so a failed commit
     // cannot leak queued records to the materializer, and a missing
     // dispatch is structurally impossible (commit_and_dispatch drains
@@ -553,7 +553,7 @@ async fn revert_ops_in_tx(
 /// given page (or all blocks if `page_id == "__all__"`), filters out non-reversible
 /// ops, and calls `revert_ops_inner()` with the remainder.
 ///
-/// # Snapshot semantics (L-31) — atomic read+revert (#1551)
+/// # Snapshot semantics — atomic read+revert (#1551)
 ///
 /// The ops-to-revert membership SELECT runs **inside** the same
 /// `BEGIN IMMEDIATE` transaction that performs the revert (it executes on
@@ -779,7 +779,7 @@ pub async fn undo_page_op_inner(
 
     // Apply in single IMMEDIATE transaction.
     //
-    // MAINT-112: see `revert_ops_inner` for the rationale — CommandTx
+    // See `revert_ops_inner` for the rationale — CommandTx
     // makes the commit + dispatch pair atomic and impossible to
     // desequence.
     let mut tx = CommandTx::begin_immediate(pool, "undo_page_op").await?;
@@ -868,7 +868,7 @@ pub async fn redo_page_op_inner(
 
     // Apply in single IMMEDIATE transaction.
     //
-    // MAINT-112: see `revert_ops_inner` for the rationale — CommandTx
+    // See `revert_ops_inner` for the rationale — CommandTx
     // makes the commit + dispatch pair atomic and impossible to
     // desequence.
     let mut tx = CommandTx::begin_immediate(pool, "redo_page_op").await?;
@@ -905,7 +905,7 @@ pub async fn redo_page_op_inner(
     })
 }
 
-/// PEND-35 Tier 4.4 — Compute the size of the consecutive same-device,
+/// Compute the size of the consecutive same-device,
 /// within-window undo group starting at the Nth-most-recent **undoable** op
 /// of a page.
 ///
@@ -1121,7 +1121,7 @@ pub async fn redo_page_op(
 
 /// Tauri command: compute the size of the consecutive same-device,
 /// within-window undo group starting at the Nth-most-recent undoable op.
-/// Delegates to [`find_undo_group_inner`]. PEND-35 Tier 4.4.
+/// Delegates to [`find_undo_group_inner`]..
 #[tauri::command]
 #[specta::specta]
 pub async fn find_undo_group(
@@ -1287,7 +1287,7 @@ pub async fn compute_block_vs_current_diff_inner(
     // selected point. Bounding by `(created_at < ?c OR (created_at = ?c
     // AND seq <= ?s))` makes the bound agree with the ORDER BY.
     //
-    // MAINT-218: ORDER BY `created_at DESC, seq DESC` (not `seq DESC`
+    // ORDER BY `created_at DESC, seq DESC` (not `seq DESC`
     // alone) to mirror `find_prior_text`'s cross-device tie-break and the
     // canonical total order used by `commands/history.rs` /
     // `pagination/history.rs`. Sorting by `created_at` first picks the
@@ -1314,7 +1314,7 @@ pub async fn compute_block_vs_current_diff_inner(
         )));
     };
 
-    // Same `InvalidOperation` strategy as `compute_edit_diff_inner` (L-39):
+    // Same `InvalidOperation` strategy as `compute_edit_diff_inner`:
     // surface row identity through `sanitize_internal_error`'s pass-through
     // set when the on-disk payload is corrupt.
     let historical = if row.op_type == "edit_block" {
@@ -1362,7 +1362,7 @@ pub async fn compute_block_vs_current_diff(
 
 #[cfg(test)]
 mod tests {
-    //! Inline unit tests for [`compute_edit_diff_inner`] focused on the L-39
+    //! Inline unit tests for [`compute_edit_diff_inner`] focused on the
     //! error-path fix: parse failures of `EditBlockPayload` must surface a
     //! row-identifying [`AppError::InvalidOperation`] (which passes through
     //! [`super::sanitize_internal_error`] unchanged) rather than a generic
@@ -1470,7 +1470,7 @@ mod tests {
         );
     }
 
-    /// L-39 regression: a corrupted `edit_block` payload must surface as
+    /// Regression: a corrupted `edit_block` payload must surface as
     /// [`AppError::InvalidOperation`] with `(device_id, seq)` and the
     /// `EditBlockPayload` parser context embedded.  Crucially this is a
     /// pass-through variant in [`super::sanitize_internal_error`] — the
@@ -1520,7 +1520,7 @@ mod tests {
         // Defence-in-depth: confirm the variant is not in the sanitiser's
         // collapse-set.  If a future refactor adds InvalidOperation to the
         // set, this assertion forces an explicit decision before silently
-        // regressing the L-39 fix.
+        // Regressing the fix.
         let sanitised = super::sanitize_internal_error(err);
         assert!(
             matches!(sanitised, AppError::InvalidOperation(ref m) if m.contains("EditBlockPayload")),

@@ -1,5 +1,5 @@
 /**
- * PEND-60 Phase 1 — Pure caret-anchor utility.
+ * Phase 1 — Pure caret-anchor utility.
  *
  * Given a single-line `<input>` and a character offset, return a
  * viewport-relative `DOMRect` whose `(x, y)` is the pixel position of

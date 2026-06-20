@@ -48,7 +48,7 @@ export function usePageTemplateMeta(
 ): UsePageTemplateMetaReturn {
   const [isTemplate, setIsTemplate] = useState(false)
   const [isJournalTemplate, setIsJournalTemplate] = useState(false)
-  // FEAT-3 Phase 2 — `t('space.moveTo')` needs two bits of metadata that
+  // Phase 2 — `t('space.moveTo')` needs two bits of metadata that
   // aren't derivable from props: whether the current page is itself a
   // space block (moving spaces into spaces is nonsensical), and which
   // space currently owns it (so the destination list can exclude it).

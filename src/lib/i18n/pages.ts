@@ -152,7 +152,7 @@ export const pages: Record<string, string> = {
   'pageHeader.deleteConfirm': 'Delete this page? It can be restored from trash.',
   'pageHeader.starPage': 'Star this page',
   'pageHeader.unstarPage': 'Unstar this page',
-  // PEND-68 Part A — shared toast/restore copy for the page-delete flow
+  // Part A — shared toast/restore copy for the page-delete flow
   // surfaced by both `PageHeader` and journal `DaySection` via
   // `usePageDeleteAction`. Kept in its own `pageDeleteAction.*` namespace
   // so journal callers don't have to import `pageHeader.*` keys.
@@ -200,7 +200,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.countAll_one': '{{count}} page',
   'pageBrowser.countAll_other': '{{count}} pages',
   'pageBrowser.countFiltered': '{{loaded}} of {{total}} matching',
-  // PEND-58d D11 — chips active without a text query: numerator and
+  // Chips active without a text query: numerator and
   // denominator must share a basis, so show just the filtered total
   // ("312 matching pages") instead of "loaded of total".
   'pageBrowser.countMatching_one': '{{count}} matching page',
@@ -214,7 +214,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.sortMostContent': 'Most content',
   'pageBrowser.sortDefault': 'Default',
   'pageBrowser.sortPersistedTooltip': 'Your sort choice is saved across sessions',
-  // PEND-58d D3 — cue for frontend-only sorts that reorder only the
+  // Cue for frontend-only sorts that reorder only the
   // loaded pages while more remain to load.
   'pageBrowser.frontendSortHint': 'Sorted within loaded pages',
   'pageBrowser.frontendSortHintTooltip':
@@ -234,7 +234,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.starredSectionLabel_other': 'Starred, {{count}} pages',
   'pageBrowser.pagesSectionLabel_one': 'Pages, {{count}} page',
   'pageBrowser.pagesSectionLabel_other': 'Pages, {{count}} pages',
-  // #81 / PEND-57 — multi-select + batch toolbar.
+  // #81 / multi-select + batch toolbar.
   'pageBrowser.select.toggle': 'Select page',
   'pageBrowser.select.selectAll': 'Select all',
   'pageBrowser.select.clear': 'Clear selection',
@@ -325,7 +325,7 @@ export const pages: Record<string, string> = {
   'pages.outline.empty': 'No headings found',
   'pageTree.toggleNamespace': 'Toggle {{path}} namespace',
   'pageTree.toggleHybrid': 'Toggle {{path}} (hybrid namespace)',
-  // PEND-83 Bug 2 — child-pages tree section at the bottom of PageEditor.
+  // Bug 2 — child-pages tree section at the bottom of PageEditor.
   // Renders only when the current page actually has descendants (the
   // section hides itself otherwise), so `pagesTree.empty` is reserved
   // for the deliberate "no descendants" copy if a caller chooses to
@@ -334,7 +334,7 @@ export const pages: Record<string, string> = {
   'pagesTree.empty': 'No child pages.',
   'pagesTree.ariaLabel': 'Child pages of {{title}}',
   'pageProperty.tableErrorBoundary': 'Failed to load properties.',
-  // PEND-56 — DensityRow metadata badges + density tooltip
+  // DensityRow metadata badges + density tooltip
   'pageBrowser.metadata.inbound_one': '{{count}} inbound link',
   'pageBrowser.metadata.inbound_other': '{{count}} inbound links',
   'pageBrowser.metadata.children_one': '{{count}} child block',
@@ -345,14 +345,14 @@ export const pages: Record<string, string> = {
   'pageBrowser.metadata.propertyTodo': 'todos',
   'pageBrowser.metadata.propertyScheduled': 'scheduled',
   'pageBrowser.metadata.propertyDue': 'due',
-  // PEND-58 Phase 3+4 — compound-filter chip-row + Add-Filter popover
+  // Phase 3+4 — compound-filter chip-row + Add-Filter popover
   'pageBrowser.filter.addFilter': 'Add filter',
   'pageBrowser.filter.addFilterDialogLabel': 'Add a filter',
   'pageBrowser.filter.appliedFiltersLabel': 'Active filters',
   'pageBrowser.filter.filterGroup': 'Filter: {{label}}',
   'pageBrowser.filter.removeFilter': 'Remove filter {{label}}',
   'pageBrowser.filter.manyFiltersWarning': 'Many filters can slow the view.',
-  // PEND-58d D12 — clear-all control on the chip row.
+  // Clear-all control on the chip row.
   'pageBrowser.filter.clearAll': 'Clear all',
   'pageBrowser.filter.clearAllLabel': 'Clear all filters',
   'pageBrowser.filter.sharedGroup': 'Filters',
@@ -374,7 +374,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.pathPlaceholder': 'e.g. Projects/*',
   'pageBrowser.filter.propertyKeyPlaceholder': 'Property key',
   'pageBrowser.filter.propertyValuePlaceholder': 'Value',
-  // PEND-58d D24 — property predicate op selector + path exclude toggle.
+  // Property predicate op selector + path exclude toggle.
   'pageBrowser.filter.propertyOpLabel': 'Comparison',
   'pageBrowser.filter.propertyOpEq': 'is',
   'pageBrowser.filter.propertyOpNe': 'is not',
@@ -392,19 +392,19 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.summarySpace': 'this space',
   'pageBrowser.filter.summaryPriority': 'priority {{priority}}',
   'pageBrowser.filter.summaryUnknown': 'filter',
-  // PEND-58b — a11y: live-region announcements + facet descriptions
+  // A11y: live-region announcements + facet descriptions
   'pageBrowser.filter.announceAdded': 'Filter added: {{label}}.',
   'pageBrowser.filter.announceRemoved': 'Filter removed: {{label}}.',
   'pageBrowser.filter.announceResults_one': '{{count}} result.',
   'pageBrowser.filter.announceResults_other': '{{count}} results.',
-  // PEND-58e E16 — clear-all of N chips announces a single dedicated
+  // Clear-all of N chips announces a single dedicated
   // message (a per-chip `.find()` would announce only the first removed).
   'pageBrowser.filter.announceCleared': 'Cleared all filters.',
-  // PEND-58e E18 — the backend rejects a malformed/disallowed compound
+  // The backend rejects a malformed/disallowed compound
   // filter with `Validation("InvalidFilter: …")`; surface a specific
   // toast instead of the generic "Failed to load pages".
   'pageBrowser.filter.invalidFilter': 'That filter is invalid and was not applied.',
-  // PEND-58d D24 — tightened so Orphan and "No inbound links" read as clearly
+  // Tightened so Orphan and "No inbound links" read as clearly
   // distinct: Orphan is fully isolated (no links either way), whereas "No
   // inbound links" is the looser inbound-only sibling (the page may still link
   // out). Stub is about content, not links.
@@ -412,7 +412,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.facetStubDesc': 'A titled page with no content blocks.',
   'pageBrowser.filter.facetHasNoInboundLinksDesc':
     'Nothing links to this page (it may still link out).',
-  // PEND-58e E19 — short descriptions for the value-bearing facets so they read
+  // Short descriptions for the value-bearing facets so they read
   // as clearly as the boolean ones in the Add-Filter popover.
   'pageBrowser.filter.facetTagDesc': 'Pages tagged with a specific tag id.',
   'pageBrowser.filter.facetPathDesc': 'Pages whose path matches a glob pattern.',

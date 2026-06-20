@@ -80,7 +80,7 @@ async fn test_pool() -> (SqlitePool, TempDir) {
 
 /// Shorthand: create a content-type block (the most common case in tests).
 ///
-/// Post-MAINT-112 every `create_block_inner` call enqueues a background
+/// Post- every `create_block_inner` call enqueues a background
 /// op dispatch via `CommandTx::commit_and_dispatch`, even for `content`
 /// blocks. Tests that read materializer-affected state (caches, joined
 /// projections, anything paginated through `list_blocks_inner` /
@@ -111,7 +111,7 @@ async fn create_content(
 /// Allow materializer background tasks to settle before the next write
 /// or before any read of materializer-affected state.
 ///
-/// Post-MAINT-112 every block op (create / edit / delete / restore /
+/// Post- every block op (create / edit / delete / restore /
 /// purge — regardless of block_type) enqueues a background dispatch via
 /// `CommandTx::commit_and_dispatch`. Tests that read paginated /
 /// projected state (`list_blocks_inner`, `list_trash_inner`,
@@ -468,7 +468,7 @@ async fn recovery_on_empty_database_is_noop() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    // L-103 test isolation: tests share a single process, and the
+    // Test isolation: tests share a single process, and the
     // production guard would trip on the second `recover_at_boot` call
     // in the same run. Reset before each invocation so the four
     // recovery integration tests can run together (matches
@@ -519,7 +519,7 @@ async fn recovery_flushes_unflushed_draft_as_edit_op() {
         .await
         .unwrap();
 
-    // L-103 test isolation: tests share a single process, and the
+    // Test isolation: tests share a single process, and the
     // production guard would trip on the second `recover_at_boot` call
     // in the same run. Reset before each invocation so the four
     // recovery integration tests can run together (matches
@@ -600,7 +600,7 @@ async fn recovery_skips_already_flushed_draft_without_duplicate() {
         .unwrap()
         .len();
 
-    // L-103 test isolation: tests share a single process, and the
+    // Test isolation: tests share a single process, and the
     // production guard would trip on the second `recover_at_boot` call
     // in the same run. Reset before each invocation so the four
     // recovery integration tests can run together (matches
@@ -669,7 +669,7 @@ async fn recovery_unflushed_draft_with_prior_edit_includes_prev_edit() {
 
     let ops_before = ops_pre_draft.len();
 
-    // L-103 test isolation: tests share a single process, and the
+    // Test isolation: tests share a single process, and the
     // production guard would trip on the second `recover_at_boot` call
     // in the same run. Reset before each invocation so the four
     // recovery integration tests can run together (matches
@@ -987,7 +987,7 @@ async fn pagination_on_empty_database_returns_no_items() {
         None,
         None,
         Some(50),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1050,7 +1050,7 @@ async fn list_excludes_soft_deleted_blocks_and_trash_shows_only_deleted() {
         None,
         None,
         Some(50),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1090,7 +1090,7 @@ async fn cursor_pagination_walks_all_blocks_without_duplicates() {
             .id,
         );
     }
-    // Drain background dispatches before paginating: post-MAINT-112 even
+    // Drain background dispatches before paginating: post- even
     // content-type creates enqueue a bg op record, and `list_blocks_inner`
     // joins on materializer-written state. Without this, the loop below
     // can observe partial state and miss / duplicate blocks (~12% flake
@@ -1113,7 +1113,7 @@ async fn cursor_pagination_walks_all_blocks_without_duplicates() {
             None,
             cursor,
             Some(PAGE_SIZE),
-            TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+            TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
         )
         .await
         .unwrap();
@@ -1164,7 +1164,7 @@ async fn pagination_with_exact_page_boundary_terminates_correctly() {
         None,
         None,
         Some(PAGE_SIZE),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1237,7 +1237,7 @@ async fn list_by_type_filters_to_matching_block_type() {
         None,
         None,
         Some(50),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1254,7 +1254,7 @@ async fn list_by_type_filters_to_matching_block_type() {
         None,
         None,
         Some(50),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1271,7 +1271,7 @@ async fn list_by_type_filters_to_matching_block_type() {
         None,
         None,
         Some(50),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1342,7 +1342,7 @@ async fn children_listed_in_position_order() {
         None,
         None,
         Some(50),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -2113,7 +2113,7 @@ async fn property_lifecycle_set_get_edit_delete_cascade() {
 }
 
 // ======================================================================
-// Group 12: page_id ↔ space drift audit (PEND-13)
+// Group 12: page_id ↔ space drift audit
 // ======================================================================
 //
 // Three denormalised fields must stay in sync to prevent the space
@@ -2318,7 +2318,7 @@ async fn run_drift_audit(pool: &SqlitePool, label: &str) {
     }
 }
 
-/// PEND-13 — populated-fixture per-block drift audit. Bootstraps
+/// Populated-fixture per-block drift audit. Bootstraps
 /// Personal + Work, creates two pages (one per space) each with a
 /// child + grandchild, and moves one child cross-space. After the
 /// fixture settles, runs the three-assertion audit on every live
@@ -2412,7 +2412,7 @@ async fn page_id_space_drift_audit_per_block() {
     run_drift_audit(&pool, "per_block").await;
 }
 
-/// PEND-13 op-type coverage variant. Same fixture base, then
+/// Op-type coverage variant. Same fixture base, then
 /// exercises every block lifecycle op (`DeleteBlock`,
 /// `RestoreBlock`, `PurgeBlock`, `SetProperty(key='space')`) and
 /// re-runs the drift audit after each transition.

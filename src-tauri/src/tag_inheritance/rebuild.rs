@@ -18,9 +18,9 @@ use crate::error::AppError;
 /// Atomic DELETE + recompute in a single transaction. Called as a background
 /// materializer task (safety net / initial population).
 pub async fn rebuild_all(pool: &SqlitePool) -> Result<(), AppError> {
-    // L-94 / issue #117: take the writer lock up-front via BEGIN IMMEDIATE
+    // / issue #117: take the writer lock up-front via BEGIN IMMEDIATE
     // (same reason as `rebuild_all_split` below). `begin_immediate_logged`
-    // adds the MAINT-30 slow-acquire log so per-rebuild contention is
+    // Adds the slow-acquire log so per-rebuild contention is
     // observable in production traces.
     let mut tx = crate::db::begin_immediate_logged(pool, "tag_inheritance_rebuild").await?;
 
@@ -52,8 +52,8 @@ pub async fn rebuild_all(pool: &SqlitePool) -> Result<(), AppError> {
 /// stability with the [`crate::materializer::handlers`] split/single
 /// dispatch helper but is intentionally unused.
 ///
-/// Closes L-93 (no per-row INSERT loop — the recursive CTE writes the
-/// full tuple set in one statement) and L-94 (no read-vs-write race —
+/// Closes (no per-row INSERT loop — the recursive CTE writes the
+/// Full tuple set in one statement) and (no read-vs-write race —
 /// `BEGIN IMMEDIATE` serialises the rebuild with concurrent
 /// [`super::apply_op_tag_inheritance`] writers, so any in-flight incremental
 /// update either lands fully before the rebuild's DELETE or commits
@@ -62,7 +62,7 @@ pub(crate) async fn rebuild_all_split(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<(), AppError> {
-    // L-94: rebuild runs entirely on write_pool inside BEGIN IMMEDIATE;
+    // Rebuild runs entirely on write_pool inside BEGIN IMMEDIATE;
     // read_pool is retained for API stability with `dispatch_split_or_single`.
     let _ = read_pool;
 
@@ -70,7 +70,7 @@ pub(crate) async fn rebuild_all_split(
     // `apply_op_tag_inheritance` calls serialise behind us. Combined with
     // the single-statement recursive-CTE INSERT below, this means the
     // DELETE + recompute is atomic with respect to incremental updates.
-    // `begin_immediate_logged` adds the MAINT-30 slow-acquire log
+    // `begin_immediate_logged` adds the slow-acquire log
     // (consistency with PR #116's cache/ migrations).
     let mut tx =
         crate::db::begin_immediate_logged(write_pool, "tag_inheritance_rebuild_split").await?;
@@ -79,7 +79,7 @@ pub(crate) async fn rebuild_all_split(
         .execute(&mut *tx)
         .await?;
 
-    // L-93: same recursive-CTE INSERT … SELECT used by `rebuild_all` —
+    // Same recursive-CTE INSERT … SELECT used by `rebuild_all` —
     // no Rust-side tuple materialisation, no per-row INSERT loop.
     sqlx::query(concat!(
         "WITH RECURSIVE ",

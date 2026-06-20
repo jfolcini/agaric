@@ -83,7 +83,7 @@ fn now_ms() -> i64 {
 }
 
 /// The apply-cursor seq a snapshot taken *now* is guaranteed to reflect
-/// (PEND-70 C1/C2 watermark).
+/// (C2 watermark).
 ///
 /// `materializer_apply_cursor.materialized_through_seq` tracks
 /// ENGINE-APPLY progress, NOT SQL-materialization progress. It advances
@@ -304,7 +304,7 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     // serialization. A `LoroDoc` clone is a reference clone (shared
     // underlying doc), so this does NOT double peak memory — see
     // `LoroEngineRegistry::snapshot_all_engines` for the full rationale.
-    // PEND-70 C1/C2: read the watermark BEFORE acquiring the engine lock,
+    // /C2: read the watermark BEFORE acquiring the engine lock,
     // so it is a safe lower bound for every engine exported in this pass —
     // the lock-time cursor can only be >= this value, and each engine
     // reflects all ops <= (lock-time cursor - 1) >= this watermark.
@@ -377,7 +377,7 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
 
 /// Default cadence for the periodic snapshot task (5 minutes).
 ///
-/// Restored after the PEND-09 parity flush task — which hosted the
+/// Restored after the parity flush task — which hosted the
 /// `save_all_engines` call on its tick — was deleted, leaving snapshots
 /// unpersisted (the resulting empty `loro_doc_state` + advancing apply
 /// cursor wedged the materializer). The engine applies at human-typing

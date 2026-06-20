@@ -80,7 +80,7 @@ vi.mock('lucide-react', () => ({
   XIcon: (props: Record<string, unknown>) => <svg data-testid="x-icon" {...props} />,
 }))
 
-// Mock announcer (UX-282) — track screen-reader announcements per outcome
+// Mock announcer — track screen-reader announcements per outcome
 vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
@@ -122,7 +122,7 @@ beforeEach(() => {
   })
   useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
   useUndoStore.setState({ pages: new Map() })
-  // FEAT-3 Phase 2 — seed two spaces so the "Move to space" sub-menu
+  // Phase 2 — seed two spaces so the "Move to space" sub-menu
   // (which filters out the current owner) has a non-empty target list
   // once a page's `space` property is populated.
   useSpaceStore.setState({
@@ -330,7 +330,7 @@ describe('PageHeader title editing', () => {
     })
   })
 
-  // UX-360 — successful rename surfaces a user-visible toast for sighted
+  // Successful rename surfaces a user-visible toast for sighted
   // users without screen readers, in addition to the existing aria-live
   // announcement (regression-guarded below).
   it('fires toast.success with localised text on successful rename', async () => {
@@ -352,7 +352,7 @@ describe('PageHeader title editing', () => {
     expect(mockedAnnounce).toHaveBeenCalledWith('Page renamed')
   })
 
-  // UX-360 — a no-change blur (title unchanged) must be silent.
+  // A no-change blur (title unchanged) must be silent.
   it('does not fire toast.success when blur leaves the title unchanged', async () => {
     const user = userEvent.setup()
     setupTagMock([])
@@ -369,7 +369,7 @@ describe('PageHeader title editing', () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
   })
 
-  // UX-360 — a failed rename must not surface a spurious success toast;
+  // A failed rename must not surface a spurious success toast;
   // the existing error path (toast.error) is exercised separately.
   it('does not fire toast.success when the rename IPC rejects', async () => {
     const user = userEvent.setup()
@@ -427,7 +427,7 @@ describe('PageHeader tag management', () => {
     })
   })
 
-  // UX-248 — Unicode-aware fold: tag picker filter matches Turkish /
+  // Unicode-aware fold: tag picker filter matches Turkish /
   // German / accented tag names via `matchesSearchFolded`.
   it('tag picker search matches accented tag when query is ASCII', async () => {
     const user = userEvent.setup()
@@ -467,7 +467,7 @@ describe('PageHeader tag management', () => {
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
-    // No tags applied → inline "add tag" button is hidden (per UX-H10),
+    // No tags applied → inline "add tag" button is hidden,
     // so open the picker via the kebab menu instead.
     await user.click(screen.getByRole('button', { name: /page actions/i }))
     await user.click(await screen.findByText('Add tag'))
@@ -972,7 +972,7 @@ describe('PageHeader page-level undo/redo buttons', () => {
   })
 })
 
-// ── Breadcrumb navigation for namespaced pages (UX-257) ──────────────────
+// ── Breadcrumb navigation for namespaced pages ──────────────────
 
 describe('PageHeader breadcrumb', () => {
   it('shows breadcrumb for namespaced page title', () => {
@@ -991,13 +991,13 @@ describe('PageHeader breadcrumb', () => {
     const buttonTexts = Array.from(buttons).map((b) => b.textContent)
     expect(buttonTexts).not.toContain('tasks')
 
-    // FEAT-13: final crumb is the active step and carries aria-current="page".
+    // Final crumb is the active step and carries aria-current="page".
     const finalCrumb = nav.querySelector('[aria-current="page"]')
     expect(finalCrumb).not.toBeNull()
     expect(finalCrumb?.textContent).toBe('tasks')
   })
 
-  // UX-257 — slashes are replaced with the canonical chevron separator from
+  // Slashes are replaced with the canonical chevron separator from
   // the shared Breadcrumb primitive. Verify the chevron is present and no
   // visible `/` glyph remains in the bar.
   it('uses chevron separators between segments (not slashes)', () => {
@@ -1200,9 +1200,9 @@ describe('PageHeader kebab menu (#639)', () => {
   })
 })
 
-// ── Kebab menu reorganization (UX-H10 / UX-H12) ─────────────────────────
+// ── Kebab menu reorganization ─────────────────────────
 
-describe('PageHeader kebab menu reorganization (UX-H10/H12)', () => {
+describe('PageHeader kebab menu reorganization (/H12)', () => {
   it('alias section hidden when no aliases exist', async () => {
     setupTagMock([])
 
@@ -1504,7 +1504,7 @@ describe('PageHeader error paths', () => {
     const confirmBtn = await screen.findByRole('button', { name: /^Delete page$/i })
     await user.click(confirmBtn)
 
-    // PEND-68 Part A — the delete flow now routes through
+    // Part A — the delete flow now routes through
     // `usePageDeleteAction`, which surfaces a Retry action on failure.
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith(
@@ -1604,9 +1604,9 @@ describe('PageHeader error paths', () => {
   })
 })
 
-// ── Keyboard shortcut for export (UX-158) ────────────────────────────────
+// ── Keyboard shortcut for export ────────────────────────────────
 
-describe('PageHeader export keyboard shortcut (UX-158)', () => {
+describe('PageHeader export keyboard shortcut', () => {
   it('Ctrl+Shift+E triggers export', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return emptyPage
@@ -1639,9 +1639,9 @@ describe('PageHeader export keyboard shortcut (UX-158)', () => {
   })
 })
 
-// ── Star / favourite button (UX-156) ──────────────────────────────────────
+// ── Star / favourite button ──────────────────────────────────────
 
-describe('PageHeader star button (UX-156)', () => {
+describe('PageHeader star button', () => {
   it('renders star button', () => {
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
@@ -1677,9 +1677,9 @@ describe('PageHeader star button (UX-156)', () => {
   })
 })
 
-// ── Rich title rendering (BUG-1) ──────────────────────────────────────────
+// ── Rich title rendering ──────────────────────────────────────────
 
-describe('PageHeader rich title rendering (BUG-1)', () => {
+describe('PageHeader rich title rendering', () => {
   const BLOCK_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
 
   it('plain text title renders as contentEditable', () => {
@@ -1746,12 +1746,12 @@ describe('PageHeader rich title rendering (BUG-1)', () => {
   })
 })
 
-// UX-198: PageHeader used to render its content inside a `sticky top-0`
+// PageHeader used to render its content inside a `sticky top-0`
 // wrapper div. It's now hoisted to the App-level outlet via <ViewHeader>.
 // The header's children (title editor, star button, etc.) must still render
 // (via ViewHeader's inline fallback) but the stale sticky classes must be
 // gone from the component's subtree.
-describe('PageHeader UX-198 header outlet migration', () => {
+describe('PageHeader  header outlet migration', () => {
   it('no sticky top-0 wrapper but header content still renders', () => {
     const { container } = renderPageHeader(<PageHeader pageId="PAGE_1" title="Hoist test" />)
     // The title editor (inside the old header wrapper) still renders.
@@ -1762,7 +1762,7 @@ describe('PageHeader UX-198 header outlet migration', () => {
   })
 })
 
-// ── Move to space (FEAT-3 Phase 2) ──────────────────────────────────────
+// ── Move to space (Phase 2) ──────────────────────────────────────
 //
 // The kebab menu learns a new entry that reveals a sub-menu of every
 // space except the current owner. Selecting a target calls `setProperty`
@@ -1770,7 +1770,7 @@ describe('PageHeader UX-198 header outlet migration', () => {
 // entry is hidden when the page itself is a space block (spaces can't
 // be nested inside other spaces).
 
-describe('PageHeader Move to space (FEAT-3 Phase 2)', () => {
+describe('PageHeader Move to space (Phase 2)', () => {
   /** Install an invoke mock that returns a page owned by `spaceId`. */
   function setupPageWithSpace(
     spaceId: string,
@@ -1940,9 +1940,9 @@ describe('PageHeader Move to space (FEAT-3 Phase 2)', () => {
   })
 })
 
-// ── Screen reader announcements (UX-282) ──────────────────────────────────
+// ── Screen reader announcements ──────────────────────────────────
 
-describe('PageHeader screen reader announcements (UX-282)', () => {
+describe('PageHeader screen reader announcements', () => {
   it('announces page renamed after a successful title edit', async () => {
     const user = userEvent.setup()
     setupTagMock([])
@@ -2074,8 +2074,8 @@ describe('PageHeader screen reader announcements (UX-282)', () => {
   })
 })
 
-// ── PEND-68 Part A — dedicated delete button + Undo toast ──────────
-describe('PageHeader dedicated delete button (PEND-68 Part A)', () => {
+// ── Part A — dedicated delete button + Undo toast ──────────
+describe('PageHeader dedicated delete button (Part A)', () => {
   it('renders the dedicated trash button next to the star in the title row', () => {
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
@@ -2116,7 +2116,7 @@ describe('PageHeader dedicated delete button (PEND-68 Part A)', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'PAGE_1' })
     })
 
-    // Success toast carries an Undo action (PEND-68 Part A A3).
+    // Success toast carries an Undo action (Part A A3).
     await waitFor(() => {
       expect(mockedToastSuccess).toHaveBeenCalledWith(
         'Page deleted',

@@ -1,5 +1,5 @@
 /**
- * WebWorker — d3-force simulation off the main thread (PERF-9b).
+ * WebWorker — d3-force simulation off the main thread.
  *
  * Receives graph data from the main thread, runs the force simulation,
  * and posts back node positions on every tick and when the simulation

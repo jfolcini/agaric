@@ -14,7 +14,7 @@
 //! so every current surface keeps its semantics; the tree only ADDS the ability
 //! to nest `Or` / `Not`. No existing query path changes in this phase — this
 //! lands as a purely additive module, mirroring how `FilterPrimitive` itself
-//! shipped (PEND-58 Phase 1).
+//! shipped (Phase 1).
 //!
 //! **Empty-combinator identities** (matching the backlink resolver):
 //! - empty `And` is the identity TRUE (`1=1`) — vacuously satisfied;

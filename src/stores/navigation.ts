@@ -1,6 +1,6 @@
 /**
  * Navigation store — Zustand state for the active sidebar view + selected
- * block highlight (MAINT-127 split).
+ * Block highlight (split).
  *
  * Owns three pieces of state:
  *
@@ -8,7 +8,7 @@
  *    `'pages'`, `'page-editor'`, …). The active-space mirror of
  *    `currentViewBySpace[currentSpaceId]`. Persisted to localStorage so
  *    a re-launch lands on the same view the user was using.
- *  - `currentViewBySpace` — per-space view slice (FEAT-3p4). Switching
+ * `currentViewBySpace` — per-space view slice. Switching
  *    space pulls `currentViewBySpace[newKey]` into the flat
  *    `currentView` field via the space-switch subscriber, so a user who
  *    last used `Search` in Personal lands on `Search` when they switch
@@ -28,7 +28,7 @@
  * when they imply a view change; this store's actions never reach back
  * into tabs.
  *
- * Persist contract — FEAT-3p4 bumped from `version: 2` to `version: 3`.
+ * Persist contract — bumped from `version: 2` to `version: 3`.
  * The v2→v3 migrate function seeds `currentViewBySpace[__legacy__]`
  * from the rehydrated flat `currentView` so users carrying v2 data
  * land on their last view (under the `__legacy__` slot) until the
@@ -65,7 +65,7 @@ interface NavigationStore {
   /** Optional block ID to highlight/scroll to after navigation. */
   selectedBlockId: string | null
   /**
-   * PEND-67 Phase 5 follow-up — transient handoff slot consumed by
+   * Phase 5 follow-up — transient handoff slot consumed by
    * `PageBrowser` on mount. Written by `CommandPalette`'s
    * "Reveal in Pages view" action so the user lands on a pages list
    * already filtered to the page in question. The view reads and
@@ -168,7 +168,7 @@ function coercePersistedNavigation(
   >
   const currentView = coerceView(blob['currentView']) ?? 'journal'
   const persistedBySpace = coerceViewBySpace(blob['currentViewBySpace'])
-  // v2 → v3 (FEAT-3p4): seed `currentViewBySpace[__legacy__]` from the
+  // V2 → v3: seed `currentViewBySpace[__legacy__]` from the
   // flat `currentView` so a returning v2 user lands on their last view
   // until the space subscriber pulls the proper per-space slot.
   const currentViewBySpace =
@@ -179,7 +179,7 @@ function coercePersistedNavigation(
 }
 
 /**
- * Per-space view selector (FEAT-3p4). Pass `currentSpaceId` from
+ * Per-space view selector. Pass `currentSpaceId` from
  * `useSpaceStore`.
  *
  * Reads the per-space slice keyed by `spaceId`, falling back to the flat
@@ -240,11 +240,11 @@ export const useNavigationStore = create<NavigationStore>()(
         currentViewBySpace: state.currentViewBySpace,
       }),
       migrate: (persisted: unknown, version: number) => {
-        // v0 → v1 (FEAT-3p3): the v1 migration moved tab data into the
+        // V0 → v1: the v1 migration moved tab data into the
         // per-space slices — that logic now lives in `useTabsStore` and
         // is irrelevant to this store post-split.
         //
-        // v1 → v2 (MAINT-127): strip the now-removed tab fields from the
+        // V1 → v2: strip the now-removed tab fields from the
         // persisted blob so the rehydrated shape matches the slimmer v2
         // contract (`currentView` only).
         //
@@ -275,7 +275,7 @@ export const useNavigationStore = create<NavigationStore>()(
  * Without this, switching from space-A to space-B would leave A's
  * last view active in B's UI.
  *
- * MAINT-122: subscription mechanics + diff detection live in
+ * Subscription mechanics + diff detection live in
  * `createSpaceSubscriber`; this site only owns the navigation flush /
  * pull logic. On first fire (`prevKey === newKey`) we seed
  * `currentViewBySpace[newKey]` from the rehydrated flat `currentView`

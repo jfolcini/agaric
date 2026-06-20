@@ -89,7 +89,7 @@ function relativePrefixForDepth(zipPath: string): string {
  * link is rewritten to a relative path (`![alt](../assets/<file>)`) so the
  * exported image renders in other tools (#1490 residual).
  *
- * `spaceId` (FEAT-3 Phase 4) — only pages in the active space are
+ * `spaceId` (Phase 4) — only pages in the active space are
  * included in the export.  The `?? ''` fallback at the call site is
  * the pre-bootstrap no-match sentinel; `listAllPagesInSpace('')`
  * returns an empty list.

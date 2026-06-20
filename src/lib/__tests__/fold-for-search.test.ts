@@ -1,5 +1,5 @@
 /**
- * Tests for the UX-247 fix — Unicode-aware case-insensitive
+ * Tests for the fix — Unicode-aware case-insensitive
  * substring matching used by PageBrowser and HighlightMatch.
  *
  * The baseline JS `.toLowerCase()` has known substring-match failure
@@ -91,7 +91,7 @@ describe('foldForSearch', () => {
 })
 
 describe('matchesSearchFolded', () => {
-  describe('ASCII parity with the pre-UX-247 behaviour', () => {
+  describe('ASCII parity with the pre- behaviour', () => {
     it('matches case-insensitively for ASCII substrings', () => {
       expect(matchesSearchFolded('Projects', 'projects')).toBe(true)
       expect(matchesSearchFolded('Projects', 'PROJECTS')).toBe(true)
@@ -108,7 +108,7 @@ describe('matchesSearchFolded', () => {
     })
   })
 
-  describe('UX-247 — Turkish dotted I regression cases', () => {
+  describe('Turkish dotted I regression cases', () => {
     it('matches "İstanbul" when query is "istanbul"', () => {
       // This is the canonical Turkish failure case:
       // `"İstanbul".toLowerCase().includes("istanbul")` is `false`
@@ -125,7 +125,7 @@ describe('matchesSearchFolded', () => {
     })
   })
 
-  describe('UX-247 — German eszett regression cases', () => {
+  describe('German eszett regression cases', () => {
     it('matches "Straße" when query is "strasse"', () => {
       expect(matchesSearchFolded('Straße', 'strasse')).toBe(true)
     })
@@ -139,7 +139,7 @@ describe('matchesSearchFolded', () => {
     })
   })
 
-  describe('UX-247 — accent regression cases', () => {
+  describe('accent regression cases', () => {
     it('matches "naïve" when query is "naive"', () => {
       expect(matchesSearchFolded('naïve', 'naive')).toBe(true)
     })
@@ -191,7 +191,7 @@ describe('indexOfFolded', () => {
   })
 
   // -------------------------------------------------------------------
-  // PEND-27 P2 — incremental-fold cases
+  // Incremental-fold cases
   //
   // The reverse-mapping scan in `indexOfFolded` builds the folded
   // prefix one code unit at a time instead of refolding the growing
@@ -200,7 +200,7 @@ describe('indexOfFolded', () => {
   // combining-mark stripping, CJK no-op fold, all-ASCII fast-path) so
   // the incremental walker has to handle each correctly.
   // -------------------------------------------------------------------
-  describe('PEND-27 P2 — incremental fold across transformation classes', () => {
+  describe('incremental fold across transformation classes', () => {
     it('ligature ﬁ (U+FB01) folds to "fi" — match offset lands on the ligature', () => {
       // 'aﬁx' folds to 'afix'. Searching for 'fi' must locate the
       // ligature at code-unit index 1 in the original.

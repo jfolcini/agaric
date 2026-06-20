@@ -1,5 +1,5 @@
 /**
- * Unit tests for the in-page find matcher (PEND-52).
+ * Unit tests for the in-page find matcher.
  *
  * Covers:
  *  - Literal scanning with case sensitivity and whole-word toggles.

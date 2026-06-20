@@ -91,7 +91,7 @@ export const references: Record<string, string> = {
   'graph.filter.priorityValue.1': 'High (1)',
   'graph.filter.priorityValue.2': 'Medium (2)',
   'graph.filter.priorityValue.3': 'Low (3)',
-  // UX-7 — search actually fires at 1 char; this is a soft hint (the
+  // Search actually fires at 1 char; this is a soft hint (the
   // FTS trigram index matches whole words of 3+ chars best), not a hard
   // requirement, so the copy must not promise a gate that doesn't exist.
   'search.minCharsHint': 'Tip: words of 3+ characters return the best matches.',
@@ -208,12 +208,12 @@ export const references: Record<string, string> = {
   'search.statusCleared': 'Search cleared',
   'search.clearAll': 'Clear all',
   'search.filtersActive': 'Filters active',
-  // PEND-54 — inline filter syntax + helper popover.
+  // Inline filter syntax + helper popover.
   'search.addFilter': '+ Filter',
   'search.filterCategory.tag': 'Tag',
   'search.filterCategory.pathInclude': 'Page path (include)',
   'search.filterCategory.pathExclude': 'Page path (exclude)',
-  // PEND-58g UX-A5 — structural filter builder categories.
+  // Structural filter builder categories.
   'search.filterCategory.state': 'State',
   'search.filterCategory.priority': 'Priority',
   'search.filterCategory.due': 'Due date',
@@ -229,12 +229,12 @@ export const references: Record<string, string> = {
   'search.searchTags': 'Search tags...',
   'search.searchPages': 'Search pages...',
   'search.noTagsFound': 'No tags found',
-  // UX-A3 — filter-helper popover navigation + path-entry strings.
+  // Filter-helper popover navigation + path-entry strings.
   'search.filterHelper.back': 'Back',
   'search.filterHelper.add': 'Add',
   'search.filterHelper.tagResultsLabel': 'Tag suggestions',
   'search.filterHelper.pathPlaceholder': 'Journal/2026-*',
-  // PEND-58g UX-A5 — structural filter builder form strings.
+  // Structural filter builder form strings.
   'search.filterHelper.matchMode': 'Match mode',
   'search.filterHelper.include': 'Include',
   'search.filterHelper.exclude': 'Exclude',
@@ -250,7 +250,7 @@ export const references: Record<string, string> = {
   'search.filterHelper.propKeyPlaceholder': 'area',
   'search.filterHelper.propValueLabel': 'Property value',
   'search.filterHelper.propValuePlaceholder': 'value',
-  // PEND-70 CR8 MAJOR-1 — round-trip guards: the forms reject keys/values
+  // Round-trip guards: the forms reject keys/values
   // they can't serialise back unambiguously. #152 added value quoting, so
   // spaces are fine in VALUES; a literal `"` still has no escape syntax.
   'search.filterHelper.propKeyInvalid': "Key can't contain spaces, = or quotes",
@@ -259,7 +259,7 @@ export const references: Record<string, string> = {
   'search.filterHelper.pathValueInvalid': "Glob can't contain quotes",
   'search.noPagesFound': 'No pages found',
   'search.aliasMatch': 'via alias: {{alias}}',
-  // UX-8 — accessible name for the alias-match card region.
+  // Accessible name for the alias-match card region.
   'search.aliasMatchRegion': 'Alias match',
   'search.typing': 'Typing\u2026',
   'search.searching': 'Searching\u2026',
@@ -299,7 +299,7 @@ export const references: Record<string, string> = {
   'search.matchCountInGroupSingular': '1 match',
   'search.matchCountInGroupPlural': '{{count}} matches',
   /**
-   * PEND-50 Phase 1 recommendation: page-name-only hits surface as
+   * Phase 1 recommendation: page-name-only hits surface as
    * "1 match (in name)" so users understand why a content-less group
    * appears. Used when a group has exactly one block that is a
    * page-type hit on the title rather than the content.
@@ -308,7 +308,7 @@ export const references: Record<string, string> = {
   'search.groupCollapsedLabel': 'Show matches in {{pageTitle}}',
   'search.groupExpandedLabel': 'Hide matches in {{pageTitle}}',
   'search.helpButtonLabel': 'Search help',
-  // UX-1/UX-3 — search help dialog (structural strings; the dense
+  // Search help dialog (structural strings; the dense
   // token reference inside each section is monospace code, not prose).
   'search.help.description': 'Search basics: paginated full-text search across blocks and pages.',
   'search.help.section.filterSyntax': 'Filter syntax',
@@ -316,8 +316,8 @@ export const references: Record<string, string> = {
   'search.help.section.regexSyntax': 'Regex syntax',
   'search.help.section.booleanOperators': 'Boolean operators',
   'search.help.section.tips': 'Tips',
-  // PEND-55 — toggle row (`Aa` / `Ab|` / `.*`) + search history.
-  // #154 UX-A8 — the abbreviation is now rendered as always-visible text
+  // Toggle row (`Aa` / `Ab|` / `.*`) + search history.
+  // #154 the abbreviation is now rendered as always-visible text
   // on each toggle, so it is dropped from the accessible name here to
   // avoid a doubled "Case-sensitive A a" screen-reader announcement.
   'search.toggle.caseSensitive': 'Case-sensitive',
@@ -334,14 +334,14 @@ export const references: Record<string, string> = {
   'search.history.disabledNotice': 'Search history is off',
   'search.filterGroupLabel': 'Filter: {{value}}',
   'search.invalidRegex': '{{message}}',
-  // UX-2 — generic (non-regex) search failure: announced in the live
+  // Generic (non-regex) search failure: announced in the live
   // region and shown as a visible inline error state.
   'search.statusError': 'Search failed',
   'search.errorTitle': 'Search failed',
   'search.errorBody': 'Something went wrong running your search. Try again.',
-  // UX-4 — result cap notice (the 5000-item ceiling was hit silently).
+  // Result cap notice (the 5000-item ceiling was hit silently).
   'search.cappedNotice': 'Showing the first results — refine your search to narrow them down.',
-  // PEND-51 — Cmd+K palette dialog.
+  // Cmd+K palette dialog.
   'palette.dialogLabel': 'Quick search',
   'palette.dialogTitle': 'Search palette',
   'palette.dialogDescription': 'Search for pages and blocks, then run a command.',
@@ -356,16 +356,16 @@ export const references: Record<string, string> = {
   'palette.groupMatchesLabel': 'Matches in {{pageTitle}}',
   'palette.moreInThisPage_one': '+{{count}} more in this page',
   'palette.moreInThisPage_other': '+{{count}} more in this page',
-  // PEND-61 — multi-mode palette (search + commands).
+  // Multi-mode palette (search + commands).
   //
-  // PEND-61 CR — `palette.empty` was the catch-all for both the cold-
+  // `palette.empty` was the catch-all for both the cold-
   // open welcome state and "no results for typed query". Split into
   // `palette.welcomeEmpty` (no query, no recents) + `palette.noResults`
   // (non-empty query, zero matches) so each surface carries the right
   // copy.
   'palette.welcomeEmpty': 'Type to search pages, blocks, or [[ to link. Press > for commands.',
   'palette.noResults': 'No matches for “{{query}}”. Try the escalation below.',
-  // PEND-61 CR-2 — footer hint split into per-chord strings so each
+  // Footer hint split into per-chord strings so each
   // chord renders as a `<kbd>` chip in the visible UI. Concatenating
   // the chord + label inside one string would put the kbd icon in
   // user-facing translation, which is fragile.
@@ -387,10 +387,10 @@ export const references: Record<string, string> = {
   'palette.cmdSearchEverywhere': 'Search across all pages…',
   'palette.cmdKeyboardShortcuts': 'Keyboard shortcuts',
   'palette.commandsEmpty': 'No commands match — clear the input to see all.',
-  // PEND-67 Phase 2 — recent commands strip rendered above Navigate/Actions
+  // Phase 2 — recent commands strip rendered above Navigate/Actions
   // when the commands-mode filter is empty.
   'palette.recentCommandsTitle': 'Recent',
-  // PEND-67 Phase 3 — `#` (tags) and `?` (help) prefix modes.
+  // Phase 3 — `#` (tags) and `?` (help) prefix modes.
   'palette.modeTags': 'Tags',
   'palette.modeHelp': 'Help',
   // Compact hint showing the prefix vocabulary on the search-mode chip
@@ -407,16 +407,16 @@ export const references: Record<string, string> = {
   'palette.tagsUnnamed': '(unnamed)',
   // Help mode placeholder.
   'palette.helpEmpty': 'No shortcuts match the filter.',
-  // PEND-67 Phase 4 — pin / unpin affordance on the recents rows.
+  // Phase 4 — pin / unpin affordance on the recents rows.
   'palette.pinRecent': 'Pin {{title}} to recents',
   'palette.unpinRecent': 'Unpin {{title}} from recents',
-  // PEND-67 Phase 5 — per-row action menu labels.
+  // Phase 5 — per-row action menu labels.
   'palette.actionOpen': 'Open',
   'palette.actionOpenPage': 'Open page',
   'palette.actionOpenNewTab': 'Open in new tab',
   'palette.actionPin': 'Pin to recents',
   'palette.actionUnpin': 'Unpin from recents',
-  // PEND-67 Phase 5 follow-up — expanded action sets.
+  // Phase 5 follow-up — expanded action sets.
   'palette.actionReveal': 'Reveal in Pages view',
   'palette.actionCopyPageLink': 'Copy page link',
   'palette.actionCopyBlockLink': 'Copy block link',
@@ -424,7 +424,7 @@ export const references: Record<string, string> = {
   'palette.copyPageLinkSuccess': 'Page link copied to clipboard',
   'palette.copyLinkSuccess': 'Block link copied to clipboard',
   'palette.copyFailed': 'Could not access clipboard',
-  // UX-3 — search help body
+  // Search help body
   //
   // Prose for the five SearchHelpDialog body sections (Filter syntax,
   // Toggles, Regex syntax, Boolean operators, Tips). Monospace code

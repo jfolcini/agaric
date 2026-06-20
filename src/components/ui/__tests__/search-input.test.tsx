@@ -1,5 +1,5 @@
 /**
- * Tests for SearchInput — clear-button affordance (UX-221).
+ * Tests for SearchInput — clear-button affordance.
  */
 
 import { render, screen } from '@testing-library/react'
@@ -70,7 +70,7 @@ describe('SearchInput', () => {
     expect(screen.queryByTestId('search-input-clear')).not.toBeInTheDocument()
   })
 
-  it('MAINT-207 (e): fires onClear once on clear-button click (without it onChange still clears)', async () => {
+  it('fires onClear once on clear-button click (without it onChange still clears)', async () => {
     // Opt-in `onClear` is the recommended explicit signal — see the
     // component docstring. Verify it fires alongside `onChange` so a
     // caller can subscribe to either.

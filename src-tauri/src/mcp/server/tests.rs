@@ -1,6 +1,6 @@
 //! Lifecycle + accept-loop unit tests for `mcp/server.rs`.
 //!
-//! Wire-level integration coverage (FEAT-4e grace period, protocol-
+//! Wire-level integration coverage (grace period, protocol-
 //! error responses) lives in the sibling `tests_rmcp.rs` and drives a
 //! real rmcp client. This file is purely for the bits that the rmcp
 //! adapter does not own: the H-2 enable/disable gate on the accept
@@ -234,7 +234,7 @@ async fn re_enable_rebinds_listener_after_shutdown() {
 async fn shutdown_during_active_connection_blocks_new_connects() {
     // H-2 acceptance test: an in-flight connection is mid-handshake
     // when `shutdown()` fires. The existing per-connection
-    // `select!` (FEAT-4e) drops the in-flight stream as before;
+    // `select!` drops the in-flight stream as before;
     // the H-2 addition is that NO new connection succeeds after
     // the shutdown observes the gate.
     use super::super::McpLifecycle;
@@ -298,7 +298,7 @@ async fn shutdown_during_active_connection_blocks_new_connects() {
     );
 
     // The in-flight stream's handler also observes the disconnect
-    // signal via its `select!` (FEAT-4e) and drops its half. The
+    // Signal via its `select!` and drops its half. The
     // client side may still hold its FD open — drop it explicitly
     // so the test is clean.
     drop(inflight);

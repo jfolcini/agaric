@@ -85,7 +85,7 @@ const OP_RECORD_BINDS_PER_OP: usize = 3;
 ///     (edit_block, move_block, set_property, delete_property arms).
 ///   * `AppError::NonReversible` for non-reversible ops (e.g. purge_block,
 ///     an attachment restore whose `add_attachment` is gone, or a
-///     move-of-create missing position — BUG-26).
+///     Move-of-create missing position).
 ///   * `serde_json::Error` (via `From`) for malformed payloads in any arm.
 ///
 /// An empty input slice returns `Ok(Vec::new())`.
@@ -532,7 +532,7 @@ fn build_reverse_move_block(
             (p.new_parent_id, p.new_index, Some(p.new_position))
         } else {
             let p: CreateBlockPayload = serde_json::from_str(prior_payload)?;
-            // BUG-26: ancient `create_block` payloads predate the position wire
+            // Ancient `create_block` payloads predate the position wire
             // field (both `index` and `position` absent) → no valid reverse-move;
             // mirror `block_ops::find_prior_position` and surface `NonReversible`.
             match (p.index, p.position) {

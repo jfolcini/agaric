@@ -6,9 +6,9 @@
  * with structured logger.warn on failure (no silent .catch()) and
  * re-throws so callers retain their existing error handling.
  *
- * MAINT-131 — closes the last hook-wrap row. Pairs with usePropertySave
+ * Closes the last hook-wrap row. Pairs with usePropertySave
  * and useBatchAttachments. The `reschedule()` method (added in the
- * MAINT-131 final pass) folds the duplicated "decide due vs
+ * Final pass) folds the duplicated "decide due vs
  * scheduled, then setX" pattern that previously lived in
  * `BlockListItem` and `RescheduleDropZone` into one place — both
  * consumers used to call `getBlock(blockId)` to inspect

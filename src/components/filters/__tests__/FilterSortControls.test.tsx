@@ -196,11 +196,11 @@ describe('FilterSortControls', () => {
     })
   })
 
-  // PEND-23 L16: the direction-toggle ships `min-h-[44px]` on coarse
+  // The direction-toggle ships `min-h-[44px]` on coarse
   // pointers, but `px-1` keeps its horizontal footprint well below the
   // 44 px touch-target target. Bumping to `px-2` on coarse pointers
   // widens the hit area without affecting the tight desktop layout.
-  it('PEND-23 L16: direction-toggle bumps horizontal padding on coarse pointers', () => {
+  it('direction-toggle bumps horizontal padding on coarse pointers', () => {
     render(<FilterSortControls {...defaultProps} sort={{ type: 'Created', dir: 'Desc' }} />)
 
     const btn = screen.getByRole('button', { name: /Toggle sort direction/i })

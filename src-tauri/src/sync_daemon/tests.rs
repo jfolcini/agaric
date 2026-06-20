@@ -26,7 +26,7 @@ fn install_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-/// TEST-4 — generic polling barrier for `SyncDaemon` / `SyncScheduler` tests.
+/// Generic polling barrier for `SyncDaemon` / `SyncScheduler` tests.
 ///
 /// Repeatedly evaluates `predicate` every 5 ms until it returns `true` or
 /// `timeout` elapses, in which case it panics with `label` for triage.
@@ -39,7 +39,7 @@ fn install_crypto_provider() {
 /// on a real hang rather than masking a regression.
 ///
 /// If no observable predicate exists for a given sleep, leave the sleep
-/// in place with a `// TEST-4: no observable predicate available` comment
+/// In place with a `// no observable predicate available` comment
 /// — a blind `|| true` predicate would just hide the same race.
 async fn wait_for<F>(mut predicate: F, timeout: std::time::Duration, label: &'static str)
 where
@@ -252,7 +252,7 @@ async fn peer_ref_lookup_returns_none_for_unknown_device() {
     );
 }
 
-// ── M-15: stale mDNS peer eviction test ────────────────────────────
+// ── stale mDNS peer eviction test ────────────────────────────
 
 #[test]
 fn stale_mdns_peers_evicted() {
@@ -2469,10 +2469,10 @@ fn format_peer_address_uses_first_address_when_multiple() {
 }
 
 // ======================================================================
-// L-62 — format_peer_addresses (multi-address try-all)
+// Format_peer_addresses (multi-address try-all)
 // ======================================================================
 
-/// L-62: empty address list ⇒ empty `Vec` (callers can `.is_empty()`).
+/// Empty address list ⇒ empty `Vec` (callers can `.is_empty()`).
 #[test]
 fn format_peer_addresses_returns_empty_when_no_addresses() {
     let peer = sync_net::DiscoveredPeer {
@@ -2482,13 +2482,13 @@ fn format_peer_addresses_returns_empty_when_no_addresses() {
     };
     assert!(
         format_peer_addresses(&peer).is_empty(),
-        "L-62: empty address list must return empty Vec"
+        "empty address list must return empty Vec"
     );
 }
 
-/// L-62: when mDNS announces IPv6 link-local before IPv4, the formatter
+/// When mDNS announces IPv6 link-local before IPv4, the formatter
 /// reorders so IPv4 is tried first — that is the whole point of the
-/// fix (L-62).
+/// Fix.
 #[test]
 fn format_peer_addresses_prefers_ipv4_over_ipv6_link_local() {
     let peer = sync_net::DiscoveredPeer {
@@ -2507,11 +2507,11 @@ fn format_peer_addresses_prefers_ipv4_over_ipv6_link_local() {
             "192.168.1.10:8080".to_string(),
             "[fe80::1]:8080".to_string()
         ],
-        "L-62: IPv4 must be tried before IPv6 link-local"
+        "IPv4 must be tried before IPv6 link-local"
     );
 }
 
-/// L-62: IPv6 unicast non-link-local sits between IPv4 and link-local.
+/// IPv6 unicast non-link-local sits between IPv4 and link-local.
 #[test]
 fn format_peer_addresses_orders_ipv4_then_ipv6_global_then_linklocal() {
     let peer = sync_net::DiscoveredPeer {
@@ -2531,11 +2531,11 @@ fn format_peer_addresses_orders_ipv4_then_ipv6_global_then_linklocal() {
             "[2001:db8::1]:9443".to_string(),
             "[fe80::1]:9443".to_string(),
         ],
-        "L-62: priority order is IPv4 → IPv6 unicast → IPv6 link-local"
+        "priority order is IPv4 → IPv6 unicast → IPv6 link-local"
     );
 }
 
-/// L-62: within a single tier, the original mDNS order must be preserved
+/// Within a single tier, the original mDNS order must be preserved
 /// — important so a deterministic announcement produces a deterministic
 /// connection sequence.
 #[test]
@@ -2555,15 +2555,15 @@ fn format_peer_addresses_preserves_within_tier_order() {
             "192.168.1.20:8080".to_string(),
             "192.168.1.10:8080".to_string()
         ],
-        "L-62: announcement order preserved within each priority tier"
+        "announcement order preserved within each priority tier"
     );
 }
 
 // ======================================================================
-// L-63 — ServiceRemoved eviction
+// ServiceRemoved eviction
 // ======================================================================
 
-/// L-63: `process_service_removed` drops the entry from the discovered
+/// `process_service_removed` drops the entry from the discovered
 /// HashMap immediately and reports `true` so the caller can branch on
 /// whether anything actually changed.
 #[test]
@@ -2585,26 +2585,23 @@ fn process_service_removed_drops_entry() {
 
     let removed = process_service_removed("REMOVED_PEER", "LOCAL", &mut discovered);
 
-    assert!(removed, "L-63: must report the entry as removed");
+    assert!(removed, "must report the entry as removed");
     assert!(
         !discovered.contains_key("REMOVED_PEER"),
-        "L-63: discovered map must drop the peer immediately on ServiceRemoved"
+        "discovered map must drop the peer immediately on ServiceRemoved"
     );
 }
 
-/// L-63: a `ServiceRemoved` for a peer we never saw is a no-op.
+/// A `ServiceRemoved` for a peer we never saw is a no-op.
 #[test]
 fn process_service_removed_ignores_unknown_peer() {
     let mut discovered = HashMap::new();
     let removed = process_service_removed("NEVER_SEEN", "LOCAL", &mut discovered);
-    assert!(!removed, "L-63: removal of unknown peer must report false");
-    assert!(
-        discovered.is_empty(),
-        "L-63: discovered map must remain empty"
-    );
+    assert!(!removed, "removal of unknown peer must report false");
+    assert!(discovered.is_empty(), "discovered map must remain empty");
 }
 
-/// L-63: a removal of the local device must not touch the map (we never
+/// A removal of the local device must not touch the map (we never
 /// insert ourselves in the discovered HashMap to begin with).
 #[test]
 fn process_service_removed_ignores_self() {
@@ -2621,14 +2618,14 @@ fn process_service_removed_ignores_self() {
 
     let removed = process_service_removed("LOCAL_DEV", "LOCAL_DEV", &mut discovered);
 
-    assert!(!removed, "L-63: self-removal must be a no-op");
+    assert!(!removed, "self-removal must be a no-op");
     assert!(
         discovered.contains_key("OTHER_PEER"),
-        "L-63: peers belonging to other devices must not be touched"
+        "peers belonging to other devices must not be touched"
     );
 }
 
-/// L-63: a `ServiceRemoved` event flowing through `process_discovery_event`
+/// A `ServiceRemoved` event flowing through `process_discovery_event`
 /// must remove the peer from the discovered HashMap and return `None`
 /// (no peer to sync with — eviction is the side effect).
 #[test]
@@ -2654,11 +2651,11 @@ fn process_discovery_event_evicts_on_service_removed() {
 
     assert!(
         result.is_none(),
-        "L-63: ServiceRemoved must not return a peer to sync with"
+        "ServiceRemoved must not return a peer to sync with"
     );
     assert!(
         !discovered.contains_key("REMOVED"),
-        "L-63: discovered HashMap must no longer contain the removed peer"
+        "discovered HashMap must no longer contain the removed peer"
     );
 }
 
@@ -2778,17 +2775,17 @@ async fn daemon_start_and_shutdown() {
     .await
     .expect("daemon should start successfully");
 
-    // TEST-4: no observable predicate available — sleep retained.
+    // No observable predicate available — sleep retained.
     // We just want the spawned daemon task to make a turn in its select!
     // loop before we issue shutdown. There is no production-side signal
     // exposing "select! loop entered", and adding one to the production
-    // type just for this test is out of scope (TEST-4).
+    // Type just for this test is out of scope.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // Shutdown should exit cleanly
     daemon.shutdown();
 
-    // TEST-4: poll until the spawned task finishes; 4× cap on the
+    // Poll until the spawned task finishes; 4× cap on the
     // original 200 ms guess so a real hang fails fast.
     wait_for(
         || {
@@ -2832,7 +2829,7 @@ async fn daemon_cancel_does_not_trigger_shutdown() {
     // Cancel active sync (should not affect daemon lifecycle)
     daemon.cancel_active_sync();
 
-    // TEST-4: no observable predicate available — sleep retained.
+    // No observable predicate available — sleep retained.
     // cancel_active_sync() is a fire-and-forget atomic store; the
     // observable "daemon noticed and is still alive" requires a tick
     // through the select! loop with no production-side signal.
@@ -2840,7 +2837,7 @@ async fn daemon_cancel_does_not_trigger_shutdown() {
 
     // Daemon should still be running — shutdown it cleanly
     daemon.shutdown();
-    // TEST-4: poll until the spawned task finishes; 4× cap on the
+    // Poll until the spawned task finishes; 4× cap on the
     // original 200 ms guess.
     wait_for(
         || {
@@ -2911,14 +2908,14 @@ async fn two_daemons_start_on_different_ports() {
     .await
     .expect("daemon 2 should start");
 
-    // TEST-4: no observable predicate available — sleep retained.
+    // No observable predicate available — sleep retained.
     // Both daemons need a turn in their select! loop after start; no
     // production-side "loop entered" signal exists.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     d1.shutdown();
     d2.shutdown();
-    // TEST-4: poll until BOTH daemon tasks finish; 4× cap on 200 ms.
+    // Poll until BOTH daemon tasks finish; 4× cap on 200 ms.
     wait_for(
         || {
             d1.handle
@@ -2980,7 +2977,7 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     .await
     .unwrap();
 
-    // TEST-4: no observable predicate available — sleep retained.
+    // No observable predicate available — sleep retained.
     // We need the daemon to (a) enter daemon_loop, (b) let Branch C's
     // immediate first resync tick fire and find zero peers (no-op), and
     // (c) sit on the next debounce wait. None of these transitions are
@@ -3000,7 +2997,7 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     // Trigger Branch B by notifying a local change.
     scheduler.notify_change();
 
-    // TEST-4: poll until the unreachable peer accumulates a failure, with a
+    // Poll until the unreachable peer accumulates a failure, with a
     // 4× cap on the original 800 ms guess so a real hang fails fast.
     {
         let sched = scheduler.clone();
@@ -3021,7 +3018,7 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     );
 
     daemon.shutdown();
-    // TEST-4: poll until the spawned task finishes; 4× cap on 200 ms.
+    // Poll until the spawned task finishes; 4× cap on 200 ms.
     wait_for(
         || {
             daemon
@@ -3036,7 +3033,7 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     mat.shutdown();
 }
 
-/// L-61 smoke test: Branch B must dispatch ALL paired peers, not just
+/// Smoke test: Branch B must dispatch ALL paired peers, not just
 /// the first one. Pre-L-61 the loop was `for peer_ref in &refs { ...
 /// .await; }`, so a hypothetical regression that dropped peers 2+ from
 /// the iteration would still pass the single-peer
@@ -3078,7 +3075,7 @@ async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
     .await
     .unwrap();
 
-    // TEST-4: no observable predicate available — sleep retained.
+    // No observable predicate available — sleep retained.
     // Same rationale as the sibling branch_b test above: we need the
     // daemon to enter its loop and let Branch C's first tick pass on an
     // empty peer table before we insert peers, and the daemon doesn't
@@ -3102,8 +3099,8 @@ async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
     // Trigger Branch B by notifying a local change.
     scheduler.notify_change();
 
-    // TEST-4: poll until BOTH unreachable peers accumulate a failure (the
-    // regression guard from L-61). 4× cap on the original 800 ms guess.
+    // Poll until BOTH unreachable peers accumulate a failure (the
+    // Regression guard). 4× cap on the original 800 ms guess.
     {
         let sched = scheduler.clone();
         wait_for(
@@ -3125,12 +3122,12 @@ async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
     );
     assert!(
         f2 >= 1,
-        "Branch B must dispatch peer 2 (regression guard for L-61 \
+        "Branch B must dispatch peer 2 (regression guard for  \
          concurrent dispatch dropping later peers); got failure_count={f2}"
     );
 
     daemon.shutdown();
-    // TEST-4: poll until the spawned task finishes; 4× cap on 200 ms.
+    // Poll until the spawned task finishes; 4× cap on 200 ms.
     wait_for(
         || {
             daemon
@@ -3187,7 +3184,7 @@ async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
     .await
     .unwrap();
 
-    // TEST-4: poll until the first resync tick fires and the unreachable
+    // Poll until the first resync tick fires and the unreachable
     // OVERDUE_PEER accumulates a failure. 4× cap on the original 800 ms guess.
     {
         let sched = scheduler.clone();
@@ -3207,7 +3204,7 @@ async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
     );
 
     daemon.shutdown();
-    // TEST-4: poll until the spawned task finishes; 4× cap on 200 ms.
+    // Poll until the spawned task finishes; 4× cap on 200 ms.
     wait_for(
         || {
             daemon
@@ -3322,7 +3319,7 @@ fn process_discovery_paired_returns_some() {
     assert_eq!(discovered.len(), 1);
 }
 
-// ── PERF-25: conditional daemon startup ──────────────────────────────
+// ── conditional daemon startup ──────────────────────────────
 //
 // `SyncDaemon::start_if_peers_exist` avoids starting mDNS + TLS listener
 // when no paired peers exist. These tests exercise the peer-count helper,
@@ -3366,7 +3363,7 @@ async fn should_start_active_returns_true_with_many_peers() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn should_start_active_true_when_pairing_pending() {
-    // PEND-76 F3: a just-completed pairing (no real peer yet) must wake the
+    // A just-completed pairing (no real peer yet) must wake the
     // dormant daemon so it can accept the first inbound connection.
     let (pool, _dir) = test_pool().await;
     peer_refs::set_pending_pairing(&pool).await.unwrap();
@@ -3499,7 +3496,7 @@ async fn start_if_peers_exist_starts_actively_when_peers_present() {
     .await
     .unwrap();
 
-    // TEST-4: no observable predicate available — sleep retained.
+    // No observable predicate available — sleep retained.
     // We want the daemon task to enter daemon_loop init (so this asserts
     // the "active" path was taken, not the dormant waiter). The daemon
     // does not surface the dormant→active transition to test code; the
@@ -3562,7 +3559,7 @@ async fn dormant_daemon_wakes_on_pair_notification() {
     peer_refs::upsert_peer_ref(&pool, "PEER_NEW").await.unwrap();
     scheduler.notify_change();
 
-    // TEST-4: no observable predicate available — sleep retained.
+    // No observable predicate available — sleep retained.
     // The dormant→active transition isn't exposed to test code (it
     // happens inside the dormant waiter and continues into daemon_loop).
     // The shutdown-then-timeout pattern below is the actual liveness
@@ -3641,7 +3638,7 @@ async fn dormant_daemon_unaffected_when_last_peer_removed() {
     .await
     .unwrap();
 
-    // TEST-4: no observable predicate available — sleep retained.
+    // No observable predicate available — sleep retained.
     // We want the daemon to have transitioned past initial peer-presence
     // detection into daemon_loop before we delete the peer. That
     // transition isn't surfaced to test code.
@@ -3664,7 +3661,7 @@ async fn dormant_daemon_unaffected_when_last_peer_removed() {
     .expect("daemon must continue running and shut down cleanly after peers removed");
 }
 
-// ── PERF-24: app-lifecycle integration ───────────────────────────────
+// ── app-lifecycle integration ───────────────────────────────
 //
 // The daemon's periodic 30 s resync tick checks `lifecycle.is_foreground`
 // before running its body. We exercise the gate at two levels:
@@ -3708,7 +3705,7 @@ async fn start_with_lifecycle_accepts_backgrounded_initial_state() {
     .await
     .expect("daemon should start even when the app is backgrounded");
 
-    // TEST-4: no observable predicate available — sleep retained.
+    // No observable predicate available — sleep retained.
     // The "select! loop entered" signal isn't exposed; the post-shutdown
     // timeout-await is the actual liveness assertion.
     // Let the daemon reach its select! loop.
@@ -3755,7 +3752,7 @@ async fn start_with_lifecycle_wake_notify_does_not_crash_daemon() {
     .await
     .expect("daemon should start");
 
-    // TEST-4: no observable predicate available — sleep retained.
+    // No observable predicate available — sleep retained.
     // We need the daemon's select! loop to be running before we toggle
     // lifecycle state, but the daemon doesn't expose that. The actual
     // liveness assertion is the post-shutdown timeout-await below.
@@ -3766,13 +3763,13 @@ async fn start_with_lifecycle_wake_notify_does_not_crash_daemon() {
     // re-enter and reset the resync interval; it should NOT terminate
     // the daemon.
     lifecycle.mark_backgrounded();
-    // TEST-4: no observable predicate available — sleep retained.
+    // No observable predicate available — sleep retained.
     // mark_backgrounded() is a fire-and-forget atomic; the wake notify's
     // effect on the select! loop isn't surfaced to test code.
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     lifecycle.mark_foreground();
 
-    // TEST-4: no observable predicate available — sleep retained.
+    // No observable predicate available — sleep retained.
     // Same rationale as the background sleep above — we want both wake
     // notifies to be processed by the select! loop before we shut down,
     // but the daemon doesn't expose that.
@@ -3797,7 +3794,7 @@ async fn lifecycle_default_from_start_is_equivalent_to_always_foreground() {
     // The non-lifecycle `start` variant constructs a
     // `LifecycleHooks::default()` internally. Assert the default
     // starts in foreground so legacy callers (tests, benches) observe
-    // the same behaviour as before PERF-24.
+    // The same behaviour as before.
     let hooks = crate::lifecycle::LifecycleHooks::default();
     assert!(
         !hooks.is_backgrounded(),
@@ -3806,10 +3803,10 @@ async fn lifecycle_default_from_start_is_equivalent_to_always_foreground() {
 }
 
 // ======================================================================
-// FEAT-6 — End-to-end snapshot-driven catch-up on ResetRequired
+// End-to-end snapshot-driven catch-up on ResetRequired
 // ======================================================================
 
-/// FEAT-6 — End-to-end: responder's op log has been compacted past the
+/// End-to-end: responder's op log has been compacted past the
 /// initiator's advertised frontier, the initiator's HeadExchange
 /// triggers `ResetRequired`, and the snapshot sub-flow catches the
 /// initiator up to the responder's state.
@@ -3945,10 +3942,10 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     // lookup for `(FEAT6_RESP, 1)` fails — the orchestrator transitions
     // to `ResetRequired` (the one genuine reset case the local op_log
     // can still detect post-#490-M1: the peer observed ops we authored
-    // but no longer have). M-58's covering check then confirms the
+    // But no longer have). covering check then confirms the
     // snapshot at `{FEAT6_RESP: 1}` covers the initiator's frontier
     // (seq-0 self head is trivially covered) and lets the offer
-    // proceed. Had the initiator claimed own ops (seq >= 1), M-58 would
+    // Proceed. Had the initiator claimed own ops (seq >= 1), would
     // — correctly — refuse, because applying the snapshot wipes the
     // initiator's op_log (see
     // `try_offer_snapshot_catchup_sends_error_when_snapshot_behind_remote`).
@@ -4174,7 +4171,7 @@ async fn make_local_edit_602(
 /// `NotFound` → `ResetRequired` — every session, both directions. The
 /// snapshot fallback then dead-ends: the responder's snapshot
 /// `up_to_seqs` is built solely from its own op_log and can never
-/// cover the initiator's own head, so M-58 (correctly) refuses the
+/// Cover the initiator's own head, so (correctly) refuses the
 /// offer → `SnapshotStale` → wire `Error` → backoff — no remaining
 /// path to convergence, forever.
 ///
@@ -4518,7 +4515,7 @@ async fn issue610_empty_registry_initiator_records_via_synccomplete() {
     mat_b.shutdown();
 }
 
-/// Incremental sync (MAINT-228 / #87 §10.5): when the initiator advertises a
+/// Incremental sync (#87 §10.5): when the initiator advertises a
 /// per-space Loro version vector in `HeadExchange`, the responder ships a
 /// delta `Update` (the ops since that vv) instead of a full `Snapshot`. A
 /// space the initiator did not advertise — or an older peer that sends no
@@ -4605,7 +4602,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
             );
             // Round-trip: feed the Update into A's apply path and assert the
             // newly-live incremental apply converges (A gains B's block). The
-            // Update's from_vv == A's own advertised vv, so the MAINT-228
+            // Update's from_vv == A's own advertised vv, so the
             // reachability gate passes and the delta imports.
             let outcome = crate::sync_protocol::loro_sync::apply_remote(
                 &pool_a,
@@ -4669,7 +4666,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
 /// `HeadExchange { heads: [] }` (`get_local_heads` on an empty op_log).
 /// The responder used to derive `remote_id` from the advertised heads,
 /// got `""`, and rejected the session as "cannot sync with self" —
-/// before the BUG-27 mTLS fallback could apply. A brand-new device
+/// Before the mTLS fallback could apply. A brand-new device
 /// could not pull anything until it made a local edit.
 ///
 /// This test drives a REAL fresh-device initiator orchestrator over an
@@ -4679,7 +4676,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
 ///   2. data flows: the responder's seeded block lands in the
 ///      initiator's DB,
 ///   3. the responder records the session under the cert-CN identity
-///      (BUG-27 fallback: the heads never identified the peer).
+/// (fallback: the heads never identified the peer).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_responder() {
     use crate::sync_protocol::{SyncOrchestrator, SyncState};
@@ -4824,7 +4821,7 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
         "#778: the responder's seeded block must reach the fresh initiator's DB"
     );
 
-    // ── BUG-27 fallback: the responder identified the session under the
+    // ── fallback: the responder identified the session under the
     //    cert-CN identity (the heads never identified the peer), so the
     //    peer row exists under FRESH_DEV (pinned during cert TOFU). ─────
     let peer = peer_refs::get_peer_ref(&resp_pool, FRESH_DEV)
@@ -5046,10 +5043,10 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
 }
 
 // ======================================================================
-// M-46 — try_sync_with_peer returns bool reflecting cancel observation
+// Try_sync_with_peer returns bool reflecting cancel observation
 // ======================================================================
 
-/// M-46: When `try_sync_with_peer` exits via the connection-failure
+/// When `try_sync_with_peer` exits via the connection-failure
 /// early-exit path (no real session ran), the function must return
 /// `false` even if the cancel flag was pre-set. The `CancelGuard` still
 /// clears the flag, but the returned bool reflects the spec: only
@@ -5098,11 +5095,11 @@ async fn try_sync_with_peer_returns_false_when_connect_refused_even_if_cancel_pr
     .await
     .expect("must complete within timeout");
 
-    // M-46 spec: connect-failure early-exit returns false even when
+    // Spec: connect-failure early-exit returns false even when
     // cancel was pre-set, because run_sync_session never executed.
     assert!(
         !result,
-        "M-46: connect-failure early-exit must return false (no real session ran), got true"
+        "connect-failure early-exit must return false (no real session ran), got true"
     );
     // #637 invariant: the early-exit task does NOT own the cancel, so it must
     // PRESERVE a pre-set flag (it could be aimed at a still-running sibling)
@@ -5115,7 +5112,7 @@ async fn try_sync_with_peer_returns_false_when_connect_refused_even_if_cancel_pr
     materializer.shutdown();
 }
 
-/// M-46: backoff early-exit returns false (no real session ran).
+/// Backoff early-exit returns false (no real session ran).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn try_sync_with_peer_returns_false_on_backoff_early_exit_m46() {
     let (pool, _dir) = test_pool().await;
@@ -5146,10 +5143,7 @@ async fn try_sync_with_peer_returns_false_on_backoff_early_exit_m46() {
     };
     let result = try_sync_with_peer(&ctx, &peer, &refs).await;
 
-    assert!(
-        !result,
-        "M-46: backoff early-exit must return false, got true"
-    );
+    assert!(!result, "backoff early-exit must return false, got true");
     materializer.shutdown();
 }
 
@@ -5222,7 +5216,7 @@ async fn cancel_637_early_exiter_does_not_swallow_sibling_cancel() {
 
     let early_was_cancelled = early_handle.await.unwrap();
 
-    // The early-exiter ran no real session, so it reports false (M-46) ...
+    // The early-exiter ran no real session, so it reports false...
     assert!(
         !early_was_cancelled,
         "#637: early-exiter (backoff) must report false — it ran no session"
@@ -5250,9 +5244,9 @@ async fn cancel_637_early_exiter_does_not_swallow_sibling_cancel() {
 /// clear the shared flag on the way out. Here we reach `run_sync_session`
 /// against a live loopback responder with the cancel pre-set; the session's
 /// cancel check returns immediately ("sync cancelled by user"), the function
-/// reports `true` (M-46), and the guard clears the flag.
+/// Reports `true`, and the guard clears the flag.
 ///
-/// This also exercises the M-46 TRUE-return path that was an acknowledged
+/// This also exercises the TRUE-return path that was an acknowledged
 /// TODO(#497): a real session ran AND the cancel was observed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancel_637_owns_path_clears_flag_after_real_session() {
@@ -5307,7 +5301,7 @@ async fn cancel_637_owns_path_clears_flag_after_real_session() {
     // the initiator's first send doesn't fail before the cancel check.
     drop(conn_rx.try_recv());
 
-    // A real session ran and observed the cancel → true (M-46 true-path / #497).
+    // A real session ran and observed the cancel → true (true-path / #497).
     assert!(
         was_cancelled,
         "#637 owns-path: a real session that observed the cancel must return true"
@@ -5393,7 +5387,7 @@ async fn cancel_637_owns_path_normal_reset_leaves_flag_clear() {
     materializer.shutdown();
 }
 
-/// M-46: the daemon-loop's "break on cancel" pattern must stop at the
+/// The daemon-loop's "break on cancel" pattern must stop at the
 /// first peer that reports cancellation.
 ///
 /// Calls the production `run_sequential_sync_round` helper (extracted
@@ -5425,18 +5419,18 @@ async fn daemon_loop_breaks_round_when_cancel_observed_during_first_peer_m46() {
 
     assert!(
         was_cancelled,
-        "M-46: run_sequential_sync_round must return true when first peer cancels"
+        "run_sequential_sync_round must return true when first peer cancels"
     );
     assert_eq!(
         visited.lock().unwrap().clone(),
         vec!["PEER_1".to_string()],
-        "M-46: daemon loop must break after the first peer reports cancellation; \
+        "daemon loop must break after the first peer reports cancellation; \
          got visited peers {:?}",
         visited.lock().unwrap().clone()
     );
 }
 
-/// M-46: when no peer reports cancellation, `run_sequential_sync_round`
+/// When no peer reports cancellation, `run_sequential_sync_round`
 /// must visit all peers in the round (regression guard against an over-eager break).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_loop_visits_all_peers_when_no_cancel_observed_m46() {
@@ -5457,7 +5451,7 @@ async fn daemon_loop_visits_all_peers_when_no_cancel_observed_m46() {
 
     assert!(
         !was_cancelled,
-        "M-46: run_sequential_sync_round must return false when no peer cancels"
+        "run_sequential_sync_round must return false when no peer cancels"
     );
     assert_eq!(
         visited.lock().unwrap().clone(),
@@ -5466,11 +5460,11 @@ async fn daemon_loop_visits_all_peers_when_no_cancel_observed_m46() {
             "PEER_B".to_string(),
             "PEER_C".to_string()
         ],
-        "M-46: when no peer reports cancellation, all peers in the round must be visited"
+        "when no peer reports cancellation, all peers in the round must be visited"
     );
 }
 
-/// L-75: dormant-waiter race vs. immediate shutdown.
+/// Dormant-waiter race vs. immediate shutdown.
 ///
 /// The daemon starts dormant (no peers in pool). We then race two events:
 /// (1) a pair-arrival notification (insert peer + `scheduler.notify_change()`)
@@ -5544,7 +5538,7 @@ async fn dormant_waiter_races_pair_with_immediate_shutdown_l75() {
     })
     .await
     .expect(
-        "L-75: daemon must shut down within 10s when pair-notify and shutdown \
+        "daemon must shut down within 10s when pair-notify and shutdown \
          race; a hang here means a select! arm leaks across the race window",
     );
 
@@ -5556,7 +5550,7 @@ async fn dormant_waiter_races_pair_with_immediate_shutdown_l75() {
         .unwrap();
     assert!(
         peer.is_some(),
-        "L-75: peer inserted before shutdown must persist regardless of \
+        "peer inserted before shutdown must persist regardless of \
          which select! arm consumed first; got None"
     );
 }

@@ -14,7 +14,7 @@ use crate::space::SpaceScope;
 /// (soft-deleted) blocks are served by [`list_trash_inner`] / the
 /// [`list_trash`] Tauri command — never through this entry point.
 ///
-/// FEAT-3 Phase 4 — `space_id` is required (not optional). The filter is
+/// Phase 4 — `space_id` is required (not optional). The filter is
 /// threaded through every dispatch path (agenda, tag, by-type, children)
 /// so the result set always reflects the active space.
 ///
@@ -70,9 +70,9 @@ pub async fn list_blocks_inner(
     }
 
     // F06 / limit-clamp-followup Phase 1: reject limits outside `[1, 100]`
-    // loudly.  Silent clamp was the BUG-48 root: callers asking for >100
+    // Loudly. Silent clamp was the root: callers asking for >100
     // got truncated to 100 with no signal.  Strict validation surfaces
-    // the contract violation at the IPC boundary so a future BUG-48 fails
+    // The contract violation at the IPC boundary so a future fails
     // synchronously rather than as mysterious data loss months later.
     if let Some(l) = limit
         && !(1..=100).contains(&l)
@@ -84,7 +84,7 @@ pub async fn list_blocks_inner(
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
 
-    // FEAT-3 Phase 4: `space_id` is required, so every dispatch path
+    // Phase 4: `space_id` is required, so every dispatch path
     // forwards `Some(&space_id)` to its pagination helper. The helpers
     // keep the `Option<&str>` shape so other callers (e.g.
     // `list_pages_inner`, MCP unscoped paths) can still pass `None`.
@@ -182,7 +182,7 @@ async fn count_blocks_by_type(
 /// result to the user, an MCP agent, or an export — must NOT use
 /// this function: use [`get_active_block_inner`] instead, which
 /// adds `AND deleted_at IS NULL` and surfaces soft-deleted rows as
-/// [`AppError::NotFound`]. M-98 audited and established this split.
+/// [`AppError::NotFound`]. audited and established this split.
 ///
 /// # Errors
 ///
@@ -202,7 +202,7 @@ pub async fn get_block_inner(pool: &SqlitePool, block_id: BlockId) -> Result<Blo
 
 /// Fetch a single **active** (non-soft-deleted) block by ID.
 ///
-/// M-98 — The active-only counterpart to [`get_block_inner`]. The
+/// The active-only counterpart to [`get_block_inner`]. The
 /// SQL is the same single-row lookup with one additional predicate
 /// (`deleted_at IS NULL`), so a soft-deleted row surfaces as
 /// [`AppError::NotFound`] rather than leaking through to the
@@ -243,12 +243,12 @@ pub async fn get_active_block_inner(
 /// Uses `json_each()` so the full ID list is passed as a single JSON-encoded
 /// bind parameter — no dynamic SQL construction.
 ///
-/// FEAT-3 Phase 7 — `space_id` is required (not optional). Targets whose
+/// Phase 7 — `space_id` is required (not optional). Targets whose
 /// `b.page_id` does not carry `space = ?space_id` are
 /// dropped from the result. This is the policy enforcement point for
 /// "no live links between spaces, ever": foreign-space chips fall into
 /// the "unknown id" branch in the frontend and render as broken-link
-/// chips via the existing UX (FEAT-3p7).
+/// Chips via the existing UX.
 ///
 /// # Errors
 ///
@@ -256,14 +256,14 @@ pub async fn get_active_block_inner(
 /// - [`AppError::Validation`] — `ids.len()` >
 ///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
 ///
-/// `scope` (FEAT-3p7) — [`SpaceScope::Active`] restricts the result set
-/// to the named space (FEAT-3p7's broken-chip rendering for foreign-space
+/// `scope` — [`SpaceScope::Active`] restricts the result set
+/// To the named space ('s broken-chip rendering for foreign-space
 /// `[[ULID]]` targets). [`SpaceScope::Global`] keeps the cross-space
 /// behaviour used by legacy surfaces like trash / search / agenda views
 /// that have not yet been promoted to per-space scoping — tracked under
-/// FEAT-3p4. The `Option<String>` shape this replaces mirrored
-/// `list_page_history`'s FEAT-3p8 pattern; both migrated together in
-/// PEND-18 Phase 2.
+/// The `Option<String>` shape this replaces mirrored
+/// `list_page_history`'s pattern; both migrated together in
+/// Phase 2.
 #[instrument(skip(pool, ids), err)]
 pub async fn batch_resolve_inner(
     pool: &SqlitePool,
@@ -280,7 +280,7 @@ pub async fn batch_resolve_inner(
     let ids_json = serde_json::to_string(&ids)?;
     let space_filter = scope.as_filter_param();
 
-    // FEAT-3 Phase 7: scope to the current space using the canonical
+    // Phase 7: scope to the current space using the canonical
     // `b.space_id = ?` filter (#533, migration 0086 — `space_id` is now a
     // first-class column; matches the pattern shipped in
     // `pagination/{hierarchy,trash}.rs` and `fts/search.rs`).
@@ -325,7 +325,7 @@ pub async fn batch_resolve_inner(
 ///
 /// The three agenda knobs (`date`, `date_range`, `source`) are bundled
 /// into a single [`AgendaQuery`] to keep this wrapper under the
-/// `tauri-specta` 10-arg limit after FEAT-3 Phase 2 added `space_id`.
+/// `tauri-specta` 10-arg limit after Phase 2 added `space_id`.
 /// The hand-written TS wrapper in `src/lib/tauri.ts` keeps the flat
 /// public API (accepts `agendaDate` / `agendaDateRange` / `agendaSource`
 /// at the top level and marshals them into this struct for the IPC
@@ -425,7 +425,7 @@ pub async fn list_trash(
 /// Tauri command: fetch a single block by ID. Delegates to
 /// [`get_active_block_inner`].
 ///
-/// M-98 — the public IPC must never surface soft-deleted rows; the
+/// The public IPC must never surface soft-deleted rows; the
 /// frontend exposes them only via [`list_trash`] (the trash view).
 /// Switched from `get_block_inner` to [`get_active_block_inner`] so a
 /// soft-deleted block returns `NotFound` to the IPC caller instead of an
@@ -440,7 +440,7 @@ pub async fn get_block(pool: State<'_, ReadPool>, block_id: BlockId) -> Result<B
 
 /// Tauri command: batch-resolve block metadata. Delegates to [`batch_resolve_inner`].
 ///
-/// FEAT-3 Phase 7 — `space_id` is required so the resolve store cannot
+/// Phase 7 — `space_id` is required so the resolve store cannot
 /// surface foreign-space titles. The frontend always knows the current
 /// space and threads it through `useResolveStore.preload(spaceId)`.
 #[tauri::command]
@@ -497,7 +497,7 @@ pub async fn trash_descendant_counts(
 /// sibling-order used by every page renderer. Parents with no active
 /// children are omitted; callers should treat missing keys as "no preview".
 ///
-/// PEND-35 Tier 2.8 — the templates view used to fire one
+/// The templates view used to fire one
 /// `list_blocks({ parent_id, limit: 1 })` IPC per template just to
 /// surface a one-line preview. This batch endpoint collapses that
 /// N+1 into a single query using SQLite's `ROW_NUMBER()` window

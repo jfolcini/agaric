@@ -1,5 +1,5 @@
 /**
- * PEND-58d T-F4 — PageBrowserRowRenderer tests.
+ * T-F4 — PageBrowserRowRenderer tests.
  *
  * `PageBrowserRowRenderer` is the per-row dispatcher inside the
  * `PageBrowser` virtualizer. It branches on `row.kind`:

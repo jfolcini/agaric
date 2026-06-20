@@ -1,5 +1,5 @@
 /**
- * Tests for BlockZoomBar component (UX-257 — consumes the Breadcrumb primitive).
+ * Tests for BlockZoomBar component (consumes the Breadcrumb primitive).
  *
  * Validates:
  * - Returns null when breadcrumbs are empty
@@ -11,7 +11,7 @@
  * - `[[ULID]]` content is rendered as plain stripped text — never as a chip
  *   inside `button[data-zoom-crumb]`
  * - Chevron separators (not slashes / commas) between crumbs
- * - UX-215 keyboard navigation moved into the primitive — still works here
+ * Keyboard navigation moved into the primitive — still works here
  * - a11y compliance (axe)
  */
 
@@ -132,7 +132,7 @@ describe('BlockZoomBar', () => {
     expect(firstButton.className).not.toContain('font-medium')
   })
 
-  // UX-257 — the headline visual win: no inline chips inside crumbs. Block-link
+  // The headline visual win: no inline chips inside crumbs. Block-link
   // tokens are stripped to plain text so the bar reads as nav chrome.
   it('renders [[ULID]] content as stripped plain text — no chip elements', () => {
     const items: BreadcrumbItem[] = [{ id: 'Z', content: 'See [[01JFAKE00000000000000ULID]]' }]
@@ -191,7 +191,7 @@ describe('BlockZoomBar', () => {
     expect(results).toHaveNoViolations()
   })
 
-  describe('UX-215 arrow-key navigation', () => {
+  describe(' arrow-key navigation', () => {
     it('marks the last breadcrumb with aria-current="page"', () => {
       render(<BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
       // The active crumb is now a span (non-clickable). Look up by text.

@@ -1,5 +1,5 @@
 /**
- * PEND-56 — `DensityRow`.
+ * `DensityRow`.
  *
  * Pages-view leaf row that renders one page at one of three densities:
  *
@@ -71,7 +71,7 @@ export interface DensityRowProps {
   /** When `true`, disables the delete button (parent is mid-delete). */
   deleting: boolean
 
-  // ── Typed metadata primitives (PEND-56 Phase 1 IPC columns) ────────
+  // ── Typed metadata primitives (Phase 1 IPC columns) ────────
   /** Epoch-ms from `last_modified_at` (#109 Phase 2). `null` renders "never". */
   lastModifiedAt: number | null
   /** Inbound link count. Zero suppresses the ↗ badge in `regular` /
@@ -89,7 +89,7 @@ export interface DensityRowProps {
   /** Some descendant has a non-null `due_date`. */
   hasDue: boolean
 
-  // ── Multi-select (#81 / PEND-57) ───────────────────────────────────
+  // ── Multi-select (#81) ───────────────────────────────────
   /** Whether this row is in the batch selection. Drives the leading
    * checkbox's checked state and the `data-selected` attribute. */
   multiSelected: boolean
@@ -242,7 +242,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
   // tooltip so users keep access to ↗ / ⊟ / flags without the extra
   // chrome. Regular / expanded use the visible badge cluster, so the
   // tooltip stays the bare title (matching today's `PageRow`).
-  // PEND-56 edge case: suppress `↗ 0` / `⊟ 0` in the tooltip the same
+  // Edge case: suppress `↗ 0` / `⊟ 0` in the tooltip the same
   // way the visible badges do — assemble the tail conditionally so
   // an empty page doesn't read "0 inbound links, 0 child blocks".
   const tooltipText = (() => {
@@ -261,7 +261,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
 
   return (
     <div
-      // UX-331 — stable id so the grid container's `aria-activedescendant`
+      // Stable id so the grid container's `aria-activedescendant`
       // can point at this row when keyboard nav lands on it.
       id={`page-row-${pageId}`}
       data-index={virtualRowIndex}
@@ -285,7 +285,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
       )}
       style={rowStyle(virtualRowStart)}
     >
-      {/* #81 / PEND-57 — batch-selection checkbox. Always present (it is
+      {/* #81 / batch-selection checkbox. Always present (it is
           the entry point into selection mode); visible on hover / focus /
           when checked, mirroring the star + delete affordances. */}
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to the inner checkbox; CSS-grid cell would break as a <td> without a <table> */}

@@ -171,7 +171,7 @@ async fn alias_collision_returns_error() {
 // Journal commands — today_journal / navigate_journal
 // ======================================================================
 //
-// FEAT-3p5: every journal call now requires a `space_id`. Tests seed a
+// Every journal call now requires a `space_id`. Tests seed a
 // space via `test_space()` and pass its ULID through.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -294,7 +294,7 @@ async fn navigate_journal_different_dates_create_different_pages() {
 }
 
 // ======================================================================
-// quick_capture_block — FEAT-12 (global-shortcut quick capture)
+// Quick_capture_block — (global-shortcut quick capture)
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -463,7 +463,7 @@ async fn restore_page_to_op_reverts_edits_after_target() {
     // Edit block: B → C (this should be reverted).
     // No sleep needed: the restore query orders by (created_at, seq, device_id)
     // and `seq` is strictly monotonic per device, so this op sorts strictly
-    // after `target_seq` even at an identical ms timestamp (see undo_redo TEST-24).
+    // After `target_seq` even at an identical ms timestamp (see undo_redo).
     edit_block_inner(&pool, DEV, &mat, child.id.clone(), "content-C".into())
         .await
         .unwrap();
@@ -573,7 +573,7 @@ async fn restore_page_to_op_with_all_pages_target() {
     // Edit blocks on both pages.
     // No sleep needed: the restore query orders by (created_at, seq, device_id)
     // and `seq` is strictly monotonic per device, so these ops sort strictly
-    // after `target_seq` even at identical ms timestamps (see undo_redo TEST-24).
+    // After `target_seq` even at identical ms timestamps (see undo_redo).
     edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "changed-1".into())
         .await
         .unwrap();
@@ -767,7 +767,7 @@ async fn restore_page_to_op_op_log_chain_valid_after_restore() {
     // Make edits that will be reverted.
     // No sleeps needed: the restore query orders by (created_at, seq, device_id)
     // and `seq` is strictly monotonic per device, so both edits sort strictly
-    // after `target_seq` even at identical ms timestamps (see undo_redo TEST-24).
+    // After `target_seq` even at identical ms timestamps (see undo_redo).
     edit_block_inner(&pool, DEV, &mat, child.id.clone(), "edited-1".into())
         .await
         .unwrap();

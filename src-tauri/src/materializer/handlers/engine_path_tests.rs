@@ -67,7 +67,7 @@ async fn apply_op_tx_create_block_engine_path() {
     // The engine path reads the Loro state global; install it for
     // the test.
     let _state = crate::loro::shared::install_for_test();
-    // PEND-80 Phase 3: the parent page must exist in the engine tree.
+    // Phase 3: the parent page must exist in the engine tree.
     seed_page_via_loro(&pool).await;
 
     let payload = OpPayload::CreateBlock(CreateBlockPayload {
@@ -222,7 +222,7 @@ async fn apply_op_tx_edit_block_engine_path() {
 /// MoveBlock loro-path tests), then set `page_id` so subsequent
 /// `resolve_block_space` calls walk to the page's space property.
 /// Mirrors the inline pattern used in the EditBlock test.
-/// Create the PAGE_ID node in the Loro engine (not just SQL). PEND-80
+/// Create the PAGE_ID node in the Loro engine (not just SQL).
 /// Phase 3: the block hierarchy is a LoroTree, so a child's parent must
 /// exist in the engine for `read_block` to derive its `parent_id`.
 /// Production always creates pages through the op-log → engine; the

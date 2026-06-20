@@ -112,7 +112,7 @@ describe('SLASH_COMMANDS', () => {
     expect(ids).toContain('attach')
   })
 
-  it('all commands have category and icon metadata (UX-50)', () => {
+  it('all commands have category and icon metadata', () => {
     for (const cmd of SLASH_COMMANDS) {
       expect(cmd.category).toBeTruthy()
       expect(cmd.icon).toBeTruthy()
@@ -219,7 +219,7 @@ describe('searchSlashCommands', () => {
     expect(results.length).toBe(0)
   })
 
-  it('filtered results preserve category and icon metadata (UX-50)', () => {
+  it('filtered results preserve category and icon metadata', () => {
     const results = searchSlashCommands('todo')
     const todoItem = results.find((r) => r.id === 'todo')
     expect(todoItem).toBeDefined()
@@ -227,7 +227,7 @@ describe('searchSlashCommands', () => {
     expect(todoItem?.icon).toBeTruthy()
   })
 
-  it('dynamic table command includes category and icon (UX-50)', () => {
+  it('dynamic table command includes category and icon', () => {
     const results = searchSlashCommands('table 3x3')
     const tableItem = results.find((r) => r.id === 'table:3:3')
     expect(tableItem).toBeDefined()
@@ -235,15 +235,15 @@ describe('searchSlashCommands', () => {
     expect(tableItem?.icon).toBeTruthy()
   })
 
-  // -- UX-68: Fuzzy matching --------------------------------------------------
+  // -- Fuzzy matching --------------------------------------------------
 
-  it('fuzzy matches non-substring queries (UX-68)', () => {
+  it('fuzzy matches non-substring queries', () => {
     // "tdo" is not a substring of "TODO — Mark as to-do" but fuzzy should match
     const results = searchSlashCommands('tdo')
     expect(results.some((r) => r.id === 'todo')).toBe(true)
   })
 
-  it('fuzzy matches across command groups (UX-68)', () => {
+  it('fuzzy matches across command groups', () => {
     // "prihi" should fuzzy match "PRIORITY 1 — Set high priority"
     const results = searchSlashCommands('pri')
     expect(results.some((r) => r.id === 'priority-high')).toBe(true)
@@ -251,7 +251,7 @@ describe('searchSlashCommands', () => {
 })
 
 describe('searchPropertyKeys', () => {
-  // PEND-35 Tier 2.5 — `searchPropertyKeys` now reads through the
+  // `searchPropertyKeys` now reads through the
   // shared module-level cache in `src/lib/property-keys-cache.ts`. Each
   // test below provides a different mocked IPC payload, so the cache
   // must be reset between tests to force a fresh fetch.
@@ -491,11 +491,11 @@ describe('useBlockSlashCommands handleSlashCommand', () => {
     })
   })
 
-  // FE-M-6: handleAttach wraps `input.click()` in try/catch so that platforms
+  // HandleAttach wraps `input.click()` in try/catch so that platforms
   // where the synthetic click is rejected (lost user gesture, blocked
   // programmatic file dialog, etc.) surface a toast + logger.warn instead of
   // letting the exception bubble out as an unhandled rejection.
-  it('FE-M-6: surfaces toast + logger.warn when input.click() throws', async () => {
+  it('surfaces toast + logger.warn when input.click() throws', async () => {
     const originalClick = HTMLInputElement.prototype.click
     const clickMock = vi.fn(() => {
       throw new Error('mock click')
@@ -623,7 +623,7 @@ describe('useBlockSlashCommands undo notifications', () => {
     expect(onNewActionSpy).not.toHaveBeenCalled()
   })
 
-  // MAINT-116 regression: pre-fix, applyContentEdit (used by heading /
+  // Regression: pre-fix, applyContentEdit (used by heading /
   // callout / numbered-list / divider slash commands) reached `pageStore`
   // directly without firing notifyUndo, so the redo stack stayed
   // uncleared and Cmd+Shift+Z after a heading slash command would
@@ -634,7 +634,7 @@ describe('useBlockSlashCommands undo notifications', () => {
   // redo-stack semantics, but its handler replaces the entire content
   // with '---' rather than editing it, so the contract proven by the 3
   // tests below applies transitively to divider.
-  it('MAINT-116: heading slash command calls onNewAction (clears redo stack)', async () => {
+  it('heading slash command calls onNewAction (clears redo stack)', async () => {
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
 
@@ -645,7 +645,7 @@ describe('useBlockSlashCommands undo notifications', () => {
     expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
   })
 
-  it('MAINT-116: callout slash command calls onNewAction (clears redo stack)', async () => {
+  it('callout slash command calls onNewAction (clears redo stack)', async () => {
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
 
@@ -656,7 +656,7 @@ describe('useBlockSlashCommands undo notifications', () => {
     expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
   })
 
-  it('MAINT-116: numbered-list slash command calls onNewAction (clears redo stack)', async () => {
+  it('numbered-list slash command calls onNewAction (clears redo stack)', async () => {
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
 
@@ -668,7 +668,7 @@ describe('useBlockSlashCommands undo notifications', () => {
   })
 })
 
-describe('useBlockSlashCommands handleSlashCommand stability (#MAINT-10)', () => {
+describe('useBlockSlashCommands handleSlashCommand stability (#)', () => {
   it('keeps handleSlashCommand identity stable when rootParentId/t/rovingEditor change', () => {
     // rootParentId, t, rovingEditor are all accessed via refs inside the callback
     // (not listed in deps). Changing these props must NOT rebuild the callback.
@@ -746,13 +746,13 @@ describe('useBlockSlashCommands handleSlashCommand stability (#MAINT-10)', () =>
   })
 })
 
-// PEND-30 D-4 — dispatcher regression test. Asserts that every PickerItem id
+// D-4 — dispatcher regression test. Asserts that every PickerItem id
 // produced by `SLASH_COMMANDS` (plus the dynamic `table:N:M` and the `h1..h6`
 // heading family) resolves to exactly one handler in the merged dispatch
 // table — no missing kinds, no exact-key collisions across sub-hooks, no
 // prefix double-routing. Pins the cross-sub-hook contract that the four
 // category hooks together cover the full command catalog.
-describe('useBlockSlashCommands dispatcher coverage (#PEND-30 D-4)', () => {
+describe('useBlockSlashCommands dispatcher coverage (# D-4)', () => {
   function getMergedTables() {
     const { result } = renderHook(
       () => {

@@ -3,7 +3,7 @@
 use super::sanitize_internal_error;
 use crate::error::AppError;
 
-/// M-39: per-field byte ceiling applied at the IPC boundary. The
+/// Per-field byte ceiling applied at the IPC boundary. The
 /// frontend rate-limiter caps emission frequency, but a single
 /// `logger.error` payload (e.g. a stringified TipTap document in
 /// `data`) can still be hundreds of MB. Without this cap the formatter
@@ -16,7 +16,7 @@ pub(crate) const MAX_FRONTEND_LOG_FIELD_BYTES: usize = 64 * 1024;
 
 /// Truncate a single frontend log field to [`MAX_FRONTEND_LOG_FIELD_BYTES`].
 ///
-/// Delegates to [`crate::text_utils::truncate_at_char_boundary`] (L-59):
+/// Delegates to [`crate::text_utils::truncate_at_char_boundary`]:
 /// preserve the head of the field, append a `…[truncated N bytes]`
 /// marker, and split on a UTF-8 char boundary so the cut never lands
 /// inside a multibyte codepoint. The marker wording is owned here so
@@ -35,10 +35,10 @@ fn truncate_optional_log_field(s: Option<String>) -> Option<String> {
     s.map(truncate_log_field)
 }
 
-/// M-40: pure level-dispatch helper, extracted from `log_frontend` so
+/// Pure level-dispatch helper, extracted from `log_frontend` so
 /// the unknown-level fallback to `info` can be unit-tested without a
 /// Tauri runtime. All fields are passed by reference; the caller owns
-/// the M-39 truncation step before invoking this helper.
+/// The truncation step before invoking this helper.
 pub(crate) fn log_frontend_inner(
     level: &str,
     module: &str,
@@ -69,7 +69,7 @@ pub(crate) fn log_frontend_inner(
 /// Log a frontend message to the backend's daily-rolling log file.
 /// Fire-and-forget — the frontend never awaits this.
 ///
-/// M-39: every `String` / `Option<String>` field is truncated at entry
+/// Every `String` / `Option<String>` field is truncated at entry
 /// to [`MAX_FRONTEND_LOG_FIELD_BYTES`] (64 KB) so a single oversized
 /// payload cannot stall the IPC thread or corrupt the daily log file.
 /// Truncation is unconditional — the FE rate-limiter is not in this
@@ -85,7 +85,7 @@ pub async fn log_frontend(
     context: Option<String>,
     data: Option<String>,
 ) -> Result<(), AppError> {
-    // M-39: bound every field at entry. The truncation is cheap when
+    // Bound every field at entry. The truncation is cheap when
     // the field is small (no allocation; the input String moves through
     // unchanged) and bounds the worst case when a FE bug ships a
     // megabyte-scale payload.
@@ -107,11 +107,11 @@ pub async fn log_frontend(
     Ok(())
 }
 
-/// M-40: testable helper for `get_log_dir`. Mirrors what the outer
+/// Testable helper for `get_log_dir`. Mirrors what the outer
 /// `#[tauri::command]` does after resolving `app_data_dir` from Tauri:
 /// route through [`crate::log_dir_for_app_data`] so the path returned
 /// to the frontend matches the directory the tracing-appender writes
-/// to (BUG-34).
+/// To.
 pub(crate) fn get_log_dir_inner(app_data_dir: &std::path::Path) -> String {
     crate::log_dir_for_app_data(app_data_dir)
         .to_string_lossy()
@@ -122,7 +122,7 @@ pub(crate) fn get_log_dir_inner(app_data_dir: &std::path::Path) -> String {
 ///
 /// Uses [`crate::log_dir_for_app_data`] so the path returned to the
 /// frontend ("Open logs folder") is guaranteed to match the directory
-/// the tracing-appender writes to — on every platform (BUG-34).
+/// The tracing-appender writes to — on every platform.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
@@ -205,7 +205,7 @@ mod tests {
         );
     }
 
-    /// M-39: a 1 MB payload in the `data` field must complete the IPC
+    /// A 1 MB payload in the `data` field must complete the IPC
     /// quickly with the field truncated. No tracing infrastructure is
     /// asserted on (that requires a custom subscriber); we assert the
     /// IPC wall-clock and the truncation helpers' contract instead.
@@ -242,10 +242,10 @@ mod tests {
         );
     }
 
-    // -- M-40: log_frontend_inner level dispatch ------------------------
+    // -- log_frontend_inner level dispatch ------------------------
     //
     // No `tracing_test`/`TestWriter` fixtures are wired into this crate
-    // (verified by grep). Per the M-40 plan: invoke the helper with each
+    // (verified by grep). Per the plan: invoke the helper with each
     // documented level (and an unknown one) and assert the call does not
     // panic — that proves the `match` arms compile-and-run end-to-end and
     // that the unknown-level fallback correctly routes through
@@ -294,14 +294,14 @@ mod tests {
         log_frontend_inner("bogus", "M40Test", "mystery", None, None, None);
     }
 
-    // -- M-40: get_log_dir_inner ---------------------------------------
+    // -- get_log_dir_inner ---------------------------------------
 
     #[test]
     fn get_log_dir_inner_returns_logs_subdir() {
         // Mirror the suffix used by `lib.rs::run` (around line 442) and
         // by `crate::log_dir_for_app_data` — the helper appends a `logs`
         // subdirectory to the supplied app-data dir. Both call sites
-        // must agree (BUG-34).
+        // Must agree.
         let app_data = std::path::Path::new("/tmp/agaric-m40-test-data");
         let out = get_log_dir_inner(app_data);
         let expected = std::path::Path::new("/tmp/agaric-m40-test-data")

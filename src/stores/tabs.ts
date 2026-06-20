@@ -1,5 +1,5 @@
 /**
- * Tabs store — Zustand state for the editor tab engine (MAINT-127 split).
+ * Tabs store — Zustand state for the editor tab engine (split).
  *
  * Tracks per-tab page stacks plus the active-tab pointer. Multiple editor
  * tabs are supported; each tab has its own page stack. Only one tab is
@@ -7,14 +7,14 @@
  * `selectPageStack` to derive the active tab's page stack from the store
  * state.
  *
- * FEAT-3 Phase 3 — tabs are partitioned by space. `tabsBySpace` and
+ * Phase 3 — tabs are partitioned by space. `tabsBySpace` and
  * `activeTabIndexBySpace` hold one slice per space id; the flat `tabs` /
  * `activeTabIndex` fields mirror the active-space slice and serve as the
  * legacy view when no space is active (`currentSpaceId == null`). Consumers
  * read via `selectTabsForSpace` / `selectActiveTabIndexForSpace` so a tab
  * opened in space-A never leaks into space-B.
  *
- * MAINT-127 — extracted from `navigation.ts`. The asymmetric coupling is
+ * Extracted from `navigation.ts`. The asymmetric coupling is
  * preserved here: every tab action that implies a view change calls
  * `useNavigationStore.getState().setView(...)` directly. The navigation
  * store's actions never reach back into this store. Cross-store coordination
@@ -89,7 +89,7 @@ interface TabsStore {
   /**
    * Switch to a different tab by index. When invoked from a non-`page-editor`
    * view, also flips `currentView` back to `page-editor` so the user actually
-   * sees the tab's page content (FEAT-7 — shell-level TabBar hoist).
+   * Sees the tab's page content (shell-level TabBar hoist).
    */
   switchTab: (tabIndex: number) => void
 }
@@ -136,7 +136,7 @@ function tabLabel(stack: PageEntry[]): string {
 }
 
 /**
- * UX-242: parse a `YYYY-MM-DD` page title into a local-time `Date` when the
+ * Parse a `YYYY-MM-DD` page title into a local-time `Date` when the
  * title is both shape-correct (`isDateFormattedPage`) AND resolves to a valid
  * calendar date (`parseDate` returns null for impossible dates like
  * `2026-13-45`). Returns `null` for any other input so callers can fall
@@ -366,7 +366,7 @@ export const useTabsStore = create<TabsStore>()(
         // already batches. Item #11 closed as "no fix needed; subscribers
         // already batch" in `pending/design-system-perf-review-2026-05-09.md`.
 
-        // FEAT-9: record every COMPLETED navigateToPage call as a
+        // Record every COMPLETED navigateToPage call as a
         // recent-visit (the store dedups by pageId, so repeated visits
         // stay MRU-correct). #753 — the visit is recorded on each branch
         // AFTER its bail-outs: previously it fired unconditionally at the
@@ -375,7 +375,7 @@ export const useTabsStore = create<TabsStore>()(
         // opened. Date-titled pages (YYYY-MM-DD) are page visits too —
         // the journal branch records before routing into Journal.
 
-        // UX-242: date-titled pages (YYYY-MM-DD) belong to the Journal → Daily
+        // Date-titled pages (YYYY-MM-DD) belong to the Journal → Daily
         // view, not the generic page-editor. Route them through the journal
         // store so every call site (PageBrowser, breadcrumbs, search, tag
         // filter, templates, graph, …) gets the correct behaviour with a
@@ -387,8 +387,8 @@ export const useTabsStore = create<TabsStore>()(
           useRecentPagesStore.getState().recordVisit({ pageId, title })
           useJournalStore.getState().navigateToDate(parsedDate, 'daily')
           // Journal view does not use pageStack at all, so we never push
-          // onto it here. Tabs / activeTabIndex are preserved (UX-251).
-          // UX-258: DailyView reads selectedBlockId on mount and scrolls
+          // Onto it here. Tabs / activeTabIndex are preserved.
+          // DailyView reads selectedBlockId on mount and scrolls
           // the matching block into view + restores focus, then clears
           // the selection (one-shot). See src/components/journal/DailyView.tsx.
           setNavigationView('journal')
@@ -535,7 +535,7 @@ export const useTabsStore = create<TabsStore>()(
       },
 
       switchTab: (tabIndex: number) => {
-        // FEAT-7: TabBar is hoisted to the app shell and visible from any view
+        // TabBar is hoisted to the app shell and visible from any view
         // (journal, pages, search, …). Clicking a tab from a non-editor view
         // must flip `currentView` back to `page-editor` so the user actually
         // sees the tab's page content. When already in `page-editor` the
@@ -629,11 +629,11 @@ export function resetTabIdCounter(): void {
  * that reads the flat field) consistent with whichever space the user is
  * currently on, without forcing every consumer to thread the space id.
  *
- * MAINT-122: subscription mechanics + diff detection live in
+ * Subscription mechanics + diff detection live in
  * `createSpaceSubscriber`; this site only owns the tabs-specific
  * flush / pull logic. On first fire (`prevKey === newKey`) we seed
  * `tabsBySpace[newKey]` from the rehydrated flat tabs if it's missing,
- * so a returning user who migrated from a pre-FEAT-3p3 shape (where
+ * So a returning user who migrated from a pre- shape (where
  * tabs only existed in the flat fields under the `__legacy__` key)
  * keeps their tabs accessible from the active space.
  */

@@ -10,10 +10,10 @@
 //
 // ─── Scope ──────────────────────────────────────────────────────────
 //
-// MAINT-159: walks `src/components/**/*.tsx` recursively. Subdirectory
+// Walks `src/components/**/*.tsx` recursively. Subdirectory
 // components (`src/components/agent-access/`, `src/components/journal/`,
 // `src/components/block-tree/`, `src/components/backlink-filter/`,
-// future `src/components/settings/` from MAINT-128) are now in scope
+// Future `src/components/settings/`) are now in scope
 // alongside top-level files.
 //
 // `src/components/ui/` (Radix-wrapped primitives) is excluded because
@@ -43,7 +43,7 @@
 //
 // Hooks/stores are still out of scope — this hook only catches direct
 // IPC callers in the component layer (the most-trafficked surface for
-// FEAT-3-class regressions where a missing error toast leaks past
+// -class regressions where a missing error toast leaks past
 // review).
 //
 // ─── Detection ──────────────────────────────────────────────────────
@@ -136,7 +136,7 @@ if (!fs.existsSync(COMPONENTS_DIR) || !fs.existsSync(TESTS_DIR)) {
 // ─── helpers ────────────────────────────────────────────────────────
 
 /**
- * MAINT-159: walk `src/components/**` recursively for `*.tsx` files
+ * Walk `src/components/**` recursively for `*.tsx` files
  * (excluding `*.test.tsx`, `__tests__/`, and the `ui/` subdir which
  * holds stateless Radix primitives that never call `invoke`). Helper
  * modules with `.helpers.tsx` or pure-`.ts` siblings are out of
@@ -166,7 +166,7 @@ function listAllComponents(componentsDir = COMPONENTS_DIR) {
 
 /**
  * Resolve the candidate test file for a component, preferring a
- * sibling `__tests__/` (per MAINT-128 split convention) and falling
+ * Sibling `__tests__/` (split convention) and falling
  * back to the top-level `src/components/__tests__/`. Returns `null`
  * if neither exists.
  */

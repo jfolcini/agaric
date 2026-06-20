@@ -41,7 +41,7 @@ function makePage(id: string, content: string): BlockRow {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // PEND-35 Tier 2.6: single-key PK lookup; default mock returns null
+  // Single-key PK lookup; default mock returns null
   // (no def for the requested key).
   mockGetPropertyDef.mockResolvedValue(null)
   mockListBlocks.mockResolvedValue({
@@ -78,7 +78,7 @@ describe('usePropertyDefForEdit', () => {
     })
     expect(result.current.isRefProp).toBe(false)
     expect(result.current.refPages).toEqual([])
-    // PEND-35 Tier 2.6: dedicated PK lookup, not a full vocabulary scan.
+    // Dedicated PK lookup, not a full vocabulary scan.
     expect(mockGetPropertyDef).toHaveBeenCalledWith('severity')
   })
 
@@ -106,7 +106,7 @@ describe('usePropertyDefForEdit', () => {
       expect(result.current.refPages).toHaveLength(2)
     })
     expect(result.current.selectOptions).toBeNull()
-    // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`; `''` is the
+    // Phase 4 — `listBlocks` requires `spaceId`; `''` is the
     // pre-bootstrap fallback when no space is seeded in the test.
     expect(mockListBlocks).toHaveBeenCalledWith({ blockType: 'page', spaceId: '' })
   })

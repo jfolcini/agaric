@@ -43,13 +43,13 @@ use crate::pagination::{BlockRow, Cursor, PageRequest};
 /// Self-references are excluded from the base set (a block linking to
 /// itself does not surface as its own backlink), matching the
 /// convention used by `eval_unlinked_references` and
-/// `eval_backlink_query_grouped`. (L-95)
+/// `eval_backlink_query_grouped`.
 ///
-/// `space_id` (FEAT-3p4) — when `Some`, the base-set query restricts
+/// `space_id` — when `Some`, the base-set query restricts
 /// source blocks to those whose owning page (`b.page_id`)
 /// carries `space = ?space_id`. Applying the filter at the base-set
 /// step means `total_count` and `filtered_count` reflect the
-/// post-space-filter universe. `None` is the unscoped (pre-FEAT-3)
+/// Post-space-filter universe. `None` is the unscoped (pre-)
 /// behaviour.
 ///
 /// ## Algorithm (H1)
@@ -311,7 +311,7 @@ async fn eval_created_sort_keyset(
         None
     };
 
-    // MAINT-113 M2 — the SQL filters `deleted_at IS NULL`, so the rows
+    // The SQL filters `deleted_at IS NULL`, so the rows
     // are active by construction. Boundary cast records that claim.
     let items: Vec<crate::pagination::ActiveBlockRow> = rows
         .into_iter()
@@ -470,7 +470,7 @@ async fn eval_property_sort_materialised(
 /// Returns FxHashMap<block_id, (root_page_id, root_page_title)>.
 /// Blocks whose `page_id` is NULL (orphans / tags) are omitted.
 ///
-/// L-5 (PEND-25): FxHashMap is used for return / construction so the
+/// FxHashMap is used for return / construction so the
 /// post-resolve `.get(&id)` lookups in the grouping pass run on the
 /// faster Fx hash. Callers were already on Fx-flavoured sets, so this
 /// keeps the family aligned.
@@ -491,7 +491,7 @@ async fn eval_property_sort_materialised(
 /// never produce. No runtime guard is added here so the hot grouping
 /// path keeps the single denormalised-column join.
 ///
-/// ## SMALL_IN_LIMIT dual-branch (L-82/L-83)
+/// ## SMALL_IN_LIMIT dual-branch
 ///
 /// When `block_ids.len() <= SMALL_IN_LIMIT` (500), positional `IN (?,…)`
 /// placeholders are used. Above that threshold a single
@@ -559,7 +559,7 @@ pub(super) async fn resolve_root_pages(
 /// and falls back to `IN (SELECT value FROM json_each(?))` for larger sets to
 /// avoid SQLite's variable-binding ceiling. Both branches return identical
 /// row sets — the row order is unspecified, so callers must reorder
-/// themselves if a specific order is required. (L-82, L-83)
+/// Themselves if a specific order is required.
 pub(super) async fn fetch_block_rows_by_ids(
     pool: &SqlitePool,
     ids: &[&str],
@@ -611,7 +611,7 @@ pub(super) async fn resolve_root_pages_cte(
 
     let placeholders = block_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     // Bound `depth < 100` on the recursive member to prevent runaway recursion
-    // on corrupted parent_id chains (AGENTS.md invariant #9). (M-60)
+    // On corrupted parent_id chains (AGENTS.md invariant #9).
     let sql = format!(
         "WITH RECURSIVE walk(block_id, current_id, depth) AS ( \
             SELECT id, id, 0 FROM blocks WHERE id IN ({placeholders}) \
@@ -741,7 +741,7 @@ pub async fn list_property_values(pool: &SqlitePool, key: &str) -> Result<Vec<St
 #[cfg(test)]
 mod tests {
     //! Localized regression tests that need not depend on the broader
-    //! `super::tests` fixture surface. Specifically guards the L-95 fix
+    //! `super::tests` fixture surface. Specifically guards the fix
     //! that excludes self-referencing links from `eval_backlink_query`'s
     //! base set, aligning the path with `eval_unlinked_references` /
     //! `eval_backlink_query_grouped`.
@@ -783,7 +783,7 @@ mod tests {
         PageRequest::new(None, Some(50)).unwrap()
     }
 
-    /// L-95: a block linking to itself must NOT appear as its own
+    /// A block linking to itself must NOT appear as its own
     /// backlink and must NOT inflate `total_count`.
     #[tokio::test]
     async fn eval_backlink_query_excludes_self_references() {
@@ -814,7 +814,7 @@ mod tests {
         assert!(resp.next_cursor.is_none());
     }
 
-    /// L-95 negative-side guard: ensure the new self-reference filter
+    /// Negative-side guard: ensure the new self-reference filter
     /// does not accidentally drop legitimate backlinks from OTHER
     /// blocks. With BLK_A → BLK_B and BLK_B → BLK_B (self), only BLK_A
     /// should surface in the response.

@@ -259,7 +259,7 @@ describe('HistoryListItem', () => {
       }),
     )
 
-    // UX-351: the visible text label is the accessible name; the Lock svg
+    // The visible text label is the accessible name; the Lock svg
     // is decorative (aria-hidden) but still present alongside the text.
     expect(screen.getByText(/Non-reversible/)).toBeInTheDocument()
   })
@@ -275,11 +275,11 @@ describe('HistoryListItem', () => {
     expect(screen.queryByText(/Non-reversible/)).not.toBeInTheDocument()
   })
 
-  // -- UX-351: visible "Non-reversible" text label + opacity-50 multi-cue ----
+  // -- visible "Non-reversible" text label + opacity-50 multi-cue ----
   // Pins the WCAG-compliant multi-cue contract: visible text label is the
   // primary accessible signal and opacity-50 is retained as a secondary
   // visual cue. Both must coexist for non-reversible rows.
-  describe('UX-351 non-reversible visible label', () => {
+  describe(' non-reversible visible label', () => {
     it('renders the visible "Non-reversible" text label when isNonReversible=true', () => {
       renderInListbox(
         defaultProps({
@@ -649,7 +649,7 @@ describe('HistoryListItem', () => {
       expect(onRowClick).not.toHaveBeenCalled()
     })
 
-    // -- UX-275 sub-fix 6: visible label on touch ----------------------------
+    // -- sub-fix 6: visible label on touch ----------------------------
     it('renders a touch-only label next to the restore icon', () => {
       renderInListbox(defaultProps())
       const label = screen.getByTestId('restore-to-here-touch-label')
@@ -666,7 +666,7 @@ describe('HistoryListItem', () => {
       expect(screen.queryByTestId('restore-to-here-touch-label')).not.toBeInTheDocument()
     })
 
-    // -- UX-345: disambiguate point-in-time reset from per-entry revert ------
+    // -- disambiguate point-in-time reset from per-entry revert ------
     // Pins the new copy so the label/touch-label/tooltip stay distinct from
     // the per-entry "Revert" action and don't drift back to "Restore". The
     // tooltip body lives inside Radix's portal and only mounts on
@@ -690,8 +690,8 @@ describe('HistoryListItem', () => {
     })
   })
 
-  // -- UX-275 sub-fix 5: visible focus-ring on the checkbox ------------------
-  describe('UX-275 checkbox focus styling', () => {
+  // -- sub-fix 5: visible focus-ring on the checkbox ------------------
+  describe(' checkbox focus styling', () => {
     it('checkbox carries visible focus-ring utilities', () => {
       renderInListbox(defaultProps())
       const checkbox = screen.getByRole('checkbox')
@@ -742,7 +742,7 @@ describe('HistoryListItem', () => {
     })
   })
 
-  // -- Property op display (UX-134) -----------------------------------------
+  // -- Property op display -----------------------------------------
 
   describe('property op display', () => {
     it('renders set_property with formatted name and value', () => {
@@ -782,7 +782,7 @@ describe('HistoryListItem', () => {
 })
 
 // ===========================================================================
-// BlockHistoryItem (PEND-17 Part B redesign)
+// BlockHistoryItem (Part B redesign)
 // ===========================================================================
 //
 // The component changed shape:
@@ -853,7 +853,7 @@ describe('BlockHistoryItem', () => {
   })
 
   it('does not render the legacy Reset / Diff per-row buttons', () => {
-    // PEND-17 Part B: those affordances were folded into the expanded
+    // Part B: those affordances were folded into the expanded
     // panel (Restore button) and the row click (expansion). Their
     // presence would mean the redesign regressed to the dual-button
     // layout.
@@ -876,7 +876,7 @@ describe('BlockHistoryItem', () => {
     expect(screen.queryByRole('button', { expanded: true })).not.toBeInTheDocument()
   })
 
-  it('shows lock affordance + non-reversible label on non-restorable rows (MAINT-220)', () => {
+  it('shows lock affordance + non-reversible label on non-restorable rows', () => {
     // Non-edit_block ops are non-restorable. Without a visible cue, the
     // user has no explanation for why the row doesn't respond to clicks.
     // The lock affordance + visible label mirrors the legacy
@@ -995,7 +995,7 @@ describe('BlockHistoryItem', () => {
     expect(document.querySelector('.diff-container')).toBeInTheDocument()
   })
 
-  it('flips Insert/Delete spans in comparedToCurrent mode so colours match restore intent (MAINT-217)', async () => {
+  it('flips Insert/Delete spans in comparedToCurrent mode so colours match restore intent', async () => {
     const mockedInvoke = vi.mocked(invoke)
     mockedInvoke.mockImplementation((cmd) => {
       if (cmd === 'compute_block_vs_current_diff') {

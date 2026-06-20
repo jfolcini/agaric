@@ -80,7 +80,7 @@ export function parseQueryExpression(expr: string): {
   // `*`, `` ` ``, `~`, `=`, `[`, `]`, `#[`) in block content. Round-tripped
   // `{{query ...}}` blocks therefore arrive here with escaped `=`, which
   // breaks property-shorthand parsing (`property:key=value`). Unescape the
-  // common single-char escapes before tokenising (TEST-1f).
+  // Common single-char escapes before tokenising.
   const unescaped = expr.replace(/\\([\\*`~=[\]#])/g, '$1')
   const parts = unescaped.trim().split(/\s+/)
   const params: Record<string, string> = {}

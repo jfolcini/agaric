@@ -3,7 +3,7 @@
  *
  * Used by both App.tsx (header controls) and JournalPage.tsx (content).
  *
- * FEAT-3p5 — per-space slices for `currentDate` and `mode`.
+ * Per-space slices for `currentDate` and `mode`.
  *
  * The flat `currentDate` / `mode` fields remain the active-view selectors
  * every consumer reads from (no consumer plumbing needed). Two new
@@ -16,7 +16,7 @@
  * space's flat fields into its slice and pulls the INCOMING space's
  * slice into the flat fields. Fresh-space default: today's date in
  * `daily` mode. The pattern mirrors `useNavigationStore.tabsBySpace`
- * (FEAT-3 Phase 3, session 498).
+ * (Phase 3, session 498).
  */
 
 import { create } from 'zustand'
@@ -32,12 +32,12 @@ interface JournalStore {
   mode: JournalMode
   currentDate: Date
   /**
-   * FEAT-3p5 — last-active date per space, keyed by space ULID. Stored
+   * Last-active date per space, keyed by space ULID. Stored
    * as `YYYY-MM-DD` strings so JSON persistence round-trips cleanly
    * (Date objects don't survive `JSON.stringify`).
    */
   currentDateBySpace: Record<string, string>
-  /** FEAT-3p5 — last-active mode per space, keyed by space ULID. */
+  /** last-active mode per space, keyed by space ULID. */
   modeBySpace: Record<string, JournalMode>
   /** Date string (YYYY-MM-DD) to scroll into view after render, or null. */
   scrollToDate: string | null
@@ -236,11 +236,11 @@ export const useJournalStore = create<JournalStore>()(
 )
 
 // ---------------------------------------------------------------------------
-// FEAT-3p5 — space-switch subscriber
+// Space-switch subscriber
 // ---------------------------------------------------------------------------
 //
 // Mirrors the `tabsBySpace` flush/pull pattern from `useNavigationStore`
-// (FEAT-3 Phase 3, session 498). On every `currentSpaceId` change:
+// (Phase 3, session 498). On every `currentSpaceId` change:
 //
 //   1. Flush the outgoing flat `currentDate` + `mode` into the outgoing
 //      space's slice.
@@ -249,7 +249,7 @@ export const useJournalStore = create<JournalStore>()(
 //      `daily` (and seed both slices so the user lands somewhere
 //      stable).
 //
-// MAINT-122: subscription mechanics + diff detection live in
+// Subscription mechanics + diff detection live in
 // `createSpaceSubscriber`; this site only owns the journal-specific
 // flush / pull logic. On first fire (`prevKey === newKey`) we pull the
 // active-space slice into the flat fields so a returning user lands on

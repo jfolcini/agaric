@@ -95,7 +95,7 @@ function SortableBlockInner({
 }: SortableBlockProps): React.ReactElement {
   const { t } = useTranslation()
 
-  // ── Action / resolver resolution (MAINT-118 + PEND-30 D-1) ───────
+  // ── Action / resolver resolution (+ D-1) ───────
   // Production and tests both wire callbacks via BlockActionsProvider /
   // BlockResolversProvider — production at the BlockTree boundary,
   // tests via the `<TestBlockActionsOverride>` wrapper. SortableBlock
@@ -163,7 +163,7 @@ function SortableBlockInner({
   })
 
   // ── Attachment state ─────────────────────────────────────────────
-  // MAINT-131 / PEND-35 Tier 2.7a: read counts from the BatchAttachments
+  // Read counts from the BatchAttachments
   // provider (single source — one IPC per page mount, count derived as
   // `rows.length`). Outside a provider the hook returns null and the
   // count defaults to 0 — matches the previous "no rows yet" rendering.
@@ -270,7 +270,7 @@ function SortableBlockInner({
       {...(isTouchDevice && onDelete ? { 'aria-describedby': swipeRowDescId } : {})}
       className={cn(
         'sortable-block group relative flex items-center gap-1 max-sm:items-start min-w-0',
-        // BUG-37: suppress the iOS/Android long-press text-selection
+        // Suppress the iOS/Android long-press text-selection
         // magnifier / callout that otherwise competes with the 400ms
         // long-press context menu. Only applied on coarse pointers so
         // desktop text-selection within static blocks still works.
@@ -307,7 +307,7 @@ function SortableBlockInner({
         </span>
       )}
       {/* ── Swipe-to-delete backdrop (mobile only) ──────────────── */}
-      {/* UX-304: progressive cue — the backdrop is a muted destructive
+      {/* progressive cue — the backdrop is a muted destructive
             tint while the gesture only reveals the action, then flips to
             the solid destructive variant + t('block.swipe.releaseToDelete') label
             once the auto-delete threshold is crossed mid-drag.

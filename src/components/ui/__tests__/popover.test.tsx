@@ -61,7 +61,7 @@ describe('PopoverContent', () => {
     expect(content.closest('[data-slot="popover-content"]')).toBeInTheDocument()
   })
 
-  it('caps height to dynamic viewport (PEND-28 H2)', async () => {
+  it('caps height to dynamic viewport', async () => {
     render(
       <Popover defaultOpen>
         <PopoverTrigger>Open</PopoverTrigger>

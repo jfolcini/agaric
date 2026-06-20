@@ -55,7 +55,7 @@ export function SourcePageFilter({
   const filteredPages = useMemo(() => {
     const sorted = [...sourcePages].sort((a, b) => b.blockCount - a.blockCount)
     if (!search.trim()) return sorted
-    // UX-248 — Unicode-aware fold.
+    // Unicode-aware fold.
     return sorted.filter((p) => matchesSearchFolded(p.pageTitle ?? 'Untitled', search))
   }, [sourcePages, search])
 

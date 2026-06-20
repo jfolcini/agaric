@@ -1,11 +1,11 @@
 /**
- * PEND-58g UX-A5 — `prop:key=value` / `not-prop:key=value` builder form.
+ * `prop:key=value` / `not-prop:key=value` builder form.
  *
  * Free-form key + value text inputs (the property vocabulary is
  * space-scoped and not enumerated here) plus an include/exclude toggle.
  * Emits a `prop` or `notProp` `FilterToken` and closes the popover.
  *
- * PEND-70 CR8 MAJOR-1 — round-trip validation. KEY is still constrained
+ * Round-trip validation. KEY is still constrained
  * (no whitespace, `=`, or `"`) because the serialiser does not quote
  * keys. #152 relaxed VALUE: serialiser now emits `prop:KEY="VALUE"`
  * when VALUE contains whitespace and the tokeniser recognises the

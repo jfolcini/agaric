@@ -273,7 +273,7 @@ describe('CodeLanguageSelector', () => {
     })
   })
 
-  describe('filter input (UX-300)', () => {
+  describe('filter input', () => {
     it('auto-focuses the filter input on open', () => {
       render(
         <CodeLanguageSelector

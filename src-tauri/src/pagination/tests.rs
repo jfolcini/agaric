@@ -245,7 +245,7 @@ fn cursor_encode_decode_preserves_special_characters() {
     assert_eq!(cursor, decoded, "special characters must survive roundtrip");
 }
 
-// ── L-18: cursor version tag ────────────────────────────────────────
+// ── cursor version tag ────────────────────────────────────────
 
 #[test]
 fn cursor_decode_rejects_unknown_version() {
@@ -297,7 +297,7 @@ fn cursor_encode_sets_version_1() {
 
 #[test]
 fn cursor_decode_old_format_assumes_version_1() {
-    // Pre-versioning cursors emitted before L-18 do not carry a
+    // Pre-versioning cursors emitted before do not carry a
     // `version` key.  They must continue to decode cleanly under the
     // current schema (treated as version 1).
     let old_json = r#"{"id":"01HZ0000000000000000000001","position":3}"#;
@@ -456,7 +456,7 @@ async fn list_children_last_page_has_no_cursor() {
         &pool,
         Some("PARENT01"),
         &PageRequest::new(None, Some(2)).unwrap(),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        None, //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -464,7 +464,7 @@ async fn list_children_last_page_has_no_cursor() {
         &pool,
         Some("PARENT01"),
         &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        None, //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -472,7 +472,7 @@ async fn list_children_last_page_has_no_cursor() {
         &pool,
         Some("PARENT01"),
         &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        None, //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -970,7 +970,7 @@ async fn list_trash_paginates_with_cursor() {
     .await;
 }
 
-// ── UX-243: roots-only trash listing ────────────────────────────────
+// ── roots-only trash listing ────────────────────────────────
 
 #[tokio::test]
 async fn list_trash_deleted_page_with_children_returns_only_root() {
@@ -1259,7 +1259,7 @@ async fn list_trash_exhaustive_walk_shared_deleted_at_no_dupes_or_gaps_386() {
     );
 }
 
-// ── UX-243: trash_descendant_counts helper ──────────────────────────
+// ── trash_descendant_counts helper ──────────────────────────
 
 #[tokio::test]
 async fn trash_descendant_counts_returns_per_root_counts() {
@@ -1342,7 +1342,7 @@ async fn trash_descendant_counts_empty_input_returns_empty_map() {
 
 #[tokio::test]
 async fn trash_descendant_counts_isolates_unrelated_roots_sharing_deleted_at() {
-    // M-16 regression: two unrelated trees soft-deleted at the *same*
+    // Regression: two unrelated trees soft-deleted at the *same*
     // `deleted_at` (e.g. millisecond collision in cascade_soft_delete or a
     // shared FIXED_DELETED_AT in tests) must not contaminate each other's
     // descendant count. Pre-fix, the bare deleted_at join saw all 6 deleted
@@ -1489,7 +1489,7 @@ async fn cursor_stable_after_concurrent_inserts() {
         &pool,
         Some("PARENT01"),
         &PageRequest::new(None, Some(2)).unwrap(),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        None, //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1528,7 +1528,7 @@ async fn cursor_stable_after_concurrent_inserts() {
         &pool,
         Some("PARENT01"),
         &PageRequest::new(saved_cursor, Some(10)).unwrap(),
-        None, // FEAT-3 Phase 2: space_id unscoped
+        None, //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1914,7 +1914,7 @@ async fn query_by_property_excludes_soft_deleted() {
 
 #[tokio::test]
 async fn query_by_property_rejects_both_value_filters() {
-    // L-23: passing both value_text and value_date is ambiguous because
+    // Passing both value_text and value_date is ambiguous because
     // the reserved-column and non-reserved-row paths historically applied
     // different precedence rules. Reject at the boundary instead.
     let (pool, _dir) = test_pool().await;
@@ -2615,7 +2615,7 @@ async fn insert_block_link(pool: &SqlitePool, source_id: &str, target_id: &str) 
 
 /// Insert an op_log entry directly for history tests.
 ///
-/// PEND-20 B.2 — `list_block_history` now queries the native `block_id`
+/// B.2 — `list_block_history` now queries the native `block_id`
 /// column (migration 0030) instead of `json_extract(payload, '$.block_id')`,
 /// so test inserts must populate `block_id` from the payload to match
 /// production rows. Production-side this happens automatically in
@@ -3003,7 +3003,7 @@ async fn test_list_block_history_all_op_types() {
     );
 }
 
-/// PEND-35 Tier 1.3 — `op_type_filter = Some("edit_block")` must restrict
+/// `op_type_filter = Some("edit_block")` must restrict
 /// the result set to ops of that type at the SQL layer, so cursor pages
 /// arrive pre-filtered (the FE no longer drops rows post-pagination).
 #[tokio::test]
@@ -3082,7 +3082,7 @@ async fn list_block_history_filters_by_op_type() {
     );
 }
 
-/// PEND-35 Tier 1.3 control — without an `op_type_filter`, every op for
+/// Control — without an `op_type_filter`, every op for
 /// the block is returned (parity with the pre-filter behaviour).
 #[tokio::test]
 async fn list_block_history_no_filter_returns_all() {
@@ -3125,8 +3125,8 @@ async fn list_block_history_no_filter_returns_all() {
     );
 }
 
-/// PEND-35 Tier 1.3 — cursor pagination must remain consistent under an
-/// active `op_type_filter`. The pre-PEND-35 anti-pattern was: 50-row
+/// Cursor pagination must remain consistent under an
+/// Active `op_type_filter`. The pre- anti-pattern was: 50-row
 /// cursor page returned, FE drops the non-matching rows, page appears
 /// empty even though `next_cursor` is set. With the SQL-level filter,
 /// a small cursor `limit` over a sparsely-matching dataset must still
@@ -3219,7 +3219,7 @@ async fn list_block_history_paginates_under_op_type_filter() {
     assert_eq!(seen, vec![5, 4, 2], "filtered cursor walk hits every match");
 }
 
-/// PEND-20 B.2 parity: rows whose `block_id` column is unset must NOT
+/// B.2 parity: rows whose `block_id` column is unset must NOT
 /// surface in `list_block_history` after the rewrite to native column
 /// lookups, even if their JSON payload contains the right block_id.
 /// This anchors the contract that the index is the source of truth and
@@ -3262,11 +3262,11 @@ async fn test_list_block_history_uses_native_block_id_column() {
     assert_eq!(
         resp.items.len(),
         1,
-        "PEND-20 B.2: only the row with native block_id set should match"
+        " B.2: only the row with native block_id set should match"
     );
     assert_eq!(
         resp.items[0].seq, 1,
-        "PEND-20 B.2: row A (block_id populated) is the match"
+        " B.2: row A (block_id populated) is the match"
     );
 }
 
@@ -3295,7 +3295,7 @@ async fn snapshot_history_entry_response() {
         .await
         .unwrap();
 
-    // TEST-10: exhaustive redactions covering every non-deterministic field
+    // Exhaustive redactions covering every non-deterministic field
     // surfaced by `PageResponse<HistoryEntry>` — `created_at` is an RFC 3339
     // timestamp and `next_cursor` is an opaque base64 cursor. Both must be
     // redacted unconditionally so the snapshot stays stable across runs.
@@ -4310,7 +4310,7 @@ async fn test_list_page_history_multi_device_cursor() {
 }
 
 // ====================================================================
-// FEAT-3 Phase 2 — space filtering
+// Phase 2 — space filtering
 // ====================================================================
 //
 // These tests exercise the `Some(space_id)` path of `list_by_type`,
@@ -4642,7 +4642,7 @@ async fn list_trash_filters_by_space() {
 }
 
 // ====================================================================
-// FEAT-3 Phase 8 — list_page_history space scoping
+// Phase 8 — list_page_history space scoping
 // ====================================================================
 //
 // `list_page_history(page_id, op_type_filter, space_id, page)` gains a new
@@ -4816,7 +4816,7 @@ mod tests_p8 {
 }
 
 // ====================================================================
-// FEAT-3 Phase 7 — cross-space link enforcement
+// Phase 7 — cross-space link enforcement
 // ====================================================================
 //
 // `batch_resolve_inner(ids, space_id)` and `get_page_inner(page_id,
@@ -4838,7 +4838,7 @@ mod tests_p8 {
 // `pagination::history`) is intentionally left unscoped: per-block
 // history viewing is allowed across spaces (it's an admin/diagnostics
 // surface, not a user-facing navigation entry-point). The umbrella
-// FEAT-3 design explicitly carves it out.
+// Design explicitly carves it out.
 
 mod tests_p7 {
     use super::{
@@ -4950,7 +4950,7 @@ mod tests_p7 {
     /// subtree) and is used by MCP / undo / batch-resolve paths where
     /// space scoping is enforced upstream.
     ///
-    /// To keep the FEAT-3p7 contract honest we cover the related
+    /// To keep the contract honest we cover the related
     /// regression — a page that has no `space` property at all (legacy
     /// pre-Phase-2 vault content that bypassed bootstrap somehow) is
     /// also rejected by `get_page_inner` regardless of the requested
@@ -5067,7 +5067,7 @@ mod tests_p7 {
     /// The codebase has `proptest` available but a deterministic walk
     /// is sufficient for this regression — the predicate is a closed-form
     /// "for all (page, space)" assertion, not a search over a large
-    /// state-space. Per the user's instruction (FEAT-3p7),
+    /// State-space. Per the user's instruction,
     /// ship the deterministic version for clarity and CI determinism.
     #[tokio::test]
     async fn property_no_cross_space_resolution_or_fetch() {
@@ -5218,7 +5218,7 @@ mod proptest_tests {
 }
 
 // ============================================================================
-// MAINT-113 M1.5 — ActiveBlockRow + ActiveProjectedAgendaEntry conversions
+// ActiveBlockRow + ActiveProjectedAgendaEntry conversions
 // ============================================================================
 
 mod active_row_conversions {

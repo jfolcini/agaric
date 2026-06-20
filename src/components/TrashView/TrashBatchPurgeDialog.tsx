@@ -1,7 +1,7 @@
 /**
  * TrashBatchPurgeDialog — confirms permanently deleting every block in
  * the current selection (the toolbar `t('trash.purgeSelectedButton')`
- * flow). Sibling extracted from TrashView.tsx for MAINT-128.
+ * Flow). Sibling extracted from TrashView.tsx for.
  */
 
 import type React from 'react'

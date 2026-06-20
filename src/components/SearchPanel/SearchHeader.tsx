@@ -1,7 +1,7 @@
 /**
  * SearchHeader — input form + activity indicators for SearchPanel.
  *
- * PEND-30 Phase 3b — extracted from `SearchPanel.tsx` to keep the
+ * Phase 3b — extracted from `SearchPanel.tsx` to keep the
  * orchestrator under 450 LOC. Owns only the `ViewHeader`-hosted form:
  * the `SearchInput`, submit button, and typing/searching indicators.
  *
@@ -27,27 +27,27 @@ export interface SearchHeaderProps {
   onSubmit: (e: React.SubmitEvent<HTMLFormElement>) => void
   searchLoading: boolean
   typing: boolean
-  /** PEND-55 — onKeyDown handler that consumes `↑`/`↓` for history recall. */
+  /** onKeyDown handler that consumes `↑`/`↓` for history recall. */
   onInputKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
-  /** PEND-55 — toggle row rendered next to the input. */
+  /** toggle row rendered next to the input. */
   toggleRow?: React.ReactNode
-  /** PEND-55 — history dropdown rendered beneath the input. */
+  /** history dropdown rendered beneath the input. */
   historyDropdown?: React.ReactNode
-  /** PEND-55 — visible inline error (e.g. invalid regex pattern). */
+  /** visible inline error (e.g. invalid regex pattern). */
   inlineError?: string | null
-  /** PEND-55 — controls the input's `aria-invalid` attribute. */
+  /** controls the input's `aria-invalid` attribute. */
   invalid?: boolean
-  /** PEND-55 — focus / blur tracking for the history dropdown. */
+  /** focus / blur tracking for the history dropdown. */
   onInputFocus?: () => void
   onInputBlur?: () => void
-  /** PEND-60 Phase 1 a11y — ARIA combobox-with-listbox attrs applied
+  /** Phase 1 a11y — ARIA combobox-with-listbox attrs applied
    *  to the input (role / aria-expanded / aria-controls /
    *  aria-activedescendant / aria-autocomplete / aria-haspopup).
    *  Computed by the orchestrator from autocomplete-popover state. */
   comboboxAttrs?: React.AriaAttributes & { role?: 'combobox' }
-  /** UX-1 — open the search help dialog (the `?` toolbar button). */
+  /** open the search help dialog (the `?` toolbar button). */
   onHelpClick?: () => void
-  /** PEND-58g NEW-2 — when true, the input free-text is matched as a
+  /** NEW-2 — when true, the input free-text is matched as a
    *  regular expression. Renders a regex-specific placeholder, a
    *  monospace input, and an sr-only hint wired via `aria-describedby`. */
   regexMode?: boolean

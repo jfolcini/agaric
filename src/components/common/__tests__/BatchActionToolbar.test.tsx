@@ -80,7 +80,7 @@ describe('BatchActionToolbar', () => {
     expect(toolbar).toHaveAccessibleName('4 selected')
   })
 
-  it('UX-8: wires the range-select hint to the toolbar via aria-describedby', () => {
+  it('wires the range-select hint to the toolbar via aria-describedby', () => {
     render(
       <BatchActionToolbar selectedCount={2}>
         <button type="button">Action</button>
@@ -94,7 +94,7 @@ describe('BatchActionToolbar', () => {
     expect(hint.getAttribute('id')).toBe('batch-range-select-hint')
   })
 
-  it('UX-8: omits aria-describedby when the range-select hint is suppressed', () => {
+  it('omits aria-describedby when the range-select hint is suppressed', () => {
     render(
       <BatchActionToolbar selectedCount={2} suppressRangeSelectHint>
         <button type="button">Action</button>

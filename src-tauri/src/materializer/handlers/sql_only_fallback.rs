@@ -8,7 +8,7 @@
 //!   uninitialised — test scaffolding without
 //!   `crate::loro::shared::install_for_test`), or
 //! - [`crate::space::resolve_block_space`] misses (the block's space
-//!   cannot be resolved — orphan block, no `space` ancestor, pre-FEAT-3
+//!   cannot be resolved — orphan block, no `space` ancestor, pre-
 //!   row, fresh page-create with no SetProperty(space) yet).
 //!
 //! **In production both arms are unreachable** — `init` runs at boot, and
