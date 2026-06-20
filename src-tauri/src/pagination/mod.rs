@@ -124,6 +124,159 @@ pub(crate) fn index_to_provisional_position(index: i64) -> i64 {
 }
 
 // ---------------------------------------------------------------------------
+// #1652 — shared `(COALESCE(position, sentinel) ASC, id ASC)` keyset.
+// ---------------------------------------------------------------------------
+//
+// The same NULL-tolerant `(position, id)` keyset is inlined at every site
+// that walks a sibling / subtree slice ordered by position with id as the
+// tiebreaker: `pagination::list_children`, `commands::pages::get_page_inner`,
+// and `commands::pages::markdown` (export subtree walk). All three share the
+// identical WHERE keyset condition and `ORDER BY`, the identical
+// cursor-binding destructure, and (the response-assembly sites) the identical
+// has_more / next_cursor / truncate logic.
+//
+// Like the space filter (see [`crate::space_filter_canonical`]), the SQL
+// fragment itself MUST stay inlined: `sqlx::query_as!` requires a string
+// literal directly and does not accept `concat!()`, so it cannot be composed
+// from a `const &str`. Drift between the inlined copies is therefore caught by
+// a parity walk ([`POSITION_KEYSET_CANONICAL`] + the
+// `position_keyset_production_sites_match_canonical` test in `tests`) rather
+// than by sharing the string.
+//
+// The *Rust* glue around the macro — cursor binds and page-response assembly
+// — is genuinely shared via [`position_keyset_binds`] and
+// [`split_position_keyset_page`] so the has_more / next_cursor / cursor-format
+// logic has exactly one implementation across the sites that previously
+// hand-rolled it.
+
+/// Canonical inline form of the `(COALESCE(position, sentinel), id)` keyset
+/// **WHERE** condition, with `?N` standing in for the bind index (which varies
+/// per site: `?7` in `list_children`, `?6` in `get_page_inner` / `markdown`).
+/// After whitespace + bind-index normalisation (see `tests::normalize_keyset`)
+/// every production occurrence equals this string exactly.
+///
+/// Guarded separately from [`POSITION_KEYSET_ORDER_CANONICAL`] because the two
+/// fragments are *not* contiguous at every site — `list_children` interposes
+/// the space filter between the keyset condition and the ORDER BY.
+///
+/// Keep in sync with every inlined copy — drift is flagged by
+/// `tests::position_keyset_production_sites_match_canonical`. Because
+/// `sqlx::query_as!` needs a string literal, this is a `#[cfg(test)]`-only
+/// drift sentinel; production code keeps the SQL inlined at each callsite.
+#[cfg(test)]
+pub(crate) const POSITION_KEYSET_WHERE_CANONICAL: &str =
+    "(?N IS NULL OR ( COALESCE(position, ?N) > ?N OR (COALESCE(position, ?N) = ?N AND id > ?N)))";
+
+/// Canonical inline form of the `(COALESCE(position, sentinel), id)` keyset
+/// **ORDER BY**. See [`POSITION_KEYSET_WHERE_CANONICAL`] for the WHERE half and
+/// the rationale for keeping it a `#[cfg(test)]` drift sentinel.
+#[cfg(test)]
+pub(crate) const POSITION_KEYSET_ORDER_CANONICAL: &str =
+    "ORDER BY COALESCE(position, ?N) ASC, id ASC";
+
+/// Destructure a position-keyset cursor into the `(flag, position, id)` bind
+/// triple shared by every `(COALESCE(position, sentinel), id)` query.
+///
+/// Returns `(cursor_flag, cursor_pos, cursor_id)`:
+/// * `cursor_flag` — `Some(1)` when a cursor is present (the SQL keyset
+///   `(?N IS NULL OR …)` guard activates), `None` for the first page (the
+///   guard short-circuits true).
+/// * `cursor_pos` — the cursor's position, defaulting NULL positions to
+///   [`NULL_POSITION_SENTINEL`] so they sort after positioned siblings;
+///   irrelevant (`0`) on the first page.
+/// * `cursor_id` — the cursor's id tiebreaker; `""` on the first page.
+///
+/// This is the single source of truth for how `list_children`,
+/// `get_page_inner` and the markdown export walk bind their keyset cursor.
+pub(crate) fn position_keyset_binds(after: Option<&Cursor>) -> (Option<i64>, i64, &str) {
+    match after {
+        Some(c) => (Some(1), c.position.unwrap_or(NULL_POSITION_SENTINEL), &c.id),
+        None => (None, 0, ""),
+    }
+}
+
+/// A row keyed by the `(position, id)` keyset — the minimal accessors the
+/// shared page-assembly helper needs. Implemented for both [`ActiveBlockRow`]
+/// and [`BlockRow`] so [`split_position_keyset_page`] is row-type agnostic.
+pub(crate) trait PositionKeyRow {
+    /// The block id, used as the keyset tiebreaker and cursor `id`.
+    fn keyset_id(&self) -> &str;
+    /// The block position; `None` is encoded as [`NULL_POSITION_SENTINEL`]
+    /// in the cursor so it resumes after positioned siblings.
+    fn keyset_position(&self) -> Option<i64>;
+}
+
+impl PositionKeyRow for ActiveBlockRow {
+    fn keyset_id(&self) -> &str {
+        self.id.as_str()
+    }
+    fn keyset_position(&self) -> Option<i64> {
+        self.position
+    }
+}
+
+impl PositionKeyRow for BlockRow {
+    fn keyset_id(&self) -> &str {
+        self.id.as_str()
+    }
+    fn keyset_position(&self) -> Option<i64> {
+        self.position
+    }
+}
+
+/// The page-boundary signals derived from an over-fetched position-keyset
+/// result set: whether more rows remain and the cursor that resumes there.
+pub(crate) struct PositionPage {
+    /// `true` when the `limit + 1` fetch returned a sentinel row, i.e. more
+    /// rows remain beyond this page.
+    pub has_more: bool,
+    /// Opaque cursor resuming after the last row of this page; `None` when
+    /// `has_more` is `false`.
+    pub next_cursor: Option<String>,
+}
+
+/// Trim an over-fetched (`limit + 1`) position-keyset result set to a page and
+/// derive its `(has_more, next_cursor)` boundary.
+///
+/// This is the single source of truth for the has_more / truncate /
+/// next_cursor logic shared by sites that walk the `(position, id)` keyset but
+/// do **not** return a [`PageResponse<T>`] (e.g. `get_page_inner`, whose
+/// children nest inside `PageSubtreeResponse`, and the markdown export walk).
+/// The cursor is built via [`Cursor::for_id_and_position`] with NULL positions
+/// folded to [`NULL_POSITION_SENTINEL`] — byte-identical to the cursor
+/// `build_page_response` produces for `list_children`, so a page boundary is
+/// interchangeable across all three sites.
+///
+/// `rows` is mutated in place: truncated to `limit` when a sentinel row was
+/// fetched.
+pub(crate) fn split_position_keyset_page<T: PositionKeyRow>(
+    rows: &mut Vec<T>,
+    limit: i64,
+) -> Result<PositionPage, AppError> {
+    let limit_usize = usize::try_from(limit).unwrap_or(usize::MAX);
+    let has_more = rows.len() > limit_usize;
+    if has_more {
+        rows.truncate(limit_usize);
+    }
+    let next_cursor = if has_more {
+        let last = rows.last().expect("has_more implies non-empty");
+        Some(
+            Cursor::for_id_and_position(
+                last.keyset_id().to_string(),
+                last.keyset_position().unwrap_or(NULL_POSITION_SENTINEL),
+            )
+            .encode()?,
+        )
+    } else {
+        None
+    };
+    Ok(PositionPage {
+        has_more,
+        next_cursor,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
