@@ -176,6 +176,40 @@ pass_filenames = false
 types_or = ["ts", "tsx"]
 stages = ["pre-commit"]
 
+# Elevation-tier drift guard (#1810, follow-up to #1654). #1654 routed the
+# hand-rolled component surfaces through the elevation-tier tokens
+# (`--shadow-resting/floating/overlay`, registered in src/index.css, #1098),
+# applied as the `shadow-(--shadow-<tier>)` utility. This hook stops a NEW
+# raw `shadow-(sm|md|lg)` (with any variant prefix, e.g. `focus:shadow-lg`)
+# from silently re-drifting a container surface under src/components/ off the
+# tiers. A small set of intentional non-tier shadows (badge legibility,
+# pressed-state insets, control affordances, the floating-sidebar variant)
+# are allowlisted with reasons inside the script. Comments are stripped first
+# so a shadow class mentioned only in a code comment never fires. Rules +
+# allowlist live in scripts/check-elevation-tiers.py.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "check-elevation-tiers"
+name = "elevation-tier guard (#1810 no raw shadow-sm/md/lg on surfaces)"
+entry = "python3 scripts/check-elevation-tiers.py"
+language = "system"
+files = '^src/components/.*\.(tsx|ts)$'
+stages = ["pre-commit", "pre-push"]
+
+# Companion: run the guard's own fixture suite (`--self-test`) so the match
+# contract (variant prefixes, tier-utility/longer-token boundary,
+# comment-stripping, allowlist exemption) cannot silently regress. No file
+# args.
+[[repos.hooks]]
+id = "check-elevation-tiers-self-test"
+name = "elevation-tier guard self-test (#1810 fixtures)"
+entry = "python3 scripts/check-elevation-tiers.py --self-test"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit", "pre-push"]
+
 # Legacy React API guard — block re-introduction of APIs we migrated away from
 # (MAINT-48 React 19, MAINT-49 TypeScript 6, follow-up MutableRefObject removal).
 # Two legitimate `React.JSX.IntrinsicElements` uses in RichContentRenderer.tsx are

@@ -331,7 +331,10 @@ export const SuggestionList = ({
   )
 
   return (
-    <div className="suggestion-list rounded-lg border bg-popover p-1 shadow-md" data-editor-portal>
+    <div
+      className="suggestion-list rounded-lg border bg-popover p-1 shadow-(--shadow-floating)"
+      data-editor-portal
+    >
       {/* #1102 — live result-count status. Announced on EVERY update (the
           previous `aria-live` lived only in the empty branch), so AT users hear
           how many suggestions are available as they type. Visually hidden;
