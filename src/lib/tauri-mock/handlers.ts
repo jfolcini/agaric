@@ -51,6 +51,19 @@ function nextCohortMarker(): string {
   return `${new Date().toISOString()}#${cohortSeq.toString().padStart(6, '0')}`
 }
 
+/**
+ * #1472 — the adjacently-tagged `TagExpr` wire shape (`{ type, value }`,
+ * matching the Rust `#[serde(tag = "type", content = "value")]` enum and the
+ * specta-generated TS union in `bindings.ts`). Declared locally so the mock
+ * stays self-contained, mirroring the other `Mock*` row types in this file.
+ */
+type TagExprNode =
+  | { type: 'Tag'; value: string }
+  | { type: 'Prefix'; value: string }
+  | { type: 'And'; value: TagExprNode[] }
+  | { type: 'Or'; value: TagExprNode[] }
+  | { type: 'Not'; value: TagExprNode }
+
 // Stub return shapes used by handlers that don't need behaviour beyond a
 // type-correct empty payload. `list_projected_agenda` is cursor-paginated
 // (M-25) and returns a `PageResponse<T>` shape, NOT a bare array — using
@@ -1966,6 +1979,71 @@ export const HANDLERS: Record<string, Handler> = {
       }
       // Default: AND — block must have ALL specified tags
       return allTagIds.every((tid) => tags.has(tid))
+    })
+    return { items, next_cursor: null, has_more: false }
+  },
+
+  // #1472 — nested boolean tag expression `(A AND B) OR (NOT C)` over IPC.
+  // Faithful minimal twin of `query_by_tag_expr_inner` -> `eval_tag_query`:
+  // recursively evaluates the adjacently-tagged `TagExpr` tree (the same wire
+  // shape specta emits: `{ type, value }`) per non-deleted block. `Not`
+  // complements over the visible block universe (matches the backend's
+  // set-complement semantics), `Prefix` resolves to tag ids by tag-content
+  // prefix. Scope / block_type filtering mirror `query_by_tags` above.
+  query_by_tag_expr: (args) => {
+    const a = args as Record<string, unknown>
+    const expr = a['expr'] as TagExprNode
+    const blockType = (a['blockType'] as string | null) ?? null
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+
+    // Resolve a `Prefix` leaf to the set of tag ids whose tag-block content
+    // starts with the prefix (case-insensitive), mirroring the SQL LIKE leaf.
+    const prefixTagIds = (prefix: string): Set<string> => {
+      const lp = prefix.toLowerCase()
+      const ids = new Set<string>()
+      for (const [, b] of blocks) {
+        if (
+          b['block_type'] === 'tag' &&
+          !b['deleted_at'] &&
+          ((b['content'] as string) ?? '').toLowerCase().startsWith(lp)
+        ) {
+          ids.add(b['id'] as string)
+        }
+      }
+      return ids
+    }
+
+    // Does block `blockId` satisfy `node`? Recurses over And/Or/Not.
+    const matches = (blockId: string, node: TagExprNode): boolean => {
+      const tags = blockTags.get(blockId)
+      switch (node.type) {
+        case 'Tag':
+          return tags?.has(node.value) ?? false
+        case 'Prefix': {
+          if (!tags || tags.size === 0) return false
+          const wanted = prefixTagIds(node.value)
+          for (const t of tags) if (wanted.has(t)) return true
+          return false
+        }
+        case 'And':
+          return node.value.every((child) => matches(blockId, child))
+        case 'Or':
+          return node.value.some((child) => matches(blockId, child))
+        case 'Not':
+          return !matches(blockId, node.value)
+      }
+    }
+
+    const items = [...blocks.values()].filter((b) => {
+      if (b['deleted_at']) return false
+      if (blockType !== null && b['block_type'] !== blockType) return false
+      if (spaceId !== null) {
+        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+        if (ownerSpace !== spaceId) return false
+      }
+      return matches(b['id'] as string, expr)
     })
     return { items, next_cursor: null, has_more: false }
   },

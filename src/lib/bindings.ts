@@ -156,6 +156,15 @@ export const commands = {
 	/**  Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`]. */
 	queryByTags: (tagIds: string[], prefixes: string[], mode: string, includeInherited: boolean | null, cursor: string | null, limit: number | null, scope: SpaceScope, blockType: string | null) => typedError<PageResponse<ActiveBlockRow>, AppError>(__TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, includeInherited, cursor, limit, scope, blockType })),
 	/**
+	 *  Tauri command: query blocks by an arbitrary nested boolean tag
+	 *  expression (#1472). Delegates to [`query_by_tag_expr_inner`].
+	 *
+	 *  Exposes the resolver's full `(A AND B) OR (NOT C)` nesting over IPC —
+	 *  the flat [`query_by_tags`] remains for back-compat. The `expr` is
+	 *  depth-validated against [`TagExpr::MAX_DEPTH`] before resolution.
+	 */
+	queryByTagExpr: (expr: TagExpr, includeInherited: boolean | null, cursor: string | null, limit: number | null, scope: SpaceScope, blockType: string | null) => typedError<PageResponse<ActiveBlockRow>, AppError>(__TAURI_INVOKE("query_by_tag_expr", { expr, includeInherited, cursor, limit, scope, blockType })),
+	/**
 	 *  Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
 	 *
 	 *  All push-down filters (`exclude_parent_id`, `content_non_empty`,
@@ -1368,7 +1377,7 @@ export type BacklinkSort = { type: "Created"; dir: SortDir } | { type: "Property
  *  Primary type for block IDs. Type aliases below provide semantic names for
  *  non-block entity IDs (attachments, snapshots) that are also ULIDs.
  *
- *  **Deserialization normalizes to uppercase Crockford base32** — any valid
+ *  **Deserialization normalizes to canonical Crockford base32** — any valid
  *  ULID string (lowercase, mixed-case) is accepted and stored in canonical
  *  uppercase form. This is critical for blake3 hash determinism.
  */
@@ -3297,6 +3306,35 @@ export type TagCacheRow = {
 	usage_count: number,
 	updated_at: string,
 };
+
+/**
+ *  Boolean expression tree for tag queries.
+ *
+ *  # IPC wire format (#1472)
+ *
+ *  Adjacently-tagged via `#[serde(tag = "type", content = "value")]`, the
+ *  same shape `SpaceScope` (`space.rs`) and `CursorValue` (`query/engine.rs`)
+ *  use for tuple/newtype variants. Internal tagging (`#[serde(tag = "type")]`,
+ *  as `FilterExpr` uses) cannot wrap the non-struct newtype payloads here
+ *  (`Tag(String)` / `Not(Box<TagExpr>)`); adjacent tagging keeps the existing
+ *  tuple-variant shape — so every in-tree constructor (`TagExpr::Tag(..)`,
+ *  `TagExpr::And(vec![..])`, …) is unchanged — while still emitting a
+ *  specta-expressible, self-describing TS discriminated union:
+ *
+ *  - `Tag("urgent")`      → `{ "type": "Tag",    "value": "urgent" }`
+ *  - `Prefix("work/")`    → `{ "type": "Prefix", "value": "work/" }`
+ *  - `And([a, b])`        → `{ "type": "And",    "value": [a, b] }`
+ *  - `Or([a, b])`         → `{ "type": "Or",     "value": [a, b] }`
+ *  - `Not(a)`             → `{ "type": "Not",    "value": a }`
+ *
+ *  The recursion bottoms out at the `Tag`/`Prefix` leaves, so the type is a
+ *  self-referential discriminated union specta emits losslessly. Untrusted
+ *  trees deserialised at the IPC boundary MUST be passed through
+ *  [`TagExpr::validate_depth`] before resolution — `query_by_tag_expr`
+ *  (`commands/tags.rs`) is the gate (see also `eval_tag_query`'s own
+ *  `validate_depth` call for the And/Or/Not arms).
+ */
+export type TagExpr = { type: "Tag"; value: string } | { type: "Prefix"; value: string } | { type: "And"; value: TagExpr[] } | { type: "Or"; value: TagExpr[] } | { type: "Not"; value: TagExpr };
 
 /**
  *  Tag predicate for [`filtered_blocks_query_inner`].

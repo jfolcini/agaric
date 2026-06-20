@@ -62,6 +62,7 @@ export type {
   StatusInfo,
   SyncProgressUpdate,
   TagCacheRow,
+  TagExpr,
   TagResponse,
   TaskNotification,
 } from './bindings'
@@ -112,6 +113,7 @@ import type {
   StatusInfo,
   SyncProgressUpdate,
   TagCacheRow,
+  TagExpr,
   TagResponse,
   TaskNotification,
 } from './bindings'
@@ -1032,6 +1034,40 @@ export async function queryByTags(params: {
       params.tagIds,
       params.prefixes,
       params.mode,
+      params.includeInherited ?? null,
+      params.cursor ?? null,
+      params.limit ?? null,
+      toSpaceScope(params.spaceId),
+      params.blockType ?? null,
+    ),
+  )
+}
+
+/**
+ * Query blocks by an arbitrary nested boolean tag expression (#1472).
+ *
+ * Unlike {@link queryByTags} — which assembles at most a single-level tree
+ * from a flat `(tagIds, prefixes, mode)` triple — this accepts the full
+ * recursive {@link TagExpr} (`(A AND B) OR (NOT C)`, per-leaf `Not`, arbitrary
+ * `Prefix` leaves), so a deep TagFilterPanel composer can reach the resolver's
+ * nested-tree capability over IPC.
+ *
+ * `expr` nesting depth is validated against `TagExpr::MAX_DEPTH` on the backend
+ * before resolution; an over-deep tree rejects with a validation error.
+ * `spaceId` / `blockType` / `includeInherited` / pagination behave exactly as
+ * in {@link queryByTags}.
+ */
+export async function queryByTagExpr(params: {
+  expr: TagExpr
+  includeInherited?: boolean | undefined
+  cursor?: string | undefined
+  limit?: SafeLimit | undefined
+  spaceId?: string | null | undefined
+  blockType?: string | undefined
+}): Promise<PageResponse<BlockRow>> {
+  return unwrap(
+    await commands.queryByTagExpr(
+      params.expr,
       params.includeInherited ?? null,
       params.cursor ?? null,
       params.limit ?? null,
