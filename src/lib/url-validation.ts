@@ -42,7 +42,7 @@ export function isAllowedUrl(url: string): boolean {
   // become live script-executing anchors (markdown import / peer sync sink).
   const lower = url
     // oxlint-disable-next-line no-control-regex -- control chars are the bypass vector being stripped here
-    .replace(/[\u0000-\u0020\u007f]/g, '')
+    .replace(/[\u0000-\u0020\u007F]/g, '')
     .toLowerCase()
   return !BLOCKED_URL_SCHEMES.some((scheme) => lower.startsWith(scheme))
 }

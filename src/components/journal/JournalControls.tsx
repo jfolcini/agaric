@@ -82,20 +82,25 @@ export function JournalControls(): React.ReactElement {
     const currentIndex = JOURNAL_MODES.indexOf(mode as JournalMode)
     let nextIndex: number
     switch (e.key) {
-      case 'ArrowRight':
+      case 'ArrowRight': {
         nextIndex = (currentIndex + 1) % count
         break
-      case 'ArrowLeft':
+      }
+      case 'ArrowLeft': {
         nextIndex = (currentIndex - 1 + count) % count
         break
-      case 'Home':
+      }
+      case 'Home': {
         nextIndex = 0
         break
-      case 'End':
+      }
+      case 'End': {
         nextIndex = count - 1
         break
-      default:
+      }
+      default: {
         return
+      }
     }
     e.preventDefault()
     const target = JOURNAL_MODES[nextIndex] as JournalMode

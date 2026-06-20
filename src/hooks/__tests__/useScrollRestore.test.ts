@@ -9,7 +9,7 @@ import { useScrollRestore } from '../useScrollRestore'
  */
 function createScrollContainer(): HTMLDivElement {
   const el = document.createElement('div')
-  document.body.appendChild(el)
+  document.body.append(el)
   let _scrollTop = 0
   Object.defineProperty(el, 'scrollTop', {
     get: () => _scrollTop,

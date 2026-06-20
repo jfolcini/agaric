@@ -53,7 +53,7 @@ export function EditorTab(): React.ReactElement {
   )
 
   // Stable, sorted for a deterministic managed-domains list.
-  const allowedHosts = [...allowlist].sort((a, b) => a.localeCompare(b))
+  const allowedHosts = [...allowlist].toSorted((a, b) => a.localeCompare(b))
 
   return (
     <div className="space-y-6">

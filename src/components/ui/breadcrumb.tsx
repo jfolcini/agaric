@@ -293,20 +293,25 @@ function OverflowPopover({ items, ariaLabel }: OverflowPopoverProps): React.Reac
       const current = buttons.indexOf(document.activeElement as HTMLButtonElement)
       let next: number
       switch (event.key) {
-        case 'ArrowDown':
+        case 'ArrowDown': {
           next = current < 0 ? 0 : (current + 1) % buttons.length
           break
-        case 'ArrowUp':
+        }
+        case 'ArrowUp': {
           next = current < 0 ? buttons.length - 1 : (current - 1 + buttons.length) % buttons.length
           break
-        case 'Home':
+        }
+        case 'Home': {
           next = 0
           break
-        case 'End':
+        }
+        case 'End': {
           next = buttons.length - 1
           break
-        default:
+        }
+        default: {
           return
+        }
       }
       event.preventDefault()
       // React portals bubble events through the REACT tree, not the DOM tree
@@ -435,8 +440,9 @@ export function Breadcrumb({
           focusIndex(buttons.length - 1)
           break
         }
-        default:
+        default: {
           break
+        }
       }
     },
     [focusIndex],
@@ -450,8 +456,8 @@ export function Breadcrumb({
   // therefore always visible.
   const shouldCollapse = items.length > OVERFLOW_THRESHOLD
   const headItem = shouldCollapse ? items[0] : null
-  const middleItems = shouldCollapse ? items.slice(1, items.length - 2) : []
-  const tailItems = shouldCollapse ? items.slice(items.length - 2) : items
+  const middleItems = shouldCollapse ? items.slice(1, -2) : []
+  const tailItems = shouldCollapse ? items.slice(-2) : items
   const tailStartIndex = shouldCollapse ? items.length - tailItems.length : 0
 
   return (

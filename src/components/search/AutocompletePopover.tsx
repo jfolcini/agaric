@@ -71,7 +71,9 @@ export interface AutocompletePopoverProps {
   onAriaIdsChange?: (ids: AutocompleteAriaIds | null) => void
 }
 
-type Measurable = { getBoundingClientRect: () => DOMRect }
+interface Measurable {
+  getBoundingClientRect: () => DOMRect
+}
 
 /**
  * Bridge inside `<Command>` that subscribes to cmdk's internal store

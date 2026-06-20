@@ -25,7 +25,7 @@ export const SIDEBAR_WIDTH_DEFAULT = 150
 export const SIDEBAR_WIDTH_MIN = 120
 export const SIDEBAR_WIDTH_STORAGE_KEY = 'sidebar_width'
 
-export type SidebarState = {
+export interface SidebarState {
   state: 'expanded' | 'collapsed'
   open: boolean
   setOpen: (open: boolean) => void
@@ -39,7 +39,7 @@ export type SidebarState = {
   setIsResizing: React.Dispatch<React.SetStateAction<boolean>>
 }
 
-export type UseSidebarStateOptions = {
+export interface UseSidebarStateOptions {
   defaultOpen?: boolean | undefined
   open?: boolean | undefined
   onOpenChange?: ((open: boolean) => void) | undefined
@@ -99,9 +99,10 @@ export function useSidebarState({
   )
 
   // Helper to toggle the sidebar.
-  const toggleSidebar = React.useCallback(() => {
-    return isMobile ? setOpenMobile((open) => !open) : setOpen((open) => !open)
-  }, [isMobile, setOpen])
+  const toggleSidebar = React.useCallback(
+    () => (isMobile ? setOpenMobile((open) => !open) : setOpen((open) => !open)),
+    [isMobile, setOpen],
+  )
 
   // We add a state so that we can do data-state="expanded" or "collapsed".
   // This makes it easier to style the sidebar with Tailwind classes.

@@ -600,7 +600,7 @@ describe('useRecentPagesStore', () => {
       expect(slice.map((p) => p.pageId)).toEqual(['SHARED', 'S1', 'R1'])
       expect(slice.find((p) => p.pageId === 'SHARED')?.pinned).toBe(true)
       // No entry lost from either source.
-      expect(slice.map((p) => p.pageId).sort()).toEqual(['R1', 'S1', 'SHARED'])
+      expect(slice.map((p) => p.pageId).toSorted()).toEqual(['R1', 'S1', 'SHARED'])
     })
 
     it('is a no-op when there are no raw keys', () => {

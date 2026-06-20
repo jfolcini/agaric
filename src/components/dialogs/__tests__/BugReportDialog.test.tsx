@@ -90,7 +90,7 @@ beforeEach(() => {
 
 describe('BugReportDialog', () => {
   it('renders the dialog with title, form fields, preview, and confirmation checkbox', async () => {
-    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+    render(<BugReportDialog open onOpenChange={() => {}} />)
 
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
     expect(screen.getByLabelText(t('bugReport.fieldTitleLabel'))).toBeInTheDocument()
@@ -106,7 +106,7 @@ describe('BugReportDialog', () => {
 
   it('primary button is disabled until the confirmation checkbox is ticked', async () => {
     const user = userEvent.setup()
-    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+    render(<BugReportDialog open onOpenChange={() => {}} />)
 
     // Wait for metadata to resolve so the preview has content.
     await waitFor(() => {
@@ -127,7 +127,7 @@ describe('BugReportDialog', () => {
 
   it('toggling "Include diagnostic logs" requests logs from the backend', async () => {
     const user = userEvent.setup()
-    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+    render(<BugReportDialog open onOpenChange={() => {}} />)
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
@@ -151,7 +151,7 @@ describe('BugReportDialog', () => {
 
   it('toggling the redact switch re-reads the logs with redact=false', async () => {
     const user = userEvent.setup()
-    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+    render(<BugReportDialog open onOpenChange={() => {}} />)
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
@@ -178,7 +178,7 @@ describe('BugReportDialog', () => {
   describe('redact switch sibling layout', () => {
     it('redact switch is visible regardless of include-logs state', async () => {
       const user = userEvent.setup()
-      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      render(<BugReportDialog open onOpenChange={() => {}} />)
 
       // Wait for metadata so the form is fully rendered.
       await waitFor(() => {
@@ -194,7 +194,7 @@ describe('BugReportDialog', () => {
     })
 
     it('redact switch is disabled when include-logs is off', async () => {
-      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      render(<BugReportDialog open onOpenChange={() => {}} />)
 
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
@@ -209,7 +209,7 @@ describe('BugReportDialog', () => {
 
     it('redact switch is enabled when include-logs is on', async () => {
       const user = userEvent.setup()
-      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      render(<BugReportDialog open onOpenChange={() => {}} />)
 
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
@@ -229,7 +229,7 @@ describe('BugReportDialog', () => {
     })
 
     const onOpenChange = vi.fn()
-    render(<BugReportDialog open={true} onOpenChange={onOpenChange} />)
+    render(<BugReportDialog open onOpenChange={onOpenChange} />)
 
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith(t('bugReport.loadMetadataFailed'))
@@ -248,7 +248,7 @@ describe('BugReportDialog', () => {
     })
 
     const user = userEvent.setup()
-    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+    render(<BugReportDialog open onOpenChange={() => {}} />)
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
@@ -264,7 +264,7 @@ describe('BugReportDialog', () => {
   it('Copy button writes the report body to the clipboard', async () => {
     const user = userEvent.setup()
 
-    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+    render(<BugReportDialog open onOpenChange={() => {}} />)
 
     await screen.findByText(/## Description/)
 
@@ -283,7 +283,7 @@ describe('BugReportDialog', () => {
   it('primary click with logs OFF opens the GitHub URL and closes', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
-    render(<BugReportDialog open={true} onOpenChange={onOpenChange} />)
+    render(<BugReportDialog open onOpenChange={onOpenChange} />)
 
     await screen.findByText(/## Description/)
 
@@ -320,7 +320,7 @@ describe('BugReportDialog', () => {
     })
 
     try {
-      render(<BugReportDialog open={true} onOpenChange={onOpenChange} />)
+      render(<BugReportDialog open onOpenChange={onOpenChange} />)
 
       await screen.findByText(/## Description/)
 
@@ -372,7 +372,7 @@ describe('BugReportDialog', () => {
     })
 
     try {
-      render(<BugReportDialog open={true} onOpenChange={onOpenChange} />)
+      render(<BugReportDialog open onOpenChange={onOpenChange} />)
 
       await screen.findByText(/## Description/)
 
@@ -402,7 +402,7 @@ describe('BugReportDialog', () => {
 
   it('renders the design-system Checkbox primitive (data-slot="checkbox") and toggles via onCheckedChange', async () => {
     const user = userEvent.setup()
-    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+    render(<BugReportDialog open onOpenChange={() => {}} />)
 
     const checkbox = await screen.findByRole('checkbox', {
       name: t('bugReport.confirmCheckbox'),
@@ -431,7 +431,7 @@ describe('BugReportDialog', () => {
   it('Download zip writes the ZIP file and shows a success toast', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
-    render(<BugReportDialog open={true} onOpenChange={onOpenChange} />)
+    render(<BugReportDialog open onOpenChange={onOpenChange} />)
 
     await screen.findByText(/## Description/)
 
@@ -474,7 +474,7 @@ describe('BugReportDialog', () => {
   it('Open GitHub issue (logs ON) opens the URL and keeps the dialog open', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
-    render(<BugReportDialog open={true} onOpenChange={onOpenChange} />)
+    render(<BugReportDialog open onOpenChange={onOpenChange} />)
 
     await screen.findByText(/## Description/)
 
@@ -506,7 +506,7 @@ describe('BugReportDialog', () => {
   // into the GitHub issue manually.
   it('renders the zip-download hint under the logs list when logs are ON', async () => {
     const user = userEvent.setup()
-    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+    render(<BugReportDialog open onOpenChange={() => {}} />)
 
     await screen.findByText(/## Description/)
 
@@ -523,7 +523,7 @@ describe('BugReportDialog', () => {
   })
 
   it('Download zip button is not rendered when logs are OFF', async () => {
-    render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+    render(<BugReportDialog open onOpenChange={() => {}} />)
 
     await screen.findByText(/## Description/)
     expect(
@@ -532,7 +532,7 @@ describe('BugReportDialog', () => {
   })
 
   it('has no a11y violations', async () => {
-    const { container } = render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+    const { container } = render(<BugReportDialog open onOpenChange={() => {}} />)
 
     await screen.findByText(/## Description/)
 
@@ -574,7 +574,7 @@ describe('BugReportDialog', () => {
       const user = userEvent.setup()
       setupTwoLogs()
 
-      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      render(<BugReportDialog open onOpenChange={() => {}} />)
       await openLogsList(user)
 
       expect(
@@ -593,7 +593,7 @@ describe('BugReportDialog', () => {
       const user = userEvent.setup()
       setupTwoLogs()
 
-      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      render(<BugReportDialog open onOpenChange={() => {}} />)
       await openLogsList(user)
 
       await user.click(
@@ -614,7 +614,7 @@ describe('BugReportDialog', () => {
       const user = userEvent.setup()
       setupTwoLogs()
 
-      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      render(<BugReportDialog open onOpenChange={() => {}} />)
       await openLogsList(user)
 
       await user.click(
@@ -638,7 +638,7 @@ describe('BugReportDialog', () => {
       const user = userEvent.setup()
       setupTwoLogs()
 
-      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      render(<BugReportDialog open onOpenChange={() => {}} />)
       await openLogsList(user)
 
       await user.click(
@@ -675,7 +675,7 @@ describe('BugReportDialog', () => {
         return null
       })
 
-      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      render(<BugReportDialog open onOpenChange={() => {}} />)
       await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
       await screen.findByText('agaric.log')
 
@@ -716,7 +716,7 @@ describe('BugReportDialog', () => {
         return null
       })
 
-      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      render(<BugReportDialog open onOpenChange={() => {}} />)
       await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
       await screen.findByText('agaric.log')
 
@@ -737,7 +737,7 @@ describe('BugReportDialog', () => {
       const user = userEvent.setup()
       setupTwoLogs()
 
-      const { container } = render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      const { container } = render(<BugReportDialog open onOpenChange={() => {}} />)
       await openLogsList(user)
 
       await user.click(
@@ -760,7 +760,7 @@ describe('BugReportDialog', () => {
   // ── required-marker on confirmation checkbox ─────────────────
   describe('confirmation checkbox required marker', () => {
     it('renders aria-required="true" on the confirmation checkbox', async () => {
-      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      render(<BugReportDialog open onOpenChange={() => {}} />)
 
       const checkbox = await screen.findByRole('checkbox', {
         name: t('bugReport.confirmCheckbox'),
@@ -769,7 +769,7 @@ describe('BugReportDialog', () => {
     })
 
     it('renders the aria-hidden asterisk visual marker in the label', async () => {
-      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      render(<BugReportDialog open onOpenChange={() => {}} />)
 
       // Wait for the dialog body to render.
       await screen.findByRole('checkbox', { name: t('bugReport.confirmCheckbox') })
@@ -806,7 +806,7 @@ describe('BugReportDialog', () => {
       const user = userEvent.setup()
       setupOneLongLog()
 
-      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      render(<BugReportDialog open onOpenChange={() => {}} />)
 
       await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
       await screen.findByText('agaric.log')
@@ -846,7 +846,7 @@ describe('BugReportDialog', () => {
   // ScrollArea is now an implementation detail of DialogBody.
   describe('scrollable body layout', () => {
     it('renders the form body inside the DialogBody slot with title and footer outside', async () => {
-      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      render(<BugReportDialog open onOpenChange={() => {}} />)
 
       await screen.findByText(/## Description/)
 
@@ -881,7 +881,7 @@ describe('BugReportDialog', () => {
         return null
       })
 
-      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      render(<BugReportDialog open onOpenChange={() => {}} />)
 
       await user.click(screen.getByRole('switch', { name: t('bugReport.includeLogsLabel') }))
       await screen.findByText('agaric.log')
@@ -906,7 +906,7 @@ describe('BugReportDialog', () => {
   it('prefills title and description from props', async () => {
     render(
       <BugReportDialog
-        open={true}
+        open
         onOpenChange={() => {}}
         initialTitle="crash prefilled"
         initialDescription="stack trace here"
@@ -934,7 +934,7 @@ describe('BugReportDialog', () => {
     it('renders form body on mobile (Sheet path)', async () => {
       mockedUseIsMobile.mockReturnValue(true)
 
-      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      render(<BugReportDialog open onOpenChange={() => {}} />)
 
       expect(await screen.findByRole('dialog')).toBeInTheDocument()
       expect(screen.getByLabelText(t('bugReport.fieldTitleLabel'))).toBeInTheDocument()
@@ -947,7 +947,7 @@ describe('BugReportDialog', () => {
     it('renders form body on desktop (Dialog path)', async () => {
       mockedUseIsMobile.mockReturnValue(false)
 
-      render(<BugReportDialog open={true} onOpenChange={() => {}} />)
+      render(<BugReportDialog open onOpenChange={() => {}} />)
 
       expect(await screen.findByRole('dialog')).toBeInTheDocument()
       expect(screen.getByLabelText(t('bugReport.fieldTitleLabel'))).toBeInTheDocument()

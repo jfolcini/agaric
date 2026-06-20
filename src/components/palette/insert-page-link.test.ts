@@ -45,7 +45,7 @@ function makeProseMirrorTarget(): HTMLElement {
   const pm = document.createElement('div')
   pm.className = 'ProseMirror'
   pm.contentEditable = 'true'
-  document.body.appendChild(pm)
+  document.body.append(pm)
   return pm
 }
 

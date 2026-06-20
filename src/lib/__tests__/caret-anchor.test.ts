@@ -29,7 +29,7 @@ function makeInput(value: string, extraStyle = ''): HTMLInputElement {
   input.type = 'text'
   input.value = value
   input.style.cssText = `${STYLES}; ${extraStyle}`
-  document.body.appendChild(input)
+  document.body.append(input)
   // Pin the bounding rect so tests aren't sensitive to layout differences.
   input.getBoundingClientRect = () => new DOMRect(100, 200, 300, 24)
   return input

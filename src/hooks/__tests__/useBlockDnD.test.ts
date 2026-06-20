@@ -230,7 +230,7 @@ describe('useBlockDnD', () => {
       // getProjection should be called with the offset; we verify the offset argument
       // The last call to getProjection should include 48 as the dragOffset
       const calls = mockedGetProjection.mock.calls
-      const lastCall = calls[calls.length - 1]
+      const lastCall = calls.at(-1)
       expect(lastCall?.[3]).toBe(48) // dragOffset param
     })
   })
@@ -891,7 +891,7 @@ describe('useBlockDnD', () => {
       // jsdom/happy-dom report an empty `--indent-width`, so the resolver
       // falls back to INDENT_WIDTH (24) — passed as the 5th getProjection arg.
       const calls = mockedGetProjection.mock.calls
-      const lastCall = calls[calls.length - 1]
+      const lastCall = calls.at(-1)
       expect(lastCall?.[4]).toBe(24)
     })
 
@@ -914,7 +914,7 @@ describe('useBlockDnD', () => {
         })
 
         const calls = mockedGetProjection.mock.calls
-        const lastCall = calls[calls.length - 1]
+        const lastCall = calls.at(-1)
         expect(lastCall?.[4]).toBe(12)
       } finally {
         document.documentElement.style.removeProperty('--indent-width')

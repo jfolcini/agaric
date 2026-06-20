@@ -29,10 +29,9 @@
 
 import { execSync, spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join, resolve } from 'node:path'
 
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const REPO_ROOT = resolve(import.meta.dirname, '..')
 const SRC_TAURI = join(REPO_ROOT, 'src-tauri')
 const BINARIES_DIR = join(SRC_TAURI, 'binaries')
 

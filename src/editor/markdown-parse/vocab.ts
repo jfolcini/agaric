@@ -369,23 +369,31 @@ export function trailingBackslashRun(line: string): number {
 /** Convert an inline node back to its plain-text representation (for unclosed mark revert). */
 export function nodeToPlainText(node: InlineNode): string {
   switch (node.type) {
-    case 'text':
+    case 'text': {
       return node.text
-    case 'tag_ref':
+    }
+    case 'tag_ref': {
       return `#[${node.attrs.id}]`
-    case 'block_link':
+    }
+    case 'block_link': {
       return `[[${node.attrs.id}]]`
-    case 'block_ref':
+    }
+    case 'block_ref': {
       return `((${node.attrs.id}))`
-    case 'math_inline':
+    }
+    case 'math_inline': {
       return `$${node.attrs.latex}$`
-    case 'image':
+    }
+    case 'image': {
       return `![${node.attrs.alt}](${node.attrs.src})`
+    }
     /* v8 ignore start -- hardBreak never appears during line parsing; default is type guard */
-    case 'hardBreak':
+    case 'hardBreak': {
       return '\n'
-    default:
+    }
+    default: {
       return ''
+    }
     /* v8 ignore stop */
   }
 }

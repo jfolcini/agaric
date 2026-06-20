@@ -11,7 +11,7 @@ import { useLocalStoragePreference } from './useLocalStoragePreference'
 const GROUP_BY_KEY = 'agaric:agenda:groupBy'
 const SORT_BY_KEY = 'agaric:agenda:sortBy'
 
-const VALID_GROUP_BY: readonly string[] = ['date', 'priority', 'state', 'page', 'none']
+const VALID_GROUP_BY: ReadonlySet<string> = new Set(['date', 'priority', 'state', 'page', 'none'])
 const VALID_SORT_BY: readonly string[] = ['date', 'priority', 'state', 'page']
 
 export interface AgendaPreferences {
@@ -25,7 +25,7 @@ export interface AgendaPreferences {
 // And must keep parsing existing on-disk preferences.
 const groupByOptions = {
   parse: (raw: string): AgendaGroupBy => {
-    if (VALID_GROUP_BY.includes(raw)) return raw as AgendaGroupBy
+    if (VALID_GROUP_BY.has(raw)) return raw as AgendaGroupBy
     throw new Error('invalid groupBy')
   },
   serialize: (v: AgendaGroupBy): string => v,

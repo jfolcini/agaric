@@ -83,7 +83,7 @@ export async function performActivePageUndo(): Promise<boolean> {
   const navState = useNavigationStore.getState()
   const pageStack = selectPageStack(useTabsStore.getState())
   if (navState.currentView !== 'page-editor' || pageStack.length === 0) return false
-  const pageId = pageStack[pageStack.length - 1]?.pageId
+  const pageId = pageStack.at(-1)?.pageId
   if (!pageId) return false
   await performPageUndo(pageId)
   return true
@@ -103,7 +103,7 @@ export function useUndoShortcuts(): void {
       const pageStack = selectPageStack(useTabsStore.getState())
       if (navState.currentView !== 'page-editor' || pageStack.length === 0) return
 
-      const pageId = pageStack[pageStack.length - 1]?.pageId as string
+      const pageId = pageStack.at(-1)?.pageId as string
 
       // `undoLastPageOp` (Ctrl/Cmd+Z by default) — routed through
       // `matchesShortcutBinding` (#724) so Settings rebinds are honoured.

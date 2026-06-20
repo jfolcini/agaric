@@ -44,9 +44,7 @@ const mockEditorState = {
 }
 
 vi.mock('@tiptap/react', () => ({
-  useEditorState: () => {
-    return mockEditorState
-  },
+  useEditorState: () => mockEditorState,
 }))
 
 // #925 f3 — control coarse-pointer (touch) detection so the desktop suite stays

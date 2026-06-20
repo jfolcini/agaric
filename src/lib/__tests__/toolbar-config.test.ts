@@ -236,7 +236,7 @@ describe('createRefsAndBlocks', () => {
       } as never
       const [, blockRef] = createRefsAndBlocks(editor)
       blockRef?.action()
-      const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
+      const focusResult = mockFocus.mock.results.at(-1)?.value as {
         insertContent: ReturnType<typeof vi.fn>
       }
       expect(focusResult.insertContent).toHaveBeenCalledWith('((')
@@ -279,7 +279,7 @@ describe('createRefsAndBlocks', () => {
       const [, , insertTag] = createRefsAndBlocks(editor)
       insertTag?.action()
       // Find the most recent insertContent call
-      const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
+      const focusResult = mockFocus.mock.results.at(-1)?.value as {
         insertContent: ReturnType<typeof vi.fn>
       }
       expect(focusResult.insertContent).toHaveBeenCalledWith('@')
@@ -289,7 +289,7 @@ describe('createRefsAndBlocks', () => {
       const editor = makeTagEditor({ from: 5, prevChar: ' ' })
       const [, , insertTag] = createRefsAndBlocks(editor)
       insertTag?.action()
-      const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
+      const focusResult = mockFocus.mock.results.at(-1)?.value as {
         insertContent: ReturnType<typeof vi.fn>
       }
       expect(focusResult.insertContent).toHaveBeenCalledWith('@')
@@ -299,7 +299,7 @@ describe('createRefsAndBlocks', () => {
       const editor = makeTagEditor({ from: 5, prevChar: '\u00A0' })
       const [, , insertTag] = createRefsAndBlocks(editor)
       insertTag?.action()
-      const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
+      const focusResult = mockFocus.mock.results.at(-1)?.value as {
         insertContent: ReturnType<typeof vi.fn>
       }
       expect(focusResult.insertContent).toHaveBeenCalledWith('@')
@@ -309,7 +309,7 @@ describe('createRefsAndBlocks', () => {
       const editor = makeTagEditor({ from: 5, prevChar: '\n' })
       const [, , insertTag] = createRefsAndBlocks(editor)
       insertTag?.action()
-      const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
+      const focusResult = mockFocus.mock.results.at(-1)?.value as {
         insertContent: ReturnType<typeof vi.fn>
       }
       expect(focusResult.insertContent).toHaveBeenCalledWith('@')
@@ -319,7 +319,7 @@ describe('createRefsAndBlocks', () => {
       const editor = makeTagEditor({ from: 5, prevChar: 'x' })
       const [, , insertTag] = createRefsAndBlocks(editor)
       insertTag?.action()
-      const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
+      const focusResult = mockFocus.mock.results.at(-1)?.value as {
         insertContent: ReturnType<typeof vi.fn>
       }
       expect(focusResult.insertContent).toHaveBeenCalledWith(' @')

@@ -191,7 +191,7 @@ describe('LinkEditPopover', () => {
       render(
         <LinkEditPopover
           editor={makeEditor()}
-          isEditing={true}
+          isEditing
           initialUrl="https://example.com"
           initialLabel=""
           onClose={onClose}
@@ -218,7 +218,7 @@ describe('LinkEditPopover', () => {
       render(
         <LinkEditPopover
           editor={makeEditor()}
-          isEditing={true}
+          isEditing
           initialUrl="https://example.com"
           initialLabel=""
           onClose={onClose}
@@ -231,7 +231,7 @@ describe('LinkEditPopover', () => {
       render(
         <LinkEditPopover
           editor={makeEditor()}
-          isEditing={true}
+          isEditing
           initialUrl="https://example.com"
           initialLabel=""
           onClose={onClose}
@@ -436,7 +436,7 @@ describe('LinkEditPopover', () => {
       render(
         <LinkEditPopover
           editor={makeEditor()}
-          isEditing={true}
+          isEditing
           initialUrl="https://example.com"
           initialLabel=""
           onClose={onClose}
@@ -456,7 +456,7 @@ describe('LinkEditPopover', () => {
       render(
         <LinkEditPopover
           editor={makeEditor()}
-          isEditing={true}
+          isEditing
           initialUrl="https://example.com"
           initialLabel=""
           onClose={onClose}
@@ -538,7 +538,7 @@ describe('LinkEditPopover', () => {
       render(
         <LinkEditPopover
           editor={makeEditor()}
-          isEditing={true}
+          isEditing
           initialUrl="https://old.com"
           initialLabel=""
           onClose={onClose}
@@ -579,7 +579,7 @@ describe('LinkEditPopover', () => {
       const { container } = render(
         <LinkEditPopover
           editor={makeEditor()}
-          isEditing={true}
+          isEditing
           initialUrl="https://example.com"
           initialLabel=""
           onClose={onClose}
@@ -881,7 +881,7 @@ describe('LinkEditPopover', () => {
       render(
         <LinkEditPopover
           editor={makeEditor()}
-          isEditing={true}
+          isEditing
           initialUrl=""
           initialLabel="existing text"
           onClose={onClose}

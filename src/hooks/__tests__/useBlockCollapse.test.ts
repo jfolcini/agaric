@@ -209,7 +209,7 @@ describe('useBlockCollapse', () => {
     })
 
     const stored = JSON.parse(localStorage.getItem('collapsed_ids:PAGE_1') as string) as string[]
-    expect(stored.sort()).toEqual(['A', 'B'])
+    expect(stored.toSorted()).toEqual(['A', 'B'])
   })
 
   it('reloads persisted state when pageKey changes (page switch without remount)', () => {

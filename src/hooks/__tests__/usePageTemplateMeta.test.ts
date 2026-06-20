@@ -50,7 +50,7 @@ const mockedDelete = vi.mocked(deleteProperty)
 const mockedSet = vi.mocked(setProperty)
 const t = (key: string) => key
 
-type Prop = {
+interface Prop {
   key: string
   value_text?: string | null
   value_ref?: string | null

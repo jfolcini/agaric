@@ -44,30 +44,42 @@ export function quoteValueIfNeeded(v: string): string {
 /** Render a single token back to its canonical source form. */
 export function tokenSource(t: FilterToken): string {
   switch (t.kind) {
-    case 'tag':
+    case 'tag': {
       return `tag:#${t.value}`
-    case 'pathInclude':
+    }
+    case 'pathInclude': {
       return `path:${quoteValueIfNeeded(t.value)}`
-    case 'pathExclude':
+    }
+    case 'pathExclude': {
       return `not-path:${quoteValueIfNeeded(t.value)}`
-    case 'state':
+    }
+    case 'state': {
       return `state:${t.value}`
-    case 'notState':
+    }
+    case 'notState': {
       return `not-state:${t.value}`
-    case 'priority':
+    }
+    case 'priority': {
       return `priority:${t.value}`
-    case 'notPriority':
+    }
+    case 'notPriority': {
       return `not-priority:${t.value}`
-    case 'due':
+    }
+    case 'due': {
       return `due:${t.raw}`
-    case 'scheduled':
+    }
+    case 'scheduled': {
       return `scheduled:${t.raw}`
-    case 'prop':
+    }
+    case 'prop': {
       return `prop:${t.key}=${quoteValueIfNeeded(t.value)}`
-    case 'notProp':
+    }
+    case 'notProp': {
       return `not-prop:${t.key}=${quoteValueIfNeeded(t.value)}`
-    case 'invalid':
+    }
+    case 'invalid': {
       return t.source
+    }
   }
 }
 

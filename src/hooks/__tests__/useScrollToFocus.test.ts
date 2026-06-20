@@ -26,7 +26,7 @@ const seededElements: HTMLElement[] = []
 function seedElementById(id: string): HTMLElement {
   const el = document.createElement('div')
   el.id = id
-  document.body.appendChild(el)
+  document.body.append(el)
   seededElements.push(el)
   return el
 }
@@ -34,7 +34,7 @@ function seedElementById(id: string): HTMLElement {
 function seedElementByAttr(attr: string, value: string): HTMLElement {
   const el = document.createElement('div')
   el.setAttribute(attr, value)
-  document.body.appendChild(el)
+  document.body.append(el)
   seededElements.push(el)
   return el
 }

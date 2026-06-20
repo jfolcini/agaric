@@ -84,7 +84,7 @@ export function BlockPropertyEditor({
       return
     }
     const selectedIdx = selectOptions.indexOf(editingProp.value)
-    setActiveIndex(selectedIdx >= 0 ? selectedIdx : 0)
+    setActiveIndex(Math.max(selectedIdx, 0))
   }, [editingProp, selectOptions])
 
   // Keep the keyboard-active option scrolled into view as the user navigates,
@@ -120,22 +120,26 @@ export function BlockPropertyEditor({
     (e: React.KeyboardEvent) => {
       if (!selectOptions || selectOptions.length === 0) return
       switch (e.key) {
-        case 'ArrowDown':
+        case 'ArrowDown': {
           e.preventDefault()
           setActiveIndex((prev) => Math.min(prev + 1, selectOptions.length - 1))
           break
-        case 'ArrowUp':
+        }
+        case 'ArrowUp': {
           e.preventDefault()
           setActiveIndex((prev) => Math.max(prev - 1, 0))
           break
-        case 'Home':
+        }
+        case 'Home': {
           e.preventDefault()
           setActiveIndex(0)
           break
-        case 'End':
+        }
+        case 'End': {
           e.preventDefault()
           setActiveIndex(selectOptions.length - 1)
           break
+        }
         case 'Enter': {
           const opt = selectOptions[activeIndex]
           if (activeIndex >= 0 && opt !== undefined) {

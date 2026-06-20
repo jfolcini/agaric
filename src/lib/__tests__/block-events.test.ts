@@ -28,7 +28,7 @@ describe('BLOCK_EVENTS', () => {
       'INSERT_DIVIDER',
       'INSERT_CALLOUT',
     ]
-    expect(Object.keys(BLOCK_EVENTS).sort()).toEqual(expectedKeys.sort())
+    expect(Object.keys(BLOCK_EVENTS).toSorted()).toEqual(expectedKeys.toSorted())
   })
 
   it('maps keys to kebab-case string values', () => {

@@ -149,7 +149,7 @@ describe('journal store', () => {
 describe('journal persist migrate', () => {
   const migrate = useJournalStore.persist.getOptions().migrate
 
-  type PersistedJournal = {
+  interface PersistedJournal {
     currentDateBySpace: Record<string, string>
     modeBySpace: Record<string, string>
   }
@@ -212,7 +212,7 @@ describe('journal persist merge (#823 — same-version blobs bypass migrate)', (
     modeBySpace: {},
   } as unknown as Parameters<NonNullable<typeof options.merge>>[1]
 
-  type MergedJournal = {
+  interface MergedJournal {
     currentDateBySpace: Record<string, string>
     modeBySpace: Record<string, string>
   }

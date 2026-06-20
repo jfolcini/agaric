@@ -216,11 +216,12 @@ export function SettingsView(): React.ReactElement {
   // the `?settings=…` query param so the URL no longer claims the user is
   // on a specific Settings tab. Without this, the param would linger and
   // a refresh would yank the user back into Settings unexpectedly.
-  useEffect(() => {
-    return () => {
+  useEffect(
+    () => () => {
       setSettingsTabInUrl(null)
-    }
-  }, [])
+    },
+    [],
+  )
 
   return (
     <div className="settings-view space-y-6">

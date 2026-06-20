@@ -225,7 +225,7 @@ describe('useAppDialogs — showShortcuts keydown listener (#754)', () => {
   it('ignores "?" while typing in an input', () => {
     const { result } = renderHook(() => useAppDialogs())
     const input = document.createElement('input')
-    document.body.appendChild(input)
+    document.body.append(input)
 
     try {
       act(() => {
@@ -241,7 +241,7 @@ describe('useAppDialogs — showShortcuts keydown listener (#754)', () => {
     const { result } = renderHook(() => useAppDialogs())
     const editable = document.createElement('div')
     editable.setAttribute('contenteditable', 'true')
-    document.body.appendChild(editable)
+    document.body.append(editable)
 
     try {
       act(() => {
@@ -268,7 +268,7 @@ describe('useAppDialogs — showShortcuts keydown listener (#754)', () => {
   it('ignores "?" while typing in a textarea', () => {
     const { result } = renderHook(() => useAppDialogs())
     const textarea = document.createElement('textarea')
-    document.body.appendChild(textarea)
+    document.body.append(textarea)
 
     try {
       act(() => {

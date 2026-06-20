@@ -1466,7 +1466,7 @@ describe('App', () => {
       const spy = vi.fn()
       window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, spy)
       const input = document.createElement('input')
-      document.body.appendChild(input)
+      document.body.append(input)
       try {
         fireEvent.keyDown(input, { key: 'Escape' })
         await Promise.resolve()
@@ -1486,7 +1486,7 @@ describe('App', () => {
       const spy = vi.fn()
       window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, spy)
       const textarea = document.createElement('textarea')
-      document.body.appendChild(textarea)
+      document.body.append(textarea)
       try {
         fireEvent.keyDown(textarea, { key: 'Escape' })
         await Promise.resolve()
@@ -1507,7 +1507,7 @@ describe('App', () => {
       window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, spy)
       const editable = document.createElement('div')
       editable.setAttribute('contenteditable', 'true')
-      document.body.appendChild(editable)
+      document.body.append(editable)
       try {
         fireEvent.keyDown(editable, { key: 'Escape' })
         await Promise.resolve()
@@ -2416,7 +2416,7 @@ describe('App', () => {
       useSpaceStore.getState().setCurrentSpace(WORK.id)
 
       const textarea = document.createElement('textarea')
-      document.body.appendChild(textarea)
+      document.body.append(textarea)
       try {
         fireEvent.keyDown(textarea, { key: '1', ctrlKey: true })
         await Promise.resolve()
@@ -2483,7 +2483,7 @@ describe('App', () => {
       })
 
       await waitFor(() => {
-        expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Personal \u00b7 Agaric')
+        expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Personal \u00B7 Agaric')
       })
     })
 
@@ -2495,7 +2495,7 @@ describe('App', () => {
 
       // Initial assert so we know the baseline call landed.
       await waitFor(() => {
-        expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Personal \u00b7 Agaric')
+        expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Personal \u00B7 Agaric')
       })
       vi.mocked(setWindowTitle).mockClear()
 
@@ -2511,7 +2511,7 @@ describe('App', () => {
         )
       })
       await waitFor(() => {
-        expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Work \u00b7 Agaric')
+        expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Work \u00B7 Agaric')
       })
     })
 

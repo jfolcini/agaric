@@ -125,12 +125,13 @@ export function useRovingTabindex(): UseRovingTabindexReturn {
     [sync],
   )
 
-  useEffect(() => {
-    return () => {
+  useEffect(
+    () => () => {
       observerRef.current?.disconnect()
       observerRef.current = null
-    }
-  }, [])
+    },
+    [],
+  )
 
   /** Move focus + the tab stop to `nextIndex` (already validated). */
   const focusIndex = useCallback((items: HTMLElement[], nextIndex: number) => {
@@ -151,21 +152,26 @@ export function useRovingTabindex(): UseRovingTabindexReturn {
       let next: number | null = null
       switch (e.key) {
         case 'ArrowRight':
-        case 'ArrowDown':
+        case 'ArrowDown': {
           next = (from + 1) % items.length
           break
+        }
         case 'ArrowLeft':
-        case 'ArrowUp':
+        case 'ArrowUp': {
           next = (from - 1 + items.length) % items.length
           break
-        case 'Home':
+        }
+        case 'Home': {
           next = 0
           break
-        case 'End':
+        }
+        case 'End': {
           next = items.length - 1
           break
-        default:
+        }
+        default: {
           return
+        }
       }
 
       e.preventDefault()

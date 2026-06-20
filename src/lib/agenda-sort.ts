@@ -26,7 +26,7 @@ function stateRank(state: string | null): number {
  * Pure function, does not mutate input.
  */
 export function sortAgendaBlocks(blocks: BlockRow[]): BlockRow[] {
-  return [...blocks].sort((a, b) => {
+  return [...blocks].toSorted((a, b) => {
     // 1. Date ascending
     const dateA = effectiveDate(a)
     const dateB = effectiveDate(b)
@@ -109,7 +109,7 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
   const sortKeyFor = (key: string): string => SPECIAL_SORT_KEY[key] ?? key
 
   return [...groups.entries()]
-    .sort(([a], [b]) => {
+    .toSorted(([a], [b]) => {
       const ka = sortKeyFor(a)
       const kb = sortKeyFor(b)
       return ka < kb ? -1 : ka > kb ? 1 : 0
@@ -181,7 +181,7 @@ export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
       label === NO_PRIORITY ? 'text-muted-foreground' : classForLevel(label.replace(/^P/, ''))
     result.push({
       label,
-      blocks: [...group].sort(sortWithin),
+      blocks: [...group].toSorted(sortWithin),
       className,
     })
   }
@@ -236,7 +236,7 @@ export function groupByState(blocks: BlockRow[]): AgendaGroup[] {
     if (group.length === 0) continue
     result.push({
       label,
-      blocks: [...group].sort(sortWithin),
+      blocks: [...group].toSorted(sortWithin),
       className: CLASS_MAP[label],
     })
   }
@@ -248,7 +248,7 @@ export function groupByState(blocks: BlockRow[]): AgendaGroup[] {
  * Pure function, does not mutate input.
  */
 export function sortByPriority(blocks: BlockRow[]): BlockRow[] {
-  return [...blocks].sort((a, b) => {
+  return [...blocks].toSorted((a, b) => {
     // 1. Priority: 1 > 2 > 3 > null
     const prioA = priorityRank(a.priority)
     const prioB = priorityRank(b.priority)
@@ -271,7 +271,7 @@ export function sortByPriority(blocks: BlockRow[]): BlockRow[] {
  * Pure function, does not mutate input.
  */
 export function sortByState(blocks: BlockRow[]): BlockRow[] {
-  return [...blocks].sort((a, b) => {
+  return [...blocks].toSorted((a, b) => {
     // 1. State: DOING > TODO > DONE > CANCELLED > null
     const stateA = stateRank(a.todo_state)
     const stateB = stateRank(b.todo_state)
@@ -337,7 +337,7 @@ export function groupByPage(blocks: BlockRow[], pageTitles: Map<string, string>)
   for (const entry of entries) {
     result.push({
       label: entry.title,
-      blocks: [...entry.blocks].sort(sortWithin),
+      blocks: [...entry.blocks].toSorted(sortWithin),
     })
   }
 
@@ -345,7 +345,7 @@ export function groupByPage(blocks: BlockRow[], pageTitles: Map<string, string>)
   if (noPageBlocks && noPageBlocks.length > 0) {
     result.push({
       label: 'No page',
-      blocks: [...noPageBlocks].sort(sortWithin),
+      blocks: [...noPageBlocks].toSorted(sortWithin),
       className: 'text-muted-foreground',
     })
   }
@@ -360,7 +360,7 @@ export function groupByPage(blocks: BlockRow[], pageTitles: Map<string, string>)
  * Pure function, does not mutate input.
  */
 export function sortByPage(blocks: BlockRow[], pageTitles: Map<string, string>): BlockRow[] {
-  return [...blocks].sort((a, b) => {
+  return [...blocks].toSorted((a, b) => {
     const titleA = a.page_id ? (pageTitles.get(a.page_id) ?? a.page_id) : null
     const titleB = b.page_id ? (pageTitles.get(b.page_id) ?? b.page_id) : null
 
@@ -400,14 +400,18 @@ export function sortAgendaBlocksBy(
   pageTitles?: Map<string, string> | undefined,
 ): BlockRow[] {
   switch (sortBy) {
-    case 'priority':
+    case 'priority': {
       return sortByPriority(blocks)
-    case 'state':
+    }
+    case 'state': {
       return sortByState(blocks)
-    case 'page':
+    }
+    case 'page': {
       return sortByPage(blocks, pageTitles ?? new Map())
-    default:
+    }
+    default: {
       return sortAgendaBlocks(blocks)
+    }
   }
 }
 

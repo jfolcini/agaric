@@ -16,16 +16,21 @@ export function getTodoLabel(
   t: (key: string) => string,
 ): string {
   switch (todoState) {
-    case 'TODO':
+    case 'TODO': {
       return t('contextMenu.todoToDoing')
-    case 'DOING':
+    }
+    case 'DOING': {
       return t('contextMenu.doingToDone')
-    case 'DONE':
+    }
+    case 'DONE': {
       return t('contextMenu.doneToCancelled')
-    case 'CANCELLED':
+    }
+    case 'CANCELLED': {
       return t('contextMenu.cancelledToClear')
-    default:
+    }
+    default: {
       return t('contextMenu.setTodo')
+    }
   }
 }
 
@@ -34,14 +39,18 @@ export function getPriorityLabel(
   t: (key: string) => string,
 ): string {
   switch (priority) {
-    case '1':
+    case '1': {
       return t('contextMenu.priority1To2')
-    case '2':
+    }
+    case '2': {
       return t('contextMenu.priority2To3')
-    case '3':
+    }
+    case '3': {
       return t('contextMenu.priority3ToClear')
-    default:
+    }
+    default: {
       return t('contextMenu.setPriority1')
+    }
   }
 }
 

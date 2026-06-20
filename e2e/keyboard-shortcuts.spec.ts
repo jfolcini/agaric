@@ -96,7 +96,7 @@ test.describe('Block navigation', () => {
     // Get text of first block for comparison later
     const firstBlockText = await page
       .locator('[data-testid="block-editor"] [contenteditable="true"]')
-      .innerText()
+      .textContent()
 
     // Move to end and press ArrowDown to navigate to next block
     await page.keyboard.press('End')
@@ -107,7 +107,7 @@ test.describe('Block navigation', () => {
     await expect(editor).toBeVisible()
 
     // The editor content should be different from the first block
-    const newText = await editor.innerText()
+    const newText = await editor.textContent()
     expect(newText).not.toBe(firstBlockText)
   })
 
@@ -240,7 +240,7 @@ test.describe('Block organization', () => {
     await openPage(page, 'Getting Started')
 
     // Get text of the first two blocks in static view
-    const secondBlockText = await page.locator('[data-testid="block-static"]').nth(1).innerText()
+    const secondBlockText = await page.locator('[data-testid="block-static"]').nth(1).textContent()
 
     // Focus the first block
     await focusBlock(page, 0)
@@ -518,7 +518,7 @@ test.describe('Global shortcuts', () => {
 
   test('Alt+Left navigates journal back', async ({ page }) => {
     // We start on the journal view, get the current date display
-    const initialDate = await page.locator('[data-testid="date-display"]').innerText()
+    const initialDate = await page.locator('[data-testid="date-display"]').textContent()
 
     // Press Alt+Left to go to previous day
     await page.keyboard.down('Alt')
@@ -531,7 +531,7 @@ test.describe('Global shortcuts', () => {
 
   test('Alt+Right navigates journal forward', async ({ page }) => {
     // Capture today's date before navigating
-    const todayDate = await page.locator('[data-testid="date-display"]').innerText()
+    const todayDate = await page.locator('[data-testid="date-display"]').textContent()
 
     // First go back a day so we can go forward
     await page.keyboard.down('Alt')
@@ -541,7 +541,7 @@ test.describe('Global shortcuts', () => {
     // Wait for the date to change from today
     await expect(page.locator('[data-testid="date-display"]')).not.toHaveText(todayDate)
 
-    const backDate = await page.locator('[data-testid="date-display"]').innerText()
+    const backDate = await page.locator('[data-testid="date-display"]').textContent()
 
     // Blur any editor that stole focus from the auto-created block for the
     // new (empty) journal page. The product's `isTypingInField()` guard in
@@ -562,7 +562,7 @@ test.describe('Global shortcuts', () => {
 
   test('Alt+T goes to today', async ({ page }) => {
     // Get today's date display
-    const todayDate = await page.locator('[data-testid="date-display"]').innerText()
+    const todayDate = await page.locator('[data-testid="date-display"]').textContent()
 
     // Navigate back a day first
     await page.keyboard.down('Alt')

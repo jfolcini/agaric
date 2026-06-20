@@ -81,7 +81,7 @@ describe('PropertyValuePicker', () => {
     const onChange = vi.fn()
     renderPicker({ selected: ['project:alpha'], onChange })
 
-    const lastCall = onChange.mock.calls[onChange.mock.calls.length - 1]
+    const lastCall = onChange.mock.calls.at(-1)
     expect(lastCall?.[0]).toEqual(['project:alpha'])
   })
 

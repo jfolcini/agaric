@@ -217,7 +217,7 @@ describe('KeyboardSettingsTab', () => {
     // Click the action button in the dialog
     const confirmButton = screen.getAllByRole('button', { name: 'Reset All to Defaults' })
     // The last one is the dialog action button
-    await user.click(confirmButton[confirmButton.length - 1] as HTMLElement)
+    await user.click(confirmButton.at(-1) as HTMLElement)
 
     expect(mockResetAllShortcuts).toHaveBeenCalled()
   })

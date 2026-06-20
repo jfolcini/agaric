@@ -209,19 +209,23 @@ export function attachNodeRovingKeys(node: NodeSel): void {
     let next = current
     switch (event.key) {
       case 'ArrowRight':
-      case 'ArrowDown':
+      case 'ArrowDown': {
         next = (current + 1) % all.length
         break
+      }
       case 'ArrowLeft':
-      case 'ArrowUp':
+      case 'ArrowUp': {
         next = (current - 1 + all.length) % all.length
         break
-      case 'Home':
+      }
+      case 'Home': {
         next = 0
         break
-      case 'End':
+      }
+      case 'End': {
         next = all.length - 1
         break
+      }
     }
     const target = all[next]
     if (target) focusRovingNode(node, target)

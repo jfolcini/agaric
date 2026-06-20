@@ -135,7 +135,7 @@ export const useBlockStore = create<BlockStore>((set) => ({
       const anchorId =
         selectionAnchorId && visibleIds.includes(selectionAnchorId)
           ? selectionAnchorId
-          : (selectedBlockIds[selectedBlockIds.length - 1] as string)
+          : (selectedBlockIds.at(-1) as string)
       const anchorIdx = visibleIds.indexOf(anchorId)
       const targetIdx = visibleIds.indexOf(blockId)
       if (anchorIdx < 0 || targetIdx < 0) {
@@ -172,7 +172,7 @@ export const useBlockStore = create<BlockStore>((set) => ({
       const anchorId =
         selectionAnchorId && visibleIds.includes(selectionAnchorId)
           ? selectionAnchorId
-          : (selectedBlockIds[selectedBlockIds.length - 1] as string)
+          : (selectedBlockIds.at(-1) as string)
       const focusId =
         selectionFocusId && visibleIds.includes(selectionFocusId) ? selectionFocusId : anchorId
 

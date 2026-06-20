@@ -74,11 +74,12 @@ export function useDateInput({
   }, [initialValue, cancelPendingParse])
 
   // Cancel pending parse on unmount
-  useEffect(() => {
-    return () => {
+  useEffect(
+    () => () => {
       if (debounceRef.current !== null) clearTimeout(debounceRef.current)
-    }
-  }, [])
+    },
+    [],
+  )
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {

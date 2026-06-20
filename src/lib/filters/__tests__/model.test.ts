@@ -549,7 +549,7 @@ describe('search surface round-trip (projection ⇄ canonical)', () => {
 
 describe('per-surface allow-lists', () => {
   it('declares an allow-list for every surface', () => {
-    expect(Object.keys(FILTER_SURFACE_ALLOWLIST).sort()).toEqual([
+    expect(Object.keys(FILTER_SURFACE_ALLOWLIST).toSorted()).toEqual([
       'backlink',
       'graph',
       'pageBrowser',

@@ -119,7 +119,7 @@ const TAG_ALL_KEY = '__all__'
  */
 function getCacheKey(tagIds: readonly string[]): string {
   if (tagIds.length === 0) return TAG_ALL_KEY
-  return [...tagIds].sort().join(',')
+  return [...tagIds].toSorted().join(',')
 }
 
 /** @internal — exported for test isolation only. */
@@ -181,7 +181,7 @@ export function GraphView(): React.ReactElement {
   // the active tab has no page open (e.g. a view tab), which disables the
   // focus toggle.
   const pageStack = useTabsStore(selectPageStack)
-  const seedEntry = pageStack.length > 0 ? pageStack[pageStack.length - 1] : null
+  const seedEntry = pageStack.length > 0 ? pageStack.at(-1) : null
   const seedPageId = seedEntry?.pageId ?? null
 
   // Extract the tag filter's tagIds — these drive server-side fetching.

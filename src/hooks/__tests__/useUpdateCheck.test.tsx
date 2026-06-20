@@ -54,7 +54,7 @@ vi.mock('@/lib/logger', () => ({
 // Mock `@/lib/notify` directly so the tests can assert on `notify.message`
 // / `notify.error` / `notify.success` calls. The default `notify`
 // callable + the chained method shape is preserved.
-type NotifyMockMethods = {
+interface NotifyMockMethods {
   message: ReturnType<typeof vi.fn>
   error: ReturnType<typeof vi.fn>
   success: ReturnType<typeof vi.fn>

@@ -113,7 +113,7 @@ describe('HistorySelectionToolbar', () => {
     render(
       <HistorySelectionToolbar
         selectedCount={1}
-        reverting={true}
+        reverting
         onRevertClick={vi.fn()}
         onClearSelection={vi.fn()}
       />,
@@ -127,7 +127,7 @@ describe('HistorySelectionToolbar', () => {
     render(
       <HistorySelectionToolbar
         selectedCount={1}
-        reverting={true}
+        reverting
         onRevertClick={vi.fn()}
         onClearSelection={vi.fn()}
       />,
@@ -178,7 +178,7 @@ describe('HistorySelectionToolbar', () => {
     const { container } = render(
       <HistorySelectionToolbar
         selectedCount={2}
-        reverting={true}
+        reverting
         onRevertClick={vi.fn()}
         onClearSelection={vi.fn()}
       />,

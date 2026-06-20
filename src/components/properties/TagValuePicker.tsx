@@ -102,14 +102,16 @@ export function TagValuePicker({
         return
       }
       switch (e.key) {
-        case 'ArrowDown':
+        case 'ArrowDown': {
           e.preventDefault()
           setActiveIndex((prev) => Math.min(prev + 1, results.length - 1))
           break
-        case 'ArrowUp':
+        }
+        case 'ArrowUp': {
           e.preventDefault()
           setActiveIndex((prev) => Math.max(prev - 1, 0))
           break
+        }
         case 'Enter': {
           const item = results[activeIndex]
           if (activeIndex >= 0 && activeIndex < results.length && item) {
@@ -118,11 +120,12 @@ export function TagValuePicker({
           }
           break
         }
-        case 'Escape':
+        case 'Escape': {
           e.preventDefault()
           setOpen(false)
           setActiveIndex(-1)
           break
+        }
       }
     },
     [open, results, activeIndex, handleSelect],

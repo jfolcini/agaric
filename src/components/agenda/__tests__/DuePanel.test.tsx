@@ -868,7 +868,7 @@ describe('DuePanel', () => {
     await screen.findByText('due1')
 
     // Header should show breakdown with middle dot separator
-    expect(screen.getByText('2 Due \u00b7 1 Scheduled \u00b7 1 Properties')).toBeInTheDocument()
+    expect(screen.getByText('2 Due \u00B7 1 Scheduled \u00B7 1 Properties')).toBeInTheDocument()
   })
 
   // #1540 — the breakdown is a date-equality heuristic, not a per-source

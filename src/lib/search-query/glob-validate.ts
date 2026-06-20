@@ -17,7 +17,7 @@
 
 import { prefixed, ValidationCode } from './validation-codes'
 
-export type GlobValidationError = {
+export interface GlobValidationError {
   /** `InvalidGlob: …` — the same prefix the backend emits. */
   message: string
 }
@@ -54,23 +54,28 @@ function stepGlobValidate(
     return null
   }
   switch (ch) {
-    case '[':
+    case '[': {
       state.bracket++
       return null
-    case ']':
+    }
+    case ']': {
       if (state.bracket === 0) return globError('unbalanced bracket')
       state.bracket--
       return null
-    case '{':
+    }
+    case '{': {
       state.brace++
       if (state.brace > 1) return globError('brace nesting not supported')
       return null
-    case '}':
+    }
+    case '}': {
       if (state.brace === 0) return globError('unbalanced brace')
       state.brace--
       return null
-    default:
+    }
+    default: {
       return null
+    }
   }
 }
 

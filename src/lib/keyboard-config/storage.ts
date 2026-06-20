@@ -100,18 +100,22 @@ export function toAriaKeyshortcuts(displayKeys: string): string {
     .map((part) => {
       switch (part) {
         case 'Ctrl':
-        case 'Control':
+        case 'Control': {
           return 'Control'
+        }
         case 'Cmd':
         case 'Command':
-        case '⌘':
+        case '⌘': {
           return 'Meta'
+        }
         case 'Opt':
         case 'Option':
-        case 'Alt':
+        case 'Alt': {
           return 'Alt'
-        default:
+        }
+        default: {
           return part.replace(/\s+/g, '')
+        }
       }
     })
     .join('+')
@@ -284,7 +288,7 @@ function findAlwaysOnCrossCategoryConflicts(
         const conditionsDisjoint =
           a.condition !== undefined && b.condition !== undefined && a.condition !== b.condition
         if (conditionsDisjoint) continue
-        const pairKey = [a.id, b.id].sort().join('|')
+        const pairKey = [a.id, b.id].toSorted().join('|')
         if (seenPairs.has(pairKey)) continue
         seenPairs.add(pairKey)
         conflicts.push({ ids: [a.id, b.id], keys: chord, category: a.category })

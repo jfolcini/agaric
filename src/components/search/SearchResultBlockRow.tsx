@@ -177,12 +177,13 @@ function SearchResultBlockRowImpl({
  * because the user can only fire it after the row commits, and on
  * commit it gets the latest closure.
  */
-export const SearchResultBlockRow = memo(SearchResultBlockRowImpl, (prev, next) => {
-  // `style` is the virtualizer's positioning transform; it
-  // changes whenever the row's offset shifts (scroll / re-measure), so it
-  // must defeat the memo. `measureRef` is stable per virtualizer instance,
-  // so it is intentionally NOT compared.
-  return (
+export const SearchResultBlockRow = memo(
+  SearchResultBlockRowImpl,
+  (prev, next) =>
+    // `style` is the virtualizer's positioning transform; it
+    // changes whenever the row's offset shifts (scroll / re-measure), so it
+    // must defeat the memo. `measureRef` is stable per virtualizer instance,
+    // so it is intentionally NOT compared.
     prev.row.id === next.row.id &&
     prev.row.content === next.row.content &&
     prev.row.snippet === next.row.snippet &&
@@ -191,6 +192,5 @@ export const SearchResultBlockRow = memo(SearchResultBlockRowImpl, (prev, next) 
     prev.loading === next.loading &&
     prev.id === next.id &&
     prev.dataIndex === next.dataIndex &&
-    prev.style?.transform === next.style?.transform
-  )
-})
+    prev.style?.transform === next.style?.transform,
+)

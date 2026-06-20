@@ -50,7 +50,7 @@ describe('useBlockTouchLongPress', () => {
     )
 
     const div = document.createElement('div')
-    document.body.appendChild(div)
+    document.body.append(div)
 
     const touchEvent = {
       touches: [{ clientX: 100, clientY: 200 }],
@@ -219,7 +219,7 @@ describe('useBlockTouchLongPress', () => {
     )
 
     const div = document.createElement('div')
-    document.body.appendChild(div)
+    document.body.append(div)
 
     act(() => {
       result.current.handleTouchStart({
@@ -349,7 +349,7 @@ describe('useBlockTouchLongPress', () => {
     )
 
     const div = document.createElement('div')
-    document.body.appendChild(div)
+    document.body.append(div)
 
     const preventDefault = vi.fn()
     const mouseEvent = {
@@ -442,8 +442,8 @@ describe('useBlockTouchLongPress', () => {
     link.classList.add('external-link')
     link.setAttribute('href', 'https://example.com')
     const span = document.createElement('span')
-    link.appendChild(span)
-    document.body.appendChild(link)
+    link.append(span)
+    document.body.append(link)
 
     const preventDefault = vi.fn()
     const mouseEvent = {
@@ -473,7 +473,7 @@ describe('useBlockTouchLongPress', () => {
     )
 
     const div = document.createElement('div')
-    document.body.appendChild(div)
+    document.body.append(div)
 
     const preventDefault = vi.fn()
     const mouseEvent = {
@@ -505,7 +505,7 @@ describe('useBlockTouchLongPress', () => {
     const span = document.createElement('span')
     span.classList.add('external-link')
     span.setAttribute('data-href', 'https://fallback.com')
-    document.body.appendChild(span)
+    document.body.append(span)
 
     const preventDefault = vi.fn()
     const mouseEvent = {
@@ -538,7 +538,7 @@ describe('useBlockTouchLongPress', () => {
 
     const preventDefault = vi.fn()
     const div = document.createElement('div')
-    document.body.appendChild(div)
+    document.body.append(div)
 
     const touchEvent = {
       touches: [{ clientX: 100, clientY: 200 }],
@@ -639,7 +639,7 @@ describe('useBlockTouchLongPress', () => {
       throw new Error('passive listener — preventDefault not allowed')
     })
     const div = document.createElement('div')
-    document.body.appendChild(div)
+    document.body.append(div)
 
     act(() => {
       result.current.handleTouchStart({

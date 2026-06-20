@@ -65,7 +65,7 @@ describe('useSearchHistoryStore', () => {
     // The newest entry is `q24` (since we pushed 25 entries); the
     // oldest retained is `q5`.
     expect(list[0]).toBe(`q${MAX_HISTORY + 4}`)
-    expect(list[list.length - 1]).toBe(`q5`)
+    expect(list.at(-1)).toBe(`q5`)
   })
 
   it('push ignores empty / whitespace-only queries', () => {
@@ -227,7 +227,7 @@ describe('persist merge (#1609 — same-version blobs bypass migrate)', () => {
     historyEnabled: true,
   } as unknown as Parameters<NonNullable<typeof options.merge>>[1]
 
-  type MergedSearchHistory = {
+  interface MergedSearchHistory {
     bySpace: Record<string, string[]>
     historyEnabled: boolean
   }

@@ -55,7 +55,7 @@ describe('KeyboardShortcuts', () => {
   })
 
   it('renders sheet content when open', () => {
-    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+    render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
     expect(screen.getByText(t('shortcuts.title'))).toBeInTheDocument()
     expect(screen.getByText(t('keyboard.sheetDescription'))).toBeInTheDocument()
@@ -68,7 +68,7 @@ describe('KeyboardShortcuts', () => {
   })
 
   it('shows all shortcut entries', () => {
-    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+    render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
     // Verify category headers
     expect(screen.getByText(t('keyboard.category.navigation'))).toBeInTheDocument()
@@ -121,7 +121,7 @@ describe('KeyboardShortcuts', () => {
   })
 
   it('renders syntax section with formatting entries', () => {
-    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+    render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
     // Verify the syntax section header
     expect(screen.getByText(t('shortcuts.syntaxSection'))).toBeInTheDocument()
@@ -158,7 +158,7 @@ describe('KeyboardShortcuts', () => {
   // picker trigger alongside the other 3 user-typed picker triggers
   // (`@tag`, `[[page]]`, `/command`).
   it('renders the ((block)) block-reference syntax entry', () => {
-    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+    render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
     const syntaxTable = screen.getByTestId('syntax-table')
     const codeTexts = Array.from(syntaxTable.querySelectorAll('code')).map((el) => el.textContent)
@@ -182,14 +182,14 @@ describe('KeyboardShortcuts', () => {
   })
 
   it('has no a11y violations when open', async () => {
-    const { container } = render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+    const { container } = render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
 
   it('shortcuts table container is scrollable', () => {
-    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+    render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
     const table = screen.getByTestId('shortcuts-table')
     expect(table.dataset['slot']).toBe('scroll-area')
@@ -199,7 +199,7 @@ describe('KeyboardShortcuts', () => {
   // user keeps category context mid-list. Pin the Tailwind classes that
   // implement the sticky behavior + opaque background + layering.
   it('category headers are sticky to keep context while scrolling', () => {
-    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+    render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
     const categoryLabel = screen.getByText(t('keyboard.category.navigation'))
     const cell = categoryLabel.closest('td') as HTMLElement
@@ -211,7 +211,7 @@ describe('KeyboardShortcuts', () => {
   })
 
   it('individual keys are rendered as separate kbd elements', () => {
-    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+    render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
     const kbds = screen.getByTestId('shortcuts-table').querySelectorAll('kbd')
     expect(kbds.length).toBeGreaterThanOrEqual(15)
@@ -224,7 +224,7 @@ describe('KeyboardShortcuts', () => {
   })
 
   it('conditions are rendered as normal text, not inside kbd elements', () => {
-    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+    render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
     const kbds = screen.getByTestId('shortcuts-table').querySelectorAll('kbd')
     const kbdTexts = Array.from(kbds).map((el) => el.textContent)
@@ -248,7 +248,7 @@ describe('KeyboardShortcuts', () => {
 
   it('shows customized shortcuts when localStorage has overrides', () => {
     localStorage.setItem('agaric-keyboard-shortcuts', JSON.stringify({ focusSearch: 'Ctrl + G' }))
-    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+    render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
     // Find the row containing the "Focus search" description
     const focusSearchLabel = screen.getByText(t('keyboard.focusSearch'))
@@ -268,7 +268,7 @@ describe('KeyboardShortcuts', () => {
   describe('macOS platform display', () => {
     it('renders "⌘" instead of "Ctrl" on macOS', () => {
       setPlatform('MacIntel')
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const kbdTexts = Array.from(
         screen.getByTestId('shortcuts-table').querySelectorAll('kbd'),
@@ -281,7 +281,7 @@ describe('KeyboardShortcuts', () => {
 
     it('still shows "Ctrl" on non-mac platforms', () => {
       setPlatform('Linux x86_64')
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const kbdTexts = Array.from(
         screen.getByTestId('shortcuts-table').querySelectorAll('kbd'),
@@ -297,7 +297,7 @@ describe('KeyboardShortcuts', () => {
   // still works via a hardcoded editor alias, but the dialog advertises S.
   it('renders strikethrough as Ctrl + Shift + S (#211 P2-11)', () => {
     setPlatform('Linux x86_64')
-    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+    render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
     const strikethroughLabel = screen.getByText(t('keyboard.strikethrough'))
     const row = strikethroughLabel.closest('tr') as HTMLElement
@@ -312,7 +312,7 @@ describe('KeyboardShortcuts', () => {
   describe('closeOverlays event', () => {
     it('dispatching agaric:closeAllOverlays while open calls onOpenChange(false)', () => {
       const onOpenChange = vi.fn()
-      render(<KeyboardShortcuts open={true} onOpenChange={onOpenChange} />)
+      render(<KeyboardShortcuts open onOpenChange={onOpenChange} />)
 
       window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
 
@@ -332,7 +332,7 @@ describe('KeyboardShortcuts', () => {
 
     it('unsubscribes on unmount', () => {
       const onOpenChange = vi.fn()
-      const { unmount } = render(<KeyboardShortcuts open={true} onOpenChange={onOpenChange} />)
+      const { unmount } = render(<KeyboardShortcuts open onOpenChange={onOpenChange} />)
 
       unmount()
       window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
@@ -346,14 +346,14 @@ describe('KeyboardShortcuts', () => {
   // after the text to telegraph the navigation.
   describe('customize footer button', () => {
     it('button label reads "Customize in Settings"', () => {
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const button = screen.getByTestId('keyboard-customize-button')
       expect(button).toHaveTextContent('Customize in Settings')
     })
 
     it('button renders a ChevronRight icon after the label', () => {
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const button = screen.getByTestId('keyboard-customize-button')
       // lucide-react renders SVGs with a `lucide-chevron-right` class.
@@ -363,7 +363,7 @@ describe('KeyboardShortcuts', () => {
 
     it('opens Settings on the Keyboard tab via the pending-tab handoff slot', () => {
       useNavigationStore.getState().setPendingSettingsTab(null)
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       fireEvent.click(screen.getByTestId('keyboard-customize-button'))
 
@@ -380,7 +380,7 @@ describe('KeyboardShortcuts', () => {
   // text, or category so users don't have to eyeball-scan the full list.
   describe('shortcut filter', () => {
     it('renders the filter input above the table', () => {
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const filterInput = screen.getByTestId('shortcuts-filter')
       expect(filterInput).toBeInTheDocument()
@@ -389,7 +389,7 @@ describe('KeyboardShortcuts', () => {
     })
 
     it('typing into the filter narrows the visible shortcuts', () => {
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       // Sanity: an unrelated shortcut is visible before filtering.
       expect(screen.getByText(t('keyboard.focusSearch'))).toBeInTheDocument()
@@ -405,7 +405,7 @@ describe('KeyboardShortcuts', () => {
     })
 
     it('shows the empty-state message when no shortcuts match', () => {
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const filterInput = screen.getByTestId('shortcuts-filter')
       fireEvent.change(filterInput, { target: { value: 'zzznomatchzzz' } })
@@ -418,7 +418,7 @@ describe('KeyboardShortcuts', () => {
     })
 
     it('clearing the filter restores the full list', () => {
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const filterInput = screen.getByTestId('shortcuts-filter')
       fireEvent.change(filterInput, { target: { value: 'indent' } })
@@ -439,7 +439,7 @@ describe('KeyboardShortcuts', () => {
   describe('quick-capture hotkey announcement', () => {
     it('renders a Quick Capture category with the platform default chord', () => {
       setPlatform('Linux x86_64')
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       expect(screen.getByText(t('keyboard.category.quickCapture'))).toBeInTheDocument()
       const actionLabel = screen.getByText(t('keyboard.quickCapture.openDialog'))
@@ -453,7 +453,7 @@ describe('KeyboardShortcuts', () => {
 
     it('renders the macOS default chord with the ⌘ glyph on macOS', () => {
       setPlatform('MacIntel')
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const actionLabel = screen.getByText(t('keyboard.quickCapture.openDialog'))
       const row = actionLabel.closest('tr') as HTMLElement
@@ -467,7 +467,7 @@ describe('KeyboardShortcuts', () => {
     it('reflects the user-customised chord persisted in localStorage', () => {
       setPlatform('Linux x86_64')
       localStorage.setItem('agaric:quickCaptureShortcut', 'Ctrl+Shift+J')
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const actionLabel = screen.getByText(t('keyboard.quickCapture.openDialog'))
       const row = actionLabel.closest('tr') as HTMLElement
@@ -480,7 +480,7 @@ describe('KeyboardShortcuts', () => {
   // List the three routes the Rust router (`parse_deep_link`) accepts.
   describe('deep links section', () => {
     it('renders the section header and description', () => {
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       expect(screen.getByTestId('deep-links-section-title')).toHaveTextContent(
         t('keyboard.section.deepLinks'),
@@ -489,7 +489,7 @@ describe('KeyboardShortcuts', () => {
     })
 
     it('lists exactly the three documented deep-link routes', () => {
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const table = screen.getByTestId('deep-links-table')
       const codeTexts = Array.from(table.querySelectorAll('code')).map((el) => el.textContent)
@@ -505,7 +505,7 @@ describe('KeyboardShortcuts', () => {
     })
 
     it('has no a11y violations with the new sections rendered', async () => {
-      const { container } = render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      const { container } = render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
@@ -517,7 +517,7 @@ describe('KeyboardShortcuts', () => {
   describe('customized badge', () => {
     it('renders a "Customized" badge in the row of an overridden shortcut', () => {
       setCustomShortcut('focusSearch', 'Ctrl + G')
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const focusSearchLabel = screen.getByText(t('keyboard.focusSearch'))
       const row = focusSearchLabel.closest('tr') as HTMLElement
@@ -527,7 +527,7 @@ describe('KeyboardShortcuts', () => {
 
     it('does not render a "Customized" badge for default (un-overridden) shortcuts', () => {
       // No overrides set in localStorage.
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const focusSearchLabel = screen.getByText(t('keyboard.focusSearch'))
       const row = focusSearchLabel.closest('tr') as HTMLElement
@@ -543,7 +543,7 @@ describe('KeyboardShortcuts', () => {
   describe('essential section reflects rebinds (#1711)', () => {
     it('renders the default chord for the undo essential entry', () => {
       setPlatform('Linux x86_64')
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const row = screen.getByText(t('keyboard.essential.undo')).closest('tr') as HTMLElement
       expect(row).toBeTruthy()
@@ -555,7 +555,7 @@ describe('KeyboardShortcuts', () => {
       setPlatform('Linux x86_64')
       // Rebind the catalog `undoLastPageOp` shortcut.
       setCustomShortcut('undoLastPageOp', 'Ctrl + Shift + U')
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const row = screen.getByText(t('keyboard.essential.undo')).closest('tr') as HTMLElement
       expect(row).toBeTruthy()
@@ -568,7 +568,7 @@ describe('KeyboardShortcuts', () => {
       setPlatform('Linux x86_64')
       // The "search" essential entry is backed by the `findInPage` catalog id.
       setCustomShortcut('findInPage', 'Ctrl + G')
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const row = screen.getByText(t('keyboard.essential.search')).closest('tr') as HTMLElement
       expect(row).toBeTruthy()
@@ -579,7 +579,7 @@ describe('KeyboardShortcuts', () => {
 
     it('substitutes the platform mod glyph (⌘) for an essential chord on macOS', () => {
       setPlatform('MacIntel')
-      render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+      render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
       const row = screen.getByText(t('keyboard.essential.undo')).closest('tr') as HTMLElement
       const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)

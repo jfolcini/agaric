@@ -348,7 +348,7 @@ describe('RescheduleDropZone', () => {
     const fs = await import('node:fs')
     const path = await import('node:path')
     const sourcePath = path.resolve(process.cwd(), 'src/components/journal/RescheduleDropZone.tsx')
-    const source = fs.readFileSync(sourcePath, 'utf-8')
+    const source = fs.readFileSync(sourcePath, 'utf8')
     expect(source).toMatch(/DateChipEditor/)
     expect(source).toMatch(/Keyboard accessibility/i)
   })

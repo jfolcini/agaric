@@ -26,11 +26,9 @@ import { emptyPage, makeDailyPage } from '../../__tests__/fixtures'
 
 // ── Mock BlockTree ──────────────────────────────────────────────────
 vi.mock('@/components/editor/BlockTree', () => ({
-  BlockTree: (props: { parentId?: string }) => {
-    return (
-      <div data-testid="block-tree" data-parent-id={props.parentId ?? ''} className="block-tree" />
-    )
-  },
+  BlockTree: (props: { parentId?: string }) => (
+    <div data-testid="block-tree" data-parent-id={props.parentId ?? ''} className="block-tree" />
+  ),
 }))
 
 // ── Mock DuePanel ───────────────────────────────────────────────────
@@ -620,7 +618,7 @@ describe('JournalPage', () => {
       // which would leave the placeholder mounted forever.
       const AutoIntersectingObserver = class {
         callback: (entries: IntersectionObserverEntry[]) => void
-        observed: Set<Element> = new Set()
+        observed = new Set<Element>()
         constructor(callback: (entries: IntersectionObserverEntry[]) => void) {
           this.callback = callback
         }
@@ -2898,7 +2896,7 @@ describe('JournalPage', () => {
       ).length
 
       const input = document.createElement('input')
-      document.body.appendChild(input)
+      document.body.append(input)
       input.focus()
 
       fireEvent.keyDown(input, { key: 'Enter' })

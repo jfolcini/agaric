@@ -183,24 +183,30 @@ function applyThemeClasses(resolved: ResolvedTheme) {
   const root = document.documentElement
   root.classList.remove(...THEME_CLASSES)
   switch (resolved) {
-    case 'light':
+    case 'light': {
       // no class — :root defaults apply
       break
-    case 'dark':
+    }
+    case 'dark': {
       root.classList.add('dark')
       break
-    case 'solarized-light':
+    }
+    case 'solarized-light': {
       root.classList.add('theme-solarized-light')
       break
-    case 'solarized-dark':
+    }
+    case 'solarized-dark': {
       root.classList.add('dark', 'theme-solarized-dark')
       break
-    case 'dracula':
+    }
+    case 'dracula': {
       root.classList.add('dark', 'theme-dracula')
       break
-    case 'one-dark-pro':
+    }
+    case 'one-dark-pro': {
       root.classList.add('dark', 'theme-one-dark-pro')
       break
+    }
   }
 }
 

@@ -590,7 +590,7 @@ describe('AdvancedQueryView', () => {
       const inner = await waitFor(() => {
         const all = screen.getAllByRole('dialog', { name: 'Add a filter' })
         if (all.length < 2) throw new Error('inner popover not yet open')
-        return all[all.length - 1] as HTMLElement
+        return all.at(-1) as HTMLElement
       })
       await user.click(within(inner).getByText('Tag'))
       await user.type(within(inner).getByLabelText('Tag id'), 'project')

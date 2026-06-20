@@ -81,7 +81,7 @@ describe('emoji-data', () => {
       }
       const order = buckets.map((b) => b.group)
       const canonicalIdx = order.map((g) => EMOJI_GROUPS.indexOf(g))
-      expect(canonicalIdx).toEqual([...canonicalIdx].sort((a, z) => a - z))
+      expect(canonicalIdx).toEqual([...canonicalIdx].toSorted((a, z) => a - z))
     })
 
     it('leads with the Smileys & Emotion group', () => {

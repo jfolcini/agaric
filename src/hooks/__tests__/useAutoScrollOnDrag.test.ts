@@ -18,7 +18,7 @@ import { MAX_SPEED, SCROLL_ZONE, useAutoScrollOnDrag } from '../useAutoScrollOnD
 
 // ── RAF mock ────────────────────────────────────────────────────────────
 
-let rafCallbacks: Map<number, FrameRequestCallback> = new Map()
+let rafCallbacks = new Map<number, FrameRequestCallback>()
 let rafIdCounter = 1
 
 function mockRAF(cb: FrameRequestCallback): number {

@@ -77,7 +77,7 @@ describe('PageTagSection rendering', () => {
     render(
       <PageTagSection
         {...defaultProps}
-        showTagPicker={true}
+        showTagPicker
         availableTags={[TAG_2]}
         allTags={[TAG_1, TAG_2]}
       />,
@@ -89,14 +89,7 @@ describe('PageTagSection rendering', () => {
   })
 
   it('shows "no more tags" when no available tags and no query', () => {
-    render(
-      <PageTagSection
-        {...defaultProps}
-        showTagPicker={true}
-        availableTags={[]}
-        allTags={[TAG_1]}
-      />,
-    )
+    render(<PageTagSection {...defaultProps} showTagPicker availableTags={[]} allTags={[TAG_1]} />)
 
     expect(screen.getByText('No more tags')).toBeInTheDocument()
   })
@@ -105,7 +98,7 @@ describe('PageTagSection rendering', () => {
     render(
       <PageTagSection
         {...defaultProps}
-        showTagPicker={true}
+        showTagPicker
         tagQuery="newtag"
         availableTags={[]}
         allTags={[TAG_1]}
@@ -119,7 +112,7 @@ describe('PageTagSection rendering', () => {
     render(
       <PageTagSection
         {...defaultProps}
-        showTagPicker={true}
+        showTagPicker
         tagQuery="urgent"
         availableTags={[]}
         allTags={[TAG_1]}
@@ -220,7 +213,7 @@ describe('PageTagSection interaction', () => {
     render(
       <PageTagSection
         {...defaultProps}
-        showTagPicker={true}
+        showTagPicker
         availableTags={[TAG_2]}
         allTags={[TAG_1, TAG_2]}
         onAddTag={onAddTag}
@@ -238,7 +231,7 @@ describe('PageTagSection interaction', () => {
     render(
       <PageTagSection
         {...defaultProps}
-        showTagPicker={true}
+        showTagPicker
         availableTags={[TAG_2]}
         allTags={[TAG_1, TAG_2]}
         onTagQueryChange={onTagQueryChange}
@@ -258,7 +251,7 @@ describe('PageTagSection interaction', () => {
     render(
       <PageTagSection
         {...defaultProps}
-        showTagPicker={true}
+        showTagPicker
         tagQuery="newtag"
         availableTags={[]}
         allTags={[TAG_1]}
@@ -277,7 +270,7 @@ describe('PageTagSection interaction', () => {
     render(
       <PageTagSection
         {...defaultProps}
-        showTagPicker={true}
+        showTagPicker
         tagQuery="newtag"
         availableTags={[]}
         allTags={[TAG_1]}
@@ -327,7 +320,7 @@ describe('PageTagSection ', () => {
     render(
       <PageTagSection
         {...defaultProps}
-        showTagPicker={true}
+        showTagPicker
         availableTags={[TAG_2]}
         allTags={[TAG_1, TAG_2]}
       />,
@@ -343,7 +336,7 @@ describe('PageTagSection ', () => {
     render(
       <PageTagSection
         {...defaultProps}
-        showTagPicker={true}
+        showTagPicker
         tagQuery="newtag"
         availableTags={[]}
         allTags={[TAG_1]}
@@ -357,7 +350,7 @@ describe('PageTagSection ', () => {
 
 describe('PageTagSection emoji insert (#286)', () => {
   it('renders an Insert emoji affordance in the tag picker', () => {
-    render(<PageTagSection {...defaultProps} showTagPicker={true} allTags={[]} />)
+    render(<PageTagSection {...defaultProps} showTagPicker allTags={[]} />)
 
     expect(screen.getByRole('button', { name: /insert emoji/i })).toBeInTheDocument()
   })
@@ -369,7 +362,7 @@ describe('PageTagSection emoji insert (#286)', () => {
     render(
       <PageTagSection
         {...defaultProps}
-        showTagPicker={true}
+        showTagPicker
         tagQuery="ab"
         allTags={[]}
         onTagQueryChange={onTagQueryChange}
@@ -393,7 +386,7 @@ describe('PageTagSection emoji insert (#286)', () => {
     render(
       <PageTagSection
         {...defaultProps}
-        showTagPicker={true}
+        showTagPicker
         allTags={[]}
         onTagPickerChange={onTagPickerChange}
       />,
@@ -420,7 +413,7 @@ describe('PageTagSection accessibility', () => {
     const { container } = render(
       <PageTagSection
         {...defaultProps}
-        showTagPicker={true}
+        showTagPicker
         availableTags={[TAG_2, TAG_3]}
         allTags={[TAG_1, TAG_2, TAG_3]}
       />,

@@ -239,7 +239,7 @@ describe('ViewDispatcher — fresh-space default render path (#1685)', () => {
   // null when the stack is empty (the fresh-space case).
   function deriveActivePage() {
     const stack = selectPageStack(useTabsStore.getState())
-    return stack.length > 0 ? (stack[stack.length - 1] ?? null) : null
+    return stack.length > 0 ? (stack.at(-1) ?? null) : null
   }
 
   it('renders a real view (EmptyState + CTA), not a blank region, after switching into a fresh space', () => {

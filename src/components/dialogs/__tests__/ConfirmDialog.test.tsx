@@ -112,7 +112,7 @@ describe('ConfirmDialog', () => {
   it('uses default labels when none provided', () => {
     render(
       <ConfirmDialog
-        open={true}
+        open
         onOpenChange={vi.fn()}
         title="Test"
         description="Desc"
@@ -561,7 +561,7 @@ describe('ConfirmDialog', () => {
     it('falls back to dialog.cancel when cancelKey is not provided', () => {
       render(
         <ConfirmDialog
-          open={true}
+          open
           onOpenChange={vi.fn()}
           onConfirm={vi.fn()}
           titleKey="pairing.confirmCloseTitle"
@@ -635,7 +635,7 @@ describe('ConfirmDialog', () => {
     it('interpolates values into title and description', () => {
       render(
         <ConfirmDialog
-          open={true}
+          open
           onOpenChange={vi.fn()}
           onConfirm={vi.fn()}
           titleKey="device.unpairConfirmTitle"
@@ -713,7 +713,7 @@ describe('ConfirmDialog', () => {
     it('explicit `title` overrides `titleKey` when both are set', () => {
       render(
         <ConfirmDialog
-          open={true}
+          open
           onOpenChange={vi.fn()}
           titleKey="pairing.confirmCloseTitle"
           title="Custom override"
@@ -847,7 +847,7 @@ describe('ConfirmDialog', () => {
     it('labelKey resolves via i18n', () => {
       render(
         <ConfirmDialog
-          open={true}
+          open
           onOpenChange={vi.fn()}
           titleKey="pairing.confirmCloseTitle"
           descriptionKey="pairing.confirmCloseDescription"
@@ -877,7 +877,7 @@ describe('ConfirmDialog', () => {
     it('renders a non-empty accessible name when neither title nor titleKey is given', () => {
       render(
         <ConfirmDialog
-          open={true}
+          open
           onOpenChange={vi.fn()}
           onConfirm={vi.fn()}
           description="Something will happen."
@@ -894,7 +894,7 @@ describe('ConfirmDialog', () => {
     it('passes axe with no title/titleKey (no aria-dialog-name violation)', async () => {
       const { container } = render(
         <ConfirmDialog
-          open={true}
+          open
           onOpenChange={vi.fn()}
           onConfirm={vi.fn()}
           description="Something will happen."
@@ -913,7 +913,7 @@ describe('ConfirmDialog', () => {
     it('still honors an explicit title over the fallback', () => {
       render(
         <ConfirmDialog
-          open={true}
+          open
           onOpenChange={vi.fn()}
           onConfirm={vi.fn()}
           title="Real title"
@@ -927,7 +927,7 @@ describe('ConfirmDialog', () => {
     it('falls back when an explicit title is whitespace-only (trimmed empty)', () => {
       render(
         <ConfirmDialog
-          open={true}
+          open
           onOpenChange={vi.fn()}
           onConfirm={vi.fn()}
           title="   "
@@ -945,7 +945,7 @@ describe('ConfirmDialog', () => {
 
       render(
         <ConfirmDialog
-          open={true}
+          open
           onOpenChange={vi.fn()}
           onConfirm={vi.fn()}
           description="Something will happen."
@@ -965,7 +965,7 @@ describe('ConfirmDialog', () => {
 
       render(
         <ConfirmDialog
-          open={true}
+          open
           onOpenChange={vi.fn()}
           onConfirm={vi.fn()}
           title="Real title"

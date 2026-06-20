@@ -185,9 +185,9 @@ describe('useScrollCaretAboveKeyboard', () => {
     vi.spyOn(vv, 'removeEventListener').mockImplementation((t) => removed.push(t as string))
     const el = elementWithBottom(600)
     const { unmount } = renderHook(() => useScrollCaretAboveKeyboard(refTo(el), true))
-    expect(added.sort()).toEqual(['resize', 'scroll'])
+    expect(added.toSorted()).toEqual(['resize', 'scroll'])
     unmount()
-    expect(removed.sort()).toEqual(['resize', 'scroll'])
+    expect(removed.toSorted()).toEqual(['resize', 'scroll'])
   })
 
   it('re-applies the scroll when the visualViewport resizes (keyboard opens)', () => {

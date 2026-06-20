@@ -113,9 +113,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   useEffect(() => {
     if (storeOwnsBlock(pageStore, focusedBlockId)) markTreeInteracted(pageStore)
   }, [pageStore, focusedBlockId])
-  useEffect(() => {
-    return () => clearTreeInteractionIfHolder(pageStore)
-  }, [pageStore])
+  useEffect(() => () => clearTreeInteractionIfHolder(pageStore), [pageStore])
 
   // ── Keyboard shortcut for collapse toggle (`collapseExpand`, default
   // Mod+. — routed through matchesShortcutBinding so rebinds work, #724) ──
@@ -191,7 +189,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
       // #713 — only act when this tree's store owns the anchoring block (the
       // last selected). Otherwise another tree owns the selection; fall
       // through WITHOUT preventDefault so it isn't claimed here.
-      const anchorId = selectedBlockIds[selectedBlockIds.length - 1]
+      const anchorId = selectedBlockIds.at(-1)
       if (anchorId == null || !storeOwnsBlock(pageStore, anchorId)) return
       e.preventDefault()
       extendSelection(direction, visibleIds)
@@ -217,7 +215,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
       if (!matchesShortcutBinding(e, 'toggleBlockSelectionKbd')) return
       // Need a selection to define the anchor (block-select mode entry point).
       if (selectedBlockIds.length === 0) return
-      const anchorId = selectedBlockIds[selectedBlockIds.length - 1]
+      const anchorId = selectedBlockIds.at(-1)
       if (anchorId == null || !storeOwnsBlock(pageStore, anchorId)) return
       e.preventDefault()
       toggleSelected(anchorId)
@@ -295,7 +293,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
       // Paste: anchor on the LAST selected owned block (the user's most recent
       // selection), insert the clipboard outline after it.
       const ownedSelected = selectedBlockIds.filter((id) => state.blocksById.has(id))
-      const anchorId = ownedSelected[ownedSelected.length - 1]
+      const anchorId = ownedSelected.at(-1)
       if (anchorId == null) return
       e.preventDefault()
       void readText()

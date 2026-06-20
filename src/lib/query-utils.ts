@@ -124,18 +124,24 @@ export function parseQueryExpression(expr: string): {
 /** Map PropertyFilter operator to Rust CompareOp variant. */
 function toCompareOp(op: PropertyFilter['operator']): CompareOp {
   switch (op) {
-    case 'neq':
+    case 'neq': {
       return 'Neq'
-    case 'lt':
+    }
+    case 'lt': {
       return 'Lt'
-    case 'gt':
+    }
+    case 'gt': {
       return 'Gt'
-    case 'lte':
+    }
+    case 'lte': {
       return 'Lte'
-    case 'gte':
+    }
+    case 'gte': {
       return 'Gte'
-    default:
+    }
+    default: {
       return 'Eq'
+    }
   }
 }
 

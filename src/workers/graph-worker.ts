@@ -124,20 +124,23 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
         if (!node) break
 
         switch (msg.phase) {
-          case 'start':
+          case 'start': {
             simulation.alphaTarget(0.3).restart()
             node.fx = msg.x
             node.fy = msg.y
             break
-          case 'drag':
+          }
+          case 'drag': {
             node.fx = msg.x
             node.fy = msg.y
             break
-          case 'end':
+          }
+          case 'end': {
             simulation.alphaTarget(0)
             node.fx = null
             node.fy = null
             break
+          }
         }
         break
       }

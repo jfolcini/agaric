@@ -20,7 +20,6 @@
 
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -52,12 +51,7 @@ const INTENTIONALLY_NOT_MOCKED: ReadonlySet<string> = new Set<string>()
 // Helpers
 // ---------------------------------------------------------------------------
 
-const BINDINGS_PATH = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '..',
-  '..',
-  'bindings.ts',
-)
+const BINDINGS_PATH = path.resolve(import.meta.dirname, '..', '..', 'bindings.ts')
 
 /**
  * Extract every Tauri command name from the auto-generated `bindings.ts`.
@@ -71,7 +65,7 @@ function extractBindingsCommandNames(): string[] {
   for (const match of source.matchAll(re)) {
     names.add(match[1] as string)
   }
-  return [...names].sort()
+  return [...names].toSorted()
 }
 
 // ---------------------------------------------------------------------------

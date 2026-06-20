@@ -120,7 +120,7 @@ interface EditorSlotProps {
 
 function EditorSlot({ bag, prop, onSave, valueLabel, hasCreateNewPage }: EditorSlotProps) {
   switch (bag.valueType) {
-    case 'ref':
+    case 'ref': {
       return (
         <RefEditor
           prop={prop}
@@ -129,15 +129,21 @@ function EditorSlot({ bag, prop, onSave, valueLabel, hasCreateNewPage }: EditorS
           hasCreateNewPage={hasCreateNewPage}
         />
       )
-    case 'boolean':
+    }
+    case 'boolean': {
       return <BooleanEditor prop={prop} onSave={onSave} />
-    case 'select':
+    }
+    case 'select': {
       return <SelectEditor state={bag.select} ariaLabel={valueLabel} />
-    case 'number':
+    }
+    case 'number': {
       return <NumberEditor state={bag.textLike} ariaLabel={valueLabel} />
-    case 'date':
+    }
+    case 'date': {
       return <DateEditor state={bag.date} ariaLabel={valueLabel} />
-    default:
+    }
+    default: {
       return <TextEditor state={bag.textLike} ariaLabel={valueLabel} />
+    }
   }
 }

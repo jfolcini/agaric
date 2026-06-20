@@ -226,7 +226,10 @@ describe('ExternalLink paste-to-link (F-40)', () => {
 })
 
 describe('ExternalLink Ctrl+K shortcut (B-70)', () => {
-  type ShortcutContext = { editor: unknown; options: unknown }
+  interface ShortcutContext {
+    editor: unknown
+    options: unknown
+  }
   type ShortcutMap = Record<string, (() => boolean) | undefined>
 
   function callAddKeyboardShortcuts(

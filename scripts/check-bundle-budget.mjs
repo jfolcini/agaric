@@ -24,11 +24,10 @@
 //       budgeted chunk is missing (the manualChunks grouping changed).
 // ─────────────────────────────────────────────────────────────────────
 import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+const __dirname = import.meta.dirname
 const REPO_ROOT = join(__dirname, '..')
 const DIST_ASSETS = join(REPO_ROOT, 'dist', 'assets')
 const BUDGETS_PATH = join(__dirname, 'bundle-budgets.json')
@@ -108,7 +107,7 @@ function writeBudgets(sizes, tracked) {
       'by the headroom margin; see git history for the build that set them.',
     chunks,
   }
-  writeFileSync(BUDGETS_PATH, JSON.stringify(doc, null, 2) + '\n')
+  writeFileSync(BUDGETS_PATH, `${JSON.stringify(doc, null, 2)}\n`)
   console.log(`Wrote ${BUDGETS_PATH}`)
 }
 

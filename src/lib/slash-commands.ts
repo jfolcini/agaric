@@ -681,7 +681,7 @@ export function searchSlashCommands(query: string): PickerItem[] {
     results = results.filter((r) => r.id !== 'table')
     results.unshift({
       id: `table:${rows}:${cols}`,
-      label: `TABLE ${rows}\u00d7${cols} — Insert ${rows}\u00d7${cols} table`,
+      label: `TABLE ${rows}\u00D7${cols} — Insert ${rows}\u00D7${cols} table`,
       category: 'slashCommand.categories.structure',
       icon: Grid3x3,
     })

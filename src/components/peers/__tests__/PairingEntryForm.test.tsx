@@ -189,11 +189,7 @@ describe('PairingEntryForm', () => {
 
   it('Pair button is disabled when session is expired', () => {
     render(
-      <PairingEntryForm
-        {...defaultProps}
-        words={['echo', 'foxtrot', 'golf', 'hotel']}
-        isExpired={true}
-      />,
+      <PairingEntryForm {...defaultProps} words={['echo', 'foxtrot', 'golf', 'hotel']} isExpired />,
     )
 
     const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
@@ -201,7 +197,7 @@ describe('PairingEntryForm', () => {
   })
 
   it('inputs are disabled when pairLoading is true', () => {
-    render(<PairingEntryForm {...defaultProps} pairLoading={true} />)
+    render(<PairingEntryForm {...defaultProps} pairLoading />)
 
     const inputs = screen.getAllByRole('textbox')
     for (const input of inputs) {
@@ -210,7 +206,7 @@ describe('PairingEntryForm', () => {
   })
 
   it('inputs are disabled when isExpired is true', () => {
-    render(<PairingEntryForm {...defaultProps} isExpired={true} />)
+    render(<PairingEntryForm {...defaultProps} isExpired />)
 
     const inputs = screen.getAllByRole('textbox')
     for (const input of inputs) {
@@ -219,7 +215,7 @@ describe('PairingEntryForm', () => {
   })
 
   it('Cancel button is disabled when pairLoading is true', () => {
-    render(<PairingEntryForm {...defaultProps} pairLoading={true} />)
+    render(<PairingEntryForm {...defaultProps} pairLoading />)
 
     const cancelBtn = screen.getByRole('button', { name: /Cancel/i })
     expect(cancelBtn).toBeDisabled()

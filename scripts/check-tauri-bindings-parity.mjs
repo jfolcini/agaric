@@ -28,9 +28,8 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const ROOT = path.resolve(import.meta.dirname, '..')
 const BINDINGS = path.join(ROOT, 'src/lib/bindings.ts')
 const TAURI = path.join(ROOT, 'src/lib/tauri.ts')
 
@@ -119,9 +118,11 @@ if (wrappers.size === 0) {
 }
 
 // ─── 3. Compute three diff sets ─────────────────────────────────────
-const missingNew = [...commands].filter((c) => !wrappers.has(c) && !KNOWN_UNWRAPPED.has(c)).sort()
-const allowlistStale = [...KNOWN_UNWRAPPED].filter((c) => !commands.has(c)).sort()
-const extra = [...wrappers].filter((c) => !commands.has(c)).sort()
+const missingNew = [...commands]
+  .filter((c) => !wrappers.has(c) && !KNOWN_UNWRAPPED.has(c))
+  .toSorted()
+const allowlistStale = [...KNOWN_UNWRAPPED].filter((c) => !commands.has(c)).toSorted()
+const extra = [...wrappers].filter((c) => !commands.has(c)).toSorted()
 
 let exitCode = 0
 

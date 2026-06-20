@@ -927,7 +927,7 @@ describe('executeAgendaFilters', () => {
       ) as Array<[string, Record<string, unknown>]>
       // Exactly 2 lookups, one per distinct prefix.
       expect(prefixCalls).toHaveLength(2)
-      const prefixes = prefixCalls.map(([, a]) => a['prefix']).sort()
+      const prefixes = prefixCalls.map(([, a]) => a['prefix']).toSorted()
       expect(prefixes).toEqual(['tag-1', 'tag-2'])
     })
 

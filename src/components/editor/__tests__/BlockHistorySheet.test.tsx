@@ -38,7 +38,7 @@ import { BlockHistorySheet } from '@/components/editor/BlockHistorySheet'
 
 describe('BlockHistorySheet', () => {
   it('renders content when open=true and blockId is set', () => {
-    render(<BlockHistorySheet blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    render(<BlockHistorySheet blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     expect(screen.getByTestId('history-sheet')).toBeInTheDocument()
     expect(screen.getByTestId('history-block-id')).toHaveTextContent('BLOCK_1')
@@ -51,7 +51,7 @@ describe('BlockHistorySheet', () => {
   })
 
   it('does not render block ID when blockId is null', () => {
-    render(<BlockHistorySheet blockId={null} open={true} onOpenChange={vi.fn()} />)
+    render(<BlockHistorySheet blockId={null} open onOpenChange={vi.fn()} />)
 
     expect(screen.getByTestId('history-sheet')).toBeInTheDocument()
     expect(screen.queryByTestId('history-block-id')).not.toBeInTheDocument()
@@ -61,7 +61,7 @@ describe('BlockHistorySheet', () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
 
-    render(<BlockHistorySheet blockId="BLOCK_1" open={true} onOpenChange={onOpenChange} />)
+    render(<BlockHistorySheet blockId="BLOCK_1" open onOpenChange={onOpenChange} />)
 
     await user.click(screen.getByRole('button', { name: /close/i }))
 
@@ -70,7 +70,7 @@ describe('BlockHistorySheet', () => {
 
   it('has no a11y violations when open', async () => {
     const { container } = render(
-      <BlockHistorySheet blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />,
+      <BlockHistorySheet blockId="BLOCK_1" open onOpenChange={vi.fn()} />,
     )
 
     const results = await axe(container)

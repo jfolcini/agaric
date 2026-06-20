@@ -130,20 +130,27 @@ export interface GraphFilterBarProps {
 /** Human-readable label for a single filter (used inside the pill). */
 function filterLabel(filter: GraphFilter, t: TFunction): string {
   switch (filter.type) {
-    case 'tag':
+    case 'tag': {
       return `${t('graph.filter.tag')}: ${filter.tagIds.length}`
-    case 'status':
+    }
+    case 'status': {
       return `${t('graph.filter.status')}: ${filter.values.join(', ')}`
-    case 'priority':
+    }
+    case 'priority': {
       return `${t('graph.filter.priority')}: ${filter.values.join(', ')}`
-    case 'hasDueDate':
+    }
+    case 'hasDueDate': {
       return `${t('graph.filter.hasDueDate')}: ${filter.value ? t('graph.filter.yes') : t('graph.filter.no')}`
-    case 'hasScheduledDate':
+    }
+    case 'hasScheduledDate': {
       return `${t('graph.filter.hasScheduledDate')}: ${filter.value ? t('graph.filter.yes') : t('graph.filter.no')}`
-    case 'hasBacklinks':
+    }
+    case 'hasBacklinks': {
       return `${t('graph.filter.hasBacklinks')}: ${filter.value ? t('graph.filter.yes') : t('graph.filter.no')}`
-    case 'excludeTemplates':
+    }
+    case 'excludeTemplates': {
       return t('graph.filter.excludeTemplates')
+    }
   }
 }
 
@@ -185,27 +192,34 @@ function AddFilterForm({
       if (!dimension) return
       let filter: GraphFilter
       switch (dimension) {
-        case 'tag':
+        case 'tag': {
           filter = { type: 'tag', tagIds }
           break
-        case 'status':
+        }
+        case 'status': {
           filter = { type: 'status', values: statusValues }
           break
-        case 'priority':
+        }
+        case 'priority': {
           filter = { type: 'priority', values: priorityValues }
           break
-        case 'hasDueDate':
+        }
+        case 'hasDueDate': {
           filter = { type: 'hasDueDate', value: boolValue === 'true' }
           break
-        case 'hasScheduledDate':
+        }
+        case 'hasScheduledDate': {
           filter = { type: 'hasScheduledDate', value: boolValue === 'true' }
           break
-        case 'hasBacklinks':
+        }
+        case 'hasBacklinks': {
           filter = { type: 'hasBacklinks', value: boolValue === 'true' }
           break
-        case 'excludeTemplates':
+        }
+        case 'excludeTemplates': {
           filter = { type: 'excludeTemplates', value: true }
           break
+        }
       }
       onApply(filter)
     },

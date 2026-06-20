@@ -135,20 +135,27 @@ export function applyGraphFilters<N extends GraphFilterableNode>(
  */
 export function getGraphFilterKey(filter: GraphFilter): string {
   switch (filter.type) {
-    case 'tag':
-      return `tag:${[...filter.tagIds].sort().join(',')}`
-    case 'status':
-      return `status:${[...filter.values].sort().join(',')}`
-    case 'priority':
-      return `priority:${[...filter.values].sort().join(',')}`
-    case 'hasDueDate':
+    case 'tag': {
+      return `tag:${[...filter.tagIds].toSorted().join(',')}`
+    }
+    case 'status': {
+      return `status:${[...filter.values].toSorted().join(',')}`
+    }
+    case 'priority': {
+      return `priority:${[...filter.values].toSorted().join(',')}`
+    }
+    case 'hasDueDate': {
       return `hasDueDate:${filter.value}`
-    case 'hasScheduledDate':
+    }
+    case 'hasScheduledDate': {
       return `hasScheduledDate:${filter.value}`
-    case 'hasBacklinks':
+    }
+    case 'hasBacklinks': {
       return `hasBacklinks:${filter.value}`
-    case 'excludeTemplates':
+    }
+    case 'excludeTemplates': {
       return `excludeTemplates:${filter.value}`
+    }
   }
 }
 

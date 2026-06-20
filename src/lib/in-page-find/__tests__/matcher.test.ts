@@ -31,7 +31,7 @@ const defaultOpts = { caseSensitive: false, wholeWord: false, isRegex: false }
 function makeHost(html: string): HTMLDivElement {
   const host = document.createElement('div')
   host.innerHTML = html
-  document.body.appendChild(host)
+  document.body.append(host)
   return host
 }
 
@@ -227,7 +227,7 @@ describe('walkSync', () => {
     // Mutate the first paragraph's text node directly to bypass innerHTML
     // limits on large strings; happy-dom handles long Text values.
     const p = host.querySelector('p')
-    p?.appendChild(document.createTextNode(longText))
+    p?.append(document.createTextNode(longText))
 
     const nodes = collectTextNodes(host)
     const compiled = compileQuery('x', { ...defaultOpts, isRegex: true }) as Extract<

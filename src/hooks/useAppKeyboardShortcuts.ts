@@ -159,7 +159,7 @@ const TAB_SHORTCUTS: ReadonlyArray<TabShortcut> = [
       const tabs = selectTabsForSpace(state, spaceId)
       const idx = selectActiveTabIndexForSpace(state, spaceId)
       const activeTab = tabs[idx]
-      const top = activeTab?.pageStack[activeTab.pageStack.length - 1]
+      const top = activeTab?.pageStack.at(-1)
       if (top) {
         state.openInNewTab(top.pageId, top.title)
       }
@@ -474,7 +474,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
         const tabs = selectTabsForSpace(state, spaceId)
         const idx = selectActiveTabIndexForSpace(state, spaceId)
         const activeTab = tabs[idx]
-        const top = activeTab?.pageStack[activeTab.pageStack.length - 1]
+        const top = activeTab?.pageStack.at(-1)
         if (!top) {
           notify.error(t('tabs.openInNewTabEmpty'))
           return

@@ -576,7 +576,7 @@ describe('Breadcrumb', () => {
       const buttons = screen.getAllByRole('button')
       ;(buttons[0] as HTMLButtonElement).focus()
       await user.keyboard('{End}')
-      expect(document.activeElement).toBe(buttons[buttons.length - 1])
+      expect(document.activeElement).toBe(buttons.at(-1))
     })
 
     it('does not capture unrelated keys', async () => {
@@ -671,7 +671,7 @@ describe('BreadcrumbItem', () => {
   })
 
   it('renders as a span with aria-current when active', () => {
-    render(<BreadcrumbItem label="Active" isActive={true} />)
+    render(<BreadcrumbItem label="Active" isActive />)
     const node = screen.getByText('Active')
     expect(node.tagName).toBe('SPAN')
     expect(node).toHaveAttribute('aria-current', 'page')

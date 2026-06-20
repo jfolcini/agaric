@@ -418,17 +418,21 @@ export function dispatchLaunchUrl(raw: string): void {
   // canonical form that blake3-hash determinism depends on.
   const normalisedId = identifier.toUpperCase()
   switch (host) {
-    case 'block':
+    case 'block': {
       void handleNavigatePayload({ id: normalisedId }, DEEPLINK_EVENT_NAVIGATE_TO_BLOCK, 'block')
       return
-    case 'page':
+    }
+    case 'page': {
       void handleNavigatePayload({ id: normalisedId }, DEEPLINK_EVENT_NAVIGATE_TO_PAGE, 'page')
       return
-    case 'settings':
+    }
+    case 'settings': {
       // Settings tab names are not ULIDs — pass through as-is.
       handleOpenSettingsPayload({ tab: identifier })
       return
-    default:
+    }
+    default: {
       logger.warn('deeplink', 'launch URL has unknown host', { url: raw, host })
+    }
   }
 }

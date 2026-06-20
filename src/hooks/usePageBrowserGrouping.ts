@@ -255,7 +255,7 @@ export function sortTopLevelUnits(
   // Decorate each unit once with its precomputed keys. `tieId` is the
   // `id ASC` tiebreak key (own id for a flat page, lowest descendant
   // page id for a tree).
-  type Decorated = {
+  interface Decorated {
     unit: PagesTopLevelUnit
     name: string
     createdId: string
@@ -348,12 +348,14 @@ export function usePageBrowserGrouping({
   starredIds,
   isSinglePageVault,
 }: UsePageBrowserGroupingArgs): GroupedRowsResult {
-  return useMemo(() => {
-    // `starredIds` is sourced from `useStarredPages()` and changes
-    // whenever a star toggle happens (in this view or another mounted
-    // hook instance), so pages move between sections immediately.
-    return isSinglePageVault
-      ? buildSinglePageBranch(filteredPagesUnsorted, sortPages)
-      : buildMultiPageBranch(filteredPagesUnsorted, sortPages, sortOption, starredIds)
-  }, [isSinglePageVault, filteredPagesUnsorted, sortPages, sortOption, starredIds])
+  return useMemo(
+    () =>
+      // `starredIds` is sourced from `useStarredPages()` and changes
+      // whenever a star toggle happens (in this view or another mounted
+      // hook instance), so pages move between sections immediately.
+      isSinglePageVault
+        ? buildSinglePageBranch(filteredPagesUnsorted, sortPages)
+        : buildMultiPageBranch(filteredPagesUnsorted, sortPages, sortOption, starredIds),
+    [isSinglePageVault, filteredPagesUnsorted, sortPages, sortOption, starredIds],
+  )
 }

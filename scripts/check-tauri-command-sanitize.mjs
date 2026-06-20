@@ -58,9 +58,8 @@
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
-const HERE = fileURLToPath(new URL('.', import.meta.url))
+const HERE = import.meta.dirname
 const REPO_ROOT = join(HERE, '..')
 const COMMANDS_DIR = join(REPO_ROOT, 'src-tauri', 'src', 'commands')
 

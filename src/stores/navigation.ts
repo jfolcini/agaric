@@ -239,7 +239,7 @@ export const useNavigationStore = create<NavigationStore>()(
         currentView: state.currentView,
         currentViewBySpace: state.currentViewBySpace,
       }),
-      migrate: (persisted: unknown, version: number) => {
+      migrate: (persisted: unknown, version: number) =>
         // V0 → v1: the v1 migration moved tab data into the
         // per-space slices — that logic now lives in `useTabsStore` and
         // is irrelevant to this store post-split.
@@ -253,8 +253,7 @@ export const useNavigationStore = create<NavigationStore>()(
         // `as NavigationState` unvalidated). Note zustand only invokes
         // `migrate` on a version MISMATCH — same-version blobs are
         // coerced by `merge` below.
-        return coercePersistedNavigation(persisted, version) as NavigationState
-      },
+        coercePersistedNavigation(persisted, version) as NavigationState,
       // CR-PERSIST (#753) — zustand skips `migrate` when the stored
       // version equals `options.version` (or isn't a number), handing the
       // raw blob straight to `merge`. Coerce here too so a corrupt

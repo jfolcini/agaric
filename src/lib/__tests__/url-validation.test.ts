@@ -61,7 +61,7 @@ describe('isAllowedUrl', () => {
     ['\x00javascript:alert(1)'],
     ['\tjavascript:alert(1)'],
     ['java\x01script:alert(1)'],
-    ['java\x7fscript:alert(1)'],
+    ['java\x7Fscript:alert(1)'],
     ['j\ta\nv\ra\x00script:alert(1)'],
   ])('rejects control-char obfuscated blocked scheme %j', (url) => {
     expect(isAllowedUrl(url)).toBe(false)

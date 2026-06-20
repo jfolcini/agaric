@@ -97,7 +97,7 @@ describe('GraphView local-graph mode (#1429)', () => {
     await renderGraph()
     expect(screen.getByTestId('local-graph-toggle')).toBeInTheDocument()
     // Default: every page is shown (no local filtering until toggled).
-    expect(captured.nodes.map((n) => n.id).sort()).toEqual(['a', 'b', 'c', 'hub', 'island'])
+    expect(captured.nodes.map((n) => n.id).toSorted()).toEqual(['a', 'b', 'c', 'hub', 'island'])
   })
 
   it('disables the toggle when the active tab has no page open', async () => {
@@ -110,8 +110,12 @@ describe('GraphView local-graph mode (#1429)', () => {
     await renderGraph()
     fireEvent.click(screen.getByTestId('local-graph-toggle'))
     // hub(0) → a(1) → b(2); c is 3 hops, island is unrelated → both excluded.
-    await waitFor(() => expect(captured.nodes.map((n) => n.id).sort()).toEqual(['a', 'b', 'hub']))
-    const edgeKeys = captured.edges.map((e) => `${e.source as string}-${e.target as string}`).sort()
+    await waitFor(() =>
+      expect(captured.nodes.map((n) => n.id).toSorted()).toEqual(['a', 'b', 'hub']),
+    )
+    const edgeKeys = captured.edges
+      .map((e) => `${e.source as string}-${e.target as string}`)
+      .toSorted()
     expect(edgeKeys).toEqual(['a-b', 'hub-a'])
   })
 
@@ -120,7 +124,7 @@ describe('GraphView local-graph mode (#1429)', () => {
     fireEvent.click(screen.getByTestId('local-graph-toggle'))
     fireEvent.click(screen.getByRole('radio', { name: '1 hop' }))
     // hub(0) → a(1); b is 2 hops → excluded.
-    await waitFor(() => expect(captured.nodes.map((n) => n.id).sort()).toEqual(['a', 'hub']))
+    await waitFor(() => expect(captured.nodes.map((n) => n.id).toSorted()).toEqual(['a', 'hub']))
   })
 
   it('shows just the seed node for a page with no links', async () => {
@@ -162,7 +166,7 @@ describe('GraphView local-graph mode (#1429)', () => {
       seedTab('hub')
     })
     await waitFor(() =>
-      expect(captured.nodes.map((n) => n.id).sort()).toEqual(['a', 'b', 'c', 'hub', 'island']),
+      expect(captured.nodes.map((n) => n.id).toSorted()).toEqual(['a', 'b', 'c', 'hub', 'island']),
     )
     expect(screen.getByTestId('local-graph-toggle')).toHaveAttribute('aria-pressed', 'false')
   })

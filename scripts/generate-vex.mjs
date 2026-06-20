@@ -28,10 +28,9 @@
 // deny.toml's schema ever changes, the assertions below fail loudly.
 // ─────────────────────────────────────────────────────────────────────
 import { readFileSync, writeFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+const __dirname = import.meta.dirname
 const REPO_ROOT = resolve(__dirname, '..')
 const DENY_PATH = resolve(REPO_ROOT, 'src-tauri/deny.toml')
 const PKG_PATH = resolve(REPO_ROOT, 'package.json')

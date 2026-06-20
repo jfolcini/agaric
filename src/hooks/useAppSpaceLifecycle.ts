@@ -68,7 +68,7 @@ export function useAppSpaceLifecycle(): void {
     const activeSpace = availableSpaces.find((s) => s.id === currentSpaceId) ?? null
     const titleText =
       activeSpace != null && activeSpace.name !== ''
-        ? `${activeSpace.name} \u00b7 Agaric`
+        ? `${activeSpace.name} \u00B7 Agaric`
         : 'Agaric'
     void setWindowTitle(titleText)
   }, [currentSpaceId, availableSpaces])

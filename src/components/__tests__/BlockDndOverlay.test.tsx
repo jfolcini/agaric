@@ -88,7 +88,7 @@ describe('BlockDndOverlay', () => {
       />,
     )
 
-    const anim = dropAnimationCalls[dropAnimationCalls.length - 1] as {
+    const anim = dropAnimationCalls.at(-1) as {
       duration?: number
     } | null
     expect(anim).not.toBeNull()

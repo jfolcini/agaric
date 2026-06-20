@@ -110,7 +110,7 @@ describe('formatRelativeTime', () => {
     // case themselves via t('sidebar.lastSyncedNever'), so the formatter must
     // still produce a relative string for 0 rather than anything special.
     const result = formatRelativeTime(0, mockT as never)
-    expect(result).toBe('sidebar.daysAgo:' + Math.floor((Date.now() - 0) / 86_400_000))
+    expect(result).toBe(`sidebar.daysAgo:${Math.floor((Date.now() - 0) / 86_400_000)}`)
   })
 })
 

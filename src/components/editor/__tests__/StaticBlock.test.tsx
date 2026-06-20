@@ -190,7 +190,7 @@ describe('StaticBlock', () => {
   // Selection feedback is the single `block-selected` recipe
   // @utility (src/index.css), shared with BlockListItem / EditableBlock.
   it('applies the block-selected recipe when isSelected is true', () => {
-    render(<StaticBlock blockId="B1" content="Sel" onFocus={vi.fn()} isSelected={true} />)
+    render(<StaticBlock blockId="B1" content="Sel" onFocus={vi.fn()} isSelected />)
     expect(screen.getByTestId('block-static').className).toContain('block-selected')
   })
 
@@ -1548,7 +1548,7 @@ describe('StaticBlock', () => {
 
     it('renders single-item ordered list', () => {
       const { container } = render(
-        <StaticBlock blockId="B1" content={'1. only item'} onFocus={vi.fn()} />,
+        <StaticBlock blockId="B1" content="1. only item" onFocus={vi.fn()} />,
       )
       const ol = container.querySelector('ol')
       expect(ol).toBeInTheDocument()
@@ -1568,13 +1568,13 @@ describe('StaticBlock', () => {
 
   describe('horizontal rule rendering', () => {
     it('renders horizontal rule as <hr>', () => {
-      const { container } = render(<StaticBlock blockId="B1" content={'---'} onFocus={vi.fn()} />)
+      const { container } = render(<StaticBlock blockId="B1" content="---" onFocus={vi.fn()} />)
       const hr = container.querySelector('hr')
       expect(hr).toBeInTheDocument()
     })
 
     it('renders horizontal rule with data-testid', () => {
-      render(<StaticBlock blockId="B1" content={'---'} onFocus={vi.fn()} />)
+      render(<StaticBlock blockId="B1" content="---" onFocus={vi.fn()} />)
       expect(screen.getByTestId('horizontal-rule')).toBeInTheDocument()
     })
 

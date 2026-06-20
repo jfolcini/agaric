@@ -59,7 +59,7 @@ class MockIntersectionObserver {
   static autoEnter = true
   callback: IOCallback
   rootMargin: string
-  observed: Set<Element> = new Set()
+  observed = new Set<Element>()
 
   constructor(callback: IOCallback, options?: IntersectionObserverInit) {
     this.callback = callback

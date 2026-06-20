@@ -53,7 +53,7 @@ beforeEach(() => {
     <section>delta alpha echo</section>
     <section>foxtrot alpha alpha</section>
   `
-  document.body.appendChild(host)
+  document.body.append(host)
   useInPageFindStore.getState().setContainer(host)
 })
 

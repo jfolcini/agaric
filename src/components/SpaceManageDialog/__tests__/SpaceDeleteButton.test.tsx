@@ -48,7 +48,7 @@ describe('SpaceDeleteButton', () => {
         spaceId="SPACE_1"
         spaceName="Personal"
         isLastSpace={false}
-        emptiness={true}
+        emptiness
         onRefresh={() => {}}
       />,
     )
@@ -74,8 +74,8 @@ describe('SpaceDeleteButton', () => {
       <SpaceDeleteButton
         spaceId="SPACE_1"
         spaceName="Personal"
-        isLastSpace={true}
-        emptiness={true}
+        isLastSpace
+        emptiness
         onRefresh={() => {}}
       />,
     )
@@ -103,7 +103,7 @@ describe('SpaceDeleteButton', () => {
         spaceId="SPACE_1"
         spaceName="Personal"
         isLastSpace={false}
-        emptiness={true}
+        emptiness
         onRefresh={onRefresh}
       />,
     )
@@ -133,7 +133,7 @@ describe('SpaceDeleteButton', () => {
         spaceId="SPACE_1"
         spaceName="Personal"
         isLastSpace={false}
-        emptiness={true}
+        emptiness
         onRefresh={() => {}}
       />,
     )
@@ -162,7 +162,7 @@ describe('SpaceDeleteButton', () => {
         spaceId="SPACE_1"
         spaceName="Personal"
         isLastSpace={false}
-        emptiness={true}
+        emptiness
         onRefresh={() => {}}
       />,
     )
@@ -186,12 +186,12 @@ describe('SpaceDeleteBlockedHint', () => {
   })
 
   it('returns null when emptiness=true (delete enabled)', () => {
-    const { container } = render(<SpaceDeleteBlockedHint emptiness={true} isLastSpace={false} />)
+    const { container } = render(<SpaceDeleteBlockedHint emptiness isLastSpace={false} />)
     expect(container.querySelector('[data-testid="space-delete-blocked-hint"]')).toBeNull()
   })
 
   it('returns null when isLastSpace=true (already covered by tooltip)', () => {
-    const { container } = render(<SpaceDeleteBlockedHint emptiness={false} isLastSpace={true} />)
+    const { container } = render(<SpaceDeleteBlockedHint emptiness={false} isLastSpace />)
     expect(container.querySelector('[data-testid="space-delete-blocked-hint"]')).toBeNull()
   })
 

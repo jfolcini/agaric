@@ -27,7 +27,7 @@ function trapTabFocus(dialog: HTMLElement, shiftKey: boolean): void {
   const buttons = dialog.querySelectorAll<HTMLElement>('button')
   if (buttons.length === 0) return
   const first = buttons[0]
-  const last = buttons[buttons.length - 1]
+  const last = [...buttons].at(-1)
   const active = document.activeElement as HTMLElement | null
   const atEdge = shiftKey ? active === first : active === last
   if (atEdge || !dialog.contains(active)) {

@@ -25,7 +25,7 @@ describe('buildReportZip', () => {
     expect(blob.size).toBeGreaterThan(0)
 
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
-    expect(Object.keys(unzipped.files).sort()).toEqual([
+    expect(Object.keys(unzipped.files).toSorted()).toEqual([
       'logs/',
       'logs/agaric.log',
       'logs/agaric.log.2025-01-01',

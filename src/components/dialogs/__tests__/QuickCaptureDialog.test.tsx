@@ -52,7 +52,7 @@ beforeEach(() => {
 
 describe('QuickCaptureDialog', () => {
   it('renders the dialog with title, textarea, and Capture/Cancel buttons', () => {
-    render(<QuickCaptureDialog open={true} onOpenChange={() => {}} />)
+    render(<QuickCaptureDialog open onOpenChange={() => {}} />)
 
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(screen.getByText(t('quickCapture.dialogTitle'))).toBeInTheDocument()
@@ -62,13 +62,13 @@ describe('QuickCaptureDialog', () => {
   })
 
   it('Capture button is disabled while the textarea is empty', () => {
-    render(<QuickCaptureDialog open={true} onOpenChange={() => {}} />)
+    render(<QuickCaptureDialog open onOpenChange={() => {}} />)
     expect(screen.getByTestId('quick-capture-save')).toBeDisabled()
   })
 
   it('typing into the textarea enables the Capture button', async () => {
     const user = userEvent.setup()
-    render(<QuickCaptureDialog open={true} onOpenChange={() => {}} />)
+    render(<QuickCaptureDialog open onOpenChange={() => {}} />)
 
     const textarea = screen.getByTestId('quick-capture-textarea')
     await user.type(textarea, 'hello')
@@ -88,7 +88,7 @@ describe('QuickCaptureDialog', () => {
       deleted_at: null,
     })
 
-    render(<QuickCaptureDialog open={true} onOpenChange={onOpenChange} />)
+    render(<QuickCaptureDialog open onOpenChange={onOpenChange} />)
 
     const textarea = screen.getByTestId('quick-capture-textarea')
     await user.type(textarea, '  captured  ')
@@ -116,7 +116,7 @@ describe('QuickCaptureDialog', () => {
       deleted_at: null,
     })
 
-    render(<QuickCaptureDialog open={true} onOpenChange={onOpenChange} />)
+    render(<QuickCaptureDialog open onOpenChange={onOpenChange} />)
     const textarea = screen.getByTestId('quick-capture-textarea')
     await user.type(textarea, 'hotkey-submit')
     await user.keyboard('{Control>}{Enter}{/Control}')
@@ -134,7 +134,7 @@ describe('QuickCaptureDialog', () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
 
-    render(<QuickCaptureDialog open={true} onOpenChange={onOpenChange} />)
+    render(<QuickCaptureDialog open onOpenChange={onOpenChange} />)
     await user.type(screen.getByTestId('quick-capture-textarea'), 'never sent')
     await user.click(screen.getByTestId('quick-capture-cancel'))
 
@@ -148,7 +148,7 @@ describe('QuickCaptureDialog', () => {
     const onOpenChange = vi.fn()
     mockedInvoke.mockRejectedValueOnce(new Error('disk full'))
 
-    render(<QuickCaptureDialog open={true} onOpenChange={onOpenChange} />)
+    render(<QuickCaptureDialog open onOpenChange={onOpenChange} />)
     await user.type(screen.getByTestId('quick-capture-textarea'), 'will fail')
     await user.click(screen.getByTestId('quick-capture-save'))
 
@@ -163,14 +163,14 @@ describe('QuickCaptureDialog', () => {
 
   it('whitespace-only content keeps the Capture button disabled', async () => {
     const user = userEvent.setup()
-    render(<QuickCaptureDialog open={true} onOpenChange={() => {}} />)
+    render(<QuickCaptureDialog open onOpenChange={() => {}} />)
 
     await user.type(screen.getByTestId('quick-capture-textarea'), '    \n   ')
     expect(screen.getByTestId('quick-capture-save')).toBeDisabled()
   })
 
   it('passes axe accessibility audit', async () => {
-    const { container } = render(<QuickCaptureDialog open={true} onOpenChange={() => {}} />)
+    const { container } = render(<QuickCaptureDialog open onOpenChange={() => {}} />)
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
@@ -180,7 +180,7 @@ describe('QuickCaptureDialog', () => {
   // DialogContent was redundant. The textarea must carry its own label
   // (not the dialog title) so screen readers don't mislabel the input.
   it('does not duplicate the dialog title as an aria-label on DialogContent', () => {
-    render(<QuickCaptureDialog open={true} onOpenChange={() => {}} />)
+    render(<QuickCaptureDialog open onOpenChange={() => {}} />)
 
     const dialog = screen.getByRole('dialog')
     // Radix wires the dialog's accessible name via aria-labelledby pointing
@@ -190,7 +190,7 @@ describe('QuickCaptureDialog', () => {
   })
 
   it('labels the textarea with its own distinct aria-label (not the dialog title)', () => {
-    render(<QuickCaptureDialog open={true} onOpenChange={() => {}} />)
+    render(<QuickCaptureDialog open onOpenChange={() => {}} />)
 
     const textarea = screen.getByTestId('quick-capture-textarea')
     expect(textarea).toHaveAttribute('aria-label', t('quickCapture.captureInputLabel'))
@@ -204,7 +204,7 @@ describe('QuickCaptureDialog', () => {
   describe('mobile / desktop responsive surfaces', () => {
     it('renders the capture textarea on the mobile Sheet path', () => {
       mockedUseIsMobile.mockReturnValue(true)
-      render(<QuickCaptureDialog open={true} onOpenChange={() => {}} />)
+      render(<QuickCaptureDialog open onOpenChange={() => {}} />)
 
       expect(screen.getByTestId('quick-capture-textarea')).toBeInTheDocument()
       expect(screen.getByPlaceholderText(t('quickCapture.placeholder'))).toBeInTheDocument()
@@ -212,7 +212,7 @@ describe('QuickCaptureDialog', () => {
 
     it('renders the capture textarea on the desktop Dialog path', () => {
       mockedUseIsMobile.mockReturnValue(false)
-      render(<QuickCaptureDialog open={true} onOpenChange={() => {}} />)
+      render(<QuickCaptureDialog open onOpenChange={() => {}} />)
 
       expect(screen.getByTestId('quick-capture-textarea')).toBeInTheDocument()
       expect(screen.getByPlaceholderText(t('quickCapture.placeholder'))).toBeInTheDocument()

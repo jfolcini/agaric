@@ -77,9 +77,8 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
 
   /** Get the current todo state for a block from the block store. */
   const getTodoState = useCallback(
-    (blockId: string): string | null => {
-      return pageStore.getState().blocksById.get(blockId)?.todo_state ?? null
-    },
+    (blockId: string): string | null =>
+      pageStore.getState().blocksById.get(blockId)?.todo_state ?? null,
     [pageStore],
   )
 

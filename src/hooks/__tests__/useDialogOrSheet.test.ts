@@ -126,19 +126,19 @@ describe('useDialogOrSheet', () => {
     ]
 
     mockedUseIsMobile.mockReturnValue(false)
-    expect(Object.keys(renderHook(() => useDialogOrSheet('alert')).result.current).sort()).toEqual(
-      [...expectedKeys].sort(),
-    )
-    expect(Object.keys(renderHook(() => useDialogOrSheet('dialog')).result.current).sort()).toEqual(
-      [...expectedKeys].sort(),
-    )
+    expect(
+      Object.keys(renderHook(() => useDialogOrSheet('alert')).result.current).toSorted(),
+    ).toEqual([...expectedKeys].toSorted())
+    expect(
+      Object.keys(renderHook(() => useDialogOrSheet('dialog')).result.current).toSorted(),
+    ).toEqual([...expectedKeys].toSorted())
 
     mockedUseIsMobile.mockReturnValue(true)
-    expect(Object.keys(renderHook(() => useDialogOrSheet('alert')).result.current).sort()).toEqual(
-      [...expectedKeys].sort(),
-    )
-    expect(Object.keys(renderHook(() => useDialogOrSheet('dialog')).result.current).sort()).toEqual(
-      [...expectedKeys].sort(),
-    )
+    expect(
+      Object.keys(renderHook(() => useDialogOrSheet('alert')).result.current).toSorted(),
+    ).toEqual([...expectedKeys].toSorted())
+    expect(
+      Object.keys(renderHook(() => useDialogOrSheet('dialog')).result.current).toSorted(),
+    ).toEqual([...expectedKeys].toSorted())
   })
 })

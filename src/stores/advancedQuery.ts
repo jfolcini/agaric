@@ -281,7 +281,7 @@ function updateNodeAt(
     return next
   }
   const parentPath = path.slice(0, -1)
-  const index = path[path.length - 1] as number
+  const index = path.at(-1) as number
   return updateGroupAt(root, parentPath, (parent) => {
     const target = parent.children[index]
     if (target == null) {
@@ -333,7 +333,7 @@ export function addGroupToTree(
 export function removeNodeFromTree(root: BuilderGroupNode, path: BuilderPath): BuilderGroupNode {
   if (path.length === 0) return root
   const parentPath = path.slice(0, -1)
-  const index = path[path.length - 1] as number
+  const index = path.at(-1) as number
   return updateGroupAt(root, parentPath, (parent) => ({
     ...parent,
     children: parent.children.filter((_, i) => i !== index),

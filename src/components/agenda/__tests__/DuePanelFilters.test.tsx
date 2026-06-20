@@ -111,7 +111,7 @@ describe('DuePanelFilters', () => {
   })
 
   it('renders hide-before-scheduled toggle with correct label when ON', () => {
-    render(<DuePanelFilters {...defaultProps} hideBeforeScheduled={true} />)
+    render(<DuePanelFilters {...defaultProps} hideBeforeScheduled />)
 
     const toggle = screen.getByRole('button', { name: /Scheduled: hide future/i })
     expect(toggle).toHaveAttribute('aria-pressed', 'true')
@@ -139,11 +139,7 @@ describe('DuePanelFilters', () => {
 
   it('a11y: no violations with active filter', async () => {
     const { container } = render(
-      <DuePanelFilters
-        {...defaultProps}
-        sourceFilter="column:due_date"
-        hideBeforeScheduled={true}
-      />,
+      <DuePanelFilters {...defaultProps} sourceFilter="column:due_date" hideBeforeScheduled />,
     )
 
     await waitFor(async () => {

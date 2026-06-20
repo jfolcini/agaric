@@ -167,41 +167,48 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
       let { r, c } = focused
       const len = (row: number) => entriesAtRow(row).length
       switch (e.key) {
-        case 'ArrowRight':
+        case 'ArrowRight': {
           if (c < len(r) - 1) c++
           else if (r < lastR) {
             r++
             c = 0
           }
           break
-        case 'ArrowLeft':
+        }
+        case 'ArrowLeft': {
           if (c > 0) c--
           else if (r > 0) {
             r--
             c = Math.max(0, len(r) - 1)
           }
           break
-        case 'ArrowDown':
+        }
+        case 'ArrowDown': {
           if (r < lastR) {
             r++
             c = Math.min(c, len(r) - 1)
           }
           break
-        case 'ArrowUp':
+        }
+        case 'ArrowUp': {
           if (r > 0) {
             r--
             c = Math.min(c, len(r) - 1)
           }
           break
-        case 'Home':
+        }
+        case 'Home': {
           c = 0
           break
-        case 'End':
+        }
+        case 'End': {
           c = Math.max(0, len(r) - 1)
           break
-        default:
+        }
+        default: {
           // Enter/Space activate the focused <button> natively (its onClick).
           return
+        }
       }
       e.preventDefault()
       setFocused({ r, c })

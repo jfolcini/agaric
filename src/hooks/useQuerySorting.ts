@@ -31,7 +31,7 @@ export function useQuerySorting(options: UseQuerySortingOptions): UseQuerySortin
 
   const sortedResults = useMemo(() => {
     if (!sortKey) return results
-    return [...results].sort((a, b) => {
+    return [...results].toSorted((a, b) => {
       const aVal =
         sortKey === 'content' ? a.content : (a[sortKey as keyof BlockRow] as string | null)
       const bVal =

@@ -56,7 +56,7 @@ describe('HistoryRestoreDialog', () => {
     const onSuccess = vi.fn()
     render(
       <HistoryRestoreDialog
-        open={true}
+        open
         onOpenChange={vi.fn()}
         restoreTarget={TARGET}
         onSuccess={onSuccess}
@@ -78,7 +78,7 @@ describe('HistoryRestoreDialog', () => {
     const onSuccess = vi.fn()
     render(
       <HistoryRestoreDialog
-        open={true}
+        open
         onOpenChange={vi.fn()}
         restoreTarget={TARGET}
         onSuccess={onSuccess}

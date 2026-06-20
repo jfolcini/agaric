@@ -32,9 +32,9 @@ function buildList(itemCount: number, selector = 'data-block-list-item') {
     const item = document.createElement('button')
     item.setAttribute(selector, '')
     item.textContent = `item-${i}`
-    list.appendChild(item)
+    list.append(item)
   }
-  document.body.appendChild(list)
+  document.body.append(list)
   return { list, items: Array.from(list.children) as HTMLElement[] }
 }
 
@@ -143,7 +143,7 @@ describe('useKeyboardNavigableList', () => {
     const { list } = buildList(3)
     // External element holds focus.
     const outside = document.createElement('button')
-    document.body.appendChild(outside)
+    document.body.append(outside)
     outside.focus()
     expect(document.activeElement).toBe(outside)
 
@@ -238,9 +238,9 @@ describe('useKeyboardNavigableList', () => {
     a.className = 'custom-item'
     const b = document.createElement('div')
     b.className = 'custom-item'
-    list.appendChild(a)
-    list.appendChild(b)
-    document.body.appendChild(list)
+    list.append(a)
+    list.append(b)
+    document.body.append(list)
 
     const { result } = renderHook(() =>
       useKeyboardNavigableList(2, () => {}, { itemSelector: '.custom-item' }),

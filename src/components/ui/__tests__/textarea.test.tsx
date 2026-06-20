@@ -69,7 +69,7 @@ describe('Textarea', () => {
   // -- aria-invalid propagation -----------------------------------------------
 
   it('propagates aria-invalid="true" from prop to DOM', () => {
-    render(<Textarea aria-invalid={true} aria-label="Notes" />)
+    render(<Textarea aria-invalid aria-label="Notes" />)
 
     const ta = screen.getByRole('textbox', { name: 'Notes' })
     expect(ta).toHaveAttribute('aria-invalid', 'true')
@@ -149,7 +149,7 @@ describe('Textarea', () => {
     const { container } = render(
       <>
         <label htmlFor="notes-invalid">Notes</label>
-        <Textarea id="notes-invalid" aria-invalid={true} />
+        <Textarea id="notes-invalid" aria-invalid />
       </>,
     )
     const results = await axe(container)

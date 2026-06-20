@@ -25,7 +25,7 @@ async function latestFilter(
   page: import('@playwright/test').Page,
 ): Promise<Record<string, unknown>> {
   const calls = await getInvokeCalls(page, 'search_blocks')
-  return calls[calls.length - 1]?.['filter'] as Record<string, unknown>
+  return calls.at(-1)?.['filter'] as Record<string, unknown>
 }
 
 /** Type a query, submit, and wait until a `search_blocks` IPC matching the

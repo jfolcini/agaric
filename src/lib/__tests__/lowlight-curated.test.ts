@@ -43,8 +43,8 @@ const EXPECTED_LANGUAGES = [
 
 describe('lowlight-curated', () => {
   it('exports the expected curated language set (pins against drift toward `common`)', () => {
-    const actual = Object.keys(CURATED_LANGUAGES).sort()
-    const expected = [...EXPECTED_LANGUAGES].sort()
+    const actual = Object.keys(CURATED_LANGUAGES).toSorted()
+    const expected = [...EXPECTED_LANGUAGES].toSorted()
     expect(actual).toEqual(expected)
   })
 

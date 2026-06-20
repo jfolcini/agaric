@@ -75,7 +75,7 @@ function ensureHighlightStyles(): void {
   const style = doc.createElement('style')
   style.setAttribute('data-in-page-find', '')
   style.textContent = HIGHLIGHT_STYLES
-  doc.head.appendChild(style)
+  doc.head.append(style)
   stylesInjected = true
 }
 
@@ -96,9 +96,7 @@ interface CSSWithHighlights {
   highlights?: CSSHighlights
 }
 
-interface HighlightCtor {
-  new (...ranges: Range[]): HighlightLike
-}
+type HighlightCtor = new (...ranges: Range[]) => HighlightLike
 
 function getRegistry(): CSSHighlights | null {
   const css = (globalThis as { CSS?: CSSWithHighlights }).CSS

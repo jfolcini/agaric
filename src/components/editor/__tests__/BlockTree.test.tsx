@@ -1731,7 +1731,7 @@ describe('BlockTree slash command wiring', () => {
     expect(results?.some((r) => r.id === 'table')).toBe(false)
     // The parameterized item should be first
     expect((results?.[0] as { id: string } | undefined)?.id).toBe('table:4:6')
-    expect((results?.[0] as { label: string } | undefined)?.label).toContain('4\u00d76')
+    expect((results?.[0] as { label: string } | undefined)?.label).toContain('4\u00D76')
   })
 
   it('searchSlashCommands returns default table for "table" query without dimensions', async () => {
@@ -1808,7 +1808,7 @@ describe('BlockTree slash command wiring', () => {
     })
 
     await act(async () => {
-      capturedOnSlashCommand?.({ id: 'table:4:6', label: 'TABLE 4\u00d76 — Insert 4\u00d76 table' })
+      capturedOnSlashCommand?.({ id: 'table:4:6', label: 'TABLE 4\u00D76 — Insert 4\u00D76 table' })
     })
 
     expect(mockInsertTable).toHaveBeenCalledWith({ rows: 4, cols: 6, withHeaderRow: true })
@@ -1832,7 +1832,7 @@ describe('BlockTree slash command wiring', () => {
     await act(async () => {
       capturedOnSlashCommand?.({
         id: 'table:10:2',
-        label: 'TABLE 10\u00d72 — Insert 10\u00d72 table',
+        label: 'TABLE 10\u00D72 — Insert 10\u00D72 table',
       })
     })
 
@@ -6366,8 +6366,8 @@ describe('BlockTree unfocused-Escape handler', () => {
     const fakePM = document.createElement('div')
     fakePM.classList.add('ProseMirror')
     const fakeInput = document.createElement('input')
-    fakePM.appendChild(fakeInput)
-    document.body.appendChild(fakePM)
+    fakePM.append(fakeInput)
+    document.body.append(fakePM)
     fakeInput.focus()
 
     fireEvent.keyDown(document, { key: 'Escape' })

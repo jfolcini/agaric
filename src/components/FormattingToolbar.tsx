@@ -179,7 +179,7 @@ export function FormattingToolbar({
       )
     }
     switch (item.key) {
-      case 'toolbar.codeBlockLanguage':
+      case 'toolbar.codeBlockLanguage': {
         return renderCodeBlockButton({
           editor,
           mode,
@@ -190,7 +190,8 @@ export function FormattingToolbar({
           setOpen: setCodeBlockPopoverOpen,
           onOverflowClose: closeOverflow,
         })
-      case 'toolbar.headingLevel':
+      }
+      case 'toolbar.headingLevel': {
         return renderHeadingButton({
           editor,
           mode,
@@ -200,7 +201,8 @@ export function FormattingToolbar({
           setOpen: setHeadingPopoverOpen,
           onOverflowClose: closeOverflow,
         })
-      case 'toolbar.callout':
+      }
+      case 'toolbar.callout': {
         return renderCalloutButton({
           mode,
           t,
@@ -208,7 +210,8 @@ export function FormattingToolbar({
           setOpen: setCalloutPopoverOpen,
           onOverflowClose: closeOverflow,
         })
-      case 'toolbar.tableOps':
+      }
+      case 'toolbar.tableOps': {
         return renderTableOpsButton({
           editor,
           mode,
@@ -217,7 +220,8 @@ export function FormattingToolbar({
           setOpen: setTableOpsPopoverOpen,
           onOverflowClose: closeOverflow,
         })
-      case 'toolbar.insertTable':
+      }
+      case 'toolbar.insertTable': {
         return renderTablePickerButton({
           editor,
           mode,
@@ -226,13 +230,15 @@ export function FormattingToolbar({
           setOpen: setTablePickerPopoverOpen,
           onOverflowClose: closeOverflow,
         })
-      case 'toolbar.cyclePriority':
+      }
+      case 'toolbar.cyclePriority': {
         return renderCyclePriority({
           mode,
           t,
           currentPriority,
           onAfterOverflowAction: closeOverflow,
         })
+      }
       default: {
         const cfg = configByKey.get(item.key)
         if (!cfg) return null

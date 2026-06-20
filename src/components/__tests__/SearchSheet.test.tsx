@@ -18,7 +18,7 @@ import { SearchSheet } from '../SearchSheet'
 function makeHost(): HTMLElement {
   const host = document.createElement('div')
   host.innerHTML = '<section>alpha bravo</section>'
-  document.body.appendChild(host)
+  document.body.append(host)
   useInPageFindStore.setState({ container: host })
   return host
 }
@@ -420,7 +420,7 @@ describe('SearchSheet', () => {
       // restarts.
       const host2 = document.createElement('div')
       host2.innerHTML = '<section>delta echo</section>'
-      document.body.appendChild(host2)
+      document.body.append(host2)
       useInPageFindStore.getState().setContainer(host2)
       await waitFor(() => {
         expect(useInPageFindStore.getState().open).toBe(true)

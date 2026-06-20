@@ -922,7 +922,7 @@ describe('useDuePanelData', () => {
       await waitFor(() => {
         expect(result.current.blocks).toHaveLength(2)
       })
-      expect(result.current.blocks.map((b) => b.id).sort()).toEqual(['OTHER', 'OWN'])
+      expect(result.current.blocks.map((b) => b.id).toSorted()).toEqual(['OTHER', 'OWN'])
     })
   })
 })

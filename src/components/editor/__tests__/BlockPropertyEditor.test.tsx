@@ -310,7 +310,7 @@ describe('BlockPropertyEditor', () => {
       // than calling `.remove()` so React's reconciliation can still unmount
       // the element cleanly during test teardown.
       const calls = vi.mocked(autoUpdate).mock.calls
-      const lastCall = calls[calls.length - 1]
+      const lastCall = calls.at(-1)
       expect(lastCall).toBeDefined()
       const update = lastCall?.[2] as () => void
       const anchor = document.querySelector(

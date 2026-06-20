@@ -50,7 +50,7 @@ describe('LoadMoreButton', () => {
   // 1. Renders button when hasMore=true
   it('renders button when hasMore is true', () => {
     const onLoadMore = vi.fn()
-    render(<LoadMoreButton hasMore={true} loading={false} onLoadMore={onLoadMore} />)
+    render(<LoadMoreButton hasMore loading={false} onLoadMore={onLoadMore} />)
 
     const btn = screen.getByRole('button', { name: 'Load more' })
     expect(btn).toBeInTheDocument()
@@ -72,7 +72,7 @@ describe('LoadMoreButton', () => {
   it('fires onLoadMore on click', async () => {
     const user = userEvent.setup()
     const onLoadMore = vi.fn()
-    render(<LoadMoreButton hasMore={true} loading={false} onLoadMore={onLoadMore} />)
+    render(<LoadMoreButton hasMore loading={false} onLoadMore={onLoadMore} />)
 
     await user.click(screen.getByRole('button', { name: 'Load more' }))
 
@@ -82,7 +82,7 @@ describe('LoadMoreButton', () => {
   // 4. Loading state shows spinner and disables button
   it('shows spinner and disables button when loading', () => {
     const onLoadMore = vi.fn()
-    render(<LoadMoreButton hasMore={true} loading={true} onLoadMore={onLoadMore} />)
+    render(<LoadMoreButton hasMore loading onLoadMore={onLoadMore} />)
 
     const btn = screen.getByRole('button')
     expect(btn).toBeDisabled()
@@ -93,14 +93,7 @@ describe('LoadMoreButton', () => {
   // 4b. Loading state uses custom loadingLabel
   it('uses custom loadingLabel when loading', () => {
     const onLoadMore = vi.fn()
-    render(
-      <LoadMoreButton
-        hasMore={true}
-        loading={true}
-        onLoadMore={onLoadMore}
-        loadingLabel="Fetching..."
-      />,
-    )
+    render(<LoadMoreButton hasMore loading onLoadMore={onLoadMore} loadingLabel="Fetching..." />)
 
     expect(screen.getByRole('button')).toHaveTextContent('Fetching...')
   })
@@ -108,9 +101,7 @@ describe('LoadMoreButton', () => {
   // 5. Custom labels are rendered
   it('renders custom label', () => {
     const onLoadMore = vi.fn()
-    render(
-      <LoadMoreButton hasMore={true} loading={false} onLoadMore={onLoadMore} label="Show more" />,
-    )
+    render(<LoadMoreButton hasMore loading={false} onLoadMore={onLoadMore} label="Show more" />)
 
     expect(screen.getByRole('button', { name: 'Show more' })).toBeInTheDocument()
   })
@@ -120,7 +111,7 @@ describe('LoadMoreButton', () => {
     const onLoadMore = vi.fn()
     render(
       <LoadMoreButton
-        hasMore={true}
+        hasMore
         loading={false}
         onLoadMore={onLoadMore}
         ariaLabel="Load more references"
@@ -136,8 +127,8 @@ describe('LoadMoreButton', () => {
     const onLoadMore = vi.fn()
     render(
       <LoadMoreButton
-        hasMore={true}
-        loading={true}
+        hasMore
+        loading
         onLoadMore={onLoadMore}
         ariaLabel="Load more references"
         ariaLoadingLabel="Loading more references"
@@ -150,14 +141,14 @@ describe('LoadMoreButton', () => {
   // 7. aria-busy reflects loading state
   it('sets aria-busy when loading', () => {
     const onLoadMore = vi.fn()
-    render(<LoadMoreButton hasMore={true} loading={true} onLoadMore={onLoadMore} />)
+    render(<LoadMoreButton hasMore loading onLoadMore={onLoadMore} />)
 
     expect(screen.getByRole('button')).toHaveAttribute('aria-busy', 'true')
   })
 
   it('sets aria-busy=false when not loading', () => {
     const onLoadMore = vi.fn()
-    render(<LoadMoreButton hasMore={true} loading={false} onLoadMore={onLoadMore} />)
+    render(<LoadMoreButton hasMore loading={false} onLoadMore={onLoadMore} />)
 
     expect(screen.getByRole('button')).toHaveAttribute('aria-busy', 'false')
   })
@@ -167,7 +158,7 @@ describe('LoadMoreButton', () => {
     const onLoadMore = vi.fn()
     const { container } = render(
       <LoadMoreButton
-        hasMore={true}
+        hasMore
         loading={false}
         onLoadMore={onLoadMore}
         className="my-custom-class"
@@ -183,9 +174,7 @@ describe('LoadMoreButton', () => {
   // 9. A11y audit passes (axe)
   it('has no a11y violations', async () => {
     const onLoadMore = vi.fn()
-    const { container } = render(
-      <LoadMoreButton hasMore={true} loading={false} onLoadMore={onLoadMore} />,
-    )
+    const { container } = render(<LoadMoreButton hasMore loading={false} onLoadMore={onLoadMore} />)
 
     await waitFor(async () => {
       const results = await axe(container)
@@ -196,9 +185,7 @@ describe('LoadMoreButton', () => {
   // 9b. A11y audit in loading state
   it('has no a11y violations in loading state', async () => {
     const onLoadMore = vi.fn()
-    const { container } = render(
-      <LoadMoreButton hasMore={true} loading={true} onLoadMore={onLoadMore} />,
-    )
+    const { container } = render(<LoadMoreButton hasMore loading onLoadMore={onLoadMore} />)
 
     await waitFor(async () => {
       const results = await axe(container)
@@ -209,7 +196,7 @@ describe('LoadMoreButton', () => {
   // 10. i18n default label resolves to "Load more"
   it('default label resolves from i18n to "Load more"', () => {
     const onLoadMore = vi.fn()
-    render(<LoadMoreButton hasMore={true} loading={false} onLoadMore={onLoadMore} />)
+    render(<LoadMoreButton hasMore loading={false} onLoadMore={onLoadMore} />)
 
     const btn = screen.getByRole('button')
     expect(btn).toHaveTextContent('Load more')
@@ -218,7 +205,7 @@ describe('LoadMoreButton', () => {
   // 11. i18n loading label resolves to "Loading…"
   it('default loading label resolves from i18n to "Loading…"', () => {
     const onLoadMore = vi.fn()
-    render(<LoadMoreButton hasMore={true} loading={true} onLoadMore={onLoadMore} />)
+    render(<LoadMoreButton hasMore loading onLoadMore={onLoadMore} />)
 
     const btn = screen.getByRole('button')
     expect(btn).toHaveTextContent('Loading\u2026')
@@ -229,7 +216,7 @@ describe('LoadMoreButton', () => {
     const onLoadMore = vi.fn()
     render(
       <LoadMoreButton
-        hasMore={true}
+        hasMore
         loading={false}
         onLoadMore={onLoadMore}
         label="Fetch more"
@@ -243,14 +230,14 @@ describe('LoadMoreButton', () => {
   // Progress indicator
   describe(' progress indicator', () => {
     it('does not render progress when counts are omitted', () => {
-      render(<LoadMoreButton hasMore={true} loading={false} onLoadMore={vi.fn()} />)
+      render(<LoadMoreButton hasMore loading={false} onLoadMore={vi.fn()} />)
       expect(screen.queryByTestId('load-more-progress')).not.toBeInTheDocument()
     })
 
     it('renders "Loaded X of Y" progress line when both counts are provided', () => {
       render(
         <LoadMoreButton
-          hasMore={true}
+          hasMore
           loading={false}
           onLoadMore={vi.fn()}
           loadedCount={20}
@@ -265,7 +252,7 @@ describe('LoadMoreButton', () => {
     it('does not render progress when totalCount is 0', () => {
       render(
         <LoadMoreButton
-          hasMore={true}
+          hasMore
           loading={false}
           onLoadMore={vi.fn()}
           loadedCount={0}
@@ -276,26 +263,18 @@ describe('LoadMoreButton', () => {
     })
 
     it('does not render progress when only loadedCount is provided', () => {
-      render(<LoadMoreButton hasMore={true} loading={false} onLoadMore={vi.fn()} loadedCount={5} />)
+      render(<LoadMoreButton hasMore loading={false} onLoadMore={vi.fn()} loadedCount={5} />)
       expect(screen.queryByTestId('load-more-progress')).not.toBeInTheDocument()
     })
 
     it('does not render progress when only totalCount is provided', () => {
-      render(
-        <LoadMoreButton hasMore={true} loading={false} onLoadMore={vi.fn()} totalCount={100} />,
-      )
+      render(<LoadMoreButton hasMore loading={false} onLoadMore={vi.fn()} totalCount={100} />)
       expect(screen.queryByTestId('load-more-progress')).not.toBeInTheDocument()
     })
 
     it('renders progress alongside the spinner while loading', () => {
       render(
-        <LoadMoreButton
-          hasMore={true}
-          loading={true}
-          onLoadMore={vi.fn()}
-          loadedCount={10}
-          totalCount={50}
-        />,
+        <LoadMoreButton hasMore loading onLoadMore={vi.fn()} loadedCount={10} totalCount={50} />,
       )
       expect(screen.getByTestId('load-more-progress')).toHaveTextContent('Loaded 10 of 50')
       expect(screen.getByRole('button')).toBeDisabled()
@@ -304,7 +283,7 @@ describe('LoadMoreButton', () => {
     it('has no a11y violations when rendering progress', async () => {
       const { container } = render(
         <LoadMoreButton
-          hasMore={true}
+          hasMore
           loading={false}
           onLoadMore={vi.fn()}
           loadedCount={20}

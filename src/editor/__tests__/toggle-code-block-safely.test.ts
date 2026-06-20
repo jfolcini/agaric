@@ -104,7 +104,7 @@ describe('toggleCodeBlockSafely', () => {
 
     toggleCodeBlockSafely(editor)
 
-    expect(calls[calls.length - 1]?.method).toBe('run')
+    expect(calls.at(-1)?.method).toBe('run')
     expect(calls.filter((c) => c.method === 'run')).toHaveLength(1)
   })
 })

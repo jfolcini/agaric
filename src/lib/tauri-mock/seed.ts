@@ -30,27 +30,27 @@ export function fakeId(): string {
 // Maps are reference types; mutating them from another module works fine.
 // ---------------------------------------------------------------------------
 
-export const blocks: Map<string, Record<string, unknown>> = new Map()
+export const blocks = new Map<string, Record<string, unknown>>()
 
 // Property store: block_id → key → PropertyRow
-export const properties: Map<string, Map<string, Record<string, unknown>>> = new Map()
+export const properties = new Map<string, Map<string, Record<string, unknown>>>()
 
 // Block-tag associations: block_id → Set<tag_id>
-export const blockTags: Map<string, Set<string>> = new Map()
+export const blockTags = new Map<string, Set<string>>()
 
 // Property definitions store
-export const propertyDefs: Map<string, Record<string, unknown>> = new Map()
+export const propertyDefs = new Map<string, Record<string, unknown>>()
 
 // Page aliases store: page_id → string[]
-export const pageAliases: Map<string, string[]> = new Map()
+export const pageAliases = new Map<string, string[]>()
 
 // Attachment store: attachment_id → AttachmentRow-like object
-export const attachments: Map<string, Record<string, unknown>> = new Map()
+export const attachments = new Map<string, Record<string, unknown>>()
 
 // Attachment raw bytes store: attachment_id → byte array. Lets the
 // `add_attachment_with_bytes` / `read_attachment` mock handlers round-trip
 // content so the FE upload→render flow is exercisable under the web mock.
-export const attachmentBytes: Map<string, number[]> = new Map()
+export const attachmentBytes = new Map<string, number[]>()
 
 // Per-page last-edited timestamp (page_id → ISO-8601 string). The backend
 // computes `last_modified_at` as `MAX(op_log.created_at)` over the page block
@@ -58,7 +58,7 @@ export const attachmentBytes: Map<string, number[]> = new Map()
 // rather than on the BlockRow. Seeded with deterministic values below and
 // read by the `list_pages_with_metadata` handler for the `last-edited:`
 // compound filter and the recently-modified sort.
-export const pageLastModified: Map<string, string> = new Map()
+export const pageLastModified = new Map<string, string>()
 
 // Op log for undo/redo/history
 export interface MockOpLogEntry {

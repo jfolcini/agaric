@@ -38,7 +38,7 @@ import { BlockPropertyDrawerSheet } from '@/components/editor/BlockPropertyDrawe
 
 describe('BlockPropertyDrawerSheet', () => {
   it('renders content when open=true and blockId is set', () => {
-    render(<BlockPropertyDrawerSheet blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    render(<BlockPropertyDrawerSheet blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     expect(screen.getByTestId('property-drawer')).toBeInTheDocument()
     expect(screen.getByTestId('property-block-id')).toHaveTextContent('BLOCK_1')
@@ -51,7 +51,7 @@ describe('BlockPropertyDrawerSheet', () => {
   })
 
   it('does not render block ID when blockId is null', () => {
-    render(<BlockPropertyDrawerSheet blockId={null} open={true} onOpenChange={vi.fn()} />)
+    render(<BlockPropertyDrawerSheet blockId={null} open onOpenChange={vi.fn()} />)
 
     expect(screen.getByTestId('property-drawer')).toBeInTheDocument()
     expect(screen.queryByTestId('property-block-id')).not.toBeInTheDocument()
@@ -61,7 +61,7 @@ describe('BlockPropertyDrawerSheet', () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
 
-    render(<BlockPropertyDrawerSheet blockId="BLOCK_1" open={true} onOpenChange={onOpenChange} />)
+    render(<BlockPropertyDrawerSheet blockId="BLOCK_1" open onOpenChange={onOpenChange} />)
 
     await user.click(screen.getByRole('button', { name: /close/i }))
 
@@ -70,7 +70,7 @@ describe('BlockPropertyDrawerSheet', () => {
 
   it('has no a11y violations when open', async () => {
     const { container } = render(
-      <BlockPropertyDrawerSheet blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />,
+      <BlockPropertyDrawerSheet blockId="BLOCK_1" open onOpenChange={vi.fn()} />,
     )
 
     const results = await axe(container)

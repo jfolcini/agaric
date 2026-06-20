@@ -60,14 +60,18 @@ function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
   if (syncState === 'offline') return 'bg-muted-foreground'
   if (!hasPeers) return 'bg-status-pending'
   switch (syncState) {
-    case 'idle':
+    case 'idle': {
       return 'bg-sync-idle'
-    case 'syncing':
+    }
+    case 'syncing': {
       return 'bg-sync-active'
-    case 'error':
+    }
+    case 'error': {
       return 'bg-destructive'
-    default:
+    }
+    default: {
       return 'bg-muted-foreground'
+    }
   }
 }
 

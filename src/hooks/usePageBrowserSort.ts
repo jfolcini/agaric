@@ -97,14 +97,18 @@ export function pageSortWireFor(sort: SortOption): PageSortWire {
     case 'alphabetical':
     case 'recent':
     case 'created':
-    case 'default':
+    case 'default': {
       return 'default'
-    case 'recently-modified':
+    }
+    case 'recently-modified': {
       return 'recently-modified'
-    case 'most-linked':
+    }
+    case 'most-linked': {
       return 'most-linked'
-    case 'most-content':
+    }
+    case 'most-content': {
       return 'most-content'
+    }
   }
 }
 

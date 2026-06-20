@@ -28,7 +28,7 @@ describe('ChevronToggle', () => {
   })
 
   it('applies rotate-90 when expanded', () => {
-    const { container } = render(<ChevronToggle isExpanded={true} />)
+    const { container } = render(<ChevronToggle isExpanded />)
 
     const svg = container.querySelector('svg')
     expect(svg).toBeInTheDocument()
@@ -37,7 +37,7 @@ describe('ChevronToggle', () => {
   })
 
   it('renders Loader2 spinner when loading is true', () => {
-    const { container } = render(<ChevronToggle isExpanded={false} loading={true} />)
+    const { container } = render(<ChevronToggle isExpanded={false} loading />)
 
     const svg = container.querySelector('svg')
     expect(svg).toBeInTheDocument()
@@ -48,7 +48,7 @@ describe('ChevronToggle', () => {
   })
 
   it('renders spinner instead of chevron when loading, even if expanded', () => {
-    const { container } = render(<ChevronToggle isExpanded={true} loading={true} />)
+    const { container } = render(<ChevronToggle isExpanded loading />)
 
     const svg = container.querySelector('svg')
     const classes = svg?.getAttribute('class') ?? ''
@@ -107,12 +107,7 @@ describe('ChevronToggle', () => {
 
   it('forwards data-testid and aria-* onto the spinner when loading', () => {
     const { container } = render(
-      <ChevronToggle
-        isExpanded={false}
-        loading={true}
-        data-testid="row-chevron"
-        aria-hidden="true"
-      />,
+      <ChevronToggle isExpanded={false} loading data-testid="row-chevron" aria-hidden="true" />,
     )
 
     const svg = container.querySelector('svg') as SVGElement
@@ -134,7 +129,7 @@ describe('ChevronToggle', () => {
   it('has no a11y violations when expanded', async () => {
     const { container } = render(
       <button type="button" aria-label="Toggle">
-        <ChevronToggle isExpanded={true} />
+        <ChevronToggle isExpanded />
       </button>,
     )
     const results = await axe(container)
@@ -144,7 +139,7 @@ describe('ChevronToggle', () => {
   it('has no a11y violations when loading', async () => {
     const { container } = render(
       <button type="button" aria-label="Toggle">
-        <ChevronToggle isExpanded={false} loading={true} />
+        <ChevronToggle isExpanded={false} loading />
       </button>,
     )
     const results = await axe(container)

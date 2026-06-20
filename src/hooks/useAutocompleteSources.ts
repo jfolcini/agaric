@@ -236,26 +236,31 @@ export function useAutocompleteSources(
     // value vocabulary; they carry a distinct anchor kind only so the
     // negation signal is preserved should negated-chip UX ever diverge.
     case 'state':
-    case 'notState':
+    case 'notState': {
       return { items: projectStatic(STATE_VALUES, anchor.query), loading: false }
+    }
     case 'priority':
-    case 'notPriority':
+    case 'notPriority': {
       return { items: projectStatic(priorityValues, anchor.query), loading: false }
+    }
     case 'due':
-    case 'scheduled':
+    case 'scheduled': {
       return { items: projectStatic(DATE_BUCKET_VALUES, anchor.query), loading: false }
+    }
     case 'pathInclude':
     case 'pathExclude': {
       const history = getPathHistory(spaceId)
       return { items: projectStatic(history, anchor.query), loading: false }
     }
-    case 'tag':
+    case 'tag': {
       return { items: tagItems, loading: tagLoading }
-    case 'propKey':
+    }
+    case 'propKey': {
       // `usePropertyKeysCache` returns the stable empty array until the
       // first fetch resolves; `loading: false` because the cache is
       // shared with the rest of the app and we don't own its lifecycle.
       return { items: projectStatic(propKeys, anchor.query), loading: false }
+    }
     case 'propValue': {
       // #1425 — merge the `select` definition's options (preferred, so the
       // canonical vocabulary leads) with the live usage-ranked values,
@@ -275,7 +280,8 @@ export function useAutocompleteSources(
         loading: false,
       }
     }
-    default:
+    default: {
       return { items: [], loading: false }
+    }
   }
 }

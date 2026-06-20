@@ -15,8 +15,7 @@
  */
 
 import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -41,14 +40,14 @@ beforeEach(() => {
 
 describe('SpaceOnboardingHint', () => {
   it('shows the banner on first render with open=true and ≤2 spaces', () => {
-    render(<SpaceOnboardingHint open={true} availableSpaceCount={2} />)
+    render(<SpaceOnboardingHint open availableSpaceCount={2} />)
     expect(screen.getByText(t('space.onboardingTitle'))).toBeInTheDocument()
     expect(screen.getByText(t('space.onboardingBody'))).toBeInTheDocument()
   })
 
   it('dismiss persists "true" to localStorage and unmounts the banner', async () => {
     const user = userEvent.setup()
-    render(<SpaceOnboardingHint open={true} availableSpaceCount={2} />)
+    render(<SpaceOnboardingHint open availableSpaceCount={2} />)
 
     await user.click(screen.getByRole('button', { name: t('space.onboardingDismiss') }))
 
@@ -60,7 +59,7 @@ describe('SpaceOnboardingHint', () => {
 
   it('subsequent mount with the flag set hides the banner', () => {
     localStorage.setItem(ONBOARDING_STORAGE_KEY, 'true')
-    render(<SpaceOnboardingHint open={true} availableSpaceCount={2} />)
+    render(<SpaceOnboardingHint open availableSpaceCount={2} />)
     expect(screen.queryByText(t('space.onboardingTitle'))).not.toBeInTheDocument()
   })
 
@@ -70,7 +69,7 @@ describe('SpaceOnboardingHint', () => {
   })
 
   it('renders nothing when more than 2 spaces exist', () => {
-    render(<SpaceOnboardingHint open={true} availableSpaceCount={3} />)
+    render(<SpaceOnboardingHint open availableSpaceCount={3} />)
     expect(screen.queryByText(t('space.onboardingTitle'))).not.toBeInTheDocument()
   })
 
@@ -103,7 +102,7 @@ describe('SpaceOnboardingHint', () => {
   // for the storage key must not appear in the component module. The
   // key is now a module-level const.
   it('source no longer imports i18n; storage key is a module-level const', () => {
-    const here = dirname(fileURLToPath(import.meta.url))
+    const here = import.meta.dirname
     const src = readFileSync(join(here, '..', 'SpaceOnboardingHint.tsx'), 'utf8')
     // No import of the i18n module — the runtime-i18n key derivation
     // is gone for good.

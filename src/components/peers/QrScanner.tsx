@@ -44,16 +44,17 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
   const hasScannedRef = useRef(false)
 
   // Cleanup scanner on unmount to prevent camera leaks
-  useEffect(() => {
-    return () => {
+  useEffect(
+    () => () => {
       if (scannerInstanceRef.current) {
         scannerInstanceRef.current.stop().catch((err: unknown) => {
           logger.warn('QrScanner', 'Failed to stop scanner on unmount', undefined, err)
         })
         scannerInstanceRef.current = null
       }
-    }
-  }, [])
+    },
+    [],
+  )
 
   const startScanning = async () => {
     try {

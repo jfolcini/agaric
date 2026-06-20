@@ -175,21 +175,26 @@ export async function dispatchQuery(
   spaceId?: string | null,
 ): Promise<QueryFetchResult> {
   switch (parsed.type) {
-    case 'tag':
+    case 'tag': {
       return await fetchTagQuery(parsed.params, pageCursor, spaceId)
-    case 'property':
+    }
+    case 'property': {
       return await fetchPropertyQuery(parsed.params, pageCursor, spaceId)
-    case 'filtered':
+    }
+    case 'filtered': {
       return await fetchFilteredQuery(
         parsed.propertyFilters,
         parsed.tagFilters,
         spaceId,
         pageCursor,
       )
-    case 'backlinks':
+    }
+    case 'backlinks': {
       return await fetchBacklinksQuery(parsed.params, pageCursor, spaceId)
-    default:
+    }
+    default: {
       throw new QueryValidationError(`Unknown query type: ${parsed.type}`)
+    }
   }
 }
 

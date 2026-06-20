@@ -164,7 +164,7 @@ export function DuePanel({
     return GROUP_ORDER.map((state) => {
       const items = visibleBlocks
         .filter((b) => b.todo_state === state)
-        .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority))
+        .toSorted((a, b) => priorityRank(a.priority) - priorityRank(b.priority))
       return {
         state,
         label: state ? (groupLabels[state] ?? state) : t('duePanel.groupOther'),
@@ -307,7 +307,7 @@ export function DuePanel({
       if (due > 0) parts.push(`${due} ${t('duePanel.filterDue')}`)
       if (scheduled > 0) parts.push(`${scheduled} ${t('duePanel.filterScheduled')}`)
       if (property > 0) parts.push(`${property} ${t('duePanel.filterProperties')}`)
-      if (parts.length > 1) return parts.join(' \u00b7 ')
+      if (parts.length > 1) return parts.join(' \u00B7 ')
     }
     return visibleCount === 1
       ? t('duePanel.headerOne')

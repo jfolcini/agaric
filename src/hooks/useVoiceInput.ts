@@ -128,8 +128,8 @@ export function useVoiceInput({ onResult, lang }: UseVoiceInputOptions): UseVoic
 
   // Tear down any live session on unmount so a late `onend`/`onresult`
   // can't fire into an unmounted component.
-  useEffect(() => {
-    return () => {
+  useEffect(
+    () => () => {
       const rec = recognitionRef.current
       if (rec == null) return
       rec.onresult = null
@@ -142,8 +142,9 @@ export function useVoiceInput({ onResult, lang }: UseVoiceInputOptions): UseVoic
         // Best-effort teardown.
       }
       recognitionRef.current = null
-    }
-  }, [])
+    },
+    [],
+  )
 
   return { supported, listening, start, stop }
 }

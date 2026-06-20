@@ -95,11 +95,13 @@ function hasPropertySummary(
 ): string {
   const { key, predicate } = filter
   switch (predicate.type) {
-    case 'Exists':
+    case 'Exists': {
       return t('pageBrowser.filter.summaryHasProperty', { key })
-    case 'NotExists':
+    }
+    case 'NotExists': {
       return t('pageBrowser.filter.summaryNotHasProperty', { key })
-    default:
+    }
+    default: {
       // Eq / Ne both carry a value; the operand is `predicate.value.value`
       // for either Text or Ref (D26 — no Text/Ref ternary needed). D24 ships
       // the full op selector, so the Pages popover emits both Eq (`=`) and Ne
@@ -109,6 +111,7 @@ function hasPropertySummary(
         op: predicate.type === 'Ne' ? '≠' : '=',
         value: predicate.value.value,
       })
+    }
   }
 }
 
@@ -120,25 +123,32 @@ function hasPropertySummary(
  */
 function datePredicateSummary(prefix: string, predicate: DatePredicate, t: TFunction): string {
   switch (predicate.type) {
-    case 'IsNull':
+    case 'IsNull': {
       return t('pageBrowser.filter.summaryDateIsNull', { prefix })
-    case 'Before':
+    }
+    case 'Before': {
       return t('pageBrowser.filter.summaryDateBefore', { prefix, date: predicate.date })
-    case 'After':
+    }
+    case 'After': {
       return t('pageBrowser.filter.summaryDateAfter', { prefix, date: predicate.date })
-    case 'OnOrBefore':
+    }
+    case 'OnOrBefore': {
       return t('pageBrowser.filter.summaryDateOnOrBefore', { prefix, date: predicate.date })
-    case 'OnOrAfter':
+    }
+    case 'OnOrAfter': {
       return t('pageBrowser.filter.summaryDateOnOrAfter', { prefix, date: predicate.date })
-    case 'On':
+    }
+    case 'On': {
       return t('pageBrowser.filter.summaryDateOn', { prefix, date: predicate.date })
-    default:
+    }
+    default: {
       // Between
       return t('pageBrowser.filter.summaryDateBetween', {
         prefix,
         from: predicate.from,
         to: predicate.to,
       })
+    }
   }
 }
 
@@ -190,14 +200,18 @@ function createdSummary(
  */
 export function pageFilterChipTitle(filter: FilterPrimitive, t: TFunction): string | undefined {
   switch (filter.type) {
-    case 'Orphan':
+    case 'Orphan': {
       return t('pageBrowser.filter.facetOrphanDesc')
-    case 'Stub':
+    }
+    case 'Stub': {
       return t('pageBrowser.filter.facetStubDesc')
-    case 'HasNoInboundLinks':
+    }
+    case 'HasNoInboundLinks': {
       return t('pageBrowser.filter.facetHasNoInboundLinksDesc')
-    default:
+    }
+    default: {
       return undefined
+    }
   }
 }
 
@@ -215,63 +229,81 @@ export function pageFilterSummary(
   refResolver?: (id: string) => string,
 ): string {
   switch (filter.type) {
-    case 'Tag':
+    case 'Tag': {
       return t('pageBrowser.filter.summaryTag', {
         tag: tagResolver ? tagResolver(filter.tag) : filter.tag,
       })
-    case 'PathGlob':
+    }
+    case 'PathGlob': {
       // D24 ships the path-exclude toggle, so the Pages popover emits both the
       // `exclude: false` ("path") and `exclude: true` ("not path") variants.
       return filter.exclude
         ? t('pageBrowser.filter.summaryPathExclude', { pattern: filter.pattern })
         : t('pageBrowser.filter.summaryPath', { pattern: filter.pattern })
-    case 'HasProperty':
+    }
+    case 'HasProperty': {
       return hasPropertySummary(filter, t)
-    case 'LastEdited':
+    }
+    case 'LastEdited': {
       return lastEditedSummary(filter.spec, t)
-    case 'Space':
+    }
+    case 'Space': {
       return t('pageBrowser.filter.summarySpace')
-    case 'Priority':
+    }
+    case 'Priority': {
       return t('pageBrowser.filter.summaryPriority', { priority: filter.priority })
-    case 'State':
+    }
+    case 'State': {
       return stateSummary(filter, t)
-    case 'BlockType':
+    }
+    case 'BlockType': {
       return blockTypeSummary(filter, t)
-    case 'DueDate':
+    }
+    case 'DueDate': {
       return datePredicateSummary(t('pageBrowser.filter.summaryDuePrefix'), filter.predicate, t)
-    case 'Scheduled':
+    }
+    case 'Scheduled': {
       return datePredicateSummary(
         t('pageBrowser.filter.summaryScheduledPrefix'),
         filter.predicate,
         t,
       )
-    case 'Created':
+    }
+    case 'Created': {
       return createdSummary(filter, t)
-    case 'LinksTo':
+    }
+    case 'LinksTo': {
       // #1478 — `target` is a ULID; resolve to the page title (same resolver the
       // grouped-results headers use, #1447), falling back to the raw id.
       return t('pageBrowser.filter.summaryLinksTo', {
         target: refResolver ? refResolver(filter.target) : filter.target,
       })
-    case 'LinkedFrom':
+    }
+    case 'LinkedFrom': {
       return t('pageBrowser.filter.summaryLinkedFrom', {
         source: refResolver ? refResolver(filter.source) : filter.source,
       })
-    case 'HasParentMatching':
+    }
+    case 'HasParentMatching': {
       // #1478 — the matcher is a nested FilterExpr; the chip is a terse
       // "has parent matching (…)" placeholder (the full sub-expr is built/edited
       // via the nested mini-builder in the popover, not re-rendered in the chip).
       return t('pageBrowser.filter.summaryHasParentMatching')
-    case 'Orphan':
+    }
+    case 'Orphan': {
       return t('pageBrowser.filter.facetOrphan')
-    case 'Stub':
+    }
+    case 'Stub': {
       return t('pageBrowser.filter.facetStub')
-    case 'HasNoInboundLinks':
+    }
+    case 'HasNoInboundLinks': {
       return t('pageBrowser.filter.facetHasNoInboundLinks')
-    default:
+    }
+    default: {
       // Search-only primitives never reach the Pages surface (allow-list
       // gate), but keep the switch exhaustive for type safety.
       return t('pageBrowser.filter.summaryUnknown')
+    }
   }
 }
 

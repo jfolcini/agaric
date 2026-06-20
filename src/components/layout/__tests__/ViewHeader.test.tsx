@@ -76,7 +76,7 @@ describe('ViewHeader', () => {
       )
     }
 
-    const { rerender, queryByTestId } = render(<Harness show={true} />)
+    const { rerender, queryByTestId } = render(<Harness show />)
     expect(queryByTestId('header-child')).toBeInTheDocument()
 
     rerender(<Harness show={false} />)

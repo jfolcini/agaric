@@ -80,32 +80,31 @@ const FeaturePageHeader = ({
   actions,
   kebab,
   className,
-}: FeaturePageHeaderProps) => {
-  return (
-    <header
-      ref={ref}
-      data-slot="feature-page-header"
-      className={cn('feature-page-header flex flex-col gap-2', className)}
-    >
-      {breadcrumb != null && <div data-slot="feature-page-header-breadcrumb">{breadcrumb}</div>}
-      <div className="flex items-center gap-2">
-        <h1 data-slot="feature-page-header-title" className="flex-1 truncate text-lg font-semibold">
-          {title}
-        </h1>
-        {actions != null && (
-          <div data-slot="feature-page-header-actions" className="flex items-center gap-1">
-            {actions}
-          </div>
-        )}
-        {kebab != null && (
-          <div data-slot="feature-page-header-kebab" className="flex items-center">
-            {kebab}
-          </div>
-        )}
-      </div>
-    </header>
-  )
-}
+}: FeaturePageHeaderProps) => (
+  <header
+    ref={ref}
+    data-slot="feature-page-header"
+    className={cn('feature-page-header flex flex-col gap-2', className)}
+  >
+    {breadcrumb != null && <div data-slot="feature-page-header-breadcrumb">{breadcrumb}</div>}
+    <div className="flex items-center gap-2">
+      <h1 data-slot="feature-page-header-title" className="flex-1 truncate text-lg font-semibold">
+        {title}
+      </h1>
+      {actions != null && (
+        <div data-slot="feature-page-header-actions" className="flex items-center gap-1">
+          {actions}
+        </div>
+      )}
+      {kebab != null && (
+        <div data-slot="feature-page-header-kebab" className="flex items-center">
+          {kebab}
+        </div>
+      )}
+    </div>
+  </header>
+)
+
 FeaturePageHeader.displayName = 'FeaturePageHeader'
 
 export { FeaturePageHeader }

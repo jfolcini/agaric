@@ -234,7 +234,7 @@ function scanLiteralFolded(
     if (start !== undefined && end !== undefined && (!wholeWord || isWholeWord(text, start, end))) {
       // Two folded offsets can map to the same original span (a match
       // starting inside a multi-unit fold) — emit each span once.
-      const last = out[out.length - 1]
+      const last = out.at(-1)
       if (!last || last.start !== start || last.end !== end) {
         out.push({ start, end })
       }

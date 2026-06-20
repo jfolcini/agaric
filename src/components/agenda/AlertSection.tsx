@@ -76,7 +76,7 @@ export function AlertSection({
       <SectionTitle color={config.titleColor} label={title} count={blocks.length} />
       <ul className="space-y-1">
         {blocks
-          .sort((a, b) => (a.due_date ?? '').localeCompare(b.due_date ?? ''))
+          .toSorted((a, b) => (a.due_date ?? '').localeCompare(b.due_date ?? ''))
           .map((block) => {
             const pageTitle = block.page_id ? pageTitles.get(block.page_id) : undefined
             const dueDate = block.due_date ? new Date(`${block.due_date}T00:00:00`) : null

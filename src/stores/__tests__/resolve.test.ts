@@ -66,10 +66,9 @@ describe('preload', () => {
         if (!params?.['cursor']) {
           // First page
           return { items: [mockPages[0]], next_cursor: 'cursor_1', has_more: true }
-        } else {
-          // Second page
-          return { items: [mockPages[1]], next_cursor: null, has_more: false }
         }
+        // Second page
+        return { items: [mockPages[1]], next_cursor: null, has_more: false }
       }
       if (cmd === 'list_all_tags_in_space') return mockTags
       return null

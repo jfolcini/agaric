@@ -177,38 +177,51 @@ export async function loadMoreUnfilteredAgenda(
 /** Map a due/scheduled date filter value to a date-utils preset string. */
 export function toFutureDatePreset(value: string): string | null {
   switch (value) {
-    case 'Today':
+    case 'Today': {
       return 'today'
-    case 'This week':
+    }
+    case 'This week': {
       return 'this-week'
-    case 'This month':
+    }
+    case 'This month': {
       return 'this-month'
-    case 'Next 7 days':
+    }
+    case 'Next 7 days': {
       return 'next-7-days'
-    case 'Next 14 days':
+    }
+    case 'Next 14 days': {
       return 'next-14-days'
-    case 'Next 30 days':
+    }
+    case 'Next 30 days': {
       return 'next-30-days'
-    default:
+    }
+    default: {
       return null
+    }
   }
 }
 
 /** Map a completed/created date filter value to a date-utils preset string. */
 export function toPastDatePreset(value: string): string | null {
   switch (value) {
-    case 'Today':
+    case 'Today': {
       return 'today'
-    case 'This week':
+    }
+    case 'This week': {
       return 'this-week'
-    case 'This month':
+    }
+    case 'This month': {
       return 'this-month'
-    case 'Last 7 days':
+    }
+    case 'Last 7 days': {
       return 'last-7-days'
-    case 'Last 30 days':
+    }
+    case 'Last 30 days': {
       return 'last-30-days'
-    default:
+    }
+    default: {
       return null
+    }
   }
 }
 
@@ -406,7 +419,7 @@ function translateFilters(filters: AgendaFilter[], today: Date): TranslatedFilte
   const out: TranslatedFilters = { propertyFilters: [], postFilters: [] }
   for (const filter of filters) {
     switch (filter.dimension) {
-      case 'status':
+      case 'status': {
         if (filter.values.length > 0) {
           out.propertyFilters.push({
             key: 'todo_state',
@@ -415,30 +428,38 @@ function translateFilters(filters: AgendaFilter[], today: Date): TranslatedFilte
           })
         }
         break
-      case 'priority':
+      }
+      case 'priority': {
         if (filter.values.length > 0) {
           out.propertyFilters.push({ key: 'priority', operator: 'eq', valueTextIn: filter.values })
         }
         break
-      case 'dueDate':
+      }
+      case 'dueDate': {
         appendFutureDateDimension(filter.values, 'due_date', today, out)
         break
-      case 'scheduledDate':
+      }
+      case 'scheduledDate': {
         appendFutureDateDimension(filter.values, 'scheduled_date', today, out)
         break
-      case 'completedDate':
+      }
+      case 'completedDate': {
         appendPastDateDimension(filter.values, 'completed_at', today, out)
         break
-      case 'createdDate':
+      }
+      case 'createdDate': {
         appendPastDateDimension(filter.values, 'created_at', today, out)
         break
-      case 'property':
+      }
+      case 'property': {
         appendCustomPropertyDimension(filter.values, out)
         break
-      case 'tag':
+      }
+      case 'tag': {
         // Handled separately by `resolveTagFilters` (needs a `listTagsByPrefix`
         // round-trip per prefix to map names → tag_ids).
         break
+      }
     }
   }
   return out

@@ -46,7 +46,7 @@ function backendMove(
   // Order the target parent's other children by current (position, id).
   const others = rows
     .filter((b) => b.id !== blockId && (b.parent_id ?? null) === parentId)
-    .sort((a, b) => {
+    .toSorted((a, b) => {
       const pa = a.position ?? Number.MAX_SAFE_INTEGER
       const pb = b.position ?? Number.MAX_SAFE_INTEGER
       if (pa !== pb) return pa - pb
@@ -66,7 +66,7 @@ function backendMove(
   if (oldParentId !== parentId) {
     rows
       .filter((b) => b.id !== blockId && (b.parent_id ?? null) === oldParentId)
-      .sort((a, b) => {
+      .toSorted((a, b) => {
         const pa = a.position ?? Number.MAX_SAFE_INTEGER
         const pb = b.position ?? Number.MAX_SAFE_INTEGER
         if (pa !== pb) return pa - pb

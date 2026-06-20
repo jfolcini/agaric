@@ -17,7 +17,11 @@ import { useBlockStore } from '../stores/blocks'
 import { keyFor, useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
 
-export type TemplatePagePreview = { id: string; content: string; preview: string | null }
+export interface TemplatePagePreview {
+  id: string
+  content: string
+  preview: string | null
+}
 
 export interface UseTemplateSelectionParams {
   focusedBlockId: string | null

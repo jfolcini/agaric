@@ -260,25 +260,32 @@ function predicateToGraphHasDate(predicate: DatePredicate): boolean {
  */
 export function graphFilterToCanonical(filter: GraphFilter): FilterPredicate {
   switch (filter.type) {
-    case 'tag':
+    case 'tag': {
       // The graph references tags by RESOLVED id (it filters node.tag_ids).
       // A multi-id graph tag filter is OR over ids; the canonical `tag`
       // predicate is single-id, so a multi-id graph filter expands to one
       // predicate per id at the list level (see `graphFiltersToCanonical`).
       // This single-filter helper only ever sees the already-expanded form.
       return { kind: 'tag', by: 'id', tagId: filter.tagIds[0] ?? '' }
-    case 'status':
+    }
+    case 'status': {
       return { kind: 'status', values: [...filter.values], isNull: false, exclude: false }
-    case 'priority':
+    }
+    case 'priority': {
       return { kind: 'priority', values: [...filter.values], exclude: false }
-    case 'hasDueDate':
+    }
+    case 'hasDueDate': {
       return { kind: 'date', field: 'due', predicate: graphHasDateToPredicate(filter.value) }
-    case 'hasScheduledDate':
+    }
+    case 'hasScheduledDate': {
       return { kind: 'date', field: 'scheduled', predicate: graphHasDateToPredicate(filter.value) }
-    case 'hasBacklinks':
+    }
+    case 'hasBacklinks': {
       return { kind: 'hasBacklinks', value: filter.value }
-    case 'excludeTemplates':
+    }
+    case 'excludeTemplates': {
       return { kind: 'excludeTemplates' }
+    }
   }
 }
 
@@ -289,29 +296,36 @@ export function graphFilterToCanonical(filter: GraphFilter): FilterPredicate {
  */
 export function canonicalToGraphFilter(predicate: FilterPredicate): GraphFilter | null {
   switch (predicate.kind) {
-    case 'tag':
+    case 'tag': {
       return predicate.by === 'id' ? { type: 'tag', tagIds: [predicate.tagId] } : null
-    case 'status':
+    }
+    case 'status': {
       // Graph status is a plain multi-value membership; the canonical
       // isNull/exclude flags are graph-inexpressible, so a non-default value
       // there is not a graph filter.
       return predicate.isNull || predicate.exclude
         ? null
         : { type: 'status', values: [...predicate.values] }
-    case 'priority':
+    }
+    case 'priority': {
       return predicate.exclude ? null : { type: 'priority', values: [...predicate.values] }
-    case 'date':
+    }
+    case 'date': {
       if (predicate.field === 'due')
         return { type: 'hasDueDate', value: predicateToGraphHasDate(predicate.predicate) }
       if (predicate.field === 'scheduled')
         return { type: 'hasScheduledDate', value: predicateToGraphHasDate(predicate.predicate) }
       return null
-    case 'hasBacklinks':
+    }
+    case 'hasBacklinks': {
       return { type: 'hasBacklinks', value: predicate.value }
-    case 'excludeTemplates':
+    }
+    case 'excludeTemplates': {
       return { type: 'excludeTemplates', value: true }
-    default:
+    }
+    default: {
       return null
+    }
   }
 }
 
@@ -371,57 +385,72 @@ export function canonicalToGraphFilters(predicates: readonly FilterPredicate[]):
  */
 export function backlinkFilterToCanonical(filter: BacklinkFilter): FilterPredicate | null {
   switch (filter.type) {
-    case 'PropertyText':
+    case 'PropertyText': {
       return {
         kind: 'property',
         key: filter.key,
         predicate: comparePredicate(filter.op, { type: 'Text', value: filter.value }),
         exclude: false,
       }
-    case 'PropertyNum':
+    }
+    case 'PropertyNum': {
       return {
         kind: 'property',
         key: filter.key,
         predicate: comparePredicate(filter.op, { type: 'Num', value: filter.value }),
         exclude: false,
       }
-    case 'PropertyDate':
+    }
+    case 'PropertyDate': {
       return {
         kind: 'property',
         key: filter.key,
         predicate: comparePredicate(filter.op, { type: 'Date', value: filter.value }),
         exclude: false,
       }
-    case 'PropertyIsSet':
+    }
+    case 'PropertyIsSet': {
       return { kind: 'property', key: filter.key, predicate: { type: 'Exists' }, exclude: false }
-    case 'PropertyIsEmpty':
+    }
+    case 'PropertyIsEmpty': {
       return { kind: 'property', key: filter.key, predicate: { type: 'NotExists' }, exclude: false }
-    case 'TodoState':
+    }
+    case 'TodoState': {
       return { kind: 'status', values: [filter.state], isNull: false, exclude: false }
-    case 'Priority':
+    }
+    case 'Priority': {
       return { kind: 'priority', values: [filter.level], exclude: false }
-    case 'DueDate':
+    }
+    case 'DueDate': {
       return {
         kind: 'date',
         field: 'due',
         predicate: compareOpToDatePredicate(filter.op, filter.value),
       }
-    case 'HasTag':
+    }
+    case 'HasTag': {
       return { kind: 'tag', by: 'id', tagId: filter.tag_id }
-    case 'HasTagPrefix':
+    }
+    case 'HasTagPrefix': {
       return { kind: 'tagPrefix', prefix: filter.prefix }
-    case 'Contains':
+    }
+    case 'Contains': {
       return { kind: 'contains', query: filter.query }
-    case 'CreatedInRange':
+    }
+    case 'CreatedInRange': {
       return { kind: 'createdRange', after: filter.after, before: filter.before }
-    case 'BlockType':
+    }
+    case 'BlockType': {
       return { kind: 'blockType', values: [filter.block_type], exclude: false }
-    case 'SourcePage':
+    }
+    case 'SourcePage': {
       return { kind: 'sourcePage', included: [...filter.included], excluded: [...filter.excluded] }
+    }
     case 'And':
     case 'Or':
-    case 'Not':
+    case 'Not': {
       return null
+    }
   }
 }
 
@@ -433,64 +462,87 @@ export function backlinkFilterToCanonical(filter: BacklinkFilter): FilterPredica
  */
 function comparePredicate(op: CompareOp, value: PropertyValue): PropertyPredicate {
   switch (op) {
-    case 'Eq':
+    case 'Eq': {
       return { type: 'Eq', value }
-    case 'Neq':
+    }
+    case 'Neq': {
       return { type: 'Ne', value }
-    case 'Lt':
+    }
+    case 'Lt': {
       return { type: 'Lt', value }
-    case 'Gt':
+    }
+    case 'Gt': {
       return { type: 'Gt', value }
-    case 'Lte':
+    }
+    case 'Lte': {
       return { type: 'Lte', value }
-    case 'Gte':
+    }
+    case 'Gte': {
       return { type: 'Gte', value }
-    case 'Contains':
+    }
+    case 'Contains': {
       return { type: 'Contains', value }
-    case 'StartsWith':
+    }
+    case 'StartsWith': {
       return { type: 'StartsWith', value }
+    }
   }
 }
 
 /** Inverse of {@link comparePredicate} — recover the backlink `CompareOp`. */
 function predicateCompareOp(type: PropertyPredicate['type']): CompareOp | null {
   switch (type) {
-    case 'Eq':
+    case 'Eq': {
       return 'Eq'
-    case 'Ne':
+    }
+    case 'Ne': {
       return 'Neq'
-    case 'Lt':
+    }
+    case 'Lt': {
       return 'Lt'
-    case 'Gt':
+    }
+    case 'Gt': {
       return 'Gt'
-    case 'Lte':
+    }
+    case 'Lte': {
       return 'Lte'
-    case 'Gte':
+    }
+    case 'Gte': {
       return 'Gte'
-    case 'Contains':
+    }
+    case 'Contains': {
       return 'Contains'
-    case 'StartsWith':
+    }
+    case 'StartsWith': {
       return 'StartsWith'
+    }
     case 'Exists':
-    case 'NotExists':
+    case 'NotExists': {
       return null
+    }
   }
 }
 
 function compareOpToDatePredicate(op: CompareOp, date: string): DatePredicate {
   switch (op) {
-    case 'Lt':
+    case 'Lt': {
       return { type: 'Before', date }
-    case 'Lte':
+    }
+    case 'Lte': {
       return { type: 'OnOrBefore', date }
-    case 'Gt':
+    }
+    case 'Gt': {
       return { type: 'After', date }
-    case 'Gte':
+    }
+    case 'Gte': {
       return { type: 'OnOrAfter', date }
-    case 'Eq':
+    }
+    case 'Eq': {
       return { type: 'On', date }
-    default:
+    }
+    default: {
       return { type: 'On', date }
+    }
   }
 }
 
@@ -507,19 +559,25 @@ function datePredicateToBacklinkDue(
   predicate: DatePredicate,
 ): { op: CompareOp; value: string } | null {
   switch (predicate.type) {
-    case 'Before':
+    case 'Before': {
       return { op: 'Lt', value: predicate.date }
-    case 'OnOrBefore':
+    }
+    case 'OnOrBefore': {
       return { op: 'Lte', value: predicate.date }
-    case 'After':
+    }
+    case 'After': {
       return { op: 'Gt', value: predicate.date }
-    case 'OnOrAfter':
+    }
+    case 'OnOrAfter': {
       return { op: 'Gte', value: predicate.date }
-    case 'On':
+    }
+    case 'On': {
       return { op: 'Eq', value: predicate.date }
+    }
     case 'IsNull':
-    case 'Between':
+    case 'Between': {
       return null
+    }
   }
 }
 
@@ -537,8 +595,9 @@ function datePredicateToBacklinkDue(
  */
 export function canonicalToBacklinkFilter(predicate: FilterPredicate): BacklinkFilter | null {
   switch (predicate.kind) {
-    case 'property':
+    case 'property': {
       return canonicalPropertyToBacklink(predicate.key, predicate.predicate)
+    }
     case 'status': {
       // The backlink builder routes status through a `PropertyText`/
       // `PropertyIsEmpty` leaf (handled by the `property` kind above), so the
@@ -565,28 +624,34 @@ export function canonicalToBacklinkFilter(predicate: FilterPredicate): BacklinkF
       const due = datePredicateToBacklinkDue(predicate.predicate)
       return due ? { type: 'DueDate', op: due.op, value: due.value } : null
     }
-    case 'createdRange':
+    case 'createdRange': {
       return { type: 'CreatedInRange', after: predicate.after, before: predicate.before }
-    case 'tag':
+    }
+    case 'tag': {
       return predicate.by === 'id' ? { type: 'HasTag', tag_id: predicate.tagId } : null
-    case 'tagPrefix':
+    }
+    case 'tagPrefix': {
       return { type: 'HasTagPrefix', prefix: predicate.prefix }
-    case 'contains':
+    }
+    case 'contains': {
       return { type: 'Contains', query: predicate.query }
+    }
     case 'blockType': {
       const [blockType] = predicate.values
       return predicate.exclude || predicate.values.length !== 1 || blockType === undefined
         ? null
         : { type: 'BlockType', block_type: blockType }
     }
-    case 'sourcePage':
+    case 'sourcePage': {
       return {
         type: 'SourcePage',
         included: [...predicate.included],
         excluded: [...predicate.excluded],
       }
-    default:
+    }
+    default: {
       return null
+    }
   }
 }
 
@@ -606,16 +671,20 @@ function canonicalPropertyToBacklink(
   if (op === null) return null
   const value = predicate.value
   switch (value.type) {
-    case 'Text':
+    case 'Text': {
       return { type: 'PropertyText', key, op, value: value.value }
-    case 'Num':
+    }
+    case 'Num': {
       return { type: 'PropertyNum', key, op, value: value.value }
-    case 'Date':
+    }
+    case 'Date': {
       return { type: 'PropertyDate', key, op, value: value.value }
-    case 'Ref':
+    }
+    case 'Ref': {
       // The backlink builder never emits a `Ref` property value; it has no
       // backlink leaf to reconstruct, so drop it rather than guess.
       return null
+    }
   }
 }
 
@@ -632,52 +701,72 @@ function canonicalPropertyToBacklink(
  */
 export function filterPrimitiveToCanonical(filter: FilterPrimitive): FilterPredicate | null {
   switch (filter.type) {
-    case 'Tag':
+    case 'Tag': {
       return { kind: 'tag', by: 'name', name: filter.tag }
-    case 'PathGlob':
+    }
+    case 'PathGlob': {
       return { kind: 'pathGlob', pattern: filter.pattern, exclude: filter.exclude }
-    case 'HasProperty':
+    }
+    case 'HasProperty': {
       return { kind: 'property', key: filter.key, predicate: filter.predicate, exclude: false }
-    case 'LastEdited':
+    }
+    case 'LastEdited': {
       return { kind: 'lastEdited', spec: filter.spec }
-    case 'Space':
+    }
+    case 'Space': {
       return { kind: 'space', spaceId: filter.space_id }
-    case 'Priority':
+    }
+    case 'Priority': {
       return { kind: 'priority', values: [filter.priority], exclude: false }
-    case 'State':
+    }
+    case 'State': {
       return {
         kind: 'status',
         values: [...filter.values],
         isNull: filter.is_null ?? false,
         exclude: filter.exclude ?? false,
       }
-    case 'BlockType':
+    }
+    case 'BlockType': {
       return { kind: 'blockType', values: [...filter.values], exclude: filter.exclude }
-    case 'DueDate':
+    }
+    case 'DueDate': {
       return { kind: 'date', field: 'due', predicate: filter.predicate }
-    case 'Scheduled':
+    }
+    case 'Scheduled': {
       return { kind: 'date', field: 'scheduled', predicate: filter.predicate }
-    case 'Created':
+    }
+    case 'Created': {
       return { kind: 'createdRange', after: filter.after, before: filter.before }
-    case 'LinksTo':
+    }
+    case 'LinksTo': {
       return { kind: 'linksTo', target: filter.target }
-    case 'LinkedFrom':
+    }
+    case 'LinkedFrom': {
       return { kind: 'linkedFrom', source: filter.source }
-    case 'Orphan':
+    }
+    case 'Orphan': {
       return { kind: 'orphan' }
-    case 'Stub':
+    }
+    case 'Stub': {
       return { kind: 'stub' }
-    case 'HasNoInboundLinks':
+    }
+    case 'HasNoInboundLinks': {
       return { kind: 'hasNoInboundLinks' }
-    case 'Regex':
+    }
+    case 'Regex': {
       return { kind: 'regex', pattern: filter.pattern }
-    case 'CaseSensitive':
+    }
+    case 'CaseSensitive': {
       return { kind: 'caseSensitive', enabled: filter.enabled }
-    case 'WholeWord':
+    }
+    case 'WholeWord': {
       return { kind: 'wholeWord', enabled: filter.enabled }
+    }
     case 'HasParentMatching':
-    case 'Snippet':
+    case 'Snippet': {
       return null
+    }
   }
 }
 
@@ -736,15 +825,19 @@ function searchDateToPredicate(value: DateFilterValue): DatePredicate {
 /** Inverse of {@link searchDateToPredicate}. Total over the predicates it emits. */
 function predicateToSearchDate(predicate: DatePredicate): DateFilterValue {
   switch (predicate.type) {
-    case 'Before':
+    case 'Before': {
       return { kind: 'op', op: '<', date: predicate.date }
-    case 'OnOrBefore':
+    }
+    case 'OnOrBefore': {
       return { kind: 'op', op: '<=', date: predicate.date }
-    case 'OnOrAfter':
+    }
+    case 'OnOrAfter': {
       return { kind: 'op', op: '>=', date: predicate.date }
-    case 'After':
+    }
+    case 'After': {
       return { kind: 'op', op: '>', date: predicate.date }
-    case 'On':
+    }
+    case 'On': {
       if (predicate.date.startsWith(SEARCH_NAMED_DATE_SENTINEL)) {
         return {
           kind: 'named',
@@ -752,11 +845,13 @@ function predicateToSearchDate(predicate: DatePredicate): DateFilterValue {
         }
       }
       return { kind: 'op', op: '=', date: predicate.date }
+    }
     case 'IsNull':
-    case 'Between':
+    case 'Between': {
       // The search surface never emits these; degenerate fallback keeps the
       // function total. (Not reachable from `searchDateToPredicate`.)
       return { kind: 'op', op: '=', date: '' }
+    }
   }
 }
 
@@ -859,14 +954,16 @@ export function canonicalToSearchProjection(
   }
   for (const p of predicates) {
     switch (p.kind) {
-      case 'tag':
+      case 'tag': {
         if (p.by === 'name') projection.tagNames.push(p.name)
         break
-      case 'pathGlob':
+      }
+      case 'pathGlob': {
         if (p.exclude) projection.excludePageGlobs.push(p.pattern)
         else projection.includePageGlobs.push(p.pattern)
         break
-      case 'status':
+      }
+      case 'status': {
         // Each search state token is a single-value canonical `status`
         // predicate; flatten them back into the flat projection arrays.
         for (const v of p.values) {
@@ -874,18 +971,21 @@ export function canonicalToSearchProjection(
           else projection.stateFilter.push(v)
         }
         break
-      case 'priority':
+      }
+      case 'priority': {
         for (const v of p.values) {
           if (p.exclude) projection.excludedPriorityFilter.push(v)
           else projection.priorityFilter.push(v)
         }
         break
-      case 'date':
+      }
+      case 'date': {
         if (p.field === 'due') projection.dueFilter = predicateToSearchDate(p.predicate)
         else if (p.field === 'scheduled')
           projection.scheduledFilter = predicateToSearchDate(p.predicate)
         break
-      case 'property':
+      }
+      case 'property': {
         if (p.exclude)
           projection.excludedPropertyFilters.push({
             key: p.key,
@@ -897,9 +997,11 @@ export function canonicalToSearchProjection(
             value: predicateToSearchPropValue(p.predicate),
           })
         break
-      default:
+      }
+      default: {
         // Outside the search allow-list — dropped.
         break
+      }
     }
   }
   return projection
@@ -983,53 +1085,72 @@ function canonicalDateToFilterPrimitive(
 
 export function canonicalToFilterPrimitive(predicate: FilterPredicate): FilterPrimitive | null {
   switch (predicate.kind) {
-    case 'tag':
+    case 'tag': {
       return canonicalTagToFilterPrimitive(predicate)
-    case 'pathGlob':
+    }
+    case 'pathGlob': {
       return { type: 'PathGlob', pattern: predicate.pattern, exclude: predicate.exclude }
-    case 'property':
+    }
+    case 'property': {
       return canonicalPropertyToFilterPrimitive(predicate)
-    case 'lastEdited':
+    }
+    case 'lastEdited': {
       return { type: 'LastEdited', spec: predicate.spec }
-    case 'space':
+    }
+    case 'space': {
       return { type: 'Space', space_id: predicate.spaceId }
-    case 'priority':
+    }
+    case 'priority': {
       return canonicalPriorityToFilterPrimitive(predicate)
-    case 'status':
+    }
+    case 'status': {
       return {
         type: 'State',
         values: [...predicate.values],
         is_null: predicate.isNull,
         exclude: predicate.exclude,
       }
-    case 'blockType':
+    }
+    case 'blockType': {
       return { type: 'BlockType', values: [...predicate.values], exclude: predicate.exclude }
-    case 'date':
+    }
+    case 'date': {
       return canonicalDateToFilterPrimitive(predicate)
-    case 'createdRange':
+    }
+    case 'createdRange': {
       return { type: 'Created', after: predicate.after, before: predicate.before }
-    case 'linksTo':
+    }
+    case 'linksTo': {
       return { type: 'LinksTo', target: predicate.target }
-    case 'linkedFrom':
+    }
+    case 'linkedFrom': {
       return { type: 'LinkedFrom', source: predicate.source }
-    case 'orphan':
+    }
+    case 'orphan': {
       return { type: 'Orphan' }
-    case 'stub':
+    }
+    case 'stub': {
       return { type: 'Stub' }
-    case 'hasNoInboundLinks':
+    }
+    case 'hasNoInboundLinks': {
       return { type: 'HasNoInboundLinks' }
-    case 'regex':
+    }
+    case 'regex': {
       return { type: 'Regex', pattern: predicate.pattern }
-    case 'caseSensitive':
+    }
+    case 'caseSensitive': {
       return { type: 'CaseSensitive', enabled: predicate.enabled }
-    case 'wholeWord':
+    }
+    case 'wholeWord': {
       return { type: 'WholeWord', enabled: predicate.enabled }
+    }
     // Other surfaces' vocabulary — no Pages/advanced wire leaf.
     case 'tagPrefix':
     case 'sourcePage':
     case 'contains':
     case 'hasBacklinks':
-    case 'excludeTemplates':
+    case 'excludeTemplates': {
       return null
+    }
   }
 }

@@ -68,7 +68,7 @@ describe('createSuggestionRenderer', () => {
     } as any)
 
     expect(mockReactRenderer).toHaveBeenCalled()
-    const lastCall = mockReactRenderer.mock.calls[mockReactRenderer.mock.calls.length - 1]
+    const lastCall = mockReactRenderer.mock.calls.at(-1)
     expect(lastCall?.[1].props.label).toBe('Tags')
 
     // Clean up popup
@@ -313,7 +313,7 @@ describe('positioning', () => {
     })
 
     const calls = mockedComputePosition.mock.calls
-    const lastCall = calls[calls.length - 1]
+    const lastCall = calls.at(-1)
     expect(lastCall?.[2]).toEqual({
       placement: 'bottom-start',
       middleware: [offset(4), flip({ padding: 8 }), shift({ padding: 8 })],
@@ -695,8 +695,7 @@ describe('outside-click dismissal', () => {
     renderer.onStart(makeProps())
 
     // Get the last ReactRenderer instance
-    const lastInstance: any =
-      mockReactRenderer.mock.instances[mockReactRenderer.mock.instances.length - 1]
+    const lastInstance: any = mockReactRenderer.mock.instances.at(-1)
     expect(lastInstance.destroy).not.toHaveBeenCalled()
 
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
@@ -826,8 +825,7 @@ describe('outside-click dismissal', () => {
     expect(removeSpy).toHaveBeenCalledWith('pointerdown', expect.any(Function), true)
 
     // Confirm renderer was destroyed too
-    const lastInstance: any =
-      mockReactRenderer.mock.instances[mockReactRenderer.mock.instances.length - 1]
+    const lastInstance: any = mockReactRenderer.mock.instances.at(-1)
     expect(lastInstance.destroy).toHaveBeenCalled()
   })
 })
@@ -1344,7 +1342,7 @@ describe('editable-combobox ARIA wiring (#1102)', () => {
     dom.setAttribute('role', 'textbox')
     dom.setAttribute('aria-multiline', 'true')
     dom.setAttribute('aria-label', 'Block editor')
-    document.body.appendChild(dom)
+    document.body.append(dom)
     const editor = { view: { dom, isDestroyed: false } } as any
     return { editor, dom }
   }
@@ -1366,7 +1364,7 @@ describe('editable-combobox ARIA wiring (#1102)', () => {
   /** The `onActiveDescendantChange` callback handed to the most recent SuggestionList. */
   function lastActiveDescendantCb(): (id: string | null) => void {
     const calls = mockReactRenderer.mock.calls
-    const last = calls[calls.length - 1]
+    const last = calls.at(-1)
     if (!last) throw new Error('ReactRenderer was never constructed')
     return (last[1] as any).props.onActiveDescendantChange
   }
@@ -1399,7 +1397,7 @@ describe('editable-combobox ARIA wiring (#1102)', () => {
     renderer.onStart(makeProps(editor))
 
     const calls = mockReactRenderer.mock.calls
-    const last = calls[calls.length - 1]
+    const last = calls.at(-1)
     if (!last) throw new Error('ReactRenderer was never constructed')
     expect((last[1] as any).props.listboxId).toBe('suggestion-listbox')
 

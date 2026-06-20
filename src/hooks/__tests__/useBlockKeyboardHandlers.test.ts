@@ -390,7 +390,7 @@ describe('useBlockKeyboardHandlers  scrollIntoView', () => {
     scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
     blockEl = document.createElement('div')
     blockEl.setAttribute('data-block-id', 'B')
-    document.body.appendChild(blockEl)
+    document.body.append(blockEl)
   })
 
   afterEach(() => {
@@ -432,7 +432,7 @@ describe('useBlockKeyboardHandlers  scrollIntoView', () => {
     // Create a second block element for the id-addressed path.
     const otherEl = document.createElement('div')
     otherEl.setAttribute('data-block-id', 'C')
-    document.body.appendChild(otherEl)
+    document.body.append(otherEl)
 
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockKeyboardHandlers(params))
@@ -452,7 +452,7 @@ describe('useBlockKeyboardHandlers  scrollIntoView', () => {
   it('scrolls the moved block into view after handleMoveDownById resolves', async () => {
     const otherEl = document.createElement('div')
     otherEl.setAttribute('data-block-id', 'A')
-    document.body.appendChild(otherEl)
+    document.body.append(otherEl)
 
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockKeyboardHandlers(params))

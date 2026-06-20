@@ -131,7 +131,7 @@ function emptyTabList(): Tab[] {
 
 /** Derive a tab label from its page stack. */
 function tabLabel(stack: PageEntry[]): string {
-  const top = stack[stack.length - 1]
+  const top = stack.at(-1)
   return top?.title ?? ''
 }
 
@@ -405,7 +405,7 @@ export const useTabsStore = create<TabsStore>()(
         useRecentPagesStore.getState().recordVisit({ pageId, title })
 
         const pageStack = activeTab.pageStack
-        const top = pageStack[pageStack.length - 1]
+        const top = pageStack.at(-1)
         if (top?.pageId === pageId) {
           // The page is already at the top of the stack, but the user may
           // have switched away to another view (Pages, Tags, Journal, …)

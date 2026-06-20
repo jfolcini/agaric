@@ -65,7 +65,7 @@ describe('CodeLanguageSelector', () => {
       render(
         <CodeLanguageSelector
           editor={makeEditor()}
-          isCodeBlock={true}
+          isCodeBlock
           currentLanguage=""
           onClose={vi.fn()}
         />,
@@ -81,7 +81,7 @@ describe('CodeLanguageSelector', () => {
       render(
         <CodeLanguageSelector
           editor={makeEditor()}
-          isCodeBlock={true}
+          isCodeBlock
           currentLanguage="rust"
           onClose={vi.fn()}
         />,
@@ -101,7 +101,7 @@ describe('CodeLanguageSelector', () => {
       render(
         <CodeLanguageSelector
           editor={makeEditor()}
-          isCodeBlock={true}
+          isCodeBlock
           currentLanguage=""
           onClose={vi.fn()}
         />,
@@ -133,7 +133,7 @@ describe('CodeLanguageSelector', () => {
       render(
         <CodeLanguageSelector
           editor={makeEditor()}
-          isCodeBlock={true}
+          isCodeBlock
           currentLanguage=""
           onClose={onClose}
         />,
@@ -161,7 +161,7 @@ describe('CodeLanguageSelector', () => {
         render(
           <CodeLanguageSelector
             editor={makeEditor()}
-            isCodeBlock={true}
+            isCodeBlock
             currentLanguage=""
             onClose={onClose}
           />,
@@ -237,7 +237,7 @@ describe('CodeLanguageSelector', () => {
       render(
         <CodeLanguageSelector
           editor={makeEditor()}
-          isCodeBlock={true}
+          isCodeBlock
           currentLanguage="rust"
           onClose={onClose}
         />,
@@ -278,7 +278,7 @@ describe('CodeLanguageSelector', () => {
       render(
         <CodeLanguageSelector
           editor={makeEditor()}
-          isCodeBlock={true}
+          isCodeBlock
           currentLanguage=""
           onClose={vi.fn()}
         />,
@@ -293,7 +293,7 @@ describe('CodeLanguageSelector', () => {
       render(
         <CodeLanguageSelector
           editor={makeEditor()}
-          isCodeBlock={true}
+          isCodeBlock
           currentLanguage=""
           onClose={vi.fn()}
         />,
@@ -316,7 +316,7 @@ describe('CodeLanguageSelector', () => {
       render(
         <CodeLanguageSelector
           editor={makeEditor()}
-          isCodeBlock={true}
+          isCodeBlock
           currentLanguage=""
           onClose={onClose}
         />,
@@ -340,7 +340,7 @@ describe('CodeLanguageSelector', () => {
       render(
         <CodeLanguageSelector
           editor={makeEditor()}
-          isCodeBlock={true}
+          isCodeBlock
           currentLanguage=""
           onClose={onClose}
         />,
@@ -362,7 +362,7 @@ describe('CodeLanguageSelector', () => {
       render(
         <CodeLanguageSelector
           editor={makeEditor()}
-          isCodeBlock={true}
+          isCodeBlock
           currentLanguage=""
           onClose={vi.fn()}
         />,
@@ -381,7 +381,7 @@ describe('CodeLanguageSelector', () => {
       render(
         <CodeLanguageSelector
           editor={makeEditor()}
-          isCodeBlock={true}
+          isCodeBlock
           currentLanguage=""
           onClose={vi.fn()}
         />,
@@ -397,7 +397,7 @@ describe('CodeLanguageSelector', () => {
       render(
         <CodeLanguageSelector
           editor={makeEditor()}
-          isCodeBlock={true}
+          isCodeBlock
           currentLanguage=""
           onClose={onClose}
         />,
@@ -419,7 +419,7 @@ describe('CodeLanguageSelector', () => {
       render(
         <CodeLanguageSelector
           editor={makeEditor()}
-          isCodeBlock={true}
+          isCodeBlock
           currentLanguage=""
           onClose={onClose}
         />,
@@ -436,7 +436,7 @@ describe('CodeLanguageSelector', () => {
       const { container } = render(
         <CodeLanguageSelector
           editor={makeEditor()}
-          isCodeBlock={true}
+          isCodeBlock
           currentLanguage="javascript"
           onClose={vi.fn()}
         />,

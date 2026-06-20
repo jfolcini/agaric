@@ -26,7 +26,7 @@ describe('NoPeersDialog', () => {
   })
 
   it('renders title, body, and both action buttons when open', () => {
-    render(<NoPeersDialog open={true} onOpenChange={vi.fn()} onOpenSettings={vi.fn()} />)
+    render(<NoPeersDialog open onOpenChange={vi.fn()} onOpenSettings={vi.fn()} />)
     expect(screen.getByText(t('sync.noPeersTitle'))).toBeInTheDocument()
     expect(screen.getByText(t('sync.noPeersBody'))).toBeInTheDocument()
     // Both actions surfaced as accessible buttons (i18n-keyed labels).
@@ -35,7 +35,7 @@ describe('NoPeersDialog', () => {
   })
 
   it('uses the alertdialog role (Radix AlertDialog primitive)', () => {
-    render(<NoPeersDialog open={true} onOpenChange={vi.fn()} onOpenSettings={vi.fn()} />)
+    render(<NoPeersDialog open onOpenChange={vi.fn()} onOpenSettings={vi.fn()} />)
     // The Radix AlertDialog content gets `role="alertdialog"`. This is
     // the right role for an interrupt with a default action — we want
     // assistive tech to announce it as such.
@@ -45,7 +45,7 @@ describe('NoPeersDialog', () => {
   it('calls onOpenSettings when the primary CTA is clicked', async () => {
     const user = userEvent.setup()
     const onOpenSettings = vi.fn()
-    render(<NoPeersDialog open={true} onOpenChange={vi.fn()} onOpenSettings={onOpenSettings} />)
+    render(<NoPeersDialog open onOpenChange={vi.fn()} onOpenSettings={onOpenSettings} />)
 
     await user.click(screen.getByRole('button', { name: t('sync.noPeersCta') }))
     expect(onOpenSettings).toHaveBeenCalledOnce()
@@ -55,9 +55,7 @@ describe('NoPeersDialog', () => {
     const user = userEvent.setup()
     const onOpenSettings = vi.fn()
     const onOpenChange = vi.fn()
-    render(
-      <NoPeersDialog open={true} onOpenChange={onOpenChange} onOpenSettings={onOpenSettings} />,
-    )
+    render(<NoPeersDialog open onOpenChange={onOpenChange} onOpenSettings={onOpenSettings} />)
 
     await user.click(screen.getByRole('button', { name: t('sync.noPeersCancel') }))
     expect(onOpenSettings).not.toHaveBeenCalled()
@@ -68,9 +66,7 @@ describe('NoPeersDialog', () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
     const onOpenSettings = vi.fn()
-    render(
-      <NoPeersDialog open={true} onOpenChange={onOpenChange} onOpenSettings={onOpenSettings} />,
-    )
+    render(<NoPeersDialog open onOpenChange={onOpenChange} onOpenSettings={onOpenSettings} />)
 
     // Radix AlertDialog binds ESC to the Cancel pathway → onOpenChange(false).
     await user.keyboard('{Escape}')
@@ -81,7 +77,7 @@ describe('NoPeersDialog', () => {
 
   it('has no a11y violations when open', async () => {
     const { container } = render(
-      <NoPeersDialog open={true} onOpenChange={vi.fn()} onOpenSettings={vi.fn()} />,
+      <NoPeersDialog open onOpenChange={vi.fn()} onOpenSettings={vi.fn()} />,
     )
     // axe cold-load on first call per worker can exceed the default 1 s
     // waitFor budget — match the pattern used by Sidebar/HistoryView tests.

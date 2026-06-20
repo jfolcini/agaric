@@ -25,10 +25,9 @@
 // Exit: 0 by default; 1 when `--gate` is set AND coverage dropped beyond tolerance.
 // ─────────────────────────────────────────────────────────────────────
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+const __dirname = import.meta.dirname
 const BASELINE_PATH = join(__dirname, 'coverage-baseline.json')
 
 // A drop smaller than this (percentage points) is run-to-run noise, not a
@@ -99,15 +98,15 @@ function writeBaseline(baseline) {
       'Re-baseline on main with `--update` after a deliberate change.',
     ...baseline,
   }
-  writeFileSync(BASELINE_PATH, JSON.stringify(doc, null, 2) + '\n')
+  writeFileSync(BASELINE_PATH, `${JSON.stringify(doc, null, 2)}\n`)
 }
 
 function appendStepSummary(md) {
   const out = process.env['GITHUB_STEP_SUMMARY']
   if (out) {
-    writeFileSync(out, md + '\n', { flag: 'a' })
+    writeFileSync(out, `${md}\n`, { flag: 'a' })
   } else {
-    process.stdout.write(md + '\n')
+    process.stdout.write(`${md}\n`)
   }
 }
 

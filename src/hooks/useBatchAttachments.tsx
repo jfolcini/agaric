@@ -68,7 +68,7 @@ export function BatchAttachmentsProvider({ blockIds, children }: ProviderProps):
   // Sort + join produces a stable key that only changes when the
   // membership of blockIds changes. Avoids re-fetching on every render
   // when the parent passes a new array reference but identical contents.
-  const stableKey = useMemo(() => [...blockIds].sort().join('|'), [blockIds])
+  const stableKey = useMemo(() => [...blockIds].toSorted().join('|'), [blockIds])
 
   useEffect(() => {
     if (blockIds.length === 0) {

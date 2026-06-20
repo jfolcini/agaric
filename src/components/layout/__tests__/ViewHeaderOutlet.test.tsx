@@ -123,16 +123,16 @@ describe('useViewHeaderOutlet', () => {
       )
     }
 
-    const { rerender, queryByTestId } = render(<Harness showSlot={true} />)
+    const { rerender, queryByTestId } = render(<Harness showSlot />)
     expect(queryByTestId('view-header-outlet')).toBeInTheDocument()
-    const resolvedWhileMounted = observations[observations.length - 1]
+    const resolvedWhileMounted = observations.at(-1)
     expect(resolvedWhileMounted).toBeInstanceOf(HTMLElement)
 
     act(() => {
       rerender(<Harness showSlot={false} />)
     })
     expect(queryByTestId('view-header-outlet')).not.toBeInTheDocument()
-    const afterUnmount = observations[observations.length - 1]
+    const afterUnmount = observations.at(-1)
     expect(afterUnmount).toBeNull()
   })
 })

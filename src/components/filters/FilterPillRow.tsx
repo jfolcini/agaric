@@ -41,22 +41,30 @@ export interface FilterPillRowProps {
 
 function opLabel(op: CompareOp, t?: (key: string) => string): string {
   switch (op) {
-    case 'Eq':
+    case 'Eq': {
       return '='
-    case 'Neq':
+    }
+    case 'Neq': {
       return '!='
-    case 'Lt':
+    }
+    case 'Lt': {
       return '<'
-    case 'Gt':
+    }
+    case 'Gt': {
       return '>'
-    case 'Lte':
+    }
+    case 'Lte': {
       return '<='
-    case 'Gte':
+    }
+    case 'Gte': {
       return '>='
-    case 'Contains':
+    }
+    case 'Contains': {
       return t ? t('filter.operatorContains') : 'contains'
-    case 'StartsWith':
+    }
+    case 'StartsWith': {
       return t ? t('filter.operatorStartsWith') : 'starts with'
+    }
   }
 }
 
@@ -66,36 +74,46 @@ export function filterSummary(
   t?: (key: string) => string,
 ): string {
   switch (filter.type) {
-    case 'BlockType':
+    case 'BlockType': {
       return `type = ${filter.block_type}`
-    case 'PropertyText':
+    }
+    case 'PropertyText': {
       if (filter.key === 'todo') return `status ${opLabel(filter.op, t)} ${filter.value}`
       if (filter.key === 'priority') return `priority ${opLabel(filter.op, t)} ${filter.value}`
       return `${filter.key} ${opLabel(filter.op, t)} ${filter.value}`
-    case 'PropertyNum':
+    }
+    case 'PropertyNum': {
       return `${filter.key} ${opLabel(filter.op, t)} ${filter.value}`
-    case 'PropertyDate':
+    }
+    case 'PropertyDate': {
       return `${filter.key} ${opLabel(filter.op, t)} ${filter.value}`
-    case 'PropertyIsSet':
+    }
+    case 'PropertyIsSet': {
       return `${filter.key} ${t ? t('filter.isSet') : 'is set'}`
-    case 'PropertyIsEmpty':
+    }
+    case 'PropertyIsEmpty': {
       return `${filter.key} ${t ? t('filter.isEmpty') : 'is empty'}`
-    case 'Contains':
+    }
+    case 'Contains': {
       return `${t ? t('filter.operatorContains') : 'contains'} "${filter.query}"`
+    }
     case 'CreatedInRange': {
       const parts: string[] = []
       if (filter.after) parts.push(`after ${filter.after}`)
       if (filter.before) parts.push(`before ${filter.before}`)
       return `created ${parts.join(' ')}`
     }
-    case 'HasTag':
+    case 'HasTag': {
       return tagResolver
         ? `has tag ${tagResolver(filter.tag_id)}`
         : `has tag ${filter.tag_id.slice(0, 8)}...`
-    case 'HasTagPrefix':
+    }
+    case 'HasTagPrefix': {
       return `${t ? t('filter.tagPrefix') : 'tag prefix'} "${filter.prefix}"`
-    default:
+    }
+    default: {
       return t ? t('filter.default') : 'filter'
+    }
   }
 }
 

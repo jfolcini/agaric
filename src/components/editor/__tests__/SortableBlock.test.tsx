@@ -1171,7 +1171,7 @@ describe('SortableBlock task marker', () => {
       <SortableBlock
         blockId="B1"
         content="cancelled task"
-        isFocused={true}
+        isFocused
         depth={0}
         rovingEditor={makeRovingEditor()}
         todoState="CANCELLED"
@@ -1236,7 +1236,7 @@ describe('SortableBlock task marker', () => {
       <SortableBlock
         blockId="B1"
         content="done task"
-        isFocused={true}
+        isFocused
         depth={0}
         rovingEditor={makeRovingEditor()}
         todoState="DONE"
@@ -1612,7 +1612,7 @@ describe('SortableBlock visibility controls', () => {
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
-        isFocused={true}
+        isFocused
         rovingEditor={makeRovingEditor()}
       />,
     )
@@ -1690,7 +1690,7 @@ describe('SortableBlock visibility controls', () => {
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
-        isFocused={true}
+        isFocused
         rovingEditor={makeRovingEditor()}
       />,
     )
@@ -2026,7 +2026,7 @@ describe('SortableBlock inline controls', () => {
         <SortableBlock
           blockId="BLOCK_1"
           content="hello"
-          isFocused={true}
+          isFocused
           rovingEditor={makeRovingEditor()}
           priority="1"
         />

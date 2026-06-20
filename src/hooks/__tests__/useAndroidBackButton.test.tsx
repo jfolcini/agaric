@@ -111,7 +111,7 @@ describe('useAndroidBackButton', () => {
     const overlay = document.createElement('div')
     overlay.setAttribute('role', 'dialog')
     overlay.setAttribute('data-state', 'open')
-    document.body.appendChild(overlay)
+    document.body.append(overlay)
     useNavigationStore.setState({ currentView: 'settings' })
 
     act(() => capturedBackPress()())

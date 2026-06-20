@@ -28,7 +28,7 @@ import type { AstFilterProjection } from '@/lib/search-query'
  */
 export const UNRESOLVED_TAG_SENTINEL = '__unresolved-tag__'
 
-export type SearchFilterParams = {
+export interface SearchFilterParams {
   tagIds?: string[] | undefined
   includePageGlobs?: string[] | undefined
   excludePageGlobs?: string[] | undefined

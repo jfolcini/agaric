@@ -1104,7 +1104,7 @@ describe('keyboard-config', () => {
       setCustomShortcut('underline', 'Ctrl + U / Ctrl + Shift + U')
       const handler = vi.fn()
       const map = tipTapShortcutMap('underline', handler)
-      expect(Object.keys(map).sort()).toEqual(['Mod-Shift-u', 'Mod-u'])
+      expect(Object.keys(map).toSorted()).toEqual(['Mod-Shift-u', 'Mod-u'])
       // Every expanded entry routes to the same handler.
       expect(map['Mod-u']).toBe(handler)
       expect(map['Mod-Shift-u']).toBe(handler)

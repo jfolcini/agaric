@@ -227,7 +227,7 @@ function groupByLink(content: readonly InlineNode[]): NodeGroup[] {
   const groups: NodeGroup[] = []
   for (const node of content) {
     const href = getLinkHref(node)
-    const last = groups.length > 0 ? groups[groups.length - 1] : null
+    const last = groups.length > 0 ? groups.at(-1) : null
     if (last && last.href === href) {
       last.nodes.push(node)
     } else {

@@ -152,20 +152,23 @@ export function ImageLightbox({
     const onKeyDown = (e: KeyboardEvent): void => {
       switch (e.key) {
         case '+':
-        case '=':
+        case '=': {
           e.preventDefault()
           zoomBy(ZOOM_STEP)
           break
+        }
         case '-':
-        case '_':
+        case '_': {
           e.preventDefault()
           zoomBy(-ZOOM_STEP)
           break
-        case '0':
+        }
+        case '0': {
           e.preventDefault()
           resetZoom()
           break
-        case 'ArrowLeft':
+        }
+        case 'ArrowLeft': {
           if (zoomed) {
             e.preventDefault()
             panBy(PAN_KEY_STEP, 0)
@@ -174,7 +177,8 @@ export function ImageLightbox({
             goPrev()
           }
           break
-        case 'ArrowRight':
+        }
+        case 'ArrowRight': {
           if (zoomed) {
             e.preventDefault()
             panBy(-PAN_KEY_STEP, 0)
@@ -183,20 +187,24 @@ export function ImageLightbox({
             goNext()
           }
           break
-        case 'ArrowUp':
+        }
+        case 'ArrowUp': {
           if (zoomed) {
             e.preventDefault()
             panBy(0, PAN_KEY_STEP)
           }
           break
-        case 'ArrowDown':
+        }
+        case 'ArrowDown': {
           if (zoomed) {
             e.preventDefault()
             panBy(0, -PAN_KEY_STEP)
           }
           break
-        default:
+        }
+        default: {
           break
+        }
       }
     }
     window.addEventListener('keydown', onKeyDown)

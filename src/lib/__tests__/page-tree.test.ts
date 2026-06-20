@@ -128,7 +128,7 @@ describe('buildPageTree', () => {
     const tree = buildPageTree(pages)
 
     function visit(node: unknown): void {
-      const keys = Object.keys(node as object).sort()
+      const keys = Object.keys(node as object).toSorted()
       const allowed = ['children', 'fullPath', 'name', 'pageId']
       for (const k of keys) {
         expect(allowed).toContain(k)

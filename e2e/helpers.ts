@@ -876,7 +876,7 @@ export async function selectEditorRange(page: Page, from: number, to: number): P
           if (acc + t.length >= offset) return [t, offset - acc]
           acc += t.length
         }
-        const last = textNodes[textNodes.length - 1] as Text
+        const last = textNodes.at(-1) as Text
         return [last, last.length]
       }
       const [startNode, startOff] = locate(from)

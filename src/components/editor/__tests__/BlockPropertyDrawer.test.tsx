@@ -99,7 +99,7 @@ beforeEach(() => {
 describe('BlockPropertyDrawer', () => {
   it('renders "Block Properties" title when open', async () => {
     setupMock()
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     expect(screen.getByText('Block Properties')).toBeInTheDocument()
   })
@@ -107,7 +107,7 @@ describe('BlockPropertyDrawer', () => {
   it('shows LoadingSkeleton initially (sub-fix 3)', () => {
     // Return a never-resolving promise to keep loading state
     mockedInvoke.mockReturnValue(new Promise(() => {}))
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     // Sheet portals to document.body; query the document instead of container
     const loading = document.querySelector('[data-testid="block-property-drawer-loading"]')
@@ -120,7 +120,7 @@ describe('BlockPropertyDrawer', () => {
   it('disables the Add property button while loading with a tooltip (sub-fix 3)', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockReturnValue(new Promise(() => {}))
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     const addBtn = screen.getByRole('button', { name: 'Add property' })
     expect(addBtn).toBeDisabled()
@@ -144,7 +144,7 @@ describe('BlockPropertyDrawer', () => {
     ]
     setupMock(props, [makeDef('status'), makeDef('priority', 'number')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('status')).toBeInTheDocument()
@@ -155,7 +155,7 @@ describe('BlockPropertyDrawer', () => {
   it('shows "No properties set" when block has no properties', async () => {
     setupMock([], [])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('No properties set')).toBeInTheDocument()
@@ -167,7 +167,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('status', { value_text: 'active' })]
     setupMock(props, [makeDef('status')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('status')).toBeInTheDocument()
@@ -196,7 +196,7 @@ describe('BlockPropertyDrawer', () => {
   // `w-3/4 sm:w-80` keeps the desktop 320 px while making mobile 75% viewport.
   it('SheetContent uses responsive width (w-3/4 sm:w-80)', () => {
     setupMock()
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     const sheetContent = document.querySelector('[data-slot="sheet-content"]') as HTMLElement
     expect(sheetContent).not.toBeNull()
@@ -208,7 +208,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('status', { value_text: 'active' })]
     setupMock(props, [makeDef('status')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('status')).toBeInTheDocument()
@@ -226,7 +226,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('status', { value_text: 'active' })]
     setupMock(props, [makeDef('status')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('status')).toBeInTheDocument()
@@ -248,7 +248,7 @@ describe('BlockPropertyDrawer', () => {
     setupMock(props, [makeDef('status')])
 
     const { container } = renderWithProvider(
-      <BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />,
+      <BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />,
     )
 
     await waitFor(() => {
@@ -286,7 +286,7 @@ describe('BlockPropertyDrawer', () => {
     })
     setupMock()
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByTitle('Due')).toBeInTheDocument()
@@ -316,7 +316,7 @@ describe('BlockPropertyDrawer', () => {
     })
     setupMock()
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByTitle('Scheduled')).toBeInTheDocument()
@@ -346,7 +346,7 @@ describe('BlockPropertyDrawer', () => {
     })
     setupMock([], [])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByTitle('Due')).toBeInTheDocument()
@@ -376,7 +376,7 @@ describe('BlockPropertyDrawer', () => {
     })
     setupMock()
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByTitle('Due')).toBeInTheDocument()
@@ -412,7 +412,7 @@ describe('BlockPropertyDrawer', () => {
     })
     setupMock()
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     // Initially no date shown
     await waitFor(() => {
@@ -434,7 +434,7 @@ describe('BlockPropertyDrawer', () => {
   it('property value inputs have accessible labels', async () => {
     setupMock([makeProp('status', { value_text: 'active' })], [makeDef('status')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     const input = await screen.findByLabelText('status value')
     expect(input).toBeInTheDocument()
@@ -444,7 +444,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('created_at', { value_text: '2026-01-01' })]
     setupMock(props, [makeDef('created_at')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Created At')).toBeInTheDocument()
@@ -457,7 +457,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('my_custom', { value_text: 'hello' })]
     setupMock(props, [makeDef('my_custom')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('my_custom')).toBeInTheDocument()
@@ -470,7 +470,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('repeat', { value_text: '+1w' })]
     setupMock(props, [makeDef('repeat')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Repeat')).toBeInTheDocument()
@@ -485,7 +485,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('repeat', { value_text: '++ 1d' })]
     setupMock(props, [makeDef('repeat')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Repeat')).toBeInTheDocument()
@@ -500,7 +500,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('repeat', { value_text: '++ 1d' })]
     setupMock(props, [makeDef('repeat')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Repeat')).toBeInTheDocument()
@@ -522,7 +522,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('repeat', { value_text: '++ 1d' })]
     setupMock(props, [makeDef('repeat')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Repeat')).toBeInTheDocument()
@@ -537,7 +537,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('my_custom', { value_text: 'hello' })]
     setupMock(props, [makeDef('my_custom')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('my_custom')).toBeInTheDocument()
@@ -553,7 +553,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('created_at', { value_text: '2026-01-01' })]
     setupMock(props, [makeDef('created_at')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Created At')).toBeInTheDocument()
@@ -576,7 +576,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('effort', { value_num: 30 })]
     setupMock(props, [makeDef('effort', 'number')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Effort')).toBeInTheDocument()
@@ -594,7 +594,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('my_custom', { value_text: 'hello' })]
     setupMock(props, [makeDef('my_custom')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('my_custom')).toBeInTheDocument()
@@ -615,7 +615,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('linked_page', { value_ref: null })]
     setupMock(props, [makeDef('linked_page', 'ref')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     // PropertyRowEditor formats the key: linked_page → "Linked Page"
     await waitFor(() => {
@@ -643,7 +643,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('linked_page', { value_ref: 'TARGET_PAGE' })]
     setupMock(props, [makeDef('linked_page', 'ref')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('My Target Page')).toBeInTheDocument()
@@ -655,7 +655,7 @@ describe('BlockPropertyDrawer', () => {
   it('shows error toast when loading properties fails', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('network failure'))
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to load properties')
@@ -665,7 +665,7 @@ describe('BlockPropertyDrawer', () => {
   it('exits loading state when loading properties fails', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('network failure'))
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
@@ -683,7 +683,7 @@ describe('BlockPropertyDrawer', () => {
       return null
     })
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     // (a) The successful side still renders.
     await waitFor(() => {
@@ -714,7 +714,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('status', { value_text: 'active' })]
     setupMock(props, [makeDef('status')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('status')).toBeInTheDocument()
@@ -738,7 +738,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('my_custom', { value_text: 'hello' })]
     setupMock(props, [makeDef('my_custom')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('my_custom')).toBeInTheDocument()
@@ -760,7 +760,7 @@ describe('BlockPropertyDrawer', () => {
     const props = [makeProp('my_custom', { value_text: 'hello' })]
     setupMock(props, [makeDef('my_custom')])
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('my_custom')).toBeInTheDocument()
@@ -802,7 +802,7 @@ describe('BlockPropertyDrawer', () => {
     })
     setupMock()
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByTitle('Due')).toBeInTheDocument()
@@ -841,7 +841,7 @@ describe('BlockPropertyDrawer', () => {
     })
     setupMock()
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByTitle('Scheduled')).toBeInTheDocument()
@@ -880,7 +880,7 @@ describe('BlockPropertyDrawer', () => {
     })
     setupMock()
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByTitle('Due')).toBeInTheDocument()
@@ -905,7 +905,7 @@ describe('BlockPropertyDrawer', () => {
     // No existing properties, but one definition available
     setupMock([], defs)
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
@@ -932,7 +932,7 @@ describe('BlockPropertyDrawer', () => {
     const defs = [makeDef('linked_page', 'ref')]
     setupMock(props, defs)
 
-    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Linked Page')).toBeInTheDocument()

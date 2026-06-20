@@ -181,7 +181,7 @@ describe('PageOutline', () => {
     const fakeEl = document.createElement('div')
     fakeEl.id = 'b1'
     fakeEl.scrollIntoView = mockScrollIntoView
-    document.body.appendChild(fakeEl)
+    document.body.append(fakeEl)
 
     renderOutline([makeBlock({ id: 'b1', content: '# Click me' })])
 

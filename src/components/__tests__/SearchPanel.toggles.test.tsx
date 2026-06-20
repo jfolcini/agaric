@@ -57,7 +57,7 @@ function typeAndSubmit(input: HTMLElement, value: string) {
 function lastFilter(): Record<string, unknown> | null {
   const calls = mockedInvoke.mock.calls.filter((c) => c[0] === 'search_blocks')
   if (calls.length === 0) return null
-  const last = calls[calls.length - 1] as unknown as [string, { filter: Record<string, unknown> }]
+  const last = calls.at(-1) as unknown as [string, { filter: Record<string, unknown> }]
   return last[1].filter
 }
 
@@ -67,7 +67,7 @@ function lastFilter(): Record<string, unknown> | null {
 function lastQuery(): string | null {
   const calls = mockedInvoke.mock.calls.filter((c) => c[0] === 'search_blocks')
   if (calls.length === 0) return null
-  const last = calls[calls.length - 1] as unknown as [string, { query: string }]
+  const last = calls.at(-1) as unknown as [string, { query: string }]
   return last[1].query
 }
 

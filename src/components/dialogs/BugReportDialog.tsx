@@ -173,14 +173,16 @@ export function BugReportDialog({
     })
   }, [metadata, description, includeLogs, zipFileName])
 
-  const issueUrl = useMemo<string>(() => {
-    return buildGitHubIssueUrl({
-      owner: BUG_TRACKER.owner,
-      repo: BUG_TRACKER.repo,
-      title: title.trim().length > 0 ? title : t('bugReport.title'),
-      body,
-    })
-  }, [title, body, t])
+  const issueUrl = useMemo<string>(
+    () =>
+      buildGitHubIssueUrl({
+        owner: BUG_TRACKER.owner,
+        repo: BUG_TRACKER.repo,
+        title: title.trim().length > 0 ? title : t('bugReport.title'),
+        body,
+      }),
+    [title, body, t],
+  )
 
   // Copy the formatted report body. The navigator-availability
   // guard stays in the wrapper because it short-circuits BEFORE the IPC.

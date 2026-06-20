@@ -476,7 +476,7 @@ describe('SearchResultGroups (virtualized)', () => {
       // A standalone input simulates the search box keeping DOM focus while
       // results render (focusedIndex defaults to 0 / first row).
       const input = document.createElement('input')
-      document.body.appendChild(input)
+      document.body.append(input)
       input.focus()
       expect(document.activeElement).toBe(input)
 

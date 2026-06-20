@@ -118,7 +118,7 @@ beforeEach(() => {
 
 describe('SpaceManageDialog', () => {
   it('renders title, description, and one row per available space', async () => {
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     expect(await screen.findByText(t('space.manageDialogTitle'))).toBeInTheDocument()
     expect(screen.getByText(t('space.manageDialogDescription'))).toBeInTheDocument()
@@ -132,7 +132,7 @@ describe('SpaceManageDialog', () => {
 
   it('inline rename routes through the editBlock IPC and refreshes spaces', async () => {
     const user = userEvent.setup()
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     const personalInput = await screen.findByDisplayValue(PERSONAL.name)
     await user.clear(personalInput)
@@ -169,7 +169,7 @@ describe('SpaceManageDialog', () => {
       return null
     })
 
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     const personalInput = await screen.findByDisplayValue(PERSONAL.name)
     await user.clear(personalInput)
@@ -189,7 +189,7 @@ describe('SpaceManageDialog', () => {
 
   it('clicking an accent swatch emits setProperty(accent_color, token)', async () => {
     const user = userEvent.setup()
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     // First per-row swatch group (Personal). The row aria-group lookup
     // is unambiguous: each row has its own group.
@@ -220,7 +220,7 @@ describe('SpaceManageDialog', () => {
   // is present on exactly the selected swatch and absent on the rest.
   it('overlays a Check icon on the currently-selected accent swatch only', async () => {
     const user = userEvent.setup()
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     const groups = await screen.findAllByRole('group', {
       name: t('space.accentColorLabel'),
@@ -258,7 +258,7 @@ describe('SpaceManageDialog', () => {
   // theme switching (Solarized, Dracula, OneDarkPro) honest: the fill
   // follows the active theme's `--accent-*` value automatically.
   it('renders accent swatches with CSS-var inline backgroundColor', async () => {
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     const groups = await screen.findAllByRole('group', {
       name: t('space.accentColorLabel'),
@@ -290,7 +290,7 @@ describe('SpaceManageDialog', () => {
       return null
     })
 
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     // Both Delete buttons are disabled because the probe returns one
     // page for every space. We assert there are no enabled delete
@@ -321,7 +321,7 @@ describe('SpaceManageDialog', () => {
       return null
     })
 
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     // Both rows are non-empty and neither is the last space → both
     // rows render the inline hint paragraph once the probe resolves.
@@ -337,7 +337,7 @@ describe('SpaceManageDialog', () => {
   it('does not render the inline-blocked hint when the space is empty', async () => {
     // Default mocks return `emptyPage` for every space → Delete is
     // enabled and the inline hint must NOT mount.
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     // Wait for the emptiness probe to settle and Delete to enable so
     // we are asserting against the post-probe DOM, not the
@@ -359,7 +359,7 @@ describe('SpaceManageDialog', () => {
       isReady: true,
     })
 
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     await waitFor(() => {
       const btn = screen.getByRole('button', { name: t('space.deleteSpaceLabel') })
@@ -369,7 +369,7 @@ describe('SpaceManageDialog', () => {
 
   it('confirms before delete; confirm routes through deleteBlock; cancel closes confirmation', async () => {
     const user = userEvent.setup()
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     // The per-row emptiness probe (`list_blocks`) is async — Delete
     // starts disabled (`isEmpty === null`) and only flips to enabled
@@ -417,7 +417,7 @@ describe('SpaceManageDialog', () => {
   it('ESC on the main dialog calls onOpenChange(false)', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
-    render(<SpaceManageDialog open={true} onOpenChange={onOpenChange} />)
+    render(<SpaceManageDialog open onOpenChange={onOpenChange} />)
 
     await screen.findByText(t('space.manageDialogTitle'))
     await user.keyboard('{Escape}')
@@ -428,7 +428,7 @@ describe('SpaceManageDialog', () => {
 
   it('opens an inline create form, posts via createSpace, and closes on success', async () => {
     const user = userEvent.setup()
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     // Footer button opens the form.
     const openCreateBtn = await screen.findByRole('button', {
@@ -442,7 +442,7 @@ describe('SpaceManageDialog', () => {
     // Pick an accent (the create form has its own swatch group, which is
     // the third group on the page after the two row groups).
     const groups = screen.getAllByRole('group', { name: t('space.accentColorLabel') })
-    const formSwatches = groups[groups.length - 1] as HTMLElement
+    const formSwatches = groups.at(-1) as HTMLElement
     await user.click(
       within(formSwatches).getByRole('button', {
         name: t('space.accentSwatchLabel', { color: 'blue' }),
@@ -468,7 +468,7 @@ describe('SpaceManageDialog', () => {
 
   it('shows the onboarding hint on first render with two spaces and hides it after dismissal', async () => {
     const user = userEvent.setup()
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     expect(await screen.findByText(t('space.onboardingTitle'))).toBeInTheDocument()
     expect(screen.getByText(t('space.onboardingBody'))).toBeInTheDocument()
@@ -484,7 +484,7 @@ describe('SpaceManageDialog', () => {
 
   it('does not show the onboarding hint when the localStorage flag is already set', async () => {
     localStorage.setItem(ONBOARDING_KEY, 'true')
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     await screen.findByText(t('space.manageDialogTitle'))
     expect(screen.queryByText(t('space.onboardingTitle'))).not.toBeInTheDocument()
@@ -496,7 +496,7 @@ describe('SpaceManageDialog', () => {
       availableSpaces: [PERSONAL, WORK, { id: 'SPACE_3', name: 'Side', accent_color: null }],
       isReady: true,
     })
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     await screen.findByText(t('space.manageDialogTitle'))
     expect(screen.queryByText(t('space.onboardingTitle'))).not.toBeInTheDocument()
@@ -532,7 +532,7 @@ describe('SpaceManageDialog', () => {
       return null
     })
 
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     // The Personal row's textarea must mount with the seeded value.
     // Use findAllByLabelText because both rows render the same label;
@@ -547,7 +547,7 @@ describe('SpaceManageDialog', () => {
 
   it('saving journal template calls setProperty with the entered value on blur', async () => {
     const user = userEvent.setup()
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     // The Personal row textarea (first one, since both rows render the
     // same label). Find by aria-label, scoped to the row that matches
@@ -601,7 +601,7 @@ describe('SpaceManageDialog', () => {
     })
 
     const user = userEvent.setup()
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     const textareas = await screen.findAllByLabelText(t('space.journalTemplateLabel'))
     const textarea = textareas[0] as HTMLTextAreaElement
@@ -648,7 +648,7 @@ describe('SpaceManageDialog', () => {
     })
 
     const user = userEvent.setup()
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     const textareas = await screen.findAllByLabelText(t('space.journalTemplateLabel'))
     const textarea = textareas[0] as HTMLTextAreaElement
@@ -677,7 +677,7 @@ describe('SpaceManageDialog', () => {
   // keyboard accessible without extra ARIA.
   it('renders a collapsible Examples panel that expands to show templates with variables', async () => {
     const user = userEvent.setup()
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     // Disclosure widgets render once per row. Pick the first
     // (Personal). Closed by default → `open` attribute absent.
@@ -724,7 +724,7 @@ describe('SpaceManageDialog', () => {
       isReady: true,
     })
 
-    render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     // Wait for both IPC chains to settle: the textareas mount empty
     // and only resolve once `get_batch_properties` resolves; the
@@ -771,7 +771,7 @@ describe('SpaceManageDialog', () => {
   })
 
   it('does not re-fetch on close + reopen with the same space.id set', async () => {
-    const { rerender } = render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    const { rerender } = render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     // Settle the initial probes so the cache is populated.
     await waitFor(() => {
@@ -800,7 +800,7 @@ describe('SpaceManageDialog', () => {
 
     // Reopen the dialog. Rows remount; without dedup they would
     // re-fire both IPCs once per row.
-    rerender(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    rerender(<SpaceManageDialog open onOpenChange={() => {}} />)
     await screen.findByText(t('space.manageDialogTitle'))
     // Flush any (incorrect) re-fetch microtasks before asserting.
     await act(async () => {
@@ -846,7 +846,7 @@ describe('SpaceManageDialog', () => {
 
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    const { unmount } = render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    const { unmount } = render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     // Wait for both async chains to fire their respective IPC calls.
     await waitFor(() => {
@@ -894,7 +894,7 @@ describe('SpaceManageDialog', () => {
   //  4. delete-confirm AlertDialog open
   it('has no a11y violations (default)', async () => {
     localStorage.setItem(ONBOARDING_KEY, 'true')
-    const { container } = render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    const { container } = render(<SpaceManageDialog open onOpenChange={() => {}} />)
     await screen.findByText(t('space.manageDialogTitle'))
     // Settle async list_blocks probes before the audit runs so the
     // tree is stable when axe walks it.
@@ -911,7 +911,7 @@ describe('SpaceManageDialog', () => {
   })
 
   it('has no a11y violations (onboarding visible)', async () => {
-    const { container } = render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    const { container } = render(<SpaceManageDialog open onOpenChange={() => {}} />)
     await screen.findByText(t('space.onboardingTitle'))
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0))
@@ -928,7 +928,7 @@ describe('SpaceManageDialog', () => {
   it('has no a11y violations (create form open)', async () => {
     const user = userEvent.setup()
     localStorage.setItem(ONBOARDING_KEY, 'true')
-    const { container } = render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    const { container } = render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     await user.click(await screen.findByRole('button', { name: t('space.createSpaceLabel') }))
     await screen.findByPlaceholderText(t('space.newSpacePlaceholder'))
@@ -947,7 +947,7 @@ describe('SpaceManageDialog', () => {
   it('has no a11y violations (delete confirmation open)', async () => {
     const user = userEvent.setup()
     localStorage.setItem(ONBOARDING_KEY, 'true')
-    const { container } = render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+    const { container } = render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
     // Wait for the emptiness probe to settle so Delete is enabled
     // before we click it.
@@ -982,7 +982,7 @@ describe('SpaceManageDialog', () => {
   describe('mobile / desktop responsive surfaces', () => {
     it('renders the dialog header and per-space rows on the mobile Sheet path', async () => {
       mockedUseIsMobile.mockReturnValue(true)
-      render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+      render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
       expect(await screen.findByText(t('space.manageDialogTitle'))).toBeInTheDocument()
       expect(screen.getByDisplayValue(PERSONAL.name)).toBeInTheDocument()
@@ -991,7 +991,7 @@ describe('SpaceManageDialog', () => {
 
     it('renders the dialog header and per-space rows on the desktop Dialog path', async () => {
       mockedUseIsMobile.mockReturnValue(false)
-      render(<SpaceManageDialog open={true} onOpenChange={() => {}} />)
+      render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
       expect(await screen.findByText(t('space.manageDialogTitle'))).toBeInTheDocument()
       expect(screen.getByDisplayValue(PERSONAL.name)).toBeInTheDocument()

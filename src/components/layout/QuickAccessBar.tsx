@@ -50,9 +50,7 @@ export function QuickAccessBar(): React.ReactElement | null {
     const tabs = selectTabsForSpace(s, currentSpaceId)
     const idx = selectActiveTabIndexForSpace(s, currentSpaceId)
     const active = tabs[idx]
-    return active && active.pageStack.length > 0
-      ? active.pageStack[active.pageStack.length - 1]?.pageId
-      : undefined
+    return active && active.pageStack.length > 0 ? active.pageStack.at(-1)?.pageId : undefined
   })
 
   const navigateToPage = useTabsStore((s) => s.navigateToPage)

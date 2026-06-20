@@ -469,7 +469,7 @@ describe('useSlashCommandProperty — table identity', () => {
 
   it('exposes the expected exact + prefix surface', () => {
     const { result } = renderHook(() => useSlashCommandProperty())
-    expect(Object.keys(result.current.exact).sort()).toEqual(
+    expect(Object.keys(result.current.exact).toSorted()).toEqual(
       [
         'todo',
         'doing',
@@ -481,7 +481,7 @@ describe('useSlashCommandProperty — table identity', () => {
         'assignee',
         'location',
         'attach',
-      ].sort(),
+      ].toSorted(),
     )
     expect(result.current.prefix.map(([p]) => p)).toEqual([
       'assignee-',

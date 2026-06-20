@@ -15,8 +15,8 @@ describe('autolink stability under repeated update dispatch', () => {
       extensions: [Document, Paragraph, Text, History, ExternalLink],
       content: '<p></p>',
     })
-    const longUrl = 'https://example.com/' + 'a'.repeat(3000)
-    editor.commands.insertContent(longUrl + ' ')
+    const longUrl = `https://example.com/${'a'.repeat(3000)}`
+    editor.commands.insertContent(`${longUrl} `)
     const seen = new Set<string>()
     for (let i = 0; i < 30; i++) {
       // Dispatch a no-op transaction (selection move) to fire `update` like a

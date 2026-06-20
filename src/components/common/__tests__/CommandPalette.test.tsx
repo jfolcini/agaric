@@ -899,7 +899,7 @@ describe('CommandPalette — [[page]] autocomplete', () => {
     const pm = document.createElement('div')
     pm.className = 'ProseMirror'
     pm.contentEditable = 'true'
-    document.body.appendChild(pm)
+    document.body.append(pm)
     pm.focus()
 
     mockPageA()
@@ -926,7 +926,7 @@ describe('CommandPalette — [[page]] autocomplete', () => {
     const host = document.createElement('div')
     host.contentEditable = 'true'
     host.textContent = 'x'
-    document.body.appendChild(host)
+    document.body.append(host)
     host.focus()
     // Plant a collapsed caret at the end so the store snapshots a range
     // and the fallback has somewhere to insert.
@@ -955,7 +955,7 @@ describe('CommandPalette — [[page]] autocomplete', () => {
     const field = document.createElement('input')
     field.type = 'text'
     field.value = 'pre '
-    document.body.appendChild(field)
+    document.body.append(field)
     field.focus()
     field.setSelectionRange(field.value.length, field.value.length)
 

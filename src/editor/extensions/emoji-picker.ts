@@ -48,7 +48,7 @@ export const EmojiPicker = Extension.create({
           // Editor). Read here so toggling takes effect with no remount.
           if (!isEmojiPickerEnabled()) return false
           // 'U+FFFC' is the leaf placeholder textBetween uses for non-text nodes.
-          const text = state.doc.textBetween(range.from, range.to, undefined, '\ufffc')
+          const text = state.doc.textBetween(range.from, range.to, undefined, '\uFFFC')
           return EMOJI_QUERY_RE.test(text)
         },
         editor: this.editor,

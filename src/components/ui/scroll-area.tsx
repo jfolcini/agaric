@@ -29,9 +29,8 @@ type ScrollAreaProps = React.ComponentProps<typeof ScrollAreaPrimitive.Root> & {
    * `data-*` even though they're valid HTML.
    */
   viewportProps?:
-    | (React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Viewport> & {
-        [dataAttr: `data-${string}`]: string | undefined
-      })
+    | (React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Viewport> &
+        Record<`data-${string}`, string | undefined>)
     | undefined
 }
 
@@ -94,29 +93,28 @@ const ScrollBar = ({
   className,
   orientation = 'vertical',
   ...props
-}: React.ComponentProps<typeof ScrollAreaPrimitive.ScrollAreaScrollbar>) => {
-  return (
-    <ScrollAreaPrimitive.ScrollAreaScrollbar
-      ref={ref}
-      data-slot="scroll-area-scrollbar"
-      orientation={orientation}
-      className={cn(
-        'flex touch-none p-px transition-colors select-none',
-        orientation === 'vertical' &&
-          'h-full w-1.5 border-l border-l-transparent [@media(pointer:coarse)]:w-2',
-        orientation === 'horizontal' &&
-          'h-1.5 flex-col border-t border-t-transparent [@media(pointer:coarse)]:h-2',
-        className,
-      )}
-      {...props}
-    >
-      <ScrollAreaPrimitive.ScrollAreaThumb
-        data-slot="scroll-area-thumb"
-        className="relative flex-1 rounded-full bg-border"
-      />
-    </ScrollAreaPrimitive.ScrollAreaScrollbar>
-  )
-}
+}: React.ComponentProps<typeof ScrollAreaPrimitive.ScrollAreaScrollbar>) => (
+  <ScrollAreaPrimitive.ScrollAreaScrollbar
+    ref={ref}
+    data-slot="scroll-area-scrollbar"
+    orientation={orientation}
+    className={cn(
+      'flex touch-none p-px transition-colors select-none',
+      orientation === 'vertical' &&
+        'h-full w-1.5 border-l border-l-transparent [@media(pointer:coarse)]:w-2',
+      orientation === 'horizontal' &&
+        'h-1.5 flex-col border-t border-t-transparent [@media(pointer:coarse)]:h-2',
+      className,
+    )}
+    {...props}
+  >
+    <ScrollAreaPrimitive.ScrollAreaThumb
+      data-slot="scroll-area-thumb"
+      className="relative flex-1 rounded-full bg-border"
+    />
+  </ScrollAreaPrimitive.ScrollAreaScrollbar>
+)
+
 ScrollBar.displayName = 'ScrollBar'
 
 export { ScrollArea, ScrollBar }

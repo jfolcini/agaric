@@ -46,7 +46,29 @@
     "react/no-unstable-nested-components": "error",
     "eslint/no-unneeded-ternary": "error",
     "eslint/no-unexpected-multiline": "error",
-    "unicorn/no-array-reverse": "error"
+    "unicorn/no-array-reverse": "error",
+
+    "unicorn/no-array-sort": "error",
+    "unicorn/switch-case-braces": "error",
+    "react/jsx-boolean-value": "error",
+    "eslint/arrow-body-style": "error",
+    "typescript/consistent-type-definitions": "error",
+    "typescript/consistent-generic-constructors": "error",
+    "eslint/prefer-template": "error",
+    "unicorn/prefer-dom-node-text-content": "error",
+    "react/jsx-curly-brace-presence": "error",
+    "unicorn/prefer-negative-index": "error",
+    "typescript/prefer-function-type": "error",
+    "eslint/prefer-arrow-callback": "error",
+    "unicorn/text-encoding-identifier-case": "error",
+    "typescript/consistent-indexed-object-style": "error",
+    "unicorn/prefer-dom-node-append": "error",
+    "unicorn/escape-case": "error",
+    "unicorn/no-typeof-undefined": "error",
+    "unicorn/prefer-math-min-max": "error",
+    "eslint/no-else-return": "error",
+    "unicorn/prefer-import-meta-properties": "error",
+    "unicorn/prefer-at": "error"
   },
   "overrides": [
     {

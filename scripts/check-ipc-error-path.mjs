@@ -94,9 +94,8 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const ROOT = path.resolve(import.meta.dirname, '..')
 const COMPONENTS_DIR = path.join(ROOT, 'src/components')
 const TESTS_DIR = path.join(ROOT, 'src/components/__tests__')
 
@@ -344,8 +343,9 @@ function runGuard() {
 
   const allowlisted = Object.keys(NO_TEST_ALLOWLIST).length
   console.log(
-    `OK: ${checked.length} component(s) with IPC use have rejection coverage` +
-      (allowlisted > 0 ? ` (${allowlisted} covered via allowlisted parent test)` : ''),
+    `OK: ${checked.length} component(s) with IPC use have rejection coverage${
+      allowlisted > 0 ? ` (${allowlisted} covered via allowlisted parent test)` : ''
+    }`,
   )
 }
 

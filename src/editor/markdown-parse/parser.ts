@@ -321,7 +321,7 @@ function buildTableRows(tableLines: readonly string[], depth: number): TableRowN
     if (segments.length > 0 && segments[0]?.trim() === '') segments.shift()
     // Keep at least one cell so a degenerate `|` line still yields an empty
     // cell (matching the previous `.replace(...).split('|')` behaviour).
-    if (segments.length > 1 && segments[segments.length - 1]?.trim() === '') segments.pop()
+    if (segments.length > 1 && segments.at(-1)?.trim() === '') segments.pop()
     const cellTexts = segments.map((c) => c.trim().replace(/\\\|/g, '|'))
     const isHeader = r === 0
     const cells = cellTexts.map((cellText) => buildTableCell(cellText, isHeader, depth))
@@ -1042,9 +1042,9 @@ function revertUnclosedItalic(st: InlineState): void {
  */
 function flushRemainingBuf(st: InlineState): void {
   if (st.buf.length === 0) return
-  const last = st.nodes.length > 0 ? st.nodes[st.nodes.length - 1] : null
+  const last = st.nodes.length > 0 ? st.nodes.at(-1) : null
   if (last && last.type === 'text' && (!last.marks || last.marks.length === 0)) {
-    ;(st.nodes[st.nodes.length - 1] as { text: string }).text += st.buf
+    ;(st.nodes.at(-1) as { text: string }).text += st.buf
   } else {
     st.nodes.push({ type: 'text', text: st.buf })
   }
