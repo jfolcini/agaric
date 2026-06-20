@@ -25,7 +25,7 @@ import { persist } from 'zustand/middleware'
 import { activeSpaceKey } from '../lib/active-space'
 import { createSpaceSubscriber } from '../lib/createSpaceSubscriber'
 
-export type JournalMode = 'daily' | 'weekly' | 'monthly' | 'agenda'
+export type JournalMode = 'daily' | 'weekly' | 'monthly' | 'agenda' | 'stream'
 export type JournalPanel = 'due' | 'references' | 'done'
 
 interface JournalStore {
@@ -86,6 +86,7 @@ const JOURNAL_MODES: ReadonlySet<string> = new Set<JournalMode>([
   'weekly',
   'monthly',
   'agenda',
+  'stream',
 ])
 
 /**

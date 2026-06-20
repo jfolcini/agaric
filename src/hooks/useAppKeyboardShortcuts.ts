@@ -89,12 +89,17 @@ const JOURNAL_SHIFT_PREV: Record<JournalMode, (d: Date) => Date> = {
   weekly: (d) => subWeeks(d, 1),
   monthly: (d) => subMonths(d, 1),
   agenda: (d) => subMonths(d, 1),
+  // The stream is top-anchored at today and grows older on scroll, so the
+  // prev/next date shortcuts have no per-day cursor to move; keep the
+  // record exhaustive with a no-op-equivalent single-day shift.
+  stream: (d) => subDays(d, 1),
 }
 const JOURNAL_SHIFT_NEXT: Record<JournalMode, (d: Date) => Date> = {
   daily: (d) => addDays(d, 1),
   weekly: (d) => addWeeks(d, 1),
   monthly: (d) => addMonths(d, 1),
   agenda: (d) => addMonths(d, 1),
+  stream: (d) => addDays(d, 1),
 }
 
 interface JournalShortcut {
