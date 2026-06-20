@@ -7,8 +7,8 @@
   "scripts": {
     "dev": "vite",
     "setup": "bash scripts/setup.sh",
-    "build": "tsc -b && vite build",
-    "build:e2e": "VITE_E2E=1 tsc -b && VITE_E2E=1 vite build",
+    "build": "tsgo -b && vite build",
+    "build:e2e": "VITE_E2E=1 tsgo -b && VITE_E2E=1 vite build",
     "analyze": "ANALYZE=1 vite build",
     "preview": "vite preview",
     "preview:e2e": "VITE_E2E=1 vite preview --port 5173 --strictPort",
@@ -117,6 +117,7 @@
     "@types/node": "^25.9.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "@typescript/native-preview": "^7.0.0-dev.20260620.1",
     "@vitejs/plugin-react": "^6.0.2",
     "@vitest/coverage-v8": "^4.1.8",
     "babel-plugin-react-compiler": "^1.0.0",

@@ -600,7 +600,7 @@ jobs:
             --coverage.reporter=json \
             --coverage.reporter=json-summary
 
-      - name: Production build (tsc -b && vite build)
+      - name: Production build (tsgo -b && vite build)
         # Issue #812: nothing else on the PR path runs the production
         # bundler — Playwright uses the dev server, prek's tsc covers types
         # only, and `cargo tauri build` is path-gated away from
