@@ -512,17 +512,17 @@ pub(super) async fn purge_block_sql_cascade(
     sqlx::query("DROP TABLE IF EXISTS _purge_descendants")
         .execute(&mut *conn)
         .await?;
-    sqlx::query(
-        "CREATE TEMP TABLE _purge_descendants AS \
-         WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT id, 0 FROM blocks WHERE id = ? \
-             UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
-             INNER JOIN descendants d ON b.parent_id = d.id \
-             WHERE d.depth < 100 \
-         ) \
-         SELECT id FROM descendants",
-    )
+    // #1655: build the descendants set from the shared
+    // `descendants_cte_purge!()` macro (single source of truth for the
+    // purge CTE body — outer `deleted_at`-free filter, `depth < 100` cap)
+    // rather than re-inlining it here. `concat!` is required because the
+    // macro expands to a string literal that must be prefixed by the
+    // `CREATE TEMP TABLE … AS` header and suffixed by the projection.
+    sqlx::query(concat!(
+        "CREATE TEMP TABLE _purge_descendants AS ",
+        crate::descendants_cte_purge!(),
+        "SELECT id FROM descendants",
+    ))
     .bind(block_id)
     .execute(&mut *conn)
     .await?;

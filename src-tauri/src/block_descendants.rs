@@ -554,3 +554,219 @@ mod ancestor_db_tests {
         );
     }
 }
+
+/// #1655 drift guard: the `walk descendant cohort then UPDATE/SELECT`
+/// cascade SQL shape is reimplemented across many call sites with three
+/// genuinely different anchor shapes:
+///
+/// * **Single-root** (`WHERE id = ?`) — the macro family above
+///   (`descendants_cte_*!()`) is the single source of truth. Most call
+///   sites now `concat!` against the macro; the only ones that re-inline
+///   the body are the three `sqlx::query!()` *compile-time* sites
+///   (`materializer::handlers::apply::collect_purge_affected_pages`,
+///   `soft_delete::trash::cascade_soft_delete`, and the `page_id`/`space_id`
+///   rederive in `commands::block_cleanup`) whose macro form sqlx rejects
+///   because it demands a raw string literal — see the module-level
+///   "Sites that still inline the CTE" note.
+/// * **Multi-root** (`WHERE id IN (SELECT value FROM json_each(?1))`) — the
+///   bulk delete / restore / purge paths in `commands::blocks::crud`. The
+///   recursive arm is the SAME load-bearing shape as the single-root form
+///   but the anchor is a JSON id array, so it cannot reuse the macro body
+///   (which hard-codes the `id = ?` anchor). The bulk-restore variant
+///   additionally threads each seed's `deleted_at` down as `root_deleted_at`
+///   so per-root cohort identity survives a multi-root walk.
+///
+/// Forcing these onto one literal would mean either converting the
+/// compile-time `query!` sites to runtime SQL (rejected — keeps
+/// type-checking and the #646 baseline) or contorting the multi-root
+/// anchor into the single-root macro (it cannot express `json_each`).
+/// So the *bodies* legitimately differ; what MUST stay aligned is the set
+/// of **load-bearing invariants**:
+///
+/// 1. the `d.depth < 100` runaway-recursion cap (invariant #9) on EVERY
+///    `descendants` recursive arm, and
+/// 2. the cohort-identity / `deleted_at` filter on the variants that carry
+///    one (active = `deleted_at IS NULL`; cohort = `deleted_at = ?`/
+///    `= c.root_deleted_at`).
+///
+/// This module enforces (1) and (2) by a recursive `src/**/*.rs` walk:
+/// every `WITH RECURSIVE descendants(...)` block found anywhere in the
+/// crate is normalised and checked. A new cascade site, or a drifted depth
+/// cap / deleted_at filter in any existing one, fails the test. This is the
+/// machine-checked replacement for the prose-comment + parity-test coupling
+/// the #1655 finding called out.
+#[cfg(test)]
+mod cohort_cascade_drift_guard {
+    use regex::Regex;
+
+    /// Collapse `\`-line-continuations and whitespace runs to single
+    /// spaces and strip space adjacent to parens, so a CTE written across
+    /// many Rust source lines compares as one logical SQL string.
+    fn normalize(s: &str) -> String {
+        let ws = Regex::new(r"[\s\\]+").expect("ws regex compiles");
+        let s = ws.replace_all(s, " ").to_string();
+        let open = Regex::new(r"\(\s+").expect("paren-open regex compiles");
+        let s = open.replace_all(&s, "(").to_string();
+        let close = Regex::new(r"\s+\)").expect("paren-close regex compiles");
+        close.replace_all(&s, ")").to_string().trim().to_string()
+    }
+
+    /// Recursively collect `(rel_path, contents)` for every `*.rs` under
+    /// `dir`. Mirrors the established walk in `space_filter_canonical`.
+    fn collect_rs_files(
+        dir: &std::path::Path,
+        src_root: &std::path::Path,
+    ) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        let entries = std::fs::read_dir(dir)
+            .unwrap_or_else(|e| panic!("read_dir {} failed: {e}", dir.display()));
+        for entry in entries {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                out.extend(collect_rs_files(&path, src_root));
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                let rel = path
+                    .strip_prefix(src_root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let contents = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("read {} failed: {e}", path.display()));
+                out.push((rel, contents));
+            }
+        }
+        out
+    }
+
+    /// (1) Depth cap: EVERY recursive `descendants` cohort walk in the
+    /// crate must carry the `d.depth < 100` runaway-recursion bound
+    /// (invariant #9). We anchor on the recursive-arm self-join fragment
+    /// (the `descendants d` ON-parent_id join, built from `JOIN_ANCHOR`
+    /// below). That exact SQL string appears ONLY in real cascade SQL
+    /// (never in prose/comments, verified across the tree) — and this doc
+    /// deliberately does NOT spell the full join out, so the walk cannot
+    /// count its own comment. It is thus a reliable per-walk anchor immune
+    /// to the comment-text false positives a bare `WITH RECURSIVE` header
+    /// count would suffer. For each occurrence we require a `d.depth < 100` cap
+    /// to appear before the next recursive arm (or end of the normalised
+    /// string), i.e. inside that arm's own `WHERE`.
+    #[test]
+    fn every_descendants_cte_keeps_depth_cap() {
+        let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let files = collect_rs_files(&src_root, &src_root);
+        // The recursive arm + its WHERE up to the closing paren of the
+        // recursive member. `[^)]*` keeps the match inside this arm so a
+        // capped sibling can't satisfy an uncapped one.
+        let arm_re =
+            Regex::new(r"JOIN descendants d ON b\.parent_id = d\.id WHERE [^)]*d\.depth < 100")
+                .expect("arm+cap regex compiles");
+        let bare_arm_re = Regex::new(r"JOIN descendants d ON b\.parent_id = d\.id")
+            .expect("bare arm regex compiles");
+        let mut offenders: Vec<String> = Vec::new();
+        let mut total_arms = 0usize;
+        let mut total_capped = 0usize;
+        for (path, content) in &files {
+            let norm = normalize(content);
+            let arms = bare_arm_re.find_iter(&norm).count();
+            let capped = arm_re.find_iter(&norm).count();
+            total_arms += arms;
+            total_capped += capped;
+            if arms != capped {
+                offenders.push(format!(
+                    "  {path}: {arms} `descendants` recursive arm(s) but only \
+                     {capped} carried a `d.depth < 100` cap in their WHERE",
+                ));
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "#1655: a `descendants` recursive cohort walk dropped or altered \
+             the `depth < 100` runaway-recursion cap (invariant #9). Every \
+             walk MUST keep it. Offending file(s):\n{}",
+            offenders.join("\n"),
+        );
+        // Sanity: the walk must find the known cascade sites; a low count
+        // would mean the anchor regex broke and silently disabled the guard.
+        assert!(
+            total_arms >= 5,
+            "#1655 drift guard found only {total_arms} `descendants` recursive \
+             arm(s); expected >=5 (projections, collectors, purge walk, crud \
+             cascades, rederive). The anchor regex likely broke — fix it \
+             before trusting this guard.",
+        );
+        assert_eq!(
+            total_arms, total_capped,
+            "#1655: arm/cap counts diverged across the crate",
+        );
+    }
+
+    /// (2a) The single-root macro family is the canonical body the
+    /// `concat!`-using sites consume; pin each variant's recursive-arm
+    /// filter so the macro itself can't drift.
+    #[test]
+    fn macro_variants_pin_canonical_filters() {
+        // active = skip already-deleted descendants.
+        assert!(
+            normalize(crate::descendants_cte_active!())
+                .contains("WHERE b.deleted_at IS NULL AND d.depth < 100"),
+            "active CTE recursive arm must filter `deleted_at IS NULL` then cap depth",
+        );
+        // cohort = descend only through same-cohort (matching-timestamp) rows.
+        assert!(
+            normalize(crate::descendants_cte_cohort!())
+                .contains("WHERE b.deleted_at = ? AND d.depth < 100"),
+            "cohort CTE recursive arm must filter `deleted_at = ?` then cap depth",
+        );
+        // standard / purge = depth-only (no deleted_at).
+        for cte in [
+            crate::descendants_cte_standard!(),
+            crate::descendants_cte_purge!(),
+        ] {
+            let n = normalize(cte);
+            assert!(
+                n.contains("WHERE d.depth < 100"),
+                "standard/purge CTE recursive arm must cap depth with no deleted_at filter",
+            );
+            assert!(
+                !n.contains("deleted_at"),
+                "standard/purge CTE must not reference deleted_at",
+            );
+        }
+    }
+
+    /// (2b) The multi-root `crud.rs` bulk paths can't reuse the macro body
+    /// (their anchor is `json_each(?1)`, not `id = ?`), so they're the most
+    /// likely to silently drift. Pin their load-bearing recursive-arm
+    /// filters directly against the `crud.rs` source so a change to the cap
+    /// or the cohort filter there is caught.
+    #[test]
+    fn multi_root_crud_cascades_pin_canonical_filters() {
+        let crud =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands/blocks/crud.rs");
+        let norm = normalize(
+            &std::fs::read_to_string(&crud)
+                .unwrap_or_else(|e| panic!("read {} failed: {e}", crud.display())),
+        );
+        // Multi-root bulk DELETE: active recursive arm, json_each seed.
+        assert!(
+            norm.contains(
+                "SELECT id, 0 FROM blocks WHERE id IN (SELECT value FROM json_each(?1)) \
+                 AND deleted_at IS NULL"
+            ),
+            "#1655: multi-root bulk-delete CTE anchor drifted from the \
+             `json_each(?1) … deleted_at IS NULL` shape",
+        );
+        assert!(
+            norm.contains("WHERE b.deleted_at IS NULL AND d.depth < 100"),
+            "#1655: multi-root bulk-delete recursive arm must filter \
+             `deleted_at IS NULL` then cap depth",
+        );
+        // Multi-root bulk RESTORE: per-root cohort timestamp threaded as
+        // `root_deleted_at`, recursive arm matches it then caps depth.
+        assert!(
+            norm.contains("WHERE b.deleted_at = c.root_deleted_at AND c.depth < 100"),
+            "#1655: multi-root bulk-restore cohort recursive arm must match \
+             the per-root `root_deleted_at` then cap depth",
+        );
+    }
+}
