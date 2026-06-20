@@ -1,12 +1,12 @@
 /**
- * Tests for `recent-commands` (PEND-67 Phase 2).
+ * Tests for `recent-commands` (Phase 2).
  *
  * Validates:
  *  - `getRecentCommands()` returns [] when storage is empty.
  *  - `addRecentCommand()` prepends a new entry.
  *  - `addRecentCommand()` moves an existing id to position 0 (LRU dedup).
  *  - List is capped at MAX_RECENT_COMMANDS (5); oldest is evicted.
- *  - Storage is partitioned by active space (FEAT-3 invariant).
+ * Storage is partitioned by active space (invariant).
  *  - Malformed / non-array JSON tolerated silently.
  */
 

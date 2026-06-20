@@ -417,7 +417,7 @@ proptest! {
     /// `walk_edit_chain` returns ancestors `ORDER BY depth`. On a valid
     /// (acyclic, intact) linear chain `create(1) ← edit(2) ← … ← edit(L)`,
     /// walking from the head must yield ancestors in STRICTLY DECREASING
-    /// seq order `L-1, L-2, …, 1` — which, because depth increases as seq
+    /// Seq order `…, 1` — which, because depth increases as seq
     /// decreases along this chain, is exactly "monotonically non-decreasing
     /// ancestor depth". We assert both halves: (a) the seq sequence is
     /// strictly decreasing (monotone depth, no repeats), and (b) it is the

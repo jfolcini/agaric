@@ -105,7 +105,7 @@ vi.mock('../../../stores/page-blocks', () => ({
 }))
 
 // ── Mock UI button ──────────────────────────────────────────────────
-// PEND-68 Part A — DaySection now hosts a `ConfirmDialog` via
+// Part A — DaySection now hosts a `ConfirmDialog` via
 // `usePageDeleteAction`. The shared `ConfirmDialog` imports
 // `buttonVariants` for the destructive-style action button, so the
 // mock must export it too (otherwise the dialog throws on first
@@ -288,7 +288,7 @@ describe('DaySection', () => {
 
     render(<DaySection entry={entry} mode="weekly" compact onAddBlock={noop} />)
 
-    // Compact mode now uses the EmptyState primitive (UX-3) with an "Add block" action
+    // Compact mode now uses the EmptyState primitive with an "Add block" action
     expect(screen.getByTestId('empty-state')).toBeInTheDocument()
     expect(screen.getByText(/No blocks for Sun, Jun 15, 2025/)).toBeInTheDocument()
     expect(screen.getByText('Add block')).toBeInTheDocument()
@@ -623,7 +623,7 @@ describe('DaySection', () => {
     expect(section.className).not.toContain('border-accent')
   })
 
-  // 27. PEND-28 M8: heading row uses flex-wrap so badges + open-in-editor
+  // 27. heading row uses flex-wrap so badges + open-in-editor
   // button don't run off the right edge on narrow phones.
   it('heading row uses flex-wrap to prevent overflow on phones', () => {
     const entry = makeDayEntry({ displayDate: 'Sun, Jun 15, 2025' })
@@ -667,7 +667,7 @@ describe('DaySection', () => {
     })
   })
 
-  // ── PEND-68 Part A — page-quick-actions (star + delete) ───────────
+  // ── Part A — page-quick-actions (star + delete) ───────────
   describe('PageQuickActions integration', () => {
     // The shared `Button` mock at the top of this file flattens
     // `IconButton` to a bare `<button>` (it passes through children +

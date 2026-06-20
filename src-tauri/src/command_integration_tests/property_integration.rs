@@ -76,7 +76,7 @@ async fn delete_property_writes_op_log_entry() {
     .unwrap();
 
     // seq 1 = create_block, seq 2 = set_property
-    // BUG-20: "status" is seeded as select with options
+    // "status" is seeded as select with options
     // ["active","paused","done","archived"] (migration 0011).
     set_property_inner(
         &pool,
@@ -119,10 +119,10 @@ async fn delete_property_writes_op_log_entry() {
 }
 
 // ======================================================================
-// set_property — error paths (TEST-11)
+// Set_property — error paths
 // ======================================================================
 //
-// TEST-11 — Pre-fix `set_property_inner` had only the
+// Pre-fix `set_property_inner` had only the
 // `set_property_writes_op_log_entry` happy-path test in this file.
 // Validation/NotFound coverage for the broader properties surface
 // existed (e.g. `delete_property_on_deleted_block_returns_soft_deleted`,
@@ -132,7 +132,7 @@ async fn delete_property_writes_op_log_entry() {
 // AGENTS.md "Backend test patterns" (no `.contains("not found")` —
 // a reword of the message would slip past a substring check).
 
-/// TEST-11 — Pin the NotFound variant when the block_id does not
+/// Pin the NotFound variant when the block_id does not
 /// exist.  `set_property_inner` -> `set_property_in_tx`'s TOCTOU-safe
 /// `SELECT ... WHERE id = ? AND deleted_at IS NULL` returns None and
 /// the function maps it to `AppError::NotFound`.  A future refactor
@@ -167,7 +167,7 @@ async fn set_property_inner_with_nonexistent_block_returns_not_found() {
     );
 }
 
-/// TEST-11 — Pin the Validation variant when the property key
+/// Pin the Validation variant when the property key
 /// violates `validate_set_property`'s format rules (1-64 chars,
 /// alphanumeric + `_` + `-` only).  An empty key fires the
 /// `key.is_empty()` branch in `op::validate_set_property`, which
@@ -218,7 +218,7 @@ async fn set_property_inner_with_empty_key_returns_validation() {
     );
 }
 
-/// TEST-11 — Pin the Validation variant when the supplied value
+/// Pin the Validation variant when the supplied value
 /// kind disagrees with the registered `property_definitions.value_type`.
 /// `set_property_in_tx` performs runtime type validation against
 /// `property_definitions` for non-reserved keys (block 1c/1d in
@@ -283,10 +283,10 @@ async fn set_property_inner_with_type_mismatch_returns_validation() {
 }
 
 // ======================================================================
-// PEND-14 — boolean property end-to-end
+// Boolean property end-to-end
 // ======================================================================
 
-/// PEND-14 — register a `boolean`-typed property definition, set the
+/// Register a `boolean`-typed property definition, set the
 /// property on a real block via `set_property_inner`, and read it back
 /// through `get_properties_inner`.  Exercises the full dispatch chain
 /// for the new value type:
@@ -353,7 +353,7 @@ async fn boolean_property_set_and_read_back() {
     assert!(flag.value_ref.is_none());
 }
 
-/// PEND-14 — `value_bool = Some(false)` round-trips as the literal `0`
+/// `value_bool = Some(false)` round-trips as the literal `0`
 /// integer in `block_properties.value_bool` (distinct from `NULL`,
 /// which means "no value set").
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -403,7 +403,7 @@ async fn boolean_property_false_persists_as_zero() {
     assert_eq!(archived.value_bool, Some(0));
 }
 
-/// PEND-14 — providing `value_bool` for a property whose definition
+/// Providing `value_bool` for a property whose definition
 /// declares a non-boolean `value_type` (e.g. `text`) trips the type
 /// check in `set_property_in_tx` and returns `AppError::Validation`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -704,7 +704,7 @@ async fn date_validation_invalid_month_13_returns_validation() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -729,7 +729,7 @@ async fn date_validation_short_format_returns_validation() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -754,7 +754,7 @@ async fn date_validation_two_digit_year_returns_validation() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -779,7 +779,7 @@ async fn date_validation_day_32_returns_validation() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -804,7 +804,7 @@ async fn date_validation_non_date_string_returns_validation() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await;
     assert!(
@@ -1059,7 +1059,7 @@ async fn list_property_defs_returns_all_ordered() {
         .await
         .unwrap();
 
-    // M-85: paginated; under the default limit all three defs fit on
+    // Paginated; under the default limit all three defs fit on
     // page 1 (no second page expected).
     let page = list_property_defs_inner(&pool, None, None).await.unwrap();
     let defs = &page.items;
@@ -1074,7 +1074,7 @@ async fn list_property_defs_returns_all_ordered() {
 #[tokio::test]
 async fn list_property_defs_includes_seeded_defaults() {
     let (pool, _dir) = test_pool().await;
-    // M-85: thread no cursor; seeded defaults fit under the default limit.
+    // Thread no cursor; seeded defaults fit under the default limit.
     let page = list_property_defs_inner(&pool, None, None).await.unwrap();
     let defs = &page.items;
     let keys: Vec<&str> = defs.iter().map(|d| d.key.as_str()).collect();
@@ -1117,7 +1117,7 @@ async fn delete_property_def_removes_row() {
         .await
         .unwrap();
 
-    // M-85: paginated; consume the first page (only one fixture row remains).
+    // Paginated; consume the first page (only one fixture row remains).
     let page = list_property_defs_inner(&pool, None, None).await.unwrap();
     assert!(
         !page.items.iter().any(|d| d.key == "temp"),
@@ -1163,7 +1163,7 @@ async fn create_property_def_invalid_chars_returns_validation() {
 #[tokio::test]
 async fn create_property_def_invalid_value_type_returns_validation() {
     let (pool, _dir) = test_pool().await;
-    // PEND-14: `boolean` is now a valid value_type. Use a clearly bogus
+    // `boolean` is now a valid value_type. Use a clearly bogus
     // identifier here to keep the negative-path coverage.
     let result = create_property_def_inner(&pool, "flag".into(), "garbage".into(), None).await;
     assert!(
@@ -1551,11 +1551,11 @@ async fn thin_commands_survive_delete_property_cycle() {
 }
 
 // ======================================================================
-// list_property_defs_inner — cursor pagination (M-85)
+// List_property_defs_inner — cursor pagination
 // ======================================================================
 //
 // `list_property_defs_inner` migrated from a flat `Vec<PropertyDefinition>`
-// to a `PageResponse<PropertyDefinition>` so the FEAT-4c MCP
+// To a `PageResponse<PropertyDefinition>` so the MCP
 // `list_property_defs` tool exposes the canonical cursor surface
 // (AGENTS.md invariant #3). Ordered by `key ASC`. The keyset cursor
 // (`Cursor::for_id(key)`) stores the string `key` in the cursor's `id`
@@ -1603,11 +1603,11 @@ async fn list_property_defs_returns_next_cursor_when_capped_m85() {
     );
     assert!(
         page.has_more,
-        "has_more must be true when more entries remain past the page cap (M-85)"
+        "has_more must be true when more entries remain past the page cap"
     );
     assert!(
         page.next_cursor.is_some(),
-        "next_cursor must be populated when has_more is true so callers can page (M-85)"
+        "next_cursor must be populated when has_more is true so callers can page"
     );
 }
 

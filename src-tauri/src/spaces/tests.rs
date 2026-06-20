@@ -104,7 +104,7 @@ fn seeded_ulids_are_distinct() {
 
 #[test]
 fn seeded_ulids_validate_via_bootstrap_constructor() {
-    // L-126 regression: `bootstrap_spaces` now validates the seeded ULID
+    // Regression: `bootstrap_spaces` now validates the seeded ULID
     // constants via `BlockId::from_string` (instead of the no-validation
     // `BlockId::from_trusted` shortcut). This test reproduces the exact
     // call path from `bootstrap.rs::ensure_space_block` so a future typo
@@ -364,7 +364,7 @@ async fn bootstrap_resumes_after_partial_state() {
 }
 
 // ---------------------------------------------------------------------
-// FEAT-3p10 — Default accent_color seeding for Personal + Work.
+// Default accent_color seeding for Personal + Work.
 // ---------------------------------------------------------------------
 
 /// Read the `value_text` of the `accent_color` property on `block_id`,
@@ -405,7 +405,7 @@ async fn count_set_property_ops_for_block_and_key(
     .unwrap()
 }
 
-/// FEAT-3p10 — fresh bootstrap seeds the two default accent tokens
+/// Fresh bootstrap seeds the two default accent tokens
 /// (`accent-emerald` for Personal, `accent-blue` for Work).
 #[tokio::test]
 async fn bootstrap_seeds_default_accent_colors_for_personal_and_work() {
@@ -432,14 +432,14 @@ async fn bootstrap_seeds_default_accent_colors_for_personal_and_work() {
 
     // Sanity check that bootstrap is operating in a valid steady state
     // — the seeded tokens must differ so the visual identity is
-    // distinguishable at a glance (the spec rationale for FEAT-3p10).
+    // Distinguishable at a glance (the spec rationale for).
     assert_ne!(
         SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_WORK_DEFAULT_ACCENT,
         "seeded defaults must differ to give the two spaces distinct identity"
     );
 }
 
-/// FEAT-3p10 — running bootstrap twice on a vanilla install must not
+/// Running bootstrap twice on a vanilla install must not
 /// pile up duplicate `accent_color` ops in the op_log. Each seeded
 /// block gets exactly ONE accent_color SetProperty op across both
 /// boots (the fast-path skip is the load-bearing guard; the
@@ -486,7 +486,7 @@ async fn bootstrap_does_not_re_emit_accent_color_on_second_boot() {
 }
 
 // ---------------------------------------------------------------------
-// BUG-1 / L-133 — bootstrap re-runs `pages_without_space` every boot.
+// / bootstrap re-runs `pages_without_space` every boot.
 // ---------------------------------------------------------------------
 //
 // Pages that arrive without a `space` property — via a misbehaving
@@ -496,7 +496,7 @@ async fn bootstrap_does_not_re_emit_accent_color_on_second_boot() {
 // (which avoids re-emitting `is_space` / `accent_color` ops) is
 // preserved.
 
-/// FEAT-3p10 keeps `is_space` ops fast-pathed to "emit once". This
+/// Keeps `is_space` ops fast-pathed to "emit once". This
 /// counter is the load-bearing assertion for the second-boot test —
 /// `is_space` SetProperty ops should fire on the first boot only.
 async fn count_is_space_ops_for_block(pool: &SqlitePool, block_id: &str) -> i64 {
@@ -512,7 +512,7 @@ async fn count_is_space_ops_for_block(pool: &SqlitePool, block_id: &str) -> i64 
     .unwrap()
 }
 
-/// BUG-1 / L-133 regression — after the bootstrap-complete marker
+/// / regression — after the bootstrap-complete marker
 /// is set (i.e. on every boot AFTER the first), a freshly-arrived
 /// page WITHOUT a `space` property must STILL be migrated to the
 /// Personal space on the next boot. Before the fix the fast-path
@@ -526,7 +526,7 @@ async fn bootstrap_re_runs_pages_without_space_after_marker_set() {
     bootstrap_spaces(&pool, DEV).await.unwrap();
 
     // Simulate a page that arrives between boot 1 and boot 2 WITHOUT
-    // a `space` property — exactly the bypass-path scenario BUG-1
+    // A `space` property — exactly the bypass-path scenario
     // captures: `JournalPage`'s old `createBlock({ blockType: 'page' })`
     // call, a peer-synced page from a device on stale code, etc.
     insert_page(&pool, "01JABCD0000000000000000001", "Leaked page").await;
@@ -555,9 +555,9 @@ async fn bootstrap_re_runs_pages_without_space_after_marker_set() {
     );
 }
 
-/// BUG-1 / L-133 — the seeded-block fast path is intentionally
+/// / the seeded-block fast path is intentionally
 /// preserved. `is_space = "true"` SetProperty ops must fire ONLY on
-/// the first boot (FEAT-3p10 invariant). This test pins the fact
+/// The first boot (invariant). This test pins the fact
 /// that loosening the fast-path was scoped to the
 /// `pages_without_space` step, NOT the seeded `is_space` /
 /// `accent_color` op emission.
@@ -603,7 +603,7 @@ async fn bootstrap_does_not_re_emit_is_space_ops_on_second_boot() {
     );
 }
 
-/// M-92 regression: the batched migrator must correctly span multiple
+/// Regression: the batched migrator must correctly span multiple
 /// chunks. The chunk size is `MAX_SQL_PARAMS / 6 = 166` rows; seeding
 /// 200 unscoped pages exercises the two-chunk path (chunk #1 = 166 rows,
 /// chunk #2 = 34 rows). Confirms:
@@ -666,7 +666,7 @@ async fn bootstrap_batched_migrator_handles_more_than_one_chunk() {
 }
 
 // ---------------------------------------------------------------------
-// BUG-1 / H-3c — Property-test-style invariant: every page block has a
+// / H-3c — Property-test-style invariant: every page block has a
 // `space` property.
 // ---------------------------------------------------------------------
 //
@@ -675,11 +675,11 @@ async fn bootstrap_batched_migrator_handles_more_than_one_chunk() {
 // scenarios cover the three documented bypass paths:
 //
 //   1. Legacy `create_block(page)` direct IPC call — refused at the
-//      IPC boundary by the H-3a tightening (see `block_cmd_tests.rs`).
+//      IPC boundary by the IPC tightening (see `block_cmd_tests.rs`).
 //   2. `create_page_in_space` — emits the page WITH its `space`
 //      property atomically.
 //   3. Sync replay of legacy ops (or any path that lands a page row
-//      without `space` post-bootstrap) — caught by the L-133
+// Without `space` post-bootstrap) — caught by the
 //      every-boot backfill.
 //
 // The invariant: AFTER `bootstrap_spaces` has run, EVERY live,
@@ -687,7 +687,7 @@ async fn bootstrap_batched_migrator_handles_more_than_one_chunk() {
 // `space` property pointing at a valid space block, OR carries
 // `is_space = "true"` (i.e. is itself a space block).
 
-/// Helper: assert the BUG-1 invariant holds for the entire pool.
+/// Helper: assert the invariant holds for the entire pool.
 async fn assert_every_page_has_space_or_is_space(pool: &SqlitePool) {
     // Phase 2: a page is "scoped" iff it carries a `blocks.space_id`
     // (the sole source of truth); a space block itself carries
@@ -710,11 +710,11 @@ async fn assert_every_page_has_space_or_is_space(pool: &SqlitePool) {
 
     assert!(
         leaks.is_empty(),
-        "BUG-1 invariant violated: pages missing `space` AND `is_space`: {leaks:?}"
+        " invariant violated: pages missing `space` AND `is_space`: {leaks:?}"
     );
 }
 
-/// Property-style regression: scenario sequence covering every BUG-1
+/// Property-style regression: scenario sequence covering every
 /// bypass path. Models the user's daily workflow under the fix:
 ///
 /// 1. Bootstrap fresh DB → Personal + Work seeded.
@@ -907,7 +907,7 @@ async fn every_block_maps_to_a_space_after_realistic_workflow_533() {
     mat.shutdown();
 }
 
-/// TEST-14 — `list_blocks_inner` (the IPC consumer path the frontend
+/// `list_blocks_inner` (the IPC consumer path the frontend
 /// hits via the `list_blocks` Tauri command) must enforce space
 /// isolation end-to-end: given pages seeded across both spaces via
 /// the real `create_page_in_space_inner` command path, a query with
@@ -1052,7 +1052,7 @@ async fn list_blocks_inner_isolates_blocks_by_space_id() {
 }
 
 // ---------------------------------------------------------------------
-// MAINT-1 — One-shot migration: move existing Personal pages → Work.
+// One-shot migration: move existing Personal pages → Work.
 // ---------------------------------------------------------------------
 
 /// Pre-threshold page ULID. `01JABCD…` < `01KQ5WWYR…` because `J` < `K`
@@ -1085,7 +1085,7 @@ fn migration_threshold_ulid_parses_as_valid_ulid() {
     );
 
     // Compare against the pre/post-threshold fixtures used by the rest
-    // of the MAINT-1 tests so a future bump of the threshold (without
+    // Of the tests so a future bump of the threshold (without
     // updating the fixtures) trips the assertion before the tests
     // silently start passing for the wrong reason.
     assert!(

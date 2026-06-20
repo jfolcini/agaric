@@ -1,5 +1,5 @@
 /**
- * Tests for the Command UI wrapper around cmdk (PEND-59 Phase 1).
+ * Tests for the Command UI wrapper around cmdk (Phase 1).
  *
  * Coverage:
  *  - Renders the seven canonical exports with the documented slots

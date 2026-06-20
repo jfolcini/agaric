@@ -309,7 +309,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     return () => document.removeEventListener('keydown', handler)
   }, [focusedBlockId, pageStore, selectedBlockIds, clearSelected])
 
-  // ── Keyboard shortcut: Escape closes unfocused editor (UX-M8) ──────
+  // ── Keyboard shortcut: Escape closes unfocused editor ──────
   // The TipTap-level Escape handler (use-block-keyboard.ts) only fires when
   // the editor DOM has focus.  This document-level handler covers the case
   // where the user clicked elsewhere on the page and presses Escape — the
@@ -337,7 +337,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     return () => document.removeEventListener('keydown', handleUnfocusedEscape)
   }, [handleFlush, setFocused, pageStore])
 
-  // ── Keyboard shortcut: Escape zooms out when zoomed in (UX-214) ──
+  // ── Keyboard shortcut: Escape zooms out when zoomed in ──
   // Fires only when:
   //   - the user is actually zoomed into a block (zoomedBlockId !== null)
   //   - no block is focused in the editor (Escape would blur the editor)

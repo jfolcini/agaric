@@ -2463,7 +2463,7 @@ describe('PageBlockStore', () => {
   // moveUp
   // ---------------------------------------------------------------------------
   describe('moveUp', () => {
-    it('calls move_block with the prev sibling slot, then splices locally (PEND-35 Tier 4.1)', async () => {
+    it('calls move_block with the prev sibling slot, then splices locally', async () => {
       const blockA = makeBlock({ id: 'A', position: 1, parent_id: null, depth: 0 })
       const blockB = makeBlock({ id: 'B', position: 2, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
@@ -2483,7 +2483,7 @@ describe('PageBlockStore', () => {
         newParentId: null,
         newIndex: 0,
       })
-      // PEND-35 Tier 4.1 — same-parent moveUp must NOT trigger a re-list IPC.
+      // Same-parent moveUp must NOT trigger a re-list IPC.
       expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
       // The blocks array is reordered locally with the echoed dense position.
       const blocks = store.getState().blocks
@@ -2654,7 +2654,7 @@ describe('PageBlockStore', () => {
   // moveDown
   // ---------------------------------------------------------------------------
   describe('moveDown', () => {
-    it('calls move_block with the next sibling slot, then splices locally (PEND-35 Tier 4.1)', async () => {
+    it('calls move_block with the next sibling slot, then splices locally', async () => {
       const blockA = makeBlock({ id: 'A', position: 1, parent_id: null, depth: 0 })
       const blockB = makeBlock({ id: 'B', position: 2, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
@@ -2675,7 +2675,7 @@ describe('PageBlockStore', () => {
         newParentId: null,
         newIndex: 1,
       })
-      // PEND-35 Tier 4.1 — same-parent moveDown must NOT trigger a re-list IPC.
+      // Same-parent moveDown must NOT trigger a re-list IPC.
       expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
       const blocks = store.getState().blocks
       expect(blocks[0]?.id).toBe('B')
@@ -2892,7 +2892,7 @@ describe('PageBlockStore', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // appendBlock (PEND-35 Tier 4.2)
+  // AppendBlock
   // ---------------------------------------------------------------------------
   describe('appendBlock', () => {
     it('pushes the row to blocks and rebuilds blocksById (no IPC)', () => {
@@ -3191,7 +3191,7 @@ describe('PageBlockStore', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // PEND-20 G — blocksById Map invariant
+  // G — blocksById Map invariant
   // ---------------------------------------------------------------------------
   describe('blocksById Map invariant', () => {
     it('seeds an empty Map on a freshly created store', () => {

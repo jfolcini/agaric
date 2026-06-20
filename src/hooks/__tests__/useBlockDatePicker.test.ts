@@ -55,7 +55,7 @@ beforeEach(() => {
   mockedInvoke.mockResolvedValue(undefined)
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' })] })
-  // BUG-1 / H-3b — `handleDateMode` now routes through `createPageInSpace`,
+  // / H-3b — `handleDateMode` now routes through `createPageInSpace`,
   // which reads `currentSpaceId` from the space store. Seed a deterministic
   // active space so the date-mode flow has a target.
   useSpaceStore.setState({
@@ -281,7 +281,7 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
   it('creates date page when none exists', async () => {
     // 1st invoke = list_all_pages_in_space (no existing page); 2nd =
     // create_page_in_space (returns the new page's ULID as a plain
-    // string per BUG-1's contract).  limit-clamp-followup —
+    // String contract). limit-clamp-followup —
     // `listAllPagesInSpace` returns a flat `PageHeading[]`, no
     // `.items` wrapper, no pagination clamp.
     mockedInvoke.mockResolvedValueOnce([])
@@ -297,7 +297,7 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
       'list_all_pages_in_space',
       expect.objectContaining({ spaceId: 'SPACE_TEST' }),
     )
-    // BUG-1 / H-3b — date pages route through `create_page_in_space` so
+    // / H-3b — date pages route through `create_page_in_space` so
     // they own a `space` property and surface in PageBrowser. The
     // legacy `create_block(blockType: 'page')` path is no longer used.
     expect(mockedInvoke).toHaveBeenCalledWith(

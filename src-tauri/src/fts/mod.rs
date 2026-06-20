@@ -36,7 +36,7 @@ pub use search::search_fts;
 pub(crate) use search::{SNIPPET_HL_CLOSE, SNIPPET_HL_OPEN};
 pub use toggle_filter::{SearchToggles, search_with_toggles};
 
-// PEND-61 Phase 1 — partitioned FTS scan for the multi-mode palette.
+// Phase 1 — partitioned FTS scan for the multi-mode palette.
 // `search_with_toggles_partitioned` is the single entry-point; it
 // dispatches into `search_fts_partitioned` or `regex_mode_query` based
 // on the toggle bundle. `pub(crate)` because the return type
@@ -46,7 +46,7 @@ pub(crate) use toggle_filter::search_with_toggles_partitioned;
 
 // Re-export crate-internal API
 pub(crate) use search::sanitize_fts_query;
-// PEND-58f BE-2 — the partitioned IPC command validates its
+// BE-2 — the partitioned IPC command validates its
 // `page_limit` / `block_limit` against this ceiling and rejects an
 // over-limit request (the cursor path rejects via `PageRequest::new`).
 pub(crate) use search::MAX_SEARCH_RESULTS;

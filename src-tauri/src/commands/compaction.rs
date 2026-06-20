@@ -13,7 +13,7 @@ use super::*;
 
 /// Minimum retention period accepted by [`compact_op_log_cmd_inner`].
 ///
-/// M-38: Hard floor at the IPC boundary so a buggy Settings tab or malformed
+/// Hard floor at the IPC boundary so a buggy Settings tab or malformed
 /// IPC payload supplying `0` cannot purge the entire op log down to the
 /// snapshot frontier in one shot. AGENTS.md invariant 1 ("op log is strictly
 /// append-only … except compaction") relies on the user explicitly opting
@@ -24,7 +24,7 @@ pub const MIN_RETENTION_DAYS: u64 = 7;
 ///
 /// Both endpoints are [`ActiveBlockId`] — `list_page_links_inner` filters
 /// deleted_at IS NULL` on both source and target
-/// pages (MAINT-113 M1 lift of invariant #9 into the type system).
+/// Pages (lift of invariant #9 into the type system).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, sqlx::FromRow, specta::Type)]
 pub struct PageLink {
     pub source_id: crate::ulid::ActiveBlockId,
@@ -70,7 +70,7 @@ pub async fn get_compaction_status_inner(pool: &SqlitePool) -> Result<Compaction
         .fetch_one(pool)
         .await?;
 
-    // SAFETY: MAINT-147 (j). `DEFAULT_RETENTION_DAYS = 90u64`, a
+    // SAFETY: (j). `DEFAULT_RETENTION_DAYS = 90u64`, a
     // compile-time constant well below `i64::MAX`. `u64::cast_signed`
     // is the documented happy-path conversion to `i64` for values that
     // fit; here the bound (90) is many orders of magnitude smaller, so
@@ -107,7 +107,7 @@ pub async fn get_compaction_status(
 
 /// Inner implementation for [`compact_op_log_cmd`], testable without Tauri state.
 ///
-/// L-43: this function takes a `BEGIN IMMEDIATE` lock purely to perform
+/// This function takes a `BEGIN IMMEDIATE` lock purely to perform
 /// a TOCTOU recount of eligible ops under the writer lock — it does
 /// **not** provide atomicity for the compaction itself.
 /// `snapshot::compact_op_log` (`snapshot/create.rs:243-295`) wraps its
@@ -116,7 +116,7 @@ pub async fn get_compaction_status(
 /// fast-path early-return when no ops match the cutoff and emit a
 /// `warn` log via `begin_immediate_logged` if writers are contending.
 ///
-/// L-42: the returned `CompactionResult.ops_deleted` is the real number
+/// The returned `CompactionResult.ops_deleted` is the real number
 /// of rows the inner DELETE removed (sourced from
 /// `snapshot::compact_op_log`'s `(snapshot_id, deleted_count)` return
 /// value), **not** the recounted "eligible at start" figure. The
@@ -127,14 +127,14 @@ pub async fn compact_op_log_cmd_inner(
     device_id: &str,
     retention_days: u64,
 ) -> Result<CompactionResult, AppError> {
-    // M-38: reject pathologically small retention windows at the IPC boundary
+    // Reject pathologically small retention windows at the IPC boundary
     // before any DB work. retention_days = 0 would otherwise set cutoff = now()
     // and purge the entire op log down to the snapshot frontier.
     if retention_days < MIN_RETENTION_DAYS {
         return Err(AppError::Validation("retention_days.too_small".into()));
     }
 
-    // SAFETY: MAINT-147 (j). `retention_days` was just bounded above by
+    // SAFETY: (j). `retention_days` was just bounded above by
     // `MIN_RETENTION_DAYS = 7u64`. The IPC boundary's `u64` payload can
     // in principle overflow `i64` at `2^63`, but at one day per increment
     // that value is meaningless (~25 quintillion years); SQLite's own
@@ -159,7 +159,7 @@ pub async fn compact_op_log_cmd_inner(
         });
     }
 
-    // L-43: this BEGIN IMMEDIATE is *not* providing atomicity for the
+    // This BEGIN IMMEDIATE is *not* providing atomicity for the
     // compaction itself. `snapshot::compact_op_log`
     // (`snapshot/create.rs:243-295`) already wraps its own write phase
     // in BEGIN IMMEDIATE, so the inner call owns its tx end-to-end.
@@ -171,18 +171,18 @@ pub async fn compact_op_log_cmd_inner(
     // `ops_deleted` — it's stale by the time `compact_op_log` runs
     // (more ops can be appended between commit and the inner write
     // phase, and the snapshot-frontier guard inside `compact_op_log`
-    // may also skip some). See the L-42 block below for how the real
+    // May also skip some). See the block below for how the real
     // delete count is now sourced. Do not assume this wrapper tx adds
     // atomicity over the actual delete — it does not.
     //
-    // MAINT-30: slow-acquire timed via `begin_immediate_logged` so a
+    // Slow-acquire timed via `begin_immediate_logged` so a
     // recount that blocks on the write lock surfaces as a `warn` log
     // instead of disappearing into the 5s busy_timeout.
     // allow-raw-tx: compaction admin op, no user-edit shape (#110)
     let mut tx = crate::db::begin_immediate_logged(pool, "cmd_compact_op_log").await?;
 
     // Recount inside the transaction (TOCTOU recount, not atomicity —
-    // see comment above and L-42 / L-43).
+    // See comment above and).
     let eligible_in_tx: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
         cutoff_ms
@@ -204,7 +204,7 @@ pub async fn compact_op_log_cmd_inner(
     // gain. `compact_op_log` re-verifies eligibility under its own tx.
     tx.commit().await?;
 
-    // L-42: previously this wrapper returned `ops_deleted: eligible_in_tx`,
+    // Previously this wrapper returned `ops_deleted: eligible_in_tx`,
     // i.e. the count of ops eligible at the start of the wrapper tx — a
     // figure that goes stale the moment we commit and call into
     // `compact_op_log`. Between the commit above and the inner write
@@ -228,7 +228,7 @@ pub async fn compact_op_log_cmd_inner(
     tracing::debug!(
         eligible_in_tx,
         real_deleted_count,
-        "compact_op_log_cmd: pre-flight vs actual delete count (L-42)"
+        "compact_op_log_cmd: pre-flight vs actual delete count"
     );
 
     // `CompactionResult.ops_deleted` is `i64`; the real count is at
@@ -248,7 +248,7 @@ pub async fn compact_op_log_cmd_inner(
 /// The frontend is responsible for confirming with the user before calling
 /// this command. `retention_days` controls how far back ops are retained.
 ///
-/// MAINT-229: a successful compaction that actually deleted ops enqueues
+/// A successful compaction that actually deleted ops enqueues
 /// `CleanupOrphanedAttachments` so attachments whose owning block was
 /// just purged get swept. The complementary boot-time enqueue in
 /// `lib.rs` covers the case where the user never triggers compaction.

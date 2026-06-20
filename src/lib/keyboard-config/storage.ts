@@ -1,5 +1,5 @@
 /**
- * localStorage-backed persistence for keyboard shortcut overrides (MAINT-127).
+ * LocalStorage-backed persistence for keyboard shortcut overrides.
  * Reads/writes the `agaric-keyboard-shortcuts` JSON map, merges it with the
  * defaults from `./catalog`, and reports conflicts within a category.
  */
@@ -200,7 +200,7 @@ export function findConflicts(): Array<{ ids: string[]; keys: string; category: 
   // conflict with every other binding on the same (keys, category) pair.
   const byTriple = new Map<string, ShortcutBinding[]>()
   // Also index by (keys, category) so we can surface wildcard cross-conflicts
-  // (UX-394: shortcuts with disjoint, defined conditions never fire together
+  // (shortcuts with disjoint, defined conditions never fire together
   // and must not be flagged).
   const byKeyCat = new Map<string, ShortcutBinding[]>()
   for (const s of current) {
@@ -253,7 +253,7 @@ export function findConflicts(): Array<{ ids: string[]; keys: string; category: 
  * DIFFERENT categories of that set race each other — the per-category
  * grouping in passes 1/2 never compares them. Alternatives
  * (`'Ctrl + Y / Ctrl + Shift + Z'`) are split so a single shared chord
- * counts. The UX-394 condition rule carries over: two bindings whose
+ * Counts. The condition rule carries over: two bindings whose
  * conditions are BOTH defined and differ are assumed disjoint and not
  * flagged.
  */

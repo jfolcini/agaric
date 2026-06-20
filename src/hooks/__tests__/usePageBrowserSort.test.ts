@@ -109,7 +109,7 @@ describe('usePageBrowserSort', () => {
     expect(sorted).not.toBe(pages)
   })
 
-  // ── PEND-56 — 4 new sort modes ──────────────────────────────────────
+  // ── 4 new sort modes ──────────────────────────────────────
 
   it('sortPages with "default" option sorts by ULID ascending (raw backend order)', () => {
     localStorage.setItem('page-browser-sort', 'default')
@@ -136,7 +136,7 @@ describe('usePageBrowserSort', () => {
     expect(sorted.map((p) => p.id)).toEqual(['P2', 'P3', 'P1'])
   })
 
-  // PEND-58e E14: count ties break by `id ASC` (server keyset parity),
+  // Count ties break by `id ASC` (server keyset parity),
   // not by title — so equal-count groups don't reshuffle as pages stream.
   it('sortPages with "most-linked" reads inboundLinkCount DESC, id-ASC tiebreaker', () => {
     localStorage.setItem('page-browser-sort', 'most-linked')
@@ -177,7 +177,7 @@ describe('usePageBrowserSort', () => {
     expect(sorted.map((p) => p.content)).toEqual(['Alpha', 'Bravo'])
   })
 
-  // ── PEND-58d D3 — isFrontendOnlySort helper ─────────────────────────
+  // ── isFrontendOnlySort helper ─────────────────────────
 
   it('isFrontendOnlySort is true for the three frontend-only sorts', () => {
     expect(isFrontendOnlySort('alphabetical')).toBe(true)

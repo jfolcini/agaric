@@ -15,7 +15,7 @@
 //! `sqlx::query(...)` API, which accepts a runtime `&str`, not the
 //! compile-time `query_as!` family used at the 20 production sites.
 //!
-//! Trade-off chosen (PEND-28a H1 Option 2): keep the canonical
+//! Trade-off chosen (Option 2): keep the canonical
 //! column list duplicated at all 20 production sites, accept the
 //! manual lockstep-update cost when `BlockRow` changes, and use the
 //! parity tests in this module's `#[cfg(test)] mod tests` to catch
@@ -30,7 +30,7 @@
 //!   compile-time macro sites.
 //! - [`BLOCK_ROW_RUNTIME_SELECT`] — for the 3 runtime
 //!   `sqlx::query_as::<_, BlockRow>(…)` sites which use sqlx's
-//!   `FromRow` for type mapping. MAINT-223 (PEND-28a H1 follow-up).
+//!   `FromRow` for type mapping. (follow-up).
 //!
 //! Both are `pub(crate) const` (not `#[cfg(test)]`-gated) so the
 //! production sites can reference them directly. The parity tests in
@@ -76,7 +76,7 @@ pub(crate) const BLOCK_ROW_CANONICAL_SELECT: &str = "id as \"id!: crate::ulid::B
 /// which use sqlx's `FromRow` for type mapping.
 ///
 /// Precedent: [`BLOCK_ROW_CANONICAL_SELECT`] for the macro form.
-/// MAINT-223 (PEND-28a H1 follow-up) extracted this const from the
+/// (follow-up) extracted this const from the
 /// 3 runtime callsites to give them the same drift-detection
 /// coverage that Test B gives the macro sites.
 pub(crate) const BLOCK_ROW_RUNTIME_SELECT: &str = "id, block_type, content, parent_id, position, deleted_at, \
@@ -102,8 +102,8 @@ pub(crate) const BLOCK_ROW_RUNTIME_SELECT: &str = "id, block_type, content, pare
 /// stripping `b.` from every column must yield exactly the unprefixed
 /// const.
 ///
-/// MAINT-229 (MAINT-223 follow-up) extracted this const from the 2
-/// `pagination/properties.rs` callsites that MAINT-223 deferred.
+/// (follow-up) extracted this const from the 2
+/// `pagination/properties.rs` callsites that deferred.
 pub(crate) const BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS: &str = "b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at, \
      b.todo_state, \
      b.priority, b.due_date, b.scheduled_date, b.page_id";
@@ -349,12 +349,12 @@ mod tests {
 
     /// Test C — every runtime `sqlx::query_as::<_, BlockRow>(…)` /
     /// `sqlx::query_as::<_, ActiveBlockRow>(…)` callsite covered by
-    /// MAINT-223 must reference [`BLOCK_ROW_RUNTIME_SELECT`] (rather
+    /// Must reference [`BLOCK_ROW_RUNTIME_SELECT`] (rather
     /// than embedding the 13-column list inline). Mirrors Test B but
     /// for the runtime form, which slips past Test B's regex because
     /// it uses turbofish syntax and a runtime `&str` argument.
     ///
-    /// The captured SELECT-column slot is parametric: post-MAINT-223
+    /// The captured SELECT-column slot is parametric: post-
     /// it is the literal `{}` placeholder (substituted by the
     /// `format!` arg), and substituting [`BLOCK_ROW_RUNTIME_SELECT`]
     /// in for the placeholder yields the canonical column list. If
@@ -362,7 +362,7 @@ mod tests {
     /// is a no-op and the comparison catches the drift directly.
     ///
     /// Allowlist is intentionally narrow: `backlink/query.rs` and
-    /// `tag_query/query.rs` are the 2 files MAINT-223 covers. The
+    /// `tag_query/query.rs` are the 2 files covers. The
     /// `pagination/properties.rs` runtime sites have a `b.` alias on
     /// every column and additional `WHERE`-clause complexity; they
     /// are tracked separately and not part of this parity test.
@@ -395,7 +395,7 @@ mod tests {
         ];
 
         // Match `format!("SELECT {} FROM blocks …")` — the
-        // post-MAINT-223 placeholder form used at all 3 runtime sites.
+        // Post- placeholder form used at all 3 runtime sites.
         // `[\s\\]+` matches Rust string-continuation backslashes (the
         // plain `"…"` form joins lines via `\<newline>`, unlike the
         // raw `r#"…"#` form used by the macro sites in Test B). The
@@ -491,7 +491,7 @@ mod tests {
     /// Test D — assert [`BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS`] is a
     /// pure `b.`-prefixed re-write of [`BLOCK_ROW_RUNTIME_SELECT`].
     ///
-    /// MAINT-229 split the runtime-select const into an unprefixed form
+    /// Split the runtime-select const into an unprefixed form
     /// (used at 3 sites covered by Test C) and a `b.`-aliased form (used
     /// at the 2 `pagination/properties.rs` sites). Stripping the `b.`
     /// alias from every column of the aliased const — using the same

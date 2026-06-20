@@ -15,11 +15,11 @@
 //!   `(device_id, seq)` of every just-appended op, when a scope is
 //!   active. Read by `crate::mcp::server::handle_tools_call` so the
 //!   emitted `mcp:activity` entry can carry the produced `OpRef`s for
-//!   FEAT-4h slice 3 (per-entry Undo).
+//!   slice 3 (per-entry Undo).
 //!
 //! ## Why a `Vec`, not an `Option`?
 //!
-//! L-114: every RW tool today emits exactly one op, but a future
+//! every RW tool today emits exactly one op, but a future
 //! multi-op tool (e.g. `move_subtree`, `bulk_set_property`) will append
 //! several ops in one call. Storing only the *last* `OpRef` would
 //! silently drop the earlier appends and make Undo partial. The
@@ -48,7 +48,7 @@ tokio::task_local! {
     /// Set by [`crate::op_log::append_local_op_in_tx`] (via
     /// [`record_append`], silent no-op outside the scope). Read by the
     /// MCP dispatch layer in `mcp::server` (via [`take_appends`]) to
-    /// attach `OpRef`s to the emitted `mcp:activity` entry for FEAT-4h
+    /// Attach `OpRef`s to the emitted `mcp:activity` entry for
     /// slice 3 (per-entry Undo).
     pub static LAST_APPEND: RefCell<Vec<OpRef>>;
 }
@@ -58,7 +58,7 @@ tokio::task_local! {
 /// is the intended behaviour for frontend user writes that have no
 /// activity emission surface.
 ///
-/// L-114: appends accumulate in order; multi-op tools therefore retain
+/// Appends accumulate in order; multi-op tools therefore retain
 /// every `OpRef` they produced, not just the last.
 pub fn record_append(op_ref: OpRef) {
     let _ = LAST_APPEND.try_with(|c| c.borrow_mut().push(op_ref));
@@ -120,7 +120,7 @@ mod tests {
         );
     }
 
-    /// L-114: every recorded `OpRef` must be retained, in append
+    /// Every recorded `OpRef` must be retained, in append
     /// order — multi-op tools rely on this so a future
     /// `move_subtree` / `bulk_set_property` can surface every produced
     /// op for Undo. The previous behaviour (overwrite-last) silently

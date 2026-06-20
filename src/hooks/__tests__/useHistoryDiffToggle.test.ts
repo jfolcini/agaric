@@ -222,11 +222,11 @@ describe('useHistoryDiffToggle', () => {
     expect(result.current.loadingDiffs.has(20)).toBe(false)
   })
 
-  it('FE-M-4: handleToggleDiff identity stable across state changes', async () => {
+  it('handleToggleDiff identity stable across state changes', async () => {
     mockedComputeEditDiff.mockResolvedValue(fakeDiff)
 
     // Stable keyFn — consumers pass a memoized keyFn so the callback's only
-    // remaining dep is stable. The point of FE-M-4 is that expandedKeys /
+    // Remaining dep is stable. The point of is that expandedKeys /
     // diffCache changes alone must not churn the callback identity.
     const keyFn = (entry: HistoryEntry): number => entry.seq
     const { result } = renderHook(() => useHistoryDiffToggle<number>(keyFn))

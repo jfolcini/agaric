@@ -1,6 +1,6 @@
 /**
  * Tests for `ResultCountSummary` — the "N matches in M pages" string
- * above the first search-result group (PEND-50 Phase 1).
+ * Above the first search-result group (Phase 1).
  *
  * Covers the three string variants enumerated in the plan:
  *  - 0 matches / 0 pages → renders nothing (SearchPanel handles empty

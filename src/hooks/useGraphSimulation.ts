@@ -1,6 +1,6 @@
 /**
  * useGraphSimulation — orchestrator for GraphView's d3-force simulation
- * (MAINT-57 + BUG-45). Decomposed per MAINT-127 into:
+ * (+). Decomposed into:
  *
  *   - `useGraphZoom` — zoom behavior + keyboard zoom + zoomIn/Out/Reset.
  *   - `useGraphRenderElements` — d3 selections + node/edge rendering.
@@ -361,7 +361,7 @@ export function useGraphSimulation({
 
     // ── ResizeObserver: re-anchor centering forces on SVG resize ──
     //
-    // UX-238: before this, the simulation read `svg.clientWidth /
+    // Before this, the simulation read `svg.clientWidth /
     // clientHeight` exactly once at mount. When the view container
     // resized (window resize, sidebar toggle, orientation change), the
     // simulation's `forceCenter` / `forceX` / `forceY` stayed anchored

@@ -5,7 +5,7 @@ import { isWithinUndoGroup, MAX_REDO_STACK, UNDO_GROUP_WINDOW_MS, useUndoStore }
 vi.mock('@/lib/tauri', () => ({
   undoPageOp: vi.fn(),
   redoPageOp: vi.fn(),
-  // PEND-35 Tier 4.4 — replaces the prior `listPageHistory`-based
+  // Replaces the prior `listPageHistory`-based
   // grouping mock with a single-IPC `findUndoGroup` mock. The deprecated
   // mock is left as a `vi.fn()` so the regression assertions below can
   // verify the legacy IPC is no longer fired under the new undo path.
@@ -59,7 +59,7 @@ describe('useUndoStore', () => {
   beforeEach(() => {
     useUndoStore.setState({ pages: new Map() })
     vi.clearAllMocks()
-    // PEND-35 Tier 4.4 — default `findUndoGroup` to 1 (no batch
+    // Default `findUndoGroup` to 1 (no batch
     // extension) for tests that exercise the single-undo path. Tests
     // that exercise batch behaviour override this with a higher value.
     mockedFindUndoGroup.mockResolvedValue(1)
@@ -843,7 +843,7 @@ describe('isWithinUndoGroup', () => {
 // Batch undo / redo
 // ---------------------------------------------------------------------------
 
-// PEND-35 Tier 4.4 — batch undo/redo previously re-fetched
+// Batch undo/redo previously re-fetched
 // `listPageHistory` with a growing window after every Ctrl+Z to
 // determine the group size. The new path delegates that decision to a
 // single `findUndoGroup` IPC. These tests assert ONE `findUndoGroup`

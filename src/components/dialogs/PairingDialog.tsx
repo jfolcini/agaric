@@ -67,9 +67,9 @@ export function PairingDialog({
   const [unpairPeerId, setUnpairPeerId] = useState<string | null>(null)
   const [countdown, setCountdown] = useState<number | null>(null)
   const [entryMode, setEntryMode] = useState<'manual' | 'scan'>('manual')
-  // UX-263: Guard against accidentally closing the dialog mid-handshake.
+  // Guard against accidentally closing the dialog mid-handshake.
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false)
-  // UX-263: Pause the countdown while the user is mid-keystroke in the
+  // Pause the countdown while the user is mid-keystroke in the
   // passphrase inputs so an in-flight handshake doesn't fail to a tick
   // boundary. PairingEntryForm enforces a 5s idle debounce so an idle
   // user with focus can't keep this true forever.
@@ -79,7 +79,7 @@ export function PairingDialog({
   const dialogRef = useRef<HTMLDivElement>(null)
   const retryBtnRef = useRef<HTMLButtonElement>(null)
   // Tracks the paste-focus setTimeout so we can cancel it on unmount and
-  // avoid focusing a stale DOM node (#MAINT-12).
+  // Avoid focusing a stale DOM node (#).
   const pendingFocusRef = useRef<number | null>(null)
 
   // Clear any pending paste-focus timer on unmount so we never touch a
@@ -107,7 +107,7 @@ export function PairingDialog({
 
   const syncSetState = useSyncStore((s) => s.setState)
 
-  // MAINT-120: bootstrap the pairing session via the shared useIpcCommand
+  // Bootstrap the pairing session via the shared useIpcCommand
   // hook. The error template literal mirrors the existing inline format
   // so the error banner copy stays byte-equivalent.
   const { execute: executeInit } = useIpcCommand<
@@ -138,7 +138,7 @@ export function PairingDialog({
     setLoading(false)
   }, [executeInit])
 
-  // MAINT-120: cleanup-side cancelPairing — fires when the dialog closes
+  // Cleanup-side cancelPairing — fires when the dialog closes
   // or unmounts. Logger.warn + notify.error matches the original inline
   // shape (handleCancel uses a different logger.error-only flavor that
   // stays inline because it has no toast).
@@ -183,7 +183,7 @@ export function PairingDialog({
   }, [open, init, executeCancelPairingCleanup])
 
   // Countdown timer (#294) — only re-run effect when active/inactive changes.
-  // UX-263: Read the pause flag through a ref inside the interval so flipping
+  // Read the pause flag through a ref inside the interval so flipping
   // pausedByTyping does NOT tear down and recreate the interval (which would
   // also reset its 1s phase and skew the displayed countdown). The interval
   // simply skips the decrement while paused.
@@ -212,7 +212,7 @@ export function PairingDialog({
     return () => clearInterval(interval)
   }, [countdownActive])
 
-  // UX-263: Single setter that updates both the ref (read by the interval)
+  // Single setter that updates both the ref (read by the interval)
   // and the state (drives the `t('pairing.countdownPaused')` indicator render).
   // Announces the pause / resume transition so screen-reader users — who
   // can't see the inline `t('pairing.countdownPaused')` indicator (it sits inside
@@ -231,7 +231,7 @@ export function PairingDialog({
     [t],
   )
 
-  // UX-263: Announce countdown crossings at SR-relevant thresholds only.
+  // Announce countdown crossings at SR-relevant thresholds only.
   // We deliberately avoid announcing every tick — only the meaningful
   // boundaries (1 minute, 30 seconds, 10 seconds, expired) so screen-reader
   // users get warned without being spammed.
@@ -290,7 +290,7 @@ export function PairingDialog({
     [getWordInputs],
   )
 
-  // MAINT-120: confirm pairing with the entered passphrase + refresh the
+  // Confirm pairing with the entered passphrase + refresh the
   // peer list. Failures in either of the two underlying calls produce
   // the same "Pairing failed:" banner — matches existing behavior where
   // a post-confirm `listPeerRefs()` rejection is reported under the same
@@ -385,7 +385,7 @@ export function PairingDialog({
     setError(null)
     setCountdown(null)
     setEntryMode('manual')
-    // UX-263: Clear any stale paused state (ref + render state) so a
+    // Clear any stale paused state (ref + render state) so a
     // future re-open starts fresh.
     handleTypingStateChange(false)
     onOpenChange(false)
@@ -393,7 +393,7 @@ export function PairingDialog({
     triggerRef?.current?.focus()
   }, [onOpenChange, triggerRef, handleTypingStateChange])
 
-  // MAINT-120: unpair a peer device. Same template-literal error format
+  // Unpair a peer device. Same template-literal error format
   // as `handlePair` / `init` so the existing inline banner is preserved.
   const { execute: executeUnpair } = useIpcCommand<{ peerId: string }, void>({
     call: ({ peerId }) => deletePeerRef(peerId),
@@ -435,7 +435,7 @@ export function PairingDialog({
     }
   }, [error, isExpired])
 
-  // UX-263: When the user attempts to close the dialog (Esc, X button, or
+  // When the user attempts to close the dialog (Esc, X button, or
   // backdrop click) while a pairing handshake is mid-flight, show a
   // confirmation guard so they don't accidentally abort the in-progress
   // mTLS exchange. Direct prop changes from the parent still close the
@@ -565,7 +565,7 @@ export function PairingDialog({
         className="pairing-unpair-confirm"
       />
 
-      {/* UX-263: Mid-pair close guard. Cancelling a pairing in flight is
+      {/* Mid-pair close guard. Cancelling a pairing in flight is
           destructive (the in-flight handshake is dropped). Migrated to
           the unified ConfirmDialog (UX-review-2026-05-09 item 11) — the
           wrapper auto-closes via onOpenChange(false) on confirm-handler

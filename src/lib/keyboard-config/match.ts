@@ -1,5 +1,5 @@
 /**
- * Keyboard event ↔ binding matcher (MAINT-127). Normalises arrow glyphs,
+ * Keyboard event ↔ binding matcher. Normalises arrow glyphs,
  * Space, and Shift-produced punctuation so a `KeyboardEvent` matches the
  * binding string regardless of the layout quirks the user is typing on.
  */

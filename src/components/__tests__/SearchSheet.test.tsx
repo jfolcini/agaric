@@ -23,7 +23,7 @@ function makeHost(): HTMLElement {
   return host
 }
 
-// PEND-62 Phase 3 — the all-pages segment mounts the embedded
+// Phase 3 — the all-pages segment mounts the embedded
 // CommandPalette, which fires `searchBlocksPartitioned` IPC on every
 // debounced keystroke. Mock both `searchBlocks` (linkMode) and
 // `searchBlocksPartitioned` (default) to keep tests deterministic.
@@ -481,7 +481,7 @@ describe('SearchSheet', () => {
       mockedSearchBlocksPartitioned.mockClear()
       // Switch to all-pages — PaletteBody mounts; the bridge seeds
       // the palette store; PaletteBody's external-query sync effect
-      // (PEND-72) drives `debouncedQuery` immediately so the IPC
+      // Drives `debouncedQuery` immediately so the IPC
       // fires for the seeded value.
       await user.click(screen.getByTestId('search-sheet-segment-all-pages'))
       await waitFor(() => {

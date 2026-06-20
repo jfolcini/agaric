@@ -1,7 +1,7 @@
 /**
  * Compile-time pagination-limit boundary — limit-clamp-followup Phase 3.
  *
- * The BUG-48 anti-pattern (`listBlocks({ limit: 500 })` silently
+ * The anti-pattern (`listBlocks({ limit: 500 })` silently
  * truncated to the backend clamp) is now both a backend `AppError::
  * Validation` (Phase 1) AND a TypeScript error (this module).  Every
  * pagination-aware IPC wrapper in `src/lib/tauri.ts` takes

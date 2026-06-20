@@ -4,7 +4,7 @@
 // `coverage-merged/coverage-summary.json` with the standard
 // istanbul summary shape (matches what vitest emits when run unsharded).
 //
-// Why this exists: PEND-41 R17 originally ran `--coverage` only on
+// Why this exists: originally ran `--coverage` only on
 // shard 1 of the 3-way vitest split so the step-summary had numbers to
 // render. That's ⅓-of-the-suite coverage, which understates real
 // coverage and is misleading when read at face value. Running coverage

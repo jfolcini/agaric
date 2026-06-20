@@ -1,10 +1,10 @@
 /**
- * SpaceAccentBadge — collapsed-sidebar identity affordance (FEAT-3p10).
+ * SpaceAccentBadge — collapsed-sidebar identity affordance.
  *
  * Renders a 32px (44px on touch) circular button with the first letter
  * of the active space's name centred on top of its `accent_color`.
  * Clicking the badge cycles to the next space alphabetically (matching
- * the FEAT-3p11 cycle-shortcut concept). When the sidebar is collapsed
+ * The cycle-shortcut concept). When the sidebar is collapsed
  * to its icon-only rail, this is the only visual cue the user has of
  * which space is active — without it, the rail is identical across
  * every space.

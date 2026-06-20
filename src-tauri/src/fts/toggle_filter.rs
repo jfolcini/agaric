@@ -1,4 +1,4 @@
-//! PEND-55 — toggle row pipeline for `Aa` / `Ab|` / `.*` search modes.
+//! toggle row pipeline for `Aa` / `Ab|` / `.*` search modes.
 //!
 //! Sits between [`crate::commands::search_blocks_inner`] and the two
 //! candidate-set sources (FTS5 for the literal/whole-word/case-sensitive
@@ -59,20 +59,20 @@ use sqlx::SqlitePool;
 
 use super::metadata_filter::MetadataPredicates;
 
-/// Bundle of the three PEND-55 search toggles.
+/// Bundle of the three search toggles.
 ///
-/// The all-false value reproduces the pre-PEND-55 FTS-only behaviour
+/// The all-false value reproduces the pre- FTS-only behaviour
 /// (zero overhead — `search_with_toggles` short-circuits before
 /// invoking the post-filter).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SearchToggles {
-    /// PEND-55 — case-sensitive post-filter (FTS5 trigram tokenizer is
+    /// Case-sensitive post-filter (FTS5 trigram tokenizer is
     /// `case_sensitive 0`, so this always forces the regex pass).
     pub case_sensitive: bool,
-    /// PEND-55 — ASCII whole-word boundary via `(?-u:\b)`. CJK runs
+    /// ASCII whole-word boundary via `(?-u:\b)`. CJK runs
     /// don't match `\b`; documented as v1 behaviour.
     pub whole_word: bool,
-    /// PEND-55 — regex-mode. FTS5 MATCH is bypassed; candidates come
+    /// Regex-mode. FTS5 MATCH is bypassed; candidates come
     /// from a recency-ordered SQL scan capped at
     /// [`REGEX_PRE_FILTER_CAP`].
     pub is_regex: bool,
@@ -143,13 +143,13 @@ pub async fn search_with_toggles(
     // (full content); the MCP `search` tool passes `Some(SEARCH_SNIPPET_CAP)`.
     snippet_len: Option<usize>,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
-    // PEND-58g NEW-3 — a blank free-text query has nothing for FTS5
+    // NEW-3 — a blank free-text query has nothing for FTS5
     // MATCH (cannot express "match all") or the regex engine (an empty
     // pattern matches everything) to act on, so dispatch BEFORE the
     // mode branch: with at least one STRUCTURAL filter, return the
     // structurally-filtered blocks recency-ordered (mode-independent);
     // with NO filter, preserve the prior behaviour of returning empty
-    // (never the whole DB). `space_id` is always supplied (FEAT-3p4) so
+    // (never the whole DB). `space_id` is always supplied so
     // it is NOT a user filter and is excluded from `has_filters`.
     if query.trim().is_empty() {
         let has_filters = parent_id.is_some()
@@ -182,7 +182,7 @@ pub async fn search_with_toggles(
     }
 
     if toggles.is_regex {
-        // PEND-69 F2 — `block_type_filter` is now pushed into the
+        // `block_type_filter` is now pushed into the
         // regex SQL builder so we don't drag the full 1000-row
         // pre-filter window through Rust just to discard non-matching
         // types. Removes the post-fetch `Vec::retain()` that lived
@@ -223,7 +223,7 @@ pub async fn search_with_toggles(
         .await;
     }
 
-    // SQL-A3 / BE-A1 (PEND-58f) — `case_sensitive` and/or `whole_word`
+    // SQL-A3 / BE-A1 — `case_sensitive` and/or `whole_word`
     // on. The previous shape called `search_fts` (which fixed
     // `has_more` / `next_cursor` on a `limit + 1` candidate window) and
     // THEN dropped non-matching rows, which under-filled the page and
@@ -279,29 +279,29 @@ fn truncate_row_content(rows: &mut [SearchBlockRow], snippet_len: Option<usize>)
     }
 }
 
-/// PEND-61 Phase 1 / PEND-69 F1 — partitioned sibling of
+/// Phase 1 / partitioned sibling of
 /// [`search_with_toggles`].
 ///
 /// Returns two pre-partitioned candidate sets (pages-only +
 /// unrestricted) via two parallel scans. Each partition's `has_more`
-/// is derived from a `limit + 1` probe (PEND-69 Open Q3) so the
+/// Is derived from a `limit + 1` probe (Open Q3) so the
 /// frontend can paginate accurately without inferring from the global
 /// SQL ceiling.
 ///
 /// Toggle dispatch mirrors [`search_with_toggles`]:
 ///
 /// - `is_regex` → two parallel [`regex_mode_query`] scans; the pages
-///   scan pushes `block_type = 'page'` into SQL (PEND-69 F2) instead
+///   Scan pushes `block_type = 'page'` into SQL instead
 ///   of post-fetch `Vec::retain()`. Each scan asks for `limit + 1`.
 /// - `case_sensitive` / `whole_word` → FTS5 candidate set narrowed by
 ///   the post-filter regex pass. Snippets are omitted at SQL build
-///   time (PEND-69 F5) because `apply_post_filter` clears them anyway.
+///   Time because `apply_post_filter` clears them anyway.
 /// - All toggles off → straight FTS5 partitioned scan, snippets kept.
 ///
 /// Returns a [`FtsPartitionedScan`] with per-partition `has_more`.
 ///
-/// PEND-70 — `cancel` is an optional cancellation token threaded into
-/// the FTS path. BE-A4 (PEND-58f) — the regex-mode branch now honours
+/// `cancel` is an optional cancellation token threaded into
+/// The FTS path. BE-A4 — the regex-mode branch now honours
 /// the same token: it checks `is_cancelled()` up front (mirroring
 /// `fts_fetch_rows`' early-cancel) and races the two parallel regex
 /// scans against `cancel.cancelled()` via a `biased` `tokio::select!`,
@@ -322,10 +322,10 @@ pub(crate) async fn search_with_toggles_partitioned(
     metadata: &MetadataPredicates,
     cancel: Option<crate::cancellation::CancellationToken>,
 ) -> Result<super::search::FtsPartitionedScan, AppError> {
-    // PEND-58g NEW-3 — blank free-text query dispatch (mode-independent),
+    // NEW-3 — blank free-text query dispatch (mode-independent),
     // mirroring `search_with_toggles`. This path has NO `block_type_filter`
     // param (partitioning handles block_type), so it is excluded from
-    // `has_filters`; `space_id` is always supplied (FEAT-3p4) and excluded
+    // `has_filters`; `space_id` is always supplied and excluded
     // too. With NO user filter, preserve the prior empty-partitions
     // behaviour; with at least one filter, return the structurally-
     // filtered partitions recency-ordered.
@@ -363,7 +363,7 @@ pub(crate) async fn search_with_toggles_partitioned(
     }
 
     if toggles.is_regex {
-        // BE-A4 (PEND-58f) — early-cancel before launching the scans,
+        // BE-A4 — early-cancel before launching the scans,
         // mirroring `fts_fetch_rows`' up-front `is_cancelled()` check.
         // The palette's next-keystroke pattern fires fresh IPCs faster
         // than the scans can start, so bail before doing any work.
@@ -372,9 +372,9 @@ pub(crate) async fn search_with_toggles_partitioned(
         {
             return Err(AppError::Cancelled);
         }
-        // PEND-69 F1 — two parallel regex scans, each with a
+        // Two parallel regex scans, each with a
         // `limit + 1` probe. The pages scan pushes
-        // `block_type = 'page'` into SQL (PEND-69 F2). `REGEX_PRE_FILTER_CAP`
+        // `block_type = 'page'` into SQL. `REGEX_PRE_FILTER_CAP`
         // still bounds each scan's worst-case row count.
         let pages_page = PageRequest::new(None, Some(probe_limit_i64(page_limit)))?;
         let blocks_page = PageRequest::new(None, Some(probe_limit_i64(block_limit)))?;
@@ -408,7 +408,7 @@ pub(crate) async fn search_with_toggles_partitioned(
             // P4 (#346) — partitioned (palette) path always returns full content.
             None,
         );
-        // BE-A4 (PEND-58f) — race the two parallel scans against the
+        // BE-A4 — race the two parallel scans against the
         // cancel signal so an in-flight regex burst bails the same way
         // the FTS path does (`fts_fetch_rows` uses the identical
         // `biased` `tokio::select!` shape). The `try_join!` is kept as a
@@ -474,7 +474,7 @@ pub(crate) async fn search_with_toggles_partitioned(
         .await;
     }
 
-    // SQL-A3 / BE-A1 (PEND-58f) — `case_sensitive` and/or `whole_word`
+    // SQL-A3 / BE-A1 — `case_sensitive` and/or `whole_word`
     // on. This path has NO cursor (the palette doesn't paginate), so it
     // cannot fetch successive windows like the cursor path. The previous
     // shape fetched only `limit + 1` candidates per partition and then
@@ -492,7 +492,7 @@ pub(crate) async fn search_with_toggles_partitioned(
     // regex-mode `REGEX_PRE_FILTER_CAP`).
     let overfetch = u32::try_from(super::search::MAX_SEARCH_RESULTS).unwrap_or(u32::MAX);
 
-    // PEND-69 F5 — snippets are clobbered to `None` by the post-filter,
+    // Snippets are clobbered to `None` by the post-filter,
     // so omit the SQL `snippet()` call (skips the per-row tokenizer walk).
     let mut scan = super::search::search_fts_partitioned(
         pool,
@@ -530,7 +530,7 @@ pub(crate) async fn search_with_toggles_partitioned(
     Ok(scan)
 }
 
-/// PEND-69 F1 — compute the `limit + 1` probe value for a regex-mode
+/// Compute the `limit + 1` probe value for a regex-mode
 /// pre-filter scan as an `i64` clamped to fit
 /// [`PageRequest::new`]'s domain.
 fn probe_limit_i64(limit: u32) -> i64 {
@@ -545,7 +545,7 @@ fn probe_limit_i64(limit: u32) -> i64 {
 /// path never interprets metacharacters; only the regex-mode path
 /// accepts metacharacters verbatim.
 ///
-/// SQL-5 (PEND-58f) — the input is NFC-normalised before escaping so a
+/// The input is NFC-normalised before escaping so a
 /// pasted NFD literal matches the same way the FTS path's NFC query
 /// would (the post-filter still runs against the raw FTS row content;
 /// see the contract note in [`regex_mode_query`]).
@@ -593,7 +593,7 @@ fn apply_post_filter(rows: &mut Vec<SearchBlockRow>, re: &Regex) {
     rows.retain_mut(|row| post_filter_row(row, re));
 }
 
-/// SQL-A3 / BE-A1 (PEND-58f) — per-row post-filter predicate, extracted
+/// SQL-A3 / BE-A1 — per-row post-filter predicate, extracted
 /// from [`apply_post_filter`] so the filter-aware cursor pagination loop
 /// ([`super::search::fts_fetch_post_filtered_page`]) can apply the same
 /// logic one row at a time while tracking each survivor's rank.
@@ -620,7 +620,7 @@ fn post_filter_row(row: &mut SearchBlockRow, re: &Regex) -> bool {
     let utf16 = byte_to_utf16_offsets(content, &byte_matches);
     row.match_offsets = utf16;
     // Clear the FTS snippet — the frontend prefers offsets when
-    // present, but clearing the snippet means a pre-PEND-55
+    // Present, but clearing the snippet means a pre-
     // frontend bundle won't double-render the highlight via two
     // paths.
     row.snippet = None;
@@ -665,7 +665,7 @@ pub(crate) fn byte_to_utf16_offsets(
         .collect()
 }
 
-/// PEND-55 — regex-mode query path. **Bypasses FTS5 entirely**: FTS5
+/// Regex-mode query path. **Bypasses FTS5 entirely**: FTS5
 /// MATCH cannot accept a regex, so we run a recency-ordered SQL scan
 /// over the structurally-filtered block set and apply the user's
 /// regex post-hoc.
@@ -674,7 +674,7 @@ pub(crate) fn byte_to_utf16_offsets(
 /// the FTS candidate count. The pre-filter cap
 /// ([`REGEX_PRE_FILTER_CAP`]) bounds the worst case.
 ///
-/// PEND-69 F2 — `block_type_filter` is pushed into the SQL WHERE
+/// `block_type_filter` is pushed into the SQL WHERE
 /// clause so a page-only regex query doesn't waste the 1000-row
 /// pre-filter budget on content blocks that would be dropped client-
 /// side. The caller passes `Some("page")` for the pages partition,
@@ -699,7 +699,7 @@ async fn regex_mode_query(
     // which would let the regex see only the truncated prefix.
     snippet_len: Option<usize>,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
-    // SQL-5 (PEND-58f) — **contract**: regex mode runs the user's
+    // **contract**: regex mode runs the user's
     // pattern against the **raw `blocks.content`** column, NOT against
     // the stripped / reference-resolved / NFC-normalised text that the
     // FTS5 index (`fts_blocks.stripped`, written by
@@ -726,7 +726,7 @@ async fn regex_mode_query(
     // deliberately out of scope here; this comment is the documented
     // contract. See `docs/SEARCH.md`'s regex-mode section.
 
-    // SQL-A4 (PEND-58f) — reject an over-long RAW pattern up front,
+    // SQL-A4 — reject an over-long RAW pattern up front,
     // BEFORE the NFC-normalise + regex-compile walk. Mirrors the FTS
     // path's `MAX_QUERY_LEN` guard (`search_fts` / `search_fts_partitioned`)
     // so a pathological multi-megabyte raw input is rejected before we
@@ -761,7 +761,7 @@ async fn regex_mode_query(
         pattern.push_str(query);
         pattern.push_str(")(?-u:\\b)");
     } else {
-        // PEND-73 Phase 1.B7 — wrap the user pattern in a non-capturing
+        // Phase 1.B7 — wrap the user pattern in a non-capturing
         // group so a leading inline flag in the user's input (e.g.
         // `(?i)foo|bar`) cannot rebind the case flag we just emitted
         // and bleed precedence across the top-level `|`. Symmetric with
@@ -777,7 +777,7 @@ async fn regex_mode_query(
     // candidate set is bounded by `REGEX_PRE_FILTER_CAP`); the
     // `next_cursor` field returns `None`.
     //
-    // SQL-A2 (PEND-58f) — the upper clamp is `MAX_SEARCH_RESULTS + 1`,
+    // SQL-A2 — the upper clamp is `MAX_SEARCH_RESULTS + 1`,
     // NOT `MAX_SEARCH_RESULTS`. The partitioned regex caller
     // (`search_with_toggles_partitioned`) passes a `limit + 1` PROBE
     // (`probe_limit_i64`) so it can detect overflow against its own
@@ -811,14 +811,14 @@ async fn regex_mode_query(
 
     fb.add_parent(PREFIX, parent_id);
 
-    // SQL-1 (PEND-58f) — dedupe `tag_ids` before binding, mirroring the
+    // Dedupe `tag_ids` before binding, mirroring the
     // FTS path in `fts::search::fts_fetch_rows`. The "ALL tags" predicate
     // compares `COUNT(DISTINCT bt.tag_id)` against the bound list length;
     // a duplicate id makes that length unachievable and the regex scan
     // silently returns zero rows. Order is preserved for deterministic
     // placeholder/bind indices.
     //
-    // SQL-A6 (PEND-58f) — normalise each id to its canonical UPPERCASE
+    // SQL-A6 — normalise each id to its canonical UPPERCASE
     // ULID form BEFORE inserting into the dedup set (and bind the
     // normalised form). `block_tags.tag_id` stores the canonical
     // uppercase Crockford-base32 ULID (`BlockId`/`ActiveBlockId` both
@@ -839,9 +839,9 @@ async fn regex_mode_query(
         }
         None => Vec::new(),
     };
-    // #1320 PR-3 — route the regex-mode ALL-tags + page-glob filters through
+    // #1320 route the regex-mode ALL-tags + page-glob filters through
     // `SearchProjection` (the cross-surface filter compiler), matching the
-    // `fts_fetch_rows` cutover (PR-1/PR-2). The toggle path receives the SAME
+    // `fts_fetch_rows` cutover. The toggle path receives the SAME
     // already-prepared, deduped/uppercased tags + already-prepared globs as the
     // main path (single `prepare_search_filter` source), so these are drop-in,
     // result-equivalent swaps for the legacy `add_tags_all` / `add_page_globs`.
@@ -853,10 +853,10 @@ async fn regex_mode_query(
     fb.add_page_globs_via_projection(PREFIX, false, include_page_globs);
     fb.add_page_globs_via_projection(PREFIX, true, exclude_page_globs);
 
-    // PEND-53 — metadata predicates (same shape as `search_fts`).
+    // Metadata predicates (same shape as `search_fts`).
     fb.add_metadata(metadata, "b");
 
-    // PEND-69 F2 — push `block_type` into SQL instead of post-fetch
+    // Push `block_type` into SQL instead of post-fetch
     // `Vec::retain()`. Eliminates the 1000-row drag for page-only
     // regex queries where matching pages live beyond the pre-filter
     // cap. NOTE: emitted AFTER metadata in this builder (the FTS builder
@@ -868,7 +868,7 @@ async fn regex_mode_query(
     sql.push_str(fb.sql());
 
     let cap_idx = fb.next_param();
-    // PEND-55 — ULID prefixes are monotonically time-sortable, so
+    // ULID prefixes are monotonically time-sortable, so
     // `ORDER BY b.id DESC` yields most-recent-first without a
     // dedicated `created_at` column (the `blocks` table doesn't carry
     // one — see migration `0001_initial.sql`). Document this in
@@ -899,7 +899,7 @@ async fn regex_mode_query(
 
     let rows = db_query.fetch_all(pool).await.map_err(AppError::Database)?;
 
-    // SQL-8 (PEND-58f) — the SQL scan returns at most the newest
+    // The SQL scan returns at most the newest
     // `REGEX_PRE_FILTER_CAP` (1000) structurally-filtered rows, ordered
     // `b.id DESC` (recency). If the scan returns *exactly* the cap, there
     // were at least that many candidate rows and OLDER matches beyond the
@@ -1000,7 +1000,7 @@ struct RegexScanRow {
     page_id: Option<String>,
 }
 
-/// PEND-58g NEW-3 — filter-only structural scan (NO free-text pattern).
+/// NEW-3 — filter-only structural scan (NO free-text pattern).
 ///
 /// A blank query has nothing for FTS5 MATCH (which cannot express
 /// "match all") or the regex engine (an empty pattern matches every
@@ -1067,7 +1067,7 @@ async fn filter_only_scan(
 
     fb.add_parent(PREFIX, parent_id);
 
-    // SQL-1 / SQL-A6 (PEND-58f) — dedupe + UPPERCASE-normalise tag ids
+    // / SQL-A6 — dedupe + UPPERCASE-normalise tag ids
     // before binding, exactly as `regex_mode_query` does, so the
     // `COUNT(DISTINCT)` ALL-tags predicate is achievable and a
     // mixed-case duplicate can't silently zero the scan.
@@ -1081,9 +1081,9 @@ async fn filter_only_scan(
         }
         None => Vec::new(),
     };
-    // #1320 PR-3 — route the filter-only-scan ALL-tags + page-glob filters
+    // #1320 route the filter-only-scan ALL-tags + page-glob filters
     // through `SearchProjection`, matching the `fts_fetch_rows` cutover
-    // (PR-1/PR-2). Same already-prepared deduped/uppercased tags + globs as the
+    // Same already-prepared deduped/uppercased tags + globs as the
     // main path, so these are drop-in, result-equivalent swaps for the legacy
     // `add_tags_all` / `add_page_globs`.
     fb.add_tags_via_projection(PREFIX, &tag_ids_active);
@@ -1094,7 +1094,7 @@ async fn filter_only_scan(
     fb.add_page_globs_via_projection(PREFIX, false, include_page_globs);
     fb.add_page_globs_via_projection(PREFIX, true, exclude_page_globs);
 
-    // PEND-53 — metadata predicates (same shape as `regex_mode_query`).
+    // Metadata predicates (same shape as `regex_mode_query`).
     fb.add_metadata(metadata, "b");
 
     // #1280 B2 — routed through `SearchProjection::compile_block_type`.
@@ -1142,7 +1142,7 @@ async fn filter_only_scan(
     Ok(out)
 }
 
-/// PEND-58g NEW-3 — cursor-paginated filter-only page (mode-independent;
+/// NEW-3 — cursor-paginated filter-only page (mode-independent;
 /// no free-text pattern). Drives [`filter_only_scan`] with a `limit + 1`
 /// overflow probe and emits an id-DESC `next_cursor` so the palette /
 /// search view can page through the structurally-filtered set without
@@ -1205,7 +1205,7 @@ pub(crate) async fn fts_fetch_filter_only_page(
     })
 }
 
-/// PEND-58g NEW-3 — partitioned filter-only scan (mode-independent; no
+/// NEW-3 — partitioned filter-only scan (mode-independent; no
 /// free-text pattern). Mirrors [`search_with_toggles_partitioned`]'s two
 /// partitions: a pages partition (`block_type = 'page'`) and an
 /// unrestricted blocks partition, each with a `limit + 1` overflow probe
@@ -1404,7 +1404,7 @@ mod unit_tests {
 
     #[test]
     fn byte_to_utf16_offsets_mid_emoji_match() {
-        // PEND-73 Phase 5.T1b — the existing test above covers a leading
+        // Phase 5.T1b — the existing test above covers a leading
         // emoji + trailing ASCII; this one matches the emoji itself
         // when it sits between ASCII runs. `🌟` = 4 bytes UTF-8 / 2
         // UTF-16 code units. `abc` = bytes 0-3 / units 0-3; `🌟` =

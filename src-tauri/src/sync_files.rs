@@ -59,7 +59,7 @@ pub struct FileTransferStats {
 
 /// Optional progress reporting hook for file-transfer functions.
 ///
-/// PEND-06 Tier 2: when `Some(_)`, the file-transfer loops emit
+/// When `Some(_)`, the file-transfer loops emit
 /// [`SyncEvent::FileProgress`](crate::sync_events::SyncEvent::FileProgress)
 /// before each file and after each 5 MB binary frame so the active
 /// sync's `Channel<SyncProgressUpdate>` (set up by `start_sync`) carries
@@ -98,7 +98,7 @@ impl FileTransferProgress<'_> {
 /// Validate that an attachment's stored `fs_path` is a safe relative path
 /// under `app_data_dir` and return the resolved absolute path.
 ///
-/// BUG-35: Prevents a malformed op record or corrupted row from
+/// Prevents a malformed op record or corrupted row from
 /// redirecting attachment reads/writes to arbitrary filesystem locations
 /// via `..` traversal or absolute paths.  The threat model (`AGENTS.md`)
 /// is not adversarial — sync peers are the user's own devices — but this
@@ -130,7 +130,7 @@ pub fn validate_attachment_fs_path(
 /// Pure lexical check on an attachment `fs_path` — rejects absolute paths,
 /// `..` traversal, root / drive prefixes, and empty strings. Exists so
 /// command-layer inserts can validate without needing to know the current
-/// `app_data_dir` (BUG-35). See [`validate_attachment_fs_path`] for the
+/// `app_data_dir`. See [`validate_attachment_fs_path`] for the
 /// full docs.
 ///
 /// # Errors
@@ -158,7 +158,7 @@ pub fn check_attachment_fs_path_shape(fs_path: &str) -> Result<(), AppError> {
     // so a `..` anywhere in the path will surface as `Component::ParentDir`.
     // On non-Windows, backslash-separated strings like "..\\foo" are a
     // single opaque file-name component (harmless on Linux / macOS but
-    // documented in TEST-38).
+    // Documented in).
     for component in candidate.components() {
         match component {
             Component::Normal(_) | Component::CurDir => {}
@@ -176,7 +176,7 @@ pub fn check_attachment_fs_path_shape(fs_path: &str) -> Result<(), AppError> {
 /// Query the `attachments` table and return entries whose `fs_path` file
 /// is missing — or corrupted — on disk under `app_data_dir`.
 ///
-/// M-48: a file is also classified as missing when it exists on disk
+/// A file is also classified as missing when it exists on disk
 /// but its length disagrees with the authoritative `attachments.size_bytes`
 /// in the DB row. This catches truncated copies left behind by interrupted
 /// downloads, partial writes, or antivirus quarantines that leave a 0-byte
@@ -190,7 +190,7 @@ pub fn check_attachment_fs_path_shape(fs_path: &str) -> Result<(), AppError> {
 /// defensive choice per AGENTS.md's "preventing accidental corruption"
 /// framing, and ensures a re-request rather than a silent skip.
 ///
-/// L-60: `NotFound` is the expected case (file genuinely absent) and
+/// `NotFound` is the expected case (file genuinely absent) and
 /// is logged at debug level only via the resulting re-request flow.
 /// Any other error kind (`PermissionDenied`, `NotADirectory`,
 /// `Other` for EBUSY, …) on the app's own data dir is an ops signal
@@ -217,11 +217,11 @@ pub async fn find_missing_attachments(
     // (issue #112 comment 2026-05-28T09:38); local SSD shows no measurable
     // downside vs 32, and slow shares avoid the saturation seen at 32.
     //
-    // M-49: prefer the async syscall over std's blocking `Path::exists` so
+    // Prefer the async syscall over std's blocking `Path::exists` so
     // the daemon's runtime is not stalled on cold-cache filesystems
     // (notably Android with thousands of attachments).
     //
-    // M-48: cross-check the on-disk length against the DB's `size_bytes`.
+    // Cross-check the on-disk length against the DB's `size_bytes`.
     // A truncated stub (interrupted download, partial write, antivirus
     // 0-byte quarantine) would otherwise pass the existence check forever.
     // Any metadata error (incl. permission denied) is treated as missing
@@ -250,7 +250,7 @@ pub async fn find_missing_attachments(
                         path = %full_path.display(),
                         expected_size = expected,
                         actual_size = meta.len(),
-                        "M-48: attachment file size disagrees with DB row; classifying as missing for re-request"
+                        "attachment file size disagrees with DB row; classifying as missing for re-request"
                     );
                     missing.push(MissingAttachment { id, fs_path });
                 }
@@ -259,7 +259,7 @@ pub async fn find_missing_attachments(
                 missing.push(MissingAttachment { id, fs_path });
             }
             Err(e) => {
-                // L-60: surface non-NotFound errors as a warning instead of
+                // Surface non-NotFound errors as a warning instead of
                 // silently treating them as missing. EACCES/EBUSY/ENOTDIR on
                 // the app's own data dir indicate antivirus quarantine,
                 // sandbox denial, or a read-only remount — useful ops signal.
@@ -270,7 +270,7 @@ pub async fn find_missing_attachments(
                     path = %full_path.display(),
                     error_kind = ?e.kind(),
                     error = %e,
-                    "L-60: non-NotFound metadata error; treating as missing for sync correctness"
+                    "non-NotFound metadata error; treating as missing for sync correctness"
                 );
                 missing.push(MissingAttachment { id, fs_path });
             }
@@ -292,11 +292,11 @@ async fn get_attachment_fs_path(
 }
 
 /// Metadata loaded from the `attachments` row when authorising an inbound
-/// `FileOffer` (M-50, M-52).
+/// `FileOffer`.
 struct AttachmentReceiveMeta {
     fs_path: String,
     /// Authoritative size from the local DB; an inbound `FileOffer` whose
-    /// `size_bytes` disagrees with this value must be rejected (M-52).
+    /// `size_bytes` disagrees with this value must be rejected.
     size_bytes: i64,
 }
 
@@ -304,7 +304,7 @@ struct AttachmentReceiveMeta {
 ///
 /// Combines what `get_attachment_fs_path` returns with the DB-side
 /// `size_bytes` so the receiver can cross-check `FileOffer.size_bytes`
-/// against the row before allocating any buffer (M-52).
+/// Against the row before allocating any buffer.
 async fn get_attachment_receive_meta(
     pool: &SqlitePool,
     attachment_id: &str,
@@ -325,11 +325,11 @@ async fn get_attachment_receive_meta(
 /// Returns `(file_bytes, blake3_hex_hash)`.
 ///
 /// The `fs_path` is validated via [`validate_attachment_fs_path`] before
-/// any I/O is performed (BUG-35). A malformed `fs_path` that attempts to
+/// Any I/O is performed. A malformed `fs_path` that attempts to
 /// escape `app_data_dir` (absolute path, `..` traversal, drive prefix on
 /// Windows) is rejected with [`AppError::Validation`].
 ///
-/// **M-51 note:** this is the buffered-shape helper kept for utility
+/// ** note:** this is the buffered-shape helper kept for utility
 /// callers (and the existing test suite). The production sync sender
 /// path no longer goes through here — see
 /// [`read_attachment_file_metadata`] (path-validate + size + hash via
@@ -353,9 +353,9 @@ pub fn read_attachment_file(
 /// Write an attachment file to disk, creating parent directories as needed.
 ///
 /// The `fs_path` is validated via [`validate_attachment_fs_path`] before
-/// any I/O is performed (BUG-35).
+/// Any I/O is performed.
 ///
-/// **M-51 note:** kept for utility callers. The production sync receiver
+/// ** note:** kept for utility callers. The production sync receiver
 /// path uses [`write_attachment_streaming`] which streams chunks to a
 /// `<final>.tmp-<random>` file with a `blake3::Hasher` updated mid-write,
 /// then atomically renames on hash-verified `commit`.
@@ -383,14 +383,14 @@ pub fn write_attachment_file(
 }
 
 // ---------------------------------------------------------------------------
-// M-51 — streaming helpers (low-memory attachment transfer)
+// Streaming helpers (low-memory attachment transfer)
 // ---------------------------------------------------------------------------
 //
 // The buffered helpers above materialise the whole file in a `Vec<u8>` —
 // peak Rust-heap = file size on each side simultaneously. For large
 // attachments (up to 1 GB on Android) that pattern OOMs the device.
 //
-// The M-51 contract:
+// The contract:
 //
 //   • `read_attachment_file_metadata` is the sender's pre-flight pass.
 //     It validates the path, opens the file once, hashes it through a
@@ -426,7 +426,7 @@ pub fn write_attachment_file(
 /// Path-validate `fs_path`, open the attachment file once, and compute
 /// `(size_bytes, blake3_hex)` by reading through a fixed-size buffer.
 ///
-/// Used as the sender's pass-1 (M-51): the size + hash populate the
+/// Used as the sender's pass-1: the size + hash populate the
 /// `FileOffer` message, then [`open_attachment_for_read`] is called
 /// for pass-2 (the streaming send). The returned hash matches the
 /// hash a receiver computes mid-stream via `TempAttachmentWriter`,
@@ -479,7 +479,7 @@ pub async fn read_attachment_file_metadata(
     Ok((size_bytes, hash))
 }
 
-/// Open an attachment file for streaming send (M-51 pass-2).
+/// Open an attachment file for streaming send (pass-2).
 ///
 /// Path-validates `fs_path`, opens the file as a `tokio::fs::File`,
 /// queries `metadata().len()` for the size, and returns both. The
@@ -494,7 +494,7 @@ pub async fn read_attachment_file_metadata(
 /// a concurrent writer (e.g. user re-imports the same attachment ID
 /// while a sync is in flight). The `FileOffer.size_bytes` advertised
 /// to the receiver is the pass-1 value, so any drift is caught by
-/// the receiver's existing M-52 size cross-check.
+/// The receiver's existing size cross-check.
 pub async fn open_attachment_for_read(
     app_data_dir: &Path,
     fs_path: &str,
@@ -519,7 +519,7 @@ pub async fn open_attachment_for_read(
     Ok((file, size_bytes))
 }
 
-/// Streaming attachment writer (M-51).
+/// Streaming attachment writer.
 ///
 /// Owns a `tokio::fs::File` opened on `<final>.tmp-<random>` plus a
 /// `blake3::Hasher` updated on every successful `poll_write`. On
@@ -685,7 +685,7 @@ impl AsyncWrite for TempAttachmentWriter {
     }
 }
 
-/// Open a streaming attachment writer for the given `fs_path` (M-51).
+/// Open a streaming attachment writer for the given `fs_path`.
 ///
 /// Validates the path, creates the parent directories if needed, and
 /// opens a temp file at `<final>.tmp-<random>` in the same directory.
@@ -757,7 +757,7 @@ pub async fn write_attachment_streaming(
 /// 2. For each requested attachment: send `FileOffer` + binary data.
 /// 3. Send `FileTransferComplete`.
 ///
-/// M-47: at the start of every per-file iteration, the cancel flag is
+/// At the start of every per-file iteration, the cancel flag is
 /// checked. If the user invoked `cancel_active_sync()` during the
 /// transfer, we break out of the per-file loop and fall through to the
 /// existing `FileTransferComplete` send — the receiver sees a clean
@@ -796,7 +796,7 @@ pub async fn receive_request_and_send_files(
         }
     };
 
-    // PEND-06 Tier 2: tally totals before the per-file loop so the UI
+    // Tally totals before the per-file loop so the UI
     // gets a `bytes_total` denominator on its first tick. If a row is
     // missing or unreadable here we'll skip it inside the loop too;
     // the resulting `bytes_total` is a best-effort number that tracks
@@ -817,12 +817,12 @@ pub async fn receive_request_and_send_files(
 
     // 2. For each requested attachment: send FileOffer + binary data
     for attachment_id in &attachment_ids {
-        // M-47: stop sending more files when the user cancels mid-round.
+        // Stop sending more files when the user cancels mid-round.
         // Falls through to the FileTransferComplete send below so the
         // receiver exits cleanly via the normal "no more files" sentinel.
         if cancel.load(Ordering::Acquire) {
             tracing::info!(
-                "M-47: cancel observed during send loop; stopping after {} of {} files",
+                "cancel observed during send loop; stopping after {} of {} files",
                 stats.files_sent,
                 attachment_ids.len()
             );
@@ -837,7 +837,7 @@ pub async fn receive_request_and_send_files(
             continue;
         };
 
-        // M-51 pass-1: hash the file in-place via a fixed-size buffer
+        // Pass-1: hash the file in-place via a fixed-size buffer
         // so the `FileOffer` carries the right hash without
         // materialising the whole file as a `Vec<u8>`. See the module
         // header for the two-pass rationale.
@@ -847,7 +847,7 @@ pub async fn receive_request_and_send_files(
                 tracing::warn!(
                     attachment_id,
                     error = %e,
-                    "could not read attachment file metadata (M-51), skipping"
+                    "could not read attachment file metadata, skipping"
                 );
                 stats.skipped_not_found += 1;
                 continue;
@@ -862,7 +862,7 @@ pub async fn receive_request_and_send_files(
         })
         .await?;
 
-        // M-51 pass-2: re-open the file and stream it frame-by-frame to
+        // Pass-2: re-open the file and stream it frame-by-frame to
         // the wire. Peak Rust-heap is one `BINARY_FRAME_CHUNK_SIZE`
         // buffer regardless of file size — replaces the old
         // `Vec<u8>`-of-the-whole-file pattern that OOMed on large
@@ -883,7 +883,7 @@ pub async fn receive_request_and_send_files(
                 tracing::error!(
                     attachment_id,
                     error = %e,
-                    "could not re-open attachment for streaming send (M-51) after FileOffer; \
+                    "could not re-open attachment for streaming send after FileOffer; \
                      closing connection so the daemon retries"
                 );
                 return Err(e);
@@ -892,7 +892,7 @@ pub async fn receive_request_and_send_files(
         if reopen_size != size_bytes {
             // The file changed between pass-1 (hash) and pass-2
             // (stream). Surface a hard error so the session retries —
-            // the receiver's M-52 size cross-check would catch this
+            // The receiver's size cross-check would catch this
             // anyway, but failing here keeps the bad bytes off the
             // wire entirely.
             return Err(AppError::InvalidOperation(format!(
@@ -900,7 +900,7 @@ pub async fn receive_request_and_send_files(
                  hash_pass={size_bytes} bytes, stream_pass={reopen_size} bytes"
             )));
         }
-        // PEND-06 Tier 2 — per-frame progress: capture the running
+        // Per-frame progress: capture the running
         // bytes-shipped tally for this file so the UI sees movement
         // mid-transfer on multi-frame attachments. The `bytes_total`
         // tally above is the denominator across the whole `sending`
@@ -972,7 +972,7 @@ pub async fn receive_request_and_send_files(
 /// 3. Receive `FileOffer` + binary data for each, verify, and write to disk.
 /// 4. Until `FileTransferComplete` is received.
 ///
-/// M-47: at the start of every iteration of the receive loop (before
+/// At the start of every iteration of the receive loop (before
 /// `recv_json()` for the next `FileOffer`/`FileTransferComplete`), the
 /// cancel flag is checked. If set, we break and return the partial
 /// stats. The remote sender will hit a broken-pipe / connection-close
@@ -997,9 +997,9 @@ pub async fn request_and_receive_files(
         tracing::debug!("no missing attachment files, sending empty FileRequest");
     }
 
-    // PEND-06 Tier 2: tally totals from the local DB rows for the
+    // Tally totals from the local DB rows for the
     // attachments we're about to request. The peer's `FileOffer`
-    // size_bytes is authoritative on the wire (M-52 cross-checks it),
+    // Size_bytes is authoritative on the wire (cross-checks it),
     // but the DB row is the only place we know `bytes_total` *before*
     // any FileOffer arrives — and we want a denominator on the very
     // first tick so the UI doesn't briefly show "?/?".
@@ -1025,26 +1025,26 @@ pub async fn request_and_receive_files(
 
     // 3. Receive files until FileTransferComplete
     //
-    // M-50: a `FileReceived` ACK is sent ONLY after the file has been
+    // A `FileReceived` ACK is sent ONLY after the file has been
     // hash-verified AND written to disk. Any failure on the offer (size
     // disagreement with the DB row, hash mismatch, write failure)
     // returns `Err` so the connection is closed and the daemon retries
     // on the next sync cycle. Stats counters reflect actual receiver
     // outcomes, never optimistic ACKs.
     loop {
-        // M-47: check cancel before reading the next FileOffer. Granularity
+        // Check cancel before reading the next FileOffer. Granularity
         // is per-file (not per-chunk) because the per-chunk inner read
-        // lives in `SyncConnection::receive_binary_streaming` (M-51);
+        // Lives in `SyncConnection::receive_binary_streaming`;
         // aborting between files lets multi-gigabyte transfers be
         // interrupted before the *next* file starts streaming.
         if cancel.load(Ordering::Acquire) {
             tracing::info!(
                 files_received = stats.files_received,
-                "M-47: cancel observed during receive loop; aborting before next FileOffer"
+                "cancel observed during receive loop; aborting before next FileOffer"
             );
             break;
         }
-        // M-47 (#317): the top-of-loop check above only observes a cancel
+        // (#317): the top-of-loop check above only observes a cancel
         // that is *already* visible when we re-enter the loop. If the peer
         // has also cancelled and will therefore never send the next
         // message, a bare `conn.recv_json().await` would block until the
@@ -1076,7 +1076,7 @@ pub async fn request_and_receive_files(
                         tracing::info!(
                             files_received = stats.files_received,
                             error = %e,
-                            "M-47: peer connection ended while cancelling; aborting receive cleanly"
+                            "peer connection ended while cancelling; aborting receive cleanly"
                         );
                         return Ok(stats);
                     }
@@ -1086,7 +1086,7 @@ pub async fn request_and_receive_files(
                     if cancel.load(Ordering::Acquire) {
                         tracing::info!(
                             files_received = stats.files_received,
-                            "M-47: cancel observed while waiting for next message; aborting receive"
+                            "cancel observed while waiting for next message; aborting receive"
                         );
                         return Ok(stats);
                     }
@@ -1126,7 +1126,7 @@ pub async fn request_and_receive_files(
                     continue;
                 };
 
-                // M-52: cross-check the offer's size_bytes against the
+                // Cross-check the offer's size_bytes against the
                 // authoritative DB row. A mismatch is a sender bug
                 // (`u32` truncation, wrong file picked up), so reject
                 // the offer without writing anything and return Err so
@@ -1145,7 +1145,7 @@ pub async fn request_and_receive_files(
                     )));
                 }
 
-                // M-51: stream the binary frames straight to a temp
+                // Stream the binary frames straight to a temp
                 // file under `app_data_dir`, hashing in-place via
                 // `TempAttachmentWriter`'s built-in `blake3::Hasher`.
                 // Peak Rust-heap is one `BINARY_FRAME_CHUNK_SIZE`
@@ -1179,7 +1179,7 @@ pub async fn request_and_receive_files(
                         continue;
                     }
                 };
-                // PEND-06 Tier 2 — per-frame progress on the receive
+                // Per-frame progress on the receive
                 // path: capture the running bytes-received tally so a
                 // multi-frame attachment ticks the UI mid-transfer.
                 let bytes_base = stats.bytes_received;
@@ -1210,7 +1210,7 @@ pub async fn request_and_receive_files(
                     return Err(e);
                 }
 
-                // M-50 + M-51: hash verification happens INSIDE
+                // + hash verification happens INSIDE
                 // `commit` — the running `blake3::Hasher` is finalised
                 // and compared to the offer's `blake3_hash`. On match
                 // the temp is renamed atomically; on mismatch the
@@ -1221,7 +1221,7 @@ pub async fn request_and_receive_files(
                         attachment_id,
                         expected_hash = blake3_hash,
                         error = %e,
-                        "attachment commit failed (M-51); temp unlinked, no ACK"
+                        "attachment commit failed; temp unlinked, no ACK"
                     );
                     return Err(e);
                 }
@@ -1288,7 +1288,7 @@ async fn consume_binary_data(conn: &mut SyncConnection, size_bytes: u64) -> Resu
 /// 1. Initiator requests files it's missing.
 /// 2. Initiator responds to responder's file request.
 ///
-/// M-47: `cancel` is checked at every per-file boundary inside both
+/// `cancel` is checked at every per-file boundary inside both
 /// helper functions. When set mid-transfer the receiver loop exits early
 /// (partial stats returned) and the sender loop falls through to the
 /// existing `FileTransferComplete` sentinel — both without changing the
@@ -1327,7 +1327,7 @@ pub async fn run_file_transfer_initiator(
         );
     }
 
-    // PEND-06 Tier 2: emit a final `complete` tick so the UI can flip
+    // Emit a final `complete` tick so the UI can flip
     // its file-transfer phase chip back to idle without waiting for
     // the next sync session.
     if let Some(p) = progress {
@@ -1349,7 +1349,7 @@ pub async fn run_file_transfer_initiator(
 /// 1. Responder sends files the initiator requested.
 /// 2. Responder requests files it's missing.
 ///
-/// M-47: `cancel` is threaded through to the inner per-file loops. See
+/// `cancel` is threaded through to the inner per-file loops. See
 /// the matching docs on [`run_file_transfer_initiator`] for the rationale
 /// and protocol-compatibility notes.
 pub async fn run_file_transfer_responder(

@@ -24,7 +24,7 @@ export interface TagRefOptions {
    * with no pointer / keyboard affordance.
    */
   onClick?: ((id: string) => void) | undefined
-  /** PEND-15 Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
+  /** Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
   resolveStatus?: ((id: string) => 'active' | 'deleted') | undefined
 }
 

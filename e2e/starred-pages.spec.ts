@@ -1,14 +1,14 @@
 import { expect, test, waitForBoot } from './helpers'
 
 /**
- * E2E coverage for FEAT-12 + FEAT-14 — PageBrowser unified
+ * E2E coverage for + PageBrowser unified
  * `Starred` + `Pages` model.
  *
  * The PageBrowser used to ship a toolbar Star toggle that filtered the
- * list down to starred pages only. FEAT-12 replaced that filter with
+ * List down to starred pages only. replaced that filter with
  * always-visible grouping: starred pages render on top under a
  * `Starred` section header, non-starred under `Other pages`, and sort
- * applies independently within each group. FEAT-14 then unified the
+ * Applies independently within each group. then unified the
  * two organising axes (favourites vs hierarchy) into a stable
  * two-section model: `Starred` (flat, conditional) + `Pages` (single
  * section interleaving top-level flat pages and namespace roots). A
@@ -33,13 +33,13 @@ async function openPagesView(page: import('@playwright/test').Page) {
     .locator('[data-slot="sidebar"]')
     .getByRole('button', { name: 'Pages', exact: true })
     .click()
-  // Wait for the page-list grid to render (MAINT-162 — flipped from
+  // Wait for the page-list grid to render (flipped from
   // `role="listbox"` so the mixed-mode flat/tree rows have a uniform
   // ARIA contract).
   await expect(page.getByRole('grid')).toBeVisible()
 }
 
-test.describe('FEAT-12 + FEAT-14 — PageBrowser unified Starred + Pages model', () => {
+test.describe(' + PageBrowser unified Starred + Pages model', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     // Reset starred-pages so each test starts from a clean slate even
@@ -158,12 +158,10 @@ test.describe('FEAT-12 + FEAT-14 — PageBrowser unified Starred + Pages model',
     await expect(page.locator('[data-page-item]').first()).toContainText('Projects')
   })
 
-  test('FEAT-14: namespaced pages and starred pages coexist in the unified layout', async ({
-    page,
-  }) => {
+  test('namespaced pages and starred pages coexist in the unified layout', async ({ page }) => {
     await openPagesView(page)
 
-    // Create a namespaced page — under FEAT-14, this no longer flips
+    // Create a namespaced page — under this no longer flips
     // the entire view to a tree-only mode. The flat seeded pages
     // continue to render alongside the new namespace tree under
     // `Pages`, and any starred page keeps its `Starred` row.
@@ -183,7 +181,7 @@ test.describe('FEAT-12 + FEAT-14 — PageBrowser unified Starred + Pages model',
     // its editor view).
     await openPagesView(page)
 
-    // Star a flat page — under FEAT-14 the `Starred` header DOES
+    // Star a flat page — under the `Starred` header DOES
     // render even when namespaced pages exist.
     await page.locator('[data-page-item]:has-text("Quick Notes") .star-toggle').click()
 

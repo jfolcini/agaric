@@ -48,7 +48,7 @@ describe('detectAutocompleteAnchor', () => {
     expect(detectAutocompleteAnchor('tag:#x', -10)).toBeNull()
   })
 
-  it('keeps autocomplete open for an interior # in a tag value (DSL-2)', () => {
+  it('keeps autocomplete open for an interior # in a tag value', () => {
     // The classifier strips only a *single leading* `#`, so `foo#bar`
     // is a legal tag name. The anchor detector must agree and not bail
     // out the moment it sees an interior `#`.
@@ -59,7 +59,7 @@ describe('detectAutocompleteAnchor', () => {
     })
   })
 
-  // PEND-53 — state / priority / due / scheduled / prop autocomplete.
+  // State / priority / due / scheduled / prop autocomplete.
 
   it('opens on state:', () => {
     const a = detectAutocompleteAnchor('state:TO', 8)
@@ -138,10 +138,10 @@ describe('detectAutocompleteAnchor', () => {
   })
 })
 
-// DSL-A6 — `isInsideQuote` (the caret-inside-a-phrase guard) must agree
+// `isInsideQuote` (the caret-inside-a-phrase guard) must agree
 // with the tokenizer's quote segmentation. These pin the cases where the
 // old odd/even `"`-counting model diverged.
-describe('detectAutocompleteAnchor — quote handling (DSL-A6)', () => {
+describe('detectAutocompleteAnchor — quote handling', () => {
   it('suppresses autocomplete inside a boundary-closed phrase', () => {
     // `"hello world" tag:#x` — caret at column 5 is inside the phrase
     // `"hello world"` (span [0,13]); no autocomplete there.
@@ -216,9 +216,9 @@ describe('detectAutocompleteAnchor — quote handling (DSL-A6)', () => {
   })
 })
 
-// DSL-A7 — the dead `slice === 'tag:#'` arm was removed; the `tag:#name`
+// The dead `slice === 'tag:#'` arm was removed; the `tag:#name`
 // and `tag:name` autocomplete paths must still behave identically.
-describe('detectAutocompleteAnchor — tag:# / tag: parity (DSL-A7)', () => {
+describe('detectAutocompleteAnchor — tag:# / tag: parity', () => {
   it('treats tag:#name and tag:name with the same query', () => {
     const withHash = detectAutocompleteAnchor('tag:#urgent', 'tag:#urgent'.length)
     const withoutHash = detectAutocompleteAnchor('tag:urgent', 'tag:urgent'.length)

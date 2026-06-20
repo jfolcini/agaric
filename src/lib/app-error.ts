@@ -1,5 +1,5 @@
 /**
- * PEND-73 Phase 2 — frontend-side type narrowing for the Tauri-IPC
+ * Phase 2 — frontend-side type narrowing for the Tauri-IPC
  * `AppError` wire shape.
  *
  * The backend's `AppError` (src-tauri/src/error.rs) serialises to
@@ -80,7 +80,7 @@ export function isAppError(err: unknown): err is TypedAppError {
 }
 
 /**
- * Was the request cancelled (PEND-70 backend cancellation OR a
+ * Was the request cancelled (backend cancellation OR a
  * client-side abort)? Cancellation is the EXPECTED case when a fast
  * typist fires a fresh keystroke before the previous IPC completes —
  * consumers should swallow it silently (no toast, no error counter)

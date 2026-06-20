@@ -1,5 +1,5 @@
 /**
- * Graph view filter types and pure filtering function (UX-205).
+ * Graph view filter types and pure filtering function.
  *
  * Filters are applied client-side to the loaded graph node list. For the tag
  * dimension, filtering is usually driven server-side (the GraphView refetches
@@ -16,7 +16,7 @@
  * - `excludeTemplates` with `value: true` removes nodes where
  *   `is_template === true`. `value: false` is a no-op by design — users who
  *   want only templates should add an `isTemplate` filter instead (not
- *   implemented; out of scope for UX-205).
+ * Implemented; out of scope for).
  * - `tag` with an empty `tagIds` array is treated as a no-op.
  */
 
@@ -170,7 +170,7 @@ export const GRAPH_STATUS_VALUES = ['TODO', 'DOING', 'DONE', 'CANCELLED'] as con
 
 /**
  * Default allowed priority values — kept for back-compat with tests and
- * code paths that don't yet read the dynamic set. UX-201b callers now read
+ * Code paths that don't yet read the dynamic set. callers now read
  * the live user-configured list via `getPriorityLevels()` directly.
  */
 export const GRAPH_PRIORITY_VALUES = ['1', '2', '3'] as const

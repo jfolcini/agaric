@@ -411,7 +411,7 @@ describe('HistoryView', () => {
 
     // axe's first call per worker loads rules and can exceed the default 1s
     // waitFor timeout under full-suite worker contention. 5000ms matches the
-    // precedent in Sidebar.test.tsx / TemplatePicker.test.tsx (TEST-3 fix).
+    // Precedent in Sidebar.test.tsx / TemplatePicker.test.tsx (fix).
     await waitFor(
       async () => {
         const results = await axe(container)
@@ -813,7 +813,7 @@ describe('HistoryView', () => {
     expect(checkboxes[1]).toBeChecked()
   })
 
-  // TEST-1fg regression: after a successful batch revert, the selection
+  // Regression: after a successful batch revert, the selection
   // toolbar (badge + Revert / Clear buttons) must unmount so that no
   // "N selected" text remains in the DOM. Previously the toolbar was
   // always rendered and still showed "0 selected" post-revert, which
@@ -1155,7 +1155,7 @@ describe('HistoryView', () => {
   })
 
   // =========================================================================
-  // Home/End and PageUp/PageDown keyboard navigation (UX-138)
+  // Home/End and PageUp/PageDown keyboard navigation
   // =========================================================================
 
   describe('Home/End and PageUp/PageDown navigation', () => {
@@ -1273,11 +1273,11 @@ describe('HistoryView', () => {
     })
   })
 
-  // UX-198: the filter-bar + selection-toolbar header used to render inside
+  // The filter-bar + selection-toolbar header used to render inside
   // a `sticky top-0` wrapper. It's now hoisted to the App-level outlet via
   // <ViewHeader>. The filter bar must still render (via ViewHeader's inline
   // fallback) but the stale sticky classes must be gone from the subtree.
-  describe('UX-198 header outlet migration', () => {
+  describe(' header outlet migration', () => {
     it('has no sticky top-0 wrapper, but filter bar still renders', async () => {
       const page = {
         items: [makeHistoryEntry(1, 'edit_block', { to_text: 'ux198 regression' })],
@@ -1298,12 +1298,12 @@ describe('HistoryView', () => {
     })
   })
 
-  // UX-259: destructive dialogs must not confirm on a reflex Enter.
+  // Destructive dialogs must not confirm on a reflex Enter.
   // Note: HistoryView has a document-level Enter shortcut that opens the
   // revert dialog when selection is non-empty. To avoid contaminating the
   // assertion with that pre-existing handler, we verify focus state and
-  // confirm the destructive callback is NOT fired (the core UX-259 contract).
-  describe('UX-259: destructive dialog reflex-Enter safety', () => {
+  // Confirm the destructive callback is NOT fired (the core contract).
+  describe('destructive dialog reflex-Enter safety', () => {
     it('revert dialog auto-focuses Cancel and reflex Enter does not call revertOps', async () => {
       const user = userEvent.setup()
       const page = {
@@ -1325,7 +1325,7 @@ describe('HistoryView', () => {
       await user.click(screen.getByRole('button', { name: /Revert selected/ }))
       expect(screen.getByText(t('history.revertTitle', { count: 1 }))).toBeInTheDocument()
 
-      // Cancel is auto-focused (UX-259), NOT the destructive Revert button.
+      // Cancel is auto-focused, NOT the destructive Revert button.
       const cancelBtn = screen.getByRole('button', { name: /Cancel/i })
       const revertBtn = screen.getByRole('button', { name: /^Revert$/ })
       expect(cancelBtn).toHaveFocus()
@@ -1353,7 +1353,7 @@ describe('HistoryView', () => {
       await user.click(screen.getByRole('button', { name: /Reset to this point/i }))
       expect(screen.getByText(/Restore to/)).toBeInTheDocument()
 
-      // Cancel is auto-focused (UX-259), NOT the destructive Restore button.
+      // Cancel is auto-focused, NOT the destructive Restore button.
       const cancelBtn = screen.getByRole('button', { name: /Cancel/i })
       const restoreBtn = screen.getByRole('button', { name: /^Restore$/ })
       expect(cancelBtn).toHaveFocus()
@@ -1374,7 +1374,7 @@ describe('HistoryView', () => {
   })
 
   // ===========================================================================
-  // UX-346 — touch-only ↑/↓ navigation toolbar.
+  // Touch-only ↑/↓ navigation toolbar.
   //
   // Vim/arrow keyboard nav has no equivalent on touch devices. The toolbar
   // renders two buttons that drive the same `setFocusedIndex` updater the
@@ -1382,7 +1382,7 @@ describe('HistoryView', () => {
   // — jsdom doesn't evaluate that media query so the element is in the
   // DOM regardless; tests assert behaviour, not visual hiding.
   // ===========================================================================
-  describe('UX-346 — touch navigation toolbar', () => {
+  describe('touch navigation toolbar', () => {
     it('renders the touch-nav toolbar when entries exist', async () => {
       const page = {
         items: [
@@ -1465,7 +1465,7 @@ describe('HistoryView', () => {
   })
 })
 
-describe('HistoryView screen reader announcements (UX-282)', () => {
+describe('HistoryView screen reader announcements', () => {
   it('announces ops reverted count after batch revert', async () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
@@ -1523,9 +1523,9 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
   })
 
   // ===========================================================================
-  // UX-275 sub-fix 7: error-banner categorization (network / server / unknown).
+  // Sub-fix 7: error-banner categorization (network / server / unknown).
   // ===========================================================================
-  describe('UX-275 error categorization', () => {
+  describe(' error categorization', () => {
     it('classifies a network failure and shows network-specific copy', async () => {
       mockedInvoke.mockRejectedValueOnce(new Error('failed to fetch — network error'))
 
@@ -1580,16 +1580,16 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
   })
 
   // ===========================================================================
-  // FEAT-3 Phase 8 — current-space scoping with "All spaces" toggle.
+  // Phase 8 — current-space scoping with "All spaces" toggle.
   //
   // The default behaviour is current-space-only: HistoryView reads
   // `currentSpaceId` from `useSpaceStore` and passes it through `scope`
-  // (PEND-18 Phase 3) on the IPC. Toggling "All spaces" drops the
+  // (Phase 3) on the IPC. Toggling "All spaces" drops the
   // filter (passes `scope: { kind: 'global' }` so the backend returns
-  // ops from every space). UX-369 added localStorage persistence for
+  // Ops from every space). added localStorage persistence for
   // the toggle — see the dedicated describe block below for that contract.
   // ===========================================================================
-  describe('FEAT-3 Phase 8 — space scoping', () => {
+  describe(' Phase 8 — space scoping', () => {
     afterEach(() => {
       // Reset the space store after each test to avoid bleed across the
       // rest of the suite (the store is shared module-level state).
@@ -1598,7 +1598,7 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
         availableSpaces: [],
         isReady: false,
       })
-      // UX-369 — the "All spaces" toggle is now persisted to
+      // The "All spaces" toggle is now persisted to
       // localStorage, so a flipped toggle in one test would otherwise
       // leak `true` into the next test's initial render.
       localStorage.removeItem('agaric:history:allSpacesToggle')
@@ -1678,7 +1678,7 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
 
       render(<HistoryView />)
 
-      // Default scoped state ⇒ the FEAT-3 Phase 8 copy nudges the user
+      // Default scoped state ⇒ the Phase 8 copy nudges the user
       // toward the toggle.
       expect(await screen.findByText(t('history.emptyCurrentSpace'))).toBeInTheDocument()
       expect(screen.queryByText(t('history.noEntriesFound'))).not.toBeInTheDocument()
@@ -1694,13 +1694,13 @@ describe('HistoryView screen reader announcements (UX-282)', () => {
   })
 
   // ===========================================================================
-  // UX-369 — "All spaces" toggle persists across remounts via localStorage.
+  // "All spaces" toggle persists across remounts via localStorage.
   //
   // Power users who routinely audit cross-space history previously had to
   // re-flip the toggle every visit. The toggle now reads/writes
   // `agaric:history:allSpacesToggle` so its state survives session restarts.
   // ===========================================================================
-  describe('UX-369 — All spaces toggle persistence', () => {
+  describe('All spaces toggle persistence', () => {
     afterEach(() => {
       localStorage.removeItem('agaric:history:allSpacesToggle')
     })

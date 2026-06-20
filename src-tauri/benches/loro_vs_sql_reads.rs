@@ -1,4 +1,4 @@
-//! PEND-09 Phase 0 day-10 — paired SQL read benchmark.
+//! Phase 0 day-10 — paired SQL read benchmark.
 //!
 //! Day-7's `read_path_bench` (in the now-archived loro-spike crate; see
 //! git tag `pend-09/spike-archive`) measured Loro's three materializer
@@ -473,7 +473,7 @@ async fn shape_c(pool: &SqlitePool, block_ids: &[String]) -> std::time::Duration
 fn main() {
     let overall = Instant::now();
 
-    println!("PEND-09 Phase 0 day-10 — paired SQL read benchmark");
+    println!(" Phase 0 day-10 — paired SQL read benchmark");
     println!("===================================================");
     println!("seed                 = 0x{SEED:016x}");
     println!("page roots           = {PAGE_ROOTS}");

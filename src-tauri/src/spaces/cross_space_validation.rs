@@ -1,8 +1,8 @@
-//! Cross-space reference validation (PEND-15 Phase 2 enforcement).
+//! Cross-space reference validation (Phase 2 enforcement).
 //!
 //! The two helpers below are called BEFORE emitting an op so a write
 //! that would introduce a cross-space reference is rejected up front.
-//! PEND-76 F5 wired them into the single-block command paths:
+//! wired them into the single-block command paths:
 //! `set_property` (ref-type values, `set_property_in_tx`), block create
 //! (`create_block_in_tx`), and block edit (`edit_block_inner`).
 //! `add_tag` enforces cross-space via its own inline guard.
@@ -10,7 +10,7 @@
 //! Bulk-import and sync-ingress are NOT write-time gated here: those ops
 //! arrive already committed in the CRDT, so rejecting/skipping them would
 //! diverge SQL from the authoritative engine state (links/tag-refs instead
-//! carry a PEND-15 Phase-3 write-time cache filter on that path). The one
+//! carry a Phase-3 write-time cache filter on that path). The one
 //! unfiltered synced surface — cross-space ref-type `block_properties`
 //! (`value_ref`) landing in the source-of-truth table — is covered by
 //! **detection**: the `audit_cross_space_refs` diagnostic's A5 category
@@ -30,7 +30,7 @@
 //! Both helpers take `&mut SqliteConnection` so they run on the
 //! command's `BEGIN IMMEDIATE` transaction (the `&mut Transaction` /
 //! `CommandTx` handle deref-coerces to it) without opening a fresh
-//! connection. PEND-76 F5: enforcement applies only
+//! connection. enforcement applies only
 //! when BOTH the source and the target are assigned to a space — an
 //! orphan (unassigned) block is not "cross-space" to anything, so it is
 //! tolerated (mirrors the orphan-tag adoption in `add_tag`).
@@ -114,7 +114,7 @@ pub async fn validate_content_cross_space_refs(
     content: &str,
 ) -> Result<(), AppError> {
     let source_space = resolve_block_space(&mut *conn, source_block_id).await?;
-    // PEND-76 F5: only enforce when the source block is itself assigned to
+    // Only enforce when the source block is itself assigned to
     // a space. An unassigned (orphan) source — e.g. a freshly created
     // top-level block that has not yet inherited a page/space — has no
     // space to be "cross" to, so there is nothing to reject.
@@ -186,7 +186,7 @@ pub async fn validate_ref_property_cross_space(
     }
 
     let source_space = resolve_block_space(&mut *conn, source_block_id).await?;
-    // PEND-76 F5: orphan source — no space to be "cross" to, nothing to enforce.
+    // Orphan source — no space to be "cross" to, nothing to enforce.
     let Some(source_space) = source_space else {
         return Ok(());
     };
@@ -304,7 +304,7 @@ mod tests {
 
     #[tokio::test]
     async fn content_scan_orphan_source_is_noop() {
-        // PEND-76 F5: a source block with no space (orphan) has no space to
+        // A source block with no space (orphan) has no space to
         // be "cross" to, so any reference passes.
         let (pool, _dir) = test_pool().await;
         seed_spaces(&pool).await;
@@ -329,7 +329,7 @@ mod tests {
 
     #[tokio::test]
     async fn content_scan_orphan_target_is_tolerated() {
-        // PEND-76 F5: a reference to an orphan (unassigned) target is
+        // A reference to an orphan (unassigned) target is
         // tolerated — it is not cross-space yet.
         let (pool, _dir) = test_pool().await;
         seed_spaces(&pool).await;

@@ -1,7 +1,7 @@
 /**
  * useTauriEventListener — shared Tauri `listen()` wrapper.
  *
- * MAINT-122: useSyncEvents (3 listeners), useDeepLinkRouter (3
+ * UseSyncEvents (3 listeners), useDeepLinkRouter (3
  * listeners), and useBlockPropertyEvents (1 listener) all carry the
  * same `listen() → unlisten()` lifecycle with slightly different
  * error-handling shapes. This hook centralizes the pattern, including

@@ -8,7 +8,7 @@
  * Five populated sections: Filter syntax, Toggles, Regex syntax,
  * Boolean operators, and Tips. Section headings + the dialog
  * description are i18n'd; the body prose is i18n'd via t()/<Trans>
- * (UX-3), while monospace token identifiers (filter prefixes, regex
+ *while monospace token identifiers (filter prefixes, regex
  * syntax) render verbatim as code.
  */
 
@@ -30,7 +30,7 @@ interface SearchHelpDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-/** PEND-54 — Filter syntax section body. */
+/** Filter syntax section body. */
 function FilterSyntaxBody() {
   const { t } = useTranslation()
   const mono = <span className="font-mono" />
@@ -136,7 +136,7 @@ function FilterSyntaxBody() {
   )
 }
 
-/** PEND-55 — Toggles section body. */
+/** Toggles section body. */
 function TogglesBody() {
   const { t } = useTranslation()
   return (
@@ -178,7 +178,7 @@ function TogglesBody() {
   )
 }
 
-/** PEND-55 — Regex syntax section body. */
+/** Regex syntax section body. */
 function RegexSyntaxBody() {
   const { t } = useTranslation()
   const mono = <span className="font-mono" />
@@ -253,7 +253,7 @@ function RegexSyntaxBody() {
   )
 }
 
-/** PEND-55 — Boolean operators section body. */
+/** Boolean operators section body. */
 function BooleanOperatorsBody() {
   const { t } = useTranslation()
   const mono = <span className="font-mono" />
@@ -279,7 +279,7 @@ function BooleanOperatorsBody() {
   )
 }
 
-/** PEND-55 — Tips section body. */
+/** Tips section body. */
 function TipsBody() {
   const { t } = useTranslation()
   // #1005 — canonical chip. This is a standalone help kbd inside descriptive
@@ -320,28 +320,28 @@ export function SearchHelpDialog({ open, onOpenChange }: SearchHelpDialogProps) 
           <DialogDescription>{t('search.help.description')}</DialogDescription>
         </DialogHeader>
         <DialogBody>
-          {/* PEND-54 — Filter syntax section (populated). */}
+          {/* Filter syntax section (populated). */}
           <section aria-labelledby="search-help-filter-syntax">
             <h3 id="search-help-filter-syntax" className="text-base font-semibold leading-tight">
               {t('search.help.section.filterSyntax')}
             </h3>
             <FilterSyntaxBody />
           </section>
-          {/* PEND-55 — Toggles. */}
+          {/* Toggles. */}
           <section aria-labelledby="search-help-toggles">
             <h3 id="search-help-toggles" className="text-base font-semibold leading-tight">
               {t('search.help.section.toggles')}
             </h3>
             <TogglesBody />
           </section>
-          {/* PEND-55 — Regex syntax. */}
+          {/* Regex syntax. */}
           <section aria-labelledby="search-help-regex-syntax">
             <h3 id="search-help-regex-syntax" className="text-base font-semibold leading-tight">
               {t('search.help.section.regexSyntax')}
             </h3>
             <RegexSyntaxBody />
           </section>
-          {/* PEND-55 — Boolean operators. */}
+          {/* Boolean operators. */}
           <section aria-labelledby="search-help-boolean-operators">
             <h3
               id="search-help-boolean-operators"
@@ -351,7 +351,7 @@ export function SearchHelpDialog({ open, onOpenChange }: SearchHelpDialogProps) 
             </h3>
             <BooleanOperatorsBody />
           </section>
-          {/* PEND-55 — Tips. */}
+          {/* Tips. */}
           <section aria-labelledby="search-help-tips">
             <h3 id="search-help-tips" className="text-base font-semibold leading-tight">
               {t('search.help.section.tips')}

@@ -1,4 +1,4 @@
-//! PEND-61 Phase 1 — partitioned FTS scan for the palette's two-partition
+//! Phase 1 — partitioned FTS scan for the palette's two-partition
 //! (pages + blocks) view. Runs two parallel FTS scans and packages each
 //! candidate set with its own probe-derived `has_more` flag.
 
@@ -18,7 +18,7 @@ use super::sanitizer::sanitize_fts_query;
 /// sets (page-only + unrestricted), each with its own `has_more` flag
 /// derived from a `limit + 1` probe.
 ///
-/// PEND-69 F1 — the previous one-scan-then-partition shape could drop
+/// The previous one-scan-then-partition shape could drop
 /// the pages partition entirely when 49 content blocks ranked above
 /// the only page hit. The two-scan shape guarantees the pages
 /// partition reflects matching pages regardless of content rank.
@@ -33,7 +33,7 @@ pub(crate) struct FtsPartitionedScan {
     /// at the caller's `block_limit`.
     pub blocks: Vec<SearchBlockRow>,
     /// `true` iff the pages scan returned `page_limit + 1` rows — the
-    /// probe approach (resolves PEND-69 Open Q3). Lets the caller
+    /// Probe approach (resolves Open Q3). Lets the caller
     /// signal accurate per-partition pagination instead of inferring
     /// from the global ceiling.
     pub pages_has_more: bool,
@@ -42,14 +42,14 @@ pub(crate) struct FtsPartitionedScan {
     pub blocks_has_more: bool,
 }
 
-/// PEND-61 Phase 1 / PEND-69 F1 — two parallel FTS scans for the
+/// Phase 1 / two parallel FTS scans for the
 /// palette's two-partition view. Each scan reuses the same SQL builder
 /// as [`search_fts`]; the pages scan adds `block_type = 'page'` to the
 /// WHERE clause and uses `with_snippet = with_snippet_pages`, the
 /// blocks scan adds no `block_type` filter.
 ///
 /// Both scans use a `limit + 1` probe so the caller can signal accurate
-/// per-partition `has_more` (resolves PEND-69 Open Q3).
+/// Per-partition `has_more` (resolves Open Q3).
 ///
 /// All other filters — `parent_id`, `tag_ids`, `space_id`, page-name
 /// globs, metadata predicates — are honoured identically on both
@@ -57,14 +57,14 @@ pub(crate) struct FtsPartitionedScan {
 ///
 /// Concurrency: both scans run via [`tokio::try_join!`] on the shared
 /// read pool. With `max_connections(4)` we afford two reads per IPC.
-/// Fail-fast semantics (PEND-69 Open Q2) — if either scan errors, the
+/// Fail-fast semantics (Open Q2) — if either scan errors, the
 /// other is dropped and the error propagates without a partial
 /// response.
 ///
 /// Empty / whitespace queries short-circuit to two empty partitions,
 /// mirroring [`search_fts`].
 ///
-/// PEND-70 — `cancel` is an optional cancellation token threaded
+/// `cancel` is an optional cancellation token threaded
 /// through both partition scans into [`fts_fetch_rows`]. The Tauri
 /// command wrapper (`search_blocks_partitioned`) stores a
 /// [`CancellationGuard`] in the [`crate::cancellation::CancellationRegistry`]
@@ -100,7 +100,7 @@ pub(crate) async fn search_fts_partitioned(
         });
     }
 
-    // SQL-4 (PEND-58f) — same up-front length cap as `search_fts`.
+    // Same up-front length cap as `search_fts`.
     if query.len() > MAX_QUERY_LEN {
         return Err(AppError::Validation(format!(
             "search query is too long ({} bytes); maximum is {MAX_QUERY_LEN} bytes",
@@ -121,7 +121,7 @@ pub(crate) async fn search_fts_partitioned(
         });
     }
 
-    // PEND-69 F1 — each scan independently caps at `MAX_SEARCH_RESULTS`
+    // Each scan independently caps at `MAX_SEARCH_RESULTS`
     // and asks for `limit + 1` to probe for overflow. `u64` math
     // protects against pathological `u32::MAX + 1` before the i64 cast.
     let pages_fetch_limit = limit_plus_one_capped(page_limit);
@@ -141,13 +141,13 @@ pub(crate) async fn search_fts_partitioned(
         space_id,
         include_page_globs,
         exclude_page_globs,
-        Some("page"), // PEND-69 F1: page-only pre-filter at SQL
+        Some("page"), // page-only pre-filter at SQL
         metadata,
         with_snippet,
         // P4 (#346) — the partitioned (palette) path always returns full
         // content; only the MCP cursor path opts into DB-side truncation.
         None,
-        // PEND-70 — clone the cancel token so both partition scans
+        // Clone the cancel token so both partition scans
         // observe the same signal. `CancellationToken: Clone` is a
         // cheap watch::Receiver refcount bump.
         cancel.clone(),
@@ -173,7 +173,7 @@ pub(crate) async fn search_fts_partitioned(
     );
     let (pages_rows, blocks_rows) = tokio::try_join!(pages_future, blocks_future)?;
 
-    // SQL-3 (PEND-58f) — clamp the comparison limit to the same
+    // Clamp the comparison limit to the same
     // `MAX_SEARCH_RESULTS` ceiling the fetch was clamped to. The fetch
     // probes `min(limit, MAX_SEARCH_RESULTS) + 1` rows, so `has_more`
     // must be measured against the *clamped* limit; otherwise an
@@ -221,7 +221,7 @@ pub(crate) async fn search_fts_partitioned(
 /// (capped at [`MAX_SEARCH_RESULTS`]) **plus one**, so the caller can
 /// detect overflow against its own (also-capped) limit.
 ///
-/// SQL-3 (PEND-58f) — the previous implementation computed
+/// The previous implementation computed
 /// `min(limit + 1, MAX_SEARCH_RESULTS)`, which at the boundary
 /// (`limit == 100`) collapsed to `min(101, 100) = 100`. With a fetch
 /// limit equal to the cap, `rows.len() > limit` could never be true, so

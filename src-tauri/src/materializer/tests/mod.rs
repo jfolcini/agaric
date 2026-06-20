@@ -27,7 +27,7 @@ pub(super) async fn test_pool() -> (SqlitePool, TempDir) {
     (pool, dir)
 }
 pub(super) fn fake_op_record(op_type: &str, payload: &str) -> OpRecord {
-    // L-13: cache the parsed block_id sidecar so dispatch consults
+    // Cache the parsed block_id sidecar so dispatch consults
     // the field without re-parsing the (possibly intentionally
     // malformed) payload of these synthetic records.
     let block_id = crate::op_log::extract_block_id_from_payload(payload);

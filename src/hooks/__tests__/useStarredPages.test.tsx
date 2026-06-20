@@ -1,5 +1,5 @@
 /**
- * Tests for useStarredPages hook (MAINT-130 sub-item b).
+ * Tests for useStarredPages hook (sub-item b).
  *
  * Validates:
  *  - `isStarred` returns false for an unstarred page.

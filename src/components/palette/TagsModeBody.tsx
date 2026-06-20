@@ -1,5 +1,5 @@
 /**
- * Tags-mode body (PEND-67 Phase 3 — `#` prefix → block_type=tag
+ * Tags-mode body (Phase 3 — `#` prefix → block_type=tag
  * search). Extracted from CommandPalette.tsx (#751).
  */
 
@@ -25,7 +25,7 @@ import { PALETTE_DEBOUNCE_MS, TAGS_QUERY_LIMIT } from './constants'
 /**
  * Tags-mode body — debounced `searchBlocks({ blockTypeFilter: 'tag' })`
  * with on-select escalation to the search view seeded by
- * `tag:#<name>` (PEND-54 inline filter syntax). The escalation keeps
+ * `tag:#<name>` (inline filter syntax). The escalation keeps
  * the palette out of the navigation business and reuses the existing
  * find-in-files surface for tag filtering.
  */
@@ -44,9 +44,9 @@ export function TagsModeBody({
   const [tags, setTags] = useState<SearchBlockRow[]>([])
   const [loading, setLoading] = useState(false)
   const [debouncedQuery, setDebouncedQuery] = useState('')
-  // PEND-73 Phase 4.M3 — shared race-discard hook.
+  // Phase 4.M3 — shared race-discard hook.
   const tagsGen = useGenerationGuard()
-  // PEND-73 Phase 3.U1 — once-per-session failure surface.
+  // Phase 3.U1 — once-per-session failure surface.
   const surfaceTagsFailureOnce = useFailedOnce()
   const debounced = useDebouncedCallback((value: string) => {
     setDebouncedQuery(value)
@@ -74,10 +74,10 @@ export function TagsModeBody({
       })
       .catch((err) => {
         if (!tagsGen.isCurrent(gen)) return
-        // PEND-73 Phase 2 — see sibling catch site rationale.
+        // Phase 2 — see sibling catch site rationale.
         if (isCancellation(err)) return
         logger.warn('CommandPalette', 'tags search failed', { query: debouncedQuery }, err)
-        // PEND-73 Phase 3.U1 — once-per-session toast for real failures.
+        // Phase 3.U1 — once-per-session toast for real failures.
         surfaceTagsFailureOnce('palette:tags', () => notify.error(t('search.failed')))
         setTags([])
         setLoading(false)

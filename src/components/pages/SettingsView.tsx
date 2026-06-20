@@ -4,19 +4,19 @@
  * Tabs:
  *  - General   -- DeadlineWarningSection + AutostartRow + QuickCaptureRow
  *  - Properties -- PropertyDefinitionsList
- *  - Appearance -- theme selector (7 themes, UX-203) + font size selector
+ * Appearance -- theme selector (7 themes) + font size selector
  *  - Keyboard -- KeyboardSettingsTab
  *  - Data -- DataSettingsTab (lazy)
  *  - Sync & Devices -- DeviceManagement
- *  - Agent access -- AgentAccessSettingsTab (FEAT-4e)
- *  - Help -- Report a bug (FEAT-5); future home of About / updates
+ * Agent access -- AgentAccessSettingsTab
+ * Help -- Report a bug; future home of About / updates
  *
- * MAINT-128 (in progress): the General / Appearance / Help tabs and the
+ * (in progress): the General / Appearance / Help tabs and the
  * AutostartRow / QuickCaptureRow blocks have been lifted to siblings
  * under `./settings/`. The remaining tabs are still rendered inline via
  * their pre-existing top-level sibling components. The
  * `useSettingsTab()` hook for localStorage + URL persistence is the
- * one piece of MAINT-128's SettingsView row still pending — it stays
+ * One piece of SettingsView row still pending — it stays
  * inlined here for now.
  *
  * #1108: the tabs are presented as a grouped vertical rail (see
@@ -52,7 +52,7 @@ import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
 
 // DataSettingsTab drags in `jszip` (~135 kB) for "Export as ZIP". The tab
-// is rarely opened, so defer the import until the user clicks it (PERF-24).
+// Is rarely opened, so defer the import until the user clicks it.
 const DataSettingsTab = lazy(() =>
   import('@/components/DataSettingsTab').then((m) => ({ default: m.DataSettingsTab })),
 )
@@ -87,7 +87,7 @@ const TAB_IDS: SettingsTab[] = [
 const ACTIVE_TAB_KEY = SETTINGS_ACTIVE_TAB_KEY
 
 /**
- * Load the active tab. Resolution order (UX-276):
+ * Load the active tab. Resolution order:
  *   1. `?settings=<tab>` query param — enables shareable deep links.
  *   2. localStorage (`agaric-settings-active-tab`) — restores the user's
  *      last-visited tab across navigations within the app.
@@ -196,7 +196,7 @@ export function SettingsView(): React.ReactElement {
   }, [pendingSettingsTab])
 
   // Persist active tab so navigating away and back restores the user's place
-  // (UX-276). Validation happens on read in `readActiveTab` — stored values
+  // Validation happens on read in `readActiveTab` — stored values
   // that no longer match a known tab fall back to `'general'`.
   //
   // We also mirror the active tab into the URL query string (`?settings=…`)
@@ -225,7 +225,7 @@ export function SettingsView(): React.ReactElement {
   return (
     <div className="settings-view space-y-6">
       {/* PEND-UX item 5 — `FeaturePageHeader` carries the `<h1>` landmark
-          + the UX-381 breadcrumb. The `<nav>` keeps its aria-label so
+          + the  breadcrumb. The `<nav>` keeps its aria-label so
           existing role="navigation" assertions in SettingsView.test.tsx
           continue to resolve unchanged. */}
       <FeaturePageHeader

@@ -1,4 +1,4 @@
-//! UX-165: Link metadata fetching and caching.
+//! Link metadata fetching and caching.
 //!
 //! Fetches `<title>`, favicon URL, and description from external URLs,
 //! stores them in a local SQLite cache (`link_metadata` table) that is
@@ -51,7 +51,7 @@ pub struct LinkMetadata {
     /// string before the INTEGER-ms timestamp migration).
     pub fetched_at: i64,
     pub auth_required: bool,
-    /// MAINT-213 (PEND-24 M4 follow-up): `true` when the most recent
+    /// (follow-up): `true` when the most recent
     /// fetch saw a terminal "this resource is gone" status (HTTP 404 or
     /// 410). Distinct from `auth_required` (401/403, transient
     /// sign-in) and from "transient" (5xx — both flags false plus
@@ -106,11 +106,11 @@ pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
     let status = response.status().as_u16();
     let final_url = response.url().to_string();
 
-    // PEND-24 M4 — short-circuit on non-2xx so 4xx/5xx HTML error pages
+    // Short-circuit on non-2xx so 4xx/5xx HTML error pages
     // (e.g. a 404 with `<title>Page not found</title>`) don't get parsed
     // and cached as the target page's metadata.
     //
-    // MAINT-213: classify the non-2xx into three terminal categories so
+    // Classify the non-2xx into three terminal categories so
     // the frontend can render distinct UX:
     //   * `auth_required` (401/403): sign-in card / reauth flow
     //   * `not_found` (404/410): terminal "page is gone" presentation
@@ -194,7 +194,7 @@ pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
 
 /// Read a response body up to `max_bytes`, discarding excess.
 ///
-/// L-90: streams chunks via [`reqwest::Response::chunk`] and stops as soon as
+/// Streams chunks via [`reqwest::Response::chunk`] and stops as soon as
 /// the accumulator hits `max_bytes` (then drops the response, which closes
 /// the connection and aborts the rest of the download). Pre-2025 this used
 /// `response.bytes().await?`, which materialized the entire body into memory

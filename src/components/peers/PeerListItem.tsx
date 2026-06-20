@@ -48,7 +48,7 @@ export function PeerListItem({
   const [addrOpen, setAddrOpen] = useState(false)
   const [addrInput, setAddrInput] = useState('')
 
-  // UX-378: real-time format validation for the address popover.
+  // Real-time format validation for the address popover.
   // Empty input returns null so the freshly-opened popover stays quiet;
   // 'format' / 'port' are markers translated at render time.
   const addressError = useMemo<string | null>(() => {
@@ -72,13 +72,13 @@ export function PeerListItem({
       })
       .catch((err) => {
         logger.warn('PeerListItem', 'set_peer_address failed', { peer_id: peer.peer_id }, err)
-        // UX-12: include the expected format in the toast so the user
+        // Include the expected format in the toast so the user
         // doesn't have to reopen the popover hint to recover.
         notify.error(t('status.addressInvalidWithFormat', { format: '192.168.1.100:5000' }))
       })
   }, [addrInput, peer.peer_id, t, onAddressUpdated])
 
-  // UX-12: explicit Cancel button for the address-edit popover. Outside-
+  // Explicit Cancel button for the address-edit popover. Outside-
   // click already dismisses the popover, but Cancel makes the affordance
   // observable for keyboard / screen-reader users.
   const handleCancelAddress = useCallback(() => {
@@ -160,7 +160,7 @@ export function PeerListItem({
                   aria-invalid={addressError != null}
                   aria-describedby={addressError != null ? 'peer-address-error' : undefined}
                 />
-                {/* UX-378: inline format validation. Disables Save and
+                {/* inline format validation. Disables Save and
                     surfaces the format / port error before the user
                     has to round-trip through the toast path. */}
                 {addressError && (
@@ -172,7 +172,7 @@ export function PeerListItem({
                     )}
                   </p>
                 )}
-                {/* UX-12: bumped from text-xs to text-xs (12px) so
+                {/* bumped from text-xs to text-xs (12px) so
                     the format example is legible at default zoom. */}
                 <p className="text-xs text-muted-foreground">{t('device.addressHint')}</p>
                 <div className="flex gap-2">

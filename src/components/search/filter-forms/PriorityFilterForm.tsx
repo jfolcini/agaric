@@ -1,5 +1,5 @@
 /**
- * PEND-58g UX-A5 — `priority:` / `not-priority:` builder form.
+ * `priority:` / `not-priority:` builder form.
  *
  * Priority vocabulary is the user-configurable `usePriorityLevels()` set
  * plus the appended `none` sentinel — mirrors the `priorityValues` memo
@@ -33,7 +33,7 @@ export function PriorityFilterForm({
   const [value, setValue] = useState<string>(priorityValues[0] ?? 'none')
   const [negate, setNegate] = useState(false)
 
-  // PEND-58g UX-A5 — move focus into the sub-form on open (see StateFilterForm).
+  // Move focus into the sub-form on open (see StateFilterForm).
   const triggerRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     triggerRef.current?.focus()

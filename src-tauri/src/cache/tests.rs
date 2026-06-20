@@ -1143,7 +1143,7 @@ async fn block_links_extracts_links_inside_code_fences() {
 }
 
 // ====================================================================
-// L-24 — chunked DELETE/INSERT via json_each
+// Chunked DELETE/INSERT via json_each
 // ====================================================================
 //
 // Replaces the previous per-target DELETE/INSERT loops (2N round-trips
@@ -2319,7 +2319,7 @@ async fn projected_agenda_cache_basic_rebuild() {
 
     let count = count_rows(&pool, "projected_agenda_cache").await;
     // I-Cache-7: tightened from `count > 0` to exact count.
-    // L-26 follow-up would inject a fixed clock so this remains a strict
+    // Follow-up would inject a fixed clock so this remains a strict
     // `assert_eq!` regardless of wall-clock time of execution.
     //
     // Derivation: due = today - 3 days, weekly repeat (+7 days),
@@ -2833,7 +2833,7 @@ async fn projected_cache_done_blocks_excluded() {
 }
 
 // ====================================================================
-// projected_agenda_cache — chunked-INSERT regression (M-18)
+// Projected_agenda_cache — chunked-INSERT regression
 // ====================================================================
 
 /// Forces the chunked `INSERT OR IGNORE` path in
@@ -2882,7 +2882,7 @@ async fn projected_agenda_cache_chunked_rebuild_handles_large_diff() {
 }
 
 /// Forces the chunked `INSERT OR IGNORE` path in the **split-pool**
-/// variant [`rebuild_projected_agenda_cache_split`] (M-17).  Pre-fix
+/// Variant [`rebuild_projected_agenda_cache_split`]. Pre-fix
 /// the split function delegated to the single-pool variant on
 /// `write_pool`, ignoring the read pool entirely; this test asserts the
 /// post-fix split path actually runs the SELECT on `read_pool`,
@@ -3082,7 +3082,7 @@ async fn agenda_cache_source_update_property_key_change() {
 }
 
 // ====================================================================
-// agenda_cache — chunked diff regression (M-18)
+// Agenda_cache — chunked diff regression
 // ====================================================================
 
 /// Exercises the chunked DELETE / `INSERT OR IGNORE` path in
@@ -3175,13 +3175,13 @@ async fn agenda_cache_chunked_rebuild_handles_large_diff() {
 }
 
 // ====================================================================
-// _split variants — chunked-INSERT regression (M-17)
+// _split variants — chunked-INSERT regression
 // ====================================================================
 
 /// Forces the chunked `INSERT OR IGNORE` path in
 /// [`rebuild_tags_cache_split`] by seeding more tag blocks than fit in
 /// a single statement (`MAX_SQL_PARAMS / 4 = 249` rows per chunk). Pre-
-/// M-17 the split variant delegated to the single-pool implementation,
+/// The split variant delegated to the single-pool implementation,
 /// so this test would still pass on the old code; post-fix it asserts
 /// the chunked code lands every row correctly and the result matches
 /// the single-pool variant for parity.
@@ -3309,7 +3309,7 @@ async fn pages_cache_split_chunked_rebuild_handles_large_input() {
 }
 
 // ====================================================================
-// UX-250 — block_tag_refs (inline #[ULID] tag reference cache)
+// Block_tag_refs (inline #[ULID] tag reference cache)
 // ====================================================================
 
 // Helper: insert a bare row into block_tag_refs for tests that want to
@@ -3700,7 +3700,7 @@ async fn rebuild_block_tag_refs_cache_split_matches_single_pool() {
 }
 
 // ====================================================================
-// UX-250 — rebuild_tags_cache UNION counting
+// Rebuild_tags_cache UNION counting
 // ====================================================================
 
 #[tokio::test]
@@ -3807,7 +3807,7 @@ async fn tags_cache_union_preserves_zero_usage_tags() {
     );
 }
 
-/// L-27 parity oracle: `rebuild_agenda_cache` (single-pool) and
+/// Parity oracle: `rebuild_agenda_cache` (single-pool) and
 /// `rebuild_agenda_cache_split` (read/write-split) must produce
 /// **byte-identical** `agenda_cache` row sets when run on the same
 /// fixture. Both bind the shared `DESIRED_AGENDA_SQL` constant, so any
@@ -3867,7 +3867,7 @@ async fn agenda_rebuild_single_and_split_produce_identical_cache() {
         soft_delete_block(pool, "BLK05").await;
 
         // Excluded: content block whose page has a `template` property
-        // (FEAT-5a template-page exclusion: `NOT EXISTS (... tp.block_id =
+        // (template-page exclusion: `NOT EXISTS (... tp.block_id =
         // b.page_id AND tp.key = 'template')`).
         //
         // BLK06_PAGE is a page block marked as a template; BLK06 is a
@@ -3905,7 +3905,7 @@ async fn agenda_rebuild_single_and_split_produce_identical_cache() {
         single, split,
         "rebuild_agenda_cache and rebuild_agenda_cache_split must produce \
          byte-identical agenda_cache row sets — `DESIRED_AGENDA_SQL` is the \
-         single source of truth (L-27)",
+         single source of truth",
     );
 
     // Sanity: the fixture must produce non-empty output, otherwise the
@@ -3913,7 +3913,7 @@ async fn agenda_rebuild_single_and_split_produce_identical_cache() {
     assert!(!single.is_empty(), "fixture must populate agenda_cache");
 }
 
-/// M-17 regression: forces the chunked CASE-expression UPDATE path in
+/// Regression: forces the chunked CASE-expression UPDATE path in
 /// [`rebuild_page_ids_split`] by seeding more non-page blocks than
 /// fit in a single statement (`MAX_SQL_PARAMS / 3 = 333` rows per
 /// chunk). Pre-fix the split variant delegated to the single-pool

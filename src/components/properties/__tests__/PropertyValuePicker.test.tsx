@@ -11,7 +11,7 @@ import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // MAINT-189: cache is module-level, so flush between tests so each
+  // Cache is module-level, so flush between tests so each
   // case observes its own `invoke('list_property_keys')` fetch.
   _resetPropertyKeysCacheForTest()
 })

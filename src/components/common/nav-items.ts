@@ -1,7 +1,7 @@
 /**
  * Shared sidebar navigation manifest.
  *
- * Extracted from `App.tsx` (MAINT-124 step 2) so both the sidebar JSX
+ * Extracted from `App.tsx` so both the sidebar JSX
  * (`AppSidebar`) and the header-label hook (`useHeaderLabel` in
  * `App.tsx`) can read the same source of truth without forcing a
  * circular import between the two modules.

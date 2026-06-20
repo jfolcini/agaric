@@ -10,7 +10,7 @@
 //!
 //! Guarded by `$APPIMAGE`, which is set *only* inside a running AppImage — that
 //! single check excludes deb/rpm (already integrated by the package manager),
-//! `cargo tauri dev`, and every non-Linux build. PEND-79.
+//! `cargo tauri dev`, and every non-Linux build..
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};

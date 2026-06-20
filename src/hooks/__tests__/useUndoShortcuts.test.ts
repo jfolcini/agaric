@@ -142,7 +142,7 @@ beforeEach(() => {
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   vi.clearAllMocks()
   useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
-  // FEAT-3p7 — pin a deterministic active space so `useResolveStore.set`
+  // Pin a deterministic active space so `useResolveStore.set`
   // composes its key with a known prefix.
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_TEST',
@@ -678,7 +678,7 @@ describe('refresh after undo/redo', () => {
   })
 })
 
-describe('screen reader announcements (UX-282)', () => {
+describe('screen reader announcements', () => {
   it('announces "Undone" after successful undo', async () => {
     mockUndo.mockResolvedValueOnce({ reversed_op_type: 'edit_block' })
 

@@ -1,5 +1,5 @@
 /**
- * Tests for URL validation helpers (PEND-23 L2).
+ * Tests for URL validation helpers.
  *
  * Validates:
  *  - `isAllowedUrl` rejects every blocked scheme (case-insensitive) and

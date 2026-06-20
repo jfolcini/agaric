@@ -5,19 +5,19 @@ use crate::error::AppError;
 
 /// `projected_agenda_cache` has 3 columns per row
 /// (block_id, projected_date, source) → `MAX_SQL_PARAMS / 3 = 333` rows
-/// per chunked `INSERT OR IGNORE` (M-18). Mirrors the constant naming in
+/// Per chunked `INSERT OR IGNORE`. Mirrors the constant naming in
 /// `cache/tags.rs` and `cache/pages.rs` for consistency across split-pool
 /// rebuilds.
 const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
 
-/// Buffer-flush threshold for the chunk-flush rebuild path (M-19).
+/// Buffer-flush threshold for the chunk-flush rebuild path.
 ///
 /// The pre-M-19 rebuild buffered every projection for every repeating
 /// block (up to `repeating_blocks × 365-day horizon ≈ tens of thousands
 /// of entries`) into a single `Vec<(String, String, String)>` before
 /// flushing to the DB. Peak Rust-heap was `O(repeating_blocks × horizon)`
 /// — ~18MB on a 1000-block × 365-day vault, larger on Android where the
-/// memory ceiling is tighter (M-19).
+/// Memory ceiling is tighter.
 ///
 /// The post-M-19 rebuild appends per-block projections into a working
 /// buffer and flushes the buffer to the DB once it crosses
@@ -30,7 +30,7 @@ const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
 /// were not transactional. The rebuild keeps DELETE + every chunked
 /// INSERT inside a single transaction so a partial-flush crash rolls
 /// back cleanly — atomicity is preserved (AGENTS.md "event sourcing with
-/// materialized views" invariant + the M-19 spec callout). The chunk size is large enough
+/// Materialized views" invariant + the spec callout). The chunk size is large enough
 /// that the per-flush overhead is amortised but small enough to keep
 /// peak memory bounded.
 const CHUNK_SIZE: usize = 10_000;
@@ -67,7 +67,7 @@ struct CacheRepeatingRow {
 /// 3. Respects end conditions (repeat-until, repeat-count).
 /// 4. Writes projected entries via DELETE + INSERT in a single transaction.
 ///
-/// # Time-zone semantics (L-26)
+/// # Time-zone semantics
 ///
 /// `today` and the 365-day projection horizon are anchored to the **device's
 /// local timezone** via [`chrono::Local::now`].  This means a multi-device
@@ -86,7 +86,7 @@ struct CacheRepeatingRow {
 /// Switching to UTC would eliminate the per-device divergence but at the cost
 /// of producing projections whose date column does not match the user's
 /// calendar day on either side of midnight, which is a more visible
-/// behaviour change.  The documentation path (L-26) was chosen per the
+/// Behaviour change. The documentation path was chosen per the
 /// AGENTS.md "Architectural Stability" guidance: either document this
 /// divergence or normalise to UTC consistently.
 pub async fn rebuild_projected_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
@@ -94,13 +94,13 @@ pub async fn rebuild_projected_agenda_cache(pool: &SqlitePool) -> Result<(), App
     rebuild_projected_agenda_cache_with_today(pool, today).await
 }
 
-/// MAINT-196 — pinned-today variant of [`rebuild_projected_agenda_cache`].
+/// Pinned-today variant of [`rebuild_projected_agenda_cache`].
 ///
 /// Production code calls the wrapper above (which reads `chrono::Local::now()`).
 /// Tests call this variant with a pinned `today` so the cache rebuild and
 /// the on-the-fly fallback can be compared without per-run drift driven
 /// by the wall clock. Mirrors [`crate::commands::agenda::list_projected_agenda_inner`]
-/// (MAINT-164) — same rationale: production picks up the device clock,
+/// Same rationale: production picks up the device clock,
 /// tests inject a deterministic reference date.
 pub(crate) async fn rebuild_projected_agenda_cache_with_today(
     pool: &SqlitePool,
@@ -123,7 +123,7 @@ async fn rebuild_projected_agenda_cache_impl(
     let horizon = today + chrono::Duration::days(365);
 
     // Fetch all repeating blocks (same query as list_projected_agenda_inner).
-    // Template-page filter (FEAT-5a, spec line 812): exclude repeating
+    // Template-page filter (spec line 812): exclude repeating
     // blocks whose owning page carries a `template` property so they
     // never enter the projected agenda.  `b.page_id` is the denormalised
     // root-page column (migration 0027).
@@ -153,7 +153,7 @@ async fn rebuild_projected_agenda_cache_impl(
     .await?;
 
     // Write to DB: DELETE + chunk-flushed INSERTs in a single
-    // transaction.  Chunk-flushing (M-19) bounds peak Rust-heap to
+    // Transaction. Chunk-flushing bounds peak Rust-heap to
     // `CHUNK_SIZE + max-per-block` instead of materialising every
     // projection up-front — see [`CHUNK_SIZE`] for the trade-off.
     // Atomicity: DELETE + every chunked INSERT live in the same `tx`,
@@ -171,7 +171,7 @@ async fn rebuild_projected_agenda_cache_impl(
     Ok(written)
 }
 
-/// Drive the chunk-flush rebuild path (M-19) inside an open transaction.
+/// Drive the chunk-flush rebuild path inside an open transaction.
 ///
 /// Iterates `rows`, projecting each repeating block via
 /// [`project_block_into`] into a working buffer.  Once the buffer
@@ -189,7 +189,7 @@ async fn rebuild_projected_agenda_cache_impl(
 ///
 /// Both rebuild paths (single-pool + split) share this helper so the
 /// chunk-flush + per-block projection logic cannot silently drift
-/// between them (M-17 invariant #7).
+/// Between them (invariant #7).
 async fn project_and_write_chunked(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     today: chrono::NaiveDate,
@@ -221,13 +221,13 @@ async fn project_and_write_chunked(
 }
 
 /// Flush a buffer of `(block_id, projected_date, source)` entries via
-/// chunked multi-row `INSERT OR IGNORE` (M-18).
+/// Chunked multi-row `INSERT OR IGNORE`.
 ///
 /// 3 columns per row, so each statement binds at most
 /// `REBUILD_CHUNK * 3 ≤ MAX_SQL_PARAMS = 999` parameters. The caller
 /// passes the open transaction's connection so all chunked INSERTs
 /// accumulate in the same `tx` and a partial flush rolls back cleanly
-/// (M-19 atomicity invariant).
+/// (atomicity invariant).
 async fn flush_projection_chunk(
     conn: &mut sqlx::SqliteConnection,
     entries: &[(String, String, String)],
@@ -256,16 +256,16 @@ async fn flush_projection_chunk(
 /// semantics (`dot_plus` / `plus_plus` / default modes, `repeat-until` /
 /// `repeat-count` / `repeat-seq` end conditions, the 10 000-iteration
 /// safety bound) are owned by [`crate::recurrence::project_block_dates`]
-/// (MAINT-196) so the cache rebuild and the on-the-fly fallback see
+/// So the cache rebuild and the on-the-fly fallback see
 /// **identical** recurrence math — this function is now a thin adapter
 /// that wires the shared helper's `emit` closure into the chunk-flush
 /// buffer.
 ///
 /// The cache passes `range_start = today, range_end = horizon` so the
-/// emit-range exactly matches the pre-MAINT-196 `today..horizon` clip
+/// Emit-range exactly matches the pre- `today..horizon` clip
 /// the cache previously applied. Both rebuild paths must produce
-/// identical entries for identical inputs (M-17 invariant #7 + the
-/// MAINT-196 parity test in `agenda_cmd_tests`).
+/// Identical entries for identical inputs (invariant #7 + the
+/// Parity test in `agenda_cmd_tests`).
 fn project_block_into(
     block: &CacheRepeatingRow,
     today: chrono::NaiveDate,
@@ -313,13 +313,13 @@ fn project_block_into(
     );
 }
 
-/// Read/write split variant of [`rebuild_projected_agenda_cache`] (M-17).
+/// Read/write split variant of [`rebuild_projected_agenda_cache`].
 ///
 /// Reads repeating blocks from `read_pool` inside a snapshot-isolated
 /// transaction, materialises them into memory, then runs `DELETE FROM
 /// projected_agenda_cache` plus chunk-flushed `INSERT OR IGNORE` on
 /// `write_pool` — every chunked INSERT accumulates in the same write
-/// transaction so atomicity is preserved (M-19).
+/// Transaction so atomicity is preserved.
 ///
 /// Stale-while-revalidate: between dropping the read tx and beginning
 /// the write tx another writer may mutate `blocks` / `block_properties`.
@@ -327,7 +327,7 @@ fn project_block_into(
 /// eventually consistent (AGENTS.md "Performance Conventions / Split
 /// read/write pool pattern").
 ///
-/// M-19 chunk-flush: the per-block recurrence compute now runs
+/// Chunk-flush: the per-block recurrence compute now runs
 /// interleaved with the chunked INSERTs inside the write transaction
 /// instead of buffering every projection up-front.  The writer lock is
 /// held marginally longer (one extra block-projection per chunk
@@ -335,7 +335,7 @@ fn project_block_into(
 /// `O(CHUNK_SIZE + max-per-block)`.  See [`CHUNK_SIZE`] for the
 /// trade-off.
 ///
-/// L-26 timezone semantics: `today` is captured **before** the read tx
+/// Timezone semantics: `today` is captured **before** the read tx
 /// using [`chrono::Local::now`] so the entire rebuild — read, compute,
 /// write — sees one stable reference date.  See
 /// [`rebuild_projected_agenda_cache`] for the documentation pin on
@@ -356,7 +356,7 @@ async fn rebuild_projected_agenda_cache_split_impl(
 ) -> Result<u64, AppError> {
     // Capture `today` + horizon **before** the read tx so every entry in
     // this rebuild shares one reference date — matches the single-pool
-    // variant's semantics and the L-26 device-local-timezone pin.
+    // Variant's semantics and the device-local-timezone pin.
     let today = chrono::Local::now().date_naive();
     let horizon = today + chrono::Duration::days(365);
 
@@ -392,7 +392,7 @@ async fn rebuild_projected_agenda_cache_split_impl(
     drop(read_tx);
 
     // Write phase — DELETE + chunk-flushed `INSERT OR IGNORE` on
-    // `write_pool`, all wrapped in a single transaction (M-19).  The
+    // `write_pool`, all wrapped in a single transaction. The
     // per-block projection runs interleaved with the chunked INSERTs
     // via [`project_and_write_chunked`] so peak Rust-heap is bounded
     // by [`CHUNK_SIZE`] instead of `O(blocks × horizon)`.  Atomicity:
@@ -414,7 +414,7 @@ async fn rebuild_projected_agenda_cache_split_impl(
 }
 
 // ---------------------------------------------------------------------------
-// L-26 — local-timezone documentation pin
+// Local-timezone documentation pin
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -423,7 +423,7 @@ mod l26_tests {
     use crate::db::init_pool;
     use tempfile::TempDir;
 
-    /// Sanity regression for L-26.
+    /// Sanity regression for.
     ///
     /// Asserts that `rebuild_projected_agenda_cache` returns `Ok(())` on a
     /// freshly-migrated empty pool regardless of the device clock.  This
@@ -453,9 +453,9 @@ mod l26_tests {
         assert_eq!(count, 0, "empty pool must produce zero projected entries");
     }
 
-    /// Asserts the L-26 documentation block remains in place.
+    /// Asserts the documentation block remains in place.
     ///
-    /// The doc comment is the load-bearing artefact for L-26 (the code
+    /// The doc comment is the load-bearing artefact for (the code
     /// behaviour is unchanged).  This test reads the source file at
     /// compile time and fails loudly if a future refactor strips the
     /// timezone-semantics doc block, so the documentation cannot
@@ -464,13 +464,13 @@ mod l26_tests {
     fn projected_agenda_local_timezone_doc_present() {
         let src = include_str!("projected_agenda.rs");
         assert!(
-            src.contains("# Time-zone semantics (L-26)"),
-            "L-26 timezone-semantics doc block must remain on \
+            src.contains("# Time-zone semantics"),
+            " timezone-semantics doc block must remain on \
              rebuild_projected_agenda_cache"
         );
         assert!(
             src.contains("device's\n/// local timezone"),
-            "L-26 doc must call out device-local timezone explicitly"
+            " doc must call out device-local timezone explicitly"
         );
     }
 }
@@ -548,7 +548,7 @@ mod tests {
             .unwrap()
     }
 
-    /// Forces the chunk-flush boundary in the rebuild path (M-19) by
+    /// Forces the chunk-flush boundary in the rebuild path by
     /// seeding a fixture that produces exactly `CHUNK_SIZE * 2 + 5`
     /// projections.  Daily-repeat with `due_date = today` produces 365
     /// projections per block (today+1 .. today+365 inclusive); the
@@ -618,7 +618,7 @@ mod tests {
         );
     }
 
-    /// Exercises the M-19 atomicity invariant: a partial chunk-flush
+    /// Exercises the atomicity invariant: a partial chunk-flush
     /// failure must roll back the entire rebuild — including the
     /// up-front DELETE — so the cache reverts to its pre-rebuild
     /// state.  Failure injection is via a `BEFORE INSERT` trigger that
@@ -705,7 +705,7 @@ mod tests {
         assert_eq!(rows[0].2, "due_date");
     }
 
-    /// Full-horizon smoke test for the chunk-flush path (M-19): 50
+    /// Full-horizon smoke test for the chunk-flush path: 50
     /// daily-repeating blocks × 365-day horizon = 18 250 projections,
     /// well over `CHUNK_SIZE = 10 000`.  Asserts every projection
     /// lands and the post-rebuild rows span the expected canonical

@@ -10,7 +10,7 @@
  * Outside a provider, the hook returns `null` — components that fall
  * back to per-block fetches use `useBatchProperties()?.get(blockId)`.
  *
- * PEND-35 Tier 2.4a — collapses the per-row `getProperties` fan-out in
+ * Collapses the per-row `getProperties` fan-out in
  * `DependencyIndicator` (which previously dedup'd only RE-RENDERS via a
  * shared cache ref, not the initial mount fan-out for N rows) into a
  * single batched query mounted at the AgendaResults level. Mirror of

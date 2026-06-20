@@ -1,4 +1,4 @@
-//! Bug-report command handlers (FEAT-5).
+//! Bug-report command handlers.
 //!
 //! Provides two read-only commands consumed by the in-app bug-report dialog:
 //!
@@ -17,7 +17,7 @@
 //! URL itself (only the redacted recent-error tail is embedded in the body)
 //! — the feature's privacy story rests on unconditional redaction of that
 //! tail plus the explicit user-visible preview + confirmation checkbox +
-//! ZIP-on-disk flow (FEAT-5).
+//! ZIP-on-disk flow.
 
 use std::fs;
 use std::io::Read;
@@ -272,9 +272,9 @@ const STABLE_MESSAGES: &[&str] = &[
     "MCP connection ended with error",
     "already bound",
     // bug_report itself (so its own warn lines round-trip).
-    "L-52: skipping log file with invalid UTF-8 in name",
-    "L-52: skipping log entry — not a regular file (symlink/dir/socket?)",
-    "L-52: skipping log file — read_capped_file failed (permission denied or io error?)",
+    "skipping log file with invalid UTF-8 in name",
+    "skipping log entry — not a regular file (symlink/dir/socket?)",
+    "skipping log file — read_capped_file failed (permission denied or io error?)",
     "failed to fetch peer_refs for redaction; skipping peer-device-id scrub",
 ];
 
@@ -351,7 +351,7 @@ const MAX_ROLLED_AGE_DAYS: i64 = 7;
 /// dropping content.
 const MAX_LINE_BYTES: usize = 8 * 1024;
 
-/// L-54: cap on the total bug-report bundle size (sum of all redacted
+/// Cap on the total bug-report bundle size (sum of all redacted
 /// file outputs returned from [`read_logs_for_report_inner`]). 10 MiB
 /// matches GitHub's default issue-attachment limit and bounds the worst
 /// case `MAX_FILE_BYTES * (1 + MAX_ROLLED_AGE_DAYS)` (= 16 MiB if every
@@ -366,7 +366,7 @@ const MAX_BUNDLE_BYTES: usize = 10 * 1024 * 1024;
 /// dialog preview; long enough to capture a crash + a few surrounding hints.
 const RECENT_ERRORS_CAP: usize = 20;
 
-/// L-40: pin level detection to the tracing-subscriber default format
+/// Pin level detection to the tracing-subscriber default format
 /// configured in `lib.rs::run` (`fmt::layer().with_writer(non_blocking)
 /// .with_ansi(false)`). The disk format is:
 ///
@@ -406,7 +406,7 @@ fn is_error_or_warn_line(line: &str) -> bool {
     // Text format (stderr / non-JSON fixtures): the level always sits
     // within the first 40 bytes (27-byte ISO-Z + separator + 4–5-char
     // level). A body whose payload mentions the word " ERROR " is past
-    // byte 40 and therefore excluded — preserves the L-40 false-positive
+    // Byte 40 and therefore excluded — preserves the false-positive
     // guard pinned by `is_error_or_warn_line_rejects_body_match`.
     let text_prefix = line.get(..40.min(line.len())).unwrap_or("");
     if text_prefix.contains(" ERROR ") || text_prefix.contains(" WARN ") {
@@ -449,7 +449,7 @@ fn extract_recent_errors<'a, I: Iterator<Item = &'a str>>(lines: I) -> Vec<Strin
 /// failures (no log dir, permission denied) should not also break the
 /// report surface.
 ///
-/// M-31: reuses [`read_capped_file`] (cap = [`MAX_FILE_BYTES`]) so
+/// Reuses [`read_capped_file`] (cap = [`MAX_FILE_BYTES`]) so
 /// a chatty session that grows `agaric.log` to tens of MB does not stall
 /// the bug-report dialog's IPC thread on a multi-MB
 /// `fs::read_to_string` followed by a full-buffer line scan. The cap is
@@ -478,7 +478,7 @@ fn recent_errors_from_log_dir(log_dir: &Path) -> Vec<String> {
 }
 
 fn read_errors_from_path(path: &Path) -> Vec<String> {
-    // M-31: cap the read at [`MAX_FILE_BYTES`] using the same helper
+    // Cap the read at [`MAX_FILE_BYTES`] using the same helper
     // as `read_logs_for_report_inner`. On oversized files the helper
     // prepends a `…[truncated …]` marker line; that marker contains
     // neither " ERROR " nor " WARN " so it is naturally filtered out by
@@ -491,7 +491,7 @@ fn read_errors_from_path(path: &Path) -> Vec<String> {
 
 /// Gather metadata about the running app + the tail of today's log file.
 ///
-/// MAINT-109: `os` / `arch` are sourced from `tauri-plugin-os` rather than
+/// `os` / `arch` are sourced from `tauri-plugin-os` rather than
 /// `std::env::consts::*` directly so per-platform branches are centralised
 /// behind the plugin's documented cross-platform API. The plugin's
 /// `platform()` / `arch()` helpers currently return `std::env::consts::OS`
@@ -620,7 +620,7 @@ fn read_capped_file(path: &Path) -> std::io::Result<String> {
     ))
 }
 
-/// MAINT-147 (i): bundle of optional redaction inputs threaded through
+/// Bundle of optional redaction inputs threaded through
 /// [`redact_line`] and [`redact_log`]. Grew organically as H-9a added
 /// peer-device scrubs; gluing the parameters into a single context kept
 /// the call sites from sprouting another argument every time the
@@ -709,7 +709,7 @@ fn redact_json_value(value: &mut serde_json::Value, depth: usize, key: Option<&s
     }
 }
 
-/// L-55: pre-built single-pass matcher for the static-needle portion of
+/// Pre-built single-pass matcher for the static-needle portion of
 /// [`apply_allow_list`]. Hoisting the [`AhoCorasick`] construction out of
 /// the per-line path turns the legacy O(N × L × K) cascade of
 /// `String::replace` calls (one full-buffer scan + allocation per needle
@@ -798,7 +798,7 @@ impl Redactor {
 /// is the safety contract going forward; this function is preserved as
 /// defense-in-depth so the H-9a guarantees are not lost on legacy input.
 ///
-/// L-55: takes a pre-built [`Redactor`] so the [`AhoCorasick`] matcher is
+/// Takes a pre-built [`Redactor`] so the [`AhoCorasick`] matcher is
 /// constructed once per `redact_log` call rather than once per line.
 fn apply_allow_list(line: &str, redactor: &Redactor) -> String {
     // H-9a (1)/(2): single-pass static-needle scrub via Aho-Corasick.
@@ -830,7 +830,7 @@ fn apply_allow_list(line: &str, redactor: &Redactor) -> String {
 /// safety. Returns the input unchanged when its byte length is at or
 /// below the cap — no allocation in the common case.
 ///
-/// L-59: delegates to [`crate::text_utils::truncate_at_char_boundary`].
+/// Delegates to [`crate::text_utils::truncate_at_char_boundary`].
 /// The marker wording (`…[truncated N chars]`) is owned here and must
 /// stay byte-for-byte identical — the bundled bug-report fixtures and
 /// the `redact_line_preserves_utf8_on_truncation` test assert on it.
@@ -858,7 +858,7 @@ fn cap_line_length(out: String) -> String {
 /// Public signature unchanged from H-9a: in-file unit tests keep
 /// working without edit by going through the convenience wrapper.
 ///
-/// L-55: builds a [`Redactor`] per call. The production hot path
+/// Builds a [`Redactor`] per call. The production hot path
 /// ([`redact_log`]) uses [`redact_line_with_redactor`] directly to
 /// amortise the matcher-build cost across all lines in a file.
 #[cfg(test)]
@@ -867,7 +867,7 @@ fn redact_line(line: &str, ctx: &RedactionContext<'_>) -> String {
     redact_line_with_redactor(line, &redactor)
 }
 
-/// L-55: per-line redaction against a pre-built [`Redactor`]. Hoisted out
+/// Per-line redaction against a pre-built [`Redactor`]. Hoisted out
 /// of [`redact_line`] so [`redact_log`] can construct the matcher once
 /// per log file instead of once per line.
 fn redact_line_with_redactor(line: &str, redactor: &Redactor) -> String {
@@ -883,7 +883,7 @@ fn redact_line_with_redactor(line: &str, redactor: &Redactor) -> String {
 /// (today's log, after the format switch) and text (older rolled files)
 /// without confusing the pipeline.
 ///
-/// L-55: builds the [`Redactor`] once before the loop so the Aho-Corasick
+/// Builds the [`Redactor`] once before the loop so the Aho-Corasick
 /// matcher (covering home / device_id / peer IDs) is shared
 /// across every line in the file.
 fn redact_log(contents: &str, ctx: &RedactionContext<'_>) -> String {
@@ -907,7 +907,7 @@ fn redact_log(contents: &str, ctx: &RedactionContext<'_>) -> String {
 /// callers must treat the absence as "no home replacement" rather than
 /// fabricating a path.
 ///
-/// L-41 — Uses `dirs::home_dir()` so that the platform-canonical source is
+/// Uses `dirs::home_dir()` so that the platform-canonical source is
 /// consulted on every OS:
 /// - **Unix:** `$HOME` (with `/etc/passwd` fallback)
 /// - **Windows:** `USERPROFILE` (and the `SHGetKnownFolderPath` API as a
@@ -945,7 +945,7 @@ pub fn read_logs_for_report_inner(
     let today = chrono::Utc::now().date_naive();
     let mut entries: Vec<(PathBuf, String)> = Vec::new();
 
-    // L-52: per-file silent-drop sites are now traced at warn level so a
+    // Per-file silent-drop sites are now traced at warn level so a
     // bug report missing log files for unexpected reasons (permission
     // denied, invalid UTF-8 in name, non-file entry under a corrupted
     // log dir) leaves a breadcrumb in the daily log itself rather than
@@ -962,7 +962,7 @@ pub fn read_logs_for_report_inner(
             let truncated: String = lossy.chars().take(80).collect();
             tracing::warn!(
                 path = %truncated,
-                "L-52: skipping log file with invalid UTF-8 in name",
+                "skipping log file with invalid UTF-8 in name",
             );
             continue;
         };
@@ -974,7 +974,7 @@ pub fn read_logs_for_report_inner(
         if !path.is_file() {
             tracing::warn!(
                 name = %name,
-                "L-52: skipping log entry — not a regular file (symlink/dir/socket?)",
+                "skipping log entry — not a regular file (symlink/dir/socket?)",
             );
             continue;
         }
@@ -984,7 +984,7 @@ pub fn read_logs_for_report_inner(
                 tracing::warn!(
                     name = %name,
                     error = %e,
-                    "L-52: skipping log file — read_capped_file failed (permission denied or io error?)",
+                    "skipping log file — read_capped_file failed (permission denied or io error?)",
                 );
                 continue;
             }
@@ -992,7 +992,7 @@ pub fn read_logs_for_report_inner(
         entries.push((path, contents));
     }
 
-    // L-54: sort newest-first so the bundle-size cap walk in
+    // Sort newest-first so the bundle-size cap walk in
     // [`apply_bundle_cap`] drops the OLDEST files when the running total
     // exceeds [`MAX_BUNDLE_BYTES`]. `agaric.log` (today, no date suffix)
     // is unconditionally newest; rolled `agaric.log.YYYY-MM-DD` files
@@ -1024,7 +1024,7 @@ pub fn read_logs_for_report_inner(
             .unwrap_or("agaric.log")
             .to_string();
         let final_contents = if redact {
-            // MAINT-147 (i): bundle the optional inputs into a
+            // Bundle the optional inputs into a
             // single RedactionContext so future allow-list extensions
             // don't grow the parameter list of every redaction helper.
             let ctx = RedactionContext {
@@ -1045,7 +1045,7 @@ pub fn read_logs_for_report_inner(
     Ok(apply_bundle_cap(out))
 }
 
-/// L-54: enforce the cumulative [`MAX_BUNDLE_BYTES`] cap on a list of
+/// Enforce the cumulative [`MAX_BUNDLE_BYTES`] cap on a list of
 /// already-built log entries. `entries` MUST be passed in newest-first
 /// order so that skipping when the running byte total would exceed the
 /// cap drops the OLDEST files first (preserving the most recent —
@@ -1248,9 +1248,9 @@ mod tests {
         assert!(out[0].contains("error #10"));
     }
 
-    // -- is_error_or_warn_line (L-40) ------------------------------------
+    // -- is_error_or_warn_line ------------------------------------
 
-    /// L-40 — the helper must accept the on-disk format produced by
+    /// The helper must accept the on-disk format produced by
     /// `tracing_subscriber::fmt::layer().with_writer(...).with_ansi(false)`
     /// (the production sink configured in `lib.rs::run`). The format puts
     /// an ISO-8601-Z timestamp followed by whitespace, then the level
@@ -1267,7 +1267,7 @@ mod tests {
         ));
     }
 
-    /// L-40 — the previous unbounded `line.contains(" ERROR ")` produced
+    /// The previous unbounded `line.contains(" ERROR ")` produced
     /// false positives whenever an INFO/DEBUG payload happened to mention
     /// the word " ERROR " in the message body. Bounding the substring
     /// search to the first 40 bytes (where the level always lives) means
@@ -1288,7 +1288,7 @@ mod tests {
         );
     }
 
-    /// L-40 — defensive: the helper must not panic on an empty input and
+    /// Defensive: the helper must not panic on an empty input and
     /// must classify it as not-an-error.
     #[test]
     fn is_error_or_warn_line_handles_empty_input() {
@@ -1381,7 +1381,7 @@ mod tests {
         assert_eq!(md.recent_errors.len(), 0);
     }
 
-    /// M-31: a chatty session can grow `agaric.log` to tens of MB; the
+    /// A chatty session can grow `agaric.log` to tens of MB; the
     /// bug-report dialog must not stall the IPC thread on an unbounded
     /// `fs::read_to_string` of the live log. The fix caps each file read to
     /// the last `MAX_FILE_BYTES` bytes (truncating from the head).
@@ -1427,7 +1427,7 @@ mod tests {
             md.recent_errors
         );
         // Head marker was truncated away by the read cap — it must NOT appear.
-        // (If it did, the read was unbounded — the exact regression M-31 fixed.)
+        // (If it did, the read was unbounded — the exact regression fixed.)
         assert!(
             !md.recent_errors
                 .iter()
@@ -1848,9 +1848,9 @@ mod tests {
         assert!(out[0].contents.contains(HOME));
     }
 
-    // -- L-52: silent-drop sites now warn -------------------------------
+    // -- silent-drop sites now warn -------------------------------
 
-    /// L-52 — a non-file entry under the log dir (e.g., a directory)
+    /// A non-file entry under the log dir (e.g., a directory)
     /// must NOT be silently dropped: the function continues to skip it
     /// (file-only contract preserved), but a `tracing::warn!` is now
     /// emitted naming the entry. The test verifies the function still
@@ -1880,7 +1880,7 @@ mod tests {
         assert_eq!(out[0].name, "agaric.log");
     }
 
-    /// L-52 — a file whose `read_capped_file` fails (e.g., permission
+    /// A file whose `read_capped_file` fails (e.g., permission
     /// denied) is excluded from the result and a warn is emitted. We
     /// simulate "fails to read" by creating a file with `0o000` mode
     /// on Unix; on Windows the file-permission model differs and the
@@ -1915,7 +1915,7 @@ mod tests {
             fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o600)).ok();
             assert!(
                 out.iter().any(|e| e.name == "agaric.log"),
-                "running as root: kernel ignores 0o000 mode, can't trigger the L-52 warn path",
+                "running as root: kernel ignores 0o000 mode, can't trigger the  warn path",
             );
             return;
         }
@@ -1931,9 +1931,9 @@ mod tests {
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o600)).ok();
     }
 
-    // -- apply_bundle_cap (L-54) -----------------------------------------
+    // -- apply_bundle_cap -----------------------------------------
 
-    /// L-54 — when the running total stays under [`MAX_BUNDLE_BYTES`],
+    /// When the running total stays under [`MAX_BUNDLE_BYTES`],
     /// every input entry must be preserved verbatim (same count, same
     /// order) and NO synthetic `[skipped …]` marker is appended.
     #[test]
@@ -1963,7 +1963,7 @@ mod tests {
         );
     }
 
-    /// L-54 — when the running total exceeds [`MAX_BUNDLE_BYTES`] the
+    /// When the running total exceeds [`MAX_BUNDLE_BYTES`] the
     /// helper must drop the OLDEST entries (which, given the
     /// newest-first iteration order documented on `apply_bundle_cap`,
     /// means the entries APPENDED at the end of the input list) and
@@ -2609,7 +2609,7 @@ mod tests {
         assert!(out.contains("~"), "tilde marker present: {out}");
     }
 
-    /// L-55 — single-pass Aho-Corasick scrub on the text-fallback path must
+    /// Single-pass Aho-Corasick scrub on the text-fallback path must
     /// produce byte-identical output to the legacy cascade of
     /// `String::replace` calls for realistic inputs (home + device_id +
     /// multiple peers across multiple lines, in mixed order, including an
@@ -2678,9 +2678,9 @@ mod tests {
         );
     }
 
-    // -- home_dir_string (L-41) ------------------------------------------
+    // -- home_dir_string ------------------------------------------
 
-    /// L-41 — On Linux/macOS the standard CI environments set `$HOME`, so
+    /// On Linux/macOS the standard CI environments set `$HOME`, so
     /// `dirs::home_dir()` resolves and `home_dir_string()` returns Some.
     /// Headless container CIs that strip `$HOME` would force `dirs` to
     /// fall back to `/etc/passwd`; if even that fails we treat absence as
@@ -2710,7 +2710,7 @@ mod tests {
         }
     }
 
-    /// L-41 — On Windows, `dirs::home_dir()` resolves through `USERPROFILE`
+    /// On Windows, `dirs::home_dir()` resolves through `USERPROFILE`
     /// (and the `SHGetKnownFolderPath` API as a fallback), not `$HOME`.
     /// The previous `std::env::var("HOME")` implementation would silently
     /// return `None` here, leaking `C:\Users\<name>\…` into bug-report ZIPs.

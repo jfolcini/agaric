@@ -1,5 +1,5 @@
 /**
- * PEND-55 — Search history dropdown.
+ * Search history dropdown.
  *
  * Listbox of recent submitted queries, shown beneath the input when
  * the input is empty and focused. Click → fills the input + submits.
@@ -39,18 +39,18 @@ export interface SearchHistoryDropdownProps {
   onPick: (query: string) => void
   /** Wipe the per-space MRU list. */
   onClear: () => void
-  /** UX-11 — remove a single entry from the per-space MRU list. */
+  /** remove a single entry from the per-space MRU list. */
   onRemoveEntry: (query: string) => void
   /**
-   * UX-11 — whether new submissions are being recorded. When `false`,
+   * Whether new submissions are being recorded. When `false`,
    * the footer shows the "history is off" notice and an Enable toggle;
    * existing entries (if any) still render so they can be picked/removed.
    */
   historyEnabled: boolean
-  /** UX-11 — flip the record-history preference. */
+  /** flip the record-history preference. */
   onToggleEnabled: () => void
   /**
-   * PEND-73 Phase 3.U2 — id attached to the inner `role="listbox"` so
+   * Phase 3.U2 — id attached to the inner `role="listbox"` so
    * the owning input can wire `aria-controls` to it. Stable per
    * dropdown instance; supplied by the parent so two dropdowns on the
    * same page (e.g. desktop palette vs mobile sheet) don't collide.
@@ -124,7 +124,7 @@ export function SearchHistoryDropdown({
         >
           {entries.map((entry, idx) => (
             <div
-              // FE-13 — key on the positional row id (same basis as the
+              // Key on the positional row id (same basis as the
               // aria id) rather than the entry text, so view correctness
               // doesn't depend on the store's case-sensitive dedup.
               key={searchHistoryRowId(listboxId, idx)}
@@ -135,7 +135,7 @@ export function SearchHistoryDropdown({
               tabIndex={-1}
               data-testid={`search-history-entry-${idx}`}
               onClick={() => onPick(entry)}
-              // PEND-73 Phase 3.U5 — preventDefault on mousedown keeps
+              // Phase 3.U5 — preventDefault on mousedown keeps
               // the search input focused through the click. Without
               // this, the input blurs first (mousedown fires before
               // click), the dropdown unmounts via its visibility gate,
@@ -151,7 +151,7 @@ export function SearchHistoryDropdown({
                   e.preventDefault()
                   onPick(entry)
                 }
-                // UX-11 — Delete/Backspace removes the row (mirrors the
+                // Delete/Backspace removes the row (mirrors the
                 // FilterPill convention). The real keyboard path drives
                 // this through the input's history-cycling handler; this
                 // covers a directly-focused row too.
@@ -168,7 +168,7 @@ export function SearchHistoryDropdown({
               aria-label={t('search.history.entryLabel', { query: entry })}
             >
               <span className="flex-1 truncate font-mono">{entry}</span>
-              {/* UX-11 — per-row delete as a pointer affordance. It is
+              {/* per-row delete as a pointer affordance. It is
                   `aria-hidden` on purpose: a real <button> inside
                   `role="option"` trips axe's nested-interactive rule
                   (measured), and a listbox option must not own focusable
@@ -215,7 +215,7 @@ export function SearchHistoryDropdown({
             type="button"
             data-testid="search-history-clear"
             onClick={onClear}
-            // PEND-73 Phase 3.U5 — sibling rationale: keep input
+            // Phase 3.U5 — sibling rationale: keep input
             // focused through the click so the dropdown's visibility
             // gate doesn't unmount it before onClick fires.
             onMouseDown={(e) => {

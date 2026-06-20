@@ -28,7 +28,7 @@ async fn find_missing_returns_ids_for_missing_files() {
     .unwrap();
 
     // Insert another attachment whose file DOES exist; `size_bytes`
-    // must match the on-disk length so M-48's size check accepts it.
+    // Must match the on-disk length so size check accepts it.
     let existing_path = dir.path().join("attachments");
     std::fs::create_dir_all(&existing_path).unwrap();
     let existing_bytes: &[u8] = b"fake image data"; // 15 bytes
@@ -85,7 +85,7 @@ async fn find_missing_empty_db() {
     );
 }
 
-/// L-60: a non-`NotFound` `metadata()` error (here triggered by routing
+/// A non-`NotFoundmetadata()` error (here triggered by routing
 /// through a regular file as if it were a directory, which surfaces
 /// `ENOTDIR`) must still classify the entry as missing for sync
 /// correctness. The accompanying `tracing::warn!` is observed via the
@@ -106,7 +106,7 @@ async fn find_missing_classifies_non_not_found_io_error_as_missing() {
     // Place a regular file where the attachment's parent path expects a
     // directory. `metadata()` on `<dir>/regular_file/under.png` then
     // errors with `ENOTDIR` (kind ≠ `NotFound`) on Linux/macOS — the
-    // exact branch L-60 added the warn-level log for. On Windows the
+    // Exact branch added the warn-level log for. On Windows the
     // same path shape produces a non-`NotFound` error too (the kind
     // varies by version), so the assertion intentionally checks the
     // behavioural outcome rather than the error kind.
@@ -334,9 +334,9 @@ async fn find_missing_returns_all_missing_attachments() {
     assert_eq!(missing.len(), 3, "all 3 attachments should be missing");
 }
 
-// ── M-48: truncated / partial file detection ─────────────────────────
+// ── truncated / partial file detection ─────────────────────────
 
-/// M-48: a file that exists on disk but is shorter than the DB's
+/// A file that exists on disk but is shorter than the DB's
 /// `size_bytes` (e.g. interrupted download, antivirus 0-byte stub,
 /// partial write) MUST be re-classified as missing so the next sync
 /// cycle re-requests it. Before the fix, `Path::exists()` alone
@@ -372,7 +372,7 @@ async fn find_missing_attachments_treats_truncated_file_as_missing_m48() {
 
     assert!(
         missing.iter().any(|m| m.id == "ATT_TRUNC"),
-        "M-48: truncated file (0 bytes vs DB's 1024) must be re-requested; got {missing:?}",
+        "truncated file (0 bytes vs DB's 1024) must be re-requested; got {missing:?}",
     );
 }
 
@@ -619,7 +619,7 @@ async fn protocol_initiator_requests_and_receives_files() {
     server.shutdown().await;
 }
 
-/// PEND-06 Tier 2: per-frame file-transfer progress emission.
+/// Per-frame file-transfer progress emission.
 ///
 /// Pins the contract that `run_file_transfer_*` emits
 /// [`SyncEvent::FileProgress`] events through the supplied event sink:
@@ -853,7 +853,7 @@ async fn protocol_empty_transfer_when_no_missing_files() {
     server.shutdown().await;
 }
 
-/// M-50: hash mismatch must NOT ACK and must surface an Err so the
+/// Hash mismatch must NOT ACK and must surface an Err so the
 /// daemon closes the connection and retries on the next cycle. The
 /// receiver writes nothing to disk.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -914,7 +914,7 @@ async fn protocol_hash_mismatch_no_ack_returns_err() {
         .unwrap_or_else(|_| Err(AppError::InvalidOperation("recv_json timed out".into())));
         assert!(
             !matches!(ack, Ok(SyncMessage::FileReceived { .. })),
-            "M-50: receiver must NOT send FileReceived ACK on hash mismatch (got {ack:?})"
+            "receiver must NOT send FileReceived ACK on hash mismatch (got {ack:?})"
         );
     };
 
@@ -930,11 +930,11 @@ async fn protocol_hash_mismatch_no_ack_returns_err() {
         ),
     );
 
-    // M-50: receiver returns Err so the daemon's `try_sync_with_peer`
+    // Receiver returns Err so the daemon's `try_sync_with_peer`
     // records a failure and reconnects.
     assert!(
         initiator_result.is_err(),
-        "M-50: hash mismatch must surface as Err, got Ok"
+        "hash mismatch must surface as Err, got Ok"
     );
     let err = initiator_result.unwrap_err();
     let err_str = err.to_string();
@@ -952,7 +952,7 @@ async fn protocol_hash_mismatch_no_ack_returns_err() {
     server.shutdown().await;
 }
 
-/// M-52: a `FileOffer` whose `size_bytes` disagrees with the local
+/// A `FileOffer` whose `size_bytes` disagrees with the local
 /// `attachments.size_bytes` row must be rejected without an ACK.
 /// The function returns `Err` and no file is written to disk.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1008,7 +1008,7 @@ async fn protocol_size_mismatch_no_ack_returns_err() {
         .unwrap_or_else(|_| Err(AppError::InvalidOperation("recv_json timed out".into())));
         assert!(
             !matches!(ack, Ok(SyncMessage::FileReceived { .. })),
-            "M-52: receiver must NOT send FileReceived ACK on size mismatch (got {ack:?})"
+            "receiver must NOT send FileReceived ACK on size mismatch (got {ack:?})"
         );
     };
 
@@ -1024,11 +1024,11 @@ async fn protocol_size_mismatch_no_ack_returns_err() {
         ),
     );
 
-    let err = initiator_result.expect_err("M-52 must return Err on size mismatch");
+    let err = initiator_result.expect_err(" must return Err on size mismatch");
     let msg = err.to_string();
     assert!(
         msg.contains("file_offer.size_mismatch"),
-        "M-52: error message should be tagged file_offer.size_mismatch, got {msg}"
+        "error message should be tagged file_offer.size_mismatch, got {msg}"
     );
 
     // File must NOT have been written.
@@ -1403,7 +1403,7 @@ async fn find_missing_attachments_all_files_present() {
         .unwrap();
 
     // Create both attachment files on disk; `size_bytes` in the DB
-    // rows below must match each file's on-disk length so M-48's
+    // Rows below must match each file's on-disk length so
     // size check accepts them as present.
     let att_dir = dir.path().join("attachments");
     std::fs::create_dir_all(&att_dir).unwrap();
@@ -1461,7 +1461,7 @@ async fn find_missing_attachments_concurrent_probe_set_equality() {
     // 100 attachments total. Classification by id mod 3:
     //   0 → present on disk with matching size_bytes (NOT missing)
     //   1 → row in DB, file absent on disk            (missing, NotFound)
-    //   2 → file present but truncated (size mismatch) (missing, M-48)
+    // 2 → file present but truncated (size mismatch) (missing)
     const TOTAL: usize = 100;
     let mut expected_missing: HashSet<String> = HashSet::new();
     let payload: &[u8] = b"concurrent-probe-payload"; // 24 bytes
@@ -1800,7 +1800,7 @@ async fn inmem_request_receive_one_file() {
     assert_eq!(hash, expected_hash);
 }
 
-/// L-72: chaos / partial-transfer recovery. The sender drops the
+/// Chaos / partial-transfer recovery. The sender drops the
 /// connection mid-binary-frame after delivering an unprocessable
 /// partial chunk; the receiver must:
 ///
@@ -1810,7 +1810,7 @@ async fn inmem_request_receive_one_file() {
 /// (c) keep the attachment row visible to `find_missing_attachments`
 ///     so the next sync cycle re-tries.
 ///
-/// This pins the M-50 contract that ACK-after-write means a partial
+/// This pins the contract that ACK-after-write means a partial
 /// transfer is fully recoverable on the next cycle, not silently
 /// committed as a half-baked file.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1883,27 +1883,27 @@ async fn inmem_request_receive_partial_transfer_disconnects_mid_frame_l72() {
     // (a) Receive surfaces the disconnection as Err.
     assert!(
         result.is_err(),
-        "L-72: mid-frame disconnect must surface as Err; got {result:?}"
+        "mid-frame disconnect must surface as Err; got {result:?}"
     );
 
-    // (b) No half-written file on disk. M-50 guarantees the write
+    // (b) No half-written file on disk. guarantees the write
     // happens only after the full hash-verified payload is in
     // memory; an interrupted transfer must leave the path empty.
     assert!(
         !final_path.exists(),
-        "L-72: no half-written file may appear on disk after a mid-frame \
+        "no half-written file may appear on disk after a mid-frame \
          disconnect; found unexpected file at {final_path:?}"
     );
 
     // (c) The attachment is still classified as missing so the next
-    // sync retries it. M-48 (`find_missing_attachments` re-detects
+    // Sync retries it. (`find_missing_attachments` re-detects
     // truncated files) makes the result deterministic regardless of
     // whether the OS allocated a 0-byte stub on the way.
     let still_missing = find_missing_attachments(&pool, dir.path()).await.unwrap();
     let still_missing_ids: Vec<&str> = still_missing.iter().map(|m| m.id.as_str()).collect();
     assert!(
         still_missing_ids.contains(&"ATT_L72"),
-        "L-72: attachment must remain in find_missing_attachments after partial \
+        "attachment must remain in find_missing_attachments after partial \
          transfer; got {still_missing_ids:?}"
     );
 }
@@ -1958,9 +1958,9 @@ async fn inmem_responder_bidirectional_no_files() {
     assert_eq!(stats.bytes_received, 0);
 }
 
-// ── M-47: cancel signal breaks file transfer between files ────────────
+// ── cancel signal breaks file transfer between files ────────────
 
-/// M-47 (#317): when `cancel` is set after file 1's transfer, the
+/// (#317): when `cancel` is set after file 1's transfer, the
 /// receiver must keep file 1 (already received + ACKed) but break out
 /// before processing file 2.
 ///
@@ -1990,7 +1990,7 @@ async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
     let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
     let app_data_dir = dir.path().to_path_buf();
 
-    let file1: &[u8] = b"first file body content for M-47 test";
+    let file1: &[u8] = b"first file body content for  test";
     let file2: &[u8] = b"second file body - should NOT be received after cancel";
     let hash1 = blake3::hash(file1).to_hex().to_string();
     // file2's hash is intentionally unused: file2 is never offered to the
@@ -2038,10 +2038,10 @@ async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
                 assert_eq!(
                     attachment_ids,
                     vec!["ATT_M47_1".to_string(), "ATT_M47_2".to_string()],
-                    "M-47 setup: both attachments must be requested"
+                    " setup: both attachments must be requested"
                 );
             }
-            other => panic!("M-47 setup: expected FileRequest, got {other:?}"),
+            other => panic!(" setup: expected FileRequest, got {other:?}"),
         }
 
         // 2. Send FileOffer for file 1.
@@ -2067,10 +2067,10 @@ async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
                 ack,
                 SyncMessage::FileReceived { ref attachment_id } if attachment_id == "ATT_M47_1"
             ),
-            "M-47: receiver must ACK file 1 before observing cancel; got {ack:?}"
+            "receiver must ACK file 1 before observing cancel; got {ack:?}"
         );
 
-        // 5. M-47 (#317): store cancel ONLY after ACK1. This makes the
+        // 5. (#317): store cancel ONLY after ACK1. This makes the
         //    cancel observation deterministic — the receiver has provably
         //    completed iteration 1, so it can only see cancel at/after
         //    iteration 2's start.
@@ -2088,34 +2088,34 @@ async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
     // Initiator (receiver) side: run the production code path.
     let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel, None)
         .await
-        .expect("M-47: receive must return Ok with partial stats on cancel");
+        .expect("receive must return Ok with partial stats on cancel");
 
     let _ = responder_task.await;
 
-    // M-47 contract:
+    // Contract:
     // (a) file 1 was successfully received,
     // (b) file 2 was NOT received,
     // (c) cancel flag is still set (cleared only by the daemon's
     //     CancelGuard, not by the file-transfer helper).
     assert_eq!(
         stats.files_received, 1,
-        "M-47: exactly one file should be received before cancel takes effect"
+        "exactly one file should be received before cancel takes effect"
     );
     assert!(
         dir.path().join("attachments/m47_1.bin").exists(),
-        "M-47: file 1 must be on disk (it completed before cancel was observed)"
+        "file 1 must be on disk (it completed before cancel was observed)"
     );
     assert!(
         !dir.path().join("attachments/m47_2.bin").exists(),
-        "M-47: file 2 must NOT be on disk — receiver must break before processing it"
+        "file 2 must NOT be on disk — receiver must break before processing it"
     );
     assert!(
         cancel.load(Ordering::Acquire),
-        "M-47: file-transfer helper does not clear cancel; that is the daemon's job"
+        "file-transfer helper does not clear cancel; that is the daemon's job"
     );
 }
 
-// ── TEST-38 / BUG-35: attachment path traversal validation ────────────
+// ──: attachment path traversal validation ────────────
 //
 // These tests pin down `validate_attachment_fs_path` and its sibling
 // `check_attachment_fs_path_shape` against a malformed `fs_path` —
@@ -2366,10 +2366,10 @@ async fn add_attachment_rejects_traversal_at_command_layer() {
 }
 
 // ===========================================================================
-// M-51 — streaming attachment transfer regression suite
+// Streaming attachment transfer regression suite
 // ===========================================================================
 //
-// These tests pin the low-memory streaming path introduced in M-51:
+// These tests pin the low-memory streaming path introduced in:
 //
 //   • Sender uses `read_attachment_file_metadata` + streaming
 //     `send_binary_streaming` (no `Vec<u8>` of the full file on the
@@ -2382,7 +2382,7 @@ async fn add_attachment_rejects_traversal_at_command_layer() {
 // `write_attachment_file`) are still around for utility callers; the
 // existing tests above continue to exercise them.
 
-/// M-51 — sender streams a 50 MB attachment frame-by-frame to the
+/// Sender streams a 50 MB attachment frame-by-frame to the
 /// wire and the receiver lands the bytes via a temp-file writer.
 /// Asserts streaming byte-equality (received bytes match sent bytes),
 /// correct transfer stats (files/bytes counts), and that the
@@ -2413,7 +2413,7 @@ async fn attachment_send_streams_without_full_vec_materialization_m51() {
 
     // Cross-check: the streaming metadata helper computes the same
     // hash + size as the buffered shape — the exact equality is the
-    // M-51 contract that lets the sender keep the existing
+    // Contract that lets the sender keep the existing
     // `FileOffer` wire shape.
     let (meta_size, meta_hash) =
         read_attachment_file_metadata(dir.path(), "attachments/m51_big.bin")
@@ -2442,8 +2442,8 @@ async fn attachment_send_streams_without_full_vec_materialization_m51() {
         receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel_resp, None),
         request_and_receive_files(&mut client_conn, &init_pool, &init_app, &cancel_init, None),
     );
-    let send_stats = resp_result.expect("M-51 streaming send must succeed");
-    let recv_stats = init_result.expect("M-51 streaming receive must succeed");
+    let send_stats = resp_result.expect(" streaming send must succeed");
+    let recv_stats = init_result.expect(" streaming receive must succeed");
 
     assert_eq!(send_stats.files_sent, 1);
     assert_eq!(send_stats.bytes_sent, expected_size);
@@ -2458,7 +2458,7 @@ async fn attachment_send_streams_without_full_vec_materialization_m51() {
     assert_eq!(received, file_data);
 }
 
-/// M-51 — confirm the receiver writes through a `<final>.tmp-<rand>`
+/// Confirm the receiver writes through a `<final>.tmp-<rand>`
 /// path and the final filename only appears post-commit.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn attachment_receive_writes_to_temp_then_renames_m51() {
@@ -2506,7 +2506,7 @@ async fn attachment_receive_writes_to_temp_then_renames_m51() {
     assert_eq!(std::fs::read(&final_path).unwrap(), payload);
 }
 
-/// M-51 — hash mismatch on commit must unlink the temp and surface
+/// Hash mismatch on commit must unlink the temp and surface
 /// an `AppError::InvalidOperation("hash_mismatch: …")`. The final
 /// file must NOT exist.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2526,7 +2526,7 @@ async fn attachment_receive_hash_mismatch_unlinks_temp_m51() {
         AppError::InvalidOperation(msg) => {
             assert!(
                 msg.contains("hash_mismatch"),
-                "M-51: hash mismatch error must mention `hash_mismatch`, got {msg:?}"
+                "hash mismatch error must mention `hash_mismatch`, got {msg:?}"
             );
         }
         other => panic!("expected InvalidOperation(hash_mismatch), got {other:?}"),
@@ -2534,16 +2534,16 @@ async fn attachment_receive_hash_mismatch_unlinks_temp_m51() {
 
     assert!(
         !temp_path.exists(),
-        "M-51: temp file must be unlinked after a hash-mismatch commit failure"
+        "temp file must be unlinked after a hash-mismatch commit failure"
     );
     let final_path = dir.path().join("attachments/bad.bin");
     assert!(
         !final_path.exists(),
-        "M-51: final file must not exist after a failed commit"
+        "final file must not exist after a failed commit"
     );
 }
 
-/// M-51 — dropping a `TempAttachmentWriter` mid-stream (no commit
+/// Dropping a `TempAttachmentWriter` mid-stream (no commit
 /// reached, e.g. peer disconnect / cancel) must unlink the temp so
 /// abandoned transfers do not leak `*.tmp-*` orphans.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2562,16 +2562,16 @@ async fn attachment_receive_drop_unlinks_temp_m51() {
 
     assert!(
         !temp_path.exists(),
-        "M-51: dropping a writer without commit must unlink the temp file"
+        "dropping a writer without commit must unlink the temp file"
     );
     let final_path = dir.path().join("attachments/abandoned.bin");
     assert!(
         !final_path.exists(),
-        "M-51: final file must never have appeared on an abandoned transfer"
+        "final file must never have appeared on an abandoned transfer"
     );
 }
 
-/// M-51 — empty (zero-byte) attachments must still round-trip via a
+/// Empty (zero-byte) attachments must still round-trip via a
 /// single empty binary frame, matching the
 /// `send_binary_streaming` / `receive_binary_streaming` zero-byte
 /// contract.
@@ -2618,7 +2618,7 @@ async fn attachment_send_empty_file_uses_single_empty_frame_m51() {
     assert_eq!(received.len(), 0);
 }
 
-/// M-51 — verifies `TempAttachmentWriter`'s running hasher matches
+/// Verifies `TempAttachmentWriter`'s running hasher matches
 /// `read_attachment_file_metadata` parity — no wire transfer.
 /// Feeds bytes directly into the writer and asserts that the hash
 /// recorded by the writer on `commit` equals the hash computed by
@@ -2664,7 +2664,7 @@ async fn attachment_streaming_writer_hasher_matches_file_metadata_m51() {
     );
 }
 
-/// M-51 — the wire-level streaming helpers in `SyncConnection`
+/// The wire-level streaming helpers in `SyncConnection`
 /// (`send_binary_streaming` / `receive_binary_streaming`) must
 /// round-trip an `AsyncRead` source straight into an `AsyncWrite`
 /// sink without ever materialising the full payload as a Vec on

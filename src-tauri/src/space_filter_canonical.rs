@@ -5,16 +5,16 @@
 //! Space membership is now a first-class `blocks.space_id` column
 //! (migration 0086), so the read filter is the trivial
 //! `(?N IS NULL OR b.space_id = ?N)` — see [`SPACE_FILTER_CANONICAL`].
-//! The elaborate `block_properties` sub-select that the MAINT-172
+//! The elaborate `block_properties` sub-select that the
 //! history below was written to police no longer exists, which also
 //! makes the sqlx-codegen rejection moot (there is nothing left to
 //! compose). The fragment is still inlined at ~30 sites, so this parity
 //! guard is retained against drift in the new shape; the historical
 //! notes are kept for context.
 //!
-//! ## MAINT-172 closure (session 680)
+//! ## closure (session 680)
 //!
-//! PEND-12 (`build.rs` codegen via `OUT_DIR` files + `include_str!`
+//! (`build.rs` codegen via `OUT_DIR` files + `include_str!`
 //! composition with `sqlx::query!` / `sqlx::query_as!`) was rejected
 //! session 679 because sqlx 0.8.6 parses the macro's first argument
 //! as a `syn::LitStr` token (`sqlx-macros-core-0.8.6/src/query/input.rs:55,61`)
@@ -28,13 +28,13 @@
 //! As an alternative drift-mitigation, this module pins the canonical
 //! shape of the space-filter SQL fragment and asserts every production
 //! site matches it after normalisation. Mirrors the
-//! [`crate::pagination::block_row_columns`] precedent (PEND-28a H1
+//! [`crate::pagination::block_row_columns`] precedent (
 //! Option 2, session 677).
 //!
 //! The canonical is `#[cfg(test)]` only — production code continues
 //! to inline the fragment at every call site. When the fragment
 //! changes (e.g., to add a `OR space_id IS NULL` clause for
-//! pre-FEAT-3 compat), update [`SPACE_FILTER_CANONICAL`] here, run
+//! pre- compat), update [`SPACE_FILTER_CANONICAL`] here, run
 //! the parity test, and update each drifted site the test names.
 //!
 //! ## What's NOT in scope
@@ -276,7 +276,7 @@ mod tests {
     }
 
     proptest! {
-        /// PEND-77 A2: `normalize` is idempotent — re-normalizing a canonical
+        /// `normalize` is idempotent — re-normalizing a canonical
         /// form is a no-op. Tokens are space-joined so `?` placeholders are
         /// always separated (matching real bound SQL; `??`-style adjacency
         /// never occurs in the production filter strings this guards).

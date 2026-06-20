@@ -12,7 +12,7 @@
  * on `def.value_type` and renders the row layout (label + editor slot +
  * trailing affordances + delete button).
  *
- * Decomposition history: MAINT-128 — split out of a 575-LOC monolith.
+ * Decomposition history: split out of a 575-LOC monolith.
  */
 
 import { X } from 'lucide-react'
@@ -45,7 +45,7 @@ export interface PropertyRowEditorProps {
   /** Called after a ref property value is saved (page selected via picker). */
   onRefSaved?: () => void
   /**
-   * UX-272 — when provided, the ref-picker empty state offers a "Create new
+   * When provided, the ref-picker empty state offers a "Create new
    * page" affordance. The parent wires this to its create-page flow (the
    * editor needs the active space ID, which it does not have access to).
    */

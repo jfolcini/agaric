@@ -451,7 +451,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
     })
   })
 
-  describe('Unfocused Escape closes editor (UX-M8)', () => {
+  describe('Unfocused Escape closes editor', () => {
     it('calls handleFlush and setFocused(null) when Escape is pressed and editor is unfocused', () => {
       const opts = makeOptions()
       // Simulate the store having a focused block but no selection
@@ -554,7 +554,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
     })
   })
 
-  describe('Zoom out (Escape) — UX-214', () => {
+  describe('Zoom out (Escape) — ', () => {
     it('calls zoomToRoot when Escape is pressed while zoomed and no editor/selection', () => {
       const opts = makeOptions({
         focusedBlockId: null,
@@ -816,7 +816,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       expect(treeB.handleFlush).not.toHaveBeenCalled()
     })
 
-    it('unfocused Escape flushes only the owning tree (UX-M8)', () => {
+    it('unfocused Escape flushes only the owning tree', () => {
       useBlockStore.setState({ focusedBlockId: 'BLOCK_A', selectedBlockIds: [] })
       const { treeA, treeB } = renderTwoTrees()
 

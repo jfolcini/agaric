@@ -1,4 +1,4 @@
-//! PEND-70 — Hand-rolled cancellation primitive for in-flight Tauri commands.
+//! Hand-rolled cancellation primitive for in-flight Tauri commands.
 //!
 //! The palette debounces keystrokes at 80 ms (see
 //! `src/components/CommandPalette.tsx`) but a fast typist firing 5
@@ -22,7 +22,7 @@
 //! This two-layer architecture — extension-state guard registry +
 //! spawned worker — is what makes the cancel actually fire when the
 //! IPC future is dropped. (A purely in-future guard, as in the first
-//! cut of PEND-70, would drop together with the inner future and the
+//! cut of would drop together with the inner future and the
 //! watch signal would have no separate-task receiver to wake.)
 //!
 //! [`CancellationToken`] is a cheap-to-clone **receiver** handle. Loops
@@ -35,7 +35,7 @@
 //! ## Why hand-rolled?
 //!
 //! There is no first-party cancellation primitive in Tauri 2's command
-//! pipeline (see PEND-70 § "Open questions"). The community plugin
+//! pipeline (§ "Open questions"). The community plugin
 //! landscape is small and `tokio::sync::watch` is already in the
 //! dependency graph. ~40 LOC of in-tree helper is auditable and
 //! avoids a new dependency surface.
@@ -172,7 +172,7 @@ impl CancellationToken {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Extension-state registry — PEND-70 P1-A architectural fix
+// Extension-state registry — -A architectural fix
 // ────────────────────────────────────────────────────────────────────
 
 /// Per-process registry that maps a server-generated `request_id`

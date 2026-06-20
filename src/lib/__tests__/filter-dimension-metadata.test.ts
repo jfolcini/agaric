@@ -21,10 +21,10 @@ afterEach(() => {
 
 describe('filter-dimension-metadata', () => {
   // -----------------------------------------------------------------------
-  // TASK_STATES / getTaskStates (UX-202: fixed cycle, localStorage removed)
+  // TASK_STATES / getTaskStates (fixed cycle, localStorage removed)
   // -----------------------------------------------------------------------
   describe('getTaskStates', () => {
-    it('returns the locked fixed cycle TODO/DOING/DONE/CANCELLED (UX-234)', () => {
+    it('returns the locked fixed cycle TODO/DOING/DONE/CANCELLED', () => {
       expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED'])
     })
 
@@ -68,14 +68,14 @@ describe('filter-dimension-metadata', () => {
       expect(choices).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED'])
     })
 
-    it('priority choices is a function returning the active levels (UX-201b)', () => {
+    it('priority choices is a function returning the active levels', () => {
       const meta = DIMENSION_OPTIONS.priority
       expect(typeof meta.choices).toBe('function')
       const choices = (meta.choices as () => string[])()
       expect(choices).toEqual(['1', '2', '3'])
     })
 
-    it('priority choices reflect user-configured levels (UX-201b)', () => {
+    it('priority choices reflect user-configured levels', () => {
       setPriorityLevels(['A', 'B', 'C', 'D'])
       const choices = (DIMENSION_OPTIONS.priority.choices as () => string[])()
       expect(choices).toEqual(['A', 'B', 'C', 'D'])

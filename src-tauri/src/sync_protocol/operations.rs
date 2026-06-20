@@ -79,11 +79,11 @@ pub async fn get_local_heads(pool: &SqlitePool) -> Result<Vec<DeviceHead>, AppEr
 /// device's advertised `(device_id, seq)` against the local `op_log` is
 /// therefore unconditionally `NotFound` the moment that peer has made
 /// any local edit, which degenerated EVERY session between two edited
-/// devices into `ResetRequired` → stale-snapshot refusal (M-58) →
+/// Devices into `ResetRequired` → stale-snapshot refusal →
 /// backoff, forever (issue #602). Remote-frontier staleness is instead
 /// detected where it can be answered correctly: the Loro version-vector
 /// reachability gate in [`crate::sync_protocol::loro_sync::apply_remote`]
-/// (MAINT-228 → `SnapshotFallbackRequested` → `ResetRequired`).
+/// (→ `SnapshotFallbackRequested` → `ResetRequired`).
 ///
 /// A `seq <= 0` claim means "I have observed none of your ops" and is
 /// trivially satisfiable — never a reset condition ([`get_local_heads`]
@@ -131,7 +131,7 @@ pub async fn complete_sync(
 
 /// In-transaction variant of [`complete_sync`].
 ///
-/// PEND-24 M2: composes with [`peer_refs::upsert_peer_ref_in_tx`]
+/// Composes with [`peer_refs::upsert_peer_ref_in_tx`]
 /// inside a single `BEGIN IMMEDIATE` so the post-session bookkeeping
 /// pair (ensure peer row + record final hashes) commits atomically.
 /// A crash or error between the two writes rolls both back, leaving

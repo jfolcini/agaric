@@ -184,7 +184,7 @@ beforeEach(() => {
   sourcePagesIdentities.length = 0
   // #1529: reset the captured groups-prop render history between tests.
   renderedGroupsHistory.length = 0
-  // MAINT-189: shared property-keys cache is module-level — flush it
+  // Shared property-keys cache is module-level — flush it
   // between tests so each case fetches its own keys.
   _resetPropertyKeysCacheForTest()
   useNavigationStore.setState({
@@ -197,7 +197,7 @@ beforeEach(() => {
   })
 })
 
-/** Wrap LinkedReferences in TooltipProvider (required for UX-154 icon button). */
+/** Wrap LinkedReferences in TooltipProvider (required for icon button). */
 function renderLinkedReferences(props: LinkedReferencesProps) {
   return render(
     <TooltipProvider>
@@ -913,8 +913,8 @@ describe('LinkedReferences', () => {
     expect(screen.getByLabelText('Backlinks from Page Two')).toBeInTheDocument()
   })
 
-  // 21b. UX-210: keyboard nav container has correct aria-label resolved via t()
-  it('keyboard nav container aria-label resolves via t() (UX-210)', async () => {
+  // 21b. keyboard nav container has correct aria-label resolved via t()
+  it('keyboard nav container aria-label resolves via t()', async () => {
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block' }])],
       next_cursor: null,
@@ -1008,8 +1008,8 @@ describe('LinkedReferences', () => {
   // Filter integration tests (#543 / #544)
   // ---------------------------------------------------------------------------
 
-  // 25. PEND-31: SourcePageFilter renders inside the header row (not below it)
-  it('renders source page filter inside the header row (PEND-31)', async () => {
+  // 25. SourcePageFilter renders inside the header row (not below it)
+  it('renders source page filter inside the header row', async () => {
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
       next_cursor: null,
@@ -1041,9 +1041,9 @@ describe('LinkedReferences', () => {
     expect(headerRow).toContainElement(filterTrigger)
   })
 
-  // 26. PEND-31: BacklinkFilterBuilder is visible whenever the panel is
+  // 26. BacklinkFilterBuilder is visible whenever the panel is
   // expanded — there is no "show/hide filters" toggle anymore.
-  it('renders BacklinkFilterBuilder unconditionally when expanded (PEND-31)', async () => {
+  it('renders BacklinkFilterBuilder unconditionally when expanded', async () => {
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
       next_cursor: null,
@@ -1188,7 +1188,7 @@ describe('LinkedReferences', () => {
 
     await screen.findByText('accessible block')
 
-    // BacklinkFilterBuilder is visible without any toggle click (PEND-31).
+    // BacklinkFilterBuilder is visible without any toggle click.
     expect(screen.getByTestId('backlink-filter-builder')).toBeInTheDocument()
 
     await waitFor(async () => {
@@ -1217,7 +1217,7 @@ describe('LinkedReferences', () => {
     // Apply source page filter
     await user.click(screen.getByTestId('source-page-filter-trigger'))
 
-    // Apply an advanced filter via the always-visible builder (PEND-31).
+    // Apply an advanced filter via the always-visible builder.
     await user.click(screen.getByTestId('mock-add-filter'))
 
     await waitFor(() => {
@@ -1243,10 +1243,10 @@ describe('LinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // UX-271: active-filter count badge on Advanced filters trigger
+  // Active-filter count badge on Advanced filters trigger
   // ---------------------------------------------------------------------------
 
-  it('does not render filter count badge when no filters are active (UX-271)', async () => {
+  it('does not render filter count badge when no filters are active', async () => {
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
       next_cursor: null,
@@ -1264,7 +1264,7 @@ describe('LinkedReferences', () => {
     expect(container.querySelector('.linked-references-filter-count')).toBeNull()
   })
 
-  it('renders filter count badge with active filter count (UX-271)', async () => {
+  it('renders filter count badge with active filter count', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
@@ -1283,7 +1283,7 @@ describe('LinkedReferences', () => {
     // No badge initially
     expect(container.querySelector('.linked-references-filter-count')).toBeNull()
 
-    // Add a filter via the always-visible builder (PEND-31).
+    // Add a filter via the always-visible builder.
     await user.click(screen.getByTestId('mock-add-filter'))
 
     // Badge should now be visible with the count "1"
@@ -1295,7 +1295,7 @@ describe('LinkedReferences', () => {
     expect(badge).toHaveTextContent('1')
   })
 
-  it('hides filter count badge after filters are cleared (UX-271)', async () => {
+  it('hides filter count badge after filters are cleared', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
@@ -1311,7 +1311,7 @@ describe('LinkedReferences', () => {
 
     await screen.findByText('Page One (1)')
 
-    // Add a filter via the always-visible builder (PEND-31).
+    // Add a filter via the always-visible builder.
     await user.click(screen.getByTestId('mock-add-filter'))
 
     await waitFor(() => {
@@ -1327,10 +1327,10 @@ describe('LinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // UX-271: linkType prop forwarded to BacklinkGroupRenderer renders "Linked"
+  // LinkType prop forwarded to BacklinkGroupRenderer renders "Linked"
   // ---------------------------------------------------------------------------
 
-  it('renders "Linked" badge from BacklinkGroupRenderer (UX-271)', async () => {
+  it('renders "Linked" badge from BacklinkGroupRenderer', async () => {
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
       next_cursor: null,
@@ -1348,7 +1348,7 @@ describe('LinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Group header page title navigation (#UX-H11)
+  // Group header page title navigation (#)
   // ---------------------------------------------------------------------------
 
   // 34. clicking group header page title triggers navigation
@@ -1461,7 +1461,7 @@ describe('LinkedReferences', () => {
   })
 
   // 37. property keys load failure: cache hook falls back to empty list
-  // (MAINT-189: shared `usePropertyKeysCache` replaced the per-mount fetch
+  // (shared `usePropertyKeysCache` replaced the per-mount fetch
   // and the `LinkedReferences`-only toast — the cache logs `logger.warn`
   // and surfaces an empty `string[]`, matching the other two consumers
   // (`PropertyValuePicker`, `UnlinkedReferences`) that never toasted.)
@@ -1508,7 +1508,7 @@ describe('LinkedReferences', () => {
   })
 
   // 39. simultaneous failures: backlinks + tags toast; property-keys
-  // failure is now handled silently by the shared cache (MAINT-189).
+  // Failure is now handled silently by the shared cache.
   it('error: simultaneous failures show backlinks + tags toasts (property keys handled by shared cache)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') return Promise.reject(new Error('backlinks failed'))
@@ -1538,11 +1538,11 @@ describe('LinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // UX-167: Filter button position — hugs header, not pushed right
+  // Filter button position — hugs header, not pushed right
   // ---------------------------------------------------------------------------
 
-  // 40. CollapsiblePanelHeader does NOT have flex-1 class (UX-167)
-  it('filter button is sibling of header without flex-1 pushing it right (UX-167)', async () => {
+  // 40. CollapsiblePanelHeader does NOT have flex-1 class
+  it('filter button is sibling of header without flex-1 pushing it right', async () => {
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
       next_cursor: null,
@@ -1564,13 +1564,13 @@ describe('LinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // UX-240: Filter affordance must stay inline with header on narrow viewports
+  // Filter affordance must stay inline with header on narrow viewports
   // ---------------------------------------------------------------------------
 
   // Conservative preventive styling: outer row is flex-nowrap with min-w-0
   // and the header button carries min-w-0 so the inline SourcePageFilter
   // trigger stays beside the title even when space is tight.
-  it('outer header row and children carry flex-nowrap / min-w-0 (UX-240)', async () => {
+  it('outer header row and children carry flex-nowrap / min-w-0', async () => {
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
       next_cursor: null,
@@ -1606,11 +1606,11 @@ describe('LinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // PEND-27 P5: pagination merge uses Map<page_id, group> and unions blocks
+  // Pagination merge uses Map<page_id, group> and unions blocks
   // for groups that recur across pages.
   // ---------------------------------------------------------------------------
 
-  it('pagination merge unions blocks for groups with overlapping page_id (PEND-27 P5)', async () => {
+  it('pagination merge unions blocks for groups with overlapping page_id', async () => {
     const user = userEvent.setup()
     const page1 = {
       groups: [
@@ -1679,10 +1679,10 @@ describe('LinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // PEND-29 B-6: cancellation flag on the mount-once `listTagsByPrefix` effect
+  // B-6: cancellation flag on the mount-once `listTagsByPrefix` effect
   // ---------------------------------------------------------------------------
 
-  it('cancels the listTagsByPrefix promise on unmount (PEND-29 B-6)', async () => {
+  it('cancels the listTagsByPrefix promise on unmount (B-6)', async () => {
     let rejectTags!: (err: unknown) => void
     let listTagsCalled = false
     mockedInvoke.mockImplementation((cmd: string, _args?: any) => {

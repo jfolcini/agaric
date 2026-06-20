@@ -1,5 +1,5 @@
 /**
- * Tests for useLinkPreview hook (UX-165).
+ * Tests for useLinkPreview hook.
  *
  * Validates:
  *  - Returns null/empty state when no link is hovered
@@ -316,7 +316,7 @@ describe('useLinkPreview', () => {
     expect(result.current.isLoading).toBe(true)
   })
 
-  // ── Keyboard / focus support (UX-273) ──────────────────────────────
+  // ── Keyboard / focus support ──────────────────────────────
 
   it('updates state when focusin fires on .external-link element', () => {
     const dom = makeContainer()

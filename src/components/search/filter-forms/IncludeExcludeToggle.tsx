@@ -1,5 +1,5 @@
 /**
- * PEND-58g UX-A5 — include/exclude segmented toggle shared by the
+ * Include/exclude segmented toggle shared by the
  * structural filter builder forms (state / priority / prop).
  *
  * Rendered as a `role="radiogroup"` of two `role="radio"` buttons so the

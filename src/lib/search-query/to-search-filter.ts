@@ -1,10 +1,10 @@
 /**
- * PEND-54 — Project a parsed `SearchQueryAST` onto IPC-side
+ * Project a parsed `SearchQueryAST` onto IPC-side
  * `SearchFilter` fields.
  *
  * The AST is the canonical model on the frontend; this adapter is the
  * single point where it crosses into the wire shape. Keep the
- * projection small and additive — PEND-53 appends `state_filter`,
+ * Projection small and additive — appends `state_filter`,
  * `priority_filter`, `due_filter`, `scheduled_filter`,
  * `property_filters`, `excluded_property_filters` to this same
  * adapter.
@@ -14,11 +14,11 @@
  * "Mixing `path:` and `not-path:`" edge case is handled by the
  * backend's SQL composition (both clauses AND-joined).
  *
- * PEND-53 — repeating `state:` / `priority:` tokens OR-fan-out (the
+ * Repeating `state:` / `priority:` tokens OR-fan-out (the
  * SQL emits `state IN (?, ?, ...)`); repeating `prop:` tokens
  * AND-fan-out (each becomes its own EXISTS sub-select).
  *
- * PEND-63 — `not-state:` / `not-priority:` are now wired:
+ * `not-state:` / `not-priority:` are now wired:
  * `excluded_state_filter` / `excluded_priority_filter` populate
  * dedicated `SearchFilter` fields, and the backend emits
  * `(col IS NULL OR col NOT IN (...))` — NULL-inclusive inversion so
@@ -32,10 +32,10 @@ export interface AstFilterProjection {
   tagNames: string[]
   includePageGlobs: string[]
   excludePageGlobs: string[]
-  // PEND-53 — metadata filter projection.
+  // Metadata filter projection.
   stateFilter: string[]
   priorityFilter: string[]
-  // PEND-63 — `not-state:` / `not-priority:` chips now project to
+  // `not-state:` / `not-priority:` chips now project to
   // dedicated excluded fields so the backend can emit the proper
   // `(col IS NULL OR col NOT IN (...))` inversion.
   excludedStateFilter: string[]
@@ -61,7 +61,7 @@ export function astToFilterProjection(ast: SearchQueryAST): AstFilterProjection 
   for (const f of ast.filters) {
     switch (f.kind) {
       case 'tag': {
-        // DSL-A3 — NFC-normalise the tag name before it enters the
+        // NFC-normalise the tag name before it enters the
         // matching projection. The backend stores/indexes tag content
         // in NFC (see `src-tauri/src/fts/strip.rs` / `search.rs`), and
         // `useTagResolution` matches by lowercased name string, so a
@@ -85,7 +85,7 @@ export function astToFilterProjection(ast: SearchQueryAST): AstFilterProjection 
         if (!stateFilter.includes(f.value)) stateFilter.push(f.value)
         break
       case 'notState':
-        // PEND-63 — project to `excluded_state_filter`; the backend
+        // Project to `excluded_state_filter`; the backend
         // emits `(todo_state IS NULL OR todo_state NOT IN (...))`.
         if (!excludedStateFilter.includes(f.value)) excludedStateFilter.push(f.value)
         break
@@ -93,7 +93,7 @@ export function astToFilterProjection(ast: SearchQueryAST): AstFilterProjection 
         if (!priorityFilter.includes(f.value)) priorityFilter.push(f.value)
         break
       case 'notPriority':
-        // PEND-63 — symmetric to `notState`.
+        // Symmetric to `notState`.
         if (!excludedPriorityFilter.includes(f.value)) excludedPriorityFilter.push(f.value)
         break
       case 'due':

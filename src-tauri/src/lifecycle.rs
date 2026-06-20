@@ -1,4 +1,4 @@
-//! PERF-24: Application foreground lifecycle hooks.
+//! Application foreground lifecycle hooks.
 //!
 //! On mobile (Android) the app can be alive-but-backgrounded for several
 //! minutes before the OS suspends it (Doze, App Standby). During that

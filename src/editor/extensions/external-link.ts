@@ -100,7 +100,7 @@ export const ExternalLink = Link.extend({
             tr.removeStoredMark(linkType)
             view.dispatch(tr)
 
-            // Fire-and-forget: prefetch metadata for the pasted URL (UX-165)
+            // Fire-and-forget: prefetch metadata for the pasted URL
             fetchLinkMetadata(url).catch((err: unknown) => {
               logger.warn('ExternalLink', 'link metadata prefetch failed', { url }, err)
             })

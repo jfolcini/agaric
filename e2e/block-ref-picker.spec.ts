@@ -37,7 +37,7 @@ import {
 async function openBlockRefPicker(page: import('@playwright/test').Page, query: string) {
   await page.keyboard.press('End')
   await page.keyboard.type(` ((${query}`, { delay: 30 })
-  // TEST-1b: scope to the active (last-in-DOM) suggestion-list. The
+  // Scope to the active (last-in-DOM) suggestion-list. The
   // ReactRenderer popup container can transiently coexist with a stale
   // popup from a previous test before the cleanup runs, so a bare page
   // locator would "resolve to 2 elements" under parallel pressure.

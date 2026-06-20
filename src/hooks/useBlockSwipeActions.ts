@@ -89,7 +89,7 @@ interface SwipeOptions {
  * - Swipe left > 200 px → auto-confirms deletion (and `thresholdCrossed`
  *   flips to `true` mid-drag so callers can render a progressive cue —
  *   colour change + `t('block.swipe.releaseToDelete')` label — before the gesture
- *   actually fires; UX-304).
+ * Actually fires;).
  * - Vertical scroll > 10 px cancels the gesture (avoids scroll conflicts)
  *
  * Structural gestures (#927 f4 — only when the matching handler is supplied):
@@ -114,7 +114,7 @@ export function useBlockSwipeActions(onDelete: () => void, options?: SwipeOption
 
   const [translateX, setTranslateX] = useState(0)
   const [isRevealed, setIsRevealed] = useState(false)
-  // UX-304: live "you are past the auto-delete threshold" flag, exposed
+  // Live "you are past the auto-delete threshold" flag, exposed
   // so the overlay can switch from the muted reveal state to a
   // destructive "release to delete" affordance before touch-end.
   const [thresholdCrossed, setThresholdCrossed] = useState(false)
@@ -183,7 +183,7 @@ export function useBlockSwipeActions(onDelete: () => void, options?: SwipeOption
         stateRef.current.swiping = true
         stateRef.current.currentX = touch.clientX
         setTranslateX(Math.max(dx, -AUTO_DELETE_THRESHOLD)) // Clamp to max swipe distance
-        // UX-304: track the auto-delete threshold against the raw delta
+        // Track the auto-delete threshold against the raw delta
         // (translateX is clamped, so it would always equal the threshold
         // once reached — we need the unclamped value to flip back if the
         // user drags partway back without lifting their finger).

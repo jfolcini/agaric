@@ -1,5 +1,5 @@
 /**
- * PEND-54 — AST types for the inline search filter syntax.
+ * AST types for the inline search filter syntax.
  *
  * The query string is the canonical source of truth. Every "chip" the
  * UI renders is a projection of one `FilterToken` in this AST; every
@@ -13,7 +13,7 @@
  *   - the test invariants (round-trip serialise must preserve text).
  *
  * The recogniser registry (see `./registry.ts`) accepts new
- * `FilterToken` kinds via the `extend` API; PEND-53 will append
+ * `FilterToken` kinds via the `extend` API; will append
  * `state`, `priority`, `due`, `scheduled`, `prop`, `notProp` without
  * touching the core parser. Surfaces that need to enumerate the live
  * vocabulary read it from `getRegisteredTokenKinds()` rather than
@@ -21,7 +21,7 @@
  */
 
 /**
- * PEND-53 — Date-filter value carried by `due:` / `scheduled:` tokens.
+ * Date-filter value carried by `due:` / `scheduled:` tokens.
  *
  * Two shapes:
  *
@@ -49,7 +49,7 @@ export type NamedDateRange =
 export type DateOp = '<' | '<=' | '=' | '>=' | '>'
 
 /**
- * PEND-53 — Property-filter projection shape on the IPC side. Mirrors
+ * Property-filter projection shape on the IPC side. Mirrors
  * the Rust `SearchPropertyFilter` struct exactly (camelCase keys after
  * specta's rename, but since the field names are `key` and `value`
  * already-lowercase, the camelCase rename is a no-op).
@@ -64,16 +64,16 @@ export type FilterToken =
   | { kind: 'tag'; value: string; span: [number, number] }
   | { kind: 'pathInclude'; value: string; span: [number, number] }
   | { kind: 'pathExclude'; value: string; span: [number, number] }
-  // PEND-53 — `state:` / `not-state:`
+  // `state:` / `not-state:`
   | { kind: 'state'; value: string; span: [number, number] }
   | { kind: 'notState'; value: string; span: [number, number] }
-  // PEND-53 — `priority:` / `not-priority:`
+  // `priority:` / `not-priority:`
   | { kind: 'priority'; value: string; span: [number, number] }
   | { kind: 'notPriority'; value: string; span: [number, number] }
-  // PEND-53 — `due:` / `scheduled:`
+  // `due:` / `scheduled:`
   | { kind: 'due'; value: DateFilterValue; raw: string; span: [number, number] }
   | { kind: 'scheduled'; value: DateFilterValue; raw: string; span: [number, number] }
-  // PEND-53 — `prop:key=value` / `not-prop:key=value`
+  // `prop:key=value` / `not-prop:key=value`
   | { kind: 'prop'; key: string; value: string; span: [number, number] }
   | { kind: 'notProp'; key: string; value: string; span: [number, number] }
   | { kind: 'invalid'; source: string; error: string; span: [number, number] }

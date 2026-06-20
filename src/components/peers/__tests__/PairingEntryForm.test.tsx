@@ -25,7 +25,7 @@ import { axe } from 'vitest-axe'
 import { PairingEntryForm } from '@/components/peers/PairingEntryForm'
 
 // Mock QrScanner to avoid loading html5-qrcode in tests.
-// UX-264: also expose an `onCameraDenied` button so tests can drive the
+// Also expose an `onCameraDenied` button so tests can drive the
 // camera-denied auto-fallback to manual entry.
 vi.mock('../QrScanner', () => ({
   QrScanner: ({
@@ -94,9 +94,9 @@ describe('PairingEntryForm', () => {
     expect(screen.getByRole('button', { name: /Scan QR code/i })).toBeInTheDocument()
   })
 
-  // UX-376: QR is the faster pairing path; render it first so it lands as
+  // QR is the faster pairing path; render it first so it lands as
   // the primary call-to-action in the toggle row.
-  it('renders the QR scan button before the manual passphrase button (UX-376)', () => {
+  it('renders the QR scan button before the manual passphrase button', () => {
     render(<PairingEntryForm {...defaultProps} />)
 
     const toggle = document.querySelector('.pairing-entry-toggle')
@@ -107,9 +107,9 @@ describe('PairingEntryForm', () => {
     expect(buttons[1]?.textContent).toMatch(/Type passphrase/i)
   })
 
-  // UX-376: signpost QR as the recommended path with a Badge inside the
+  // Signpost QR as the recommended path with a Badge inside the
   // QR scan button.
-  it('renders a "Recommended" Badge inside the QR scan button (UX-376)', () => {
+  it('renders a "Recommended" Badge inside the QR scan button', () => {
     render(<PairingEntryForm {...defaultProps} />)
 
     const scanBtn = screen.getByRole('button', { name: /Scan QR code/i })
@@ -260,7 +260,7 @@ describe('PairingEntryForm', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // UX-263: visible ordinal labels above each word input
+  // Visible ordinal labels above each word input
   it('renders a visible ordinal Label above each word input', () => {
     const { container } = render(<PairingEntryForm {...defaultProps} />)
 
@@ -272,7 +272,7 @@ describe('PairingEntryForm', () => {
     expect(labels[3]?.textContent).toBe('4th word')
   })
 
-  it('associates each ordinal Label with its input via htmlFor / id (UX-263)', () => {
+  it('associates each ordinal Label with its input via htmlFor / id', () => {
     const { container } = render(<PairingEntryForm {...defaultProps} />)
 
     const labels = container.querySelectorAll('label.pairing-word-label')
@@ -288,10 +288,10 @@ describe('PairingEntryForm', () => {
     }
   })
 
-  // UX-264: when the QR scanner's camera permission is denied, the form
+  // When the QR scanner's camera permission is denied, the form
   // auto-switches back to manual entry and surfaces a toast so the user is
   // never stranded on a failing scanner UI.
-  it('switches to manual mode and shows toast when QR scanner reports camera denial (UX-264)', async () => {
+  it('switches to manual mode and shows toast when QR scanner reports camera denial', async () => {
     const user = userEvent.setup()
     const onEntryModeChange = vi.fn()
 

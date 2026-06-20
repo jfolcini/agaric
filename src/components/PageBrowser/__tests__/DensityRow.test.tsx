@@ -1,5 +1,5 @@
 /**
- * PEND-56 — DensityRow tests.
+ * DensityRow tests.
  *
  * Verifies the row primitive renders correctly across the three
  * densities, fires its primitive callbacks on user interaction, and

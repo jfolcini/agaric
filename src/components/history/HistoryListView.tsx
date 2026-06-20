@@ -4,7 +4,7 @@
  * pages. Receives all selection / focus / diff state as props from the
  * orchestrating `HistoryView`.
  *
- * Extracted from `HistoryView` (MAINT-128).
+ * Extracted from `HistoryView`.
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual'

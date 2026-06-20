@@ -1,11 +1,11 @@
 /**
- * SpaceSwitcher — sidebar-top space selector (FEAT-3 Phase 1 + Phase 6).
+ * SpaceSwitcher — sidebar-top space selector (Phase 1 + Phase 6).
  *
  * Renders a Radix Select bound to `useSpaceStore`. Changing the selection
  * updates `currentSpaceId` synchronously; downstream panels (PageBrowser,
  * SearchPanel, …) re-scope their queries when `currentSpaceId` flips.
  *
- * The `t('space.manage')` entry now (FEAT-3 Phase 6) opens
+ * The `t('space.manage')` entry now (Phase 6) opens
  * `SpaceManageDialog` instead of being a disabled placeholder. The
  * MANAGE_SENTINEL value is short-circuited inside `handleValueChange`
  * so selecting it does not switch space — it only flips the dialog
@@ -42,7 +42,7 @@ import { useSpaceStore } from '@/stores/space'
 const MANAGE_SENTINEL = '__manage__'
 
 /**
- * FEAT-3p11 — only the first nine spaces get a digit hotkey hint
+ * Only the first nine spaces get a digit hotkey hint
  * (`Ctrl+1` … `Ctrl+9` / `⌘1` … `⌘9` on macOS). Tenth-and-later spaces
  * still render as selectable rows; they just don't carry a chip because
  * there is no shortcut bound to them.
@@ -50,7 +50,7 @@ const MANAGE_SENTINEL = '__manage__'
 const MAX_HOTKEY_SPACES = 9
 
 /**
- * FEAT-3p11 — render the platform-correct hint chip text. macOS users
+ * Render the platform-correct hint chip text. macOS users
  * see the bare command-glyph chord (`⌘1`) per Apple's HIG; Windows /
  * Linux users see the spelled-out modifier (`Ctrl+1`) that matches the
  * rest of the app's keyboard help. The display string is decoupled
@@ -69,7 +69,7 @@ export function SpaceSwitcher(): React.JSX.Element {
   const setCurrentSpace = useSpaceStore((s) => s.setCurrentSpace)
   const refreshAvailableSpaces = useSpaceStore((s) => s.refreshAvailableSpaces)
 
-  // PEND-37 — colour identity in the trigger. The dot inherits the
+  // Colour identity in the trigger. The dot inherits the
   // active space's accent so the user reads the same colour signal
   // here that `SpaceTopStripe` paints across the top of the viewport.
   const activeSpace = availableSpaces.find((s) => s.id === currentSpaceId)
@@ -81,7 +81,7 @@ export function SpaceSwitcher(): React.JSX.Element {
     void refreshAvailableSpaces()
   }, [refreshAvailableSpaces])
 
-  // FEAT-3 Phase 6 — local dialog open state. Hoisting this above the
+  // Phase 6 — local dialog open state. Hoisting this above the
   // store keeps the manage UI a pure component-local concern; the
   // Zustand store stays focused on `currentSpaceId` + cached
   // `availableSpaces`.
@@ -99,7 +99,7 @@ export function SpaceSwitcher(): React.JSX.Element {
     <>
       <Select value={currentSpaceId ?? ''} onValueChange={handleValueChange}>
         {/*
-         * UX-9 — surface the `Ctrl+1..9` / `⌘1..9` space-switching
+         * Surface the `Ctrl+1..9` / `⌘1..9` space-switching
          * shortcuts via a tooltip on the trigger so users discover
          * them without opening the `?` keyboard help dialog. The
          * tooltip wraps a `<span>` rather than the SelectTrigger
@@ -121,8 +121,8 @@ export function SpaceSwitcher(): React.JSX.Element {
                 )}
               >
                 {/*
-                 * PEND-37 — replace the previous static "Space:" text
-                 * prefix (UX-364) with a colour-identity dot that
+                 * Replace the previous static "Space:" text
+                 * Prefix with a colour-identity dot that
                  * mirrors `SpaceTopStripe` and `SpaceAccentBadge`. The
                  * dot is decorative (`aria-hidden`) so the
                  * `aria-label={t('space.switch')}` on `SelectTrigger` is
@@ -130,7 +130,7 @@ export function SpaceSwitcher(): React.JSX.Element {
                  * BEFORE `<SelectValue>` for the same reason the old
                  * prefix span was: Radix mirrors the active option's
                  * text into `SelectValue` and wrapping it would trip
-                 * the auto-mirror warning called out in the FEAT-3p11
+                 * The auto-mirror warning called out in the
                  * comment below.
                  */}
                 {activeSpace != null && (
@@ -142,7 +142,7 @@ export function SpaceSwitcher(): React.JSX.Element {
                   />
                 )}
                 {/*
-                 * FEAT-3p11 — keep the digit-hint chip scoped to the
+                 * Keep the digit-hint chip scoped to the
                  * dropdown rows so it does not bleed into the trigger
                  * label. Implemented via the `endContent` slot on
                  * `SelectItem` (rendered AFTER `<SelectPrimitive.ItemText>`,
@@ -156,12 +156,12 @@ export function SpaceSwitcher(): React.JSX.Element {
             </span>
           </TooltipTrigger>
           {/*
-           * UX-368 — stack the existing shortcut hint above a list of
+           * Stack the existing shortcut hint above a list of
            * the first five space → digit mappings so the user can see
            * what each `Ctrl+1..5` / `⌘1..5` chord switches to without
            * re-opening the dropdown. The dropdown rows still carry the
            * digit-hint chip via `SelectItem`'s `endContent` slot — that
-           * is FEAT-3p11's contribution and is kept untouched.
+           * Is contribution and is kept untouched.
            */}
           <TooltipContent>
             <div className="flex flex-col gap-0.5 text-xs">
@@ -182,7 +182,7 @@ export function SpaceSwitcher(): React.JSX.Element {
               endContent={
                 idx < MAX_HOTKEY_SPACES ? (
                   /*
-                   * FEAT-3p11 — right-aligned digit-hint chip (`Ctrl+1` /
+                   * Right-aligned digit-hint chip (`Ctrl+1` /
                    * `⌘1`) for the first nine spaces. Rendered via
                    * `SelectItem`'s `endContent` slot so it stays out of
                    * `<SelectPrimitive.ItemText>` and therefore out of
@@ -203,7 +203,7 @@ export function SpaceSwitcher(): React.JSX.Element {
           ))}
           <SelectSeparator />
           {/*
-           * UX-373 — when the user has only one space, the switcher is
+           * When the user has only one space, the switcher is
            * a visual no-op (nothing else to switch to). Surface a
            * `t('spaceSwitcher.createAnotherHint')` hint inside the dropdown so the
            * single-space user discovers the manage flow without having
@@ -230,7 +230,7 @@ export function SpaceSwitcher(): React.JSX.Element {
             </button>
           ) : null}
           {/*
-           * FEAT-3 Phase 6 — the `t('space.manage')` entry is now a real,
+           * Phase 6 — the `t('space.manage')` entry is now a real,
            * enabled action. `handleValueChange` short-circuits the
            * sentinel and opens `SpaceManageDialog` instead of calling
            * `setCurrentSpace`, so selecting it does not switch space.

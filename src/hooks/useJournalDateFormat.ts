@@ -10,7 +10,7 @@
  * rendered to the user; switching it never rewrites storage, so it can never
  * orphan a journal.
  *
- * Mirrors `useWeekStart` (UX-9): a `useSyncExternalStore` snapshot over a
+ * Mirrors `useWeekStart`: a `useSyncExternalStore` snapshot over a
  * single localStorage key plus a non-hook getter (`getJournalDateFormat`) for
  * pure functions like `formatJournalTitle` in `date-utils.ts`.
  */

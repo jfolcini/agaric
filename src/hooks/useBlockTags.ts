@@ -61,7 +61,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
   const [loading, setLoading] = useState(false)
 
   // Load all available tags for the active space.
-  // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
+  // Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
   // fallback is intentional pre-bootstrap behaviour: empty string
   // forces a no-match SQL filter rather than a runtime null deref.
   useEffect(() => {

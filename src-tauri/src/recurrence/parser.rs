@@ -8,7 +8,7 @@ use chrono::Datelike;
 
 use crate::error::AppError;
 
-/// MAINT-152(b) — calendar-range bound for `+Nm` / `+Ny` shifts.
+/// (b) — calendar-range bound for `+Nm` / `+Ny` shifts.
 ///
 /// Shifts that resolve to a year outside `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR`
 /// return `None` instead of producing garbage dates. The bound is deliberately
@@ -29,7 +29,7 @@ pub(super) fn days_in_month(year: i32, month: u32) -> u32 {
     .unwrap_or(28)
 }
 
-/// MAINT-152(b) — shift `base` by `n_months` months, clamping the resulting
+/// (b) — shift `base` by `n_months` months, clamping the resulting
 /// day-of-month against the destination month length so e.g. shifting from
 /// `2024-02-29` by 12 months lands on `2025-02-28`.
 ///
@@ -102,7 +102,7 @@ pub(crate) fn shift_date_once(
             }
             let (num_str, unit) = num_unit.split_at(num_unit.len() - 1);
             let n: i64 = num_str.parse().ok()?;
-            // M-79: Org-mode recurrence semantics never go backwards (and
+            // Org-mode recurrence semantics never go backwards (and
             // a zero interval would either no-op or, in `++` mode, loop
             // until the safety limit). Reject negative and zero counts at
             // parse time.
@@ -112,9 +112,9 @@ pub(crate) fn shift_date_once(
             match unit {
                 "d" => base + chrono::Duration::days(n),
                 "w" => base + chrono::Duration::days(n * 7),
-                // MAINT-152(b): `+Nm` and `+Ny` share the leap-day-clamping
+                // (b): `+Nm` and `+Ny` share the leap-day-clamping
                 // month arithmetic via `shift_by_months`; the `y` arm just
-                // multiplies by 12 first. M-80: `+1y` from 2024-02-29 lands
+                // Multiplies by 12 first. `+1y` from 2024-02-29 lands
                 // on 2025-02-28 because the helper clamps day against the
                 // destination month length.
                 "m" => shift_by_months(base, n)?,
@@ -155,15 +155,15 @@ pub(crate) fn shift_date_once(
 ///   silently"; preserving the `None` channel keeps that contract.
 /// * `Err(AppError::Validation)` — the `++` arm hit one of two
 ///   distinct dead-ends that previously returned silent garbage:
-///   - **PEND-26 N3:** `shift_date_once` returned `None` mid-loop
-///     (i.e. a `NaiveDate` arithmetic overflow on a single shift).
-///     The pre-fix `?` propagation surfaced as `Ok(None)`, which the
-///     compute caller treated as "no recurrence requested" and created
-///     a sibling with no due date.
-///   - **PEND-24 H2:** the 10 000-iteration safety budget elapsed
-///     without `current > today` (e.g. `+1d` against an `original` ~30
-///     years in the past). The pre-fix loop returned the stale past
-///     date silently.
+///   **:** `shift_date_once` returned `None` mid-loop
+///   (i.e. a `NaiveDate` arithmetic overflow on a single shift).
+///   The pre-fix `?` propagation surfaced as `Ok(None)`, which the
+///   compute caller treated as "no recurrence requested" and created
+///   a sibling with no due date.
+///   **:** the 10 000-iteration safety budget elapsed
+///   without `current > today` (e.g. `+1d` against an `original` ~30
+///   years in the past). The pre-fix loop returned the stale past
+///   date silently.
 pub(crate) fn shift_date(date: &str, rule: &str) -> Result<Option<String>, AppError> {
     let parts: Vec<&str> = date.split('-').collect();
     if parts.len() != 3 {
@@ -212,12 +212,12 @@ pub(crate) fn shift_date(date: &str, rule: &str) -> Result<Option<String>, AppEr
             // Two dead-ends that previously returned silent garbage now
             // surface as `Err(AppError::Validation)`:
             //
-            // * PEND-26 N3 — `shift_date_once` returns `None` mid-loop
+            // * `shift_date_once` returns `None` mid-loop
             //   (single-step `NaiveDate` arithmetic overflow). The
             //   pre-fix `?` propagated `None` out of `shift_date`,
             //   which the compute caller treated as "no recurrence"
             //   and created a sibling with no due date.
-            // * PEND-24 H2 — the 10 000-iteration safety budget
+            // * the 10 000-iteration safety budget
             //   elapses without `current > today` (e.g. `+1d` from an
             //   `original` ~30 years in the past). The pre-fix loop
             //   returned the stale past date silently.
@@ -232,7 +232,7 @@ pub(crate) fn shift_date(date: &str, rule: &str) -> Result<Option<String>, AppEr
             let mut hit_cap = true;
             for _ in 0..10_000 {
                 let Some(next) = shift_date_once(current, interval) else {
-                    // PEND-26 N3: explicit overflow signal instead of
+                    // Explicit overflow signal instead of
                     // silently returning `Ok(None)` from the parent.
                     return Err(AppError::Validation(format!(
                         "recurrence ++ arithmetic overflow: original={original} interval={interval}"
@@ -245,7 +245,7 @@ pub(crate) fn shift_date(date: &str, rule: &str) -> Result<Option<String>, AppEr
                 }
             }
             if hit_cap {
-                // PEND-24 H2: cap exhausted without catching up to
+                // Cap exhausted without catching up to
                 // today; previously returned a stale past date.
                 return Err(AppError::Validation(format!(
                     "recurrence ++ cap exceeded: original={original} interval={interval} today={today}"
@@ -268,7 +268,7 @@ pub(crate) fn shift_date(date: &str, rule: &str) -> Result<Option<String>, AppEr
 
 #[cfg(test)]
 mod tests_m80 {
-    //! Table-driven tests for M-80: `+Ny` (yearly) recurrence support.
+    //! Table-driven tests for `+Ny` (yearly) recurrence support.
 
     use super::shift_date;
 
@@ -311,7 +311,7 @@ mod tests_m80 {
                 "+2y from 2025-12-31 → 2027-12-31",
             ),
             // Zero count: matches `+0d`/`+0w`/`+0m` behaviour (returns None;
-            // org-mode recurrence never goes "nowhere", per M-79).
+            // Org-mode recurrence never goes "nowhere").
             (
                 "2025-04-26",
                 "+0y",
@@ -330,7 +330,7 @@ mod tests_m80 {
         ];
 
         for (date, rule, expected, desc) in cases {
-            // PEND-26 N3 / PEND-24 H2: `shift_date` returns
+            // `shift_date` returns
             // `Result<Option<String>, AppError>`. None of these table
             // cases exercise the `++` arm, so all rows expect `Ok(_)`;
             // the `Option` then captures the parse-success vs

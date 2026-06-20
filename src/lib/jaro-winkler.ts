@@ -1,5 +1,5 @@
 /**
- * Jaro-Winkler similarity (PEND-51).
+ * Jaro-Winkler similarity.
  *
  * Pure-frontend fuzzy scorer used by the Cmd+K palette to rescore the
  * FTS5 candidate set with edit-distance tolerance. The FTS5 trigram
@@ -115,7 +115,7 @@ export function jaroWinkler(a: string, b: string): number {
 
 /**
  * Blend an FTS-derived rank score with a fuzzy similarity score per the
- * PEND-51 plan: `0.7 * fts + 0.3 * fuzzy`.
+ * Plan: `0.7 * fts + 0.3 * fuzzy`.
  *
  * `ftsScore` is expected to be a normalised, **higher-is-better** score
  * in `[0, 1]`. Callers should derive it from the FTS5 cursor rank via

@@ -1,5 +1,5 @@
 /**
- * Tests for useGraphSimulation (MAINT-57 + BUG-45).
+ * Tests for useGraphSimulation (+).
  *
  * The hook owns the d3-force simulation lifecycle, worker/main-thread
  * fallback, drag handlers, zoom behavior, and error recovery. Because the
@@ -374,12 +374,12 @@ describe('useGraphSimulation', () => {
     expect(forceSimulation).toHaveBeenCalled()
   })
 
-  // UX-238: the simulation now observes the SVG with a ResizeObserver so
+  // The simulation now observes the SVG with a ResizeObserver so
   // centering forces re-anchor when the container resizes. Without the
   // observer the forces stayed pinned to the initial `clientWidth /
   // clientHeight` and nodes drifted off-center after any container
   // resize (window resize, sidebar toggle, orientation change).
-  it('attaches a ResizeObserver to the SVG for re-anchoring on resize (UX-238)', () => {
+  it('attaches a ResizeObserver to the SVG for re-anchoring on resize', () => {
     render(
       React.createElement(Harness, {
         nodes: makeNodes(),
@@ -396,7 +396,7 @@ describe('useGraphSimulation', () => {
     expect((observedEl as Element).tagName.toLowerCase()).toBe('svg')
   })
 
-  it('posts a resize message (not a second start) with new dimensions when resize fires (#747, UX-238)', () => {
+  it('posts a resize message (not a second start) with new dimensions when resize fires (#747,)', () => {
     render(
       React.createElement(Harness, {
         nodes: makeNodes(),
@@ -433,7 +433,7 @@ describe('useGraphSimulation', () => {
     expect(resizeCalls[0]).toMatchObject({ type: 'resize', width: 1200, height: 800 })
   })
 
-  it('disconnects the ResizeObserver on unmount (UX-238)', () => {
+  it('disconnects the ResizeObserver on unmount', () => {
     const { unmount } = render(
       React.createElement(Harness, {
         nodes: makeNodes(),
@@ -663,12 +663,12 @@ describe('useGraphSimulation', () => {
     })
   })
 
-  // UX-270: the keyboard-navigation pattern (tabindex=0 + role=button +
+  // The keyboard-navigation pattern (tabindex=0 + role=button +
   // Enter/Space activation) is now documented in `attachNodeClickAndKeyboard`.
   // These regression tests pin the contract:
   //   1. node `<g>` elements get `tabindex='0'` and `role='button'`
   //   2. both 'click' and 'keydown' handlers are registered on every node
-  describe('keyboard navigation pattern (UX-270)', () => {
+  describe('keyboard navigation pattern', () => {
     function getNodeSelectionMock(): any {
       // The select(svg) chain → append('g') returns the parent group, on
       // which selectAll('g.node').data(simNodes).join('g').attr(...) etc.

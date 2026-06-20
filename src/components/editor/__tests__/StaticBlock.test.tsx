@@ -33,7 +33,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   convertFileSrc: vi.fn((path: string) => `asset://localhost/${encodeURIComponent(path)}`),
 }))
 
-// MAINT-131: StaticBlock now reads attachments from the
+// StaticBlock now reads attachments from the
 // BatchAttachmentsProvider context instead of `useBlockAttachments`.
 vi.mock('@/hooks/useBatchAttachments', () => ({
   useBatchAttachments: vi.fn(),
@@ -53,7 +53,7 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
     // tests that don't seed properties fall through to the defaults.
     getBatchProperties: vi.fn(() => Promise.resolve({})),
     setProperty: vi.fn(() => Promise.resolve({})),
-    // PEND-76 F2 — image attachments are rendered from raw bytes read
+    // Image attachments are rendered from raw bytes read
     // over IPC and wrapped in a blob URL. Default mock returns a tiny
     // PNG-ish byte array so the image render path resolves.
     readAttachment: vi.fn(() => Promise.resolve(new Uint8Array([137, 80, 78, 71]))),
@@ -72,7 +72,7 @@ const mockedUseBatchAttachments = vi.mocked(useBatchAttachments)
 function mockBatchAttachments(attachments: AttachmentRow[], options: { loading?: boolean } = {}) {
   mockedUseBatchAttachments.mockReturnValue({
     get: (id: string) => (id === 'B1' ? attachments : undefined),
-    // PEND-35 Tier 2.7a: getCount derives from the same map.
+    // GetCount derives from the same map.
     getCount: (id: string) => (id === 'B1' ? attachments.length : 0),
     loading: options.loading ?? false,
     invalidate: vi.fn(),
@@ -136,7 +136,7 @@ describe('StaticBlock', () => {
     vi.clearAllMocks()
     vi.stubGlobal('IntersectionObserver', AutoEnterIntersectionObserver)
     // Restore default behavior for mocked tauri functions.
-    // PEND-35 Tier 2.4c — `getProperty` returns the single row (or
+    // `getProperty` returns the single row (or
     // null) from the backend's `block_properties` PK lookup.
     mockedGetBatchProperties.mockResolvedValue({})
     mockedSetProperty.mockResolvedValue({} as never)
@@ -187,7 +187,7 @@ describe('StaticBlock', () => {
     expect(onFocus).toHaveBeenCalledWith('B1')
   })
 
-  // UX-929 F4: selection feedback is the single `block-selected` recipe
+  // Selection feedback is the single `block-selected` recipe
   // @utility (src/index.css), shared with BlockListItem / EditableBlock.
   it('applies the block-selected recipe when isSelected is true', () => {
     render(<StaticBlock blockId="B1" content="Sel" onFocus={vi.fn()} isSelected={true} />)
@@ -432,7 +432,7 @@ describe('StaticBlock', () => {
         resolveTagName={() => '#MyTag'}
       />,
     )
-    // MAINT-162: outer wrapper no longer has role="button", so the inner
+    // Outer wrapper no longer has role="button", so the inner
     // role="link" chips are no longer "nested" inside an interactive element.
     // Audit runs without rule overrides.
     const results = await axe(container)
@@ -509,7 +509,7 @@ describe('StaticBlock', () => {
         onFocus={vi.fn()}
       />,
     )
-    // MAINT-162: outer wrapper is a passive container so the inner
+    // Outer wrapper is a passive container so the inner
     // role="link" external-link span is not a nested-interactive violation.
     const results = await axe(container)
     expect(results).toHaveNoViolations()
@@ -741,16 +741,16 @@ describe('StaticBlock', () => {
     })
   })
 
-  // -- MAINT-162: passive-container outer wrapper -----------------------------
+  // -- passive-container outer wrapper -----------------------------
   //
-  // After MAINT-162, StaticBlock's outer element is a plain <div> with no
+  // After StaticBlock's outer element is a plain <div> with no
   // role, no tabIndex, and no keyboard handler. It is NOT in the tab order
   // and is NOT exposed as a button to assistive tech. Clicking the wrapper
   // still mounts the roving TipTap editor (via onFocus), and the inner
   // subtree retains its own focusable controls (rich-content link/tag chips,
   // QueryResult chevron + edit pencil, attachment buttons).
 
-  describe('MAINT-162: passive-container outer wrapper', () => {
+  describe('passive-container outer wrapper', () => {
     it('outer wrapper is a plain <div> with no role and no tabindex', () => {
       render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
       const outer = screen.getByTestId('block-static')
@@ -887,7 +887,7 @@ describe('StaticBlock', () => {
       }
     }
 
-    it('renders image attachment as <img> from bytes (PEND-76 F2)', async () => {
+    it('renders image attachment as <img> from bytes', async () => {
       mockBatchAttachments([makeAttachment()])
 
       render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
@@ -1025,7 +1025,7 @@ describe('StaticBlock', () => {
     })
   })
 
-  // -- Image resize controls (UX-85) ------------------------------------------
+  // -- Image resize controls ------------------------------------------
 
   describe('image resize controls', () => {
     function makeAttachment(overrides: Partial<AttachmentRow> = {}): AttachmentRow {
@@ -1434,7 +1434,7 @@ describe('StaticBlock', () => {
         <StaticBlock blockId="B1" content="{{query type:tag expr:test}}" onFocus={vi.fn()} />,
       )
       await screen.findByText('Service unavailable')
-      // MAINT-162: passive-container wrapper means QueryResult's inner
+      // Passive-container wrapper means QueryResult's inner
       // <button> is no longer nested inside an interactive role.
       const results = await axe(container)
       expect(results).toHaveNoViolations()

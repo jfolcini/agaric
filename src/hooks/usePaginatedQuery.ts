@@ -75,7 +75,7 @@ export function usePaginatedQuery<T>(
   const [capped, setCapped] = useState(false)
   const [totalCount, setTotalCount] = useState<number | undefined>(undefined)
   const requestIdRef = useRef(0)
-  // PEND-58f FE-2 — controller for the in-flight request. Each `load()`
+  // Controller for the in-flight request. Each `load()`
   // aborts the previous controller so a superseded search (newer
   // keystroke, filter change, `loadMore` race) stops waiting on its IPC
   // and any AbortSignal-aware `queryFn` can drop the prior request. The
@@ -132,7 +132,7 @@ export function usePaginatedQuery<T>(
         setError(null)
       } catch (err) {
         if (requestIdRef.current !== rid) return
-        // PEND-73 Phase 2 — swallow PEND-70 cancellations silently.
+        // Phase 2 — swallow cancellations silently.
         // A superseded keystroke or filter change is the expected case
         // and should not flash a toast / set error state. The stale-id
         // guard above already discards the (non-existent) result.
@@ -153,13 +153,13 @@ export function usePaginatedQuery<T>(
   // Only call load() when enabled — this lets callers gate auto-fetch.
   const enabled = options?.enabled ?? true
   useEffect(() => {
-    // FE-1 — invalidate any in-flight request whenever deps change or
+    // Invalidate any in-flight request whenever deps change or
     // `enabled` flips. Without this, disabling the query (e.g. the user
     // cleared the input) skips `load()`, so `requestIdRef` is never
     // bumped and the prior request's late response still passes its
     // stale-id guard and repopulates the just-cleared list.
     requestIdRef.current++
-    // PEND-58f FE-2 — alongside the request-id bump, abort the prior
+    // Alongside the request-id bump, abort the prior
     // in-flight request so its IPC stops being awaited. `load()` (when
     // `enabled`) arms a fresh controller; the `!enabled` early-return
     // below leaves it aborted, which is correct — there is nothing to
@@ -181,7 +181,7 @@ export function usePaginatedQuery<T>(
     load()
   }, [load, enabled])
 
-  // PEND-58f FE-2 — abort the in-flight request on unmount. Kept in its
+  // Abort the in-flight request on unmount. Kept in its
   // own mount-only effect (empty deps) so it does NOT tear down the
   // controller that the deps-change effect above just armed; that effect
   // already aborts the prior request before re-arming.

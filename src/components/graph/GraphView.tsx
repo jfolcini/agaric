@@ -3,13 +3,13 @@
  *
  * Nodes = pages, edges = [[links]] between pages.
  *
- * Force simulation runs in a WebWorker (PERF-9b) with a main-thread
+ * Force simulation runs in a WebWorker with a main-thread
  * fallback. If the worker fails at runtime (module-resolution error,
  * CSP block, runtime throw) the component transparently falls back to
- * the main-thread path — see `useGraphSimulation` (MAINT-57 + BUG-45).
+ * The main-thread path — see `useGraphSimulation` (+).
  *
  * Data fetching lives in `GraphView.helpers.ts::fetchGraphData`
- * (MAINT-56). SVG rendering, zoom, and drag are owned by the hook.
+ *. SVG rendering, zoom, and drag are owned by the hook.
  */
 
 import { AlertCircle, Maximize2, Minus, Network, Plus } from 'lucide-react'
@@ -43,7 +43,7 @@ import { listTagsByPrefix } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
-// ── Module-level cache for stale-while-revalidate (UX-113) ────────────
+// ── Module-level cache for stale-while-revalidate ────────────
 const GRAPH_CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
 
 export interface GraphCache {
@@ -128,7 +128,7 @@ export function clearGraphCache(): void {
 }
 
 /**
- * UX-356: append the current keyboard shortcut binding (if any) to a label
+ * Append the current keyboard shortcut binding (if any) to a label
  * so icon-only buttons surface their hotkey via the accessible name. Returns
  * the bare label when no binding is configured to avoid a stray "()".
  */
@@ -206,7 +206,7 @@ export function GraphView(): React.ReactElement {
       .catch((err) => logger.error('GraphView', 'Failed to load tags', undefined, err))
   }, [])
 
-  // Fetch data with stale-while-revalidate caching (UX-113)
+  // Fetch data with stale-while-revalidate caching
   useEffect(() => {
     let cancelled = false
 
@@ -348,7 +348,7 @@ export function GraphView(): React.ReactElement {
         <LoadingSkeleton count={3} height="h-16" />
       </div>
     )
-  // PEND-23 M9: render `error` via the shared EmptyState primitive instead
+  // Render `error` via the shared EmptyState primitive instead
   // of an ad-hoc `role="alert"` card so the failure mode reuses the same
   // visual language as the empty / no-data path.
   if (error)
@@ -373,7 +373,7 @@ export function GraphView(): React.ReactElement {
         className="graph-view relative h-full w-full flex-1 min-h-0 overflow-hidden rounded-lg border border-border bg-background"
         data-testid="graph-view"
       >
-        {/* Multi-dimension filter bar (UX-205).
+        {/* Multi-dimension filter bar.
             Wrapped in FeatureErrorBoundary so a crash in the filter / cytoscape
             integration doesn't blank the entire GraphView (UX Tier 3). */}
         <div
@@ -399,7 +399,7 @@ export function GraphView(): React.ReactElement {
           />
         </div>
         {/*
-         * UX-244: `position: absolute; inset: 0` is required for the SVG to fill
+         * `position: absolute; inset: 0` is required for the SVG to fill
          * the `.graph-view` (relative) container. Bare `h-full` on an inline SVG
          * does NOT resolve against a block-level flex-item parent in Chromium —
          * it falls back to the SVG's intrinsic 150 px default height, which was
@@ -410,7 +410,7 @@ export function GraphView(): React.ReactElement {
          * overlays after → above).
          */}
         {/*
-         * UX-270: dropped `role="img"` from the SVG wrapper. The graph's nodes
+         * Dropped `role="img"` from the SVG wrapper. The graph's nodes
          * are interactive (`role="button"` + `tabindex=0` + Enter/Space handlers
          * via `useGraphSimulation`), and `role="img"` on a container of
          * interactive descendants is incorrect — ATs treat it as one opaque
@@ -419,7 +419,7 @@ export function GraphView(): React.ReactElement {
          * via its default graphics role.
          */}
         {/*
-         * UX-355: pair the SVG with a visually-hidden hint so keyboard users
+         * Pair the SVG with a visually-hidden hint so keyboard users
          * discover that nodes are activatable. `aria-describedby` points at
          * the `sr-only` paragraph so ATs read the hint alongside the SVG's
          * accessible name without affecting visual layout.

@@ -580,7 +580,7 @@ export function LinkTargetEditor({
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    // FEAT-3 Phase 4 — `listAllPagesInSpace` requires a space id; the `?? ''`
+    // Phase 4 — `listAllPagesInSpace` requires a space id; the `?? ''`
     // pre-bootstrap fallback forces an empty (no-match) result rather than a
     // runtime null-deref, matching the property ref picker.
     listAllPagesInSpace(currentSpaceId ?? '')

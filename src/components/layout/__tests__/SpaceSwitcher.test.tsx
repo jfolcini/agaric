@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-// PEND-37: accent-dot inline-style assertion (`style.backgroundColor`
+// Accent-dot inline-style assertion (`style.backgroundColor`
 // containing `var(--accent-…)`) requires jsdom — happy-dom's CSS parser
 // drops `var()` values, leaving the style empty.
 
 /**
- * Tests for SpaceSwitcher (FEAT-3 Phase 1 + Phase 6).
+ * Tests for SpaceSwitcher (Phase 1 + Phase 6).
  *
  * Validates:
  *  - Renders current space name from the store
@@ -43,7 +43,7 @@ vi.mock('@/lib/tauri', async (importActual) => {
 // (src/__tests__/mocks/ui-select.tsx) renders `SelectTrigger` as
 // `null`, which is fine for capturing props onto the native `<select>`
 // SelectContent emits, but it also drops the trigger's children — so
-// the UX-364 "Space:" prefix span (rendered as a sibling of
+// The "Space:" prefix span (rendered as a sibling of
 // `<SelectValue>` inside the trigger) is invisible to test queries.
 //
 // This override delegates everything to the shared mock and only
@@ -148,7 +148,7 @@ describe('SpaceSwitcher', () => {
     expect(useSpaceStore.getState().currentSpaceId).toBe(WORK.id)
   })
 
-  // FEAT-3 Phase 6 — the "Manage spaces…" entry is no longer a
+  // Phase 6 — the "Manage spaces…" entry is no longer a
   // disabled placeholder. It is an enabled SelectItem and selecting it
   // opens `SpaceManageDialog` instead of switching space. The dialog
   // mount itself is asserted via the stub installed at the top of the
@@ -232,8 +232,8 @@ describe('SpaceSwitcher', () => {
     )
   })
 
-  // ── UX-9: shortcut hint tooltip on the trigger ──
-  it('renders a shortcut-hint tooltip on the trigger (UX-9)', async () => {
+  // ── shortcut hint tooltip on the trigger ──
+  it('renders a shortcut-hint tooltip on the trigger', async () => {
     const user = userEvent.setup()
     mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
 
@@ -264,14 +264,14 @@ describe('SpaceSwitcher', () => {
     )
   })
 
-  // FEAT-3p11 — each non-disabled SelectItem must carry a digit-hotkey
+  // Each non-disabled SelectItem must carry a digit-hotkey
   // hint chip (`Ctrl+1`, `Ctrl+2`, … on Linux/Windows; `⌘1`, `⌘2`, … on
   // macOS) so the shortcut is discoverable without consulting the
   // keyboard cheat-sheet. The chip is rendered for the first nine
   // spaces in alphabetical order; the disabled "Manage spaces…"
   // placeholder must NOT carry a chip — it isn't bound to a hotkey
-  // and its row is owned by FEAT-3p6.
-  it('renders a hint chip on each space row in alphabetical order (FEAT-3p11)', async () => {
+  // And its row is owned by.
+  it('renders a hint chip on each space row in alphabetical order', async () => {
     mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
 
     render(<SpaceSwitcher />)
@@ -297,7 +297,7 @@ describe('SpaceSwitcher', () => {
     // is the right way to verify chip presence.
     expect(options[0]?.textContent).toContain('Personal')
     expect(options[1]?.textContent).toContain('Work')
-    // The disabled Manage placeholder must stay chip-free — FEAT-3p6
+    // The disabled Manage placeholder must stay chip-free
     // owns it and it isn't a hotkey target.
     const manageOption = screen.getByRole('option', { name: /Manage spaces/ })
     expect(manageOption.textContent).not.toMatch(/Ctrl\+\d/)
@@ -312,17 +312,17 @@ describe('SpaceSwitcher', () => {
     expect(chips[1]?.textContent).toBe('Ctrl+2')
   })
 
-  // ── PEND-37: trigger replaces "Space:" prefix with an accent dot ──
+  // ── trigger replaces "Space:" prefix with an accent dot ──
   //
-  // The static "Space:" text prefix (UX-364) was reclaiming ~50px in
-  // a sidebar that's already narrow. PEND-37 replaces it with an 8px
+  // The static "Space:" text prefix was reclaiming ~50px in
+  // A sidebar that's already narrow. replaces it with an 8px
   // colour-identity dot that mirrors `SpaceTopStripe` and
   // `SpaceAccentBadge`. The dot is decorative — `aria-hidden` + the
   // existing `aria-label="Switch space"` on `SelectTrigger` is the
   // accessible name. The four cases below pin the new behaviour
   // (presence + colour + fallback) AND the regression carve-out
   // (no "Space:" text in the trigger anymore, `aria-label` still set).
-  it('renders an accent-coloured dot before the active space name (PEND-37)', async () => {
+  it('renders an accent-coloured dot before the active space name', async () => {
     mockedListSpaces.mockResolvedValueOnce([{ ...PERSONAL, accent_color: 'accent-emerald' }, WORK])
 
     render(<SpaceSwitcher />)
@@ -341,7 +341,7 @@ describe('SpaceSwitcher', () => {
     expect(dot).toHaveAttribute('aria-hidden', 'true')
   })
 
-  it("dot's colour follows the active space when the user switches (PEND-37)", async () => {
+  it("dot's colour follows the active space when the user switches", async () => {
     mockedListSpaces.mockResolvedValueOnce([
       { ...PERSONAL, accent_color: 'accent-emerald' },
       { ...WORK, accent_color: 'accent-violet' },
@@ -370,7 +370,7 @@ describe('SpaceSwitcher', () => {
     expect(dot.style.backgroundColor).not.toContain('accent-emerald')
   })
 
-  it('falls back to var(--accent-current) when accent_color is null (PEND-37)', async () => {
+  it('falls back to var(--accent-current) when accent_color is null', async () => {
     // Mirrors the SpaceAccentBadge fallback test — a synced peer with
     // a null accent_color must still produce a non-blank dot.
     mockedListSpaces.mockResolvedValueOnce([{ ...PERSONAL, accent_color: null }])
@@ -384,7 +384,7 @@ describe('SpaceSwitcher', () => {
     expect(dot.style.backgroundColor).toContain('var(--accent-current')
   })
 
-  it('does NOT render the legacy "Space:" prefix in the trigger (PEND-37)', async () => {
+  it('does NOT render the legacy "Space:" prefix in the trigger', async () => {
     mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
 
     render(<SpaceSwitcher />)
@@ -394,14 +394,14 @@ describe('SpaceSwitcher', () => {
 
     // The per-file mock override renders SelectTrigger's children
     // into a sibling `<div data-slot="select-trigger-children">`.
-    // PEND-37 removes the prefix; the trigger should no longer carry
+    // Removes the prefix; the trigger should no longer carry
     // "Space:" text anywhere.
     const triggerChildren = document.querySelector('[data-slot="select-trigger-children"]')
     expect(triggerChildren).not.toBeNull()
     expect(triggerChildren?.textContent ?? '').not.toContain('Space:')
   })
 
-  it('keeps the trigger\'s aria-label="Switch space" (PEND-37 a11y guard)', async () => {
+  it('keeps the trigger\'s aria-label="Switch space" (a11y guard)', async () => {
     // The dot is decorative + `aria-hidden`. The accessible name on
     // the trigger must still be the i18n `space.switch` string so SR
     // users hear "Switch space" rather than the bare option text.
@@ -416,14 +416,14 @@ describe('SpaceSwitcher', () => {
     expect(trigger).toBeInTheDocument()
   })
 
-  // ── UX-373: single-space "Create another space…" hint ──
+  // ── single-space "Create another space…" hint ──
   // When the user has only one space, the SpaceSwitcher dropdown is a
   // no-op (nothing else to switch to). A "Create another space…" hint
   // is rendered inside the dropdown — under the lone space row — so
   // the manage flow is discoverable without scanning past the row to
   // the "Manage spaces…" sentinel. Clicking the hint opens the same
   // `SpaceManageDialog` the MANAGE_SENTINEL route opens.
-  it('renders the create-another-space hint when there is only one space (UX-373)', async () => {
+  it('renders the create-another-space hint when there is only one space', async () => {
     mockedListSpaces.mockResolvedValueOnce([PERSONAL])
 
     render(<SpaceSwitcher />)
@@ -437,7 +437,7 @@ describe('SpaceSwitcher', () => {
     expect(hint).toHaveTextContent('Create another space')
   })
 
-  it('does NOT render the create-another-space hint when there is more than one space (UX-373)', async () => {
+  it('does NOT render the create-another-space hint when there is more than one space', async () => {
     mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
 
     render(<SpaceSwitcher />)
@@ -449,7 +449,7 @@ describe('SpaceSwitcher', () => {
     expect(screen.queryByTestId('single-space-create-hint')).not.toBeInTheDocument()
   })
 
-  it('opens the SpaceManageDialog when the create-another-space hint is clicked (UX-373)', async () => {
+  it('opens the SpaceManageDialog when the create-another-space hint is clicked', async () => {
     const user = userEvent.setup()
     mockedListSpaces.mockResolvedValueOnce([PERSONAL])
 
@@ -471,13 +471,13 @@ describe('SpaceSwitcher', () => {
     expect(screen.getByTestId('space-manage-dialog-stub')).toBeInTheDocument()
   })
 
-  // ── UX-368: tooltip lists the first 5 space digit mappings ──
+  // ── tooltip lists the first 5 space digit mappings ──
   // The trigger tooltip used to surface only the generic
   // "Tip: Ctrl+1..9" hint. Once the dropdown closed, the user had to
-  // re-open it to see what each digit mapped to. UX-368 stacks the hint
+  // Re-open it to see what each digit mapped to. stacks the hint
   // above a list of `Ctrl+N name` rows for the first five spaces so the
   // mappings stay discoverable on hover.
-  it('lists the first 5 space digit mappings in the trigger tooltip (UX-368)', async () => {
+  it('lists the first 5 space digit mappings in the trigger tooltip', async () => {
     const user = userEvent.setup()
     mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
 

@@ -3,7 +3,7 @@
  * template-load + block-insert flow used by JournalPage's "add block"
  * affordances and the auto-create-on-mount path.
  *
- * MAINT-119: previously inlined as `handleAddBlock` in `JournalPage.tsx`.
+ * Previously inlined as `handleAddBlock` in `JournalPage.tsx`.
  * Extracted to keep the page component slim while preserving the
  * single-function ordering that handles atomic create-page-then-block,
  * optimistic state propagation, error rollback and per-space template
@@ -68,7 +68,7 @@ export function useJournalBlockCreation({
         const isNewPage = !pageId
 
         if (!pageId) {
-          // BUG-1 / H-3b — route page creation through `createPageInSpace`
+          // / H-3b — route page creation through `createPageInSpace`
           // so the new daily journal page lands with its `space` ref
           // property set atomically (CreateBlock + SetProperty in one tx).
           // The legacy `createBlock({ blockType: 'page' })` path leaked
@@ -89,7 +89,7 @@ export function useJournalBlockCreation({
             throw new Error('createPageInSpace returned no page ULID')
           }
           pageId = newId
-          // PEND-16 — page-render notification (`setCreatedPages` /
+          // Page-render notification (`setCreatedPages` /
           // `onPageCreated` / `useResolveStore.set`) is deferred to the
           // bottom of the `if (isNewPage)` branch below. Firing it here
           // would re-render JournalPage and mount BlockTree before this
@@ -100,7 +100,7 @@ export function useJournalBlockCreation({
         }
 
         if (isNewPage) {
-          // FEAT-3p5b — per-space `journal_template` text property on the
+          // Per-space `journal_template` text property on the
           // space block takes precedence over the legacy global
           // `journal-template` page. Falls through to the legacy path on
           // any failure (defensive: a broken per-space property must not
@@ -143,7 +143,7 @@ export function useJournalBlockCreation({
                 useBlockStore.setState({ focusedBlockId: ids[0] ?? null })
               }
             }
-            // PEND-16 — no `else` branch. When neither a per-space nor a
+            // No `else` branch. When neither a per-space nor a
             // legacy journal template is configured, BlockTree's
             // `autoCreateFirstBlock` effect is the single owner of seed-
             // block creation: on mount it observes `blocks.length === 0`
@@ -152,7 +152,7 @@ export function useJournalBlockCreation({
             // effect and produced two blocks for the same fresh page.
           }
 
-          // PEND-16 — fire page-render notifications now that the
+          // Fire page-render notifications now that the
           // template branch has settled (either seeded blocks via
           // `insertTemplateBlocks*` and reloaded the per-page store, or
           // intentionally no-oped so BlockTree owns seeding). DaySection

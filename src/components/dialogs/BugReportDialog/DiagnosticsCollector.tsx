@@ -10,7 +10,7 @@
  *      `t('bugReport.includeLogsLabel')` is ON.
  *   2. The zip-download hint that names the eventual ZIP and reminds the
  *      user the file must be dragged into the GitHub issue manually.
- *   3. The nested per-log preview sub-dialog (UX-277) — a Radix Dialog
+ * 3. The nested per-log preview sub-dialog — a Radix Dialog
  *      portalled to `document.body` so it stacks above the parent dialog.
  *
  * State + IPC remain in the orchestrator: this component is a controlled
@@ -54,7 +54,7 @@ export interface DiagnosticsCollectorProps {
   /** Click handler for a per-row "Preview" button. */
   onOpenPreview: (filename: string) => void
 
-  // ── Per-log preview sub-dialog state (UX-277) ───────────────────────
+  // ── Per-log preview sub-dialog state ───────────────────────
   previewOpen: boolean
   previewFilename: string | null
   previewContents: string | null
@@ -134,7 +134,7 @@ export function DiagnosticsCollector({
         </div>
       )}
 
-      {/* UX-277: per-log preview sub-dialog. Radix portals this to
+      {/* per-log preview sub-dialog. Radix portals this to
           document.body so it stacks correctly above the parent dialog.
           Kept as a regular Dialog primitive across viewports — nesting a
           Sheet inside a Sheet would compound the focus-trap and
@@ -193,7 +193,7 @@ export function DiagnosticsCollector({
                           total: previewContents.length,
                         })}
                   </p>
-                  {/* UX-12: View-full / collapse affordance so the
+                  {/* View-full / collapse affordance so the
                       truncation notice isn't a dead end. */}
                   <Button
                     variant="link"
@@ -214,7 +214,7 @@ export function DiagnosticsCollector({
               onClick={() => {
                 onPreviewOpenChange(false)
               }}
-              // PEND-23 L7: explicit autoFocus on the close button so
+              // Explicit autoFocus on the close button so
               // the nested log-preview dialog lands focus on a known,
               // dismissable target (rather than relying on Radix
               // default focus-trap discovery, which previously left

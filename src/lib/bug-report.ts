@@ -1,5 +1,5 @@
 /**
- * Bug-report URL and Markdown body composition helpers (FEAT-5).
+ * Bug-report URL and Markdown body composition helpers.
  *
  * Pure functions. No side effects. No IPC. No DOM access. Every call site
  * in the React dialog composes its inputs from component state + the

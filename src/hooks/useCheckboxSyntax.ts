@@ -51,7 +51,7 @@ export function useCheckboxSyntax({
         .then(() => {
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
           // F-37: warn when completing a task that has unresolved dependencies.
-          // PEND-35 Tier 2.4c — single-key PK lookup; the check only
+          // Single-key PK lookup; the check only
           // needs the `blocked_by` row, not the full vocabulary.
           if (state === 'DONE') {
             getProperty(focusedBlockId, 'blocked_by')

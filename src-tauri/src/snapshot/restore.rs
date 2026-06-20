@@ -6,7 +6,7 @@ use crate::db::MAX_SQL_PARAMS;
 use crate::error::AppError;
 use crate::materializer::{MaterializeTask, Materializer};
 
-/// MAINT-152(d): single inventory of cache tables paired with their rebuild
+/// (d): single inventory of cache tables paired with their rebuild
 /// task. The wipe loop iterates over `.0` to issue `DELETE FROM <table>`;
 /// the rebuild loop iterates over `.1` to enqueue the materializer task
 /// that repopulates the same table. Co-locating both sides means a new
@@ -15,10 +15,10 @@ use crate::materializer::{MaterializeTask, Materializer};
 ///
 /// Note: `RebuildPageIds` is intentionally NOT in this list — it has no
 /// dedicated cache table (it backfills `blocks.page_id` instead) and must
-/// be enqueued ahead of agenda rebuilds (M-15). It is enqueued separately
+/// Be enqueued ahead of agenda rebuilds. It is enqueued separately
 /// at the head of the rebuild fan-out below.
 ///
-/// `block_tag_refs` is the UX-250 inline-tag-ref cache and is wiped
+/// `block_tag_refs` is the inline-tag-ref cache and is wiped
 /// alongside the other caches (the wipe used to be inline among the core
 /// tables purely as a sequencing artifact; FK ordering does not matter
 /// because `PRAGMA defer_foreign_keys = ON` is set at the top of the
@@ -36,7 +36,7 @@ const CACHE_TABLES: &[(&str, MaterializeTask)] = &[
         MaterializeTask::RebuildProjectedAgendaCache,
     ),
     ("fts_blocks", MaterializeTask::RebuildFtsIndex),
-    // UX-250: inline `#[ULID]` tag-ref cache. Purely derived — repopulated
+    // Inline `#[ULID]` tag-ref cache. Purely derived — repopulated
     // by `RebuildBlockTagRefsCache` below.
     ("block_tag_refs", MaterializeTask::RebuildBlockTagRefsCache),
     // #617/#794: the page-level link roll-up (migration 0065). Both of its
@@ -55,21 +55,21 @@ const CACHE_TABLES: &[(&str, MaterializeTask)] = &[
 /// Apply a snapshot (RESET path). Wipes all core + cache tables, inserts
 /// snapshot data, then enqueues the full cache-rebuild set on the
 /// materializer so the UI doesn't see empty agenda / tag list / page
-/// list / search until the next unrelated op (BUG-42).
+/// List / search until the next unrelated op.
 ///
 /// Uses `BEGIN IMMEDIATE` (F04) to acquire the write lock upfront and
 /// `PRAGMA defer_foreign_keys = ON` (F02) so that block inserts succeed
 /// regardless of parent/child ordering in the snapshot data.
 ///
 /// Cache rebuild tasks are enqueued via the awaiting `enqueue_background`
-/// variant (M-67): it blocks until queue space is available, so no rebuild
+/// Variant: it blocks until queue space is available, so no rebuild
 /// is dropped on a saturated channel. The only failure mode is
 /// channel-closed (shutdown-in-progress), which is logged at `error!` and
 /// does not abort the restore — the snapshot itself is already durable at
 /// this point. Callers that need a synchronous guarantee can
 /// `flush_background()` on the materializer after this returns.
 ///
-/// # Caller responsibility: anchor the post-restore hash chain (M-70)
+/// # Caller responsibility: anchor the post-restore hash chain
 ///
 /// The caller is responsible for anchoring the post-restore hash chain via
 /// [`peer_refs::update_on_sync`](crate::peer_refs::update_on_sync) (or
@@ -77,7 +77,7 @@ const CACHE_TABLES: &[(&str, MaterializeTask)] = &[
 /// NOT persist `up_to_hash` as the local device's most-recent-seq-and-hash.
 /// Without this follow-up, the next local op's `prev_hash` will not chain
 /// correctly to the snapshot, and peer-side hash-chain validation will
-/// diverge. See M-70 for context.
+/// Diverge. See for context.
 ///
 /// The known production caller — `sync_daemon::snapshot_transfer::
 /// try_receive_snapshot_catchup` — performs this anchor immediately after
@@ -107,7 +107,7 @@ const CACHE_TABLES: &[(&str, MaterializeTask)] = &[
 ///   describe the pre-reset lineage; left in place,
 ///   `try_offer_snapshot_catchup` would keep serving them via
 ///   `get_latest_snapshot`, and a third device still on the OLD lineage
-///   passes the M-58 covering check — so this device could re-ship the
+///   Passes the covering check — so this device could re-ship the
 ///   pre-reset vault AFTER itself moving to the new lineage. A post-reset
 ///   device has nothing valid to offer until it snapshots its new state.
 /// - `app_settings['loro.peer_id_epoch']` — **bumped, not wiped** (#792).
@@ -141,7 +141,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
     materializer: &Materializer,
     compressed_reader: R,
 ) -> Result<SnapshotData, AppError> {
-    // L-67: the reader is consumed entirely inside `decode_snapshot`
+    // The reader is consumed entirely inside `decode_snapshot`
     // (zstd-streaming + ciborium) before we acquire the write lock,
     // so the only memory in flight from this point on is the parsed
     // `SnapshotData` itself — never the compressed bytes nor the
@@ -151,7 +151,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
     let data = decode_snapshot(compressed_reader)?;
 
     // F04: BEGIN IMMEDIATE — acquire write lock upfront (consistent with
-    // every other write path in the codebase). L-7: route through
+    // Every other write path in the codebase). route through
     // `begin_immediate_logged` so a stalled writer surfaces as a `warn`
     // instead of disappearing into the 5s busy_timeout — restore is a
     // long-running write that any other writer will visibly stall on.
@@ -164,7 +164,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
         .execute(&mut *tx)
         .await?;
 
-    // MAINT-152(d): wipe every cache table from the single inventory.
+    // (d): wipe every cache table from the single inventory.
     // FK ordering is moot under `defer_foreign_keys = ON`; iteration order
     // matches `CACHE_TABLES` for reviewability.
     for (table, _rebuild_task) in CACHE_TABLES {
@@ -221,7 +221,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
         .await?;
     // #793: stale local snapshots must die with the lineage they describe.
     // `try_offer_snapshot_catchup` serves `get_latest_snapshot` to any
-    // behind peer, and the M-58 covering check only compares the
+    // Behind peer, and the covering check only compares the
     // requester's heads against the snapshot's `up_to_seqs` — a third
     // device still on the OLD lineage is "covered" by a pre-reset
     // snapshot, so leaving these rows in place lets this device re-ship
@@ -259,9 +259,9 @@ pub async fn apply_snapshot<R: std::io::Read>(
     .execute(&mut *tx)
     .await?;
 
-    // M-66 — surface dropped drafts via a warn line.
+    // Surface dropped drafts via a warn line.
     //
-    // RESET is invoked by FEAT-6 snapshot-driven catch-up. Any draft a
+    // RESET is invoked by snapshot-driven catch-up. Any draft a
     // peer saved AFTER the snapshot was taken (because it was mid-edit
     // when the snapshot fired or when the catch-up arrived) is silently
     // discarded by the wipe-and-restore. Pre-fix this happened with no
@@ -284,7 +284,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
         tracing::warn!(
             dropped_count,
             ?sample_ids,
-            "apply_snapshot: dropping unflushed drafts (M-66) — RESET wipes block_drafts; \
+            "apply_snapshot: dropping unflushed drafts — RESET wipes block_drafts; \
              any draft saved after the snapshot was taken is silently lost without this warning"
         );
     }
@@ -294,7 +294,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
     // blocks last (parent of all FK references)
     sqlx::query!("DELETE FROM blocks").execute(&mut *tx).await?;
 
-    // MAINT-152(a): batch-INSERT each table via the `batch_insert_snapshot_rows!`
+    // (a): batch-INSERT each table via the `batch_insert_snapshot_rows!`
     // macro. The macro hides the placeholder string, the chunk-size derivation
     // (`MAX_SQL_PARAMS / num_columns`), the `format!`-driven INSERT, and the
     // bind loop — leaving the column list, row source, and per-row binding
@@ -479,7 +479,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
     // (`space_id REFERENCES spaces(id)`, checked at COMMIT because of the
     // F02 `defer_foreign_keys` above) those rows would abort the whole
     // restore. NULL them instead — the every-boot `pages_without_space`
-    // backfill (BUG-1/L-133) reassigns the affected pages to Personal.
+    // Backfill reassigns the affected pages to Personal.
     let repaired = sqlx::query!(
         "UPDATE blocks SET space_id = NULL \
          WHERE space_id IS NOT NULL \
@@ -634,11 +634,11 @@ pub async fn apply_snapshot<R: std::io::Read>(
 
     tx.commit().await?;
 
-    // BUG-42: Enqueue the full cache-rebuild set. Without this, the UI
+    // Enqueue the full cache-rebuild set. Without this, the UI
     // sees empty agenda / tag list / page list / search until the next
     // unrelated op triggers rebuilds by side-effect.
     //
-    // M-67: use the awaiting `enqueue_background` variant. The previous
+    // Use the awaiting `enqueue_background` variant. The previous
     // `try_enqueue_background` shed tasks when the bounded background
     // channel was saturated (a `warn!` was emitted but otherwise lost) —
     // and this is exactly the moment when stale caches matter most:
@@ -651,9 +651,9 @@ pub async fn apply_snapshot<R: std::io::Read>(
     // is by definition alive, we just used it) and continue so the
     // caller still sees the durable `SnapshotData`.
     //
-    // M-15: `RebuildPageIds` MUST be enqueued first so it is processed
+    // `RebuildPageIds` MUST be enqueued first so it is processed
     // before `RebuildAgendaCache` / `RebuildProjectedAgendaCache`. Both
-    // agenda rebuilds consult `b.page_id` to apply the FEAT-5a
+    // Agenda rebuilds consult `b.page_id` to apply the
     // template-page exclusion (`NOT EXISTS (... tp.block_id = b.page_id
     // AND tp.key = 'template')`). The background consumer processes
     // tasks sequentially in enqueue order, so enqueuing it ahead of

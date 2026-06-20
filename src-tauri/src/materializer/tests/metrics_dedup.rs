@@ -1,10 +1,10 @@
 use super::*;
 
-/// Regression test for the M-12 follow-up bug: the materializer
+/// Regression test for the follow-up bug: the materializer
 /// constructors must not panic when called outside any Tokio runtime
 /// context, because that is exactly the context Tauri 2's `setup`
 /// callback runs in (synchronously on the main thread before the app
-/// loop enters its runtime). Pre-fix, the M-12 commit replaced the
+/// Loop enters its runtime). Pre-fix, the commit replaced the
 /// previous `tauri::async_runtime::spawn` (which uses Tauri's stored
 /// runtime handle) with `JoinSet::spawn` (which calls
 /// `Handle::current()` and panics outside a runtime), so the

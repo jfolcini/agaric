@@ -16,7 +16,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
 /**
- * PEND-23 L4 — Variant maps to a sensible default height per use-case so
+ * Variant maps to a sensible default height per use-case so
  * call sites don't need to remember which `h-*` matches a list-row vs a
  * heading vs a button. Explicit `height` still wins as an escape hatch.
  */

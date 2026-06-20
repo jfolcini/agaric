@@ -43,13 +43,13 @@ describe('LoadingSkeleton', () => {
     }
   })
 
-  // PEND-23 L4 — variant prop maps to sensible default heights.
+  // Variant prop maps to sensible default heights.
   it.each([
     ['text', 'h-4'],
     ['heading', 'h-6'],
     ['button', 'h-9'],
     ['list-row', 'h-11'],
-  ] as const)('PEND-23 L4: variant=%s applies %s', (variant, expectedHeight) => {
+  ] as const)('variant=%s applies %s', (variant, expectedHeight) => {
     const { container } = render(<LoadingSkeleton variant={variant} />)
     const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
     expect(skeletons.length).toBeGreaterThan(0)
@@ -58,7 +58,7 @@ describe('LoadingSkeleton', () => {
     }
   })
 
-  it('PEND-23 L4: explicit height prop overrides variant', () => {
+  it('explicit height prop overrides variant', () => {
     const { container } = render(<LoadingSkeleton variant="list-row" height="h-2" />)
     const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
     for (const s of skeletons) {

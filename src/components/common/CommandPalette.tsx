@@ -1,22 +1,22 @@
 /**
- * CommandPalette — Cmd/Ctrl+K command surface (PEND-61).
+ * CommandPalette — Cmd/Ctrl+K command surface.
  *
- * Successor to PEND-51's `SearchPalette`. Same UX contract for the
+ * Successor to `SearchPalette`. Same UX contract for the
  * `'search'` mode (8 page-groups x 2 matches, fuzzy rescoring, [[page]]
  * autocomplete, escalation footer, recent-pages empty state) plus a new
  * `'commands'` mode reachable via the `>` input prefix (matching
  * VSCode's Cmd+P convention).
  *
  * Wire-level upgrade: the two parallel `searchBlocks` calls per
- * keystroke that PEND-51 fired are collapsed into one
- * `searchBlocksPartitioned` round-trip (PEND-61 Phase 1).
+ * Keystroke that fired are collapsed into one
+ * `searchBlocksPartitioned` round-trip (Phase 1).
  *
  * Built atop the cmdk wrapper at `@/components/ui/command`:
  *
  *  - `<Command shouldFilter={false}>` — the visible item list IS the
  *    answer (debounced FTS + fuzzy rescore already filtered upstream).
  *  - cmdk owns Arrow / Enter keyboard nav + `aria-activedescendant`,
- *    replacing the hand-rolled roving-focus model in PEND-51.
+ * Replacing the hand-rolled roving-focus model in.
  *  - `<CommandItem value={...}>` carries the unique selection id;
  *    `onSelect` fires on Enter or click. Modifier-key new-tab is
  *    detected via the same listener (cmdk fires the click event
@@ -193,14 +193,14 @@ export function PaletteBody({
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const openInNewTab = useTabsStore((s) => s.openInNewTab)
 
-  // PEND-73 Phase 4.M6 — collapse the 8 individual store selectors into
+  // Phase 4.M6 — collapse the 8 individual store selectors into
   // one `useShallow` selector. Matches the SearchSheet.tsx:44 pattern.
   // Each individual selector subscribed the component to ANY store
   // change and re-ran the equality check 8 times per commit; the
   // shallow-compared object lets zustand bail out at the top of the
   // selector when none of the watched fields changed.
   //
-  // PEND-73 Phase 3.U8 — `previousSelectionRange` snapshotted at palette
+  // Phase 3.U8 — `previousSelectionRange` snapshotted at palette
   // open time; restored before the Selection/Range fallback insert on
   // non-TipTap contenteditable targets so `[[page]]` insertion lands at
   // the user's original caret. (The TipTap branch doesn't need it —
@@ -228,7 +228,7 @@ export function PaletteBody({
   )
 
   // ── Mode router (one-way, prefix-as-entry-shortcut) ─────────────
-  // PEND-61 CR — typing `>` at the start of an empty/whitespace
+  // Typing `>` at the start of an empty/whitespace
   // query enters commands mode AND strips the prefix from the
   // input (the chip in `ModeChipRow` is the visible mode indicator).
   // Once in commands mode, the user exits via Escape (close) or the
@@ -236,12 +236,12 @@ export function PaletteBody({
   // round-trip where the chip click had to fake-type a literal `'> '`
   // into the query.
   //
-  // PEND-67 Phase 6 — `enterModeWithQuery` (vs setMode + setQuery)
+  // Phase 6 — `enterModeWithQuery` (vs setMode + setQuery)
   // clears the search slot's `queryByMode` entry as part of the
   // transition. Without that, a chip-toggle back to search would
   // restore the original `>set` text and re-fire this router → loop.
   //
-  // PEND-67 Phase 3 — `#` enters tags mode (block_type=tag search)
+  // Phase 3 — `#` enters tags mode (block_type=tag search)
   // and `?` enters help mode (keyboard-shortcut catalog). Same
   // prefix-strip-and-restore semantics as `>`. Picker-trigger chars
   // (`/`, `@`, `[[`, `((`, `::`) remain owned by the editor and
@@ -253,7 +253,7 @@ export function PaletteBody({
     if (route != null) enterModeWithQuery(route.next, route.q)
   }, [query, mode, enterModeWithQuery])
 
-  // PEND-73 Phase 3.U4 — autofocus before paint via useLayoutEffect.
+  // Phase 3.U4 — autofocus before paint via useLayoutEffect.
   // useEffect runs after paint, leaving a one-frame flash on slow
   // mounts where the user sees the unfocused input and then watches
   // the caret jump in. Matches the InPageFind.tsx:155 pattern.
@@ -277,7 +277,7 @@ export function PaletteBody({
     setDebouncedQuery(value)
   }, PALETTE_DEBOUNCE_MS)
 
-  // PEND-72 — distinguish user-initiated query changes (which should
+  // Distinguish user-initiated query changes (which should
   // respect the 80 ms debounce above) from external writes to the
   // store (e.g. the mobile search sheet's bridge seeding the palette
   // on segment switch). The ref is updated synchronously inside
@@ -299,7 +299,7 @@ export function PaletteBody({
     debounced.schedule(trimmed)
   }
 
-  // PEND-72 — sync `debouncedQuery` whenever `query` changes from
+  // Sync `debouncedQuery` whenever `query` changes from
   // outside the input handler. The equality check vs
   // `lastUserQueryRef.current` skips the user-typing path (which
   // routes through `handleInputChange` and manages its own
@@ -314,16 +314,16 @@ export function PaletteBody({
     // so listing it cannot cause spurious re-runs; `query` remains the trigger.
   }, [query, debounced])
 
-  // PEND-73 Phase 4.M3 — race-discard via the shared `useGenerationGuard`
+  // Phase 4.M3 — race-discard via the shared `useGenerationGuard`
   // hook. Re-bumped on every keystroke; an in-flight response from an
   // earlier keystroke is dropped if its id doesn't match.
   const searchGen = useGenerationGuard()
-  // PEND-73 Phase 3.U1 — surface real IPC failures (non-cancellation)
+  // Phase 3.U1 — surface real IPC failures (non-cancellation)
   // once per session via a toast. Logger still captures every failure.
   const surfaceFailureOnce = useFailedOnce()
   const [pages, setPages] = useState<SearchBlockRow[]>([])
   const [blocks, setBlocks] = useState<SearchBlockRow[]>([])
-  // PEND-61 CR — `loading` gates the escalation footer + the
+  // `loading` gates the escalation footer + the
   // no-results empty copy so neither mounts during the brief window
   // between debounce-settle and IPC-resolve. Without this, the
   // escalation footer can register with cmdk before the search
@@ -338,9 +338,9 @@ export function PaletteBody({
 
   // ── IPC ──────────────────────────────────────────────────────────
   // One `searchBlocksPartitioned` round-trip returns both partitions
-  // ({ pages, blocks }) from a single FTS scan (PEND-61 Phase 1).
+  // ({ pages, blocks }) from a single FTS scan (Phase 1).
   //
-  // PEND-69 F1 — the partitioned IPC now runs two parallel scans
+  // The partitioned IPC now runs two parallel scans
   // server-side (page-only + unrestricted), each with its own
   // `limit + 1` probe. The pages partition is guaranteed to surface
   // matching pages regardless of how many content rows out-rank them,
@@ -368,7 +368,7 @@ export function PaletteBody({
       // shimmer. Without the bump, the previous keystroke's
       // `searchBlocksPartitioned` response still passes `isCurrent` below
       // and repopulates pages/blocks UNDER the recents/welcome empty state
-      // (groups render regardless of query length). Mirrors the FE-1
+      // (groups render regardless of query length). Mirrors the
       // invalidation in `usePaginatedQuery` for the same clear-mid-flight
       // race.
       searchGen.next()
@@ -401,7 +401,7 @@ export function PaletteBody({
       })
       .catch((err) => {
         if (!searchGen.isCurrent(gen)) return
-        // PEND-73 Phase 2 — swallow PEND-70 backend cancellations
+        // Phase 2 — swallow backend cancellations
         // silently. They fire on every superseded keystroke when a fast
         // typist races the read pool, and the stale-generation guard
         // above already discards the (non-existent) result. Toasting on
@@ -414,7 +414,7 @@ export function PaletteBody({
           { query: effectiveQuery, linkMode },
           err,
         )
-        // PEND-73 Phase 3.U1 — once-per-session toast for real failures.
+        // Phase 3.U1 — once-per-session toast for real failures.
         surfaceFailureOnce('palette:search', () => notify.error(t('search.failed')))
         setPages([])
         setBlocks([])
@@ -495,7 +495,7 @@ export function PaletteBody({
         onClose()
         return
       }
-      // PEND-61 CR — cold-open `[[page]]` (no editor focus when
+      // Cold-open `[[page]]` (no editor focus when
       // Cmd+K fired) used to silently close. Fall through to plain
       // page navigation so the user gets *something* from the
       // selection — matches the docstring promise in
@@ -545,7 +545,7 @@ export function PaletteBody({
   }
 
   // Cmd/Ctrl-click new-tab on a CommandItem. cmdk's `onSelect` doesn't
-  // expose modifier keys, so the wrapper has to capture them. PEND-61
+  // Expose modifier keys, so the wrapper has to capture them.
   // CR-2 rewires this from a fragile `mousedown` flag (which leaked
   // when the user dragged off-row before release) to:
   //
@@ -564,7 +564,7 @@ export function PaletteBody({
     newTabRef.current = e.metaKey || e.ctrlKey
   }
 
-  // ── PEND-67 Phase 5 — per-row action menu ────────────────────────
+  // ── Phase 5 — per-row action menu ────────────────────────
   // Tab on the focused row opens this menu; mouse users can also
   // open it via the `…` button rendered at row-right (Phase 4
   // already exposes a pin button there for recents). The menu
@@ -593,7 +593,7 @@ export function PaletteBody({
     return { type: value.slice(0, idx), id: value.slice(idx + 1) }
   }
 
-  // PEND-67 Phase 5 — extracted out of `handleListKeyDown` so the
+  // Phase 5 — extracted out of `handleListKeyDown` so the
   // top-level dispatcher stays under oxlint's eslint/complexity
   // budget (≤ 25). Returns true if the Tab was consumed (caller
   // should `return` early).
@@ -621,7 +621,7 @@ export function PaletteBody({
     return true
   }
 
-  // PEND-67 Phase 7 — extracted alongside `tryOpenActionMenuOnTab` so
+  // Phase 7 — extracted alongside `tryOpenActionMenuOnTab` so
   // the dispatcher reads as a flat list of "try X branch" calls.
   function tryNumericPrefixJump(e: React.KeyboardEvent<HTMLDivElement>): boolean {
     if (query.length > 0) return false
@@ -645,7 +645,7 @@ export function PaletteBody({
       return
     }
     if (e.key === 'Backspace') {
-      // PEND-61 CR-2 — Backspace on an empty input in commands mode
+      // Backspace on an empty input in commands mode
       // returns to search mode (mirrors VSCode's Cmd+P ↔ Cmd+Shift+P
       // toggle). The chip stays the visible toggle for everyone else.
       if (mode === 'commands' && query.length === 0) {
@@ -663,7 +663,7 @@ export function PaletteBody({
     return v
   }
 
-  // PEND-67 Phase 5 — `buildActionMenuActions` (top-level helper) owns
+  // Phase 5 — `buildActionMenuActions` (top-level helper) owns
   // the row-type → action-set mapping. Memoising on `actionMenu` +
   // `t` keeps the rendered menu stable across unrelated re-renders.
   const actionMenuActions = useMemo<readonly PaletteAction[]>(
@@ -672,7 +672,7 @@ export function PaletteBody({
     [actionMenu, t],
   )
 
-  // PEND-67 Phase 5 — clipboard write with a uniform success/failure
+  // Phase 5 — clipboard write with a uniform success/failure
   // toast pair so every "Copy …" action looks the same. Extracted
   // outside the row-type handlers so `notify` is the single source of
   // user-visible state for these actions.
@@ -778,9 +778,9 @@ export function PaletteBody({
     isMobile && mode === 'search' && query.length === 0 && recentSearches.length > 0
   const showNoLinkMatch = linkMode && groups.length === 0 && linkQuery.length > 0
   const trimmedQuery = query.trim()
-  // PEND-61 CR — distinguish "welcome state" (cold open, no query, no
+  // Distinguish "welcome state" (cold open, no query, no
   // recents) from "no results for query" (user typed something, got
-  // nothing). PEND-51 lumped both into one blank panel.
+  // Nothing). lumped both into one blank panel.
   const showWelcomeEmpty =
     mode === 'search' && query.length === 0 && !showRecents && !showRecentSearches && !linkMode
   const showNoResults =
@@ -791,7 +791,7 @@ export function PaletteBody({
     groups.length === 0 &&
     debouncedQuery.length > 0
   // Escalation footer — search mode only, query non-empty, not link
-  // mode. PEND-61 CR — moved INSIDE `<CommandList>` as a `<CommandItem>`
+  // Mode. moved INSIDE `<CommandList>` as a `<CommandItem>`
   // so the cmdk keyboard model (Arrow + Enter) can reach it. Gated on
   // `!loading && (groups.length > 0 || showNoResults)` so the footer
   // never mounts ahead of the search results during the debounce →
@@ -804,7 +804,7 @@ export function PaletteBody({
     !loading &&
     trimmedQuery.length > 0 &&
     (groups.length > 0 || showNoResults)
-  // PEND-58g UX-A1 — the mobile all-pages sheet ALWAYS surfaces the
+  // The mobile all-pages sheet ALWAYS surfaces the
   // escalation CTA, independent of query text / results. The full
   // search view is where filters, regex, and history live; gating the
   // CTA on a non-empty query hid it exactly when a cold-open user most
@@ -850,7 +850,7 @@ export function PaletteBody({
             <Mic aria-hidden className="size-4" />
           </button>
         )}
-        {/* PEND-61 CR-2 — visible loading affordance during the
+        {/* visible loading affordance during the
             debounce → IPC window. The shimmer is purely decorative
             (`aria-hidden`); SR users get the assistive announcement
             via the sibling `palette-loading-status` `<div>`. Honours
@@ -882,7 +882,7 @@ export function PaletteBody({
         <div
           className="mx-3 mt-2 rounded-md border border-alert-info-border bg-alert-info px-3 py-1.5 text-xs text-alert-info-foreground"
           // role="status" + aria-live polite so screen readers announce
-          // entering / leaving link mode (PEND-61 CR a11y review).
+          // Entering / leaving link mode (a11y review).
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level badge card (border/padding/rounded); <output> is inline-level and would break the boxed layout
           role="status"
           aria-live="polite"
@@ -926,7 +926,7 @@ export function PaletteBody({
               </CommandEmpty>
             )}
             {showNoResults && (
-              // PEND-61 CR — plain div (not <CommandEmpty>) because
+              // Plain div (not <CommandEmpty>) because
               // CommandEmpty self-hides when any cmdk item is present
               // and the escalation footer below counts as one.
               <div

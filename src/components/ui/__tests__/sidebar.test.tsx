@@ -112,8 +112,8 @@ describe('Sidebar ref forwarding', () => {
     expect(ref.current?.getAttribute('data-slot')).toBe('sidebar-content')
   })
 
-  // UX-208: SidebarContent uses ScrollArea primitive (no bare overflow-auto).
-  it('SidebarContent renders through ScrollArea with a viewport (UX-208)', () => {
+  // SidebarContent uses ScrollArea primitive (no bare overflow-auto).
+  it('SidebarContent renders through ScrollArea with a viewport', () => {
     const { container } = render(
       <SidebarProvider>
         <SidebarContent>

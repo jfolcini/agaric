@@ -4,10 +4,10 @@
  *
  * Pages + tags are preloaded by App.tsx via `useResolveStore.preload()`;
  * this hook fills the gap for block-link references (e.g. links to
- * content blocks). FEAT-3p7 — `spaceId` is threaded through both the
+ * Content blocks). `spaceId` is threaded through both the
  * cache-membership check and the `batchResolve` IPC so foreign-space
  * targets are filtered out and rendered as broken-link chips. Extracted
- * from BlockTree.tsx for MAINT-128.
+ * From BlockTree.tsx for.
  */
 
 import { useEffect, useMemo } from 'react'
@@ -23,7 +23,7 @@ const ULID_LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
 /**
  * Scan the provided blocks for `[[ULID]]` tokens whose ids are not yet
  * cached for the active space. The cache is keyed by
- * `${spaceId}::${ulid}` (FEAT-3p7) so the membership check has to use
+ * `${spaceId}::${ulid}` so the membership check has to use
  * the same composite key — a bare-id lookup would treat a previous-
  * space cache hit as "already cached" and skip the (now space-scoped)
  * batch resolve, leaking the foreign title into the chip render.
@@ -49,7 +49,7 @@ export function collectUncachedLinkIds(
  * Logs and swallows transport errors; honours a cancellation predicate so
  * the caller can abort on unmount without an extra flag at the call site.
  *
- * FEAT-3p7 — pass `spaceId` to scope the resolve to the active space.
+ * Pass `spaceId` to scope the resolve to the active space.
  * Foreign-space targets are filtered out by the backend; we mark them
  * as `deleted: true` placeholders here so the chip's `resolveStatus`
  * lookup hits a cached entry and renders via the broken-link UX
@@ -79,7 +79,7 @@ export async function fetchAndCacheLinks(
         deleted: r.deleted,
       })
     }
-    // FEAT-3p7 — every requested id the backend did not return is a
+    // Every requested id the backend did not return is a
     // foreign-space (or genuinely unknown) target. Cache a deleted
     // placeholder so the chip's resolveStatus hits and the broken-link
     // styling fires; without this, an unknown id falls through to the

@@ -3,16 +3,16 @@
  *
  * Validates:
  *  - Creates a page via createPageInSpace and defers seed-block creation
- *    to BlockTree's autoCreateFirstBlock effect (PEND-16) when no template
+ * To BlockTree's autoCreateFirstBlock effect when no template
  *    is configured for the active space
  *  - Skips page creation when an entry already exists in pageMap
  *  - Skips page creation when an entry already exists in createdPages (local)
- *  - Loads per-space template when configured (FEAT-3p5b)
+ * Loads per-space template when configured
  *  - Falls back to legacy `journal-template` page when per-space is empty
  *  - Surfaces a toast on errors and bails out gracefully
  *  - Refuses to create a page without an active space
  *
- * PEND-16 — the no-template branch no longer calls `createBlock` itself.
+ * The no-template branch no longer calls `createBlock` itself.
  * `BlockTree.autoCreateFirstBlock` is the single owner of seed-block
  * creation on a fresh daily page; firing a second `createBlock` here used
  * to race that effect and produce two blocks for the same page.
@@ -93,7 +93,7 @@ function setup(initialPageMap: Map<string, string> = new Map()): SetupResult {
 
 describe('useJournalBlockCreation', () => {
   it('creates a page and defers seed-block creation when no template is configured', async () => {
-    // PEND-16 — when no journal template is configured for the active
+    // When no journal template is configured for the active
     // space, the hook MUST NOT call `create_block` for the fresh page.
     // `BlockTree.autoCreateFirstBlock` is the single owner of that
     // seed-block create; calling it here too raced and produced two
@@ -115,11 +115,11 @@ describe('useJournalBlockCreation', () => {
       content: '2025-06-15',
       spaceId: 'SPACE_TEST',
     })
-    // PEND-16 — NO `create_block` IPC: BlockTree owns seed-block creation
+    // NO `create_block` IPC: BlockTree owns seed-block creation
     const createBlockCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
     expect(createBlockCalls).toHaveLength(0)
     // onPageCreated callback fired AFTER the template branch resolved —
-    // see `useJournalBlockCreation.ts` PEND-16 ordering note. The
+    // See `useJournalBlockCreation.ts` ordering note. The
     // observable contract for the caller (a single notification with the
     // new page id) is unchanged.
     expect(pageCreatedCalls).toEqual([{ dateStr: '2025-06-15', pageId: 'PNEW' }])
@@ -217,7 +217,7 @@ describe('useJournalBlockCreation', () => {
 
     expect(mockedLoadJournalTemplateForSpace).toHaveBeenCalled()
     expect(mockedLoadJournalTemplate).toHaveBeenCalled()
-    // FEAT-3 Phase 4 — `insertTemplateBlocks` now accepts `spaceId` as
+    // Phase 4 — `insertTemplateBlocks` now accepts `spaceId` as
     // its third positional arg (the active space scopes the recursive
     // copy walk).
     expect(mockedInsertTemplateBlocks).toHaveBeenCalledWith('TMPL', 'PNEW', 'SPACE_TEST', {
@@ -225,8 +225,8 @@ describe('useJournalBlockCreation', () => {
     })
   })
 
-  it('does not call createBlock when no template is configured (PEND-16)', async () => {
-    // PEND-16 — explicit regression: when both per-space and legacy
+  it('does not call createBlock when no template is configured', async () => {
+    // Explicit regression: when both per-space and legacy
     // template loaders return empty, the hook must not call
     // `create_block`. Seed-block creation is delegated to
     // `BlockTree.autoCreateFirstBlock`, which observes the empty page

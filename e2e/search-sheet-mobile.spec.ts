@@ -1,5 +1,5 @@
 /**
- * E2E — PEND-62 mobile unified search sheet.
+ * E2E — mobile unified search sheet.
  *
  * Runs at iPhone viewport so `useIsMobile()` returns true and the
  * top-bar search trigger renders. Covers the user-visible contract
@@ -9,8 +9,8 @@
  *  - Default segment depends on the current view: page-style views
  *    (Journal / page-editor) default to `'In this page'`; everywhere
  *    else defaults to `'Across all pages'`.
- *  - Switching segments swaps the embedded body (PEND-52 toolbar ↔
- *    PEND-61 palette).
+ * Switching segments swaps the embedded body (toolbar ↔
+ * Palette).
  *  - The palette escalation footer routes the user to the
  *    find-in-files view (`'search'` nav), the sheet closes on the way.
  *  - On desktop the icon is hidden — keyboard shortcuts cover it.

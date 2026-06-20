@@ -33,6 +33,6 @@ mod tests;
 // itself rather than re-exporting it crate-wide and triggering a warning.
 pub(crate) use compute::handle_recurrence_in_tx;
 pub(crate) use parser::shift_date_once;
-// MAINT-196 — shared per-block date projection used by both the cache
+// Shared per-block date projection used by both the cache
 // rebuild and the on-the-fly fallback so the two paths cannot drift.
 pub(crate) use projection::project_block_dates;

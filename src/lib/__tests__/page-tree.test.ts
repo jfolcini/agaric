@@ -115,10 +115,10 @@ describe('buildPageTree', () => {
     expect(tree[1]?.children).toHaveLength(1)
   })
 
-  // PEND-27 P8: the per-level Map index used internally must not leak
+  // The per-level Map index used internally must not leak
   // into the returned tree — node shape is `{ name, fullPath, pageId?,
   // children }` only, byte-equivalent to the pre-Map implementation.
-  it('PEND-27 P8: returned nodes expose no internal index fields', () => {
+  it('returned nodes expose no internal index fields', () => {
     const pages = [
       { id: 'P1', content: 'work/projects/alpha' },
       { id: 'P2', content: 'work/projects/beta' },

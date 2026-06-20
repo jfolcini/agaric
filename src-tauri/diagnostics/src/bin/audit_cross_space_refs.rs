@@ -1,9 +1,9 @@
-//! `audit_cross_space_refs` — PEND-15 Phase 0 read-only diagnostic.
+//! `audit_cross_space_refs` — Phase 0 read-only diagnostic.
 //!
 //! Enumerates cross-space references in a local `notes.db` so the user
 //! can decide between Path A (tags space-scoped) and Path B (tags global)
-//! before Phase 1 of PEND-15 lands. The four audit categories mirror the
-//! plan body (`pending/PEND-15-hard-space-separation.md` §Phase 0):
+//! before Phase 1 of lands. The four audit categories mirror the
+//! plan body (§Phase 0):
 //!
 //! * **A1** — `block_links` rows whose source / target blocks resolve to
 //!   different spaces.
@@ -126,7 +126,7 @@ fn parse_args(args: &[String]) -> ParsedArgs {
 
 fn print_help() {
     println!(
-        "audit_cross_space_refs — PEND-15 Phase 0 read-only diagnostic\n\
+        "audit_cross_space_refs —  Phase 0 read-only diagnostic\n\
          \n\
          USAGE:\n    \
              audit_cross_space_refs [--db-path <PATH>] [--limit <N>]\n\
@@ -230,7 +230,7 @@ fn render_space(names: &FxHashMap<String, String>, space: Option<&str>) -> Strin
 }
 
 /// A1 — cross-space `block_links` rows. Mirrors the SQL in the plan body
-/// (`pending/PEND-15-hard-space-separation.md` lines 50-59).
+/// (lines 50-59).
 async fn audit_a1(
     pool: &SqlitePool,
     limit: usize,
@@ -514,7 +514,7 @@ pub(crate) async fn run_audit(pool: &SqlitePool, limit: usize) -> Result<AuditRe
 /// Format the report into the exact stdout layout described in the task spec.
 fn format_report(report: &AuditReport, db_path: &std::path::Path) -> String {
     let mut out = String::new();
-    out.push_str("PEND-15 Phase 0 audit — cross-space reference report\n");
+    out.push_str(" Phase 0 audit — cross-space reference report\n");
     out.push_str(&format!("DB path: {}\n\n", db_path.display()));
 
     let sections: [(&str, &str, &CategoryReport); 5] = [
@@ -1034,7 +1034,7 @@ mod tests {
         let (pool, dir) = make_pool().await;
         let report = run_audit(&pool, 10).await.unwrap();
         let out = format_report(&report, &dir.path().join("audit.db"));
-        assert!(out.starts_with("PEND-15 Phase 0 audit — cross-space reference report\n"));
+        assert!(out.starts_with(" Phase 0 audit — cross-space reference report\n"));
         assert!(out.contains("A1 (cross-space block_links): 0 violations"));
         assert!(out.contains("A2 (cross-space block_tags): 0 violations"));
         assert!(out.contains("A3 (cross-space block_tag_refs): 0 violations"));

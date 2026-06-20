@@ -1,5 +1,5 @@
 /**
- * PEND-55 — Search toggle row (#154 UX-A8).
+ * Search toggle row (#154).
  *
  * Three `<button aria-pressed>` toggles next to the search input — VS
  * Code's `Aa` / `Ab|` / `.*` family for case-sensitive, whole-word, and
@@ -7,7 +7,7 @@
  * always-visible abbreviation label and a 44px hit area on coarse
  * pointers (AGENTS.md a11y invariant).
  *
- * #154 UX-A8 — the abbreviation is rendered as visible text rather than
+ * #154 the abbreviation is rendered as visible text rather than
  * relying on a hover tooltip: Radix tooltips don't fire on touch-tap, so
  * a touch user got no explanation of an icon-only control. The visible
  * label makes each mode self-evident without any hover/long-press
@@ -118,7 +118,7 @@ export function SearchToggleRow({
               'text-muted-foreground transition-colors',
               'hover:bg-accent hover:text-accent-foreground',
               'focus-ring-visible',
-              // UX-15 — the active toggle was previously cued ONLY by a
+              // The active toggle was previously cued ONLY by a
               // low-contrast fill + subtle shadow (a colour-only signal).
               // Add a non-colour cue: a visible inset ring (a shape/border
               // change) on the pressed state so the active mode is
@@ -130,7 +130,7 @@ export function SearchToggleRow({
             )}
           >
             <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-            {/* #154 UX-A8 — always-visible abbreviation, so the mode is
+            {/* #154 always-visible abbreviation, so the mode is
                 legible on touch with no tooltip/long-press. aria-hidden
                 because the button already has the full `aria-label`. */}
             <span
@@ -140,7 +140,7 @@ export function SearchToggleRow({
             >
               {abbr}
             </span>
-            {/* UX-15 — shape-only active indicator (no colour reliance):
+            {/* shape-only active indicator (no colour reliance):
                 a small dot renders only while the toggle is pressed. */}
             {pressed && (
               <span

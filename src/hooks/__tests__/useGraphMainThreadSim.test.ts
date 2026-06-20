@@ -1,5 +1,5 @@
 /**
- * Tests for useGraphMainThreadSim (MAINT-127 split from useGraphSimulation).
+ * Tests for useGraphMainThreadSim (split from useGraphSimulation).
  *
  * The hook returns a stable `runMainThread` callback that drives the d3-force
  * simulation on the main thread (used as the no-Worker fallback and the

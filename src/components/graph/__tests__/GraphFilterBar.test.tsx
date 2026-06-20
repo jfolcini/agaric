@@ -1,5 +1,5 @@
 /**
- * Tests for GraphFilterBar component (UX-205, UX-270).
+ * Tests for GraphFilterBar component.
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
@@ -14,7 +14,7 @@ import type { GraphFilter } from '@/lib/graph-filters'
 import { t } from '@/lib/i18n'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 
-// UX-270: silence the logger.warn calls emitted by readPersistedFilters /
+// Silence the logger.warn calls emitted by readPersistedFilters /
 // writePersistedFilters when storage is corrupted or throws.
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -64,7 +64,7 @@ const sampleTags = [
 /** Stable empty default so the harness prop keeps referential equality across renders. */
 const EMPTY_FILTERS: GraphFilter[] = []
 
-// UX-270: stateful harness mirroring the parent contract in `GraphView` —
+// Stateful harness mirroring the parent contract in `GraphView` —
 // holds the controlled `filters` state so the persistence effects can dispatch
 // through `onFiltersChange` and re-render the component with the hydrated
 // value.
@@ -96,7 +96,7 @@ describe('GraphFilterBar', () => {
   beforeEach(() => {
     onFiltersChange = vi.fn<(filters: GraphFilter[]) => void>()
     __resetPriorityLevelsForTests()
-    // UX-270: clear persisted filters between tests so localStorage state
+    // Clear persisted filters between tests so localStorage state
     // from an earlier test (or the StatefulHarness write effect) does not
     // leak into the next run.
     localStorage.removeItem('agaric:graph-filters')
@@ -117,7 +117,7 @@ describe('GraphFilterBar', () => {
     ).not.toBeInTheDocument()
   })
 
-  // PEND-23 M3: PopoverContent must carry an aria-label so screen readers
+  // PopoverContent must carry an aria-label so screen readers
   // announce the popover purpose, not a generic "dialog".
   it('labels the add-filter popover with graph.filter.addFilterPopoverLabel', () => {
     render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />)
@@ -128,10 +128,10 @@ describe('GraphFilterBar', () => {
     )
   })
 
-  // UX-354: visible "Filters" text label adjacent to the icon so sighted touch
+  // Visible "Filters" text label adjacent to the icon so sighted touch
   // users recognize the bar as a filter UI. Hidden on mobile (`hidden sm:inline`)
   // to preserve the icon-only treatment on coarse-pointer devices.
-  it('renders a visible "Filters" text label adjacent to the icon (UX-354)', () => {
+  it('renders a visible "Filters" text label adjacent to the icon', () => {
     const { container } = render(
       <GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />,
     )
@@ -371,8 +371,8 @@ describe('GraphFilterBar', () => {
     })
   })
 
-  // UX-201b: priority filter checkboxes reflect the user-configured level set.
-  describe('priority level subscription (UX-201b)', () => {
+  // Priority filter checkboxes reflect the user-configured level set.
+  describe('priority level subscription', () => {
     it('renders priority checkboxes for custom user-configured levels', async () => {
       setPriorityLevels(['High', 'Mid', 'Low'])
       const user = userEvent.setup()
@@ -429,10 +429,10 @@ describe('GraphFilterBar', () => {
   })
 
   // -------------------------------------------------------------------------
-  // UX-270: a11y + filter persistence
+  // A11y + filter persistence
   // -------------------------------------------------------------------------
 
-  describe('tag list scroll container (UX-270)', () => {
+  describe('tag list scroll container', () => {
     it('uses the shared ScrollArea primitive (no bare overflow-y-auto)', async () => {
       const user = userEvent.setup()
       const { container } = render(
@@ -450,7 +450,7 @@ describe('GraphFilterBar', () => {
     })
   })
 
-  describe('tag checkbox accessible name (UX-270)', () => {
+  describe('tag checkbox accessible name', () => {
     it('checkbox has no redundant aria-label (label element provides the name)', async () => {
       const user = userEvent.setup()
       render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />)
@@ -466,7 +466,7 @@ describe('GraphFilterBar', () => {
     })
   })
 
-  describe('filter persistence (UX-270)', () => {
+  describe('filter persistence', () => {
     const STORAGE_KEY = 'agaric:graph-filters'
 
     it('hydrates filters from localStorage on mount', async () => {

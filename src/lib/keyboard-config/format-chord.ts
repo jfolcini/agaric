@@ -10,7 +10,7 @@
  * silently render blank.
  *
  * Shared by the command palette and the slash-command suggestion list so
- * both surfaces render the same chip tokens (PEND-67 / #211 P0-5).
+ * Both surfaces render the same chip tokens (#211 P0-5).
  */
 
 const GLYPHS: Record<string, string> = {

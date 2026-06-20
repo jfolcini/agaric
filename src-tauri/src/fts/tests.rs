@@ -1001,7 +1001,7 @@ async fn search_whitespace_query_returns_empty() {
 
 #[tokio::test]
 async fn search_sub_trigram_query_returns_empty() {
-    // TEST-50: pin behaviour for queries shorter than the trigram
+    // Pin behaviour for queries shorter than the trigram
     // tokenizer's 3-char minimum.  `sanitize_fts_query` drops 1- and
     // 2-char non-operator tokens (I-Search-2), so the sanitised query is
     // empty and `search_fts` short-circuits to an empty page — no panic,
@@ -1818,10 +1818,10 @@ fn sanitize_mixed_operators_and_terms() {
 
 #[test]
 fn sanitize_all_operator_query_documents_current_behaviour() {
-    // PEND-73 Phase 5.T1c — pin the sanitiser's behaviour on an
+    // Phase 5.T1c — pin the sanitiser's behaviour on an
     // all-operator query so a future change can't silently move it.
     //
-    // The desired contract per PEND-73 Phase 5.T1c reads:
+    // The desired contract Phase 5.T1c reads:
     //     assert_eq!(sanitize_fts_query("AND OR NOT"), "");
     //     assert_eq!(sanitize_fts_query("AND"), "");
     // …treating an orphan operator (one that fails the operator-context
@@ -2766,7 +2766,7 @@ async fn reindex_fts_references_updates_tag_refs() {
         &crate::pagination::PageRequest::new(None, Some(10)).unwrap(),
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        None, //  Phase 2: space_id unscoped
         &[],
         &[],
         None,
@@ -2797,7 +2797,7 @@ async fn reindex_fts_references_updates_tag_refs() {
         &crate::pagination::PageRequest::new(None, Some(10)).unwrap(),
         None,
         None,
-        None, // FEAT-3 Phase 2: space_id unscoped
+        None, //  Phase 2: space_id unscoped
         &[],
         &[],
         None,
@@ -2959,9 +2959,9 @@ async fn reindex_fts_references_batch_50_blocks() {
     );
 }
 
-// ── UX-250: reindex_fts_references must pick up inline-only referencing blocks ──
+// ── reindex_fts_references must pick up inline-only referencing blocks ──
 //
-// Before UX-250, a block whose only link to a tag was an inline
+// Before a block whose only link to a tag was an inline
 // `#[ULID]` reference (no explicit `block_tags` row, no `block_links`
 // row) would be missed by `reindex_fts_references`. After the change,
 // `block_tag_refs` is a third source that must be unioned in.
@@ -2976,7 +2976,7 @@ async fn reindex_fts_references_updates_inline_only_referencing_block() {
     // Tag block + content block with an inline `#[ULID]` ref.
     // Critically: NO explicit block_tags row and NO block_links row.
     // The only path from the content block to the tag is through
-    // block_tag_refs (the UX-250 cache).
+    // Block_tag_refs (the cache).
     insert_block(&pool, tag_id, "tag", "meeting", None, Some(1)).await;
     insert_block(
         &pool,
@@ -3079,9 +3079,9 @@ async fn reindex_fts_references_updates_inline_only_referencing_block() {
     );
 }
 
-// ── L-92: reindex_fts_references must chunk large rename targets ──
+// ── reindex_fts_references must chunk large rename targets ──
 //
-// Before L-92, `reindex_fts_references` opened one transaction for the
+// Before `reindex_fts_references` opened one transaction for the
 // entire union of `block_tags` ∪ `block_links` ∪ `block_tag_refs` and
 // streamed every INSERT through it. Renaming a popular tag with tens
 // of thousands of references would hold the SQLite writer for many
@@ -3680,7 +3680,7 @@ async fn update_fts_for_block_split_handles_null_content() {
 }
 
 // ======================================================================
-// FEAT-3 Phase 2 — space filtering in search_fts
+// Phase 2 — space filtering in search_fts
 // ======================================================================
 //
 // `search_fts` honours `space_id` by intersecting the result set with
@@ -4095,7 +4095,7 @@ async fn search_last_edited_no_op_log_block_excluded_from_rolling() {
 
     // BLOCK_A has a recent op-log; BLOCK_B has NONE → its
     // COALESCE(MAX(...), 0) is the epoch sentinel, far in the past, so a
-    // Rolling window must exclude it (the PEND-58d D7 no-op-log rule).
+    // Rolling window must exclude it (the no-op-log rule).
     insert_block(&pool, BLOCK_A, "content", "coalesce needle", None, Some(0)).await;
     insert_block(&pool, BLOCK_B, "content", "coalesce needle", None, Some(1)).await;
     insert_op_log_at(&pool, BLOCK_A, 1, ms_days_ago(1)).await;
@@ -4149,7 +4149,7 @@ async fn search_last_edited_no_op_log_block_excluded_from_rolling() {
 }
 
 // ======================================================================
-// PEND-20 D — Chunked rebuild_fts_index regression test
+// D — Chunked rebuild_fts_index regression test
 // ======================================================================
 //
 // Before D, `rebuild_fts_index_impl` ran the entire DELETE + per-row
@@ -4250,7 +4250,7 @@ async fn rebuild_fts_index_chunked_indexes_all_blocks() {
 }
 
 // ======================================================================
-// PEND-20 E — update_fts_for_block produces identical output via
+// E — update_fts_for_block produces identical output via
 // _with_maps. Regression test for the load_ref_maps refactor.
 // ======================================================================
 //
@@ -4444,7 +4444,7 @@ async fn update_fts_for_block_with_maps_removes_deleted_block() {
 }
 
 // ======================================================================
-// PEND-25 L6 — Combined inline-markup regex matches the previous
+// Combined inline-markup regex matches the previous
 // chained behaviour for every fixture case (bold / italic / code /
 // strike / highlight, including nested cases).
 // ======================================================================
@@ -4505,7 +4505,7 @@ fn strip_inline_markup_combined_matches_chain_semantics() {
 }
 
 // ======================================================================
-// PEND-25 L7 — Multi-row INSERT path covers 600+ blocks correctly.
+// Multi-row INSERT path covers 600+ blocks correctly.
 // ======================================================================
 //
 // `reindex_fts_references` now stages (id, stripped) pairs in memory
@@ -4613,7 +4613,7 @@ async fn reindex_fts_references_multi_row_insert_no_duplicates() {
 }
 
 // ======================================================================
-// PEND-50 Phase 1 — `snippet()` column tests
+// Phase 1 — `snippet()` column tests
 // ======================================================================
 //
 // These tests pin the wire shape of `SearchBlockRow.snippet` to the
@@ -4624,7 +4624,7 @@ async fn reindex_fts_references_multi_row_insert_no_duplicates() {
 // paired with a frontend renderer change.
 //
 // The window constant is `32` (trigrams) — see
-// `pending/PEND-50-search-vscode-ux.md` "Edge cases (locked in)" for
+// "Edge cases (locked in)" for
 // the tuning policy; the "snippet length tuning" test below is the
 // benchmark anchor.
 
@@ -4796,7 +4796,7 @@ async fn snippet_for_long_content_returns_windowed_output() {
         .snippet
         .as_deref()
         .expect("snippet must be produced");
-    // PEND-50 baseline: the 32-trigram window plus ellipsis must keep
+    // Baseline: the 32-trigram window plus ellipsis must keep
     // the output well under the source body length.
     assert!(
         snippet.len() < 400,
@@ -4859,7 +4859,7 @@ async fn snippet_with_multiple_matches_contains_at_least_one_pair() {
 
 #[tokio::test]
 async fn snippet_window_constant_produces_readable_output_on_representative_sample() {
-    // PEND-50 "Snippet length tuning" anchor — pins the perceived
+    // "Snippet length tuning" anchor — pins the perceived
     // utility of the snippet window. If the constant (`32`) is bumped
     // or the trigram-tokenizer behaviour changes, this test must be
     // updated together. Today, on a mid-length sentence with one
@@ -4922,7 +4922,7 @@ async fn snippet_window_constant_produces_readable_output_on_representative_samp
 }
 
 // ======================================================================
-// PEND-61 Phase 1 — `search_blocks_partitioned` tests
+// Phase 1 — `search_blocks_partitioned` tests
 // ======================================================================
 //
 // Exercise the new IPC's one-scan-two-partition contract end-to-end.
@@ -5213,7 +5213,7 @@ async fn partitioned_empty_query_returns_empty_partitions() {
         assert!(!resp.blocks.has_more);
     }
 
-    // PEND-69 — also cover the empty-space case: a non-empty query
+    // Also cover the empty-space case: a non-empty query
     // against a space that has zero matching rows must yield two
     // empty partitions with `has_more=false`. Exercises the
     // post-`MATCH` filter path (FTS5 returns rows that are then
@@ -5274,7 +5274,7 @@ async fn partitioned_ignores_block_type_filter_in_filter_struct() {
         10,
         10,
         crate::domain::search_types::SearchFilter {
-            // PEND-61 Phase 1: this field MUST be ignored — partitioning
+            // Phase 1: this field MUST be ignored — partitioning
             // by block_type is what the IPC does.
             block_type_filter: Some("page".to_string()),
             ..Default::default()
@@ -5361,7 +5361,7 @@ async fn partitioned_space_filter_excludes_other_spaces_from_both_partitions() {
     let ids_blocks: Vec<&str> = resp.blocks.items.iter().map(|r| r.id.as_str()).collect();
     assert!(
         ids_pages.contains(&page_in_a),
-        "pages partition must include the SPACE_A row (FEAT-3 invariant): {ids_pages:?}"
+        "pages partition must include the SPACE_A row (invariant): {ids_pages:?}"
     );
     assert!(
         !ids_pages.contains(&page_in_b),
@@ -5521,7 +5521,7 @@ async fn partitioned_max_search_results_ceiling_propagates_to_has_more() {
 }
 
 // ======================================================================
-// PEND-71 — Search backend test coverage matrix
+// Search backend test coverage matrix
 // ======================================================================
 //
 // Stress / edge-case coverage for the partitioned search IPC:
@@ -5539,7 +5539,7 @@ async fn partitioned_max_search_results_ceiling_propagates_to_has_more() {
 // measured-local baselines × 3 headroom (see project memory note
 // "Measure, don't imagine"). No sleep-loop polling.
 
-/// PEND-71 — Seed a "giant" partitioned fixture: 1 root page + `n_blocks`
+/// Seed a "giant" partitioned fixture: 1 root page + `n_blocks`
 /// content blocks all matching the FTS keyword `partitioned`. The shape
 /// is chosen so a single FTS scan returns up to `MAX_SEARCH_RESULTS` rows
 /// — enough to exercise the partitioned dispatch on a non-trivial corpus
@@ -5696,7 +5696,7 @@ async fn concurrent_pool_starvation_bound_500ms() {
     // runtime, 10-row fixture from `seed_partitioned_fixture(5, 5)`)
     // across three back-to-back runs: tail = 4.5 / 7.6 / 4.2 ms.
     // Worst observed = 7.6ms → 3x headroom = ~23ms. The 500ms ceiling
-    // is the plan-prescribed value (PEND-71 checklist names the test
+    // Is the plan-prescribed value (checklist names the test
     // `..._bound_500ms`); it's a wide envelope deliberately chosen to
     // tolerate CI runner variance. The assertion is the *order of
     // magnitude* check — the per-task array is preserved in the panic
@@ -5795,9 +5795,9 @@ async fn concurrent_pool_starvation_bound_500ms() {
 
 #[tokio::test]
 async fn partitioned_over_long_query_is_rejected() {
-    // SQL-4 (PEND-58f) — a 100KB query now exceeds `MAX_QUERY_LEN`
+    // A 100KB query now exceeds `MAX_QUERY_LEN`
     // (4 KiB) and is REJECTED up front with a validation error, before
-    // any tokenise / sanitise work. This supersedes the pre-PEND-58f
+    // Any tokenise / sanitise work. This supersedes the pre-
     // behaviour where a long sub-trigram-only query was tokenised,
     // sanitised to empty, and short-circuited to an empty response. The
     // sub-trigram empty-short-circuit itself is still covered by
@@ -6013,7 +6013,7 @@ async fn partitioned_giant_space_completes_within_1s() {
     //   59.4 59.9 61.1 61.3 63.7 ms  (min 55.4, p50 ≈ 56.8, max 63.7)
     //
     // The query is firmly in the ~55-64ms band — three orders of
-    // magnitude under the 1000ms in the test name (PEND-71 checklist).
+    // Magnitude under the 1000ms in the test name (checklist).
     // It is NOT near-budget, so per "measure, don't imagine" we keep the
     // perf budget here (case (a)) rather than moving it to a bench: there
     // is no real perf concern to track, only a regression to guard.
@@ -6338,7 +6338,7 @@ async fn partitioned_regex_alternation_matches_both() {
 
 #[tokio::test]
 async fn partitioned_nfc_query_matches_nfd_content() {
-    // PEND-73 B3 / T1a — NFC normalisation guard.
+    // / T1a — NFC normalisation guard.
     //
     // macOS volume content tends to be NFD-encoded (filename
     // decomposition; copy-paste from Safari can preserve NFD), and
@@ -6391,7 +6391,7 @@ async fn partitioned_nfc_query_matches_nfd_content() {
 
 #[tokio::test]
 async fn partitioned_regex_bare_alternation_matches_both_arms_under_case_flag() {
-    // PEND-73 Phase 1.B7 — regression guard for the (?:...) wrap around
+    // Phase 1.B7 — regression guard for the (?:...) wrap around
     // the user pattern. The historical risk: `(?i)foo|bar` composed by
     // string-concat is fine today, but any future prefix toggle in
     // front of `query` (e.g. `(?s)`) would interact with the top-level
@@ -6482,11 +6482,11 @@ async fn partitioned_regex_invalid_pattern_returns_validation_error() {
 }
 
 // ======================================================================
-// PEND-69 — partition correctness + filter pushdown tests
+// Partition correctness + filter pushdown tests
 // ======================================================================
 
-/// PEND-69 F1 — when content blocks rank above the only page hit, the
-/// pages partition must still surface the page. The pre-PEND-69
+/// When content blocks rank above the only page hit, the
+/// Pages partition must still surface the page. The pre-
 /// single-scan-then-Rust-partition shape failed this case: 60
 /// content blocks crowd out the lone page within the
 /// `min(page_limit + block_limit + 1, MAX_SEARCH_RESULTS)` scan
@@ -6551,8 +6551,8 @@ async fn partitioned_scan_returns_pages_when_blocks_outrank_them() {
     );
 }
 
-/// PEND-69 F2 — regex page-only queries must surface all matching
-/// pages even when content blocks dominate the table. Pre-PEND-69
+/// Regex page-only queries must surface all matching
+/// Pages even when content blocks dominate the table. Pre-
 /// the regex SQL scan grabbed the 1000 most-recent rows ANY-type
 /// then dropped non-pages in Rust, so 5 pages buried below 2000
 /// recently-inserted content rows would disappear.
@@ -6624,7 +6624,7 @@ async fn partitioned_regex_page_filter_returns_pages_when_content_dominates() {
     }
 }
 
-/// PEND-69 F5 — verify the SQL builder omits the `snippet(fts_blocks,
+/// Verify the SQL builder omits the `snippet(fts_blocks,
 /// …)` call when the toggle bundle will trigger a post-filter that
 /// clears `row.snippet` anyway. Asserts on the emitted SQL string via
 /// the test-only `fts_select_prefix_for_test` accessor — cheaper and
@@ -6678,7 +6678,7 @@ fn fts_cursor_predicate_uses_relative_rank_epsilon_1598() {
 }
 
 // ======================================================================
-// PEND-70 — cancellation + slow-query logging tests
+// Cancellation + slow-query logging tests
 // ======================================================================
 
 /// Seed a 100+ row "heavy" FTS fixture so the bench-sized scan takes
@@ -6747,7 +6747,7 @@ impl LogBuf {
 async fn cancellation_drops_in_flight_query() {
     // Acceptance: dropping the client promise → in-flight Rust future
     // returns `AppError::Cancelled` within one row-batch boundary
-    // (≤ 50 ms typical, ≤ 200 ms worst case per PEND-70).
+    // (≤ 50 ms typical, ≤ 200 ms worst case).
     let (pool, _dir) = test_pool().await;
     seed_heavy_partitioned_fixture(&pool, 150).await;
 
@@ -7096,7 +7096,7 @@ async fn rapid_fire_burst_pattern_does_not_starve_pool() {
 }
 
 // ======================================================================
-// PEND-73 Phase 5.T1d — FTS-index-drift consistency check
+// Phase 5.T1d — FTS-index-drift consistency check
 //
 // Asserts the invariant that every active `blocks` row has a matching
 // `fts_blocks` entry. A future writer that bypasses
@@ -7155,7 +7155,7 @@ async fn fts_index_stays_consistent_under_writes() {
 
 #[tokio::test]
 async fn fts_index_consistency_check_flags_missing_rows() {
-    // PEND-73 Phase 5.T1d — confirm the helper itself catches drift.
+    // Phase 5.T1d — confirm the helper itself catches drift.
     // Insert a block WITHOUT calling rebuild_fts_index → the FTS row
     // is missing → the helper must surface it.
     let (pool, _dir) = test_pool().await;
@@ -7179,10 +7179,10 @@ async fn fts_index_consistency_check_flags_missing_rows() {
 }
 
 // ======================================================================
-// PEND-58f — SQL/BE hardening regression tests
+// SQL/BE hardening regression tests
 // ======================================================================
 
-/// SQL-1 (PEND-58f) — duplicate tag IDs in the "ALL tags" filter must
+/// Duplicate tag IDs in the "ALL tags" filter must
 /// NOT silently zero out the result on the FTS path. Before the dedup
 /// fix, `tag_ids = [T, T]` made `COUNT(DISTINCT tag_id) = 1` compare
 /// against the bound list length `2`, so the predicate could never hold.
@@ -7236,7 +7236,7 @@ async fn fts_duplicate_tag_ids_do_not_zero_out_all_tags_filter() {
     );
 }
 
-/// SQL-1 (PEND-58f) — same dedup guarantee on the regex-mode path.
+/// Same dedup guarantee on the regex-mode path.
 #[tokio::test]
 async fn regex_duplicate_tag_ids_do_not_zero_out_all_tags_filter() {
     let (pool, _dir) = test_pool().await;
@@ -7291,7 +7291,7 @@ async fn regex_duplicate_tag_ids_do_not_zero_out_all_tags_filter() {
     );
 }
 
-/// SQL-A6 (PEND-58f) — a MIXED-CASE duplicate tag id must dedup so the
+/// SQL-A6 — a MIXED-CASE duplicate tag id must dedup so the
 /// "ALL tags" predicate still matches. `block_tags.tag_id` stores the
 /// canonical UPPERCASE ULID; before normalising the dedup set, the same
 /// id arriving once lower-case and once upper-case survived byte-exact
@@ -7355,7 +7355,7 @@ async fn regex_mixed_case_duplicate_tag_ids_dedup_so_all_tags_predicate_matches(
     );
 }
 
-/// SQL-A6 (PEND-58f) — same mixed-case dedup guarantee on the FTS path.
+/// SQL-A6 — same mixed-case dedup guarantee on the FTS path.
 #[tokio::test]
 async fn fts_mixed_case_duplicate_tag_ids_dedup_so_all_tags_predicate_matches() {
     let (pool, _dir) = test_pool().await;
@@ -7406,7 +7406,7 @@ async fn fts_mixed_case_duplicate_tag_ids_dedup_so_all_tags_predicate_matches() 
     );
 }
 
-/// SQL-A4 (PEND-58f) — an over-long RAW regex pattern is rejected up
+/// SQL-A4 — an over-long RAW regex pattern is rejected up
 /// front (before NFC-normalise / compile) with a validation error,
 /// mirroring the FTS path's `MAX_QUERY_LEN` guard. The raw guard fires
 /// at `MAX_QUERY_LEN` bytes, well below the `MAX_PATTERN_LEN` (1 KiB)
@@ -7445,7 +7445,7 @@ async fn regex_over_long_raw_pattern_is_rejected() {
     );
 }
 
-/// BE-A4 (PEND-58f) — the regex branch of the partitioned scan now
+/// BE-A4 — the regex branch of the partitioned scan now
 /// honours the cancellation token. A pre-cancelled token must short-
 /// circuit the regex dispatch with `AppError::Cancelled` rather than
 /// running the two parallel scans to completion. The existing
@@ -7480,7 +7480,7 @@ async fn partitioned_regex_pre_cancelled_token_returns_cancelled() {
     );
 }
 
-/// Cluster-1 (PEND-58f) — REGRESSION CONTRACT: the regex path APPLIES
+/// Cluster-1 — REGRESSION CONTRACT: the regex path APPLIES
 /// structural filters. A concurrent frontend change relies on regex
 /// mode respecting a `tag_ids` filter, so this locks the contract:
 /// seed two blocks whose content both match the regex but only one
@@ -7615,7 +7615,7 @@ async fn regex_path_without_tag_filter_matches_all() {
     );
 }
 
-/// SQL-4 (PEND-58f) — an over-long FTS query is rejected up front with a
+/// An over-long FTS query is rejected up front with a
 /// validation error rather than tokenised + bound into a MATCH.
 #[tokio::test]
 async fn fts_over_long_query_is_rejected() {
@@ -7645,7 +7645,7 @@ async fn fts_over_long_query_is_rejected() {
     );
 }
 
-/// SQL-4 (PEND-58f) — a query at exactly the cap is accepted (boundary).
+/// A query at exactly the cap is accepted (boundary).
 #[tokio::test]
 async fn fts_query_at_exactly_the_cap_is_accepted() {
     let (pool, _dir) = test_pool().await;
@@ -7675,7 +7675,7 @@ async fn fts_query_at_exactly_the_cap_is_accepted() {
     );
 }
 
-/// SQL-3 (PEND-58f) — `has_more` must be TRUE at exactly the
+/// `has_more` must be TRUE at exactly the
 /// `MAX_SEARCH_RESULTS` (100) cap when more rows exist. Before the fix,
 /// `limit_plus_one_capped(100)` collapsed to `100`, so the probe could
 /// never see the 101st row and `has_more` was stuck false at the cap.
@@ -7729,7 +7729,7 @@ async fn partitioned_has_more_is_true_at_exactly_the_cap() {
     );
 }
 
-/// BE-2 (PEND-58f) — the partitioned command rejects an over-limit
+/// BE-2 — the partitioned command rejects an over-limit
 /// request (mirrors the cursor path's `PageRequest::new` reject contract)
 /// instead of silently capping it.
 #[tokio::test]
@@ -7770,7 +7770,7 @@ async fn partitioned_over_limit_is_rejected() {
     );
 }
 
-/// BE-2 (PEND-58f) — limits at exactly the cap are accepted (boundary).
+/// BE-2 — limits at exactly the cap are accepted (boundary).
 #[tokio::test]
 async fn partitioned_limits_at_exactly_the_cap_are_accepted() {
     let (pool, _dir) = test_pool().await;
@@ -7791,7 +7791,7 @@ async fn partitioned_limits_at_exactly_the_cap_are_accepted() {
     );
 }
 
-/// BE-6 (PEND-58f) — fail-fast: an invalid regex routed through the
+/// BE-6 — fail-fast: an invalid regex routed through the
 /// partitioned inner surfaces a validation error (not a partial / empty
 /// response). Exercises the command-layer error envelope.
 #[tokio::test]
@@ -7818,7 +7818,7 @@ async fn partitioned_invalid_regex_fails_fast_with_validation() {
     );
 }
 
-/// BE-6 (PEND-58f) — cancellation envelope: a pre-cancelled token makes
+/// BE-6 — cancellation envelope: a pre-cancelled token makes
 /// the partitioned inner return `AppError::Cancelled` rather than running
 /// the scan to completion.
 #[tokio::test]
@@ -7846,7 +7846,7 @@ async fn partitioned_pre_cancelled_token_returns_cancelled() {
     );
 }
 
-/// BE-8 (PEND-58f) — an empty `prop:` key is rejected at the command
+/// BE-8 — an empty `prop:` key is rejected at the command
 /// layer (mirrors `query_by_property_inner`'s contract) instead of
 /// composing a `bp.key = ''` clause that silently matches nothing.
 #[tokio::test]
@@ -7876,7 +7876,7 @@ async fn search_empty_property_key_is_rejected() {
     );
 }
 
-/// BE-9 (PEND-58f) — `space_id: Some("")` is the "match nothing"
+/// BE-9 — `space_id: Some("")` is the "match nothing"
 /// space-isolation invariant. A search scoped to the empty space must
 /// return zero rows even when matching content exists in real spaces.
 #[tokio::test]
@@ -7916,7 +7916,7 @@ async fn search_empty_space_id_matches_nothing() {
 }
 
 // ======================================================================
-// PEND-58f BE-A10 — filter-aware pagination (SQL-A1/A2/A3) verification
+// BE-A10 — filter-aware pagination (SQL-A1/A2/A3) verification
 // ======================================================================
 //
 // These tests exercise the Cluster-2 pagination fixes:
@@ -8485,7 +8485,7 @@ async fn be_a10_post_filter_max_windows_bound_stops_without_hanging() {
 }
 
 // ======================================================================
-// PEND-58g NEW-3 — filter-only search (blank free-text + structural
+// NEW-3 — filter-only search (blank free-text + structural
 // filters). A blank query bypasses FTS/regex entirely and runs a
 // recency-ordered (`id DESC`) structural scan; with NO filter it stays
 // empty (never the whole DB). Mode-independent.
@@ -9354,7 +9354,7 @@ async fn new3_partitioned_blocks_has_more_probe() {
     assert!(!scan.pages_has_more);
 }
 
-// ── #1320 PR-1: Tag projection ↔ legacy COUNT(DISTINCT) equivalence ──────
+// ── #1320 Tag projection ↔ legacy COUNT(DISTINCT) equivalence ──────
 //
 // `fts_fetch_rows` now routes the ALL-tags filter through `SearchProjection`
 // (`add_tags_via_projection`, N AND-joined per-tag IN-subselects) instead of
@@ -9494,8 +9494,8 @@ async fn tags_via_projection_matches_legacy_count_distinct_equivalence() {
 
     const PREFIX: &str = " AND ";
     for (label, tags, expected) in cases {
-        // #1320 PR-3 — the legacy `add_tags_all` `COUNT(DISTINCT)` path was
-        // retired, so there is no live legacy builder to diff against. PR-1
+        // #1320 the legacy `add_tags_allCOUNT(DISTINCT)` path was
+        // Retired, so there is no live legacy builder to diff against.
         // proved the row-set equivalence; this test now pins the routed path
         // against the hand-computed oracle (the durable correctness invariant).
         let projected = tag_filter_ids(&pool, |fb| {
@@ -9510,7 +9510,7 @@ async fn tags_via_projection_matches_legacy_count_distinct_equivalence() {
     }
 }
 
-// ── #1320 PR-2: page-glob projection ↔ legacy GLOB sub-select equivalence ──
+// ── #1320 page-glob projection ↔ legacy GLOB sub-select equivalence ──
 //
 // `fts_fetch_rows` now routes the page-name-glob filter through
 // `SearchProjection` (`add_page_globs_via_projection`: per-pattern
@@ -9663,9 +9663,9 @@ async fn page_globs_via_projection_matches_legacy_glob_equivalence() {
         // `prepare_globs` preprocessing the production pipeline runs upstream.
         let prepared = crate::fts::glob_filter::prepare_globs(raw).unwrap();
 
-        // #1320 PR-3 — the legacy `add_page_globs` /
+        // #1320 the legacy `add_page_globs` /
         // `append_page_glob_subselect` path was retired, so there is no live
-        // legacy builder to diff against. PR-2 proved the row-set equivalence;
+        // Legacy builder to diff against. proved the row-set equivalence;
         // this test now pins the routed path against the hand-computed oracle
         // (the durable zero-behaviour-change correctness invariant — including
         // the `[class]` bracket case LIKE could never express, proving the
@@ -9850,7 +9850,7 @@ async fn b2_state_include_with_none_matches_legacy() {
 }
 
 /// State EXCLUDE: `not-state:DONE` → `todo_state IS NULL OR todo_state NOT
-/// IN ('DONE')`. The NULL-state rows are INCLUDED (legacy PEND-63 design:
+/// IN ('DONE')`. The NULL-state rows are INCLUDED (legacy design:
 /// the `IS NULL` branch lives outside the `NOT IN` list, sidestepping the
 /// 3-valued `NOT IN (…, NULL)` trap). Only DONE is dropped.
 #[tokio::test]

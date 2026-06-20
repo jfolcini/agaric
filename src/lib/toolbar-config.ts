@@ -92,7 +92,7 @@ export interface ToolbarButtonConfig {
   disabledWhenFalse?: string
   action: () => void
   /**
-   * Overflow priority used by `useToolbarOverflow` (PEND-33 Layer B).
+   * Overflow priority used by `useToolbarOverflow` (Layer B).
    * Higher = stays visible longer under width pressure. 100 = always visible,
    * 30 = drops first. Optional; defaults to 0 (drops first) when unset.
    * Applied only to buttons rendered inside the always-visible toolbar; the

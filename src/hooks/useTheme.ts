@@ -3,7 +3,7 @@
  *
  * Reads initial theme from localStorage ('theme-preference'). Supported values:
  *   - 'light', 'dark', 'auto' (classic)
- *   - 'solarized-light', 'solarized-dark', 'dracula', 'one-dark-pro' (UX-203)
+ * 'solarized-light', 'solarized-dark', 'dracula', 'one-dark-pro'
  *
  * Default: 'auto'. When 'auto': respects `window.matchMedia('(prefers-color-scheme: dark)')`
  * and listens for changes.
@@ -66,7 +66,7 @@ const CYCLE: ThemePreference[] = ['auto', 'dark', 'light']
 
 /**
  * i18n key for the human-readable display name of each theme. Used by the
- * sidebar theme-toggle tooltip (UX-387) to surface the current theme.
+ * Sidebar theme-toggle tooltip to surface the current theme.
  *
  * Hyphenated theme ids are mapped to camelCase i18n key segments because the
  * project i18n key convention (enforced in `src/lib/__tests__/i18n.test.ts`)

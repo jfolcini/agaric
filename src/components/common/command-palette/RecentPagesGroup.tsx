@@ -3,7 +3,7 @@
  * Extracted from `PaletteBody` in CommandPalette.tsx. #1149 — the list
  * is sourced from the reactive recent-pages store by the parent and
  * passed in; this component is purely presentational (rows + the inline
- * pin-toggle button from PEND-67 Phase 4).
+ * Pin-toggle button Phase 4).
  */
 
 import { Clock, Pin } from 'lucide-react'
@@ -38,7 +38,7 @@ export function RecentPagesGroup({
             data-pinned={isPinned ? 'true' : undefined}
             className="group gap-2"
           >
-            {/* PEND-67 Phase 4 — pinned entries swap the
+            {/*  Phase 4 — pinned entries swap the
                 history glyph for a filled `Pin`, signalling
                 their sticky-at-top state without a separate
                 group heading. */}
@@ -52,7 +52,7 @@ export function RecentPagesGroup({
               <Clock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
             )}
             <span className="flex-1 truncate">{page.title}</span>
-            {/* PEND-67 Phase 4 — inline pin-toggle button.
+            {/*  Phase 4 — inline pin-toggle button.
                 Mouse-only for v1 (mobile pin lives in the
                 long-press action menu of Phase 5). Stops
                 propagation so the row's onSelect does not

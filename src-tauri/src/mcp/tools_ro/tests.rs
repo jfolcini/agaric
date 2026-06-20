@@ -18,7 +18,7 @@ async fn test_pool() -> (SqlitePool, TempDir) {
     (pool, dir)
 }
 
-/// FEAT-3p5: create a single space and return its ULID. Used by the
+/// Create a single space and return its ULID. Used by the
 /// journal_for_date MCP tests so the per-space lookup has a valid
 /// space to scope under.
 async fn mk_space(pool: &SqlitePool, name: &str) -> String {
@@ -41,7 +41,7 @@ fn test_ctx() -> ActorContext {
 async fn mk_tools() -> (ReadOnlyTools, Materializer, TempDir) {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    // M-82: `init_pool` returns a single combined pool, so reuse it
+    // `init_pool` returns a single combined pool, so reuse it
     // for both the reader and writer slots in this fixture. The
     // production wiring uses split `init_pools` semantics; the
     // dedicated `tests_m82` block below exercises that path.
@@ -97,7 +97,7 @@ async fn snapshot_tool_descriptions() {
 }
 
 // -------------------------------------------------------------------
-// MAINT-150 (d) PARTIAL — schema/struct equivalence
+// (d) PARTIAL — schema/struct equivalence
 //
 // The full fix would derive `JsonSchema` via `schemars` on each
 // `*Args` struct so the tool description's `inputSchema` is
@@ -337,7 +337,7 @@ async fn get_page_happy_path_returns_subtree() {
     .await
     .unwrap();
     settle(&mat).await;
-    // FEAT-3 Phase 7 — MCP `handle_get_page` looks up the page's own
+    // Phase 7 — MCP `handle_get_page` looks up the page's own
     // `space` property and threads it through `get_page_inner`. Run
     // bootstrap so the page lands in Personal via the back-fill sweep.
     crate::spaces::bootstrap_spaces_for_test(&tools.pool, DEV)
@@ -462,7 +462,7 @@ async fn search_missing_query_returns_validation() {
 }
 
 // -------------------------------------------------------------------
-// L-119: explicit `limit` validation (rejects out-of-range values
+// Explicit `limit` validation (rejects out-of-range values
 // instead of silently clamping). Six tools advertise a min/max in
 // their input schema; cover them parametrically.
 // -------------------------------------------------------------------
@@ -539,16 +539,16 @@ async fn limit_validation_accepts_boundary() {
     for (tool, cap, base_args) in limit_validation_cases() {
         let args = args_with_limit(&base_args, cap);
         let result = tools.call_tool(tool, args, &test_ctx()).await;
-        // Boundary value must NOT trip the L-119 validation. The
+        // Boundary value must NOT trip the validation. The
         // inner handler may still legitimately surface another
         // error (e.g. NotFound when `page_id`/`block_id` is a
         // placeholder, or a different Validation for an invalid
-        // ULID) — only the L-119 message pattern is the regression
+        // ULID) — only the message pattern is the regression
         // signal here.
         if let Err(AppError::Validation(msg)) = &result {
             assert!(
                 !msg.contains("limit must be in"),
-                "{tool}: limit={cap} (boundary) tripped L-119 validation: {msg}",
+                "{tool}: limit={cap} (boundary) tripped  validation: {msg}",
             );
         }
     }
@@ -732,7 +732,7 @@ async fn search_truncates_multibyte_content_safely() {
 }
 
 // -------------------------------------------------------------------
-// PEND-65 — MCP `search` tool: `filter` arg threads through to
+// MCP `search` tool: `filter` arg threads through to
 // `SearchFilter`. The structured-filter shape mirrors the Tauri
 // command surface; the inline `tag:` / `state:` / `prop:` syntax is
 // NOT parsed at the MCP boundary (agents pass structured args).
@@ -741,7 +741,7 @@ async fn search_truncates_multibyte_content_safely() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_filter_omitted_preserves_pre_pend65_behavior() {
     // No `filter` arg = the wide query (every match across content)
-    // exactly as before PEND-65.
+    // Exactly as before.
     let (tools, mat, _dir) = mk_tools().await;
     create_block_inner(
         &tools.pool,
@@ -836,7 +836,7 @@ async fn search_filter_state_narrows_results() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_filter_excluded_state_includes_no_state_rows() {
-    // PEND-63 fields exposed through MCP: `excluded_state_filter`
+    // Fields exposed through MCP: `excluded_state_filter`
     // with NULL-inclusive inversion.
     let (tools, mat, _dir) = mk_tools().await;
     let b_done = create_block_inner(
@@ -889,7 +889,7 @@ async fn search_filter_excluded_state_includes_no_state_rows() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_filter_property_filters_threaded_through() {
-    // PEND-53 property_filters + PEND-64 four-column matching ride
+    // Property_filters + four-column matching ride
     // through the MCP wire. Numeric value matches `value_num`.
     let (tools, mat, _dir) = mk_tools().await;
     let b1 = create_block_inner(
@@ -995,7 +995,7 @@ async fn get_block_not_found_error() {
     assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
 }
 
-/// L-121: lowercase ULIDs supplied by the agent at the MCP boundary
+/// Lowercase ULIDs supplied by the agent at the MCP boundary
 /// must be uppercased by `normalize_ulid_arg` before the lookup hits
 /// SQLite (whose default `=` is case-sensitive). Without the
 /// normalisation, this test would surface as `NotFound`.
@@ -1016,7 +1016,7 @@ async fn get_block_accepts_lowercase_ulid_l121() {
     settle(&mat).await;
 
     // Agaric returns uppercase ULIDs; the agent supplies the
-    // *lowercase* form to exercise the L-121 boundary normalisation.
+    // *lowercase* form to exercise the boundary normalisation.
     let lower = blk.id.as_str().to_lowercase();
     assert_ne!(
         lower, blk.id,
@@ -1026,7 +1026,7 @@ async fn get_block_accepts_lowercase_ulid_l121() {
     let result = tools
         .call_tool("get_block", json!({"block_id": lower}), &test_ctx())
         .await
-        .expect("lowercase ULID must be accepted at the MCP boundary (L-121)");
+        .expect("lowercase ULID must be accepted at the MCP boundary");
     assert_eq!(
         result["id"],
         blk.id.as_str(),
@@ -1098,7 +1098,7 @@ async fn list_backlinks_missing_block_id_validation() {
     assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
 }
 
-/// PEND-18 Phase 2 parity test: the post-migration handler builds
+/// Phase 2 parity test: the post-migration handler builds
 /// [`SpaceScope::Global`] from the JSON-side `space_id: null` (or omitted).
 /// Asserts that calling the MCP `list_backlinks` tool with that input
 /// returns the same `GroupedBacklinkResponse` envelope as a direct call to
@@ -1205,7 +1205,7 @@ async fn list_tags_happy_path() {
         .call_tool("list_tags", json!({}), &test_ctx())
         .await
         .expect("happy path");
-    // M-85: response is a `PageResponse { items, next_cursor, has_more }`
+    // Response is a `PageResponse { items, next_cursor, has_more }`
     // rather than a flat array.
     let arr = result["items"].as_array().expect("tag items array");
     assert_eq!(arr.len(), 2, "two tags returned");
@@ -1232,7 +1232,7 @@ async fn list_tags_rejects_unknown_field() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_property_defs_happy_path() {
-    // L-115: a fresh DB ships built-in property definitions seeded by
+    // A fresh DB ships built-in property definitions seeded by
     // migrations. The exact wire shape is snapshot-locked by
     // `tool_response_list_property_defs.snap`; this test just pins
     // (a) a stable subset of must-be-present keys (the four reserved
@@ -1242,7 +1242,7 @@ async fn list_property_defs_happy_path() {
     // `property_definitions` table so adding/removing seeded defs
     // does not silently desync this assertion from reality.
     let (tools, _mat, _dir) = mk_tools().await;
-    // M-85: under the default page limit (`MAX_PAGE_SIZE = 200`) all
+    // Under the default page limit (`MAX_PAGE_SIZE = 200`) all
     // seeded definitions fit on a single page, so we still see them
     // all. The response is now a `PageResponse { items, next_cursor,
     // has_more }` rather than a flat array.
@@ -1308,7 +1308,7 @@ async fn get_agenda_happy_path() {
         )
         .await
         .expect("happy path");
-    // M-25: `get_agenda` now returns a `PageResponse` shape rather
+    // `get_agenda` now returns a `PageResponse` shape rather
     // than a flat array. The empty DB has zero entries, so `items`
     // is the empty array and `has_more` is false.
     let items = result["items"].as_array().expect("agenda items array");
@@ -1363,7 +1363,7 @@ async fn journal_for_date_happy_path_creates_page() {
     );
 }
 
-/// PEND-26 N4 — the `journal_for_date` tool lives in the read-only
+/// The `journal_for_date` tool lives in the read-only
 /// group but emits a `CreateBlock` op on first read-of-the-day. Pin
 /// the wire-visible description so it leads with that side-effect
 /// and names the op type, so MCP agents skimming descriptions for
@@ -1520,7 +1520,7 @@ async fn snapshot_list_spaces_response_shape() {
 // #694 — journal_for_date normalises space_id at the boundary
 // -------------------------------------------------------------------
 
-/// #694 / L-121 sibling of `get_block_accepts_lowercase_ulid_l121`:
+/// #694 / sibling of `get_block_accepts_lowercase_ulid_l121`:
 /// `journal_for_date` was the only handler that skipped
 /// `normalize_ulid_arg` on `space_id`, so a lowercase space ULID
 /// surfaced as a spurious "space not found".
@@ -1598,7 +1598,7 @@ async fn search_rejects_oversized_tag_ids_vector_699() {
     }
 }
 
-/// #699: PEND-65 filter vectors count against the same combined
+/// #699: filter vectors count against the same combined
 /// budget — two half-budget vectors together overflow it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_rejects_oversized_combined_filter_vectors_699() {
@@ -1919,7 +1919,7 @@ async fn call_tool_scopes_actor_even_when_outer_scope_absent() {
         panic!("list_property_defs must succeed inside scoped call, got {result:?}");
     };
     // Sanity-check the response shape: list_property_defs returns a JSON
-    // PageResponse object (M-85) with an `items` array. Confirms the
+    // PageResponse object with an `items` array. Confirms the
     // scoped call actually ran the handler (not just returned a default
     // value).
     assert!(
@@ -1979,7 +1979,7 @@ async fn list_pages_cursor_pagination_roundtrip() {
         );
     }
 
-    // TEST-31: previous test asserted page1/page2 didn't overlap but never
+    // Previous test asserted page1/page2 didn't overlap but never
     // walked to the end of pagination — a bug that DROPPED an item between
     // pages would still pass. Page through to page3 (the 5th item, with
     // `has_more = false`) and assert the union covers the full input set.
@@ -2025,12 +2025,12 @@ async fn list_pages_cursor_pagination_roundtrip() {
 }
 
 // -------------------------------------------------------------------
-// M-85 — wire-level cursor pagination for list_tags / list_property_defs
+// Wire-level cursor pagination for list_tags / list_property_defs
 // -------------------------------------------------------------------
 //
 // `list_tags` and `list_property_defs` both moved from a flat
 // top-level array to the canonical `PageResponse { items, next_cursor,
-// has_more }` envelope (M-85). The two tests below exercise that
+// Has_more }` envelope. The two tests below exercise that
 // directly through `tools.call_tool(...)` so a future regression on
 // either side of the JSON boundary surfaces as a wire-shape failure.
 
@@ -2058,7 +2058,7 @@ async fn list_tags_paginates_m85() {
         .call_tool("list_tags", json!({"limit": 4}), &test_ctx())
         .await
         .expect("list_tags wire call must succeed");
-    // Wire shape — PageResponse JSON envelope (M-85).
+    // Wire shape — PageResponse JSON envelope.
     let items = resp["items"].as_array().expect("response.items[]");
     assert_eq!(
         items.len(),
@@ -2069,11 +2069,11 @@ async fn list_tags_paginates_m85() {
     assert_eq!(
         resp["has_more"],
         json!(true),
-        "has_more must be true when more rows remain past the cap (M-85)",
+        "has_more must be true when more rows remain past the cap",
     );
     assert!(
         resp["next_cursor"].is_string(),
-        "next_cursor must be present when has_more is true (M-85), got {resp:?}",
+        "next_cursor must be present when has_more is true, got {resp:?}",
     );
 }
 
@@ -2096,11 +2096,11 @@ async fn list_property_defs_paginates_m85() {
     assert_eq!(
         resp["has_more"],
         json!(true),
-        "has_more must be true when more rows remain past the cap (M-85)",
+        "has_more must be true when more rows remain past the cap",
     );
     assert!(
         resp["next_cursor"].is_string(),
-        "next_cursor must be present when has_more is true (M-85), got {resp:?}",
+        "next_cursor must be present when has_more is true, got {resp:?}",
     );
 
     // Threading the cursor back must yield a non-empty second page
@@ -2169,8 +2169,8 @@ proptest::proptest! {
                 "no match".into(), None, Some(3),
             ).await.unwrap();
             settle(&mat).await;
-            // FEAT-3p4 — assign every seeded block to the test space
-            // so the FEAT-3p4-required `space_id` filter returns them.
+            // Assign every seeded block to the test space
+            // So the -required `space_id` filter returns them.
             crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
 
             let via_tool = tools
@@ -2402,7 +2402,7 @@ async fn inner_get_page_composes_root_and_subtree() {
     .await
     .unwrap();
     settle(&mat).await;
-    // FEAT-3 Phase 7 — `get_page_inner` enforces space membership.
+    // Phase 7 — `get_page_inner` enforces space membership.
     // Bootstrap seeds Personal + Work and back-fills any pages missing a
     // `space` property into Personal, which is exactly what we want.
     crate::spaces::bootstrap_spaces_for_test(&pool, DEV)
@@ -2430,7 +2430,7 @@ async fn inner_get_page_unknown_id_not_found() {
     // Even with no bootstrap, `get_page_inner` resolves NotFound first
     // (via `get_block_inner`) before reaching the space-membership
     // check, so the error category is unchanged for unknown IDs.
-    // L-136: must be a valid ULID shape so the BlockId::from_string gate
+    // Must be a valid ULID shape so the BlockId::from_string gate
     // passes — the test intent is to verify NotFound, not Ulid validation.
     let err = get_page_inner(
         &pool,
@@ -2456,7 +2456,7 @@ async fn inner_list_tags_returns_seeded_tags() {
         .unwrap();
     settle(&mat).await;
 
-    // M-85: paginated; under default limit both tags are on page 1.
+    // Paginated; under default limit both tags are on page 1.
     let page = list_tags_inner(&pool, None, Some(100)).await.unwrap();
     assert_eq!(page.items.len(), 2);
     assert!(!page.has_more);
@@ -2583,7 +2583,7 @@ async fn snapshot_get_page_response_shape() {
     .await
     .unwrap();
     settle(&mat).await;
-    // FEAT-3 Phase 7 — bootstrap so the page lands in Personal via the
+    // Phase 7 — bootstrap so the page lands in Personal via the
     // back-fill sweep; otherwise `handle_get_page` rejects pages with
     // no `space` property.
     crate::spaces::bootstrap_spaces_for_test(&tools.pool, DEV)
@@ -2793,7 +2793,7 @@ async fn snapshot_get_agenda_response_shape() {
         .await
         .unwrap();
     insta::assert_yaml_snapshot!("tool_response_get_agenda", result, {
-        // M-25: response is now `PageResponse { items, next_cursor, has_more }`
+        // Response is now `PageResponse { items, next_cursor, has_more }`
         ".items[].block.id" => "[ULID]",
     });
 }
@@ -2816,13 +2816,13 @@ async fn snapshot_journal_for_date_response_shape() {
     });
 }
 
-/// FEAT-4h slice 3: RO tools must NOT populate `LAST_APPEND` — they
+/// Slice 3: RO tools must NOT populate `LAST_APPEND` — they
 /// don't append ops, so the dispatch layer should drain an empty
 /// list and emit an `ActivityEntry` with `op_ref = None` and
 /// `additional_op_refs = []`. Drive `list_pages` inside an
 /// explicit scope and assert the drained list is empty on exit.
 ///
-/// L-114: storage is a `Vec`, so the assertion shifts from
+/// Storage is a `Vec`, so the assertion shifts from
 /// `is_none()` to `is_empty()`. Multi-op RW tools are covered in
 /// `mcp::server::tests::handle_tools_call_multi_op_tool_*`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

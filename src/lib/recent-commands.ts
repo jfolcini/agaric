@@ -1,20 +1,20 @@
 /**
  * Recent commands — localStorage-backed list of recently-run palette
- * commands (PEND-67 Phase 2). Mirrors `recent-pages.ts` but stores
+ * Commands (Phase 2). Mirrors `recent-pages.ts` but stores
  * command ids (e.g. `go-settings`) rather than page refs, and caps at
  * `MAX_RECENT_COMMANDS` (5).
  *
  * Storage key shape: `recent_commands:<spaceId>` (or
  * `recent_commands:__legacy__` when no space is selected — mirrors
  * `activeSpaceKey()`). Space-scoped so different spaces never see each
- * other's MRU (FEAT-3 invariant: every list slice partitions by space).
+ * Other's MRU (invariant: every list slice partitions by space).
  *
  * #1105 — the slash menu reuses this exact MRU under its own namespace
  * (`recent_slash`, see `RECENT_SLASH_PREFIX`) so palette command ids and
  * slash command ids never collide. The prefix is the only knob; cap,
  * shape, and move-to-top semantics are shared verbatim.
  *
- * Brand-new lib in PEND-67, so there is no legacy global key to
+ * Brand-new lib in so there is no legacy global key to
  * migrate. The cap is enforced only against non-pinned entries; v1
  * has no pin concept (deferred to Phase 4).
  */

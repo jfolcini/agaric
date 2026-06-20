@@ -39,7 +39,7 @@ export function useBatchCounts(entries: DayEntry[]) {
     async function fetchCounts() {
       const [bySource, backlinks] = await Promise.all([
         countAgendaBatchBySource({ dates, spaceId: currentSpaceId }),
-        // PEND-35 Tier 1.6 — thread the active space into
+        // Thread the active space into
         // `count_backlinks_batch` so badge counts on cross-linked pages
         // exclude source blocks the user can't see.
         pageIds.length > 0

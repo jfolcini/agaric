@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Guard against NEW raw write-transaction sites in production Rust.
 
-Issue #110 (MAINT-112) replaced ad-hoc `pool.begin_with("BEGIN IMMEDIATE")`
+Issue #110 replaced ad-hoc `pool.begin_with("BEGIN IMMEDIATE")`
 write transactions in user-edit paths with the `CommandTx` convention
 (open via `crate::db::begin_immediate_logged` + couple the commit with
 post-commit materializer dispatch). This hook stops the convention from
@@ -59,7 +59,7 @@ import sys
 from pathlib import Path
 
 ISSUE_HINT = (
-    "    -> #110 (MAINT-112): route user-edit write txs through the "
+    "    -> #110: route user-edit write txs through the "
     "CommandTx convention\n"
     "       (`crate::db::begin_immediate_logged` + coupled post-commit "
     "dispatch).\n"
@@ -546,7 +546,7 @@ def main(argv: list[str]) -> int:
         all_violations.extend(check_file(p, repo_root))
 
     if all_violations:
-        print("Raw write-transaction guard (#110 / MAINT-112) found "
+        print("Raw write-transaction guard (#110) found "
               "new unmanaged site(s):\n", file=sys.stderr)
         for v in all_violations:
             print(f"  {v}", file=sys.stderr)

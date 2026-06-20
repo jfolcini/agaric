@@ -7,7 +7,7 @@ use super::pool::begin_immediate_logged;
 /// SQLite transaction to the materializer-dispatch calls that must fire
 /// after it commits.
 ///
-/// MAINT-112 (phase A): every write-path command previously repeated the
+/// (phase A): every write-path command previously repeated the
 /// same three-step dance —
 ///
 /// ```text
@@ -61,7 +61,7 @@ use super::pool::begin_immediate_logged;
 /// preserved deliberately — it is load-bearing for grep + code review
 /// and every call site keeps its familiar shape.
 ///
-/// MAINT-112 phase B added a second dispatch variant —
+/// Phase B added a second dispatch variant —
 /// [`CommandTx::enqueue_edit_background`] — for the one `edit_block`
 /// caller (`crud::edit_block_inner`) that needs the `block_type` hint.
 /// `dispatch_op` (foreground + background) is not yet wrapped; the
@@ -75,14 +75,14 @@ use super::pool::begin_immediate_logged;
 /// `dispatch_background_or_warn` / a direct `logger.warn` path for the
 /// `Edit` variant, never propagated to the caller.
 ///
-/// PEND-25 L2 + L9: the inner `OpRecord` is held as `Arc<OpRecord>` so
-/// command sites that need both the dispatch queue and another
-/// post-commit borrow can share one record via refcount
-/// instead of deep-cloning. The enqueue methods accept
-/// `impl Into<Arc<OpRecord>>` so the existing call sites that hand off
-/// a freshly-built `OpRecord` by value continue to compile unchanged
-/// (the blanket `impl<T> From<T> for Arc<T>` makes the conversion
-/// transparent).
+/// + L9: the inner `OpRecord` is held as `Arc<OpRecord>` so
+///   command sites that need both the dispatch queue and another
+///   post-commit borrow can share one record via refcount
+///   instead of deep-cloning. The enqueue methods accept
+///   `impl Into<Arc<OpRecord>>` so the existing call sites that hand off
+///   a freshly-built `OpRecord` by value continue to compile unchanged
+///   (the blanket `impl<T> From<T> for Arc<T>` makes the conversion
+///   transparent).
 enum PendingDispatch {
     /// Plain op dispatch — invokes [`Materializer::dispatch_background_or_warn`].
     Background(Arc<crate::op_log::OpRecord>),
@@ -168,7 +168,7 @@ impl CommandTx {
     /// Multiple records may be enqueued from the same transaction —
     /// typical for batch operations such as [`crate::commands::history::revert_ops_inner`].
     ///
-    /// PEND-25 L9: accepts `impl Into<Arc<OpRecord>>` so callers can pass
+    /// Accepts `impl Into<Arc<OpRecord>>` so callers can pass
     /// either a fresh `OpRecord` by value (Rust's blanket
     /// `impl<T> From<T> for Arc<T>` does the wrap) or an existing
     /// `Arc<OpRecord>` they need to share with a post-commit borrow.
@@ -190,7 +190,7 @@ impl CommandTx {
     /// `block_type` is the post-edit type ("content" / "page" / "tag")
     /// the materializer uses to pick a narrower rebuild fan-out.
     ///
-    /// PEND-25 L9: see [`Self::enqueue_background`] — same `Into<Arc<…>>`
+    /// See [`Self::enqueue_background`] — same `Into<Arc<…>>`
     /// shape so the callsite reads identically regardless of whether the
     /// record is owned or already shared.
     pub fn enqueue_edit_background(
@@ -325,7 +325,7 @@ impl Drop for CommandTx {
     /// `Drop` with a non-empty `pending` can only mean a *future* code path
     /// committed the inner transaction (e.g. via `DerefMut` +
     /// `inner.commit()`) and let the value drop without draining. That is
-    /// the silent-missing-dispatch bug MAINT-112 set out to make
+    /// The silent-missing-dispatch bug set out to make
     /// impossible; the assert turns it into a loud panic under
     /// `cfg(debug_assertions)`.
     ///

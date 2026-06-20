@@ -1,7 +1,7 @@
 /**
  * Tests for the Input UI primitive.
  *
- * Validates (per PEND-23 H4):
+ * Validates:
  *  - Renders an `<input>` with `data-slot="input"` and the default classes
  *  - Accepts `type` variants (text, email, password, number, search)
  *  - `disabled` prop disables the element and prevents typing
@@ -194,7 +194,7 @@ describe('Input', () => {
     expect(el.className).toContain('[@media(pointer:coarse)]:h-11')
   })
 
-  // PEND-23 M8: bumps font-size to `text-base` on coarse pointers so iOS
+  // Bumps font-size to `text-base` on coarse pointers so iOS
   // doesn't auto-zoom when focusing the field. Default `text-sm` (≈14 px)
   // triggers Safari's auto-zoom; `text-base` (≈16 px) suppresses it.
   it('declares coarse-pointer font-size class (text-base)', () => {

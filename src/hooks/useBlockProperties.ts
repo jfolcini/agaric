@@ -28,12 +28,12 @@ import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useUndoStore } from '../stores/undo'
 
 /**
- * Locked task state cycle (UX-202): none -> TODO -> DOING -> DONE -> CANCELLED -> none.
+ * Locked task state cycle: none -> TODO -> DOING -> DONE -> CANCELLED -> none.
  *
  * This cycle is intentionally fixed — users cannot add or remove states.
  * DONE sits immediately after DOING because finishing is the overwhelmingly
  * common terminal state; CANCELLED lives at the end of the cycle as the
- * "abandoned" escape hatch. UX-234 reverses an earlier ordering that put
+ * "abandoned" escape hatch. reverses an earlier ordering that put
  * CANCELLED before DONE.
  */
 const TASK_CYCLE: readonly (string | null)[] = [null, 'TODO', 'DOING', 'DONE', 'CANCELLED']
@@ -59,7 +59,7 @@ export interface UseBlockPropertiesReturn {
  * the dependency check is advisory.
  */
 function warnIfBlocked(blockId: string): void {
-  // PEND-35 Tier 2.4c — single-key PK lookup; the hook only needs the
+  // Single-key PK lookup; the hook only needs the
   // `blocked_by` row, not the full vocabulary the FE used to ship.
   getProperty(blockId, 'blocked_by')
     .then((row) => {
@@ -124,7 +124,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
   /**
    * Cycle through priority levels. The cycle is
    * `[null, ...getPriorityLevels()]` — user-configurable via the
-   * `priority` property definition's options (UX-201b). Called at click
+   * `priority` property definition's options. Called at click
    * time so the cycle always reflects the current level set.
    */
   const handleTogglePriority = useCallback(

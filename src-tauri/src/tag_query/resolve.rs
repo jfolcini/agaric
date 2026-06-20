@@ -9,9 +9,9 @@ use crate::error::AppError;
 use crate::sql_utils::escape_like;
 
 /// Resolve a single tag id to the set of `block_id`s that match it,
-/// honouring the UX-250 inline-ref union semantics.
+/// Honouring the inline-ref union semantics.
 ///
-/// **UX-250 semantics (shared with `backlink::filters`):** the result
+/// ** semantics (shared with `backlink::filters`):** the result
 /// always unions inline `#[ULID]` references from `block_tag_refs` into
 /// the explicit `block_tags` set. Inline references are treated
 /// identically to explicit associations for tag-view counts and tag
@@ -25,8 +25,8 @@ use crate::sql_utils::escape_like;
 ///
 /// This is the single source of truth for the leaf SQL — both
 /// `resolve_expr` (here) and `BacklinkFilter::HasTag`
-/// (`backlink/filters.rs`) call it. Any future change to the UX-250
-/// union must happen here so both sites stay in lockstep (MAINT-143).
+/// (`backlink/filters.rs`) call it. Any future change to the
+/// Union must happen here so both sites stay in lockstep.
 pub(crate) async fn resolve_tag_leaves(
     pool: &SqlitePool,
     tag_id: &str,
@@ -72,15 +72,15 @@ pub(crate) async fn resolve_tag_leaves(
 }
 
 /// Resolve a tag-name prefix to the set of `block_id`s whose tags match
-/// the prefix, honouring the UX-250 inline-ref union semantics.
+/// The prefix, honouring the inline-ref union semantics.
 ///
 /// `prefix` is the raw user-supplied prefix; LIKE wildcards (`%`, `_`,
 /// `\`) inside it are escaped via [`escape_like`] before binding.
 ///
-/// See [`resolve_tag_leaves`] for the shared UX-250 semantics. This is
+/// See [`resolve_tag_leaves`] for the shared semantics. This is
 /// the single source of truth for the prefix leaf SQL — both
 /// `resolve_expr` (here) and `BacklinkFilter::HasTagPrefix`
-/// (`backlink/filters.rs`) call it (MAINT-143).
+/// (`backlink/filters.rs`) call it.
 ///
 /// **I-Search-10 — `tags_cache` lookup contract.** The query joins
 /// `tags_cache → block_tags → blocks` and filters
@@ -341,7 +341,7 @@ pub fn resolve_expr<'a>(
 > {
     Box::pin(async move {
         match expr {
-            // UX-250: leaf SQL lives in `resolve_tag_leaves` /
+            // Leaf SQL lives in `resolve_tag_leaves` /
             // `resolve_tag_prefix_leaves` so backlink filters share
             // the same union semantics. See those helpers for details.
             TagExpr::Tag(tag_id) => {
@@ -360,7 +360,7 @@ pub fn resolve_expr<'a>(
                 // `BacklinkFilter::And` in `backlink::filters`), turning N
                 // serial DB round-trips into N concurrent ones. The final
                 // intersection is order-independent, so a different completion
-                // order from the join still yields the same set. (L-85)
+                // Order from the join still yields the same set.
                 let futures = exprs
                     .iter()
                     .map(|e| resolve_expr(pool, e, include_inherited));
@@ -375,7 +375,7 @@ pub fn resolve_expr<'a>(
             TagExpr::Or(exprs) => {
                 // Resolve all sub-expressions concurrently (mirrors
                 // `BacklinkFilter::Or` in `backlink::filters`). Union is
-                // commutative, so completion order is irrelevant. (L-85)
+                // Commutative, so completion order is irrelevant.
                 let futures = exprs
                     .iter()
                     .map(|e| resolve_expr(pool, e, include_inherited));
@@ -415,10 +415,10 @@ pub fn resolve_expr<'a>(
 /// CTE-based tag resolution — kept as correctness oracle for the
 /// P-4 materialized `block_tag_inherited` table.
 ///
-/// UX-250 note: this oracle intentionally does NOT UNION
+/// Note: this oracle intentionally does NOT UNION
 /// `block_tag_refs` into the result set. It remains the oracle of the
 /// **explicit-only + inherited** semantics (i.e. what the world looked
-/// like before UX-250). The existing oracle tests never insert
+/// Like before). The existing oracle tests never insert
 /// `block_tag_refs` rows, so they continue to produce identical results
 /// between the oracle and `resolve_expr`. New targeted tests that
 /// exercise the union behaviour assert against `resolve_expr` directly
@@ -438,7 +438,7 @@ pub(crate) fn resolve_expr_cte<'a>(
             TagExpr::Tag(tag_id) if include_inherited => {
                 // Bound `depth < 100` on the recursive member to match
                 // `tag_inheritance::rebuild_all` and AGENTS.md invariant #9
-                // (no runaway recursion on corrupted parent_id chains). (M-59)
+                // (no runaway recursion on corrupted parent_id chains).
                 let rows = sqlx::query_scalar::<_, String>(
                     "WITH RECURSIVE tagged_tree(id, depth) AS ( \
                          SELECT bt.block_id AS id, 0 AS depth \
@@ -461,7 +461,7 @@ pub(crate) fn resolve_expr_cte<'a>(
             TagExpr::Prefix(prefix) if include_inherited => {
                 let escaped = format!("{}%", escape_like(prefix));
                 // Bound `depth < 100` on the recursive member — see comment in
-                // the `Tag` branch above. (M-59)
+                // The `Tag` branch above.
                 let rows = sqlx::query_scalar::<_, String>(
                     "WITH RECURSIVE tagged_tree(id, depth) AS ( \
                          SELECT DISTINCT bt.block_id AS id, 0 AS depth \

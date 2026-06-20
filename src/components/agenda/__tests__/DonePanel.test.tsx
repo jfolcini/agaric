@@ -461,7 +461,7 @@ describe('DonePanel', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Group header page title navigation (#UX-H11)
+  // Group header page title navigation (#)
   // ---------------------------------------------------------------------------
 
   // 13. clicking page title in group header navigates to that page
@@ -492,7 +492,7 @@ describe('DonePanel', () => {
   // Error-path tests
   // ---------------------------------------------------------------------------
 
-  // 14. queryByProperty rejects on initial load → renders nothing + logs error (UX-124)
+  // 14. queryByProperty rejects on initial load → renders nothing + logs error
   it('renders nothing when queryByProperty rejects on initial load', async () => {
     mockedQueryByProperty.mockRejectedValueOnce(new Error('backend error'))
 
@@ -508,7 +508,7 @@ describe('DonePanel', () => {
       expect(container.querySelector('.done-panel')).not.toBeInTheDocument()
     })
     expect(screen.queryByText(t('donePanel.noneYet'))).not.toBeInTheDocument()
-    // UX-124: logger.error should have been called
+    // Logger.error should have been called
     expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
       'DonePanel',
       'Failed to load done items',
@@ -624,11 +624,11 @@ describe('DonePanel', () => {
     expect(groupHeaders[1]).toHaveTextContent(`${t('donePanel.untitled')} (1)`)
   })
 
-  // 18. PEND-35 Tier 1.5 — empty-content rejection lives in the backend
+  // 18. empty-content rejection lives in the backend
   // now. The panel must pass `contentNonEmpty: true` on every fetch so
   // the backend can drop those rows server-side; cursor accounting and
   // totalCount then reflect the post-filter set authoritatively.
-  it('passes contentNonEmpty: true so the backend filters empty content (UX-129)', async () => {
+  it('passes contentNonEmpty: true so the backend filters empty content', async () => {
     mockedQueryByProperty.mockResolvedValue({
       items: [
         // Mock returns whatever the test wants; the FE no longer
@@ -650,7 +650,7 @@ describe('DonePanel', () => {
     )
   })
 
-  // 19. PEND-35 Tier 1.5 — excludePageId is forwarded as
+  // 19. excludePageId is forwarded as
   // `excludeParentId` to the backend. Cursor pagination, has_more,
   // and totalCount now reflect the post-filter set authoritatively.
   it('forwards excludePageId as excludeParentId to the backend (B-74)', async () => {
@@ -676,7 +676,7 @@ describe('DonePanel', () => {
     )
   })
 
-  // 20. PEND-35 Tier 1.5 — totalCount reflects the backend response
+  // 20. totalCount reflects the backend response
   // size, not a post-filter remainder. Pinning this prevents a
   // future regression where the FE re-introduces a post-filter that
   // would silently desync `totalCount` from `hasMore`.
@@ -695,7 +695,7 @@ describe('DonePanel', () => {
     render(<DonePanel date="2025-06-15" excludePageId="PAGE_X" />)
 
     // Header reflects the 3 items the backend returned, even though a
-    // pre-PEND-35 build would have post-filtered some out.
+    // Pre- build would have post-filtered some out.
     expect(await screen.findByText(t('donePanel.header', { count: 3 }))).toBeInTheDocument()
   })
 })

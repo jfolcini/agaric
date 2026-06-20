@@ -25,11 +25,11 @@ export function DailyView({
 }: DailyViewProps): React.ReactElement {
   const isToday = entry.dateStr === useToday()
 
-  // UX-258: when navigating into a date-titled page with a target
+  // When navigating into a date-titled page with a target
   // selectedBlockId (search result, breadcrumb, graph node click, …),
   // scroll that block into view + restore focus on first paint, then
   // clear the navigation store one-shot. Mirrors `scrollFocusedBlockIntoView`
-  // from useBlockKeyboardHandlers (UX-241): rAF + scrollIntoView({ block: 'nearest' }).
+  // From useBlockKeyboardHandlers: rAF + scrollIntoView({ block: 'nearest' }).
   const selectedBlockId = useNavigationStore((s) => s.selectedBlockId)
   const clearSelection = useNavigationStore((s) => s.clearSelection)
 

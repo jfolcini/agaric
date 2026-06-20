@@ -1,4 +1,4 @@
-//! SQL-A3 / BE-A1 (PEND-58f) — filter-aware cursor pagination for the
+//! SQL-A3 / BE-A1 — filter-aware cursor pagination for the
 //! non-regex toggle (case-sensitive / whole-word) path. Scans candidate
 //! windows, applies the caller's per-row `keep` predicate, and advances
 //! the FTS cursor so dropped candidates are never re-scanned.
@@ -18,7 +18,7 @@ use super::sanitizer::sanitize_fts_query;
 /// Window size (candidate FTS rows fetched per loop iteration) for the
 /// post-filter cursor pagination in [`fts_fetch_post_filtered_page`].
 ///
-/// SQL-A3 (PEND-58f) — the post-filter (case/word toggle) path narrows an
+/// SQL-A3 — the post-filter (case/word toggle) path narrows an
 /// FTS candidate window after the FTS scan. To return a FULL page of
 /// `limit` survivors we may have to scan several windows when the filter
 /// is selective. Each window asks the FTS scan for [`MAX_SEARCH_RESULTS`]
@@ -30,7 +30,7 @@ const POST_FILTER_WINDOW: i64 = MAX_SEARCH_RESULTS;
 /// Maximum number of candidate windows scanned per page request in
 /// [`fts_fetch_post_filtered_page`].
 ///
-/// SQL-A3 (PEND-58f) — bounds the total work a pathologically selective
+/// SQL-A3 — bounds the total work a pathologically selective
 /// post-filter can trigger. With [`POST_FILTER_WINDOW`] = 100 the ceiling
 /// is `100 * 10 = 1000` FTS candidates scanned per page — the same
 /// order-of-magnitude bound the regex-mode path uses
@@ -41,7 +41,7 @@ const POST_FILTER_WINDOW: i64 = MAX_SEARCH_RESULTS;
 /// round design figure, not a benchmarked value.
 const POST_FILTER_MAX_WINDOWS: usize = 10;
 
-/// SQL-A3 / BE-A1 (PEND-58f) — filter-aware cursor pagination for the
+/// SQL-A3 / BE-A1 — filter-aware cursor pagination for the
 /// non-regex toggle (case-sensitive / whole-word) path.
 ///
 /// ## Why this exists

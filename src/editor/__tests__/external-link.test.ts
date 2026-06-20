@@ -2,7 +2,7 @@
  * Tests for the ExternalLink extension (F-40):
  * - isValidHttpUrl pure function
  * - Paste-to-link behavior (bare URL -> linked text when selection is empty)
- * - Link metadata prefetch on paste (UX-165)
+ * Link metadata prefetch on paste
  */
 
 import { Editor } from '@tiptap/core'
@@ -211,7 +211,7 @@ describe('ExternalLink paste-to-link (F-40)', () => {
     expect(hasLink).toBe(false)
   })
 
-  it('triggers metadata prefetch after pasting a URL (UX-165)', () => {
+  it('triggers metadata prefetch after pasting a URL', () => {
     editor = createEditor()
     simulatePaste(editor, 'https://example.com')
     expect(mockFetchLinkMetadata).toHaveBeenCalledWith('https://example.com')
@@ -268,7 +268,7 @@ describe('ExternalLink Ctrl+K shortcut (B-70)', () => {
   })
 })
 
-describe('ExternalLink mark exit after setLink (UX-177)', () => {
+describe('ExternalLink mark exit after setLink', () => {
   let editor: Editor
 
   afterEach(() => {
@@ -298,7 +298,7 @@ describe('ExternalLink mark exit after setLink (UX-177)', () => {
     // Apply link (simulating what LinkEditPopover does)
     editor.chain().focus().setLink({ href: 'https://example.com' }).run()
 
-    // Remove stored marks (the UX-177 fix)
+    // Remove stored marks (the fix)
     const linkMarkType = getLinkMarkType(editor)
     editor.view.dispatch(editor.state.tr.removeStoredMark(linkMarkType))
 
@@ -308,7 +308,7 @@ describe('ExternalLink mark exit after setLink (UX-177)', () => {
     expect(hasLinkMark).toBe(false)
   })
 
-  it('text typed after setLink + removeStoredMark is not linked (UX-177)', () => {
+  it('text typed after setLink + removeStoredMark is not linked', () => {
     editor = createEditor()
     editor.commands.setContent({
       type: 'doc',
@@ -324,7 +324,7 @@ describe('ExternalLink mark exit after setLink (UX-177)', () => {
     // Apply link
     editor.chain().focus().setLink({ href: 'https://example.com' }).run()
 
-    // Remove stored marks (UX-177 fix)
+    // Remove stored marks (fix)
     const linkMarkType = getLinkMarkType(editor)
     editor.view.dispatch(editor.state.tr.removeStoredMark(linkMarkType))
 

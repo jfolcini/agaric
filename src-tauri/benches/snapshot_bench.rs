@@ -236,7 +236,7 @@ fn synthetic_snapshot(n: usize) -> SnapshotData {
 /// row-batched streaming *format* (a wire-format change) on real data.
 fn bench_codec(c: &mut Criterion) {
     let mut group = c.benchmark_group("snapshot_codec");
-    // 100k is the L-105 SNAPSHOT_WARN_ROW_COUNT threshold — the regime the
+    // 100k is the SNAPSHOT_WARN_ROW_COUNT threshold — the regime the
     // warn! was added to flag, and the stated mobile scaling target.
     for n in [1_000usize, 10_000, 100_000] {
         let data = synthetic_snapshot(n);

@@ -2,7 +2,7 @@
  * SearchAutocomplete — the caret-anchored autocomplete subsystem,
  * extracted from SearchPanel.
  *
- * PEND-58f FE-10 — caret position only matters to the autocomplete
+ * Caret position only matters to the autocomplete
  * anchor, yet it was SearchPanel state, so every keyup/click/select/
  * focus re-rendered the ~1100-line panel. Owning `caretPos` (and the
  * whole autocomplete state machine) here means caret moves re-render
@@ -10,7 +10,7 @@
  * via `onStateChange` (infrequent) and delegates the relevant keystrokes
  * through the imperative `handleKeyDown` handle.
  *
- * PEND-58g NEW-1 — the anchor is computed unconditionally from the query
+ * NEW-1 — the anchor is computed unconditionally from the query
  * and caret; there is no `suppressed` gate. `detectAutocompleteAnchor`
  * already returns `null` for free-text / quoted / non-prefix tokens, so
  * the free-text remainder (including the regex remainder in regex mode)

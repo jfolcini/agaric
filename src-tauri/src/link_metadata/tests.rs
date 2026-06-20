@@ -314,7 +314,7 @@ fn extract_meta_refresh_url_unchanged_for_unquoted_url_i_search_8() {
 }
 
 // ======================================================================
-// truncate_str tests (L-91)
+// Truncate_str tests
 //
 // `truncate_str` must truncate by `char` count, not byte count. The old
 // implementation used `s.len() <= max_chars` (a byte comparison) and a
@@ -709,7 +709,7 @@ fn extract_domain_strips_port() {
     );
 }
 
-// L-96: `extract_origin` / `extract_domain` must drop `user:pwd@` so
+// `extract_origin` / `extract_domain` must drop `user:pwd@` so
 // cached favicon URLs and tracing output never carry credentials.
 
 #[test]
@@ -836,7 +836,7 @@ fn resolve_url_handles_all_forms() {
 }
 
 // ======================================================================
-// read_body_limited tests (L-90)
+// Read_body_limited tests
 //
 // Pre-L-90, `read_body_limited` materialized the entire response body via
 // `response.bytes().await?` before truncating to `MAX_BODY_SIZE`. A
@@ -926,7 +926,7 @@ async fn read_body_limited_returns_full_small_body() {
 }
 
 // ======================================================================
-// PEND-24 M4 — non-2xx short-circuit
+// Non-2xx short-circuit
 //
 // Regression: a 404 page with `<title>Page not found</title>` (or any
 // other 4xx/5xx HTML body) used to be parsed as if it were the target
@@ -972,7 +972,7 @@ async fn fetch_metadata_404_returns_minimal_metadata_without_parsing_body() {
         !meta.auth_required,
         "404 must not set auth_required (only 401/403 do)"
     );
-    // MAINT-213: 404 must set `not_found` so the frontend can render
+    // 404 must set `not_found` so the frontend can render
     // the terminal "(not found)" presentation distinct from auth /
     // transient.
     assert!(
@@ -1008,7 +1008,7 @@ async fn fetch_metadata_401_marks_auth_required_without_parsing_body() {
         meta.auth_required,
         "401 must set auth_required so the reauth card surfaces"
     );
-    // MAINT-213: 401 is sign-in, NOT gone — the two flags are
+    // 401 is sign-in, NOT gone — the two flags are
     // mutually exclusive at the wire level.
     assert!(
         !meta.not_found,
@@ -1041,7 +1041,7 @@ async fn fetch_metadata_500_returns_minimal_metadata() {
         !meta.auth_required,
         "5xx must not set auth_required (only 401/403 do)"
     );
-    // MAINT-213: 5xx is the "transient" bucket — both flags must be
+    // 5xx is the "transient" bucket — both flags must be
     // false so the frontend can infer "retry later".
     assert!(
         !meta.not_found,
@@ -1077,7 +1077,7 @@ async fn fetch_metadata_200_still_parses_body() {
 
     assert_eq!(meta.title.as_deref(), Some("Real Page"));
     assert_eq!(meta.description.as_deref(), Some("Real description"));
-    // MAINT-213: a successful 2xx fetch must leave `not_found` false
+    // A successful 2xx fetch must leave `not_found` false
     // — the flag is reserved for the wire-level 404/410 short-circuit.
     assert!(
         !meta.not_found,
@@ -1086,7 +1086,7 @@ async fn fetch_metadata_200_still_parses_body() {
 }
 
 // ======================================================================
-// MAINT-213 — 410 Gone classification + cache round-trip
+// 410 Gone classification + cache round-trip
 //
 // The 404 path is already exercised by
 // `fetch_metadata_404_returns_minimal_metadata_without_parsing_body`
@@ -1229,7 +1229,7 @@ async fn redirected_error_result_cache_hits_on_second_lookup() {
     upsert(&pool, &meta).await.unwrap();
 
     // The follow-up lookup by the REQUESTED url must hit — this is the
-    // MAINT-213 error-state caching #628 restores.
+    // Error-state caching #628 restores.
     let cached = get_cached(&pool, &requested)
         .await
         .unwrap()

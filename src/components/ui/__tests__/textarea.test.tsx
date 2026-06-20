@@ -1,7 +1,7 @@
 /**
  * Tests for the Textarea UI primitive.
  *
- * Validates (per TEST-1):
+ * Validates:
  *  - Renders with `value` (controlled)
  *  - Calls `onChange` with the typed value
  *  - `aria-invalid` propagates from prop to DOM
@@ -102,7 +102,7 @@ describe('Textarea', () => {
     expect(ta.className).toContain('[@media(pointer:coarse)]:min-h-[120px]')
   })
 
-  // PEND-23 M8: bumps font-size to `text-base` on coarse pointers so iOS
+  // Bumps font-size to `text-base` on coarse pointers so iOS
   // doesn't auto-zoom when focusing the field. Default `text-sm` (≈14 px)
   // triggers Safari's auto-zoom; `text-base` (≈16 px) suppresses it.
   it('declares coarse-pointer font-size class (text-base)', () => {

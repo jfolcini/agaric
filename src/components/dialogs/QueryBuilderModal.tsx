@@ -56,7 +56,7 @@ const QUERY_TYPES = ['tag', 'property', 'backlinks'] as const
 /**
  * Map UI operator symbols to backend operator names.
  *
- * UX-317: Each option carries both the glyph (`symbol`) — shown in the
+ * Each option carries both the glyph (`symbol`) — shown in the
  * trigger and as a leading affordance in the dropdown row — and a
  * translation key (`descKey`) for the human-readable description that
  * appears beside the glyph in the dropdown only. The description is
@@ -97,7 +97,7 @@ export function QueryBuilderModal({
   const [knownPropertyKeys, setKnownPropertyKeys] = useState<string[]>([])
 
   // ---- Load known property definitions for datalist autocomplete + validation ----
-  // M-85: `listPropertyDefs` is paginated; the modal is single-page-by-design —
+  // `listPropertyDefs` is paginated; the modal is single-page-by-design —
   // datalist suggestions only need the first page worth of keys.
   useEffect(() => {
     if (!open) return
@@ -165,7 +165,7 @@ export function QueryBuilderModal({
     showAsTable,
   ])
 
-  // ---- Plain-English readable summary (UX-316) ----
+  // ---- Plain-English readable summary ----
   // Surfaces a humanised paraphrase of the generated `expression` above the
   // raw `<code>` block so users unfamiliar with the `type:... key:...` syntax
   // can verify intent. Mirrors `expression`'s empty-form gate so the line
@@ -191,7 +191,7 @@ export function QueryBuilderModal({
     return ''
   }, [queryType, tagExpr, propertyKey, propertyValue, propertyOperator, backlinkTarget, t])
 
-  // ---- Property-key validation (UX-274) ----
+  // ---- Property-key validation ----
   // Warn when the user enters a key that is not a known property definition.
   // This is a soft warning — submission is not blocked because the property
   // may be defined later or via another device. When `knownPropertyKeys` is

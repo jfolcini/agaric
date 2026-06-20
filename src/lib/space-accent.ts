@@ -2,7 +2,7 @@
  * Space accent-colour helper — shared by `SpaceAccentBadge` (collapsed
  * sidebar identity) and `SpaceSwitcher` (expanded sidebar trigger dot).
  *
- * PEND-37: extracted from `SpaceAccentBadge` so the trigger-dot
+ * Extracted from `SpaceAccentBadge` so the trigger-dot
  * fallback semantics live in one place. The token shape is
  * `accent-<name>` and matches the CSS variable names defined in
  * `index.css`; an unknown / null token resolves to

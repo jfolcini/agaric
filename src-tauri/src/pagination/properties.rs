@@ -16,7 +16,7 @@ use crate::op::is_reserved_property_key;
 ///
 /// Ordered by `b.id ASC` (ULID ≈ chronological).
 ///
-/// # Routing — reserved vs. non-reserved keys (L-29)
+/// # Routing — reserved vs. non-reserved keys
 ///
 /// The function has two distinct query paths and the routing decision is
 /// made by [`crate::op::is_reserved_property_key`]:
@@ -37,7 +37,7 @@ use crate::op::is_reserved_property_key;
 /// panicking via `unreachable!()` so a missed update surfaces as a clean
 /// runtime error rather than crashing the IPC.
 ///
-/// # Value filter (L-23)
+/// # Value filter
 ///
 /// At most one of `value_text` / `value_date` may be supplied. Passing
 /// both simultaneously is rejected with [`AppError::Validation`] at the
@@ -57,7 +57,7 @@ use crate::op::is_reserved_property_key;
 /// branch is a downstream-bug shape; rejecting the conflict at the
 /// boundary keeps the contract uniform.
 ///
-/// # Multi-value filters (PEND-35 Tier 3.4)
+/// # Multi-value filters
 ///
 /// `value_text_in` is an alternative to `value_text` for set-membership
 /// checks: when non-empty, rows are filtered by `value IN (...)` against
@@ -80,7 +80,7 @@ use crate::op::is_reserved_property_key;
 /// (e.g. `b.due_date`); for `due_date` / `scheduled_date`, prefer
 /// `value_date_range` over `value_text_in`.
 ///
-/// # Block-type filter (PEND-35 Tier 3.4)
+/// # Block-type filter
 ///
 /// `block_type` is a simple equality push-down on `b.block_type` — when
 /// `Some`, only rows whose block matches are returned. `None` is the
@@ -112,7 +112,7 @@ pub async fn query_by_property(
     value_date_range: Option<(&str, &str)>,
     exclude_todo_states: &[String],
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    // L-23: reject conflicting value filters at the boundary so both
+    // Reject conflicting value filters at the boundary so both
     // routing branches behave identically wrt the value-filter contract.
     if value_text.is_some() && value_date.is_some() {
         return Err(AppError::Validation(
@@ -120,7 +120,7 @@ pub async fn query_by_property(
         ));
     }
 
-    // PEND-35 Tier 3.4 — `value_text_in` is an alternative to
+    // `value_text_in` is an alternative to
     // `value_text`. Allowing both would require choosing precedence in
     // SQL; rejecting at the boundary keeps the contract single-shape.
     if !value_text_in.is_empty() && value_text.is_some() {
@@ -146,12 +146,12 @@ pub async fn query_by_property(
         _ => "=", // default to equality
     };
 
-    // PEND-35 Tier 1.5 — `content_non_empty` is bound as `0/1` so the
+    // `content_non_empty` is bound as `0/1` so the
     // `(?N = 0 OR …)` short-circuit produces the same plan as the
-    // pre-PEND-35 path when the filter is disabled.
+    // Pre- path when the filter is disabled.
     let content_filter_flag: i64 = i64::from(content_non_empty);
 
-    // PEND-35 Tier 3.4 — `value_text_in` is bound as a JSON array via
+    // `value_text_in` is bound as a JSON array via
     // `json_each(?N)` so the unfiltered path passes a NULL and the
     // `(?N IS NULL OR …)` short-circuit produces the same plan as
     // pre-Tier-3.4. The non-empty path serialises once per call.
@@ -177,7 +177,7 @@ pub async fn query_by_property(
         Some(serde_json::to_string(exclude_todo_states)?)
     };
 
-    // PEND-35 Tier 3.4 — `value_date_range` is split into two binds so
+    // `value_date_range` is split into two binds so
     // each side participates in the `(?N IS NULL OR …)` short-circuit.
     // Half-open `[from, to)` semantics: a row whose date equals `to`
     // is EXCLUDED — matches typical FE date-pickers where the upper
@@ -187,7 +187,7 @@ pub async fn query_by_property(
         None => (None, None),
     };
 
-    // FEAT-3p4 — both branches gain the `(?N IS NULL OR
+    // Both branches gain the `(?N IS NULL OR
     // b.page_id IN (...))` space-filter clause. The
     // literal mirrors `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline
     // because both branches are dynamic SQL (the `{sql_op}`
@@ -195,14 +195,14 @@ pub async fn query_by_property(
     // introduced on the reserved-column branch so the same clause shape
     // applies to both queries.
     //
-    // PEND-35 Tier 1.5 — both branches additionally gain
+    // Both branches additionally gain
     // `(?N IS NULL OR b.parent_id IS NOT ?N)` and
     // `(?N = 0 OR (b.content IS NOT NULL AND TRIM(b.content, x'20090a0d') != ''))`.
     // The `IS NOT` form on `parent_id` keeps NULL parents in the
     // result set regardless of the filter (matches the `IS ?N` shape
     // used by `pagination::list_children`). The content filter is
     // encoded as a `0/1` int bind so the unfiltered path (`flag = 0`)
-    // produces the same plan as pre-PEND-35. `TRIM(content, x'20090a0d')`
+    // Produces the same plan as pre-. `TRIM(content, x'20090a0d')`
     // strips space (0x20), tab (0x09), LF (0x0a), and CR (0x0d) so a
     // whitespace-only block is treated identically to NULL / `''` —
     // matching the legacy FE predicate `!b.content?.trim()`. SQLite's
@@ -210,7 +210,7 @@ pub async fn query_by_property(
     // required to cover the FE-equivalent set.
     let rows = if is_reserved_property_key(key) {
         // Reserved keys live as columns on the blocks table, not in block_properties.
-        // L-29: explicit Validation on a missed-update fall-through instead of
+        // Explicit Validation on a missed-update fall-through instead of
         // `unreachable!()` so a future reserved-key addition without the matching
         // column-routing update surfaces as a clean runtime error rather than a panic.
         let col = match key {
@@ -225,14 +225,14 @@ pub async fn query_by_property(
                 )));
             }
         };
-        // PEND-35 Tier 3.4 — three new clauses on the reserved-key path:
+        // Three new clauses on the reserved-key path:
         //   ?8  block_type equality push-down
         //   ?9  value_text_in (JSON array; bound against `b.{col}`
         //       because `bp.value_text` does not exist on this path)
         //   ?10/?11  value_date_range half-open `[from, to)`
         //       (applied against `b.{col}` so a query on `due_date`
         //       binds the range to the date column directly)
-        // MAINT-229: shared with BLOCK_ROW_RUNTIME_SELECT — alias variant for value/null routing
+        // Shared with BLOCK_ROW_RUNTIME_SELECT — alias variant for value/null routing
         let sql = format!(
             "SELECT {cols} \
              FROM blocks b \
@@ -276,18 +276,18 @@ pub async fn query_by_property(
             .await?
     } else {
         // Dynamic SQL needed because sqlx::query_as! macro cannot interpolate operators.
-        // PEND-35 Tier 3.4 — three new clauses on the non-reserved path:
+        // Three new clauses on the non-reserved path:
         //   ?10  block_type equality push-down on `b.block_type`
         //   ?11  value_text_in (JSON array) bound against `bp.value_text`
         //   ?12/?13  value_date_range half-open `[from, to)` against `bp.value_date`
-        // MAINT-229: shared with BLOCK_ROW_RUNTIME_SELECT — alias variant for value/null routing
+        // Shared with BLOCK_ROW_RUNTIME_SELECT — alias variant for value/null routing
         // #384: `neq` must not silently drop rows whose value lives in the
         // OTHER value column. A `block_properties` row stores its value in
         // exactly one of value_text / value_date, leaving the other NULL.
         // For `!=`, `NULL != 'X'` evaluates to NULL (not TRUE), so the bare
         // `(?N IS NULL OR bp.col != ?N)` predicate would exclude a row whose
         // queried value is in the sibling column. Adding `bp.col IS NULL OR`
-        // restores those rows for the neq case. The L-23 boundary guarantees
+        // Restores those rows for the neq case. The boundary guarantees
         // at most one of ?2/?3 is non-NULL, so only the queried column's
         // predicate is ever active; the inactive one short-circuits via
         // `?N IS NULL`. eq/lt/gt/lte/gte keep the original `(?N IS NULL OR

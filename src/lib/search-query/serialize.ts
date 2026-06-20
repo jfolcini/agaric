@@ -1,5 +1,5 @@
 /**
- * PEND-54 — Serialiser: `SearchQueryAST` → canonical query string.
+ * Serialiser: `SearchQueryAST` → canonical query string.
  *
  * Round-trip invariant (documented in AGENTS.md):
  *   `parse(serialize(parse(s))) === parse(s)`   for any `s`

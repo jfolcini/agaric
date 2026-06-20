@@ -3,7 +3,7 @@
  *
  * Validates filter state, the debounced echo, the Unicode-aware
  * filteredBlocks memo, and the clearFilter helper extracted from
- * TrashView.tsx (MAINT-128).
+ * TrashView.tsx.
  */
 
 import { act, renderHook } from '@testing-library/react'

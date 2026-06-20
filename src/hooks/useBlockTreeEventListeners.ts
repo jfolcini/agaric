@@ -148,7 +148,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     // Wire to the SAME content-edit path the matching slash commands use
     // (`useSlashCommandStructural`): build a minimal SlashCommandContext from
     // the focused block and reuse the canonical `applyContentEdit` (which
-    // preserves the MAINT-116 undo contract + remount).
+    // Preserves the undo contract + remount).
     const buildCtx = (blockId: string): SlashCommandContext => ({
       blockId,
       rootParentId,

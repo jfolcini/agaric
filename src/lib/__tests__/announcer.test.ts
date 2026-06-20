@@ -94,7 +94,7 @@ describe('announce', () => {
     expect(el2.textContent).toBe('Message 2')
   })
 
-  it('coalesces repeated identical calls within the 500ms window (UX-282)', () => {
+  it('coalesces repeated identical calls within the 500ms window', () => {
     announce('Same message')
     vi.advanceTimersByTime(16)
     expect(getAnnouncer().textContent).toBe('Same message')

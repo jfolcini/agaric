@@ -7,7 +7,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }))
 
-// PEND-76 F2 — rendering now reads raw bytes over IPC and wraps them in a
+// Rendering now reads raw bytes over IPC and wraps them in a
 // blob URL. Mock the wrapper so each test controls the returned bytes.
 vi.mock('@/lib/tauri', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@/lib/tauri')>()
@@ -507,7 +507,7 @@ describe('AttachmentRenderer', () => {
     expect(results).toHaveNoViolations()
   })
 
-  it('image-resize wrapper exposes aria-label, role=group, and tabindex (UX-5)', async () => {
+  it('image-resize wrapper exposes aria-label, role=group, and tabindex', async () => {
     const { container } = render(
       <AttachmentRenderer {...baseProps} attachments={[makeAttachment()]} />,
     )

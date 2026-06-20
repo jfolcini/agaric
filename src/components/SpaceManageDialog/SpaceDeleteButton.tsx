@@ -2,10 +2,10 @@
  * SpaceDeleteButton — delete-space affordance with emptiness gate +
  * confirmation AlertDialog.
  *
- * Extracted from `SpaceRowEditor` (PEND-30 D-2). Renders both the
+ * Extracted from `SpaceRowEditor` (D-2). Renders both the
  * Trash icon button (with disabled-state tooltip when the gate
- * blocks) and the inline-blocked hint paragraph (UX-370). The
- * parent owns the emptiness probe (MAINT-180) and passes the
+ * Blocks) and the inline-blocked hint paragraph. The
+ * Parent owns the emptiness probe and passes the
  * resolved tri-state result.
  *
  * Behaviour preservation contract:
@@ -48,7 +48,7 @@ interface SpaceDeleteButtonProps {
   /** True when this is the only space — delete forbidden. */
   isLastSpace: boolean
   /**
-   * Emptiness probe result lifted to the parent (MAINT-180). `null` =
+   * Emptiness probe result lifted to the parent. `null` =
    * still loading or fetch failed → Delete stays disabled. `true` =
    * no pages, Delete enabled. `false` = ≥1 page, Delete disabled.
    */
@@ -151,7 +151,7 @@ interface SpaceDeleteBlockedHintProps {
 
 /**
  * Inline help line under a row when Delete is disabled because the
- * space contains pages (UX-370). Sibling to the Trash button so the
+ * Space contains pages. Sibling to the Trash button so the
  * row layout owns the placement; this keeps the
  * `SpaceDeleteButton` returning a fragment-shape that fits inline
  * in the row's flex header.

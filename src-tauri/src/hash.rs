@@ -59,7 +59,7 @@ pub fn compute_op_hash(
 ) -> String {
     let parent_seqs_canonical = parent_seqs.unwrap_or("");
 
-    // L-4 / #1600 — These four `\0` invariants are the wire-format
+    // / #1600 — These four `\0` invariants are the wire-format
     // contract for the hash preimage: a raw `\0` in any field would
     // produce an ambiguous preimage and break cross-device hash
     // determinism. They are checked here as **dev-time** invariants
@@ -345,7 +345,7 @@ mod tests {
         );
     }
 
-    /// L-4 — The null-byte invariants are now `assert!` (not
+    /// The null-byte invariants are now `assert!` (not
     /// `debug_assert!`), so they fire in both debug and release builds.
     /// The hash preimage uses `\0` as a field separator, so a raw `\0`
     /// in any input would produce an ambiguous preimage.
@@ -432,7 +432,7 @@ mod tests {
             op_type: OP_CREATE.to_string(),
             payload: payload.to_string(),
             created_at: 1_735_689_600_000,
-            // L-13: hash tests don't care about the cached sidecar
+            // Hash tests don't care about the cached sidecar
             // (it is intentionally excluded from the hash preimage),
             // but the field is required for the struct literal.
             block_id: Some("AB".to_string()),
@@ -496,7 +496,7 @@ mod tests {
         assert!(constant_time_eq(b"", b""));
     }
 
-    // ── debug_assert: null-byte separator (dev-time invariant, L-4) ────
+    // ── debug_assert: null-byte separator (dev-time invariant) ────
     //
     // #1600 — these are `debug_assert!`s (not `assert!`): in release
     // `compute_op_hash` never panics on a NUL byte. The

@@ -5,7 +5,7 @@
  * states, and composes `HistoryFilterBar` + `HistorySelectionToolbar`
  * + `HistoryListView` + the revert / restore dialogs. Selection,
  * keyboard navigation, list rendering, and the dialog IPCs each live
- * in their own hook / sibling component (MAINT-128).
+ * In their own hook / sibling component.
  */
 
 import { ChevronDown, ChevronUp, Clock } from 'lucide-react'
@@ -44,11 +44,11 @@ export function HistoryView(): React.ReactElement {
   const [confirmRevert, setConfirmRevert] = useState(false)
   const [restoreTarget, setRestoreTarget] = useState<HistoryEntry | null>(null)
   const [confirmRestore, setConfirmRestore] = useState(false)
-  // FEAT-3 Phase 8 — current-space scoping. Default `false` ⇒ pass the
+  // Phase 8 — current-space scoping. Default `false` ⇒ pass the
   // current space id so only ops on pages in this space are returned.
   // Toggling on drops the filter (cross-space `t('history.allSpacesToggle')` mode).
   //
-  // UX-369 — opt-in localStorage persistence so power users who audit
+  // Opt-in localStorage persistence so power users who audit
   // cross-space history don't have to re-flip the toggle every visit.
   // `useLocalStoragePreference` falls back to in-memory state when
   // localStorage is unavailable (private mode / quota exceeded).
@@ -64,14 +64,14 @@ export function HistoryView(): React.ReactElement {
   const listRef = useRef<HTMLDivElement>(null)
   // Register the list container as the primary focus target so switching to
   // History via sidebar lands focus on the entries list (not #main-content),
-  // letting the user immediately arrow-navigate (UX-220).
+  // Letting the user immediately arrow-navigate.
   useRegisterPrimaryFocus(listRef)
 
   // ── Data loading ─────────────────────────────────────────────────
-  // UX-275 sub-fix 7: track the categorised failure so the error banner can
+  // Sub-fix 7: track the categorised failure so the error banner can
   // show network/server/unknown-specific copy alongside the generic title.
   const [errorCategory, setErrorCategory] = useState<HistoryErrorCategory | null>(null)
-  // FEAT-3 Phase 8 — when `t('history.allSpacesToggle')` is off, narrow the IPC to the
+  // Phase 8 — when `t('history.allSpacesToggle')` is off, narrow the IPC to the
   // current space. When on (or when no current space exists yet), pass
   // `undefined` so the backend returns ops from every space.
   const effectiveSpaceId = showAllSpaces ? undefined : (currentSpaceId ?? undefined)
@@ -138,7 +138,7 @@ export function HistoryView(): React.ReactElement {
   })
 
   // Reset selection + focus when filter changes (entries are replaced
-  // by the paginated query). FEAT-3 Phase 8 — also resets when the
+  // By the paginated query). Phase 8 — also resets when the
   // space scope flips so a stale selection from the previous scope
   // doesn't leak into the new one.
   useEffect(() => {
@@ -209,7 +209,7 @@ export function HistoryView(): React.ReactElement {
       )}
 
       {/* Error banner.
-          UX-275 sub-fix 7: keep the existing `history.loadFailed` heading
+           sub-fix 7: keep the existing `history.loadFailed` heading
           (so screen-readers and existing tests still see it) and append a
           category-specific detail line so users get actionable context. */}
       {error && (
@@ -235,7 +235,7 @@ export function HistoryView(): React.ReactElement {
       )}
 
       {/* Empty state.
-          FEAT-3 Phase 8 — when scoped to the current space, surface the
+           Phase 8 — when scoped to the current space, surface the
           "Toggle 'All spaces' to see history from other spaces." hint
           so users understand why the list is empty and how to expand
           the scope. The cross-space ("All spaces" on) empty state keeps
@@ -268,7 +268,7 @@ export function HistoryView(): React.ReactElement {
         onRestoreToHere={handleRestoreToHere}
       />
 
-      {/* UX-346 — touch-only ↑/↓ navigation buttons.
+      {/* touch-only ↑/↓ navigation buttons.
           Vim-mode (`j`/`k`) and arrow keys only fire on physical keyboards;
           on touch devices the user has no equivalent. These two buttons map
           to the same `setFocusedIndex` calls a keyboard nav step would make.

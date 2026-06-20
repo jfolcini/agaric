@@ -1,5 +1,5 @@
 /**
- * SpaceRowEditor — per-row orchestrator. PEND-30 D-2 reduced this from
+ * SpaceRowEditor — per-row orchestrator. D-2 reduced this from
  * a ~600-line monolith mixing five orthogonal concerns (rename,
  * accent, delete, journal-template, onboarding-hint) to a thin shell
  * composing four focused sub-components. The onboarding hint lifted
@@ -7,7 +7,7 @@
  * row.
  *
  * Emptiness + journal-template state is owned by `SpaceManageDialog`
- * (MAINT-180) so the IPCs fire once per `space.id`, not once per row
+ * So the IPCs fire once per `space.id`, not once per row
  * mount.
  */
 
@@ -25,14 +25,14 @@ export interface SpaceRowEditorProps {
   /** Refresh callback after a successful mutation. */
   onRefresh: () => Promise<void> | void
   /**
-   * Emptiness probe result lifted to the parent (MAINT-180). `null` =
+   * Emptiness probe result lifted to the parent. `null` =
    * still loading or fetch failed → Delete stays disabled. `true` =
    * no pages, Delete enabled. `false` = ≥1 page, Delete disabled.
    */
   emptiness: boolean | null
   /**
    * Initial value of the per-space `journal_template` property,
-   * fetched once per `space.id` by the parent (MAINT-180). `undefined`
+   * Fetched once per `space.id` by the parent. `undefined`
    * = parent has not resolved yet → the journal-template editor is
    * not mounted (the loading seam is explicit at this gate, replacing
    * the old `journalTemplateInitializedRef` flag inside the editor).

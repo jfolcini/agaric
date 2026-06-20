@@ -3,9 +3,9 @@
  *
  * Per-block panel: receives a blockId prop and displays paginated history entries.
  *
- * PEND-17 Part B redesign:
+ * Part B redesign:
  *   - In-panel restore is dialog-free; toast-with-Undo is the safety net
- *     (the existing UX-275 sub-fix 4 snapshot+Undo flow still owns the
+ * (the existing sub-fix 4 snapshot+Undo flow still owns the
  *     "second chance" guarantee).
  *   - Keyboard browse: ↓/↑ move between rows, focused row auto-expands
  *     and the previously-focused row collapses, Enter triggers the
@@ -20,7 +20,7 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-// PEND-35 Tier 1.3 — `opTypeFilter` now drives the IPC directly (mirrors
+// `opTypeFilter` now drives the IPC directly (mirrors
 // the global `HistoryView` path). The legacy post-pagination JS filter
 // silently dropped rows from the cursor page, so a 50-row backend page
 // of mixed op types could yield 0 visible rows.
@@ -73,7 +73,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [opTypeFilter, setOpTypeFilter] = useState<string | null>(null)
-  // PEND-17 Part B — only one row is expanded at a time. `null` ⇒
+  // Part B — only one row is expanded at a time. `null` ⇒
   // collapsed/idle. Tracked by `seq` (stable per device) instead of
   // index so cursor pagination doesn't shuffle expansion to the wrong
   // row when new entries are loaded.
@@ -82,14 +82,14 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     (entry) => entry.seq,
   )
   const listRef = useRef<HTMLUListElement | null>(null)
-  // MAINT-219: ref attached to the currently-expanded row's primary
+  // Ref attached to the currently-expanded row's primary
   // `Restore` button. Owning the ref at the panel level (rather than
   // querySelector-ing the DOM) keeps focus management aligned with React
   // state — the markup can move without silently breaking the lookup.
   // The ref is only forwarded to the row whose `seq === expandedSeq`, so
   // at most one button claims it at any time.
   const restoreButtonRef = useRef<HTMLButtonElement | null>(null)
-  // MAINT-219: latched true by `handlePanelKeyDown` whenever an arrow
+  // Latched true by `handlePanelKeyDown` whenever an arrow
   // key changes `expandedSeq`; consumed by the focus-on-expand effect
   // below and reset. Using a ref (not state) so toggling it doesn't
   // trigger a re-render. The latch covers the unmount-blur race where
@@ -124,7 +124,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
       }
       setLoading(false)
     },
-    // PEND-35 Tier 1.3 — `opTypeFilter` is now part of the cache key so
+    // `opTypeFilter` is now part of the cache key so
     // changing the filter forces a refetch with pre-filtered SQL.
     [blockId, opTypeFilter, t],
   )
@@ -141,12 +141,12 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     if (nextCursor) loadHistory(nextCursor)
   }, [nextCursor, loadHistory])
 
-  // PEND-35 Tier 1.3 — backend now applies `op_type_filter` in SQL, so
+  // Backend now applies `op_type_filter` in SQL, so
   // entries arrive pre-filtered. Keep the alias to minimise diff churn
   // in the consumers below.
   const filteredEntries = entries
 
-  // UX-275 sub-fix 4: restore is reversible — capture the current block
+  // Sub-fix 4: restore is reversible — capture the current block
   // content BEFORE applying the historical version so the success toast can
   // offer a one-click `t('action.undo')` that re-applies the captured snapshot.
   const handleUndoRestore = useCallback(
@@ -225,7 +225,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     [blockId, t, handleUndoRestore],
   )
 
-  // PEND-17 Part B keyboard browse — ↓/↑ navigate restorable rows
+  // Part B keyboard browse — ↓/↑ navigate restorable rows
   // (focused row auto-expands), Enter restores the focused row, Esc
   // collapses. Skips non-restorable rows so the keyboard cursor never
   // gets "stuck" on a non-actionable entry.
@@ -243,7 +243,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         const next = currentIdx < 0 ? 0 : Math.min(restorableEntries.length - 1, currentIdx + 1)
         const target = restorableEntries[next]
         if (target) {
-          // MAINT-219: latch keyboard-nav intent BEFORE the state
+          // Latch keyboard-nav intent BEFORE the state
           // update so the post-render focus effect knows this
           // expansion came from arrow keys (not a mouse click).
           pendingKeyboardFocusRef.current = true
@@ -288,7 +288,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     }
   }, [expandedSeq])
 
-  // MAINT-219 — keep DOM focus in sync with `expandedSeq`. Without this,
+  // Keep DOM focus in sync with `expandedSeq`. Without this,
   // `↓`/`↑` move expansion state but focus stays on the originally-
   // focused row, so a subsequent `Enter` double-fires: the focused row's
   // `handleRowKeyDown` toggles ITS expansion AND `handlePanelKeyDown`
@@ -360,7 +360,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
           <ul
             ref={listRef}
             className="history-list space-y-0 list-none p-0 m-0 focus:outline-none"
-            // PEND-17 Part B — list-level keydown handler; tabIndex=-1
+            // Part B — list-level keydown handler; tabIndex=-1
             // keeps the list itself outside the tab order while still
             // accepting key events delegated up from focused rows.
             tabIndex={-1}
@@ -380,7 +380,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
                   diffSpans={diffCache.get(entry.seq)}
                   onExpandToggle={handleExpandToggle}
                   onRestore={handleRestore}
-                  // MAINT-219: only the expanded row gets the ref so the
+                  // Only the expanded row gets the ref so the
                   // focus-on-change effect targets a single, current
                   // button. The ref is reassigned across renders when
                   // the expansion moves — React detaches the old node

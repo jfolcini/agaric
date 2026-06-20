@@ -1,7 +1,7 @@
 /**
  * useBlockTreeContextBags — memoised composition of the per-block action +
  * resolver bags that BlockTree publishes via `BlockActionsProvider` and
- * `BlockResolversProvider` (MAINT-118).
+ * `BlockResolversProvider`.
  *
  * Both bags are memoised so descendants using `useBlockActions()` /
  * `useBlockResolvers()` only re-render when individual callbacks change

@@ -456,8 +456,8 @@ describe('AgendaView', () => {
     })
 
     expect(mockedExecuteAgendaFilters).toHaveBeenCalledTimes(1)
-    // UX-196: agenda now opens with a TODO+DOING status filter by default.
-    // FEAT-3 Phase 4 — `executeAgendaFilters` now takes `spaceId` as
+    // Agenda now opens with a TODO+DOING status filter by default.
+    // Phase 4 — `executeAgendaFilters` now takes `spaceId` as
     // its second positional arg (`null` here because no space is seeded).
     expect(mockedExecuteAgendaFilters).toHaveBeenCalledWith(
       [{ dimension: 'status', values: ['TODO', 'DOING'] }],
@@ -478,7 +478,7 @@ describe('AgendaView', () => {
     })
 
     expect(mockedExecuteAgendaFilters).toHaveBeenCalledTimes(2)
-    // FEAT-3 Phase 4 — `executeAgendaFilters` now takes `spaceId` as
+    // Phase 4 — `executeAgendaFilters` now takes `spaceId` as
     // its second positional arg (`null` here, no seeded space).
     expect(mockedExecuteAgendaFilters).toHaveBeenLastCalledWith(
       [{ dimension: 'status', values: ['TODO'] }],
@@ -494,7 +494,7 @@ describe('AgendaView', () => {
       expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-loading', 'false')
     })
 
-    // UX-196: agenda now opens with 1 default filter (TODO+DOING status).
+    // Agenda now opens with 1 default filter (TODO+DOING status).
     expect(screen.getByTestId('agenda-filter-builder')).toHaveAttribute('data-filter-count', '1')
 
     // Replace with a different filter via AgendaFilterBuilder
@@ -706,8 +706,8 @@ describe('AgendaView', () => {
     expect(screen.getByTestId('agenda-view')).toBeInTheDocument()
   })
 
-  // UX-196: default filter hides DONE tasks by restricting status to TODO+DOING
-  it('UX-196: mounts with default status filter (TODO + DOING)', async () => {
+  // Default filter hides DONE tasks by restricting status to TODO+DOING
+  it('mounts with default status filter (TODO + DOING)', async () => {
     render(<AgendaView />)
 
     await waitFor(() => {
@@ -722,7 +722,7 @@ describe('AgendaView', () => {
     expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-has-active-filters', 'false')
 
     // The backend query should be called with the active-states filter,
-    // not an empty array (which would include DONE). FEAT-3 Phase 4
+    // Not an empty array (which would include DONE). Phase 4
     // adds `spaceId` (null here, no seeded space).
     expect(mockedExecuteAgendaFilters).toHaveBeenCalledWith(
       [{ dimension: 'status', values: ['TODO', 'DOING'] }],
@@ -785,12 +785,12 @@ describe('AgendaView', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // UX-198: AgendaView's filter/sort header is now hoisted to the App-level
+  // AgendaView's filter/sort header is now hoisted to the App-level
   // outlet via <ViewHeader>, so the per-view wrapper no longer uses sticky
   // positioning. The header content must still render (via the ViewHeader
   // inline fallback used in isolated tests), but there must be no element
   // with the old `sticky top-0` classes on this component's subtree.
-  it('UX-198: no sticky top-0 on the header wrapper', async () => {
+  it('no sticky top-0 on the header wrapper', async () => {
     const { container } = render(<AgendaView />)
     await waitFor(() => {
       expect(screen.getByTestId('agenda-filter-builder')).toBeInTheDocument()

@@ -226,7 +226,7 @@ export function getProjection(
   const overIndex = items.findIndex((item) => item.id === overId)
   const activeIndex = items.findIndex((item) => item.id === activeId)
 
-  // FE-M-11: explicit bounds check at function entry. The `!activeItem` guard
+  // Explicit bounds check at function entry. The `!activeItem` guard
   // below also catches a missing active id (via `items[-1] === undefined`),
   // but the indirection between `findIndex` and the downstream
   // `splice(activeIndex, 1)` makes future edits risky — `splice(-1, 1)` would

@@ -1,5 +1,5 @@
 /**
- * Tests for useTrashListShortcuts — UX-275 keyboard shortcuts
+ * Tests for useTrashListShortcuts — keyboard shortcuts
  * (Shift+R restore, Shift+Delete purge, Space toggle, Ctrl+A
  * select-all, Escape clear-selection) installed at the document level.
  */

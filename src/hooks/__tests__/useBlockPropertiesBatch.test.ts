@@ -141,7 +141,7 @@ describe('useBlockPropertiesBatch', () => {
     expect(result.current).toEqual({})
   })
 
-  it('ignores a stale resolution when a newer fetch has superseded it (M-1 race guard)', async () => {
+  it('ignores a stale resolution when a newer fetch has superseded it (race guard)', async () => {
     // Build two deferred IPC results. The first call (older blocks list)
     // is resolved AFTER the second call so the older `.then` runs last —
     // without the cancelled flag this would overwrite the newer state

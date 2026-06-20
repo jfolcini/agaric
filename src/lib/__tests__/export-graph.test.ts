@@ -214,7 +214,7 @@ describe('exportGraphAsZip', () => {
   })
 
   it('skips and logs pages whose export fails, returning the rest', async () => {
-    // Pin the partial-export contract (FE-M-12): a single per-page IPC failure
+    // Pin the partial-export contract: a single per-page IPC failure
     // must not reject the whole export. The successful pages still land in the
     // ZIP and the failure is surfaced through `logger.warn` with the page id.
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {

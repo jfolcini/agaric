@@ -1,5 +1,5 @@
 /**
- * PEND-56 — tests for usePageBrowserDensity.
+ * Tests for usePageBrowserDensity.
  */
 
 import { act, renderHook } from '@testing-library/react'

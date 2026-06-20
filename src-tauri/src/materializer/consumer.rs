@@ -1,6 +1,6 @@
 //! Consumer loops for the materializer foreground and background queues.
 //!
-//! ## Two-tier retry semantics (MAINT-148h)
+//! ## Two-tier retry semantics
 //!
 //! Both consumers run failed tasks through the shared
 //! [`retry_with_backoff`] helper, but the **schedule** and **observability
@@ -8,8 +8,8 @@
 //!
 //! | Tier | Site | Tasks routed here | Retries | Backoff | On exhaustion |
 //! |------|------|-------------------|---------|---------|---------------|
-//! | Foreground (fg) | [`process_single_foreground_task`] | `ApplyOp`, `BatchApplyOps`, `Barrier` | 1 | constant 100 ms | Bump `fg_errors` (and, for Apply / BatchApplyOps, `fg_apply_dropped` plus a divergence warn carrying op coords). PEND-24 H1: the failure is **persisted** to `materializer_retry_queue` (one `ApplyOp` row per record; batches fan out) and re-enqueued by the sweeper on the minute-to-hour schedule. #621: persisted ApplyOp rows are exempt from the give-up triggers — the cursor's MAX-semantics advance has already leapt past the dropped seq, so this row is the only remaining recovery net; the sweeper instead retires a row only when its op_log row is gone or a later `purge_block` supersedes it (re-applying out of order would resurrect purged data). |
-//! | Background (bg) | [`run_background`] | All cache rebuilds, FTS reindex, attachment cleanup | 2 | exponential 150 ms / 300 ms | Bump `bg_errors` / `bg_panics`. Idempotent per-block tasks (`UpdateFtsBlock`, `ReindexBlockLinks`, `ReindexBlockTagRefs`) are persisted to `materializer_retry_queue` for re-enqueue on the much-longer minute-to-hour schedule from [`super::retry_queue::backoff_delay_for`] (BUG-22). PEND-03 extends persistence to global cache rebuilds (`RebuildTagsCache`, …, `RebuildBlockTagRefsCache`) under the `'__GLOBAL__'` sentinel so a failure / saturation drop no longer leaves caches stale until the next user mutation. Truly non-retryable tasks (`RebuildFtsIndex`, `FtsOptimize`, `CleanupOrphanedAttachments`, …) are silently counted on `bg_dropped` without persistence. |
+//! | Foreground (fg) | [`process_single_foreground_task`] | `ApplyOp`, `BatchApplyOps`, `Barrier` | 1 | constant 100 ms | Bump `fg_errors` (and, for Apply / BatchApplyOps, `fg_apply_dropped` plus a divergence warn carrying op coords). the failure is **persisted** to `materializer_retry_queue` (one `ApplyOp` row per record; batches fan out) and re-enqueued by the sweeper on the minute-to-hour schedule. #621: persisted ApplyOp rows are exempt from the give-up triggers — the cursor's MAX-semantics advance has already leapt past the dropped seq, so this row is the only remaining recovery net; the sweeper instead retires a row only when its op_log row is gone or a later `purge_block` supersedes it (re-applying out of order would resurrect purged data). |
+//! | Background (bg) | [`run_background`] | All cache rebuilds, FTS reindex, attachment cleanup | 2 | exponential 150 ms / 300 ms | Bump `bg_errors` / `bg_panics`. Idempotent per-block tasks (`UpdateFtsBlock`, `ReindexBlockLinks`, `ReindexBlockTagRefs`) are persisted to `materializer_retry_queue` for re-enqueue on the much-longer minute-to-hour schedule from [`super::retry_queue::backoff_delay_for`]. extends persistence to global cache rebuilds (`RebuildTagsCache`, …, `RebuildBlockTagRefsCache`) under the `'__GLOBAL__'` sentinel so a failure / saturation drop no longer leaves caches stale until the next user mutation. Truly non-retryable tasks (`RebuildFtsIndex`, `FtsOptimize`, `CleanupOrphanedAttachments`, …) are silently counted on `bg_dropped` without persistence. |
 //!
 //! The in-memory backoffs (this module) handle transient WAL-lock
 //! contention; the persistent retry queue handles harder failures
@@ -37,7 +37,7 @@ pub(super) fn log_consumer_result(
     result: &Result<Result<(), crate::error::AppError>, tokio::task::JoinError>,
     level: tracing::Level,
 ) {
-    // L-16: callers parameterise the failure level so transient
+    // Callers parameterise the failure level so transient
     // (about-to-be-retried) failures emit at `debug` and only
     // operator-actionable failures (panics, retry exhaustion) emit
     // at `error`. Without this, every transient WAL-lock contention
@@ -88,12 +88,12 @@ pub(super) fn log_consumer_result(
 /// Each `retry_with_backoff` attempt runs inside its own
 /// `tokio::task::spawn` (for panic isolation — a panicking handler must
 /// not take down the consumer loop). The consumer loop itself runs as a
-/// task on the M-12 [`JoinSet`](super::coordinator::Materializer) and is
+/// Task on the [`JoinSet`](super::coordinator::Materializer) and is
 /// cancelled by `shutdown()`'s `abort_all()` at its next `.await` point —
 /// which is the `.await` on the attempt's `JoinHandle`. A bare
 /// `tokio::task::spawn` is **detached**: aborting the awaiting consumer
 /// task drops the `JoinHandle` but the spawned attempt keeps running
-/// against the (closing) writer pool, defeating the M-12 abort-on-shutdown
+/// Against the (closing) writer pool, defeating the abort-on-shutdown
 /// contract (the writer-pool-closed / slow-exit symptom).
 ///
 /// Wrapping the handle in this guard closes that gap: `Drop` calls
@@ -167,7 +167,7 @@ pub(super) struct RetryOutcome {
 /// inside a freshly spawned `tokio::task` so a panic in the handler does
 /// not crash the consumer loop.
 ///
-/// MAINT-148f — extracted from the formerly-duplicated retry loops in
+/// Extracted from the formerly-duplicated retry loops in
 /// [`process_single_foreground_task`] (single retry, 100 ms constant
 /// backoff) and [`run_background`] (2 retries, exponential 150 ms /
 /// 300 ms backoff). The constant-vs-exponential schedule is the only
@@ -204,7 +204,7 @@ where
         }
         Ok(Err(e)) => {
             outcome.last_error_msg = Some(format!("{e:?}"));
-            // L-16: demote first-attempt non-panic failure to `debug` —
+            // Demote first-attempt non-panic failure to `debug` —
             // the loop below already emits a `tracing::warn!("retrying
             // failed materializer task …")` line announcing the retry,
             // and if the retry succeeds the operator should NOT see an
@@ -235,7 +235,7 @@ where
         let retry_label = format!("{label}-retry-{attempt}");
         match &retry {
             Ok(Ok(())) => {
-                // L-16: optional positive correlation line — pairs with
+                // Optional positive correlation line — pairs with
                 // the demoted `debug` first-attempt failure so an
                 // operator chasing a transient WAL-lock can confirm the
                 // task eventually completed. `fg_errors` / `bg_errors`
@@ -251,7 +251,7 @@ where
             }
             Ok(Err(e)) => {
                 outcome.last_error_msg = Some(format!("{e:?}"));
-                // L-16: same rationale as the first-attempt arm — these
+                // Same rationale as the first-attempt arm — these
                 // intermediate retry failures are about to be retried
                 // again (or escalated below). Demote to `debug`.
                 log_consumer_result(&retry_label, &retry, tracing::Level::DEBUG);
@@ -265,7 +265,7 @@ where
         }
     }
 
-    // L-16: retries exhausted without panic — surface a single
+    // Retries exhausted without panic — surface a single
     // operator-facing `error` line so the demoted-to-debug
     // intermediate failures don't leave the operator-facing logs
     // silent. Panic-exhausted paths are NOT logged here; they were
@@ -307,7 +307,7 @@ pub(super) async fn run_foreground(
                 break;
             }
         }
-        // MAINT-21: enter a `mat_batch` span for the duration of this drained
+        // Enter a `mat_batch` span for the duration of this drained
         // batch so every log line emitted during processing shares the prefix
         // (`mat_batch{kind="fg",size=N}`) for correlation.
         let batch_size = batch.len();
@@ -327,7 +327,7 @@ pub(super) async fn run_foreground(
             if !segment.is_empty() {
                 process_foreground_segment(&pool, segment, &metrics).await;
             }
-            // MAINT-24: Record "we just finished a batch" timestamp so status
+            // Record "we just finished a batch" timestamp so status
             // consumers can detect stalled materializers.
             record_last_materialize(&metrics);
         }
@@ -361,7 +361,7 @@ fn record_last_materialize(metrics: &QueueMetrics) {
 /// each subsequent attempt waits [`PERSIST_RETRY_BACKOFF`] first.
 ///
 /// #851 (bounded persist-failure mitigation): a single retry (the old
-/// PEND-24 M1 budget) still left a real loss window — if BOTH the first
+/// Budget) still left a real loss window — if BOTH the first
 /// attempt and the one retry hit transient WAL-lock contention, the op was
 /// permanently unmaterialized (only a warn + metric, no further recourse;
 /// the foreground apply already failed, so the op never advances the cursor
@@ -379,7 +379,7 @@ const PERSIST_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_mil
 
 /// Persist a failed task to `materializer_retry_queue`, retrying a small
 /// bounded number of times with a short backoff if a write fails
-/// (PEND-24 M1; bounded budget widened for #851).
+/// (; bounded budget widened for #851).
 ///
 /// **Why retry?** The persistence path itself is a SQLite write that
 /// can hit the same WAL-lock contention as the primary task. Without
@@ -414,10 +414,7 @@ pub(super) async fn record_failure_with_retry(
         match record_failure(pool, task, last_error).await {
             Ok(()) => {
                 if attempt > 1 {
-                    tracing::info!(
-                        attempt,
-                        "PEND-24 M1 / #851: record_failure succeeded on retry"
-                    );
+                    tracing::info!(attempt, "#851: record_failure succeeded on retry");
                 }
                 return true;
             }
@@ -430,14 +427,14 @@ pub(super) async fn record_failure_with_retry(
                         error = %e,
                         attempt,
                         attempts = PERSIST_RETRY_ATTEMPTS,
-                        "PEND-24 M1 / #851: record_failure attempt failed; retrying after backoff"
+                        "#851: record_failure attempt failed; retrying after backoff"
                     );
                     tokio::time::sleep(PERSIST_RETRY_BACKOFF).await;
                 } else {
                     tracing::error!(
                         error = %e,
                         attempts = PERSIST_RETRY_ATTEMPTS,
-                        "PEND-24 M1 / #851: record_failure exhausted its bounded retry budget — \
+                        "#851: record_failure exhausted its bounded retry budget — \
                          task dropped without persistence"
                     );
                 }
@@ -495,7 +492,7 @@ pub(super) async fn process_single_foreground_task(
     task: MaterializeTask,
     metrics: &Arc<QueueMetrics>,
 ) {
-    // L-10: Barriers carry a `tokio::sync::Notify`; the only work is
+    // Barriers carry a `tokio::sync::Notify`; the only work is
     // `notify.notify_one()`. There is no DB read, no fallible step, no
     // retry semantic worth preserving — wrapping it in `tokio::spawn`
     // (with the pool / metrics Arc clones the rest of this
@@ -565,7 +562,7 @@ pub(super) async fn process_single_foreground_task(
         // the match arm is exhaustive for safety) keep their
         // existing single-counter behavior.
         //
-        // PEND-24 H1: in addition to the warn + `fg_apply_dropped`
+        // In addition to the warn + `fg_apply_dropped`
         // bump, persist the failure to `materializer_retry_queue` via
         // [`record_failure_with_retry`] so the boot-time / periodic
         // sweeper re-enqueues it on the same minute-to-hour backoff
@@ -612,7 +609,7 @@ pub(super) async fn process_single_foreground_task(
                         "foreground batch-apply-ops dropped after retry exhausted — empty batch"
                     );
                 }
-                // PEND-24 H1: persist each record as an individual
+                // Persist each record as an individual
                 // ApplyOp retry row. `record.clone()` is a cold-path
                 // deep clone of `OpRecord` (String fields) — acceptable
                 // since this only runs after retry exhaustion.
@@ -658,7 +655,7 @@ pub(super) async fn run_background(
         let total_before = batch.len();
         let deduped = dedup_tasks(batch);
         let dedup_count = (total_before - deduped.len()) as u64;
-        // MAINT-21: wrap the per-batch work in a `mat_batch` span (kind="bg")
+        // Wrap the per-batch work in a `mat_batch` span (kind="bg")
         // so every log line emitted during processing of this drained batch
         // shares the prefix for correlation.
         let batch_span = tracing::info_span!(
@@ -682,7 +679,7 @@ pub(super) async fn run_background(
                 // docs: docs/ARCHITECTURE.md §5 ("Materializer / Retry behaviour"
                 // — Background backoff schedule: 150ms, 300ms).
                 //
-                // Cross-reference (BUG-22 / MAINT-148h): this is the
+                // Cross-reference: this is the
                 // *in-memory* per-batch retry budget. Tasks that exhaust
                 // this loop and are idempotent per-block (UpdateFtsBlock,
                 // ReindexBlockLinks, ReindexBlockTagRefs) get persisted to
@@ -749,14 +746,14 @@ pub(super) async fn run_background(
                          row will be re-leased and re-cleared on the next sweep"
                     );
                 }
-                // BUG-22 / PEND-03: Persist exhausted failures for retryable
+                // Persist exhausted failures for retryable
                 // tasks to `materializer_retry_queue` so the boot-time /
                 // periodic sweeper can re-enqueue them later. Both
                 // idempotent per-block tasks (UpdateFtsBlock,
                 // ReindexBlockLinks, ReindexBlockTagRefs) AND global cache
                 // rebuilds (RebuildTagsCache, RebuildPagesCache, …) are
                 // persisted. Global tasks use the `'__GLOBAL__'` sentinel
-                // for `block_id` (PEND-03 — eliminates the silent-drop gap
+                // For `block_id` (eliminates the silent-drop gap
                 // where a failed cache rebuild would leave caches stale
                 // until the next user mutation re-dispatched it).
                 //
@@ -766,10 +763,10 @@ pub(super) async fn run_background(
                 // `RemoveFtsBlock`) hit the `else` arm and are silently
                 // counted without persistence. (`ApplyOp` /
                 // `BatchApplyOps` would be persisted by `from_task` after
-                // PEND-24 H1, but they are routed exclusively to the
+                // But they are routed exclusively to the
                 // foreground queue and never reach this site.)
                 //
-                // PEND-24 M1 / #851: persistence itself can fail (transient
+                // #851: persistence itself can fail (transient
                 // WAL contention on the retry-queue write). Use
                 // `record_failure_with_retry` to retry a small bounded number
                 // of times with a short backoff (`PERSIST_RETRY_ATTEMPTS`)
@@ -782,14 +779,14 @@ pub(super) async fn run_background(
                         let err_msg = last_error_msg.as_deref().unwrap_or("unknown error");
                         let persisted =
                             record_failure_with_retry(&pool, &task, err_msg, &metrics).await;
-                        // PEND-24 M1: bump bg_dropped on BOTH the success
+                        // Bump bg_dropped on BOTH the success
                         // and the persist-failure branches. Operators
                         // reading `bg_dropped` get an accurate "left the
                         // primary materialization path" count regardless
                         // of whether the retry queue write itself
                         // succeeded.
                         metrics.bg_dropped.fetch_add(1, Ordering::Relaxed);
-                        // PEND-03: surface global-cache drops separately
+                        // Surface global-cache drops separately
                         // so operators can distinguish per-block reindex
                         // backlog from global-cache freshness gaps. We
                         // bump regardless of `persisted` so this
@@ -820,7 +817,7 @@ pub(super) async fn run_background(
                 barrier.notify_one();
             }
             metrics.bg_deduped.fetch_add(dedup_count, Ordering::Relaxed);
-            // MAINT-24: Update last-batch timestamp after every drain (even if
+            // Update last-batch timestamp after every drain (even if
             // some tasks failed — the consumer itself is alive).
             record_last_materialize(&metrics);
         }
@@ -851,7 +848,7 @@ mod m10_tests {
         }
     }
 
-    /// M-10: the `BatchApplyOps` variant wraps its `Vec<OpRecord>` in an
+    /// The `BatchApplyOps` variant wraps its `Vec<OpRecord>` in an
     /// `Arc` so that the `task.clone()` calls on the foreground /
     /// background consumer retry paths are cheap refcount bumps instead
     /// of full deep clones of what can, during sync catch-up, be a

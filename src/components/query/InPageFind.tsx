@@ -1,5 +1,5 @@
 /**
- * InPageFind — browser-style find-in-page toolbar (PEND-52).
+ * InPageFind — browser-style find-in-page toolbar.
  *
  * Renders nothing when the store's `open` flag is false. When open,
  * mounts a thin toolbar that runs the matcher against the registered

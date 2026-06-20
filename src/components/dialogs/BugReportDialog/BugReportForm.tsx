@@ -4,7 +4,7 @@
  *
  * Owns the title input, description textarea, the
  * `t('bugReport.includeLogsLabel')` switch, and the sibling
- * `t('bugReport.redactLabel')` switch (UX-383). All state lives in the
+ * `t('bugReport.redactLabel')` switch. All state lives in the
  * parent orchestrator — this component is a controlled presentation layer
  * so the existing IPC + redaction logic in `BugReportDialog.tsx` (and
  * `src-tauri/src/commands/bug_report.rs`) stays untouched.
@@ -89,7 +89,7 @@ export function BugReportForm({
         </div>
       </div>
 
-      {/* UX-383: Redact is a sibling row at the same indent as Include
+      {/* Redact is a sibling row at the same indent as Include
             logs (not nested under it) so it's always visible. When
             Include logs is OFF the underlying Switch is disabled —
             Radix forwards `disabled` to the native disabled

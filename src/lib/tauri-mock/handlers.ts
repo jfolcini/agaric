@@ -66,7 +66,7 @@ type TagExprNode =
 
 // Stub return shapes used by handlers that don't need behaviour beyond a
 // type-correct empty payload. `list_projected_agenda` is cursor-paginated
-// (M-25) and returns a `PageResponse<T>` shape, NOT a bare array — using
+// And returns a `PageResponse<T>` shape, NOT a bare array — using
 // `returnEmptyArray` for it crashes consumers that read `response.items`.
 const returnNull: Handler = () => null
 const returnUndefined: Handler = () => undefined
@@ -132,7 +132,7 @@ function deriveLinkEdges(allBlocks: Map<string, Record<string, unknown>>): MockL
 /**
  * Inbound/outbound link facts for a page, scoped to "page block OR any
  * non-deleted descendant" (matching migration 0069 + the fixed `Orphan`
- * outbound term, PEND-58b P0-A). `inbound` = distinct sources linking in
+ * Outbound term, -A). `inbound` = distinct sources linking in
  * (`COUNT(DISTINCT source_id)`); `hasOutbound` = the page or a descendant
  * authors an outbound link.
  *
@@ -596,7 +596,7 @@ export const HANDLERS: Record<string, Handler> = {
     return { items, next_cursor: null, has_more: false }
   },
 
-  // BUG-48: indexed lookup for a single date-formatted journal page in
+  // Indexed lookup for a single date-formatted journal page in
   // the active space. Real backend implementation: a SELECT on
   // `idx_blocks_journal_date` with a `space` ref-property subquery.
   get_journal_page_by_date: (args) => {
@@ -615,7 +615,7 @@ export const HANDLERS: Record<string, Handler> = {
     return null
   },
 
-  // BUG-48 follow-up: list date-formatted journal pages in the active
+  // Follow-up: list date-formatted journal pages in the active
   // space whose date falls in `[startDate, endDate]`. The real backend
   // uses the `idx_blocks_journal_date` partial index plus a content
   // range predicate so this is O(visible-days).
@@ -778,7 +778,7 @@ export const HANDLERS: Record<string, Handler> = {
     }
   },
 
-  // PEND-56 — paginated page list with per-page metadata columns.
+  // Paginated page list with per-page metadata columns.
   // Mock parity with `list_pages_with_metadata_inner`: returns the same
   // shape as the backend (BlockRow columns + last_modified_at +
   // inbound_link_count + child_block_count + has_property_flags), sorts
@@ -809,7 +809,7 @@ export const HANDLERS: Record<string, Handler> = {
       rows.push(buildPageMetaRow(b, descendants, edges))
     }
 
-    // PEND-58 Phase 3 — AND-compose the requested filter primitives, then sort.
+    // Phase 3 — AND-compose the requested filter primitives, then sort.
     const filters = (filter['filters'] as Array<Record<string, unknown>> | undefined) ?? []
     const matched = rows.filter((r) => filters.every((f) => metaRowMatchesFilter(r, f)))
     matched.sort((x, y) => compareMetaRows(x, y, sort))
@@ -851,7 +851,7 @@ export const HANDLERS: Record<string, Handler> = {
     const items = hasMore ? slice.slice(0, limit) : slice
     const last = items.at(-1)
     const nextCursor = hasMore && last ? encodeNextCursor(last, sort) : null
-    // PEND-58d D6 (null-retention) — mirror the backend: the `total_count`
+    // (null-retention) — mirror the backend: the `total_count`
     // COUNT runs ONLY on the first page (`cursor == null`). The filtered-set
     // total does not change as the user pages with the same filters, so
     // recomputing it on every cursor page is wasted work. Subsequent (cursor)
@@ -884,7 +884,7 @@ export const HANDLERS: Record<string, Handler> = {
   },
 
   list_undated_tasks: (args) => {
-    // MAINT-226 — honour `scope: SpaceScope` (mirrors
+    // Honour `scope: SpaceScope` (mirrors
     // `list_undated_tasks_inner`).
     const a = (args ?? {}) as Record<string, unknown>
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
@@ -908,7 +908,7 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const id = fakeId()
     const parentId = (a['parentId'] as string) ?? null
-    // PEND-35 / MAINT-226 — `scope: SpaceScope` mirrors the backend
+    // `scope: SpaceScope` mirrors the backend
     // `create_block_inner_with_space` semantics: when `kind === 'active'`
     // and the new block is a page, the page is stamped with
     // `space = ?space_id` so subsequent space-filtered queries (backlink
@@ -963,7 +963,7 @@ export const HANDLERS: Record<string, Handler> = {
     return row
   },
 
-  // PEND-35 Tier 4.3 — atomic batch-create. Mirrors the existing
+  // Atomic batch-create. Mirrors the existing
   // `create_block` mock once per input spec, plus a `set_property` op
   // per (key, value) pair in the spec's `properties` map. The real
   // backend wraps the whole batch in one IMMEDIATE transaction; the
@@ -1045,7 +1045,7 @@ export const HANDLERS: Record<string, Handler> = {
   },
 
   // ---------------------------------------------------------------------------
-  // Spaces — FEAT-3 Phase 1 / Phase 2
+  // Spaces — Phase 1 / Phase 2
   // ---------------------------------------------------------------------------
 
   // A mock vault always exposes a single canonical "Personal" space — the
@@ -1056,12 +1056,12 @@ export const HANDLERS: Record<string, Handler> = {
   // `if (!isReady || currentSpaceId == null) return` guard in `App.tsx`.
   list_spaces: () => [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }],
 
-  // FEAT-3 Phase 2 atomic page-creation IPC. Accepts `parentId` (null for a
+  // Phase 2 atomic page-creation IPC. Accepts `parentId` (null for a
   // top-level page), `content`, and `spaceId`. Returns the new page's ULID
   // as a plain string — `bindings.ts` documents this departure from the
   // BlockRow shape used by `create_block`.
   //
-  // BUG-48 — the real backend wraps both the CreateBlock and
+  // The real backend wraps both the CreateBlock and
   // SetProperty(space) ops in a single transaction; the mock mirrors
   // that here so journal-page lookups (`get_journal_page_by_date`,
   // `list_journal_pages_in_range`) find newly-created pages by their
@@ -1111,7 +1111,7 @@ export const HANDLERS: Record<string, Handler> = {
     return id
   },
 
-  // FEAT-3p6 atomic space-creation IPC. Accepts `name` and optional
+  // Atomic space-creation IPC. Accepts `name` and optional
   // `accentColor`. Returns the new space's ULID as a plain string.
   // Mirrors `create_page_in_space` but produces a top-level page block
   // marked with `is_space="true"` so `list_spaces` picks it up.
@@ -1234,7 +1234,7 @@ export const HANDLERS: Record<string, Handler> = {
     }
   },
 
-  // PEND-35 Tier 2.1 — batch soft-delete (mirror of `delete_block`'s
+  // Batch soft-delete (mirror of `delete_block`'s
   // cascade). The backend version walks descendants via a recursive
   // CTE seeded from every root; here we approximate that by walking
   // the live `blocks` map per root once (covers the same set without
@@ -1352,7 +1352,7 @@ export const HANDLERS: Record<string, Handler> = {
     return { affected_count: count }
   },
 
-  // PEND-35 Tier 2.2 — single-IPC batch restore. Iterates the input ids,
+  // Single-IPC batch restore. Iterates the input ids,
   // clears `deleted_at` on each (matches existing `restore_block` mock's
   // per-row logic), pushes one `restore_block` op per actually-restored
   // root (mirrors backend's one op-per-root semantic). Non-deleted /
@@ -1372,7 +1372,7 @@ export const HANDLERS: Record<string, Handler> = {
     return { affected_count: count }
   },
 
-  // PEND-35 Tier 2.2 — single-IPC batch purge. Iterates the input ids,
+  // Single-IPC batch purge. Iterates the input ids,
   // physically removes each block plus all its related state from the
   // in-memory maps (matches the existing `purge_block` mock's cleanup
   // shape — that one only removed from `blocks`, but the real backend
@@ -1407,7 +1407,7 @@ export const HANDLERS: Record<string, Handler> = {
   batch_resolve: (args) => {
     const a = args as Record<string, unknown>
     const ids = a['ids'] as string[]
-    // MAINT-226 — honour `scope: SpaceScope`. Active scope drops blocks
+    // Honour `scope: SpaceScope`. Active scope drops blocks
     // whose owning page (`page_id`, or the block's own id if it IS a
     // page) is not stamped with `space = ?spaceId`, mirroring the
     // backend's `batch_resolve_inner` space-filter. Global passes
@@ -1523,7 +1523,7 @@ export const HANDLERS: Record<string, Handler> = {
     return { block_id: blockId, tag_id: tagId }
   },
 
-  // #81 / PEND-57 — bulk add one tag to N blocks. Lenient skip of
+  // #81 / bulk add one tag to N blocks. Lenient skip of
   // missing / deleted / self / already-tagged; returns the count newly tagged.
   add_tags_by_ids: (args) => {
     const a = args as Record<string, unknown>
@@ -1546,7 +1546,7 @@ export const HANDLERS: Record<string, Handler> = {
     return count
   },
 
-  // #81 / PEND-57 — bulk move N blocks to a space via the canonical
+  // #81 / bulk move N blocks to a space via the canonical
   // set_property(space) op. Lenient skip of missing / deleted; returns count moved.
   move_blocks_to_space: (args) => {
     const a = args as Record<string, unknown>
@@ -1589,7 +1589,7 @@ export const HANDLERS: Record<string, Handler> = {
   get_backlinks: (args) => {
     const a = args as Record<string, unknown>
     const targetId = a['blockId'] as string
-    // MAINT-226 — honour `scope: SpaceScope` the same way the backend's
+    // Honour `scope: SpaceScope` the same way the backend's
     // `get_backlinks_inner` does. Active scope drops source blocks whose
     // owning page (`page_id`, or own id if itself a page) lives in a
     // different space. Global is unfiltered (legacy cross-space view).
@@ -1614,7 +1614,7 @@ export const HANDLERS: Record<string, Handler> = {
   },
 
   get_block_history: (_args) => {
-    // PEND-35 Tier 1.3 — the backend now accepts `opTypeFilter`. The
+    // The backend now accepts `opTypeFilter`. The
     // mock signature mirrors that for parity with `bindings.ts` (the
     // handlers-drift test only checks that the command name is
     // present, but accepting the arg is the right shape). Browser-mode
@@ -1663,7 +1663,7 @@ export const HANDLERS: Record<string, Handler> = {
     return { items, next_cursor: null, has_more: false }
   },
 
-  // PEND-35 Tier 4.4 — mirror `find_undo_group_inner` semantics so
+  // Mirror `find_undo_group_inner` semantics so
   // browser-mode FE tests observe the same group sizing the real
   // backend produces. Walks the in-memory `opLog` newest-first,
   // filtering out `undo_*` / `redo_*` ops, seeds at index `depth`,
@@ -1725,7 +1725,7 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const query = (a['query'] as string) ?? ''
     if (!query) return { items: [], next_cursor: null, has_more: false }
-    // UX-248 — Unicode-aware fold so the mock parity-matches the real
+    // Unicode-aware fold so the mock parity-matches the real
     // backend's FTS5 / `COLLATE NOCASE` behaviour for Turkish / German
     // / accented inputs.  Tests that assert Unicode matching against
     // the mock now see consistent behaviour.
@@ -1738,7 +1738,7 @@ export const HANDLERS: Record<string, Handler> = {
   },
 
   search_blocks_partitioned: (args) => {
-    // PEND-61 Phase 1 — partitions a single content-fold over `blocks`
+    // Phase 1 — partitions a single content-fold over `blocks`
     // into `pages` (block_type='page') and `blocks` (unrestricted). The
     // real backend caps each partition independently from one FTS scan;
     // the mock mirrors that wire shape on a folded-substring filter.
@@ -1800,7 +1800,7 @@ export const HANDLERS: Record<string, Handler> = {
     const beforeDate = a['beforeDate'] as string
     const todoStates = a['todoStates'] as string[]
     const limit = (a['limit'] as number | null) ?? 200
-    // MAINT-226 — honour `scope: SpaceScope`. The previous mock read
+    // Honour `scope: SpaceScope`. The previous mock read
     // `a['spaceId']`, which was the legacy IPC arg shape; the backend
     // now takes `scope: SpaceScope`, so callers in `tauri.ts` pass
     // `toSpaceScope(spaceId)` and the literal `spaceId` arg is no
@@ -1841,12 +1841,12 @@ export const HANDLERS: Record<string, Handler> = {
     const key = a['key'] as string
     const valueText = (a['valueText'] as string | null) ?? null
     const valueDate = (a['valueDate'] as string | null) ?? null
-    // MAINT-226 — honour `scope: SpaceScope` (mirrors
+    // Honour `scope: SpaceScope` (mirrors
     // `query_by_property_inner`). Active scope drops rows whose owning
     // page is not stamped with `space = ?spaceId`. Global passes through.
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-    // PEND-35 Tier 1.5 / Tier 3.4 — push-down filters bundled into
+    // / Tier 3.4 — push-down filters bundled into
     // `extraFilters` on the IPC boundary. Mirror the backend
     // semantics so FE tests can observe the filter going through.
     //   - `excludeParentId` skips rows whose `parent_id` matches.
@@ -1868,7 +1868,7 @@ export const HANDLERS: Record<string, Handler> = {
     // created_at). The real backend exposes them through the properties
     // system, so the frontend calls query_by_property with those keys. We
     // fall back to reading the row-level field when the properties Map is
-    // empty or doesn't carry that key (TEST-1f).
+    // Empty or doesn't carry that key.
     const ROW_FIELD_KEYS: Record<string, 'text' | 'date'> = {
       todo_state: 'text',
       priority: 'text',
@@ -1887,7 +1887,7 @@ export const HANDLERS: Record<string, Handler> = {
     // oxlint-disable-next-line eslint/complexity -- pre-existing
     const items = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
-      // MAINT-226 — active-space scoping: drop rows whose owning page
+      // Active-space scoping: drop rows whose owning page
       // doesn't carry the active space ref.
       if (spaceId !== null) {
         const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
@@ -1939,10 +1939,10 @@ export const HANDLERS: Record<string, Handler> = {
     const tagIds = (a['tagIds'] as string[]) ?? []
     const prefixes = (a['prefixes'] as string[] | null) ?? []
     const mode = ((a['mode'] as string) ?? 'and').toLowerCase()
-    // PEND-35 Tier 3.4 — `blockType` push-down: restrict to a single
+    // `blockType` push-down: restrict to a single
     // block_type. `null` / `undefined` keeps the unfiltered behaviour.
     const blockType = (a['blockType'] as string | null) ?? null
-    // MAINT-226 — honour `scope: SpaceScope` (mirrors `query_by_tags_inner`).
+    // Honour `scope: SpaceScope` (mirrors `query_by_tags_inner`).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
 
@@ -2048,7 +2048,7 @@ export const HANDLERS: Record<string, Handler> = {
     return { items, next_cursor: null, has_more: false }
   },
 
-  // PEND-35 Tier 2.10b — AND-intersected property + tag query that the
+  // AND-intersected property + tag query that the
   // backend resolves entirely in SQL via composed `EXISTS` subqueries.
   // The mock exists so FE tests can assert the IPC fires and observe
   // the post-intersection result; cursor pagination is intentionally
@@ -2059,7 +2059,7 @@ export const HANDLERS: Record<string, Handler> = {
     const propertyFilters = (a['propertyFilters'] as Record<string, unknown>[] | null) ?? []
     const tagFilters = (a['tagFilters'] as Record<string, unknown> | null) ?? null
     const blockType = (a['blockType'] as string | null) ?? null
-    // MAINT-226 — honour `scope: SpaceScope` (mirrors `filtered_blocks_query_inner`).
+    // Honour `scope: SpaceScope` (mirrors `filtered_blocks_query_inner`).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
 
@@ -2252,7 +2252,7 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const key = a['key'] as string
-    // PEND-14: typed values are bundled under `value: SetPropertyArgs` (was 4 flat
+    // Typed values are bundled under `value: SetPropertyArgs` (was 4 flat
     // args). Navigate the bundle to read each typed value column.
     const valueArgs = a['value'] as Record<string, unknown> | undefined
     const valueText = (valueArgs?.['value_text'] as string | null) ?? null
@@ -2321,7 +2321,7 @@ export const HANDLERS: Record<string, Handler> = {
     return [...blockProps.values()]
   },
 
-  // PEND-35 Tier 2.4c — single-key PK lookup. Returns the row or null.
+  // Single-key PK lookup. Returns the row or null.
   get_property: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
@@ -2496,7 +2496,7 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const targetId = a['blockId'] as string
     const filterList = (a['filters'] as Array<Record<string, unknown>> | null) ?? []
-    // MAINT-226 — honour `scope: SpaceScope` (mirrors
+    // Honour `scope: SpaceScope` (mirrors
     // `query_backlinks_filtered_inner`).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
@@ -2525,7 +2525,7 @@ export const HANDLERS: Record<string, Handler> = {
         backlinkItems = backlinkItems.filter((b) => b['block_type'] === bt)
       } else if (type === 'Contains') {
         const query = (filter['query'] as string) ?? ''
-        // UX-248 — Unicode-aware fold (mock / backend parity).
+        // Unicode-aware fold (mock / backend parity).
         backlinkItems = backlinkItems.filter((b) =>
           matchesSearchFolded((b['content'] as string) ?? '', query),
         )
@@ -2633,7 +2633,7 @@ export const HANDLERS: Record<string, Handler> = {
     return { ...b }
   },
 
-  // PEND-35 Tier 2.1 — batch set/clear todo state. Iterates the
+  // Batch set/clear todo state. Iterates the
   // input list, sets `b.todo_state` on each live block, and emits a
   // single `set_property` op per affected block (mirrors the
   // backend's per-block op_log entry under one tx). Missing /
@@ -2709,7 +2709,7 @@ export const HANDLERS: Record<string, Handler> = {
   count_agenda_batch: (args) => {
     const a = args as Record<string, unknown>
     const dates = a['dates'] as string[]
-    // MAINT-226 — honour `scope: SpaceScope` (mirrors
+    // Honour `scope: SpaceScope` (mirrors
     // `count_agenda_batch_inner`).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
@@ -2733,7 +2733,7 @@ export const HANDLERS: Record<string, Handler> = {
   count_agenda_batch_by_source: (args) => {
     const a = args as Record<string, unknown>
     const dates = a['dates'] as string[]
-    // MAINT-226 — honour `scope: SpaceScope` (mirrors
+    // Honour `scope: SpaceScope` (mirrors
     // `count_agenda_batch_by_source_inner`).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
@@ -2764,7 +2764,7 @@ export const HANDLERS: Record<string, Handler> = {
   count_backlinks_batch: (args) => {
     const a = args as Record<string, unknown>
     const pageIds = a['pageIds'] as string[]
-    // PEND-35 Tier 1.6 — honour `scope` so mock-mode FE tests can
+    // Honour `scope` so mock-mode FE tests can
     // observe space-scoped badge counts the same way the real backend
     // produces them. The shape mirrors `list_page_aliases_by_prefix`
     // above: pull the active spaceId out of `{ kind, space_id }`,
@@ -2824,7 +2824,7 @@ export const HANDLERS: Record<string, Handler> = {
   list_backlinks_grouped: (args) => {
     const a = args as Record<string, unknown>
     const targetId = a['blockId'] as string
-    // MAINT-226 — honour `scope: SpaceScope` (mirrors
+    // Honour `scope: SpaceScope` (mirrors
     // `list_backlinks_grouped_inner`).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
@@ -2870,7 +2870,7 @@ export const HANDLERS: Record<string, Handler> = {
   list_unlinked_references: (args) => {
     const a = args as Record<string, unknown>
     const pageId = a['pageId'] as string
-    // MAINT-226 — honour `scope: SpaceScope` (mirrors
+    // Honour `scope: SpaceScope` (mirrors
     // `list_unlinked_references_inner`).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
@@ -2895,7 +2895,7 @@ export const HANDLERS: Record<string, Handler> = {
         truncated: false,
       }
     // Find blocks that mention the page title as text but don't have a [[link]].
-    // UX-248 — Unicode-aware fold (mock / backend parity).
+    // Unicode-aware fold (mock / backend parity).
     const LINK_RE_UL = /\[\[([0-9A-Z]{26})\]\]/g
     const unlinked = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
@@ -2962,7 +2962,7 @@ export const HANDLERS: Record<string, Handler> = {
     return spans
   },
 
-  // PEND-17 Part B — diff between a block's historical content (as of
+  // Part B — diff between a block's historical content (as of
   // the selected point `(historicalCreatedAt, historicalSeq)`) and its
   // current live content. Mirrors the Rust command's contract:
   // empty/all-Equal spans for unmodified blocks, throws on a
@@ -3049,14 +3049,14 @@ export const HANDLERS: Record<string, Handler> = {
   },
 
   list_property_defs: () => ({
-    // M-85: paginated; the mock returns every def in one page (the
+    // Paginated; the mock returns every def in one page (the
     // mock fixtures stay small enough that pagination is irrelevant).
     items: [...propertyDefs.values()],
     next_cursor: null,
     has_more: false,
   }),
 
-  // PEND-35 Tier 2.6 — single-key PK lookup. Returns the entry or null.
+  // Single-key PK lookup. Returns the entry or null.
   get_property_def: (args) => {
     const a = args as Record<string, unknown>
     const key = a['key'] as string
@@ -3106,7 +3106,7 @@ export const HANDLERS: Record<string, Handler> = {
   resolve_page_by_alias: (args) => {
     const a = args as Record<string, unknown>
     const alias = (a['alias'] as string).toLowerCase()
-    // PEND-35 Tier 1.2 — backend now takes `scope: SpaceScope`. Mirror
+    // Backend now takes `scope: SpaceScope`. Mirror
     // the `list_page_aliases_by_prefix` mock (sibling below) so an
     // alias pointing at a foreign-space page does not surface when the
     // caller is scoped to the active space. Global keeps the
@@ -3140,7 +3140,7 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const query = ((a['prefix'] as string) ?? '').toLowerCase()
     const limit = (a['limit'] as number | null) ?? 50
-    // PEND-18 Phase 3 — IPC arg shape: `scope: SpaceScope`. Recover the
+    // Phase 3 — IPC arg shape: `scope: SpaceScope`. Recover the
     // legacy `spaceId | null` shape for the active-space-scoping branch.
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
@@ -3150,7 +3150,7 @@ export const HANDLERS: Record<string, Handler> = {
       const page = blocks.get(pid)
       if (!page) continue
       if (page['deleted_at']) continue
-      // Active-space scoping (PEND-34 Q3): when `scope.kind === 'active'`,
+      // Active-space scoping: when `scope.kind === 'active'`,
       // exclude pages that don't carry `space = ?spaceId` in their
       // property map.
       if (spaceId !== null) {
@@ -3195,7 +3195,7 @@ export const HANDLERS: Record<string, Handler> = {
     const a = args as Record<string, unknown>
     const content = (a['content'] as string) ?? ''
     const filename = (a['filename'] as string | null) ?? null
-    // PEND-35 Tier 1.1 — backend now requires `space_id`. Mirror the
+    // Backend now requires `space_id`. Mirror the
     // backend behaviour: stamp `space = ?spaceId` on the created page
     // so `tauri-mock-parity` and downstream space-scoped read mocks
     // see the imported page in the active space. The backend rejects
@@ -3217,7 +3217,7 @@ export const HANDLERS: Record<string, Handler> = {
       lines.shift() // remove heading line from block content
     }
 
-    // Create the page block + stamp `space` ref property (PEND-35).
+    // Create the page block + stamp `space` ref property.
     const pageId = fakeId()
     const pageBlock = makeBlock(pageId, 'page', pageTitle, null, blocks.size)
     blocks.set(pageId, pageBlock)
@@ -3270,7 +3270,7 @@ export const HANDLERS: Record<string, Handler> = {
     return [...attachments.values()].filter((att) => att['block_id'] === blockId)
   },
 
-  // MAINT-131 / PEND-35 Tier 2.7a: full-list batch — single source for both
+  // Full-list batch — single source for both
   // SortableBlock badge counts (consumer reads `.length`) and StaticBlock
   // inline-image-render decisions. Mirrors the json_each-backed batch
   // pattern in `commands/blocks/queries.rs::batch_resolve_inner`.
@@ -3303,7 +3303,7 @@ export const HANDLERS: Record<string, Handler> = {
     return row
   },
 
-  // PEND-76 F2 — bytes-over-IPC add. Stores the raw bytes so `read_attachment`
+  // Bytes-over-IPC add. Stores the raw bytes so `read_attachment`
   // can round-trip them; fs_path is backend-generated under attachments/.
   add_attachment_with_bytes: (args) => {
     const a = args as Record<string, unknown>
@@ -3323,7 +3323,7 @@ export const HANDLERS: Record<string, Handler> = {
     return row
   },
 
-  // PEND-76 F2 — bytes-over-IPC read. Returns the stored byte array.
+  // Bytes-over-IPC read. Returns the stored byte array.
   read_attachment: (args) => {
     const a = args as Record<string, unknown>
     return attachmentBytes.get(a['attachmentId'] as string) ?? []
@@ -3356,13 +3356,13 @@ export const HANDLERS: Record<string, Handler> = {
   // Projected agenda (repeating tasks)
   // ---------------------------------------------------------------------------
 
-  // MAINT-226 — stub returns empty so scope is a no-op today. If this
+  // Stub returns empty so scope is a no-op today. If this
   // becomes a real handler, mirror `list_projected_agenda_inner`'s
   // `SpaceScope` filter (see `src-tauri/src/commands/agenda.rs` ~L175).
   list_projected_agenda: returnEmptyPage,
 
   // ---------------------------------------------------------------------------
-  // OS notifications (FEAT-11)
+  // OS notifications
   // ---------------------------------------------------------------------------
 
   // Mirrors `commands::notifier::notify_task` — rejects a blank title with a
@@ -3387,7 +3387,7 @@ export const HANDLERS: Record<string, Handler> = {
 
   list_drafts: returnEmptyArray,
 
-  // PEND-35 Tier 2.12 — boot recovery uses a single IPC. The mock has
+  // Boot recovery uses a single IPC. The mock has
   // no in-memory drafts map (existing `list_drafts: returnEmptyArray`
   // is the canonical source-of-truth shape), so `flushed` is always 0.
   flush_all_drafts: () => ({ flushed: 0 }),
@@ -3411,7 +3411,7 @@ export const HANDLERS: Record<string, Handler> = {
     // Scan all non-deleted blocks for [[ULID]] page link tokens and
     // return page-to-page edges (source = parent page, target = linked page).
     const a = (args as Record<string, unknown> | null | undefined) ?? {}
-    // PEND-35 Tier 4.5 — when `tagIds` is non-empty, restrict edges to
+    // When `tagIds` is non-empty, restrict edges to
     // those whose target page carries at least one of the listed tags.
     // Mirrors the backend semantics (`block_tags`-only resolution in the
     // mock world; the real backend additionally unions
@@ -3419,7 +3419,7 @@ export const HANDLERS: Record<string, Handler> = {
     // model — see seed.ts).
     const rawTagIds = a['tagIds'] as string[] | null | undefined
     const tagFilter = rawTagIds && rawTagIds.length > 0 ? new Set(rawTagIds) : null
-    // MAINT-226 — honour `scope: SpaceScope` (mirrors `list_page_links_inner`).
+    // Honour `scope: SpaceScope` (mirrors `list_page_links_inner`).
     // Both endpoints of an edge must live in the active space; global is
     // unfiltered. Matches the backend's `b1.space = ?` AND `b2.space = ?`
     // join predicate.
@@ -3446,10 +3446,10 @@ export const HANDLERS: Record<string, Handler> = {
         const targetBlock = blocks.get(targetPageId)
         if (!targetBlock || targetBlock['block_type'] !== 'page' || targetBlock['deleted_at'])
           continue
-        // MAINT-226 — active-scope filter on target page (mirrors the
+        // Active-scope filter on target page (mirrors the
         // backend's `b2.space = ?` predicate).
         if (spaceId !== null && pageSpace(targetPageId) !== spaceId) continue
-        // PEND-35 Tier 4.5 — apply target-side tag filter.
+        // Apply target-side tag filter.
         if (tagFilter) {
           const targetTags = blockTags.get(targetPageId)
           let hit = false
@@ -3482,7 +3482,7 @@ export const HANDLERS: Record<string, Handler> = {
   get_log_dir: () => '/mock/logs',
 
   // ---------------------------------------------------------------------------
-  // Bug report (FEAT-5)
+  // Bug report
   // ---------------------------------------------------------------------------
 
   collect_bug_report_metadata: () => ({
@@ -3549,7 +3549,7 @@ export const HANDLERS: Record<string, Handler> = {
   },
 
   // ---------------------------------------------------------------------------
-  // MCP read-only / read-write servers (FEAT-4) — MAINT-160
+  // MCP read-only / read-write servers
   //
   // The real backend manages a Unix-domain-socket lifecycle that can't run
   // inside Playwright. The mock returns disabled status snapshots so
@@ -3594,7 +3594,7 @@ export const HANDLERS: Record<string, Handler> = {
   mcp_rw_disconnect_all: returnNull,
 
   // ---------------------------------------------------------------------------
-  // Trash descendant counts (MAINT-160)
+  // Trash descendant counts
   //
   // Returns a map of root_id → number of cascade-deleted descendants.
   //
@@ -3639,7 +3639,7 @@ export const HANDLERS: Record<string, Handler> = {
   },
 
   // ---------------------------------------------------------------------------
-  // PEND-35 Tier 2.3 — get_blocks batch endpoint
+  // Get_blocks batch endpoint
   // ---------------------------------------------------------------------------
 
   // get_blocks(ids: string[]) -> BlockRow[]
@@ -3662,7 +3662,7 @@ export const HANDLERS: Record<string, Handler> = {
   },
 
   // ---------------------------------------------------------------------------
-  // First-child-per-parent batch (PEND-35 Tier 2.8)
+  // First-child-per-parent batch
   //
   // Mirrors `commands/blocks/queries.rs::first_child_for_blocks_inner`:
   // returns a map of `parentId → first BlockRow` ordered by
@@ -3703,7 +3703,7 @@ export const HANDLERS: Record<string, Handler> = {
   },
 
   // ---------------------------------------------------------------------------
-  // Quick capture (FEAT-12) — MAINT-160
+  // Quick capture
   //
   // Creates a content block under today's daily page in the requested
   // space and returns the new BlockRow. The mock uses the seeded

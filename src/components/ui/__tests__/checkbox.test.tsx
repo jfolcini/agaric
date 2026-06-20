@@ -1,7 +1,7 @@
 /**
  * Tests for the Checkbox UI primitive (Radix Checkbox wrapper).
  *
- * Validates (per PEND-23 H4):
+ * Validates:
  *  - Renders unchecked by default
  *  - Renders checked when `checked={true}` (controlled) — `aria-checked`
  *    and `data-state` mirror the prop
@@ -193,7 +193,7 @@ describe('Checkbox', () => {
     expect(cb.className).toContain('[@media(pointer:coarse)]:size-5')
   })
 
-  it('wraps checkbox in a 44 px coarse-pointer hitbox (MAINT-197)', () => {
+  it('wraps checkbox in a 44 px coarse-pointer hitbox', () => {
     render(<Checkbox aria-label="Accept terms" />)
 
     const cb = screen.getByRole('checkbox', { name: 'Accept terms' })

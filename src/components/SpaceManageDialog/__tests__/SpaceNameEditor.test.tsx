@@ -1,5 +1,5 @@
 /**
- * Tests for SpaceNameEditor (PEND-30 D-2 extraction).
+ * Tests for SpaceNameEditor (D-2 extraction).
  *
  * Coverage:
  *  - Renders the input with the canonical name pre-filled.

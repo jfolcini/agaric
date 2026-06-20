@@ -4,7 +4,7 @@
  * Owns the shared state and callbacks that the per-type editor components
  * (Text / Number / Date / Ref / Select / Boolean) consume through a thin
  * contract. Lifted from the original monolithic `PropertyRowEditor.tsx` as
- * part of MAINT-128.
+ * Part of.
  *
  * The returned object is intentionally grouped by sub-feature
  * (`textState`, `dateState`, `selectOptionsState`, `refPickerState`) so each
@@ -117,7 +117,7 @@ export function usePropertyRowEditor({
     setLocalValue(currentValue)
   }, [currentValue])
 
-  // Date input hook (M-29) — always called, values used only for date type
+  // Date input hook — always called, values used only for date type
   const dateSave = useCallback(
     (isoDate: string) => {
       if (isoDate !== currentValue) onSave(isoDate)
@@ -210,7 +210,7 @@ export function usePropertyRowEditor({
       const updatedDef = await updatePropertyDefOptions(def.key, JSON.stringify(editingOptions))
       onDefUpdated?.(updatedDef)
       setEditOptionsOpen(false)
-      // UX-201b: keep the priority-levels cache in sync when editing the
+      // Keep the priority-levels cache in sync when editing the
       // `priority` definition from the block-level editor.
       if (def.key === 'priority') {
         const levels = editingOptions.filter((v) => typeof v === 'string' && v.trim() !== '')
@@ -233,12 +233,12 @@ export function usePropertyRowEditor({
   const [refPickerOpen, setRefPickerOpen] = useState(false)
   const [refPages, setRefPages] = useState<PageHeading[]>([])
   const [refSearch, setRefSearch] = useState('')
-  /** UX-272 sub-fix 8 — id of the page currently being saved, or null. */
+  /** sub-fix 8 — id of the page currently being saved, or null. */
   const [savingRefPageId, setSavingRefPageId] = useState<string | null>(null)
 
   const handleOpenRefPicker = useCallback(() => {
     setRefSearch('')
-    // MAINT-181: the `<Popover>` above is controlled via `refPickerOpen`
+    // The `<Popover>` above is controlled via `refPickerOpen`
     // but `<PopoverTrigger asChild>` makes Radix call `onOpenChange(true)`
     // on the trigger button's click before this handler runs, so the
     // popover is already open when we get here. The fix is twofold:
@@ -249,7 +249,7 @@ export function usePropertyRowEditor({
     // empty page-picker list with no indication that the load failed.
     // The toast + `logger.error` on the catch path remains the only
     // failure surface the user sees.
-    // FEAT-3 Phase 4 — `listAllPagesInSpace` requires `spaceId`.  The
+    // Phase 4 — `listAllPagesInSpace` requires `spaceId`. The
     // `?? ''` fallback is intentional pre-bootstrap behaviour: empty
     // string forces a no-match SQL filter rather than a runtime null
     // deref.  `listAllPagesInSpace` has no clamp (the ref picker filters
@@ -269,13 +269,13 @@ export function usePropertyRowEditor({
 
   const filteredRefPages = useMemo(() => {
     if (!refSearch) return refPages
-    // UX-248 — Unicode-aware fold.
+    // Unicode-aware fold.
     return refPages.filter((p) => matchesSearchFolded(p.content || '', refSearch))
   }, [refPages, refSearch])
 
   const handleSelectRefPage = useCallback(
     async (page: PageHeading) => {
-      // UX-272 sub-fix 8 — show a Spinner gated on the same Promise as the
+      // Sub-fix 8 — show a Spinner gated on the same Promise as the
       // save so it never sticks if the IPC call rejects.
       setSavingRefPageId(page.id)
       try {

@@ -2,7 +2,7 @@
  * SnippetHighlight — render a FTS5 `snippet()` string with #828 PUA
  * sentinel boundaries as React nodes (no `dangerouslySetInnerHTML`).
  *
- * PEND-50 Phase 1 / #828. The backend emits snippets shaped like
+ * Phase 1 / #828. The backend emits snippets shaped like
  *
  *   "kicked off the \u{E000}alpha\u{E001} review …"
  *
@@ -18,11 +18,11 @@
  *
  * The parser is exported separately (`parseSnippet`) so unit tests can hit
  * it without the React chrome, and so the `<mark>` rendering can be
- * threaded through alternate consumers (PEND-55's offset path will sit
+ * Threaded through alternate consumers ('s offset path will sit
  * alongside this one). The MCP search tool converts the sentinels back to
  * literal `<mark>` / `</mark>` for its agent-facing output.
  *
- * Edge cases (locked in by PEND-50 / #828):
+ * Edge cases (locked in by / #828):
  *
  * - `null` / empty snippet → returns an empty fragment (caller should
  *   render a sensible fallback such as the page title).
@@ -107,7 +107,7 @@ export interface SnippetHighlightProps {
 /**
  * Render a snippet string as alternating `<span>` / `<mark>` React nodes.
  * The marked spans carry the `.search-result-mark` class declared in
- * `src/index.css` (PEND-50 Phase 1).
+ * `src/index.css` (Phase 1).
  */
 export function SnippetHighlight({
   snippet,

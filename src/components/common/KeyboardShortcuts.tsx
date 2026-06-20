@@ -174,7 +174,7 @@ export function KeyboardShortcuts({
   // oxlint-disable-next-line react-hooks/exhaustive-deps -- rebuild from localStorage when sheet opens
   const shortcutGroups = useMemo(() => buildShortcutGroups(), [open])
 
-  // UX-388: filter visible shortcuts by description, key text, or category.
+  // Filter visible shortcuts by description, key text, or category.
   const filteredGroups = useMemo(() => {
     if (!filter.trim()) return shortcutGroups
     const needle = filter.toLowerCase()
@@ -209,7 +209,7 @@ export function KeyboardShortcuts({
   // sheet is closed (it would not be mounted). Keeping a copy here would
   // only add a redundant document listener while the sheet is open.
 
-  // UX-228: close the sheet when the global "close all overlays" shortcut
+  // Close the sheet when the global "close all overlays" shortcut
   // fires (Escape by default). Radix already handles Escape when focus is
   // inside the sheet, but if focus has drifted elsewhere we still want the
   // sheet to dismiss.
@@ -402,7 +402,7 @@ export function KeyboardShortcuts({
             </tbody>
           </table>
         </ScrollArea>
-        {/* UX-260 sub-fix 7: footer link into Settings → Keyboard so users
+        {/*  sub-fix 7: footer link into Settings → Keyboard so users
             discover that shortcuts are customisable. */}
         <SheetFooter className="border-t">
           <Button

@@ -56,7 +56,7 @@ export function ResultCard({
         ? renderRichContent(block.content, {
             // ResultCard is wrapped in `<button>` (CardButton); keep chips
             // inert to avoid nested-interactive. `onTagClick` is threaded so
-            // the gate can be flipped later. See UX-249.
+            // The gate can be flipped later. See.
             interactive: false,
             onTagClick,
             resolveBlockTitle,

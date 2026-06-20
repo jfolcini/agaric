@@ -1,12 +1,12 @@
 /**
  * QuickAccessBar — recents strip, rendered on desktop AND mobile
- * (PEND-68 Part B; #83 recents-only; #927 f6 mobile page-switch affordance).
+ * (Part B; #83 recents-only; #927 f6 mobile page-switch affordance).
  *
- * A single `<nav>` holding the MRU **recents scroller**: the existing PEND-32
+ * A single `<nav>` holding the MRU **recents scroller**: the existing
  * recents list — `<ScrollArea orientation="horizontal">`, wheel-to-horizontal
  * handler, overflow mask, MRU exclusion of the currently-open page. Click →
  * `navigateToPage`, Ctrl/Cmd/middle → `openInNewTab`. Recents are per-space
- * (FEAT-3 Phase 3). Chips stay text-only (history).
+ * (Phase 3). Chips stay text-only (history).
  *
  * The former "destinations cluster" (a hard-coded Pages/Tags/Graph/Search
  * allowlist) was removed (#83): those four entries duplicated the left sidebar
@@ -41,7 +41,7 @@ import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '
 export function QuickAccessBar(): React.ReactElement | null {
   const { t } = useTranslation()
 
-  // FEAT-3 Phase 3 — recents are per-space.
+  // Phase 3 — recents are per-space.
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const recentPages = useRecentPagesStore((s) => selectRecentPagesForSpace(s, currentSpaceId))
 
@@ -105,7 +105,7 @@ export function QuickAccessBar(): React.ReactElement | null {
     [navigateToPage, openInNewTab],
   )
 
-  // PEND-32: vertical wheel deltas → horizontal scroll (recents zone only).
+  // Vertical wheel deltas → horizontal scroll (recents zone only).
   const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
     if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
       e.currentTarget.scrollLeft += e.deltaY
@@ -113,7 +113,7 @@ export function QuickAccessBar(): React.ReactElement | null {
     }
   }, [])
 
-  // MAINT-211: right-edge fade when the recents zone overflows.
+  // Right-edge fade when the recents zone overflows.
   const viewportRef = useRef<HTMLDivElement>(null)
   const [hasOverflow, setHasOverflow] = useState(false)
 
@@ -143,7 +143,7 @@ export function QuickAccessBar(): React.ReactElement | null {
       }}
     >
       <div className="flex w-full items-stretch">
-        {/* Recents scroller — keeps PEND-32 behaviour verbatim. */}
+        {/* Recents scroller — keeps  behaviour verbatim. */}
         <ScrollArea
           orientation="horizontal"
           className="min-w-0 flex-1"
@@ -158,7 +158,7 @@ export function QuickAccessBar(): React.ReactElement | null {
         >
           <div className="flex items-center gap-1.5 px-4 md:px-6 py-1">
             {visible.map((ref, idx) => {
-              // PEND-83 Bug 1: recent chips are space-constrained
+              // Bug 1: recent chips are space-constrained
               // (`max-w-[160px]`) and full namespaced paths overflow fast.
               // Render the LEAF only and surface the full path via `title=""`
               // for hover. The empty-title fallback to "Untitled" stays —

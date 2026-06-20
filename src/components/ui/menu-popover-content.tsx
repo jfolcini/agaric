@@ -5,7 +5,7 @@ import { PopoverContent } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 
 /**
- * PEND-23 L9: thin wrapper around `PopoverContent` that locks menu-style
+ * Thin wrapper around `PopoverContent` that locks menu-style
  * popovers (lists of selectable items) to a canonical width + viewport
  * clamp. The plan audit found `w-56`, `w-64`, `w-72`, and `w-80` all in
  * use across menu callsites, with several omitting `max-w-[calc(...)]`,

@@ -188,9 +188,9 @@ describe('CloseButtonIcon', () => {
     expect(svg).toBeInTheDocument()
   })
 
-  // UX-2: the visible icon must scale up on coarse pointers so it fills
+  // The visible icon must scale up on coarse pointers so it fills
   // more of the 44 px button (visual–affordance mismatch fix).
-  it('UX-2: inner icon scales to size-5 on coarse pointers', () => {
+  it('inner icon scales to size-5 on coarse pointers', () => {
     const { container } = render(
       <button type="button">
         <CloseButtonIcon />

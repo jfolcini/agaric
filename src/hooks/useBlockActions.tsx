@@ -6,7 +6,7 @@
  * BlockGutterControls / BlockInlineControls / BlockContextMenu /
  * EditableBlock. Every layer in that chain just forwarded the same
  * functions verbatim, which made every signature change a multi-file
- * mechanical edit and obscured what each layer actually used (MAINT-118).
+ * Mechanical edit and obscured what each layer actually used.
  *
  * `BlockActionsProvider` publishes the bag of callbacks once (at the
  * BlockTree boundary). Any descendant in the chain reads what it needs

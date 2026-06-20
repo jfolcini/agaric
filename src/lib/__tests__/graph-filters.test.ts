@@ -1,5 +1,5 @@
 /**
- * Tests for graph-filters pure functions (UX-205).
+ * Tests for graph-filters pure functions.
  */
 
 import { describe, expect, it } from 'vitest'

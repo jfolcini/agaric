@@ -1,8 +1,8 @@
 /**
- * TrashBatchRestoreDialog — UX-275 sub-fix 8 confirmation for large
+ * TrashBatchRestoreDialog — sub-fix 8 confirmation for large
  * batch restores (>5 selected). Mirrors the batch-purge confirmation
  * so the user doesn't unwind a long cascade with a misclick. Sibling
- * extracted from TrashView.tsx for MAINT-128.
+ * Extracted from TrashView.tsx for.
  */
 
 import type React from 'react'

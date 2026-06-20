@@ -71,7 +71,7 @@ export function useTemplateSelection({
       try {
         const parentId = block.parent_id ?? rootParentId
         if (!parentId) return
-        // FEAT-3p7 — cache is composite-keyed (`${spaceId}::${ulid}`).
+        // Cache is composite-keyed (`${spaceId}::${ulid}`).
         const tplSpaceId = useSpaceStore.getState().currentSpaceId
         const pageTitle =
           useResolveStore.getState().cache.get(keyFor(tplSpaceId, rootParentId ?? ''))?.title ?? ''

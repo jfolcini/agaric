@@ -1,7 +1,7 @@
 /**
  * useTagResolution — resolve search tag *names* to tag *ids* for the IPC.
  *
- * PEND-58f FE-9 — extracted from the SearchPanel god-component to shrink
+ * Extracted from the SearchPanel god-component to shrink
  * the orchestrator.
  *
  * Issue #717 — resolution outcomes are tracked per name so the caller can
@@ -21,7 +21,7 @@
  * prevents the resolve effect from re-firing the prefix lookup for the
  * same unknown name on every map identity change.
  *
- * FE-5 — the cache keys on the lowercased name only and is therefore
+ * The cache keys on the lowercased name only and is therefore
  * space-scoped: the same name can map to a different tag_id (or none) in
  * another space, so it is dropped on a space switch.
  */
@@ -110,7 +110,7 @@ export function useTagResolution(
     // entries that count as settled and would never be re-resolved.
   }, [tagNames, tagNameMap, currentSpaceId])
 
-  // FE-5 — drop the space-scoped cache on space switch. The functional
+  // Drop the space-scoped cache on space switch. The functional
   // bail-out keeps the Map identity when it is already empty, so the
   // mount-time run of this effect doesn't replace the initial empty map
   // with a fresh one (which would re-trigger the resolve effect above and

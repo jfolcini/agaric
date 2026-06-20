@@ -1,9 +1,9 @@
 /**
- * Unit tests for useAppSpaceLifecycle (MAINT-124 step 4 stretch).
+ * Unit tests for useAppSpaceLifecycle (stretch).
  *
  * Validates the three space-driven side-effects in isolation:
- * preload (FEAT-3p7), cross-space link enforcement (FEAT-3p7), and
- * visual identity (FEAT-3p10). Integration coverage of the App-level
+ * Preload, cross-space link enforcement, and
+ * Visual identity. Integration coverage of the App-level
  * wiring stays in `App.test.tsx`.
  */
 

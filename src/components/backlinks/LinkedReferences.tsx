@@ -57,7 +57,7 @@ export function LinkedReferences({
   const [sort, setSort] = useState<BacklinkSort | null>(null)
   const [sourcePageIncluded, setSourcePageIncluded] = useState<string[]>([])
   const [sourcePageExcluded, setSourcePageExcluded] = useState<string[]>([])
-  // MAINT-189: shared cache replaces per-mount `listPropertyKeys()` IPC.
+  // Shared cache replaces per-mount `listPropertyKeys()` IPC.
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
@@ -92,7 +92,7 @@ export function LinkedReferences({
           spaceId: currentSpaceId,
         })
         if (cursor) {
-          // Append: merge groups with same page_id (PEND-27 P5: Map<page_id, group>
+          // Append: merge groups with same page_id (Map<page_id, group>
           // avoids the O(N×M) `.find()` per new group).
           setGroups((prev) => {
             const byPageId = new Map(prev.map((g) => [g.page_id, g]))
@@ -162,7 +162,7 @@ export function LinkedReferences({
   )
   /* oxlint-enable react-hooks/exhaustive-deps */
 
-  // Load tags on mount (PEND-29 B-6: cancellation flag avoids React 19
+  // Load tags on mount (B-6: cancellation flag avoids React 19
   // strict-mode "state update on unmounted component" warnings on rapid
   // mount/unmount).
   useEffect(() => {
@@ -299,7 +299,7 @@ export function LinkedReferences({
 
   // Render nothing when there are no backlinks (and not loading): an empty
   // "no backlinks yet" panel is clutter at the bottom of every page. This
-  // intentionally overrides the older UX-152 empty-state mandate for this
+  // Intentionally overrides the older empty-state mandate for this
   // panel (user decision, live UX review). When filters are active, keep the
   // full panel visible so the user can clear/adjust filters — otherwise the
   // filter controls vanish. The loading branch below still renders so nothing

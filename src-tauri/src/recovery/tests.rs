@@ -10,7 +10,7 @@ use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-/// L-103 test wrapper. The production `recover_at_boot` enforces a
+/// Test wrapper. The production `recover_at_boot` enforces a
 /// once-per-process contract via a static `AtomicBool`; tests need to
 /// reset that guard before each invocation so multiple `tokio::test`
 /// fixtures can each run their own recovery against a fresh pool. Use
@@ -606,7 +606,7 @@ async fn recovery_with_no_drafts_returns_empty_report() {
 }
 
 // `recovery_when_op_log_is_empty_draft_for_never_created_block` was deleted
-// in M-93 / migration 0038: `block_drafts.block_id` now has a FK to
+// In / migration 0038: `block_drafts.block_id` now has a FK to
 // `blocks(id) ON DELETE CASCADE`, so the "draft exists for a block id with
 // no `blocks` row" precondition is schema-impossible. The recovery F07
 // orphan-skip code path remains load-bearing for the *soft-deleted* branch
@@ -844,7 +844,7 @@ async fn recovery_idempotency_second_run_is_noop() {
     assert!(r2.draft_errors.is_empty());
 }
 
-/// L-103: the production `recover_at_boot` enforces a once-per-process
+/// The production `recover_at_boot` enforces a once-per-process
 /// contract via a static `AtomicBool`. Calling it twice without
 /// resetting the guard must return `AppError::InvalidOperation` BEFORE
 /// touching the pool, NOT silently complete with an empty-batch report.
@@ -873,8 +873,8 @@ async fn recover_at_boot_returns_err_on_second_call_without_reset() {
     match r2 {
         Err(AppError::InvalidOperation(msg)) => {
             assert!(
-                msg.contains("L-103") && msg.contains("more than once"),
-                "error must reference L-103 and the once-per-process contract; got {msg:?}",
+                msg.contains("more than once"),
+                "error must reference the once-per-process contract; got {msg:?}",
             );
         }
         other => panic!("expected InvalidOperation, got {other:?}"),
@@ -1209,7 +1209,7 @@ async fn draft_for_soft_deleted_block_is_skipped_and_cleaned_up() {
 }
 
 // `draft_for_nonexistent_block_is_skipped_and_cleaned_up` was deleted in
-// M-93 / migration 0038 — the FK `block_drafts.block_id REFERENCES blocks(id)
+// / migration 0038 — the FK `block_drafts.block_id REFERENCES blocks(id)
 // ON DELETE CASCADE` prevents any orphan-draft state from being staged.
 // See note above `recovery_when_op_log_is_empty_draft_for_never_created_block`
 // (deleted at the same time) for the full rationale.
@@ -1592,9 +1592,9 @@ async fn find_prev_edit_multi_head_no_local_tiebreak_is_deterministic_m6() {
     assert_eq!(seq, b_edit.seq, "should return device B's edit seq");
 }
 
-// === BUG-23: cache refresh after draft recovery ===
+// === cache refresh after draft recovery ===
 
-/// Regression test for BUG-23: after `recover_at_boot` rewrites a block's
+/// Regression test for after `recover_at_boot` rewrites a block's
 /// `content` via a synthetic edit_block op, the FTS index still holds the
 /// pre-recovery text (because the materializer isn't created yet when
 /// recovery runs). `refresh_caches_for_recovered_drafts` must update the
@@ -1872,7 +1872,7 @@ async fn cache_refresh_enqueues_rebuilds_when_page_block_recovered_i_lifecycle_5
 }
 
 // ============================================================================
-// PERF-26: op_log.block_id indexed column regression tests
+// Op_log.block_id indexed column regression tests
 // ============================================================================
 
 /// After migration 0030, every local op appended via `append_local_op` must
@@ -2163,13 +2163,13 @@ async fn perf26_block_id_index_exists() {
     );
 }
 
-/// L-104: SQLite caps bind parameters at `MAX_SQL_PARAMS` (999). A multi-
+/// SQLite caps bind parameters at `MAX_SQL_PARAMS` (999). A multi-
 /// thousand-block paste crash can leave > 999 rows in `block_drafts`; the
 /// boot-recovery batch query must chunk the IN clause or it fails with
 /// "too many SQL variables". This test seeds ~1100 drafts and asserts
 /// `recover_at_boot` returns Ok and processes every draft.
 ///
-/// M-93 / migration 0038 added a FK from `block_drafts.block_id` to
+/// / migration 0038 added a FK from `block_drafts.block_id` to
 /// `blocks(id) ON DELETE CASCADE`, so each draft now needs a real
 /// parent block — the historical "no `blocks` rows so everything lands
 /// in the F07 already-flushed bucket" shape can't be staged anymore.

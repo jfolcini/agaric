@@ -1,17 +1,17 @@
 /**
  * useAppDialogs — central state for the 4 shell-level dialogs.
  *
- * MAINT-124 step 3 — extracted from App.tsx as part of the 4-extraction
+ * Extracted from App.tsx as part of the 4-extraction
  * collapse plan (others: useAppKeyboardShortcuts ✅, AppSidebar ✅,
  * useAppDialogs THIS, ViewDispatcher next).
  *
  * Owns:
- * - `bugReportOpen` + `bugReportPrefill` (UX-279) — bug-report dialog with
+ * `bugReportOpen` + `bugReportPrefill` — bug-report dialog with
  *   optional prefill payload from `FeatureErrorBoundary`.
- * - `quickCaptureOpen` (FEAT-12) — quick-capture dialog opened via the OS
+ * `quickCaptureOpen` — quick-capture dialog opened via the OS
  *   global hotkey registered in App.tsx.
- * - `showNoPeersDialog` (BUG-2) — sync-with-no-peers warning gate.
- * - `shortcutsOpen` (UX-228) — keyboard-shortcuts reference sheet.
+ * `showNoPeersDialog` — sync-with-no-peers warning gate.
+ * `shortcutsOpen` — keyboard-shortcuts reference sheet.
  *
  * Also installs the global `showShortcuts` keydown listener (default `?`)
  * that opens the shortcuts sheet — moved here from `KeyboardShortcuts`
@@ -41,18 +41,18 @@ import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { CLOSE_ALL_OVERLAYS_EVENT, SHOW_SHORTCUTS_EVENT } from '../lib/overlay-events'
 
 export interface UseAppDialogsReturn {
-  // bug-report (UX-279)
+  // Bug-report
   bugReportOpen: boolean
   setBugReportOpen: React.Dispatch<React.SetStateAction<boolean>>
   bugReportPrefill: BugReportEventDetail | null
   setBugReportPrefill: React.Dispatch<React.SetStateAction<BugReportEventDetail | null>>
-  // quick-capture (FEAT-12)
+  // Quick-capture
   quickCaptureOpen: boolean
   setQuickCaptureOpen: React.Dispatch<React.SetStateAction<boolean>>
-  // no-peers warning (BUG-2)
+  // No-peers warning
   showNoPeersDialog: boolean
   setShowNoPeersDialog: React.Dispatch<React.SetStateAction<boolean>>
-  // shortcuts sheet (UX-228)
+  // Shortcuts sheet
   shortcutsOpen: boolean
   setShortcutsOpen: React.Dispatch<React.SetStateAction<boolean>>
 }
@@ -64,7 +64,7 @@ export function useAppDialogs(): UseAppDialogsReturn {
   const [showNoPeersDialog, setShowNoPeersDialog] = useState<boolean>(false)
   const [shortcutsOpen, setShortcutsOpen] = useState<boolean>(false)
 
-  // ── Bug-report event listener (UX-279) ────────────────────────────
+  // ── Bug-report event listener ────────────────────────────
   // FeatureErrorBoundary dispatches `BUG_REPORT_EVENT` from its "Report
   // bug" button. The boundary is inside the crashed subtree and can't
   // open a dialog itself, so the App shell mounts a top-level
@@ -118,7 +118,7 @@ export function useAppDialogs(): UseAppDialogsReturn {
   }, [])
 
   // ── Close the shortcuts sheet when "close all overlays" fires ───────
-  // UX-228: the sheet is Radix-managed and already closes when Escape is
+  // The sheet is Radix-managed and already closes when Escape is
   // pressed *inside* it, but if focus has drifted elsewhere the global
   // handler is what dismisses it.
   useEffect(() => {

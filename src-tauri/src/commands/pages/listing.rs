@@ -25,7 +25,7 @@ use super::super::*;
 /// Soft cap applied to `list_pages_inner` / `get_page_inner` at the tool
 /// boundary. Callers may pass any `Option<i64>`; the value is clamped to
 /// [1, 100] before being forwarded to the underlying pagination layer.
-/// Matches the FEAT-4c tool-surface cap.
+/// Matches the tool-surface cap.
 pub const MCP_PAGE_LIMIT_CAP: i64 = 100;
 
 /// List all pages in the database with cursor pagination.
@@ -36,7 +36,7 @@ pub const MCP_PAGE_LIMIT_CAP: i64 = 100;
 /// all pages via the returned cursor.
 ///
 /// Thin wrapper over [`pagination::list_by_type`]; used directly by the
-/// FEAT-4c MCP `list_pages` tool. Frontend code reaches for backlinks /
+/// MCP `list_pages` tool. Frontend code reaches for backlinks /
 /// FTS instead and does not call this.
 #[instrument(skip(pool), err)]
 pub async fn list_pages_inner(
@@ -58,7 +58,7 @@ pub async fn list_pages_inner(
         )));
     }
     let page = PageRequest::new(cursor, limit)?;
-    // FEAT-3 Phase 2: `list_pages` is the MCP (agent) page enumeration
+    // Phase 2: `list_pages` is the MCP (agent) page enumeration
     // and stays unscoped — agents see every space. Frontend-facing page
     // lookups go through `list_blocks_inner` which threads `space_id`.
     // Downcast at the MCP-facing boundary to keep the tool's wire shape
@@ -79,7 +79,7 @@ pub async fn list_pages_inner(
 /// the keyset walks **all** non-conflict, non-deleted blocks whose
 /// `page_id` column points at the requested page (so grandchildren /
 /// deeper descendants are included, not just direct children). This
-/// matches the FEAT-4c tool-surface definition of
+/// Matches the tool-surface definition of
 /// `list_blocks_inner(root, subtree=true)` — we denormalize via the
 /// `page_id` column the materializer maintains rather than running a
 /// recursive CTE at every call.
@@ -102,16 +102,16 @@ pub struct PageSubtreeResponse {
 /// Composes [`get_active_block_inner`] for the root and a
 /// `page_id`-column descendant walk for the children. Validates that
 /// the requested block exists and is actually a `page`. Returns
-/// [`AppError::NotFound`] for unknown **or soft-deleted** IDs (M-98),
+/// [`AppError::NotFound`] for unknown **or soft-deleted** IDs,
 /// and [`AppError::Validation`] when the ID resolves to a non-page
 /// block, or when the page does not belong to `space_id`.
 ///
-/// FEAT-3 Phase 7 — `space_id` is required (not optional). Pages whose
+/// Phase 7 — `space_id` is required (not optional). Pages whose
 /// `space` property does not match `space_id` are rejected with
 /// [`AppError::Validation`]. This is the policy enforcement point for
 /// "no live links between spaces, ever": deep-linking into a foreign
 /// page from inside a different space's tab stack is impossible. See
-/// FEAT-3p7.
+/// .
 ///
 /// The descendant walk intentionally uses the denormalized `page_id`
 /// column (index `idx_blocks_page_id`) rather than a recursive CTE —
@@ -127,12 +127,12 @@ pub async fn get_page_inner(
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageSubtreeResponse, AppError> {
-    // L-136: validate ULID format upfront so malformed inputs surface
+    // Validate ULID format upfront so malformed inputs surface
     // `AppError::Ulid` rather than the imprecise `AppError::NotFound`
     // that the SQL `WHERE id = ?` lookup would otherwise produce.
     BlockId::from_string(page_id)?;
 
-    // M-98 — `get_active_block_inner` (not `get_block_inner`) so the
+    // `get_active_block_inner` (not `get_block_inner`) so the
     // page-fetch surface never returns a soft-deleted row to the
     // frontend / MCP. A tombstoned page now surfaces as
     // `AppError::NotFound`, matching the unknown-id case the
@@ -145,7 +145,7 @@ pub async fn get_page_inner(
         )));
     }
 
-    // FEAT-3 Phase 7: enforce space membership. The page must carry a
+    // Phase 7: enforce space membership. The page must carry a
     // `space` property equal to `space_id`, otherwise the request crosses
     // a space boundary — which the locked-in design forbids. Returning
     // `Validation` keeps the error category consistent with other
@@ -249,7 +249,7 @@ pub async fn get_page_inner(
 
 /// Fetch a page + paginated subtree without a caller-supplied
 /// `space_id`. Looks up the page's own `space` property and feeds it
-/// into [`get_page_inner`], so the FEAT-3 Phase 7 membership check is
+/// Into [`get_page_inner`], so the Phase 7 membership check is
 /// trivially satisfied.
 ///
 /// Used by the MCP `get_page` tool (`crate::mcp::tools_ro`) where the
@@ -268,7 +268,7 @@ pub async fn get_page_inner(
 ///   (so agents can distinguish "no such page" from "exists but
 ///   unscoped" via the error category).
 ///
-/// MAINT-150 (g): pulled out of `mcp::tools_ro::handle_get_page` so
+/// Pulled out of `mcp::tools_ro::handle_get_page` so
 /// `mcp::tools_ro` no longer carries direct SQL — the module header
 /// invariant is "thin wrapper around `*_inner`".
 #[instrument(skip(pool), err)]
@@ -299,7 +299,7 @@ pub async fn get_page_unscoped_inner(
         // space, fall through to `Validation` so the error category
         // matches what an MCP agent would have seen pre-Phase-7.
         //
-        // M-98 — switched from `get_block_inner` to
+        // Switched from `get_block_inner` to
         // `get_active_block_inner` so a soft-deleted page surfaces as
         // `NotFound` to the MCP read tool. Agents must not be able to
         // discover tombstoned pages via this surface; the only
@@ -526,7 +526,7 @@ pub async fn load_page_subtree_inner(
 ) -> Result<PageSubtree, AppError> {
     BlockId::from_string(root_block_id)?;
 
-    // FEAT-3 Phase 7 — enforce space membership.  A request whose root
+    // Phase 7 — enforce space membership. A request whose root
     // page does not carry `space = ?space_id` is rejected with
     // `Validation`, matching `get_page_inner`.
     let space_match = sqlx::query_scalar!(

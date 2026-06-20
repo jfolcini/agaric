@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-// PEND-37: pin to jsdom (matches the sibling PageBrowser.test.tsx) so the
+// Pin to jsdom (matches the sibling PageBrowser.test.tsx) so the
 // virtualizer mock behaves deterministically.
 
 /**
- * Multi-select + batch toolbar tests for PageBrowser (#81 / PEND-57).
+ * Multi-select + batch toolbar tests for PageBrowser (#81).
  *
  * Validates the additive selection mode layered onto the Pages view:
  *  - clicking a row's checkbox selects it; the batch toolbar appears with

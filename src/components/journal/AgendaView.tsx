@@ -33,7 +33,7 @@ interface AgendaViewProps {
 
 // Default agenda filter — active task states (TODO + DOING) so the agenda
 // opens (and "Clear filters" returns) to actionable items only, with DONE
-// hidden (UX-196, #1744). A fresh array per build keeps the React state
+// Hidden (#1744). A fresh array per build keeps the React state
 // reference stable while never sharing a mutable instance across renders.
 const makeDefaultAgendaFilters = (): AgendaFilter[] => [
   { dimension: 'status', values: ['TODO', 'DOING'] },
@@ -63,7 +63,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   // ── Agenda filter state ────────────────────────────────────────────
   // Default to active task states (TODO + DOING) so the agenda opens with
   // actionable items only — DONE is hidden until the user clears the filter
-  // or adds their own status filter (UX-196).
+  // Or adds their own status filter.
   const [agendaFilters, setAgendaFilters] = useState<AgendaFilter[]>(makeDefaultAgendaFilters)
   const [filteredBlocks, setFilteredBlocks] = useState<BlockRow[]>([])
   const [agendaLoading, setAgendaLoading] = useState(false)

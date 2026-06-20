@@ -12,7 +12,7 @@
  * want every subscriber (including detached overlays created via portals
  * outside the React tree) to react without any wiring.
  *
- * UX-228.
+ *.
  */
 export const CLOSE_ALL_OVERLAYS_EVENT = 'agaric:closeAllOverlays'
 

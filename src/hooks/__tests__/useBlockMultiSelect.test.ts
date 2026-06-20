@@ -82,7 +82,7 @@ describe('useBlockMultiSelect initial state', () => {
 })
 
 describe('useBlockMultiSelect handleBatchSetTodo', () => {
-  // PEND-35 Tier 2.1 — was N IPCs (one `set_todo_state` per block);
+  // Was N IPCs (one `set_todo_state` per block);
   // is now ONE `set_todo_state_batch` IPC carrying the whole id list.
   it('fires a single set_todo_state_batch IPC for the whole selection', async () => {
     const params = makeDefaultParams()
@@ -219,10 +219,10 @@ describe('useBlockMultiSelect handleBatchSetPriority (#1734)', () => {
 })
 
 describe('useBlockMultiSelect handleBatchDelete', () => {
-  // PEND-35 Tier 2.1 — was N IPCs (one `delete_block` per block); is
+  // Was N IPCs (one `delete_block` per block); is
   // now ONE `delete_blocks_by_ids` IPC carrying the whole id list.
   // The backend's recursive CTE walks every root's subtree in one tx,
-  // so the FE no longer needs the MAINT-173 ancestor pre-walk.
+  // So the FE no longer needs the ancestor pre-walk.
   it('fires a single delete_blocks_by_ids IPC for the whole selection', async () => {
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
@@ -248,7 +248,7 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
     expect(params.clearSelected).toHaveBeenCalled()
   })
 
-  // PEND-35 Tier 2.1 — the FE no longer pre-walks ancestors. The
+  // The FE no longer pre-walks ancestors. The
   // backend's recursive CTE handles ancestor coalescing in one tx, so
   // even when both an ancestor and its descendant are selected the FE
   // sends the raw selection unchanged. Asserts the new behaviour:
@@ -272,7 +272,7 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
     })
   })
 
-  // PEND-35 Tier 2.1 — the MAINT-173 ancestor-walk filter is gone (the
+  // The ancestor-walk filter is gone (the
   // backend's recursive CTE seeded from every root subsumes the same
   // descendant set). Transitive descendants are passed through unchanged.
   it('passes transitive descendants through unchanged (backend coalesces via CTE)', async () => {
@@ -445,7 +445,7 @@ describe('useBlockMultiSelect undo notifications', () => {
   })
 })
 
-describe('useBlockMultiSelect reentrancy guard (#MAINT-9)', () => {
+describe('useBlockMultiSelect reentrancy guard (#)', () => {
   it('rejects a concurrent handleBatchSetTodo call while another is in flight', async () => {
     // Hold the first invoke open so we can fire a second call during it.
     let releaseFirst: (() => void) | null = null
@@ -530,7 +530,7 @@ describe('useBlockMultiSelect reentrancy guard (#MAINT-9)', () => {
   })
 })
 
-describe('useBlockMultiSelect callback stability (#MAINT-9)', () => {
+describe('useBlockMultiSelect callback stability (#)', () => {
   it('keeps handleBatchSetTodo identity stable across rerenders with unchanged deps', () => {
     const params = makeDefaultParams()
     const { result, rerender } = renderHook(() => useBlockMultiSelect(params), { wrapper })

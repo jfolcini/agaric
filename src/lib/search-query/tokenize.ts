@@ -1,5 +1,5 @@
 /**
- * PEND-54 — Tokeniser for the inline search filter syntax.
+ * Tokeniser for the inline search filter syntax.
  *
  * Walks the input one character at a time and emits raw lexical
  * tokens. The classifier (`classify.ts`) is responsible for mapping
@@ -7,7 +7,7 @@
  *
  * Quoting / boolean operator behaviour started as a port of
  * `src-tauri/src/fts/search.rs::tokenize_query` (so the parser doesn't
- * accidentally pre-process FTS5 syntax), but DSL-1 deliberately diverges
+ * Accidentally pre-process FTS5 syntax), but deliberately diverges
  * on the closing-quote rule: this tokeniser is boundary-aware (a quote
  * only closes at a token boundary) because it drives chip projection +
  * caret autocomplete, whereas the Rust `tokenize_query` closes on the
@@ -53,7 +53,7 @@ export function tokenize(input: string): RawToken[] {
     }
     const start = i
     if (ch === '"') {
-      // DSL-1 — find a *closing* `"` that sits at a token boundary
+      // Find a *closing* `"` that sits at a token boundary
       // (followed by whitespace or end-of-input). A `"` glued to more
       // text (e.g. `"a"b`) is not a clean phrase close, so we keep
       // scanning; if none qualifies, fall through to word-handling so

@@ -400,7 +400,7 @@ describe('QueryResult', () => {
     })
   })
 
-  // UX-274: error path renders a Retry button that re-fetches results
+  // Error path renders a Retry button that re-fetches results
   it('renders a Retry button alongside the error message', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_tags') throw new Error('boom')
@@ -521,7 +521,7 @@ describe('QueryResult', () => {
 /* ------------------------------------------------------------------ */
 
 describe('detectColumns', () => {
-  // UX-318 — detectColumns now always returns Content + every known
+  // DetectColumns now always returns Content + every known
   // property column regardless of whether the data populates them.
   // Missing values are rendered as `—` placeholders in QueryResultTable.
   it('returns all known columns even when no properties are set', () => {
@@ -850,7 +850,7 @@ describe('buildFilters', () => {
 /* ------------------------------------------------------------------ */
 
 describe('QueryResult – multi-filter (filtered)', () => {
-  // PEND-35 Tier 2.10b: shorthand `property:key=value` and `tag:prefix`
+  // Shorthand `property:key=value` and `tag:prefix`
   // syntax (and their AND combinations) parse to `type: 'filtered'` and
   // dispatch to a single `filtered_blocks_query` IPC. The legacy
   // per-sub-filter `query_by_property` / `query_by_tags` fan-out + JS
@@ -900,7 +900,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
   })
 
   it('multiple property filters produce AND semantics', async () => {
-    // PEND-35 Tier 2.10b — AND-intersection is now SQL-side. The mock
+    // AND-intersection is now SQL-side. The mock
     // returns the post-intersection result set directly; there is no
     // per-sub-filter fan-out to model.
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -1021,7 +1021,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
   })
 
   it('shows empty state when filtered query returns no rows', async () => {
-    // PEND-35 Tier 2.10b — empty state simply means the SQL EXISTS
+    // Empty state simply means the SQL EXISTS
     // intersection produced zero rows. No per-sub-filter mocking
     // needed.
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -1075,7 +1075,7 @@ describe('QueryResult – error paths', () => {
   })
 
   it('shows error when filtered property query rejects', async () => {
-    // PEND-35 Tier 2.10b: shorthand `property:` routes through
+    // Shorthand `property:` routes through
     // `filtered_blocks_query` (single IPC).
     mockedInvoke.mockRejectedValueOnce(new Error('Filter query broken'))
 
@@ -1086,7 +1086,7 @@ describe('QueryResult – error paths', () => {
   })
 
   it('shows error when filtered_blocks_query rejects for tag+property combo', async () => {
-    // PEND-35 Tier 2.10b: tag + property filters now collapse into a
+    // Tag + property filters now collapse into a
     // single `filtered_blocks_query` IPC. A rejection of that one IPC
     // surfaces as the error message — no Promise.all fan-out exists.
     mockedInvoke.mockRejectedValueOnce(new Error('Filtered query rejected'))
@@ -1515,7 +1515,7 @@ describe('QueryResult – expression pills', () => {
 /* ------------------------------------------------------------------ */
 
 describe('QueryResult – operator syntax', () => {
-  // PEND-35 Tier 2.10b: shorthand `property:key{op}value` parses as
+  // Shorthand `property:key{op}value` parses as
   // `type: 'filtered'` and forwards each filter inside the
   // `filtered_blocks_query` IPC's `propertyFilters` array. The operator
   // travels in the marshalled `FilteredBlocksPropertyFilter.operator`.

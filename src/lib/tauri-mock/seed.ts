@@ -47,7 +47,7 @@ export const pageAliases: Map<string, string[]> = new Map()
 // Attachment store: attachment_id → AttachmentRow-like object
 export const attachments: Map<string, Record<string, unknown>> = new Map()
 
-// Attachment raw bytes store: attachment_id → byte array (PEND-76 F2). Lets the
+// Attachment raw bytes store: attachment_id → byte array. Lets the
 // `add_attachment_with_bytes` / `read_attachment` mock handlers round-trip
 // content so the FE upload→render flow is exercisable under the web mock.
 export const attachmentBytes: Map<string, number[]> = new Map()
@@ -213,7 +213,7 @@ export function seedBlocks(): void {
   blocks.set(SEED_IDS.PAGE_PROJECTS, makeBlock(SEED_IDS.PAGE_PROJECTS, 'page', 'Projects', null, 3))
   blocks.set(SEED_IDS.PAGE_MEETINGS, makeBlock(SEED_IDS.PAGE_MEETINGS, 'page', 'Meetings', null, 4))
 
-  // BUG-48: every seeded page belongs to the canonical Personal space —
+  // Every seeded page belongs to the canonical Personal space —
   // the new `get_journal_page_by_date` / `list_journal_pages_in_range`
   // handlers filter by the `space` ref property to mirror the real
   // backend's per-space scoping. Without this, e2e tests that exercise
@@ -448,7 +448,7 @@ export function seedBlocks(): void {
       0,
     ),
   )
-  // NOTE (PEND-58e E12): Quick Notes is a SHARED fixture that many e2e specs
+  // NOTE: Quick Notes is a SHARED fixture that many e2e specs
   // depend on (editor/keyboard block-nth indexing, inner-links `*ideas*` →
   // `<em>`, import-export snapshots). Adding a same-page `[[…]]` link to either
   // content block to exercise the inbound same-page exclusion broke those
@@ -620,7 +620,7 @@ function seedFacetFixturePage(): void {
   if (!enabled) return
   const pageId = fakeId()
   const page = makeBlock(pageId, 'page', 'Facet Fixture', null, 99)
-  // PEND-58e E1: the Priority facet now offers the configured levels
+  // The Priority facet now offers the configured levels
   // (`DEFAULT_PRIORITY_LEVELS` = '1'/'2'/'3'), not the old 'A'/'B'/'C'. The
   // canonical seed sets no page-level priority, so '1' here is unique and the
   // facet narrows to exactly this page.

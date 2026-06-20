@@ -2,7 +2,7 @@
  * useAgendaPreferences — localStorage persistence for agenda groupBy/sortBy.
  *
  * Extracted from AgendaView.tsx (R-13). Migrated to the shared
- * `useLocalStoragePreference` hook in MAINT-129.
+ * `useLocalStoragePreference` hook in.
  */
 
 import type { AgendaGroupBy, AgendaSortBy } from '../lib/agenda-sort'
@@ -22,7 +22,7 @@ export interface AgendaPreferences {
 }
 
 // Stored format is the bare value (e.g. `date`, not `"date"`) — predates
-// MAINT-129 and must keep parsing existing on-disk preferences.
+// And must keep parsing existing on-disk preferences.
 const groupByOptions = {
   parse: (raw: string): AgendaGroupBy => {
     if (VALID_GROUP_BY.includes(raw)) return raw as AgendaGroupBy

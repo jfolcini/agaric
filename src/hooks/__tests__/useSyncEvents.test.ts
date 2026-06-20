@@ -121,7 +121,7 @@ vi.mock('@/stores/resolve', () => ({
   },
 }))
 
-// FEAT-3p7 — `useSyncEvents.preload(spaceId, true)` reads
+// `useSyncEvents.preload(spaceId, true)` reads
 // `useSpaceStore.currentSpaceId`. Mock with a deterministic
 // active-space id so the test asserts the spaceId arg is forwarded.
 vi.mock('@/stores/space', () => ({
@@ -245,8 +245,8 @@ describe('mapBackendState', () => {
 
 describe('useSyncEvents', () => {
   describe('listener registration', () => {
-    it('registers listeners for sync:complete and sync:error (PEND-06 Phase 2)', async () => {
-      // PEND-06 Phase 2 dropped the `sync:progress` listener — the
+    it('registers listeners for sync:complete and sync:error (Phase 2)', async () => {
+      // Phase 2 dropped the `sync:progress` listener — the
       // Channel<SyncProgressUpdate> opened by `startSync` is the
       // canonical source for progress now (see `useSyncTrigger`).
       // Keeping the assertion as 2 (down from 3 in Phase 1) pins the
@@ -313,7 +313,7 @@ describe('useSyncEvents', () => {
     })
   })
 
-  // PEND-06 Phase 2 — `sync:progress` listener was dropped. Per-state
+  // Phase 2 — `sync:progress` listener was dropped. Per-state
   // progress (`streaming_ops`, `applying_ops`, etc.) now flows through
   // the Channel<SyncProgressUpdate> set up by `startSync`; see the
   // useSyncTrigger tests for the consumer side. The `mapBackendState`
@@ -520,7 +520,7 @@ describe('useSyncEvents', () => {
         },
       })
 
-      // FEAT-3p7 — preload now takes (spaceId, forceRefresh). The
+      // Preload now takes (spaceId, forceRefresh). The
       // sync-events hook reads currentSpaceId from useSpaceStore (mocked
       // to 'SPACE_TEST' above) and forwards forceRefresh=true.
       expect(mockPreload).toHaveBeenCalledWith('SPACE_TEST', true)
@@ -757,8 +757,8 @@ describe('useSyncEvents', () => {
     })
   })
 
-  // UX-282: screen-reader announcements paired with sync toast feedback
-  describe('screen reader announcements (UX-282)', () => {
+  // Screen-reader announcements paired with sync toast feedback
+  describe('screen reader announcements', () => {
     it('announces ops received when sync:complete carries ops', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 

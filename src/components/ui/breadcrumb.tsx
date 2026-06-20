@@ -3,7 +3,7 @@
  *
  * Single source of truth for breadcrumb UI across the app. Used by
  * `BlockZoomBar` (zoomed block trail) and `PageHeader`'s namespace breadcrumb
- * for `/`-separated page titles (UX-257 / FEAT-13).
+ * For `/`-separated page titles.
  *
  * Structure:
  * - `<nav role="navigation" aria-label>` wrapping `<div role="toolbar">`.
@@ -25,7 +25,7 @@
  *   `min-h` to `11` (44 px) on touch-coarse hits the AGENTS.md mandate
  *   exactly. Matches the density of the tab bar / filter-pill row.
  *
- * Keyboard navigation (UX-215):
+ * Keyboard navigation:
  * - ArrowLeft / ArrowRight move focus across breadcrumb buttons.
  * - Home / End jump to the first / last button.
  * - The container has `role="toolbar"` so AT announces the grouping.
@@ -48,11 +48,11 @@
  * crumbs are wayfinding text-links and the conventional focus indicator for a
  * text-link is an underline, not a 3 px ring. Pairing this with the underline
  * hover treatment makes the trail read as a path of links rather than a button
- * bar (FEAT-13). The popover's interior menu items keep
+ * Bar. The popover's interior menu items keep
  * the standard form-control ring (they are inside a menu surface, not on the
  * trail).
  *
- * Text-link crumb segments keep `focus-visible:underline` (FEAT-13).
+ * Text-link crumb segments keep `focus-visible:underline`.
  * Icon-only triggers (`BreadcrumbHome`, `OverflowPopover`) use the standard
  * `focus-visible:ring-[3px]` form-control treatment because the underline rule
  * has no visible effect on a single icon glyph (no glyph baseline to decorate;
@@ -114,7 +114,7 @@ export interface BreadcrumbProps {
   overflowAriaLabel?: string | undefined
 }
 
-// FEAT-13: text-link styling for non-active crumbs (no rounded pill, no
+// Text-link styling for non-active crumbs (no rounded pill, no
 // hover-bg, no focus ring). See the file's top doc comment for the rationale
 // behind the focus-style deviation from AGENTS.md.
 const itemButtonClass = cn(

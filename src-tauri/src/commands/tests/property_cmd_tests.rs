@@ -72,7 +72,7 @@ async fn set_property_creates_property() {
         "value_ref should be None for text property"
     );
 
-    // TEST-42: verify op_log row was written with op_type='set_property'
+    // Verify op_log row was written with op_type='set_property'
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM op_log WHERE op_type = 'set_property' \
          AND json_extract(payload, '$.block_id') = ? \
@@ -130,7 +130,7 @@ async fn set_property_validates_key() {
 }
 
 // ----------------------------------------------------------------------
-// L-122: caller_context message wording
+// Caller_context message wording
 //
 // `set_property_inner`'s last parameter, `caller_context`, augments the
 // exactly-one-value validation error so the MCP boundary can name the
@@ -402,7 +402,7 @@ async fn delete_property_removes_property() {
         "properties should be empty after delete, got: {props:?}"
     );
 
-    // TEST-42: verify op_log row was written with op_type='delete_property'
+    // Verify op_log row was written with op_type='delete_property'
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM op_log WHERE op_type = 'delete_property' \
          AND json_extract(payload, '$.block_id') = ? \
@@ -653,7 +653,7 @@ async fn delete_property_clears_reserved_column_key() {
     );
 }
 
-// L-57 — `delete_property_core`'s reserved-key match catch-all returns a
+// `delete_property_core`'s reserved-key match catch-all returns a
 // structured `AppError::InvalidOperation` instead of panicking via
 // `unreachable!()`. The path is unreachable from any production caller
 // today (`is_reserved_property_key` is locked at exactly the four matched
@@ -669,16 +669,16 @@ fn delete_property_core_unknown_reserved_key_error_format() {
     let err = AppError::InvalidOperation(format!("unknown reserved property: {key}"));
     assert!(
         matches!(err, AppError::InvalidOperation(_)),
-        "L-57 catch-all must use AppError::InvalidOperation"
+        " catch-all must use AppError::InvalidOperation"
     );
     assert_eq!(
         err.to_string(),
         "Invalid operation: unknown reserved property: future_reserved_key",
-        "L-57 catch-all message format must include the offending key"
+        " catch-all message format must include the offending key"
     );
 }
 
-// L-62 — Mirror of the L-57 pin for the sibling helper
+// Mirror of the pin for the sibling helper
 // `delete_property_in_tx` in `commands/blocks/crud.rs`. Same rationale:
 // the reserved-key match catch-all must return
 // `AppError::InvalidOperation` (pass-through in
@@ -692,12 +692,12 @@ fn delete_property_in_tx_unknown_reserved_key_error_format() {
     let err = AppError::InvalidOperation(format!("unknown reserved property: {key}"));
     assert!(
         matches!(err, AppError::InvalidOperation(_)),
-        "L-62 catch-all must use AppError::InvalidOperation"
+        " catch-all must use AppError::InvalidOperation"
     );
     assert_eq!(
         err.to_string(),
         "Invalid operation: unknown reserved property: future_reserved_key",
-        "L-62 catch-all message format must include the offending key"
+        " catch-all message format must include the offending key"
     );
 }
 
@@ -973,7 +973,7 @@ async fn batch_resolve_returns_all_requested_blocks() {
     insert_block(&pool, "BR01", "content", "First block", None, Some(0)).await;
     insert_block(&pool, "BR02", "page", "My Page", None, Some(1)).await;
     insert_block(&pool, "BR03", "tag", "work", None, Some(2)).await;
-    // FEAT-3 Phase 7 — `batch_resolve_inner` filters by space via
+    // Phase 7 — `batch_resolve_inner` filters by space via
     // `COALESCE(b.page_id, b.id) IN (block_properties WHERE key='space' …)`.
     // Each block needs a space row for the filter to keep it in scope.
     assign_to_test_space(&pool, "BR01").await;
@@ -1268,7 +1268,7 @@ async fn set_todo_state_sets_value() {
         "DB column should persist TODO state"
     );
 
-    // TEST-42: verify op_log row was written with op_type='set_property' for the todo_state key
+    // Verify op_log row was written with op_type='set_property' for the todo_state key
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM op_log WHERE op_type = 'set_property' \
          AND json_extract(payload, '$.block_id') = ? \
@@ -1418,7 +1418,7 @@ async fn set_todo_state_accepts_custom_keyword_cancelled() {
 
     mat.flush_background().await.unwrap();
 
-    // BUG-20: Backend validates todo_state against the property_definitions
+    // Backend validates todo_state against the property_definitions
     // options. To accept a custom keyword like CANCELLED, the user must
     // first extend the options list for the todo_state definition.
     update_property_def_options_inner(
@@ -1507,7 +1507,7 @@ async fn set_priority_sets_and_clears() {
         .unwrap();
     assert_eq!(result.priority, None, "priority should be cleared to None");
 
-    // TEST-42: verify op_log rows were written with op_type='set_property' for the priority key
+    // Verify op_log rows were written with op_type='set_property' for the priority key
     // (one for the set, one for the clear)
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM op_log WHERE op_type = 'set_property' \
@@ -1599,7 +1599,7 @@ async fn set_due_date_sets_and_clears() {
         .unwrap();
     assert_eq!(result.due_date, None, "due_date should be cleared to None");
 
-    // TEST-42: verify op_log rows were written with op_type='set_property' for the due_date key
+    // Verify op_log rows were written with op_type='set_property' for the due_date key
     // (one for the set, one for the clear)
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM op_log WHERE op_type = 'set_property' \
@@ -2545,7 +2545,7 @@ async fn set_scheduled_date_sets_and_clears() {
         "scheduled_date should be cleared to None"
     );
 
-    // TEST-42: verify op_log rows were written with op_type='set_property' for the scheduled_date key
+    // Verify op_log rows were written with op_type='set_property' for the scheduled_date key
     // (one for the set, one for the clear)
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM op_log WHERE op_type = 'set_property' \
@@ -4375,7 +4375,7 @@ async fn set_todo_state_done_with_repeat_until_without_dates_still_creates_sibli
     mat.shutdown();
 }
 
-// ─── delete_property_def builtin guard (BUG-11) ─────────────────
+// ─── delete_property_def builtin guard ─────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_property_def_rejects_builtin_key() {
@@ -4389,7 +4389,7 @@ async fn delete_property_def_rejects_builtin_key() {
     );
 }
 
-// ─── BUG-41: command wrappers must sanitize internal errors ──────────
+// ─── command wrappers must sanitize internal errors ──────────
 //
 // The two Tauri wrappers `update_property_def_options` / `delete_property_def`
 // previously returned raw `AppError::Database(sqlx::Error)` straight to the
@@ -4554,7 +4554,7 @@ async fn delete_property_def_preserves_user_facing_errors_through_sanitize() {
     );
 }
 
-// ─── M-26: delete_property_def must not orphan block_properties rows ─────────
+// ─── delete_property_def must not orphan block_properties rows ─────────
 //
 // `delete_property_def_inner` previously DELETEd the `property_definitions`
 // row unconditionally, leaving any `block_properties` rows that referenced
@@ -4737,7 +4737,7 @@ async fn m26_delete_property_def_rejection_message_includes_key_and_count() {
     mat.shutdown();
 }
 
-// ─── BUG-20: Select/enum property value validation against options ───
+// ─── Select/enum property value validation against options ───
 //
 // Previously the backend only validated property *types*, not whether
 // the supplied value was one of the allowed options for select-type
@@ -5043,7 +5043,7 @@ async fn bug20_set_priority_rejects_value_not_in_seeded_options() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn m20_set_priority_accepts_user_extended_options() {
-    // M-20 / docs/ARCHITECTURE.md §20 (UX-201b): the priority property is a
+    // / docs/ARCHITECTURE.md §20: the priority property is a
     // user-extensible select-type definition. Calling set_priority_inner
     // with a value outside the seeded `["1","2","3"]` set must succeed
     // when the user has extended the options to cover that value (e.g.
@@ -5090,7 +5090,7 @@ async fn m20_set_priority_accepts_user_extended_options() {
         .await
         .unwrap();
 
-    // Out-of-options value still rejected (BUG-20 options check inside
+    // Out-of-options value still rejected (options check inside
     // set_property_in_tx).
     let bad =
         set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("Z".into())).await;
@@ -5104,8 +5104,8 @@ async fn m20_set_priority_accepts_user_extended_options() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn m20_set_priority_fallback_when_definition_deleted() {
-    // M-20: if the `priority` property_definition row is deleted (so the
-    // BUG-20 options check inside `set_property_in_tx` finds no
+    // If the `priority` property_definition row is deleted (so the
+    // Options check inside `set_property_in_tx` finds no
     // definition), `set_priority_inner` falls back to the built-in
     // seeded options `["1","2","3"]` so the reserved-key contract
     // remains enforced. Mirrors `bug20_todo_state_fallback_when_definition_deleted`.
@@ -5215,18 +5215,18 @@ async fn bug20_todo_state_fallback_when_definition_deleted() {
 /// and no next-occurrence sibling.
 ///
 /// Trigger mechanism (post-L-100): a whitespace `repeat` value planted
-/// directly into `block_properties` (bypassing the L-6 empty-text guard
+/// Directly into `block_properties` (bypassing the empty-text guard
 /// in `set_property_inner`). `shift_date(due, " ")` returns `None`, so
-/// the L-100 ISO-date check on `repeat-until` never fires; the copy step
+/// The ISO-date check on `repeat-until` never fires; the copy step
 /// then calls `set_property_in_tx(..., "repeat", Some(" "))`, which the
-/// L-6 empty/whitespace guard in `validate_set_property` rejects. The
+/// Empty/whitespace guard in `validate_set_property` rejects. The
 /// error propagates out through `handle_recurrence_in_tx` and rolls
 /// the entire `CommandTx` back.
 ///
 /// Note: the previous trigger (a corrupt `repeat-until = "not-a-date"`)
-/// no longer reaches the copy step because L-100 now stops the
+/// No longer reaches the copy step because now stops the
 /// recurrence early on a malformed `repeat-until`. The H-4 invariant is
-/// independent of L-100 — we just need any corrupt vehicle that
+/// Independent of we just need any corrupt vehicle that
 /// bypasses the early end-condition gates to keep this test green.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_todo_state_atomic_when_recurrence_fails() {
@@ -5269,7 +5269,7 @@ async fn set_todo_state_atomic_when_recurrence_fails() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Plant a whitespace `repeat` directly, bypassing the L-6
+    // Plant a whitespace `repeat` directly, bypassing the
     // empty/whitespace guard in `set_property_inner`. The recurrence
     // flow proceeds past the end-condition gates (no `repeat-until`,
     // no `repeat-count`, and `reference_date` is `None` because
@@ -5455,12 +5455,12 @@ fn is_valid_iso_date_delegates_to_validate_date_format_i_commandscrud_8() {
     }
 }
 
-// ─── M-90: `is_space` tightened from `text` to `select` with options=["true"] ───
+// ─── `is_space` tightened from `text` to `select` with options=["true"] ───
 //
 // Migration 0039_is_space_select_type.sql changes the seeded
 // `is_space` property definition from `value_type = 'text'` (no
 // options enforcement) to `value_type = 'select'` with
-// `options = '["true"]'`. The BUG-20 options-membership guard in
+// `options = '["true"]'`. The options-membership guard in
 // `set_property_in_tx` then rejects any write whose `value_text` is
 // not literally `"true"`, catching drift from the "absent property =
 // not a space" convention at the write layer.
@@ -5520,7 +5520,7 @@ async fn set_is_space_to_true_succeeds_m90() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_is_space_to_invalid_value_returns_error_m90() {
     // Error path: any value other than `"true"` (the sole entry in
-    // `options = '["true"]'`) must be rejected by the BUG-20
+    // `options = '["true"]'`) must be rejected by the
     // options-membership check inside `set_property_in_tx`. This is
     // the regression guard that keeps the new `select` value_type
     // honest — without it the migration is just a label change.
@@ -5564,7 +5564,7 @@ async fn set_is_space_to_invalid_value_returns_error_m90() {
 }
 
 // ======================================================================
-// PEND-35 Tier 2.6 — get_property_def (single-key PK lookup)
+// Get_property_def (single-key PK lookup)
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -5605,7 +5605,7 @@ async fn get_property_def_returns_none_for_missing_key() {
 }
 
 // ======================================================================
-// PEND-35 Tier 2.4c — get_property (single-key PK lookup)
+// Get_property (single-key PK lookup)
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -5780,10 +5780,10 @@ async fn get_property_normalizes_lowercase_block_id() {
 }
 
 // ======================================================================
-// PEND-35 Tier 2.1 — set_todo_state_batch
+// Set_todo_state_batch
 // ======================================================================
 
-/// PEND-35 Tier 2.1 — N blocks in one input list produce N op_log
+/// N blocks in one input list produce N op_log
 /// rows in ONE contiguous seq range (no foreign tx interleaving) and
 /// every block's `todo_state` column reflects the requested value.
 /// Anchors the multi-IPC → single-IPC refactor: the test would also
@@ -5881,7 +5881,7 @@ async fn set_todo_state_batch_writes_one_tx_for_n_blocks() {
     }
 }
 
-/// PEND-35 Tier 2.1 — missing / soft-deleted ids in the input list
+/// Missing / soft-deleted ids in the input list
 /// are silently dropped (lenient batch). Mixed input commits the
 /// live subset.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -5939,7 +5939,7 @@ async fn set_todo_state_batch_skips_missing_and_deleted() {
     assert_eq!(v, Some("TODO".into()));
 }
 
-/// PEND-35 Tier 2.1 — invalid `state` (not in the seeded
+/// Invalid `state` (not in the seeded
 /// `["TODO","DOING","DONE"]` set when the property definition row
 /// has been deleted) aborts the whole batch — no op_log rows, no
 /// `blocks.todo_state` writes.
@@ -6025,7 +6025,7 @@ async fn set_todo_state_batch_atomic_rollback_on_inner_failure() {
     }
 }
 
-/// PEND-35 Tier 2.1 — empty input rejects with `Validation`.
+/// Empty input rejects with `Validation`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_todo_state_batch_rejects_empty_list() {
     let (pool, _dir) = test_pool().await;
@@ -6038,7 +6038,7 @@ async fn set_todo_state_batch_rejects_empty_list() {
     );
 }
 
-/// PEND-35 Tier 2.1 — input above the cap rejects with `Validation`.
+/// Input above the cap rejects with `Validation`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_todo_state_batch_rejects_oversize_list() {
     let (pool, _dir) = test_pool().await;
@@ -6064,7 +6064,7 @@ async fn set_todo_state_batch_rejects_oversize_list() {
     );
 }
 
-/// PEND-35 Tier 2.1 — `state = None` (clear) is valid and propagates
+/// `state = None` (clear) is valid and propagates
 /// to every live block in the input list.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_todo_state_batch_clears_state() {
@@ -6103,7 +6103,7 @@ async fn set_todo_state_batch_clears_state() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_property_ref_cross_space_rejected() {
-    // PEND-76 F5: a ref-type property whose target lives in a different
+    // A ref-type property whose target lives in a different
     // space than the source block is rejected at the command layer.
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());

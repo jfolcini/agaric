@@ -52,7 +52,7 @@ export function TagValuePicker({
       setActiveIndex(-1)
       setOpen(true)
     } catch (err) {
-      // PEND-23 M2: surface the failure rather than swallowing it. Matches the
+      // Surface the failure rather than swallowing it. Matches the
       // logger pattern used elsewhere for fire-and-forget IPC failures (see
       // LinkEditPopover.tsx — `logger.warn(...)`).
       logger.warn('TagValuePicker', 'failed to search tags', { prefix }, err)

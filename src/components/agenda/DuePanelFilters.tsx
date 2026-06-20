@@ -31,7 +31,7 @@ export function DuePanelFilters({
 }: DuePanelFiltersProps): React.ReactElement {
   const { t } = useTranslation()
 
-  // UX-324 — Tooltips clarify the axis of each pill, especially the
+  // Tooltips clarify the axis of each pill, especially the
   // Due-vs-Scheduled distinction (hard deadline vs soft planned start).
   const filterOptions = [
     {

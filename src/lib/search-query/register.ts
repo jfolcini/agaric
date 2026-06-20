@@ -1,10 +1,10 @@
 /**
- * PEND-54 — One-shot registration of the core PEND-54 token kinds.
+ * One-shot registration of the core token kinds.
  *
  * Called from `parse()` so test harnesses (and the dev-server HMR
  * cycle) always see the canonical registry. Idempotent.
  *
- * PEND-53 — extends the registry with structured-metadata recognisers
+ * Extends the registry with structured-metadata recognisers
  * (`state:`, `priority:`, `due:`, `scheduled:`, `prop:` + their `not-`
  * negations). The recognisers stay pure-functions; the chip projection
  * (`tokenSource` in `serialize.ts`) and the IPC projection
@@ -104,7 +104,7 @@ export function ensureRegistered(): void {
     return { kind: 'pathExclude', value: glob, span }
   })
 
-  // PEND-53 — state: / not-state:
+  // State: / not-state:
   registerTokenPrefix('state:', (value, span) => {
     if (value.length === 0) {
       return {
@@ -128,7 +128,7 @@ export function ensureRegistered(): void {
     return { kind: 'notState', value, span }
   })
 
-  // PEND-53 — priority: / not-priority:
+  // Priority: / not-priority:
   registerTokenPrefix('priority:', (value, span) => {
     if (value.length === 0) {
       return {
@@ -152,7 +152,7 @@ export function ensureRegistered(): void {
     return { kind: 'notPriority', value, span }
   })
 
-  // PEND-53 — due: / scheduled: share the date-value parser.
+  // Due: / scheduled: share the date-value parser.
   registerTokenPrefix('due:', (value, span) => {
     return parseDateToken(value, span, 'due')
   })
@@ -160,7 +160,7 @@ export function ensureRegistered(): void {
     return parseDateToken(value, span, 'scheduled')
   })
 
-  // PEND-53 — prop:key=value / not-prop:key=value
+  // Prop:key=value / not-prop:key=value
   registerTokenPrefix('prop:', (value, span) => {
     return parsePropToken(value, span, 'prop')
   })
@@ -197,7 +197,7 @@ function parseDateToken(
       span,
     }
   }
-  // DSL-3: the `none` sentinel is accepted case-insensitively for
+  // The `none` sentinel is accepted case-insensitively for
   // parity with `state:NONE` / `priority:NONE` (the backend treats the
   // date `none` sentinel case-insensitively too). We normalise to the
   // canonical lowercase `none` so the chip and the wire value agree.

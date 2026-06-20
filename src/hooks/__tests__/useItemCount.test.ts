@@ -28,7 +28,7 @@ describe('useItemCount', () => {
     vi.restoreAllMocks()
   })
 
-  // ── number-shape (count-only IPCs — PEND-35 Tier 2.11 path) ──
+  // ── number-shape (count-only IPCs — path) ──
 
   it('returns the number when queryFn resolves to a count-only IPC', async () => {
     const queryFn = vi.fn().mockResolvedValue(7)

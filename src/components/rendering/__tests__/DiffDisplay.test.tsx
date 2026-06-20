@@ -225,8 +225,8 @@ describe('DiffDisplay', () => {
     expect((container.querySelector('ins') as Element).textContent).toContain('new text')
   })
 
-  // -- UX-265 sub-fix 5: large-diff toggle --------------------------------
-  describe('UX-265 large-diff toggle', () => {
+  // -- sub-fix 5: large-diff toggle --------------------------------
+  describe(' large-diff toggle', () => {
     /** Build a span list that exceeds the LARGE_DIFF_THRESHOLD (500). */
     function makeLargeSpans(count: number): DiffSpan[] {
       return Array.from({ length: count }, (_, i) =>
@@ -301,8 +301,8 @@ describe('DiffDisplay', () => {
     })
   })
 
-  // -- UX-275 sub-fix 1: hunk navigation -----------------------------------
-  describe('UX-275 hunk navigation', () => {
+  // -- sub-fix 1: hunk navigation -----------------------------------
+  describe(' hunk navigation', () => {
     it('wraps the diff in a labelled region', () => {
       const spans: DiffSpan[] = [makeSpan('Equal', 'unchanged')]
 
@@ -343,7 +343,7 @@ describe('DiffDisplay', () => {
       // Insert directly followed by Delete (no Equal between) coalesces
       // into one hunk; the trailing Insert (after an Equal) is a second
       // hunk. Total: 2 hunks — proves the grouping logic without tripping
-      // PEND-17's hide-nav-when-only-one-hunk rule.
+      // hide-nav-when-only-one-hunk rule.
       const spans: DiffSpan[] = [
         makeSpan('Equal', 'before '),
         makeSpan('Insert', 'inserted'),
@@ -446,11 +446,11 @@ describe('DiffDisplay', () => {
       expect(results).toHaveNoViolations()
     })
 
-    // PEND-28b M7: hunk-nav row must wrap on narrow viewports so long file
+    // Hunk-nav row must wrap on narrow viewports so long file
     //              paths / counter text don't overflow horizontally on phones.
     //              Needs ≥ 2 hunks for the nav to render at all
-    //              (PEND-17 hides nav for trivial diffs).
-    it('PEND-28b M7: hunk-nav row has flex-wrap', () => {
+    // (hides nav for trivial diffs).
+    it('hunk-nav row has flex-wrap', () => {
       const spans: DiffSpan[] = [
         makeSpan('Equal', 'before '),
         makeSpan('Insert', 'changed'),
@@ -466,11 +466,11 @@ describe('DiffDisplay', () => {
       expect(nav?.className).toContain('flex-wrap')
     })
 
-    // PEND-23 L5: SR users navigating with prev/next must hear the
+    // SR users navigating with prev/next must hear the
     // counter update. The counter span is wrapped in a polite live region
     // with aria-atomic so the whole "X of Y" string is re-announced on
     // every step, not just the changed digit.
-    it('PEND-23 L5: hunk counter has aria-live=polite and aria-atomic=true', () => {
+    it('hunk counter has aria-live=polite and aria-atomic=true', () => {
       const spans: DiffSpan[] = [
         makeSpan('Equal', 'a '),
         makeSpan('Insert', 'one'),
@@ -486,9 +486,9 @@ describe('DiffDisplay', () => {
       expect(counter).toHaveAttribute('aria-atomic', 'true')
     })
 
-    // -- PEND-17 Part A: visible / honest hunk-nav --------------------------
+    // -- Part A: visible / honest hunk-nav --------------------------
 
-    it('PEND-17: active hunk receives data-hunk-active and a ring; previous active hunk loses it', async () => {
+    it('active hunk receives data-hunk-active and a ring; previous active hunk loses it', async () => {
       const user = userEvent.setup()
       const spans: DiffSpan[] = [
         makeSpan('Equal', 'a '),
@@ -517,7 +517,7 @@ describe('DiffDisplay', () => {
       expect(del.className).toContain('ring-2')
     })
 
-    it('PEND-17: single-hunk diff renders no nav', () => {
+    it('single-hunk diff renders no nav', () => {
       // Exactly one hunk — there is nothing to navigate, so the prev/next
       // buttons and the counter must all be hidden.
       const spans: DiffSpan[] = [
@@ -533,7 +533,7 @@ describe('DiffDisplay', () => {
       expect(screen.queryByTestId('diff-hunk-counter')).not.toBeInTheDocument()
     })
 
-    it('PEND-17: scrollIntoView is NOT called when target is fully visible in scrollable ancestor', async () => {
+    it('scrollIntoView is NOT called when target is fully visible in scrollable ancestor', async () => {
       const user = userEvent.setup()
       const scrollSpy = vi
         .spyOn(HTMLElement.prototype, 'scrollIntoView')
@@ -595,7 +595,7 @@ describe('DiffDisplay', () => {
       rectSpy.mockRestore()
     })
 
-    it('PEND-17: scrollIntoView IS called when target is below the scrollable ancestor', async () => {
+    it('scrollIntoView IS called when target is below the scrollable ancestor', async () => {
       const user = userEvent.setup()
       const scrollSpy = vi
         .spyOn(HTMLElement.prototype, 'scrollIntoView')

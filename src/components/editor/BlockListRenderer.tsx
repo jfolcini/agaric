@@ -3,11 +3,11 @@
  *
  * Renders the SortableContext wrapper, viewport-aware placeholders, drop
  * indicators, and SortableBlock components. Extracted from BlockTree.tsx
- * (M-1 subtask 5) for file organization — no state of its own.
+ * (subtask 5) for file organization — no state of its own.
  *
  * Per-block action callbacks (onDelete / onIndent / …) and reference
  * resolvers (resolveBlockTitle / …) flow via `BlockActionsProvider` /
- * `BlockResolversProvider` published by BlockTree (MAINT-118), so this
+ * `BlockResolversProvider` published by BlockTree, so this
  * component no longer accepts or forwards them.
  */
 
@@ -119,7 +119,7 @@ export function BlockListRenderer({
   // Mirrors the collapsedIds / hasChildrenSet Set pattern used in this file.
   const selectedSet = useMemo(() => new Set(selectedBlockIds), [selectedBlockIds])
 
-  // ── Expand animation (UX-79) ──────────────────────────────────────
+  // ── Expand animation ──────────────────────────────────────
   // Track previous collapsedIds to detect which parents were just expanded.
   // Children of those parents get a CSS enter animation.
   const prevCollapsedRef = useRef(collapsedIds)
@@ -153,10 +153,10 @@ export function BlockListRenderer({
     prevCollapsedRef.current = collapsedIds
   }, [collapsedIds])
 
-  // ── Sibling aria props (UX-48) ─────────────────────────────────────
+  // ── Sibling aria props ─────────────────────────────────────
   // Compute aria-setsize / aria-posinset for each block by grouping siblings
   // that share the same parent in the flat list. Single-pass O(N) algorithm
-  // (PERF-22): we keep a `lastAtDepth` map that records the most-recent index
+  // We keep a `lastAtDepth` map that records the most-recent index
   // seen at each depth. Each block's parent is simply `lastAtDepth[depth-1]`,
   // matching the semantics of the previous backward-scan — each block is
   // grouped with the nearest preceding block at its parent's depth. Roots

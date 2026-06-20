@@ -34,7 +34,7 @@ pub async fn is_deleted(pool: &SqlitePool, block_id: &str) -> Result<Option<bool
     Ok(row.map(|r| r.deleted_at.is_some()))
 }
 
-// MAINT-113 M1 — `get_descendants` removed (2026-05-02). It returned a
+// `get_descendants` removed (2026-05-02). It returned a
 // non-conflict-but-possibly-deleted descendant set (
 // only, no `deleted_at IS NULL` filter), so it never fit the
 // `ActiveBlockId` model the rest of the codebase reaches for. It also
@@ -71,7 +71,7 @@ mod tests {
         (pool, dir)
     }
 
-    /// SQL-review M-3: `cascade_soft_delete` / `restore_block` now take
+    /// SQL-review `cascade_soft_delete` / `restore_block` now take
     /// `&Materializer`, so every test setup needs one. Pool + Materializer
     /// + TempDir bundle; drop order matters (TempDir last).
     async fn test_pool_and_mat() -> (SqlitePool, Materializer, TempDir) {
@@ -378,7 +378,7 @@ mod tests {
     // Helper functions: is_deleted
     // ======================================================================
     //
-    // `get_descendants` was removed in MAINT-113 M1 (2026-05-02). See the
+    // `get_descendants` was removed in (2026-05-02). See the
     // module-level comment for rationale.
 
     #[tokio::test]
@@ -407,7 +407,7 @@ mod tests {
         assert_eq!(get_deleted_at(&pool, CHILD).await, Some(real_ts));
     }
 
-    /// L-102: a wrong-token call must return `Ok(0)` AND emit a `tracing::warn`
+    /// A wrong-token call must return `Ok(0)` AND emit a `tracing::warn`
     /// breadcrumb naming `block_id` and `deleted_at_ref`. Capturing tracing
     /// subscriber output in unit tests is heavy (requires per-test
     /// subscriber install + buffer capture wiring), so this test only
@@ -500,7 +500,7 @@ mod tests {
     }
 
     // ======================================================================
-    // PEND-26 N2 — cascade-depth saturation detection
+    // Cascade-depth saturation detection
     // ======================================================================
 
     /// Capture-into-`Vec<u8>` writer used to assert that a `tracing::warn!`
@@ -532,7 +532,7 @@ mod tests {
         }
     }
 
-    /// PEND-26 N2: a 105-level tree saturates the depth-100 cap on the
+    /// A 105-level tree saturates the depth-100 cap on the
     /// soft-delete cascade. The helper must report `true` AND
     /// `cascade_soft_delete` must emit the operator-visible warn.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -584,22 +584,22 @@ mod tests {
             .unwrap();
         assert!(
             saturated,
-            "PEND-26 N2: helper must report saturation on a 105-block chain"
+            "helper must report saturation on a 105-block chain"
         );
 
         // The warn message must have been written by `cascade_soft_delete`.
         let logs = writer.contents();
         assert!(
-            logs.contains("PEND-26 N2"),
-            "PEND-26 N2: cascade_soft_delete must emit the saturation warn; got log buffer: {logs}",
+            logs.contains("cascade-depth cap reached"),
+            "cascade_soft_delete must emit the saturation warn; got log buffer: {logs}",
         );
         assert!(
             logs.contains("WARN"),
-            "PEND-26 N2: emitted log entry must be at WARN level; got: {logs}",
+            "emitted log entry must be at WARN level; got: {logs}",
         );
     }
 
-    /// PEND-26 N2: a 99-level tree (max depth 98) does NOT saturate.
+    /// A 99-level tree (max depth 98) does NOT saturate.
     /// `cascade_soft_delete` must complete normally with no warn.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cascade_soft_delete_does_not_warn_under_threshold_pend26n2() {
@@ -648,13 +648,13 @@ mod tests {
             .unwrap();
         assert!(
             !saturated,
-            "PEND-26 N2: helper must NOT report saturation on a 99-block chain"
+            "helper must NOT report saturation on a 99-block chain"
         );
 
         let logs = writer.contents();
         assert!(
-            !logs.contains("PEND-26 N2"),
-            "PEND-26 N2: cascade_soft_delete must NOT emit the saturation \
+            !logs.contains("cascade-depth cap reached"),
+            "cascade_soft_delete must NOT emit the saturation \
              warn on a 99-block chain; got log buffer: {logs}",
         );
     }

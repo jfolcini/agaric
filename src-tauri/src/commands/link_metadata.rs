@@ -1,4 +1,4 @@
-//! Link metadata command handlers (UX-165).
+//! Link metadata command handlers.
 
 use sqlx::SqlitePool;
 use tauri::State;

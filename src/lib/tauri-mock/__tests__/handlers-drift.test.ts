@@ -1,5 +1,5 @@
 /**
- * MAINT-123 — runtime mock-drift detection.
+ * Runtime mock-drift detection.
  *
  * `HANDLERS` in `../handlers.ts` is typed as `Record<string, Handler>`, which
  * means TypeScript can't catch when a new Tauri command is added to
@@ -78,7 +78,7 @@ function extractBindingsCommandNames(): string[] {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('tauri-mock HANDLERS drift detection (MAINT-123)', () => {
+describe('tauri-mock HANDLERS drift detection', () => {
   const bindingsCommands = extractBindingsCommandNames()
   const handlerKeys = new Set(Object.keys(HANDLERS))
 

@@ -4,7 +4,7 @@
  * Covers the global resolve cache that maps block/tag ULIDs to display titles.
  * The preload function calls listBlocks and listAllTagsInSpace (#1343) (which wrap invoke).
  *
- * # FEAT-3p7 — Cache key encoding (cross-space link enforcement)
+ * # Cache key encoding (cross-space link enforcement)
  *
  * The cache `Map` is keyed by `${spaceId}::${ulid}`. Tests fix
  * `useSpaceStore.currentSpaceId = TEST_SPACE_ID` in `beforeEach` so every
@@ -33,7 +33,7 @@ beforeEach(async () => {
     version: 0,
     _preloaded: false,
   })
-  // FEAT-3p7 — pin the active space so composite-key encoding is
+  // Pin the active space so composite-key encoding is
   // deterministic for every test in this file.
   useSpaceStore.setState({
     currentSpaceId: TEST_SPACE_ID,
@@ -95,7 +95,7 @@ describe('preload', () => {
     // Should have called list_blocks twice (pagination)
     const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
     expect(listBlocksCalls).toHaveLength(2)
-    // FEAT-3p7 — listBlocks call must forward the spaceId so the
+    // ListBlocks call must forward the spaceId so the
     // backend filters out other-space pages.
     const firstListBlocksArgs = listBlocksCalls[0]?.[1] as Record<string, unknown> | undefined
     expect(firstListBlocksArgs?.['spaceId']).toBe(TEST_SPACE_ID)
@@ -189,7 +189,7 @@ describe('preload', () => {
     expect(state.cache.size).toBe(0)
   })
 
-  it('logs a warning when listBlocks rejects (BUG-28)', async () => {
+  it('logs a warning when listBlocks rejects', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const fetchErr = new Error('list_blocks boom')
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -211,7 +211,7 @@ describe('preload', () => {
     warnSpy.mockRestore()
   })
 
-  it('logs a warning when listAllTagsInSpace rejects (BUG-28)', async () => {
+  it('logs a warning when listAllTagsInSpace rejects', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const fetchErr = new Error('list_tags boom')
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -354,7 +354,7 @@ describe('preload', () => {
     })
   })
 
-  it('fresh data overwrites stale cache on non-force-refresh preload (BUG-6)', async () => {
+  it('fresh data overwrites stale cache on non-force-refresh preload', async () => {
     // Prime cache with a stale page title
     useResolveStore.getState().set('PAGE_SYNC', 'Old Title Before Sync', false)
 
@@ -768,9 +768,9 @@ describe('resolveStatus', () => {
 })
 
 // ---------------------------------------------------------------------------
-// FEAT-3p7 — cross-space cache scoping
+// Cross-space cache scoping
 // ---------------------------------------------------------------------------
-describe('FEAT-3p7 — cross-space cache scoping', () => {
+describe('cross-space cache scoping', () => {
   // Test 1 from the spec: Same ULID resolved against two different
   // spaces returns different cached values (cache is space-scoped).
   it('the same ULID can carry different titles in two different spaces', () => {

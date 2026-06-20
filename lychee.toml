@@ -53,7 +53,7 @@ exclude = [
     # `curl` from the maintainer's box and browsers reach it fine — but
     # lychee's reqwest+rustls combination handshakes inconsistently from
     # GHA. Narrowed to the one URL that's been flaky; other oxc.rs URLs
-    # cited in PEND-82 (docs/, blog/) check fine and are not excluded.
+    # Cited in (docs/, blog) check fine and are not excluded.
     "^https?://oxc\\.rs/blog/2026-02-24-oxfmt-beta",
     # sqlx issue #3388 → 404. Cited once in archived
     # docs/session-log/2026-sessions-401-800.md (frozen historical record)

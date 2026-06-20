@@ -206,9 +206,9 @@ async fn h6_batch_and_concurrent_apply_op_serialize_in_fifo() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// L-15 — risk-area regression seats
+// Risk-area regression seats
 //
-// L-15 flagged the materializer as well-covered on happy paths but
+// Flagged the materializer as well-covered on happy paths but
 // thin on a handful of failure / saturation / dispatch-edge code paths.
 // The four tests below pin those uncovered behaviors as regression
 // seats. They document current behavior — including the deliberately
@@ -217,7 +217,7 @@ async fn h6_batch_and_concurrent_apply_op_serialize_in_fifo() {
 // the exact contract being locked down.
 // ──────────────────────────────────────────────────────────────────────
 
-/// L-15 sub-test 1: an `ApplyOp` that fails permanently (FK violation
+/// Sub-test 1: an `ApplyOp` that fails permanently (FK violation
 /// with a non-existent `parent_id`) is dropped after the foreground
 /// retry exhausts, but the op_log row remains populated because
 /// `append_local_op` committed before the apply attempt ran.
@@ -302,7 +302,7 @@ async fn apply_op_permanent_failure_leaves_op_log_populated_l15() {
     mat.shutdown();
 }
 
-/// L-15 sub-test 2: a `BatchApplyOps` whose ops include a parent
+/// Sub-test 2: a `BatchApplyOps` whose ops include a parent
 /// CreateBlock followed by a child CreateBlock (with `parent_id` set
 /// to the parent's id) commits cleanly inside a single batch
 /// transaction — both rows must exist after flush.
@@ -398,7 +398,7 @@ async fn apply_op_parent_child_same_batch_fk_ordering_l15() {
     mat.shutdown();
 }
 
-/// L-15 sub-test 3: a stricter version of the existing
+/// Sub-test 3: a stricter version of the existing
 /// `try_enqueue_background_drops_when_full` — push exactly
 /// `BACKGROUND_CAPACITY + 100` tasks rapidly via `try_enqueue_background`
 /// (bypassing `dispatch_op` so the consumer never sees the cooperative
@@ -435,7 +435,7 @@ async fn try_enqueue_background_actually_drops_when_full_l15() {
     mat.shutdown();
 }
 
-/// L-15 sub-test 4: release-mode counterpart to
+/// Sub-test 4: release-mode counterpart to
 /// `dispatch_bg_empty_block_id` (which uses `#[should_panic]` against
 /// a `debug_assert!`).
 ///

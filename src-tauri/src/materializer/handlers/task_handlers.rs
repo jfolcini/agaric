@@ -3,7 +3,7 @@
 
 use super::*;
 
-// MAINT-148g — `handle_foreground_task` previously took an unused
+// `handle_foreground_task` previously took an unused
 // `_metrics: &QueueMetrics` parameter. Counters live on the consumer
 // loop (see `consumer::process_single_foreground_task`) which inspects
 // the handler's `Result` and bumps the appropriate counter; the handler
@@ -70,7 +70,7 @@ pub(crate) async fn handle_foreground_task(
                         .into(),
                 ));
             }
-            // SQL-review M-1: route through `begin_immediate_logged`
+            // SQL-review route through `begin_immediate_logged`
             // so sync-burst contention surfaces as upfront serialised
             // wait (with a `warn!` if slow) instead of mid-tx
             // `busy_timeout` stalls under SQLite's default DEFERRED
@@ -89,7 +89,7 @@ pub(crate) async fn handle_foreground_task(
             // default for non-RestoreBlock ops so the post-commit walk
             // just no-ops on those slots.
             let mut per_record_effects: Vec<ApplyEffects> = Vec::with_capacity(records.len());
-            // M-10: `records` is `&Arc<Vec<OpRecord>>`; `.iter()` derefs
+            // `records` is `&Arc<Vec<OpRecord>>`; `.iter()` derefs
             // through `Arc -> Vec` to yield `&OpRecord` without copying.
             for record in records.iter() {
                 let effects = match apply_op_tx(&mut tx, record).await {
@@ -151,14 +151,14 @@ pub(crate) async fn handle_foreground_task(
             Ok(())
         }
         _ => {
-            // L-14: a non-Apply / non-Batch / non-Barrier variant landed in
+            // A non-Apply / non-Batch / non-Barrier variant landed in
             // the foreground queue — that is a dispatch bug, not a runtime
             // condition. Return `Err(Validation)` so the consumer's
             // outcome inspection bumps `fg_errors` (see
             // `consumer::process_single_foreground_task`) and reviewers /
             // operators see a real signal instead of a silently-dropped op.
             //
-            // L-14: Err return + error! log is sufficient — debug_assert
+            // Err return + error! log is sufficient — debug_assert
             // removed because tests assert the Err contract directly, and a
             // `debug_assert!(false, …)` would force every test exercising
             // this path to dance around `#[should_panic]`.
@@ -176,7 +176,7 @@ pub(crate) async fn handle_foreground_task(
 /// Dispatch a background task to either the read/write split implementation
 /// (when a separate read pool is configured) or the single-pool implementation.
 ///
-/// MAINT-148a — collapses ~10 identical `match read_pool { Some(rp) => …_split,
+/// Collapses ~10 identical `match read_pool { Some(rp) => …_split,
 /// None => … }` arms in [`handle_background_task`] to a single helper. Each
 /// call site becomes one expression that constructs both branches as closures.
 pub(super) async fn dispatch_split_or_single<'a, FSplit, FSingle, FutSplit, FutSingle, T>(
@@ -265,7 +265,7 @@ pub(crate) async fn handle_background_task(
             // post-diff `block_links` state; in the split-pool variant
             // both steps share `write_pool` for the same reason.
             //
-            // PEND-56b: capture the **pre-diff** outbound target pages
+            // Capture the **pre-diff** outbound target pages
             // BEFORE `reindex_block_links` runs so we can refresh
             // `pages_cache.inbound_link_count` for pages that just lost
             // an edge (otherwise the post-diff `block_links` no longer
@@ -406,12 +406,12 @@ pub(crate) async fn handle_background_task(
             .await
         }
         MaterializeTask::ApplyOp(record) => {
-            // L-14 (bg mirror): mirror the foreground catch-all — an
+            // (bg mirror): mirror the foreground catch-all — an
             // `ApplyOp` in the background queue is a dispatch bug. Promote
             // to error level and return `Err(Validation)` so the bg
             // consumer's outcome inspection bumps `bg_errors`.
             //
-            // L-14: Err return + error! log is sufficient — debug_assert
+            // Err return + error! log is sufficient — debug_assert
             // removed because tests assert the Err contract directly.
             tracing::error!(
                 op_type = %record.op_type,
@@ -425,7 +425,7 @@ pub(crate) async fn handle_background_task(
             )))
         }
         MaterializeTask::BatchApplyOps(records) => {
-            // L-14 (bg mirror): same rationale as the `ApplyOp` arm above.
+            // (bg mirror): same rationale as the `ApplyOp` arm above.
             if let Some(first) = records.first() {
                 tracing::error!(
                     device_id = %first.device_id,

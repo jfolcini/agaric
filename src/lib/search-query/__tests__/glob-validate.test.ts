@@ -61,7 +61,7 @@ describe('expandBraces', () => {
     expect(out.length).toBeLessThanOrEqual(EXPANSION_CAP)
   })
 
-  it('truncates at the cap rather than erroring (DSL-A4 contract)', () => {
+  it('truncates at the cap rather than erroring (contract)', () => {
     // The pattern `{a,b,c,d}` repeated would expand to 4^5 = 1024
     // patterns, far over the cap. The contract — matching the Rust
     // expander's `results.truncate(EXPANSION_CAP)` — is to silently

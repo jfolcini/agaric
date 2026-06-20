@@ -69,7 +69,7 @@ The compactor writes snapshots inside a single `BEGIN IMMEDIATE` transaction (`s
 2. `UPDATE log_snapshots SET status = 'complete' WHERE id = ?`.
 3. `tx.commit()`.
 
-Folding both statements into one transaction (M-69) means no other connection ever observes an orphan `pending` row. The only remaining crash window is at the SQLite layer between commit and durable write — boot recovery still deletes any `pending` rows it finds before anything else (step 1 below), so no half-written snapshot is ever applied.
+Folding both statements into one transaction means no other connection ever observes an orphan `pending` row. The only remaining crash window is at the SQLite layer between commit and durable write — boot recovery still deletes any `pending` rows it finds before anything else (step 1 below), so no half-written snapshot is ever applied.
 
 ## Crash recovery
 

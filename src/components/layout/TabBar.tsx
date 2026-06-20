@@ -1,12 +1,12 @@
 /**
- * TabBar — horizontal tab bar mounted at the app-shell level (FEAT-7).
+ * TabBar — horizontal tab bar mounted at the app-shell level.
  *
  * Renders one button per open tab. Hidden when only a single tab is open, or
- * when the viewport is below the mobile breakpoint (FEAT-7 makes tabs a
+ * When the viewport is below the mobile breakpoint (makes tabs a
  * desktop-only affordance — mobile users navigate via sidebar + breadcrumbs).
  * Each tab shows the page title (label) and a close area (X icon).
  *
- * Active-tab styling depends on the current view (FEAT-7 item 2):
+ * Active-tab styling depends on the current view (item 2):
  * - In `page-editor`: filled/focused look (`bg-background` + bordered bottom
  *   attachment) signalling the user is editing the tab's page.
  * - In any other view: muted/outlined look (`sidebar-accent` background +
@@ -14,7 +14,7 @@
  *   active-state tokens — reads as "these are your tabs; click to return".
  *
  * Clicking the active tab's label opens a dropdown switcher listing every
- * open tab (FEAT-8). The dropdown reuses the `Popover` primitive because the
+ * Open tab. The dropdown reuses the `Popover` primitive because the
  * repo does not (yet) ship a `DropdownMenu` primitive — the behaviour is
  * equivalent: one anchor, one portaled content region, Escape closes,
  * outside-click closes.
@@ -25,7 +25,7 @@
  * The close area is a `<span>` (not a `<button>`) to avoid nested-interactive
  * a11y violations inside `role="tab"`. Close also available via Ctrl+W.
  *
- * UX-262: inside the active-tab dropdown, each row is split into TWO sibling
+ * Inside the active-tab dropdown, each row is split into TWO sibling
  * menu items — `role="menuitemradio"` (activate) + `role="menuitem"` (close) —
  * wrapped in a `role="none"` flex container. This keeps the close affordance
  * out of the activate item's interactive subtree (no nested `<button>` inside
@@ -62,7 +62,7 @@ export function TabBar(): React.ReactElement | null {
     const leaf = getPageDisplayName(fullPath, 'leaf').label
     return isDateFormattedPage(fullPath) ? formatJournalTitle(fullPath, journalDateFormat) : leaf
   }
-  // FEAT-3 Phase 3 — read tabs through the per-space selector so tabs
+  // Phase 3 — read tabs through the per-space selector so tabs
   // opened in space-A never bleed into space-B's bar.
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const tabs = useTabsStore((s) => selectTabsForSpace(s, currentSpaceId))
@@ -74,7 +74,7 @@ export function TabBar(): React.ReactElement | null {
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
   const keyNavRef = useRef(false)
   const [dropdownOpen, setDropdownOpen] = useState(false)
-  // UX-262: dropdown rows are flattened into TWO sibling menu items each
+  // Dropdown rows are flattened into TWO sibling menu items each
   // (activate + close) so the close affordance is no longer a `<button>`
   // nested inside `role="menuitemradio"`. We rove a single tabindex across
   // the doubled item list — even indices = activate, odd = close.
@@ -97,7 +97,7 @@ export function TabBar(): React.ReactElement | null {
     }
   }, [activeTabIndex])
 
-  // UX-262: when the dropdown opens, seed the roving focus on the active
+  // When the dropdown opens, seed the roving focus on the active
   // tab's activate item (even index = i*2). Closing the dropdown is a no-op
   // — the next open re-seeds.
   useEffect(() => {
@@ -106,7 +106,7 @@ export function TabBar(): React.ReactElement | null {
     }
   }, [dropdownOpen, activeTabIndex])
 
-  // UX-262: keep DOM focus in sync with the roving index whenever it
+  // Keep DOM focus in sync with the roving index whenever it
   // advances. Radix Popover focuses the content element on open; this
   // effect overrides that to land focus on the seeded menu item.
   useEffect(() => {
@@ -114,12 +114,12 @@ export function TabBar(): React.ReactElement | null {
     dropdownItemRefs.current[dropdownFocusedIndex]?.focus()
   }, [dropdownOpen, dropdownFocusedIndex])
 
-  // FEAT-7 scope item 6: TabBar is desktop-only. Mobile users navigate via
+  // Scope item 6: TabBar is desktop-only. Mobile users navigate via
   // sidebar + breadcrumbs; the `openInNewTab` IPC surface collapses to a
   // plain `navigateToPage` on mobile (handled at the call site).
   if (isMobile) return null
 
-  // Per FEAT-7 decision: autohide guard preserved by explicit user direction
+  // Per decision: autohide guard preserved by explicit user direction
   // in session 461.
   if (tabs.length <= 1) return null
 
@@ -131,7 +131,7 @@ export function TabBar(): React.ReactElement | null {
       closeTab(i)
       return
     }
-    // FEAT-8: clicking the active tab's label opens the dropdown switcher
+    // Clicking the active tab's label opens the dropdown switcher
     // (desktop-only by virtue of the earlier `isMobile` early-return).
     if (i === activeTabIndex && currentView === 'page-editor') {
       setDropdownOpen((prev) => !prev)
@@ -165,7 +165,7 @@ export function TabBar(): React.ReactElement | null {
     }
   }
 
-  // FEAT-7 item 2: the active-tab look depends on whether the user is in the
+  // Item 2: the active-tab look depends on whether the user is in the
   // page-editor view. In any other view we fall back to muted/outlined tokens
   // borrowed from `SidebarMenuButton`'s active state so the visual reads as
   // "you can click these to return to the editor".
@@ -179,7 +179,7 @@ export function TabBar(): React.ReactElement | null {
     return currentView === 'page-editor' ? activeInEditorClass : activeOutsideEditorClass
   }
 
-  // UX-262: ArrowDown / ArrowUp / Home / End rove focus across the doubled
+  // ArrowDown / ArrowUp / Home / End rove focus across the doubled
   // item list (activate-1, close-1, activate-2, close-2, …). Wrap at both
   // ends so keyboard users can cycle without leaving the menu.
   function handleDropdownKeyDown(e: React.KeyboardEvent): void {
@@ -213,7 +213,7 @@ export function TabBar(): React.ReactElement | null {
           {tabs.map((tab, i) => {
             const isActive = i === activeTabIndex
             const showDropdownHint = isActive && currentView === 'page-editor'
-            // PEND-83 Bug 1: tabs are space-constrained (`max-w-[120px]
+            // Bug 1: tabs are space-constrained (`max-w-[120px]
             // md:max-w-[200px]` + `truncate`) — full namespaced paths
             // overflow fast. Display the LEAF only and surface the full
             // path via `title=""` for hover. The empty-label fallback to
@@ -233,7 +233,7 @@ export function TabBar(): React.ReactElement | null {
                 aria-selected={isActive}
                 aria-haspopup={showDropdownHint ? 'menu' : undefined}
                 aria-expanded={showDropdownHint ? dropdownOpen : undefined}
-                // UX-255: when the active tab doubles as the dropdown trigger
+                // When the active tab doubles as the dropdown trigger
                 // (`currentView === 'page-editor'`), supply an `aria-label`
                 // hinting that Enter/Space opens a tab switcher. Radix already
                 // wires `aria-haspopup`/`aria-expanded`; the label complements
@@ -243,7 +243,7 @@ export function TabBar(): React.ReactElement | null {
                 }
                 title={fullPath}
                 className={cn(
-                  // UX-254: `group` enables `group-hover:` on the chevron so
+                  // `group` enables `group-hover:` on the chevron so
                   // hovering the active tab intensifies the dropdown hint.
                   'group flex items-center gap-1 px-3 py-1 text-sm rounded-t-md truncate max-w-[120px] md:max-w-[200px] cursor-pointer select-none',
                   'focus-ring-visible',
@@ -254,7 +254,7 @@ export function TabBar(): React.ReactElement | null {
               >
                 <span className="truncate">{displayTitle}</span>
                 {showDropdownHint && (
-                  // UX-254: chevron is the only visual affordance for the
+                  // Chevron is the only visual affordance for the
                   // active-tab dropdown. Bump base opacity (50 → 70) and
                   // intensify on hover via `group-hover` so first-time users
                   // can see the hint without guessing.
@@ -294,7 +294,7 @@ export function TabBar(): React.ReactElement | null {
           >
             {tabs.map((tab, i) => {
               const isActive = i === activeTabIndex
-              // PEND-83 Bug 1: dropdown rows share the same leaf-with-tooltip
+              // Bug 1: dropdown rows share the same leaf-with-tooltip
               // treatment as the tab buttons themselves so the two surfaces
               // read consistently. The aria-label for the close action keeps
               // the full path so screen readers announce the unambiguous page.
@@ -303,7 +303,7 @@ export function TabBar(): React.ReactElement | null {
               const activateIdx = i * 2
               const closeIdx = i * 2 + 1
               return (
-                // UX-262: each row is a presentational flex container with
+                // Each row is a presentational flex container with
                 // TWO sibling menu items inside — neither nests the other.
                 // role="none" tells AT to treat the wrapper as transparent,
                 // so role="menu" still sees only direct menuitem* children.

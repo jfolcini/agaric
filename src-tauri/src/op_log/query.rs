@@ -15,7 +15,7 @@ pub async fn get_op_by_seq(
     device_id: &str,
     seq: i64,
 ) -> Result<OpRecord, AppError> {
-    // L-13: include the indexed `block_id` column (migration 0030) so
+    // Include the indexed `block_id` column (migration 0030) so
     // the read path populates the cached sidecar field with no JSON
     // parse on either the local-append origin or post-restore reads.
     sqlx::query_as!(
@@ -50,7 +50,7 @@ pub async fn get_ops_since(
     device_id: &str,
     after_seq: i64,
 ) -> Result<Vec<OpRecord>, AppError> {
-    // L-13: include the indexed `block_id` column (migration 0030) so
+    // Include the indexed `block_id` column (migration 0030) so
     // every row in the result set carries the cached sidecar field —
     // the materializer / sync-stream consumer never needs to re-parse
     // `payload` for the same value.

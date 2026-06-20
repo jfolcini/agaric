@@ -60,7 +60,7 @@ describe('formatRepeatLabel', () => {
     expect(formatRepeatLabel('1w', t)).toBe('every 1 week')
   })
 
-  // UX-7: Verify the function reads from the i18n bundle rather than
+  // Verify the function reads from the i18n bundle rather than
   // hardcoded English literals — swapping a key changes the output.
   it('uses translated strings from the i18n bundle', () => {
     const original = i18n.getResource('en', 'translation', 'repeat.daily') as string

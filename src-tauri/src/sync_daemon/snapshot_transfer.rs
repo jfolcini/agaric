@@ -1,9 +1,9 @@
-//! Snapshot-driven catch-up for the sync orchestrator (FEAT-6).
+//! Snapshot-driven catch-up for the sync orchestrator.
 //!
 //! When a peer's head-exchange check finds that its local op log cannot
 //! satisfy the remote's advertised heads (typically because the local
 //! log has been compacted past the remote's frontier), the responder
-//! signals [`SyncMessage::ResetRequired`]. Prior to FEAT-6 this was a
+//! signals [`SyncMessage::ResetRequired`]. Prior to this was a
 //! terminal failure: the initiator would disconnect and retry, and the
 //! session could never make progress once compaction had removed the
 //! ops needed for a delta replay.
@@ -114,7 +114,7 @@ pub(crate) enum OfferOutcome {
     Rejected,
     /// The snapshot was offered, accepted, and streamed in full.
     Sent { bytes_sent: u64 },
-    /// M-58: the latest local snapshot is BEHIND the remote's
+    /// The latest local snapshot is BEHIND the remote's
     /// advertised frontier for at least one device. Sending it would
     /// silently re-apply older state on the initiator. The responder
     /// instead sent [`SyncMessage::Error`] so the initiator fails
@@ -122,7 +122,7 @@ pub(crate) enum OfferOutcome {
     SnapshotStale { reason: String },
 }
 
-/// M-58: covering check for the responder's snapshot vs. the remote's
+/// Covering check for the responder's snapshot vs. the remote's
 /// advertised heads.
 ///
 /// For every `(device_id, remote_seq)` the remote advertised in its
@@ -165,7 +165,7 @@ fn snapshot_covers_remote_heads(
 /// once the main message loop exits with `state == ResetRequired`.
 /// Returns [`OfferOutcome::NoSnapshot`] when `log_snapshots` has no
 /// complete row — in that case the caller should close the session
-/// (matching pre-FEAT-6 behavior).
+/// (matching pre- behavior).
 pub(crate) async fn try_offer_snapshot_catchup(
     conn: &mut SyncConnection,
     pool: &SqlitePool,
@@ -195,7 +195,7 @@ pub(crate) async fn try_offer_snapshot_catchup(
     // atomic-apply). Mirrors `FileOffer::blake3_hash`.
     let blob_blake3 = blake3::hash(&compressed).to_hex().to_string();
 
-    // M-58: defensive covering check.
+    // Defensive covering check.
     //
     // `ResetRequired` means our op_log was compacted past the remote's
     // advertised frontier — so the snapshot we are about to offer
@@ -218,7 +218,7 @@ pub(crate) async fn try_offer_snapshot_catchup(
             peer_id = %remote_device_id,
             snapshot_id = %snapshot_id,
             reason = %reason,
-            "responder snapshot does not cover remote frontier; sending Error instead of SnapshotOffer (M-58)"
+            "responder snapshot does not cover remote frontier; sending Error instead of SnapshotOffer"
         );
         let wire_msg = format!("snapshot does not cover remote frontier: {reason}");
         // Send the wire-level `Error` so the initiator surfaces a
@@ -235,7 +235,7 @@ pub(crate) async fn try_offer_snapshot_catchup(
             tracing::warn!(
                 peer_id = %remote_device_id,
                 error = %e,
-                "failed to send M-58 stale-snapshot Error to initiator"
+                "failed to send  stale-snapshot Error to initiator"
             );
         }
         event_sink.on_sync_event(SyncEvent::Error {
@@ -380,7 +380,7 @@ pub(crate) enum CatchupOutcome {
 /// integrity failure rolls the DB back; the initiator is never left
 /// in a half-restored state.
 ///
-/// # peer_refs bookkeeping (L-66)
+/// # peer_refs bookkeeping
 ///
 /// `expected_remote_id` mirrors the `SyncComplete` fallback in
 /// [`SyncOrchestrator`](crate::sync_protocol::SyncOrchestrator):
@@ -469,7 +469,7 @@ pub(crate) async fn try_receive_snapshot_catchup(
 
     conn.send_json(&SyncMessage::SnapshotAccept).await?;
 
-    // L-67: stream the compressed bytes straight to a temp file under
+    // Stream the compressed bytes straight to a temp file under
     // the app data dir instead of accumulating them into a `Vec<u8>`.
     // Peak Rust-heap during the receive is one
     // `BINARY_FRAME_CHUNK_SIZE` buffer (5 MB); a 256 MB compressed
@@ -515,7 +515,7 @@ pub(crate) async fn try_receive_snapshot_catchup(
         ops_sent: 0,
     });
 
-    // L-67: open the temp file as a SYNC `std::fs::File` (the
+    // Open the temp file as a SYNC `std::fs::File` (the
     // `apply_snapshot` reader bound is `std::io::Read`). The reader
     // is consumed entirely inside `decode_snapshot` (zstd-streaming
     // + ciborium) before the SQL transaction begins, so the only
@@ -630,7 +630,7 @@ pub(crate) async fn try_receive_snapshot_catchup(
         "applied snapshot; frontier advanced"
     );
 
-    // L-66: mirror the SyncComplete fallback. Prefer the orchestrator's
+    // Mirror the SyncComplete fallback. Prefer the orchestrator's
     // session-level `remote_device_id`; if that is empty (HeadExchange
     // carried only our own heads), fall back to the daemon-provided
     // `expected_remote_id` (mTLS / mDNS peer identity). If neither is
@@ -649,7 +649,7 @@ pub(crate) async fn try_receive_snapshot_catchup(
     } else {
         return Err(AppError::InvalidOperation(
             "snapshot catch-up completed with empty remote_device_id and no expected_remote_id; \
-             refusing to record peer_refs row keyed by empty string (L-66)"
+             refusing to record peer_refs row keyed by empty string"
                 .into(),
         ));
     };
@@ -659,7 +659,7 @@ pub(crate) async fn try_receive_snapshot_catchup(
     // send anything in this session. The next scheduled sync will pick
     // up any ops the responder wrote after the snapshot was taken.
     //
-    // PEND-24 M2: wrap the ensure-row + record-sync pair in a single
+    // Wrap the ensure-row + record-sync pair in a single
     // `BEGIN IMMEDIATE` transaction so a crash between the two writes
     // cannot leave a peer row whose `last_hash` is stale relative to
     // the snapshot frontier just applied. The bookkeeping write is
@@ -703,7 +703,7 @@ pub(crate) async fn try_receive_snapshot_catchup(
     })
 }
 
-/// L-67: a temp file holding a freshly-received snapshot blob.
+/// A temp file holding a freshly-received snapshot blob.
 ///
 /// Owns its on-disk path; `Drop` unlinks the file (best-effort,
 /// synchronous `std::fs::remove_file` because we can't `await` in
@@ -715,7 +715,7 @@ pub(crate) async fn try_receive_snapshot_catchup(
 /// We deliberately roll our own guard rather than depend on the
 /// `tempfile` crate at runtime (it is dev-only today; pulling it
 /// into `[dependencies]` would be a new runtime dep for one path).
-/// The pattern is small and matches the M-51
+/// The pattern is small and matches the
 /// `TempAttachmentWriter::Drop` cleanup path.
 pub(crate) struct SnapshotTempFile {
     path: PathBuf,
@@ -740,7 +740,7 @@ impl Drop for SnapshotTempFile {
 /// #706 item 2 — stream a file through a blake3 hasher and return the
 /// lowercase hex digest. Reads in `BINARY_FRAME_CHUNK_SIZE` chunks so the
 /// integrity check inherits the same bounded-memory profile as the
-/// L-67 receive path (never buffers the whole compressed blob). The hash
+/// Receive path (never buffers the whole compressed blob). The hash
 /// is computed on a blocking thread so the receive loop's executor is not
 /// stalled on a multi-hundred-MB read.
 async fn blake3_of_file(path: &Path) -> Result<String, AppError> {
@@ -774,7 +774,7 @@ async fn blake3_of_file(path: &Path) -> Result<String, AppError> {
 }
 
 /// Stream `size_bytes` of a compressed snapshot from `conn` straight
-/// to a `<app_data_dir>/snapshot-recv-<rand>.tmp` file (L-67).
+/// To a `<app_data_dir>/snapshot-recv-<rand>.tmp` file.
 ///
 /// Replaces the old `receive_snapshot_bytes` `Vec<u8>` accumulator —
 /// peak Rust-heap during the receive is now one
@@ -809,7 +809,7 @@ pub(crate) async fn receive_snapshot_to_temp(
         ))
     })?;
 
-    // L-67 — uses the M-51 streaming receiver: per-frame chunks are
+    // Uses the streaming receiver: per-frame chunks are
     // pulled off the wire and written to the file as they arrive,
     // so neither the compressed payload nor the partially-buffered
     // chunk accumulator from the old `receive_binary_chunked` ever
@@ -927,7 +927,7 @@ mod tests {
     /// took a local snapshot, then itself moved to a NEW lineage via a
     /// snapshot RESET (`apply_snapshot`). A third device still on the
     /// OLD lineage now asks for catch-up, advertising heads that the
-    /// pre-reset snapshot covers — so the M-58 covering check alone
+    /// Pre-reset snapshot covers — so the covering check alone
     /// would let the offer through and re-ship the pre-reset vault.
     /// Post-fix, `apply_snapshot` wipes `log_snapshots` in the RESET tx,
     /// so the responder has nothing to offer (`NoSnapshot`) until it
@@ -971,7 +971,7 @@ mod tests {
             .expect("RESET must succeed");
 
         // Old-lineage requester: its heads ({LOCAL_DEV: 1}) are covered
-        // by the pre-reset snapshot, so M-58 alone would NOT block the
+        // By the pre-reset snapshot, so alone would NOT block the
         // offer — pre-fix this call sent `SnapshotOffer` with the
         // pre-reset vault.
         let old_lineage_heads = vec![DeviceHead {
@@ -1119,7 +1119,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // M-58: snapshot covering check
+    // Snapshot covering check
     // -----------------------------------------------------------------
 
     /// Truth-table for the private covering helper.
@@ -1186,7 +1186,7 @@ mod tests {
     /// `up_to_seqs` is BEHIND the remote's advertised frontier,
     /// `try_offer_snapshot_catchup` must send `SyncMessage::Error`
     /// (NOT `SnapshotOffer`) so the initiator fails loudly instead of
-    /// silently re-applying an older snapshot. Reported in M-58.
+    /// Silently re-applying an older snapshot. Reported in.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn try_offer_snapshot_catchup_sends_error_when_snapshot_behind_remote() {
         let (pool, _dir) = test_pool().await;
@@ -1231,11 +1231,11 @@ mod tests {
             SyncMessage::Error { message } => {
                 assert!(
                     message.contains(LOCAL_DEV),
-                    "M-58 Error message must name the offending device, got {message:?}"
+                    " Error message must name the offending device, got {message:?}"
                 );
                 assert!(
                     message.contains("999"),
-                    "M-58 Error message must include the remote's claimed seq, got {message:?}"
+                    " Error message must include the remote's claimed seq, got {message:?}"
                 );
             }
             other => panic!(
@@ -1593,10 +1593,10 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // L-74: snapshot transfer cancellation / interruption
+    // Snapshot transfer cancellation / interruption
     // -----------------------------------------------------------------
 
-    /// L-74: the responder advertises a snapshot, the initiator accepts,
+    /// The responder advertises a snapshot, the initiator accepts,
     /// then the responder disconnects mid-binary-stream after delivering
     /// only part of the promised payload. The initiator must:
     ///
@@ -1668,7 +1668,7 @@ mod tests {
         // (a) The interruption surfaces as Err.
         assert!(
             result.is_err(),
-            "L-74: mid-stream disconnect must surface as Err; got {result:?}"
+            "mid-stream disconnect must surface as Err; got {result:?}"
         );
 
         server_task.await.unwrap();
@@ -1683,7 +1683,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             blocks_after, 0,
-            "L-74: interrupted snapshot must not leave any blocks"
+            "interrupted snapshot must not leave any blocks"
         );
 
         // (c) No peer_refs row — the catch-up did not complete.
@@ -1692,7 +1692,7 @@ mod tests {
             .unwrap();
         assert!(
             peer_after.is_none(),
-            "L-74: interrupted snapshot must NOT advance peer_refs"
+            "interrupted snapshot must NOT advance peer_refs"
         );
 
         materializer.shutdown();
@@ -1823,10 +1823,10 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // L-66: peer_refs fallback (empty remote_device_id)
+    // Peer_refs fallback (empty remote_device_id)
     // -----------------------------------------------------------------
 
-    /// Helper for the L-66 fallback / failure tests: drive a successful
+    /// Helper for the fallback / failure tests: drive a successful
     /// snapshot transfer end-to-end with the given `remote_device_id` /
     /// `expected_remote_id` pair and return the receive-side result so
     /// the caller can assert on the resolved peer_refs row (or the
@@ -1888,7 +1888,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn try_receive_snapshot_catchup_falls_back_to_expected_remote_id_when_session_id_empty() {
-        // L-66: HeadExchange sometimes carries only our own heads, so
+        // HeadExchange sometimes carries only our own heads, so
         // the initiator's `session.remote_device_id` ends up empty.
         // The daemon's `expected_remote_id` (from mTLS / mDNS) must
         // fill in so the peer_refs row uses the real peer identity.
@@ -1918,7 +1918,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn try_receive_snapshot_catchup_errors_when_both_remote_ids_empty() {
-        // L-66: with neither `remote_device_id` nor `expected_remote_id`
+        // With neither `remote_device_id` nor `expected_remote_id`
         // available, the function must fail loudly so the scheduler
         // records a failed session — silently completing would write a
         // peer_refs row keyed by the empty string and corrupt the
@@ -1928,8 +1928,8 @@ mod tests {
         match err {
             AppError::InvalidOperation(msg) => {
                 assert!(
-                    msg.contains("L-66"),
-                    "error message should reference L-66 for traceability; got {msg:?}",
+                    msg.contains("refusing to record peer_refs"),
+                    "error message should reference the empty-id failure; got {msg:?}",
                 );
             }
             other => panic!("expected InvalidOperation, got {other:?}"),
@@ -1938,7 +1938,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn try_receive_snapshot_catchup_prefers_session_id_over_expected() {
-        // L-66: when both ids are present and disagree, the
+        // When both ids are present and disagree, the
         // session-level `remote_device_id` (from HeadExchange) wins
         // because that's the value the protocol actually exchanged.
         let (init_pool, _dir, result) =
@@ -1958,11 +1958,11 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // L-67 — streaming snapshot transfer regression suite
+    // Streaming snapshot transfer regression suite
     // -----------------------------------------------------------------
     //
-    // M-51 + L-67: paired sync streaming items. M-51 is the wire-side
-    // primitive (`send/receive_binary_streaming`), L-67 layers a temp
+    // + paired sync streaming items. is the wire-side
+    // Primitive (`send/receive_binary_streaming`), layers a temp
     // file on top so the receiver lands the compressed snapshot on
     // disk frame-by-frame instead of accumulating it in a `Vec<u8>`.
     // `apply_snapshot` then reads through that temp file via the
@@ -1970,7 +1970,7 @@ mod tests {
     // compressed bytes nor the decompressed CBOR is ever fully
     // materialised in memory.
 
-    /// L-67 — confirm `try_receive_snapshot_catchup` writes the
+    /// Confirm `try_receive_snapshot_catchup` writes the
     /// incoming bytes to a temp file under the app data dir before
     /// applying. Asserts the temp file appears mid-receive (between
     /// the responder's binary frames and the apply call) and is
@@ -1995,7 +1995,7 @@ mod tests {
         let tmp_count_before = count_snapshot_tmp_files(&app_data_dir);
         assert_eq!(
             tmp_count_before, 0,
-            "L-67: no snapshot temp files must exist before catch-up"
+            "no snapshot temp files must exist before catch-up"
         );
 
         let (mut server_conn, mut client_conn) = test_connection_pair().await;
@@ -2028,7 +2028,7 @@ mod tests {
             None,
         )
         .await
-        .expect("L-67 catch-up must succeed end-to-end");
+        .expect(" catch-up must succeed end-to-end");
 
         server_task.await.unwrap();
         materializer.flush_background().await.unwrap();
@@ -2044,7 +2044,7 @@ mod tests {
         let tmp_count_after = count_snapshot_tmp_files(&app_data_dir);
         assert_eq!(
             tmp_count_after, 0,
-            "L-67: snapshot temp file must be unlinked once catch-up returns; \
+            "snapshot temp file must be unlinked once catch-up returns; \
              dir = {app_data_dir:?}"
         );
 
@@ -2059,7 +2059,7 @@ mod tests {
         resp_materializer.shutdown();
     }
 
-    /// L-67 — `apply_snapshot` now takes `impl std::io::Read`. Passing
+    /// `apply_snapshot` now takes `impl std::io::Read`. Passing
     /// a `std::io::Cursor` (the simplest in-memory `Read`) must work
     /// identically to the old `&[u8]` shape.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2078,7 +2078,7 @@ mod tests {
         let cursor = std::io::Cursor::new(encoded.clone());
         let restored = crate::snapshot::apply_snapshot(&dst_pool, &dst_mat, cursor)
             .await
-            .expect("L-67: apply_snapshot must accept a Cursor reader");
+            .expect("apply_snapshot must accept a Cursor reader");
 
         // The restored frontier matches the original encoded blob's
         // frontier (sanity check — the decoded data is the same).
@@ -2098,7 +2098,7 @@ mod tests {
         dst_mat.shutdown();
     }
 
-    /// L-67 — when the receive fails post-stream (corrupted bytes →
+    /// When the receive fails post-stream (corrupted bytes →
     /// `apply_snapshot` returns an error), the snapshot temp file
     /// must be unlinked so abandoned transfers do not leak.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2145,7 +2145,7 @@ mod tests {
         .await;
         assert!(
             result.is_err(),
-            "L-67: garbage snapshot bytes must surface as Err; got {result:?}"
+            "garbage snapshot bytes must surface as Err; got {result:?}"
         );
 
         server_task.await.unwrap();
@@ -2156,13 +2156,13 @@ mod tests {
         let tmp_count_after = count_snapshot_tmp_files(&app_data_dir);
         assert_eq!(
             tmp_count_after, 0,
-            "L-67: temp must be unlinked on apply failure; dir = {app_data_dir:?}"
+            "temp must be unlinked on apply failure; dir = {app_data_dir:?}"
         );
 
         materializer.shutdown();
     }
 
-    /// L-67 — `decode_snapshot` must use `zstd::stream::Decoder` (not
+    /// `decode_snapshot` must use `zstd::stream::Decoder` (not
     /// `zstd::decode_all`) so a snapshot that decompresses to a much
     /// larger CBOR blob than the compressed payload does NOT
     /// materialise the full decompressed stream on the heap. This is
@@ -2237,7 +2237,7 @@ mod tests {
         std::io::Read::read_to_end(&mut decoder, &mut decompressed).unwrap();
         assert!(
             decompressed.len() >= payload.len() * 3,
-            "L-67: test fixture must decompress to ≥3× the compressed size \
+            "test fixture must decompress to ≥3× the compressed size \
              (compressed={} bytes, decompressed={} bytes) so the streaming \
              decoder's value is observable",
             encoded.len(),
@@ -2257,7 +2257,7 @@ mod tests {
         assert_eq!(decoded.up_to_seqs, data.up_to_seqs);
     }
 
-    /// Helper used by the L-67 temp-file tests above: count
+    /// Helper used by the temp-file tests above: count
     /// `snapshot-recv-*.tmp` entries directly under `dir`. We use a
     /// shallow read_dir scan rather than walking — the temp file is
     /// always created as a direct child of `app_data_dir` per

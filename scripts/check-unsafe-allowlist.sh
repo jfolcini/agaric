@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PEND-41 R13 — fail any commit that introduces `#![allow(unsafe_code)]`
+# Fail any commit that introduces `#![allow(unsafe_code)]`
 # in a file not explicitly listed in `src-tauri/unsafe-allowlist.txt`.
 #
 # Workspace lint is `unsafe_code = "deny"` (`src-tauri/Cargo.toml`). The

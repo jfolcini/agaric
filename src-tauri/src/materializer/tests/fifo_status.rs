@@ -274,7 +274,7 @@ async fn handle_fg_barrier() {
 }
 #[tokio::test]
 async fn handle_fg_unexpected() {
-    // L-14: an unexpected (background-only) variant in the foreground
+    // An unexpected (background-only) variant in the foreground
     // queue must surface as `Err(Validation)` so the consumer bumps
     // `fg_errors` and reviewers see a real signal instead of a silent
     // drop.
@@ -292,7 +292,7 @@ async fn handle_fg_unexpected() {
 }
 #[tokio::test]
 async fn handle_fg_unexpected_reindex() {
-    // L-14: see `handle_fg_unexpected` — same contract for any
+    // See `handle_fg_unexpected` — same contract for any
     // background-only variant.
     let (pool, _dir) = test_pool().await;
     let result = handle_foreground_task(
@@ -314,7 +314,7 @@ async fn handle_fg_unexpected_reindex() {
 }
 #[tokio::test]
 async fn handle_bg_unexpected_apply() {
-    // L-14 (bg mirror): an `ApplyOp` in the background queue is a
+    // (bg mirror): an `ApplyOp` in the background queue is a
     // dispatch bug. The handler must return `Err(Validation)` so the
     // bg consumer bumps `bg_errors`. Block must NOT be created.
     let (pool, _dir) = test_pool().await;
@@ -348,10 +348,10 @@ async fn handle_bg_unexpected_apply() {
 }
 
 // ---------------------------------------------------------------------------
-// L-12 / L-14 regression tests
+// Regression tests
 // ---------------------------------------------------------------------------
 //
-// L-12: `enqueue_foreground` previously inspected `tx.capacity()` BEFORE
+// `enqueue_foreground` previously inspected `tx.capacity()` BEFORE
 // the awaiting `send` to bump `fg_full_waits`. That snapshot was racy
 // (the consumer can drain between the read and the send) so the metric
 // under-counted real wait events. The fix uses `try_send` first and
@@ -359,14 +359,14 @@ async fn handle_bg_unexpected_apply() {
 // correlation between counter increments and "we actually awaited on a
 // full channel".
 //
-// L-14: misrouted variants in either queue used to log at warn and
+// Misrouted variants in either queue used to log at warn and
 // return Ok(()), silently absorbing dispatch bugs. They now return
 // `Err(AppError::Validation(_))` so consumers bump `fg_errors` /
 // `bg_errors` and reviewers see a real signal.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn enqueue_foreground_does_not_bump_fg_full_waits_when_capacity_available() {
-    // L-12: the happy path — channel has capacity, `try_send` succeeds
+    // The happy path — channel has capacity, `try_send` succeeds
     // immediately, `fg_full_waits` must remain at zero. The old snapshot
     // check could in principle race (capacity read 0 milliseconds before
     // send), but more importantly was inverted in spirit: capacity == 0
@@ -394,7 +394,7 @@ async fn enqueue_foreground_does_not_bump_fg_full_waits_when_capacity_available(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handle_fg_rebuild_fts_index_returns_validation_err() {
-    // L-14: an explicit second test using a different background-only
+    // An explicit second test using a different background-only
     // variant (`RebuildFtsIndex`) so a future refactor that special-cases
     // any single variant cannot accidentally re-introduce the silent-Ok
     // behavior.
@@ -413,7 +413,7 @@ async fn handle_fg_rebuild_fts_index_returns_validation_err() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handle_bg_unexpected_batch_apply_returns_validation_err() {
-    // L-14 (bg mirror): a `BatchApplyOps` in the background queue is a
+    // (bg mirror): a `BatchApplyOps` in the background queue is a
     // dispatch bug — must surface as `Err(Validation)`.
     let (pool, _dir) = test_pool().await;
     let batch = StdArc::new(vec![fake_op_record(

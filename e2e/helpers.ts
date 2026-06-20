@@ -1,7 +1,7 @@
 import { test as baseTest, expect, type Locator, type Page } from '@playwright/test'
 
 // ---------------------------------------------------------------------------
-// Custom `test` export with a global mock-state reset baked in (TEST-1a).
+// Custom `test` export with a global mock-state reset baked in.
 //
 // Every spec file should `import { expect, test } from './helpers'` instead
 // of `@playwright/test`. The `beforeEach` below issues a best-effort reset
@@ -25,7 +25,7 @@ declare global {
 export const test = baseTest
 
 // ---------------------------------------------------------------------------
-// Console-error watcher (TEST-4).
+// Console-error watcher.
 //
 // Every spec gets a `page.on('console', ...)` + `page.on('pageerror', ...)`
 // listener registered automatically by the global `beforeEach` below, and
@@ -136,7 +136,7 @@ test.afterEach(({ page }) => {
 export { expect }
 
 // ---------------------------------------------------------------------------
-// Portal-scoped locator helpers (TEST-1b).
+// Portal-scoped locator helpers.
 //
 // Radix UI primitives render Dialog / AlertDialog / Popover / Sheet / Tooltip
 // content into `document.body` via portals. When a test closes an overlay,
@@ -151,7 +151,7 @@ export { expect }
 // and pick `.last()` so the most-recent portal wins when two coexist briefly.
 //
 // Prefer these helpers over root `page.getByRole` / `page.getByText` for any
-// query that targets content inside a Radix overlay (TEST-1b).
+// Query that targets content inside a Radix overlay.
 // ---------------------------------------------------------------------------
 
 /** Active Radix Dialog content (data-slot="dialog-content"). */
@@ -387,7 +387,7 @@ export async function waitForStableBlockRows(page: Page, expectedRows = 1): Prom
 }
 
 // ---------------------------------------------------------------------------
-// Search-view helpers (PEND-58f).
+// Search-view helpers.
 //
 // `openSearchView` boots the app and navigates to the find-in-files search
 // view (the `SearchPanel`), waiting for the header label so the panel has
@@ -560,7 +560,7 @@ export async function blurEditors(page: Page) {
  * in `useBlockKeyboardHandlers`). This means there is ALWAYS an editor
  * visible after a save — just on the new sibling, not on the block that
  * was being edited. The old `not.toBeVisible()` check for any
- * `[contenteditable]` is therefore wrong and the pre-TEST-1f helper was
+ * `[contenteditable]` is therefore wrong and the pre- helper was
  * effectively waiting for a timeout on every call.
  *
  * We identify the specific block that was being edited via its

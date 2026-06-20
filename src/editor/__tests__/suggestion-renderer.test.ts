@@ -832,7 +832,7 @@ describe('outside-click dismissal', () => {
   })
 })
 
-describe('outside-click deferred registration (BUG-2)', () => {
+describe('outside-click deferred registration', () => {
   function makeProps(): any {
     return {
       items: [],
@@ -961,7 +961,7 @@ describe('outside-click deferred registration (BUG-2)', () => {
   })
 })
 
-describe('viewport handling on coarse pointers (UX-273)', () => {
+describe('viewport handling on coarse pointers', () => {
   function makeProps(): any {
     return {
       items: [],
@@ -1146,11 +1146,11 @@ describe('viewport handling on coarse pointers (UX-273)', () => {
 })
 
 // ===========================================================================
-// PEND-27 P7 — coalesce per-frame `updatePosition` calls so burst typing
+// Coalesce per-frame `updatePosition` calls so burst typing
 // doesn't run `computePosition` once per keystroke.
 // ===========================================================================
 
-describe('onUpdate rAF coalescing (PEND-27 P7)', () => {
+describe('onUpdate rAF coalescing', () => {
   function makeProps(query = ''): any {
     return {
       items: [],
@@ -1228,7 +1228,7 @@ describe('onUpdate rAF coalescing (PEND-27 P7)', () => {
     cancelSpy.mockClear()
   }
 
-  it('three onUpdate calls within the same frame collapse to one computePosition (PEND-27 P7)', async () => {
+  it('three onUpdate calls within the same frame collapse to one computePosition', async () => {
     const { computePosition } = await import('@floating-ui/dom')
     const mockedComputePosition = vi.mocked(computePosition)
     mockedComputePosition.mockResolvedValue({

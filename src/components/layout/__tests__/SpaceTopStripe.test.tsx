@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-// PEND-37: `toHaveStyle({ backgroundColor: 'var(--accent-…)' })` requires
+// `toHaveStyle({ backgroundColor: 'var(--accent-…)' })` requires
 // jsdom — happy-dom's CSS parser drops `var()` values from inline styles.
 
 /**
- * Tests for SpaceTopStripe (PEND-11).
+ * Tests for SpaceTopStripe.
  *
  * Validates:
  *  - Renders a fixed-position 3px stripe when a space is active.

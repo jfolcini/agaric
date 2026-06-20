@@ -1,7 +1,7 @@
 /**
  * useGraphRenderElements — memoized renderer that materializes d3 node /
  * edge selections into the graph SVG. Extracted from `useGraphSimulation`
- * per MAINT-127.
+ *.
  *
  * The hook returns a stable callback so the orchestrator's effect can
  * call `render(svg)` inside the same effect that sets up zoom and the

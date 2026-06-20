@@ -16,10 +16,10 @@ import {
 /**
  * Load all pages marked as templates (property `template` = 'true').
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, restricts templates to the
+ * `spaceId` (Phase 4) — when set, restricts templates to the
  * active space. `null` keeps the cross-space (legacy) behaviour.
  *
- * PEND-35 Tier 2.8 — `blockType: 'page'` is pushed into SQL via
+ * `blockType: 'page'` is pushed into SQL via
  * Tier 3.4's `query_by_property` push-down filter. The previous
  * JS-side `b.block_type === 'page'` filter wasted bandwidth on
  * non-page rows that the backend now drops at query time.
@@ -40,10 +40,10 @@ export async function loadTemplatePages(spaceId: string | null): Promise<BlockRo
  * Returns the first matching page (or null) and an optional warning when
  * multiple journal templates are found so the caller can surface it to the user.
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, restricts the search to the
+ * `spaceId` (Phase 4) — when set, restricts the search to the
  * active space.
  *
- * PEND-35 Tier 2.8 — `blockType: 'page'` is pushed into SQL so non-page
+ * `blockType: 'page'` is pushed into SQL so non-page
  * rows are dropped at query time rather than via a JS-side filter.
  */
 export async function loadJournalTemplate(spaceId: string | null): Promise<{
@@ -70,10 +70,10 @@ export async function loadJournalTemplate(spaceId: string | null): Promise<{
  * Load template pages with a preview of their first child's content.
  * Returns the page data plus a truncated preview string.
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, restricts templates to the
+ * `spaceId` (Phase 4) — when set, restricts templates to the
  * active space.
  *
- * PEND-35 Tier 2.8 — collapses the previous N+1
+ * Collapses the previous N+1
  * (`listBlocks({ parentId, limit: 1 })` per template) into a single
  * `firstChildForBlocks(allTemplateIds)` IPC. Templates with no
  * children, with a fetch failure, or absent from the response map
@@ -283,7 +283,7 @@ export function expandTemplateVariables(content: string, context: LegacyTemplate
  * created block's id is reported back so the caller can focus it after the
  * template lands. Returns the IDs of all created blocks.
  *
- * PEND-35 Tier 4.3 — replaces the per-descendant `createBlock` IPC loop
+ * Replaces the per-descendant `createBlock` IPC loop
  * with a single `createBlocksBatch` call. limit-clamp-followup — the
  * walk-children traversal also collapsed from one `listBlocks` IPC per
  * source parent (silently clamped to 100 children per level) into a
@@ -477,12 +477,12 @@ export async function insertTemplateBlocks(
  * the property is not set.
  *
  * Distinct from the legacy `journal-template` page property — this one
- * lives directly on the space block as its `value_text`. FEAT-3p5b
+ * Lives directly on the space block as its `value_text`.
  * makes this take precedence over the legacy global template page when
  * a daily journal page is created inside the space.
  */
 export async function loadJournalTemplateForSpace(spaceId: string): Promise<string | null> {
-  // PEND-35 Tier 2.4c — single-key PK lookup against `block_properties`
+  // Single-key PK lookup against `block_properties`
   // instead of fetching the whole vocabulary just to read one row.
   const row = await getProperty(spaceId, 'journal_template')
   return row?.value_text ?? null
@@ -494,7 +494,7 @@ export async function loadJournalTemplateForSpace(spaceId: string): Promise<stri
  * `<% time %>`, `<% datetime %>`, `<% page title %>`) are expanded on
  * each line. Returns the IDs of all created blocks.
  *
- * PEND-35 Tier 4.3 — replaces the per-line `createBlock` IPC loop
+ * Replaces the per-line `createBlock` IPC loop
  * with one `createBlocksBatch` call. A 10-line journal template that
  * previously fired 10 IPCs now fires 1. Atomicity changes: a single
  * malformed line (e.g. oversize content) now rolls the whole template

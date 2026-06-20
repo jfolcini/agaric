@@ -23,7 +23,7 @@ mod snapshot_transfer;
 mod wire;
 
 // Android-only: acquire WifiManager.MulticastLock at daemon start so the
-// `mdns-sd` crate's UDP multicast sockets receive packets (BUG-39).
+// `mdns-sd` crate's UDP multicast sockets receive packets.
 #[cfg(target_os = "android")]
 pub(crate) mod android_multicast;
 
@@ -118,7 +118,7 @@ impl SyncDaemon {
     /// pair events transition to active within milliseconds.
     pub const DORMANT_POLL_INTERVAL: Duration = Duration::from_secs(30);
 
-    /// PERF-25: count the paired peers to decide whether the daemon should
+    /// Count the paired peers to decide whether the daemon should
     /// enter active mode on startup.
     ///
     /// Returns `Ok(true)` when at least one paired peer exists — the
@@ -140,7 +140,7 @@ impl SyncDaemon {
             }
             return Ok(true);
         }
-        // PEND-76 F3: no real peers yet — activate iff a pairing is awaiting
+        // No real peers yet — activate iff a pairing is awaiting
         // its first peer connection. `confirm_pairing` sets this marker so the
         // dormant daemon wakes to accept that first inbound connection (the
         // TOFU path then writes the real peer row). Replaces the old junk
@@ -148,7 +148,7 @@ impl SyncDaemon {
         peer_refs::is_pending_pairing(pool).await
     }
 
-    /// PERF-25: Spawn the daemon only if peers exist, otherwise start a
+    /// Spawn the daemon only if peers exist, otherwise start a
     /// dormant waiter that transitions to active once peers appear.
     ///
     /// This avoids mDNS announce/browse, TLS listener binding, and the
@@ -189,7 +189,7 @@ impl SyncDaemon {
         .await
     }
 
-    /// PERF-24: lifecycle-aware variant of [`Self::start_if_peers_exist`].
+    /// Lifecycle-aware variant of [`Self::start_if_peers_exist`].
     ///
     /// The `lifecycle` hooks are propagated into the full daemon loop so
     /// the periodic resync tick skips its body while the app is
@@ -363,7 +363,7 @@ impl SyncDaemon {
         .await
     }
 
-    /// PERF-24: lifecycle-aware variant of [`Self::start`].
+    /// Lifecycle-aware variant of [`Self::start`].
     ///
     /// The daemon's periodic resync tick short-circuits when
     /// `lifecycle.is_foreground` is `false`, and wakes immediately when
@@ -423,7 +423,7 @@ impl SyncDaemon {
     }
 }
 
-/// PERF-25 / #466: peek at the peer table from the dormant waiter.
+/// / #466: peek at the peer table from the dormant waiter.
 ///
 /// Returns `true` if at least one paired peer row exists, OR if a
 /// pending-pairing marker is set (QR-only pairing path: no peer row exists

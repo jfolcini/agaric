@@ -1,7 +1,7 @@
 /**
  * BlockHistoryItem --- per-block history row with restore-with-preview panel.
  *
- * PEND-17 Part B: restore-with-preview redesign.
+ * Part B: restore-with-preview redesign.
  *
  * Collapsed: timestamp + relative-age click target on the whole row.
  * Expanded (only `edit_block` ops with extractable content qualify):
@@ -9,7 +9,7 @@
  *   1. Top    — primary `Restore this version (timestamp)` button.
  *               Click triggers `onRestore(entry)` directly. No
  *               ConfirmDialog: HistoryPanel snapshots + offers
- *               Undo on the success toast (`UX-275 sub-fix 4`).
+ * Undo on the success toast (` sub-fix 4`).
  *   2. Middle — read-only `RichContentRenderer` showing the historical
  *               content as it would appear if restored.
  *   3. Bottom — segmented `ToggleGroup` switching between:
@@ -70,7 +70,7 @@ export interface BlockHistoryItemProps {
   /** Direct restore action — toast-with-Undo is the safety net (no ConfirmDialog). */
   onRestore: (entry: HistoryEntry) => void
   /**
-   * MAINT-219: parent-owned ref attached to the expanded row's `Restore`
+   * Parent-owned ref attached to the expanded row's `Restore`
    * button so `HistoryPanel` can move DOM focus to it whenever
    * `expandedSeq` changes via keyboard navigation. Only attached when
    * `isExpanded` is true — collapsed rows never own this ref. The "focus
@@ -252,10 +252,10 @@ export function BlockHistoryItem({
           className="flex flex-col items-start gap-1 w-full"
         >
           <HistoryItemCore entry={entry} />
-          {/* MAINT-220: re-add the lock affordance + tooltip for
+          {/* re-add the lock affordance + tooltip for
               non-restorable rows so users understand why the row is
               inert. Mirrors the legacy `HistoryListItem` rendering at
-              lines ~330-344 (UX-351's "two visual cues for WCAG"
+              lines ~330-344 ('s "two visual cues for WCAG"
               rationale: opacity-50 alone was a single cue; the lock
               icon + visible label adds a second cue for both visual
               and SR users). i18n keys `history.nonReversibleLabel` /
@@ -288,7 +288,7 @@ export function BlockHistoryItem({
             data-testid={`block-history-restore-${index}`}
             className="self-start"
             onClick={() => onRestore(entry)}
-            // MAINT-219: only the currently-expanded row attaches this
+            // Only the currently-expanded row attaches this
             // ref (the prop itself is only forwarded by the parent for
             // the expanded slot). Skipping the conditional check would
             // be safe but redundant.

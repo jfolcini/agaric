@@ -168,7 +168,7 @@ describe('AgendaSortGroupControls', () => {
   })
 
   // -----------------------------------------------------------------------
-  // UX-268 — touch-target sizing
+  // Touch-target sizing
   // -----------------------------------------------------------------------
   it('group/sort triggers include 44px min-width and min-height on coarse pointer', () => {
     renderControls()
@@ -182,10 +182,10 @@ describe('AgendaSortGroupControls', () => {
     expect(sortTrigger.className).toContain('[@media(pointer:coarse)]:min-w-[44px]')
   })
 
-  // PEND-28b M4: when the buttons grow to 44×44 px on touch, scale the label
+  // When the buttons grow to 44×44 px on touch, scale the label
   //              from text-xs → text-sm so the text isn't dwarfed inside a
   //              now-much-larger hit target.
-  it('PEND-28b M4: group/sort triggers scale text up on coarse pointer', () => {
+  it('group/sort triggers scale text up on coarse pointer', () => {
     renderControls()
 
     const groupTrigger = screen.getByLabelText(t('agenda.groupBy'))

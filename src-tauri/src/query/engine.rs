@@ -553,7 +553,7 @@ fn push_bind(val: &CursorValue, next_pos: &mut usize, binds: &mut Vec<Bind>) -> 
 /// parse error into [`AppError::Validation`] (a user-facing "bad query")
 /// while every other database error keeps its [`AppError::Database`]
 /// discriminant. Mirrors the canonical check in `fts::search::fts_fetch_rows`
-/// (PEND-73 Phase 1.B5): the error must originate from the driver, carry the
+/// (Phase 1.B5): the error must originate from the driver, carry the
 /// generic `SQLITE_ERROR` code, AND start with FTS5's canonical `fts5: `
 /// message prefix. Used only on the full-text path's queries.
 fn map_fts_error(e: sqlx::Error) -> AppError {

@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EDITOR_PORTAL_SELECTOR, useEditorBlur } from '../useEditorBlur'
 
 /**
- * Historical overlay class/attribute selectors. Pre-PEND-30-L-3 these were
+ * Historical overlay class/attribute selectors. Pre--L-3 these were
  * the literal contents of the now-retired `EDITOR_PORTAL_SELECTORS` array
  * in the hook itself. Today the hook checks `[data-editor-portal]` only;
  * this list survives in the test as documentation that every known portal
@@ -90,7 +90,7 @@ describe('useEditorBlur', () => {
     }
   })
 
-  // -- EDITOR_PORTAL_SELECTOR constant (PEND-30 L-3) --------------------
+  // -- EDITOR_PORTAL_SELECTOR constant --------------------
 
   describe('EDITOR_PORTAL_SELECTOR', () => {
     it('is exported as the single canonical attribute selector', () => {
@@ -766,7 +766,7 @@ describe('useEditorBlur', () => {
     /**
      * Helper that builds an overlay element carrying its historical class /
      * attribute marker (e.g. `.suggestion-popup`) AND the canonical
-     * `data-editor-portal` attribute that the post-PEND-30-L-3 hook checks.
+     * `data-editor-portal` attribute that the post--L-3 hook checks.
      * The dual marking matches what production overlay components do today.
      */
     function buildPortalElement(selector: string): HTMLElement {

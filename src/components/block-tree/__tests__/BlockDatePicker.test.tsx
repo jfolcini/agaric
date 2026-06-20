@@ -12,7 +12,7 @@
  *  8. Outside-click closes via Radix overlay
  *
  * Historical note: previously this component hand-rolled a focus trap,
- * backdrop, and Tab/Escape handlers. UX-213 moved to Radix Dialog which
+ * Backdrop, and Tab/Escape handlers. moved to Radix Dialog which
  * provides these via DialogPrimitive. Tests were updated to remove assertions
  * against the hand-rolled internals (dialogRef focus trap, manual backdrop,
  * keydown listeners on document).

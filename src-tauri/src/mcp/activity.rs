@@ -1,7 +1,7 @@
 //! Activity ring buffer + Tauri event emitter for the MCP read-only server.
 //!
-//! FEAT-4d ships the in-memory rolling log of the last 100 tool calls plus
-//! the `mcp:activity` Tauri event surface. The frontend (FEAT-4e) subscribes
+//! ships the in-memory rolling log of the last 100 tool calls plus
+//! the `mcp:activity` Tauri event surface. The frontend subscribes
 //! to the event stream and maintains its own 100-entry render buffer; the
 //! ring lets late subscribers / diagnostics inspect the recent history via
 //! the `get_mcp_recent_activity` command (#695). Production threads ONE
@@ -11,9 +11,9 @@
 //!
 //! Design notes:
 //!
-//! - **No persistence.** The ring is pure in-memory state. FEAT-4 explicitly
+//! **No persistence.** The ring is pure in-memory state. explicitly
 //!   rejected a new table + retention policy.
-//! - **Privacy.** `summary` strings are built by each tool handler (FEAT-4c)
+//! **Privacy.** `summary` strings are built by each tool handler
 //!   and must never include block content, page titles, or property values.
 //!   `agent_name` is serialized into Tauri events but redacted in `Debug`
 //!   output so it cannot leak into tracing spans.
@@ -38,7 +38,7 @@ use serde::Serialize;
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Hard cap for the activity ring — FEAT-4 agreed on a rolling 100-entry log.
+/// Hard cap for the activity ring — agreed on a rolling 100-entry log.
 pub const ACTIVITY_RING_CAPACITY: usize = 100;
 
 /// Tauri event name emitted for each completed tool call. The frontend
@@ -56,7 +56,7 @@ pub const MCP_ACTIVITY_EVENT: &str = "mcp:activity";
 #[serde(rename_all = "snake_case")]
 pub enum ActorKind {
     /// Tool call originated from a user action in the UI (today this never
-    /// happens for the RO server; reserved for FEAT-4h's RW tools).
+    /// Happens for the RO server; reserved for RW tools).
     User,
     /// Tool call originated from an external agent connected via the MCP
     /// socket.
@@ -128,13 +128,13 @@ pub struct ActivityEntry {
     /// payload when `None`.
     ///
     /// Multi-op tools surface their additional `OpRef`s on
-    /// [`ActivityEntry::additional_op_refs`] — see L-114 for the
+    /// [`ActivityEntry::additional_op_refs`] — for the
     /// rationale (forward-compat for `move_subtree` /
     /// `bulk_set_property` and similar future tools that append more
     /// than one op per call).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub op_ref: Option<crate::op::OpRef>,
-    /// L-114 forward-compat: any further `OpRef`s produced by the
+    /// Forward-compat: any further `OpRef`s produced by the
     /// same tool call, in append order. Empty for the (current)
     /// single-op RW tools and for RO / failing tools. Defaults to
     /// `Vec::new()` for older clients / fixtures that don't set the
@@ -314,7 +314,7 @@ impl<R: tauri::Runtime> ActivityEmitter for TauriRuntimeEmitter<R> {
 // ---------------------------------------------------------------------------
 
 /// Bundle of the shared ring handle + the event emitter, threaded through
-/// [`super::server::handle_connection`] so later sub-items (FEAT-4c) can
+/// [`super::server::handle_connection`] so later sub-items can
 /// push activity entries from the `tools/call` dispatch path.
 ///
 /// `ActivityContext` is cheap to clone — both fields are `Arc`-backed — and
@@ -415,7 +415,7 @@ pub fn emit_activity(
 }
 
 /// Bundle of every parameter [`emit_tool_completion`] needs beyond the
-/// shared [`ActivityContext`]. MAINT-150 (f): replaces the 8-positional
+/// Shared [`ActivityContext`]. replaces the 8-positional
 /// `#[allow(clippy::too_many_arguments)]` signature so call sites are
 /// self-documenting and adding a new field (e.g. a future
 /// `latency_ms`) does not become a positional argument shuffle.
@@ -451,7 +451,7 @@ pub struct ToolCompletionEvent<'a> {
     /// Captured from the `LAST_APPEND` task-local inside the
     /// tool dispatch scope.
     pub op_ref: Option<crate::op::OpRef>,
-    /// L-114 forward-compat: any further `OpRef`s produced by the
+    /// Forward-compat: any further `OpRef`s produced by the
     /// same call, in append order. Empty for single-op tools (every
     /// RW tool today). Captured by draining the `LAST_APPEND`
     /// task-local in the dispatch scope and assigning index 0 to
@@ -461,7 +461,7 @@ pub struct ToolCompletionEvent<'a> {
 
 /// Convenience wrapper that builds an [`ActivityEntry`] with `Utc::now()`
 /// and dispatches it through [`emit_activity`]. Exposed as the stable
-/// integration point FEAT-4c calls from the `tools/call` success and
+/// Integration point calls from the `tools/call` success and
 /// failure branches.
 pub fn emit_tool_completion(ctx: &ActivityContext, event: ToolCompletionEvent<'_>) {
     let entry = ActivityEntry {
@@ -762,7 +762,7 @@ mod tests {
         assert_eq!(emitter.len(), 1);
     }
 
-    // TEST-51: multi-threaded sibling of `emit_activity_survives_poisoned_lock`.
+    // Multi-threaded sibling of `emit_activity_survives_poisoned_lock`.
     //
     // The single-threaded version above poisons via `std::thread::spawn`
     // and then synchronously calls `emit_activity` on the same thread.
@@ -790,7 +790,7 @@ mod tests {
             let _guard = ring_for_poison
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            panic!("TEST-51: poison the mutex from a spawned task");
+            panic!("poison the mutex from a spawned task");
         });
         let join_err = poison_handle
             .await
@@ -992,7 +992,7 @@ mod tests {
         );
     }
 
-    /// L-114 wire-shape contract: a multi-op tool's additional
+    /// Wire-shape contract: a multi-op tool's additional
     /// `OpRef`s surface as `additionalOpRefs` (camelCase outer key,
     /// snake_case inner keys — same convention as `opRef`). The
     /// frontend can ignore the field today; this test pins the

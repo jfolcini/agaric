@@ -12,7 +12,7 @@ use specta::Type;
 
 /// Streaming progress payload carried over the sync channel.
 ///
-/// PEND-06 Tier 2 made this a tagged enum so a single channel per sync
+/// Made this a tagged enum so a single channel per sync
 /// session carries both the orchestrator's state-transition stream
 /// (`Sync`) and the post-sync attachment-transfer stream (`Files`).
 /// Frontend consumers switch on `kind` and read the variant-specific
@@ -80,7 +80,7 @@ pub enum SyncEvent {
         message: String,
         remote_device_id: String,
     },
-    /// PEND-06 Tier 2: per-frame attachment-transfer progress emitted
+    /// Per-frame attachment-transfer progress emitted
     /// by `sync_files`. The [`ChannelEventSink`] forwards these to the
     /// `Channel<SyncProgressUpdate>` as the `Files` variant; the
     /// production [`TauriEventSink`] drops them (no `app.emit`
@@ -98,7 +98,7 @@ pub enum SyncEvent {
     /// iOS sandbox blocks raw UDP multicast, or the Android app is missing
     /// its multicast lock). Sync still works via manual IP entry, but the
     /// frontend should surface this to the user instead of showing an
-    /// empty peer list. See BUG-38 / BUG-39.
+    /// Empty peer list. See.
     MdnsDisabled { reason: String },
 }
 
@@ -110,7 +110,7 @@ pub const EVENT_SYNC_PROGRESS: &str = "sync:progress";
 pub const EVENT_SYNC_COMPLETE: &str = "sync:complete";
 pub const EVENT_SYNC_ERROR: &str = "sync:error";
 /// Emitted when mDNS peer discovery is unavailable on this device
-/// (BUG-38). Payload is [`SyncEvent::MdnsDisabled`].
+/// Payload is [`SyncEvent::MdnsDisabled`].
 pub const EVENT_SYNC_MDNS_DISABLED: &str = "sync:mdns_disabled";
 
 /// Event emitted when block properties change (for panel invalidation).
@@ -157,7 +157,7 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
             SyncEvent::Complete { .. } => EVENT_SYNC_COMPLETE,
             SyncEvent::Error { .. } => EVENT_SYNC_ERROR,
             SyncEvent::MdnsDisabled { .. } => EVENT_SYNC_MDNS_DISABLED,
-            // PEND-06 Tier 2: file-transfer progress was never on the
+            // File-transfer progress was never on the
             // legacy `app.emit` bus, so this sink drops it. The
             // canonical path is `ChannelEventSink` → `Channel<…>::Files`;
             // a `TauriEventSink` reached without the channel wrapper
@@ -172,7 +172,7 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
 }
 
 /// A sink that forwards events to an underlying sink AND a Tauri IPC channel,
-/// with PEND-06 Phase 2 semantics: `Progress` events go to the channel only
+/// With Phase 2 semantics: `Progress` events go to the channel only
 /// (the inner sink's `sync:progress` `app.emit` was the dual-emission
 /// migration runway in Phase 1 and is no longer needed now that
 /// `useSyncEvents` has dropped the `sync:progress` listener).
@@ -184,7 +184,7 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
 /// non-progress events (e.g. `MdnsDisabled`) hit the inner sink only —
 /// the channel is reserved for the active sync's progress stream.
 ///
-/// PEND-06 Tier 2 added the `FileProgress` variant: it goes to the
+/// Added the `FileProgress` variant: it goes to the
 /// channel only (no legacy `app.emit` listener to keep in lockstep) and
 /// is delivered as `SyncProgressUpdate::Files`.
 pub struct ChannelEventSink {
@@ -194,7 +194,7 @@ pub struct ChannelEventSink {
 
 impl SyncEventSink for ChannelEventSink {
     fn on_sync_event(&self, event: SyncEvent) {
-        // PEND-06 Phase 2 — Progress events go to the channel ONLY. The
+        // Phase 2 — Progress events go to the channel ONLY. The
         // inner sink's `sync:progress` `app.emit` from Phase 1 has no
         // remaining frontend consumer (`useSyncEvents` dropped its
         // listener in lockstep with this commit), so the dual-emit
@@ -207,9 +207,9 @@ impl SyncEventSink for ChannelEventSink {
         // that the channel-stream callback in `useSyncTrigger` does
         // not own. A later cleanup can move those side effects into
         // the channel path and drop the inner emission for Complete
-        // + Error too — out of scope for PEND-06 Phase 2.
+        // + Error too — out of scope for Phase 2.
         //
-        // PEND-06 Tier 2 — FileProgress is channel-only by construction:
+        // FileProgress is channel-only by construction:
         // the legacy event bus never carried per-frame attachment
         // progress, so there's no inner listener to feed.
         let channel_only = matches!(
@@ -599,7 +599,7 @@ mod tests {
         assert_eq!(EVENT_PROPERTY_CHANGED, "block:properties-changed");
     }
 
-    // ── BUG-38: MdnsDisabled variant ──────────────────────────────────────
+    // ── MdnsDisabled variant ──────────────────────────────────────
 
     #[test]
     fn sync_event_mdns_disabled_serializes_with_type_tag() {
@@ -716,7 +716,7 @@ mod tests {
         );
     }
 
-    // ── PEND-06 Phase 1 — Channel<T> dual-emission contract ───────────────────
+    // ── Phase 1 — Channel<T> dual-emission contract ───────────────────
     //
     // ChannelEventSink wraps an inner sink (production: TauriEventSink for
     // legacy `app.emit` consumers) and a `tauri::ipc::Channel<T>` (new
@@ -765,7 +765,7 @@ mod tests {
 
     #[test]
     fn channel_event_sink_progress_forwards_only_to_channel() {
-        // PEND-06 Phase 2 — Progress events are channel-only now. The
+        // Phase 2 — Progress events are channel-only now. The
         // inner sink's `sync:progress` app.emit from Phase 1 had no
         // remaining frontend consumer once `useSyncEvents` dropped its
         // listener, so we stopped paying for an extra IPC round-trip
@@ -799,7 +799,7 @@ mod tests {
             1,
             "channel must receive a SyncProgressUpdate for Progress events"
         );
-        // PEND-06 Tier 2: SyncProgressUpdate is now a tagged enum
+        // SyncProgressUpdate is now a tagged enum
         // (`#[serde(tag = "kind")]`). Op-sync transitions land as
         // `kind: "sync"`; the file-transfer path uses `kind: "files"`.
         assert_eq!(channel_msgs[0]["kind"], "sync");
@@ -829,7 +829,7 @@ mod tests {
         // preserved for legacy listeners).
         assert_eq!(inner.events().len(), 1);
         // Channel receives a SyncProgressUpdate::Sync with state="complete" —
-        // PEND-06 normalises Complete + Error into the same envelope so
+        // Normalises Complete + Error into the same envelope so
         // the frontend has a single switch on `state` rather than two
         // different shapes.
         let msgs = captured.lock().unwrap().clone();
@@ -868,7 +868,7 @@ mod tests {
 
     #[test]
     fn channel_event_sink_file_progress_forwards_to_channel_only() {
-        // PEND-06 Tier 2 — FileProgress is channel-only by construction.
+        // FileProgress is channel-only by construction.
         // The legacy event bus never carried per-frame attachment
         // progress, so the inner sink stays silent and the channel
         // receives a `SyncProgressUpdate::Files` payload.

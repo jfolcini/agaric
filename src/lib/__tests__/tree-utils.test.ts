@@ -35,7 +35,7 @@ beforeEach(() => {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 // Thin positional-arg wrappers around the shared `makeBlock` fixture
-// (TEST-61). The wrappers preserve the call-site ergonomics of these
+// The wrappers preserve the call-site ergonomics of these
 // tree-tests (lots of `mkBlock('a', null, 1)` calls) without duplicating
 // field-level defaults.
 
@@ -135,7 +135,7 @@ describe('buildFlatTree', () => {
     expect(result.map((b) => b.id)).toEqual(['a', 'c', 'b'])
   })
 
-  it('handles cycles in block data without infinite recursion (BUG-9)', () => {
+  it('handles cycles in block data without infinite recursion', () => {
     // Corrupted data: A→B→A cycle
     const blocks = [mkBlock('A', 'B', 1), mkBlock('B', 'A', 1)]
     const result = buildFlatTree(blocks, 'A')
@@ -147,7 +147,7 @@ describe('buildFlatTree', () => {
     expect(ids).toContain('B')
   })
 
-  it('caps recursion at MAX_TREE_DEPTH on a pathologically deep linear chain (M-2)', () => {
+  it('caps recursion at MAX_TREE_DEPTH on a pathologically deep linear chain', () => {
     // Synthetic 2000-block linear chain: b0 ← b1 ← b2 ← … ← b1999
     // Without the depth bound this would throw `RangeError: Maximum call
     // stack size exceeded` on the recursive `dfs` call at depth ~1100.
@@ -232,7 +232,7 @@ describe('getProjection', () => {
     expect(result.parentId).toBeNull()
   })
 
-  it('returns early-result shape when activeId is missing without splicing at -1 (FE-M-11)', () => {
+  it('returns early-result shape when activeId is missing without splicing at -1 ()', () => {
     // With a non-trivial drag offset and a valid overId, removing the explicit
     // activeIndex bounds check would let `splice(-1, 1)` strip the last item
     // from the cloned array and compute a bogus projection. The early return

@@ -552,7 +552,7 @@ fn from_trusted_normalizes_to_uppercase() {
 
 #[test]
 fn from_trusted_uses_ascii_only_uppercase_for_non_ascii() {
-    // L-3 — Unicode `to_uppercase()` would map "ß" to "SS", but the
+    // Unicode `to_uppercase()` would map "ß" to "SS", but the
     // Deserialize path uses `to_ascii_uppercase()`, which leaves "ß"
     // untouched. `from_trusted` must match the Deserialize behaviour
     // so the two normalization paths agree on every byte sequence.
@@ -565,7 +565,7 @@ fn from_trusted_uses_ascii_only_uppercase_for_non_ascii() {
 }
 
 proptest::proptest! {
-    /// L-3 — Property test: for any `String s`, the result of
+    /// Property test: for any `String s`, the result of
     /// `BlockId::from_trusted(&s)` must agree byte-for-byte with the
     /// result of round-tripping `s` through serde JSON deserialization.
     ///
@@ -643,7 +643,7 @@ fn from_trusted_and_deserialize_agree_on_inputs_i_gcalspaces_1() {
 }
 
 // ============================================================================
-// ActiveBlockId — MAINT-113 M1
+// ActiveBlockId
 // ============================================================================
 //
 // Tests for the type-level newtype (no DB) and for the `verify_active`

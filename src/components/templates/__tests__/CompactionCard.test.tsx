@@ -70,7 +70,7 @@ describe('CompactionCard', () => {
 
     render(<CompactionCard />)
 
-    // Auto-expanded by UX-352 since eligible_ops > 0; wait for stats to load.
+    // Auto-expanded by since eligible_ops > 0; wait for stats to load.
     await waitFor(() => {
       expect(screen.getByTestId('compaction-total-ops')).toHaveTextContent('1500')
     })
@@ -278,8 +278,8 @@ describe('CompactionCard', () => {
     expect(toast.error).toHaveBeenCalledWith('Failed to compact op log')
   })
 
-  // UX-259: destructive dialogs must not compact on a reflex Enter on open.
-  it('UX-259: reflex Enter on compact confirm dialog dismisses without calling compactOpLog', async () => {
+  // Destructive dialogs must not compact on a reflex Enter on open.
+  it('reflex Enter on compact confirm dialog dismisses without calling compactOpLog', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockResolvedValueOnce(defaultStatus)
 
@@ -377,10 +377,10 @@ describe('CompactionCard', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // UX-352: auto-expand the card on mount when there are eligible ops to act on,
+  // Auto-expand the card on mount when there are eligible ops to act on,
   // so users see the action surface instead of a silent collapsed header.
-  describe('UX-352 auto-expand on eligible ops', () => {
-    it('UX-352: starts collapsed when eligible_ops is 0', async () => {
+  describe(' auto-expand on eligible ops', () => {
+    it('starts collapsed when eligible_ops is 0', async () => {
       mockedInvoke.mockResolvedValueOnce(emptyStatus)
 
       render(<CompactionCard />)
@@ -394,7 +394,7 @@ describe('CompactionCard', () => {
       expect(screen.queryByTestId('compaction-eligible-ops')).not.toBeInTheDocument()
     })
 
-    it('UX-352: auto-expands on mount when eligible_ops > 0', async () => {
+    it('auto-expands on mount when eligible_ops > 0', async () => {
       mockedInvoke.mockResolvedValueOnce(defaultStatus)
 
       render(<CompactionCard />)
@@ -406,7 +406,7 @@ describe('CompactionCard', () => {
       expect(screen.getByTestId('compaction-total-ops')).toBeInTheDocument()
     })
 
-    it('UX-352: auto-expand fires only once per mount; user-collapse is sticky even when eligible_ops grows', async () => {
+    it('auto-expand fires only once per mount; user-collapse is sticky even when eligible_ops grows', async () => {
       const user = userEvent.setup()
       mockedInvoke
         .mockResolvedValueOnce(defaultStatus) // initial fetch (eligible=300) — auto-expands

@@ -147,7 +147,7 @@ describe('QueryResultTable', () => {
     expect(onColumnSort).toHaveBeenCalledWith('todo_state')
   })
 
-  it('does not have role="grid" on the table (UX-8)', () => {
+  it('does not have role="grid" on the table', () => {
     render(
       <QueryResultTable
         results={[makeBlock({ todo_state: 'TODO' })]}
@@ -314,7 +314,7 @@ describe('QueryResultTable', () => {
     expect(screen.getByText('2025-06-01')).toBeInTheDocument()
   })
 
-  // UX-318 — missing values must render as an em-dash placeholder, not blank.
+  // Missing values must render as an em-dash placeholder, not blank.
   it('renders em-dash placeholder for null property values', () => {
     const columns: TableColumn[] = [
       { key: 'content', label: 'Content' },
@@ -371,9 +371,9 @@ describe('QueryResultTable', () => {
     expect(screen.getByText('\u2014')).toBeInTheDocument()
   })
 
-  // UX-2: the content cell must carry the same coarse-pointer padding as
+  // The content cell must carry the same coarse-pointer padding as
   // the adjacent page cell so the row is consistently 44 px tall on touch.
-  it('UX-2: content cell has [@media(pointer:coarse)]:py-3 to match the page cell', () => {
+  it('content cell has [@media(pointer:coarse)]:py-3 to match the page cell', () => {
     const columns: TableColumn[] = [{ key: 'content', label: 'Content' }]
     const { container } = render(
       <QueryResultTable
@@ -397,15 +397,15 @@ describe('QueryResultTable', () => {
     const cells = container.querySelectorAll('tbody td')
     expect(cells.length).toBeGreaterThanOrEqual(2)
     // Every <td> in the body should have the coarse-pointer padding so the
-    // row sizing is consistent (UX-2 visual mismatch fix).
+    // Row sizing is consistent (visual mismatch fix).
     for (const cell of cells) {
       expect((cell as HTMLElement).className).toContain('[@media(pointer:coarse)]:py-3')
     }
   })
 
-  // PEND-28 M13 — header sort buttons must hit the 44 px touch-target floor
+  // Header sort buttons must hit the 44 px touch-target floor
   // on coarse-pointer devices.
-  it('PEND-28 M13: header sort buttons carry the touch-target utility', () => {
+  it('header sort buttons carry the touch-target utility', () => {
     render(
       <QueryResultTable
         results={[makeBlock({ todo_state: 'TODO' })]}

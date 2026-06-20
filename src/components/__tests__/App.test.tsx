@@ -33,7 +33,7 @@ import { useSpaceStore } from '../../stores/space'
 import { useSyncStore } from '../../stores/sync'
 import { selectPageStack, useTabsStore } from '../../stores/tabs'
 
-// FEAT-3p10 — partial mock: replace `setWindowTitle` with a vitest spy
+// Partial mock: replace `setWindowTitle` with a vitest spy
 // so we can assert the App-level effect calls it with
 // `"<SpaceName> · Agaric"`. Every other lib/tauri export passes
 // through unchanged via `importActual`.
@@ -45,7 +45,7 @@ vi.mock('../../lib/tauri', async (importActual) => {
   }
 })
 
-// FEAT-9: controllable mobile mock so we can flip the breakpoint per-test
+// Controllable mobile mock so we can flip the breakpoint per-test
 // without fiddling with window.innerWidth + matchMedia polyfills.
 vi.mock('../../hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
@@ -80,7 +80,7 @@ vi.mock('@/components/pages/PagePropertyTable', () => ({
 }))
 
 // Mock useSyncTrigger to prevent automatic sync in tests. The `syncAll`
-// spy is hoisted so individual tests can assert on it (BUG-2 — verifies
+// Spy is hoisted so individual tests can assert on it (verifies
 // the non-empty-peers branch still forwards to `syncAll()` after the
 // no-peers guard short-circuits the empty branch).
 const { mockSyncAll } = vi.hoisted(() => ({ mockSyncAll: vi.fn() }))
@@ -96,7 +96,7 @@ const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: 
 beforeEach(() => {
   vi.clearAllMocks()
 
-  // FEAT-9 / PEND-68: desktop-by-default so the TabBar + QuickAccessBar
+  // Desktop-by-default so the TabBar + QuickAccessBar
   // render the same way they do in the app. Individual tests flip this via
   // mockedUseIsMobile.
   mockedUseIsMobile.mockReturnValue(false)
@@ -106,7 +106,7 @@ beforeEach(() => {
   useBootStore.setState({ state: 'ready', error: null })
 
   // Reset the navigation store so each test starts at the default view.
-  // FEAT-3 Phase 3 — also clear the per-space slices so tabs from a
+  // Phase 3 — also clear the per-space slices so tabs from a
   // previous test don't leak into the current test's active space via
   // the per-space selector fall-back.
   useNavigationStore.setState({
@@ -123,15 +123,15 @@ beforeEach(() => {
     activeTabIndexBySpace: {},
   })
 
-  // FEAT-9 / PEND-68: reset the recent-pages MRU so QuickAccessBar recents
-  // zone tests are isolated. FEAT-3 Phase 3 — clear the per-space MRU
+  // Reset the recent-pages MRU so QuickAccessBar recents
+  // Zone tests are isolated. Phase 3 — clear the per-space MRU
   // slices for the same reason.
   useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
 
-  // FEAT-3 Phase 1: reset the space store so SpaceSwitcher renders
+  // Phase 1: reset the space store so SpaceSwitcher renders
   // deterministic state regardless of test ordering.
   //
-  // FEAT-3 Phase 2 — seed a "Personal" space so the new-page flow (which
+  // Phase 2 — seed a "Personal" space so the new-page flow (which
   // now routes through `createPageInSpace` and refuses to fire when
   // `currentSpaceId == null`) has a valid space to attach to. Tests
   // that need to exercise the unhydrated branch can override this
@@ -142,7 +142,7 @@ beforeEach(() => {
     isReady: true,
   })
 
-  // FEAT-3 Phase 2 — reset the resolve store so the `cache` state
+  // Phase 2 — reset the resolve store so the `cache` state
   // doesn't leak between tests (and so the space-switch clear-cache
   // test can observe a deterministic starting state).
   useResolveStore.setState({
@@ -161,22 +161,22 @@ beforeEach(() => {
   // Dismiss onboarding modal so it doesn't block interactions.
   localStorage.setItem('agaric-onboarding-done', 'true')
 
-  // Reset UX-201b priority levels cache between tests.
+  // Reset priority levels cache between tests.
   __resetPriorityLevelsForTests()
 
   // Default mock: all invoke calls return an empty page response.
   // This covers: boot store's list_blocks, JournalPage, PageBrowser, TagList, TrashView.
   //
-  // FEAT-3 Phase 1 — `list_spaces` returns a flat `SpaceRow[]` rather
+  // Phase 1 — `list_spaces` returns a flat `SpaceRow[]` rather
   // than the paginated `{items,next_cursor,has_more}` shape, so dispatch
   // by command name. Every other command keeps the empty-page default.
   //
-  // FEAT-3 Phase 2 — return the same seeded "Personal" space so the
+  // Phase 2 — return the same seeded "Personal" space so the
   // boot-time `refreshAvailableSpaces()` call reconciles against a
   // non-empty list and leaves `currentSpaceId` intact.
   //
   // `get_status` returns a complete `StatusInfo` shape so the `<StatusPanel>`
-  // (mounted at shell level when the FEAT-7 `currentView === 'status'`
+  // (mounted at shell level when the `currentView === 'status'`
   // branch fires) doesn't render `undefined + undefined` (NaN) for the
   // `total_ops_dispatched + total_background_dispatched` sum at L231.
   mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -242,12 +242,12 @@ describe('App', () => {
     expect(screen.getAllByRole('button', { name: /add.*block/i }).length).toBeGreaterThanOrEqual(1)
   })
 
-  // UX-238: view-transition-wrapper must be a flex column with height
+  // View-transition-wrapper must be a flex column with height
   // propagation so the height chain (SidebarInset → ScrollArea viewport →
   // wrapper → GraphView) resolves correctly. jsdom can't verify the
   // computed height, so this is a class-list regression guard matching
-  // the pattern used in UX-237's PageBrowser tests.
-  it('view-transition-wrapper is a flex column with height propagation (UX-238)', async () => {
+  // The pattern used in PageBrowser tests.
+  it('view-transition-wrapper is a flex column with height propagation', async () => {
     render(<App />)
 
     await waitFor(() => {
@@ -439,7 +439,7 @@ describe('App', () => {
     expect(headerLabel.textContent).toBe('')
   })
 
-  it('Ctrl+Shift+F switches to search view (PEND-52 rebind)', async () => {
+  it('Ctrl+Shift+F switches to search view (rebind)', async () => {
     render(<App />)
 
     // Wait for boot
@@ -447,7 +447,7 @@ describe('App', () => {
       expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
-    // PEND-52 — the global search view is now Ctrl+Shift+F; Ctrl+F
+    // The global search view is now Ctrl+Shift+F; Ctrl+F
     // reclaimed for the in-page-find toolbar (browser convention).
     fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true })
 
@@ -458,7 +458,7 @@ describe('App', () => {
   })
 
   it('Ctrl+N creates a new page and navigates to it', async () => {
-    // Mock create_page_in_space to return the new page's ULID (FEAT-3 Phase 2).
+    // Mock create_page_in_space to return the new page's ULID (Phase 2).
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_spaces')
         return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
@@ -496,7 +496,7 @@ describe('App', () => {
     })
   })
 
-  it('Ctrl+Shift+F announces "Search opened" (PEND-52 rebind)', async () => {
+  it('Ctrl+Shift+F announces "Search opened" (rebind)', async () => {
     render(<App />)
 
     await waitFor(() => {
@@ -705,7 +705,7 @@ describe('App', () => {
       expect(announce).not.toHaveBeenCalled()
     })
 
-    // MAINT-105: holding Alt+Arrow generates repeat=true keydown events
+    // Holding Alt+Arrow generates repeat=true keydown events
     // every ~30ms — without the e.repeat guard each one would shift
     // setCurrentDate and emit a SR announcement. Verify the guard skips
     // them.
@@ -727,9 +727,9 @@ describe('App', () => {
     })
   })
 
-  // ── BUG-18: shortcut rebinding (keyboard-config integration) ──────
+  // ── shortcut rebinding (keyboard-config integration) ──────
 
-  describe('shortcut rebinding (BUG-18)', () => {
+  describe('shortcut rebinding', () => {
     // localStorage is cleared here because `useUndoShortcuts` and other
     // stores share state; the outer beforeEach clears mocks but not this
     // key specifically.
@@ -741,7 +741,7 @@ describe('App', () => {
       localStorage.removeItem('agaric-keyboard-shortcuts')
     })
 
-    it('rebinding focusSearch: new keys fire, old default does not (PEND-52)', async () => {
+    it('rebinding focusSearch: new keys fire, old default does not', async () => {
       localStorage.setItem(
         'agaric-keyboard-shortcuts',
         JSON.stringify({ focusSearch: 'Ctrl + Shift + Q' }),
@@ -751,7 +751,7 @@ describe('App', () => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
-      // The old default (Ctrl+Shift+F after PEND-52) does NOT fire after rebind.
+      // The old default (Ctrl+Shift+F after) does NOT fire after rebind.
       fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true })
       await Promise.resolve()
       expect(useNavigationStore.getState().currentView).toBe('journal')
@@ -768,7 +768,7 @@ describe('App', () => {
         'agaric-keyboard-shortcuts',
         JSON.stringify({ createNewPage: 'Ctrl + Alt + M' }),
       )
-      // FEAT-3 Phase 2 — the atomic create_page_in_space command is
+      // Phase 2 — the atomic create_page_in_space command is
       // now used instead of create_block for top-level pages. The IPC
       // returns the new page's ULID (a string), not a BlockRow.
       mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -864,7 +864,7 @@ describe('App', () => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
-      // PEND-52 — Ctrl+Shift+F switches to search (Ctrl+F was reclaimed
+      // Ctrl+Shift+F switches to search (Ctrl+F was reclaimed
       // for the in-page find toolbar).
       fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true })
       await waitFor(() => {
@@ -957,13 +957,13 @@ describe('App', () => {
       expect(screen.getByTestId('last-synced')).toHaveTextContent(/Last synced/)
     })
 
-    // UX-266 — sub-fix 1: the sidebar-footer Sync button surfaces a
+    // Sub-fix 1: the sidebar-footer Sync button surfaces a
     // glanceable colored dot so the user has a sync signal regardless
     // of whether the StatusPanel view is open.
-    describe('sidebar Sync button status dot (UX-266)', () => {
-      it('renders the dot with the pending color when online but there are no peers (UX-380)', async () => {
+    describe('sidebar Sync button status dot', () => {
+      it('renders the dot with the pending color when online but there are no peers', async () => {
         // Online + no peers is a pairing-state problem (waiting for action),
-        // distinct from offline (network problem). UX-380 split these two
+        // Distinct from offline (network problem). split these two
         // states off from the shared muted gray to make the difference
         // glanceable.
         useSyncStore.setState({ state: 'idle', peers: [] })
@@ -998,16 +998,16 @@ describe('App', () => {
       })
     })
 
-    // BUG-2: clicking the sidebar Sync button when no devices are paired
+    // Clicking the sidebar Sync button when no devices are paired
     // used to silently no-op (the hook's `peers.length === 0` short-circuit
     // returned `'idle'` with no toast / dialog / log). The shell now
     // wraps the click in `handleSyncClick` — if `listPeerRefs()` is empty
     // we open `NoPeersDialog` instead of forwarding to `syncAll()`. The
     // hook itself is unchanged.
-    describe('sidebar Sync button — no-peers guard (BUG-2)', () => {
+    describe('sidebar Sync button — no-peers guard', () => {
       // Reset the `?settings=...` query param + the persisted Settings
       // tab so each test starts on a known surface — the no-peers CTA
-      // pre-selects the Sync tab via the URL param mechanism (UX-276)
+      // Pre-selects the Sync tab via the URL param mechanism
       // and we don't want a leftover param from another test polluting
       // the assertion.
       beforeEach(() => {
@@ -1425,9 +1425,9 @@ describe('App', () => {
     })
   })
 
-  // ── UX-228: close-all-overlays shortcut ─────────────────────────────
+  // ── close-all-overlays shortcut ─────────────────────────────
 
-  describe('closeOverlays shortcut (UX-228)', () => {
+  describe('closeOverlays shortcut', () => {
     it('Escape on window dispatches agaric:closeAllOverlays event', async () => {
       render(<App />)
       await waitFor(() => {
@@ -1556,7 +1556,7 @@ describe('App', () => {
       }
     })
 
-    // MAINT-105: holding Escape generates auto-repeat keydown events
+    // Holding Escape generates auto-repeat keydown events
     // (e.repeat=true). Without the guard each one would dispatch the
     // closeAllOverlays event + announce, spamming SR users.
     it('ignores auto-repeat Escape (e.repeat=true)', async () => {
@@ -1711,12 +1711,12 @@ describe('App', () => {
       expect(main).toBeInTheDocument()
     })
 
-    // UX-226: the main content scroller uses ScrollArea (no bare overflow).
+    // The main content scroller uses ScrollArea (no bare overflow).
     // `id="main-content"` + `tabIndex=-1` land on the scroll viewport so the
     // skip link focuses the real scrollable element and BlockTree's
     // drag-to-auto-scroll (`document.getElementById('main-content')` +
     // `.scrollTop +=`) still drives actual scrolling.
-    it('main content scroller is a ScrollArea viewport (UX-226)', async () => {
+    it('main content scroller is a ScrollArea viewport', async () => {
       render(<App />)
       await waitFor(() => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
@@ -1727,12 +1727,12 @@ describe('App', () => {
       expect(main?.getAttribute('tabindex')).toBe('-1')
     })
 
-    // UX-225: the main content scroller re-applies the bottom safe-area
+    // The main content scroller re-applies the bottom safe-area
     // inset so the last block of a long scroll doesn't sit under the
     // iPhone home indicator / Android gesture bar. Body-level padding is
     // not enough because the `overflow-y-auto` scroller *contains* the
     // scrollable content — the inset must live on the viewport itself.
-    it('main content viewport applies env(safe-area-inset-bottom) padding (UX-225)', async () => {
+    it('main content viewport applies env(safe-area-inset-bottom) padding', async () => {
       render(<App />)
       await waitFor(() => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
@@ -1748,10 +1748,10 @@ describe('App', () => {
     })
   })
 
-  // FEAT-7: TabBar is now mounted at the app-shell level, so multi-tab state
+  // TabBar is now mounted at the app-shell level, so multi-tab state
   // makes the tablist visible across every sidebar destination — not just
   // inside page-editor.
-  describe('FEAT-7 shell-level TabBar hoist', () => {
+  describe(' shell-level TabBar hoist', () => {
     const shellViews: Array<import('../../stores/navigation').View> = [
       'journal',
       'pages',
@@ -1823,7 +1823,7 @@ describe('App', () => {
       expect(tablist).toBeInTheDocument()
     })
 
-    // FEAT-7 UX follow-up (session 467): before this fix, pressing Ctrl+T
+    // UX follow-up (session 467): before this fix, pressing Ctrl+T
     // from a fresh tab with an empty pageStack silently did nothing. The
     // handler now surfaces a toast so the user gets explicit feedback.
     it('Ctrl+T with an empty pageStack toasts "No page to open in a new tab"', async () => {
@@ -1881,11 +1881,11 @@ describe('App', () => {
     })
   })
 
-  // PEND-68 Part B (#83 recents-only): the QuickAccessBar mounts between the
+  // Part B (#83 recents-only): the QuickAccessBar mounts between the
   // hoisted TabBar and the ViewHeaderOutletSlot. It renders whenever the
   // recents zone is non-empty; with no recents it returns null. Mobile stays
   // hidden.
-  describe('PEND-68 quick-access bar', () => {
+  describe(' quick-access bar', () => {
     it('mounts between TabBar and ViewHeaderOutletSlot in the shell', async () => {
       // Seed two recent pages and render from a non-editor view so the
       // currently-open page filter doesn't hide every chip.
@@ -2001,12 +2001,12 @@ describe('App', () => {
     })
   })
 
-  // UX-198: view-level sticky headers didn't stick because the nearest
+  // View-level sticky headers didn't stick because the nearest
   // scroll ancestor was the ScrollArea viewport, not the view component.
   // The fix hoists headers into a <ViewHeaderOutletSlot /> rendered
   // between App's fixed app-shell <header> and the main <ScrollArea>, so
   // portaled headers live outside the scroll container entirely.
-  describe('ViewHeaderOutlet (UX-198)', () => {
+  describe('ViewHeaderOutlet', () => {
     it('renders the view-header outlet above the main scroll area', async () => {
       render(<App />)
       await waitFor(() => {
@@ -2027,16 +2027,16 @@ describe('App', () => {
     })
   })
 
-  // UX-201b: on boot, App reads the `priority` property definition's
+  // On boot, App reads the `priority` property definition's
   // options JSON and hydrates the shared priority-levels cache so badge
   // colours / sort / filter choices reflect the user's configured set.
-  describe('priority levels boot load (UX-201b)', () => {
+  describe('priority levels boot load', () => {
     it('hydrates getPriorityLevels() from getPropertyDef on mount', async () => {
       __resetPriorityLevelsForTests()
 
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'get_property_def') {
-          // PEND-35 Tier 2.6: single-key PK lookup, returns the row directly.
+          // Single-key PK lookup, returns the row directly.
           return {
             key: 'priority',
             value_type: 'select',
@@ -2123,7 +2123,7 @@ describe('App', () => {
     })
   })
 
-  // FEAT-3p7 — Cross-space link enforcement. When the active space
+  // Cross-space link enforcement. When the active space
   // changes, the App-level subscriber must flush every cache entry
   // keyed under the previous space (so a stale chip resolution can't
   // leak across the boundary — foreign chips fall through to the
@@ -2131,11 +2131,11 @@ describe('App', () => {
   //
   // The previous Phase 2 behaviour kept the cache intact and relied
   // on the chip resolver to render foreign titles "for continuity";
-  // the locked-in policy (FEAT-3p7) inverts this — no live links
+  // The locked-in policy inverts this — no live links
   // between spaces, ever. (#753 — the dead `pagesList` store mirror
   // that was also flushed here has been deleted; the picker's
   // short-query cache is the hook-local ref in `useBlockResolve`.)
-  describe('FEAT-3p7 — cross-space cache flush on space switch', () => {
+  describe('cross-space cache flush on space switch', () => {
     it('flushes the previous space cache when currentSpaceId changes', async () => {
       // Override the default mock so `preload()` lands the ULID→title
       // `cache` entry keyed under SPACE_A.
@@ -2169,7 +2169,7 @@ describe('App', () => {
       render(<App />)
 
       // Wait for `preload()` to resolve and populate the cache for
-      // SPACE_A. FEAT-3p7 — composite keys: SPACE_A's preload writes
+      // SPACE_A. composite keys: SPACE_A's preload writes
       // `${SPACE_A}::PAGE_A1`.
       await waitFor(() => {
         expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_A1'))).toEqual({
@@ -2182,7 +2182,7 @@ describe('App', () => {
         useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
       })
 
-      // FEAT-3p7 — `clearAllForSpace('SPACE_A')` flushes every
+      // `clearAllForSpace('SPACE_A')` flushes every
       // `${SPACE_A}::*` entry so a foreign-space chip doesn't
       // continue resolving to its old title from a stale cache hit.
       await waitFor(() => {
@@ -2244,11 +2244,11 @@ describe('App', () => {
     })
   })
 
-  // UX-279: shell-level BugReportDialog mount that listens for the
+  // Shell-level BugReportDialog mount that listens for the
   // `BUG_REPORT_EVENT` global event from FeatureErrorBoundary's "Report
   // bug" button. The dialog must open with the supplied detail
   // (message → initialTitle, stack → initialDescription) pre-filled.
-  describe('UX-279 — bug-report event listener', () => {
+  describe('bug-report event listener', () => {
     const sampleMetadata = {
       app_version: '0.1.0',
       os: 'linux',
@@ -2333,14 +2333,14 @@ describe('App', () => {
     })
   })
 
-  // ── FEAT-3p11 — digit hotkeys for instant space switching ──────────────
+  // ── digit hotkeys for instant space switching ──────────────
   //
   // `Ctrl+1` … `Ctrl+9` (`Cmd+1` … `Cmd+9` on macOS — `matchesShortcutBinding`
   // already accepts `metaKey`) jump directly to the Nth space in the
   // alphabetical `availableSpaces` order. Out-of-range digits are silent
   // no-ops, and the handler is suppressed while the user is typing in an
   // input/textarea/contenteditable so it never steals keystrokes.
-  describe('FEAT-3p11 — space digit hotkeys', () => {
+  describe('space digit hotkeys', () => {
     const PERSONAL = { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }
     const WORK = { id: 'SPACE_WORK', name: 'Work', accent_color: null }
 
@@ -2386,7 +2386,7 @@ describe('App', () => {
       // App's mount-time effects (e.g. JournalPage auto-create using
       // a default-mocked `create_page_in_space` result) so the
       // assertions below scope cleanly to the Ctrl+5 keydown alone.
-      // FEAT-3p11's intent is "Ctrl+5 is a silent no-op" — not "the
+      // intent is "Ctrl+5 is a silent no-op" — not "the
       // App shell never fires any toast at any point during its
       // boot-time auto-create wiring".
       mockedToastError.mockClear()
@@ -2427,7 +2427,7 @@ describe('App', () => {
     })
   })
 
-  // FEAT-3p10 — visual identity. On every space change:
+  // Visual identity. On every space change:
   //   1. The `--accent-current` CSS variable on
   //      `document.documentElement` is rebound to the active space's
   //      accent token.
@@ -2435,7 +2435,7 @@ describe('App', () => {
   //      via the `setWindowTitle` wrapper (mocked at file scope).
   //
   // Falls back to plain `Agaric` when no space is active.
-  describe('FEAT-3p10 — visual identity (accent + window title)', () => {
+  describe('visual identity (accent + window title)', () => {
     const PERSONAL = { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }
     const WORK = { id: 'SPACE_WORK', name: 'Work', accent_color: 'accent-blue' }
 
@@ -2534,7 +2534,7 @@ describe('App', () => {
       })
     })
 
-    // PEND-11 — the SpaceTopStripe is mounted at App level (above the
+    // The SpaceTopStripe is mounted at App level (above the
     // SidebarProvider) so it stays visible regardless of sidebar state.
     // Smoke-test that the App-level mount renders the stripe with the
     // active space's id when a space is active.

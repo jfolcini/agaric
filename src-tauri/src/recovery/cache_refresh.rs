@@ -1,4 +1,4 @@
-//! Post-recovery cache refresh (BUG-23).
+//! Post-recovery cache refresh.
 //!
 //! [`recover_at_boot`] appends synthetic `edit_block` ops and updates
 //! `blocks.content` directly without driving them through the
@@ -95,7 +95,7 @@ pub async fn refresh_caches_for_recovered_drafts(
 
     // Block until all enqueued background tasks (plus anything ahead of us
     // in the queue) have been processed — this closes the stale-cache
-    // window that BUG-23 was reporting.
+    // Window that was reporting.
     materializer.flush_background().await?;
 
     Ok(())

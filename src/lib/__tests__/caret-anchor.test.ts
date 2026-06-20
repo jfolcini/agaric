@@ -1,5 +1,5 @@
 /**
- * Tests for `getCaretRect` — PEND-60 Phase 1 caret-anchor utility.
+ * Tests for `getCaretRect` — Phase 1 caret-anchor utility.
  *
  * The text measurer is injected per-test for determinism. The default
  * canvas-based measurer is exercised once to ensure it doesn't crash

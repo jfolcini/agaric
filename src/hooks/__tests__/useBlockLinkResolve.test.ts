@@ -1,7 +1,7 @@
 /**
  * Tests for useBlockLinkResolve — scans loaded blocks for `[[ULID]]`
  * tokens not yet in the resolve cache and batch-fetches them via the
- * `batchResolve` IPC. Covers cache-membership filtering, FEAT-3p7
+ * `batchResolve` IPC. Covers cache-membership filtering,
  * space scoping, cancellation on unmount, and graceful error handling.
  */
 
@@ -112,7 +112,7 @@ describe('useBlockLinkResolve', () => {
     })
   })
 
-  it('caches ids the backend did not return as deleted placeholders (FEAT-3p7)', async () => {
+  it('caches ids the backend did not return as deleted placeholders', async () => {
     mockedBatchResolve.mockResolvedValueOnce([])
 
     renderHook(() =>
@@ -322,7 +322,7 @@ describe('fetchAndCacheLinks — single-batchSet writeback (#1072)', () => {
       title: `[[${ULID_C.slice(0, 8)}...]]`,
       deleted: false,
     })
-    // Requested but not returned → deleted placeholder (FEAT-3p7).
+    // Requested but not returned → deleted placeholder.
     expect(cache.get(keyFor(TEST_SPACE_ID, ULID_D))).toEqual({
       title: `[[${ULID_D.slice(0, 8)}...]]`,
       deleted: true,

@@ -7,7 +7,7 @@
  *  - Shows section name in error message
  *  - Retry button resets error state and re-renders children
  *  - Report bug button dispatches `BUG_REPORT_EVENT` with the captured
- *    error message + stack (UX-279)
+ * Error message + stack
  *  - a11y compliance on fallback UI
  */
 
@@ -151,7 +151,7 @@ describe('FeatureErrorBoundary', () => {
     consoleErrorSpy.mockRestore()
   })
 
-  describe('Report bug button (UX-279)', () => {
+  describe('Report bug button', () => {
     const listener = vi.fn<(e: Event) => void>()
 
     beforeEach(() => {
@@ -239,7 +239,7 @@ describe('FeatureErrorBoundary', () => {
     })
   })
 
-  it('renders the data-safety reassurance copy alongside the raw error message (UX-12)', () => {
+  it('renders the data-safety reassurance copy alongside the raw error message', () => {
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     shouldThrow = true
 
@@ -251,7 +251,7 @@ describe('FeatureErrorBoundary', () => {
 
     // Raw error.message — kept for diagnostics.
     expect(screen.getByText('Boom!')).toBeInTheDocument()
-    // UX-12: reassurance copy so users know retry is non-destructive.
+    // Reassurance copy so users know retry is non-destructive.
     expect(screen.getByText('Your data is safe — Retry reloads this panel.')).toBeInTheDocument()
 
     expect(consoleErrorSpy).toHaveBeenCalledTimes(2)

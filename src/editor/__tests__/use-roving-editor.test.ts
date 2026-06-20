@@ -1368,7 +1368,7 @@ describe('useRovingEditor integration (renderHook)', () => {
     unmountHook()
   })
 
-  // MAINT-130(c) — Pattern-C ref plumbing for searchBlockRefs.
+  // (c) — Pattern-C ref plumbing for searchBlockRefs.
   //
   // Before the fix, BlockRefPicker.configure({ items: searchBlockRefsRef.current })
   // captured the .current value at configure time, so subsequent re-renders
@@ -1413,7 +1413,7 @@ describe('useRovingEditor integration (renderHook)', () => {
     unmountHook()
   })
 
-  // MAINT-165 — Pattern-C ref plumbing for the remaining 4 picker callbacks
+  // Pattern-C ref plumbing for the remaining 4 picker callbacks
   // (searchTags, searchPages, searchSlashCommands, searchPropertyKeys).
   // Mirrors the searchBlockRefs test above: re-render with a fresh callback,
   // invoke the configured items option directly, and verify the new callback
@@ -1542,7 +1542,7 @@ describe('useRovingEditor integration (renderHook)', () => {
   })
 })
 
-// -- MAINT-176 — suggestion-exit dispatch error handling ----------------------
+// -- suggestion-exit dispatch error handling ----------------------
 //
 // The suggestion-exit dispatch in mount() (use-roving-editor.ts:~397) can
 // throw when the editor view is torn down between block-switch frames. The
@@ -1550,7 +1550,7 @@ describe('useRovingEditor integration (renderHook)', () => {
 // since that would corrupt plugin state. isDestroyed distinguishes the
 // expected race (debug) from an unexpected throw on a live view (warn).
 
-describe('mount() suggestion-exit dispatch error handling (MAINT-176)', () => {
+describe('mount() suggestion-exit dispatch error handling', () => {
   async function setup() {
     const hook = renderHook(() => useRovingEditor())
     await waitFor(() => expect(hook.result.current.editor).not.toBeNull())
@@ -1817,9 +1817,9 @@ describe('#727 unmount suggestion-exit dispatch is guarded', () => {
   })
 })
 
-// -- PEND-30 L-4: cleanupOrphanedPopups runs on host-component unmount -------
+// -- cleanupOrphanedPopups runs on host-component unmount -------
 
-describe('PEND-30 L-4 host-unmount popup sweep', () => {
+describe('  host-unmount popup sweep', () => {
   it('calls cleanupOrphanedPopups exactly once when the host component unmounts', async () => {
     // Plant an orphan popup so cleanupOrphanedPopups has visible work to
     // do — the function `.querySelectorAll('.suggestion-popup')`s the

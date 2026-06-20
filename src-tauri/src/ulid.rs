@@ -199,7 +199,7 @@ impl From<BlockId> for String {
 }
 
 // ---------------------------------------------------------------------------
-// ActiveBlockId — MAINT-113 M1
+// ActiveBlockId
 // ---------------------------------------------------------------------------
 //
 // Lifts the "block is live" predicate into the type system. A function
@@ -374,7 +374,7 @@ impl From<ActiveBlockId> for BlockId {
 /// exists in `blocks` with deleted_at IS NULL`.
 ///
 /// This is the single checked gate from raw [`BlockId`] to
-/// [`ActiveBlockId`] (MAINT-113 M1). Every `ActiveBlockId` value in the
+/// [`ActiveBlockId`]. Every `ActiveBlockId` value in the
 /// codebase is either:
 ///
 /// 1. produced directly by a SQL query that filters on
@@ -446,7 +446,7 @@ pub async fn verify_active_in_tx(
 }
 
 // ---------------------------------------------------------------------------
-// PageId — MAINT-107
+// PageId
 // ---------------------------------------------------------------------------
 //
 // Lifts the "this id names a page (or a block's owning page)" role into

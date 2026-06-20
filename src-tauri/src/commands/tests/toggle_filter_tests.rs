@@ -1,9 +1,9 @@
-//! PEND-55 — DB-backed integration tests for the search toggle row.
+//! DB-backed integration tests for the search toggle row.
 //!
 //! Co-locates with the other `commands/tests/*` files so the existing
 //! `test_pool` helper is in scope; mirrors the pattern set by
-//! `glob_filter_tests` (PEND-54) and `search_blocks_struct_tests`
-//! (PEND-50).
+//! `glob_filter_tests` and `search_blocks_struct_tests`
+//! .
 //!
 //! Coverage:
 //! - All toggles off — post-filter skipped, FTS path returns the FTS
@@ -42,11 +42,11 @@ fn filter_with(case_sensitive: bool, whole_word: bool, is_regex: bool) -> Search
         case_sensitive,
         whole_word,
         is_regex,
-        // PEND-51 — toggle tests don't exercise block-type filtering;
-        // `None` preserves the pre-PEND-51 candidate set semantics.
+        // Toggle tests don't exercise block-type filtering;
+        // `None` preserves the pre- candidate set semantics.
         block_type_filter: None,
-        // PEND-53 — toggle tests don't exercise metadata filters either;
-        // defaults preserve the pre-PEND-53 "no metadata filter" shape.
+        // Toggle tests don't exercise metadata filters either;
+        // Defaults preserve the pre- "no metadata filter" shape.
         ..Default::default()
     }
 }
@@ -151,7 +151,7 @@ async fn all_toggles_off_returns_snippet_and_no_offsets() {
             row.match_offsets.len(),
             row.id.as_str()
         );
-        // The PEND-50 snippet path may emit a #828 PUA-sentinel-bracketed
+        // The snippet path may emit a #828 PUA-sentinel-bracketed
         // window (U+E000 / U+E001).
         assert!(
             row.snippet.is_some(),

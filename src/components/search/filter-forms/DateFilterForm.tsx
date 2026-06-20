@@ -1,5 +1,5 @@
 /**
- * PEND-58g UX-A5 — `due:` / `scheduled:` builder form (no not- variant).
+ * `due:` / `scheduled:` builder form (no not- variant).
  *
  * Two shapes, selectable via a mode toggle:
  *  - Named bucket — `DATE_BUCKET_VALUES` (today / overdue / …); emits
@@ -48,7 +48,7 @@ export function DateFilterForm({
   const [op, setOp] = useState<DateOp>('=')
   const [date, setDate] = useState('')
 
-  // PEND-58g UX-A5 — move focus into the sub-form on open (see StateFilterForm).
+  // Move focus into the sub-form on open (see StateFilterForm).
   const shapeRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     shapeRef.current?.focus()

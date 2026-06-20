@@ -1,5 +1,5 @@
 /**
- * Tests for SpaceDeleteButton + SpaceDeleteBlockedHint (PEND-30 D-2).
+ * Tests for SpaceDeleteButton + SpaceDeleteBlockedHint (D-2).
  *
  * Coverage:
  *  - When emptiness=true and isLastSpace=false: button is enabled, click

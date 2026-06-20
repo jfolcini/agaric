@@ -1,6 +1,6 @@
 /**
  * Tests for the shared MimeIcon component (extracted from AttachmentList +
- * AttachmentRenderer; previously two byte-identical copies — MAINT-129).
+ * AttachmentRenderer; previously two byte-identical copies).
  */
 
 import { render, waitFor } from '@testing-library/react'

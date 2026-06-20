@@ -1,7 +1,7 @@
 //! Tool-registry trait shared by every MCP server surface.
 //!
-//! FEAT-4a shipped a marker placeholder trait + `PlaceholderRegistry` struct
-//! so the generic parameter on `server::serve` could land early. FEAT-4b
+//! shipped a marker placeholder trait + `PlaceholderRegistry` struct
+//! so the generic parameter on `server::serve` could land early.
 //! (this file) replaces the marker with the real contract:
 //!
 //! ```text
@@ -12,8 +12,8 @@
 //! ```
 //!
 //! The trait is deliberately DB-pool-free: each impl owns its own
-//! `Arc<SqlitePool>` rather than taking one via the trait. FEAT-4c will
-//! land a `ReadOnlyTools` impl that holds its pool internally; FEAT-4h's
+//! `Arc<SqlitePool>` rather than taking one via the trait. will
+//! land a `ReadOnlyTools` impl that holds its pool internally;
 //! `ReadWriteTools` will do the same with the writer pool.
 //!
 //! `call_tool` returns a future with an explicit `+ Send` bound so the
@@ -31,7 +31,7 @@ use super::actor::ActorContext;
 use crate::error::AppError;
 
 // ---------------------------------------------------------------------------
-// MCP tool-name constants (MAINT-136)
+// MCP tool-name constants
 //
 // One `pub(crate) const TOOL_<NAME>: &str = "<name>";` per advertised MCP
 // tool. These are the single source of truth for the wire-format tool name
@@ -41,7 +41,7 @@ use crate::error::AppError;
 //      `tools_ro.rs` / `tools_rw.rs`) — the `name:` field.
 //   2. `call_tool` match arms (in `tools_ro.rs` / `tools_rw.rs`).
 //   3. `parse_args` error-prefix string ("<tool>: invalid arguments
-//      (<category>)" — see `handler_utils::parse_args` / L-123).
+// (<category>)" — see `handler_utils::parse_args`).
 //   4. `summarise.rs` privacy-summary match.
 //
 // Tests that intentionally pin the wire-format string (snapshot ordering
@@ -124,7 +124,7 @@ pub trait ToolRegistry: Send + Sync + 'static {
     /// via `ACTOR.scope(...)` — impls read the same context from the
     /// task-local via `current_actor()` if they need it, but receiving
     /// `ctx` as a parameter makes the plumbing explicit at the call site
-    /// and lets the FEAT-4c tools stamp `request_id` into tool-specific
+    /// And lets the tools stamp `request_id` into tool-specific
     /// logs without reaching into `ACTOR` themselves.
     fn call_tool(
         &self,
@@ -134,7 +134,7 @@ pub trait ToolRegistry: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Value, AppError>> + Send;
 }
 
-/// No-op registry used by FEAT-4a/4b until FEAT-4c lands `ReadOnlyTools`.
+/// No-op registry used by /4b until lands `ReadOnlyTools`.
 /// Advertises zero tools and rejects every `tools/call`. Retained for the
 /// `spawn_mcp_ro_task` default path and for `handle_connection` tests.
 #[derive(Default, Debug, Clone, Copy)]
@@ -155,7 +155,7 @@ impl ToolRegistry for PlaceholderRegistry {
         // (resource-not-found — the tool name does not exist in this
         // registry).
         Err(AppError::NotFound(format!(
-            "Tool `{name}` not found (no tools registered in FEAT-4a/4b)"
+            "Tool `{name}` not found (no tools registered in /4b)"
         )))
     }
 }
@@ -186,7 +186,7 @@ mod tests {
         assert_eq!(
             tools.len(),
             0,
-            "PlaceholderRegistry exposes zero tools; FEAT-4c adds them",
+            "PlaceholderRegistry exposes zero tools;  adds them",
         );
     }
 

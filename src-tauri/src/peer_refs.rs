@@ -90,7 +90,7 @@ pub async fn upsert_peer_ref(pool: &SqlitePool, peer_id: &str) -> Result<(), App
 
 /// In-transaction variant of [`upsert_peer_ref`].
 ///
-/// PEND-24 M2: the post-session bookkeeping pair (`upsert_peer_ref`
+/// The post-session bookkeeping pair (`upsert_peer_ref`
 /// followed by [`update_on_sync`]) must run inside a single
 /// `BEGIN IMMEDIATE` transaction so a crash between the two writes
 /// cannot leave a peer row whose `last_hash` is stale relative to
@@ -172,7 +172,7 @@ pub async fn upsert_peer_ref_with_cert(
 /// the column). That requires touching every call site
 /// (`complete_sync` in `sync_protocol::operations`, the orchestrator's
 /// `SyncComplete` arm, `snapshot_transfer`, and several test files);
-/// the doc-comment route is preferred for the MAINT-149 batch and the
+/// The doc-comment route is preferred for the batch and the
 /// type migration is left as a separate small refactor.
 ///
 /// **Caller responsibility:** this should run inside a `BEGIN IMMEDIATE`
@@ -206,7 +206,7 @@ pub async fn update_on_sync(
 
 /// In-transaction variant of [`update_on_sync`].
 ///
-/// PEND-24 M2: paired with [`upsert_peer_ref_in_tx`] so the
+/// Paired with [`upsert_peer_ref_in_tx`] so the
 /// orchestrator's post-session bookkeeping (ensure-row + record-sync)
 /// commits atomically. A crash between the two writes — or any other
 /// failure that aborts the transaction — rolls both back so the next
@@ -320,7 +320,7 @@ pub async fn update_last_address(
 }
 
 // ---------------------------------------------------------------------------
-// Pending-pairing marker (PEND-76 F3)
+// Pending-pairing marker
 // ---------------------------------------------------------------------------
 
 /// `app_settings` key for the "a pairing completed; the first peer connection
@@ -920,7 +920,7 @@ mod tests {
         );
     }
 
-    // ── pending-pairing marker (PEND-76 F3) ─────────────────────────────
+    // ── pending-pairing marker ─────────────────────────────
 
     #[tokio::test]
     async fn pending_pairing_set_check_clear_roundtrip() {

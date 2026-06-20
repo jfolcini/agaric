@@ -18,7 +18,7 @@
  * `DialogDescription`, and dismisses on Esc / outside-click / the Close
  * button. The gesture list carries an explicit `role="list"` (Safari +
  * VoiceOver strip the implicit role from `list-none` lists — see
- * WelcomeModal / UX-278).
+ * WelcomeModal).
  */
 
 import type React from 'react'
@@ -88,7 +88,7 @@ export function GestureCoachMark(): React.ReactElement | null {
             oxlint-disable-next-line jsx-a11y/no-redundant-roles -- explicit
             role="list" is required because Safari + VoiceOver strip the
             implicit list role from a <ul> with `list-style: none`
-            (Tailwind `list-none`). Matches WelcomeModal / UX-278.
+            (Tailwind `list-none`). Matches WelcomeModal / .
           */}
           <ul role="list" className="grid list-none gap-4 py-2 pl-0">
             {GESTURE_ENTRIES.map((entry) => (

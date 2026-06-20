@@ -24,7 +24,7 @@ use crate::error::AppError;
 ///
 /// When `space_id` is `Some`, the result set is restricted to blocks whose
 /// owning page (`b.page_id`) carries a `space` property pointing at
-/// `space_id`. `None` is the unscoped (pre-FEAT-3) behaviour — every
+/// `space_id`. `None` is the unscoped (pre-) behaviour — every
 /// existing callsite that hasn't migrated yet passes `None` and sees
 /// identical results. The filter uses bare `b.page_id` (migration 0066
 /// dropped the old `COALESCE(page_id, id)` form for sargability; 0073's
@@ -45,7 +45,7 @@ pub async fn list_children(
     // source of truth shared with `get_page_inner` / the markdown export).
     let (cursor_flag, cursor_pos, cursor_id) = position_keyset_binds(page.after.as_ref());
 
-    // FEAT-3 Phase 2 — ?6 (space_id) drives the shared space-filter
+    // Phase 2 — ?6 (space_id) drives the shared space-filter
     // clause. ?7 is `NULL_POSITION_SENTINEL`: the keyset comparison and
     // `ORDER BY` wrap `position` in `COALESCE(position, ?7)` so a genuine
     // NULL position sorts at the sentinel rather than mis-ordering or being
@@ -97,7 +97,7 @@ pub async fn list_children(
 /// `b.page_id`; migration 0066 dropped the old `COALESCE(page_id, id)`
 /// form for sargability, 0073's `page_id_self_for_pages` CHECK makes the
 /// fallback unnecessary) carries `space = ?space_id` are returned. `None`
-/// keeps the pre-FEAT-3 behaviour (no filter). See
+/// Keeps the pre- behaviour (no filter). See
 /// [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] for the shared
 /// SQL fragment definition.
 ///
@@ -115,7 +115,7 @@ pub async fn list_by_type(
         None => (None, ""),
     };
 
-    // FEAT-3 Phase 2 — ?5 (space_id) drives the space filter. See the
+    // Phase 2 — ?5 (space_id) drives the space filter. See the
     // header note on `list_children` for why the clause is inlined
     // rather than composed via
     // [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`].

@@ -115,7 +115,7 @@ describe('resolveTagStatus', () => {
   })
 })
 
-// ── useTagClickHandler (UX-249) ────────────────────────────────────────
+// ── useTagClickHandler ────────────────────────────────────────
 
 describe('useTagClickHandler', () => {
   // Intersection type so the spy satisfies both Zustand's store signature

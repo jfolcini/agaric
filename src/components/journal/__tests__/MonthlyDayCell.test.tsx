@@ -1,5 +1,5 @@
 /**
- * Tests for MonthlyDayCell component (UX-83).
+ * Tests for MonthlyDayCell component.
  *
  * Validates:
  *  1. Renders date number
@@ -139,9 +139,9 @@ describe('MonthlyDayCell', () => {
     expect(dots).toHaveLength(2)
   })
 
-  // UX-199: count dots must use high-contrast -foreground color tokens so
+  // Count dots must use high-contrast -foreground color tokens so
   // they meet WCAG contrast against the cell background in both themes.
-  it('UX-199: source dots use the -foreground color token for contrast', () => {
+  it('source dots use the -foreground color token for contrast', () => {
     const { container } = render(
       <MonthlyDayCell
         {...defaultProps}
@@ -169,8 +169,8 @@ describe('MonthlyDayCell', () => {
     ).toBeNull()
   })
 
-  // UX-199: backlink dot at full opacity (previously /40 → unreadable in dark).
-  it('UX-199: backlink dot uses full-opacity muted-foreground', () => {
+  // Backlink dot at full opacity (previously /40 → unreadable in dark).
+  it('backlink dot uses full-opacity muted-foreground', () => {
     const { container } = render(
       <MonthlyDayCell {...defaultProps} agendaCount={0} backlinkCount={3} />,
     )
@@ -183,8 +183,8 @@ describe('MonthlyDayCell', () => {
     expect(backlinkDot.className).not.toContain('bg-muted-foreground/40')
   })
 
-  // UX-199: axe pass in dark mode — with dark class applied to <html>
-  it('UX-199: no a11y violations in dark mode with count dots', async () => {
+  // Axe pass in dark mode — with dark class applied to <html>
+  it('no a11y violations in dark mode with count dots', async () => {
     document.documentElement.classList.add('dark')
     try {
       const { container } = render(
@@ -282,10 +282,10 @@ describe('MonthlyDayCell', () => {
     expect(cell).toHaveAttribute('tabindex', '-1')
   })
 
-  // UX-2: scale the inner clickable date circle on coarse pointers so the
+  // Scale the inner clickable date circle on coarse pointers so the
   // visible tap target meets the 44 px minimum (the cell already does, but
-  // the circle is the visual affordance — UX-2).
-  it('UX-2: inner date circle scales to 40 px on coarse pointers', () => {
+  // The circle is the visual affordance).
+  it('inner date circle scales to 40 px on coarse pointers', () => {
     const { container } = render(<MonthlyDayCell {...defaultProps} />)
 
     // The date number span is the first <span> with the rounded-full class

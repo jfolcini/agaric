@@ -5,7 +5,7 @@
 //! type.
 //!
 //! [`SpaceScope::Global`] applies no `block_properties.space` filter at the
-//! SQL level — results span every space (pre-FEAT-3 behaviour, plus journal
+//! SQL level — results span every space (pre- behaviour, plus journal
 //! / settings views that intentionally span all spaces).
 //! [`SpaceScope::Active`] restricts results to blocks belonging to the
 //! wrapped [`SpaceId`].
@@ -22,7 +22,7 @@ use crate::ulid::BlockId;
 
 /// Newtype wrapper around a space ULID for type-safety + IPC bindings.
 ///
-/// Mirrors [`crate::ulid::ActiveBlockId`] (the strict MAINT-113 newtype):
+/// Mirrors [`crate::ulid::ActiveBlockId`] (the strict newtype):
 /// transparent serde + transparent sqlx + `specta::Type` so the wire / DB
 /// layers see a plain string while Rust call sites get the named type.
 ///
@@ -175,7 +175,7 @@ impl PartialEq<SpaceId> for &str {
 
 /// The space scope a list / search query runs under.
 ///
-/// `Global` — no `block_properties.space` filter is applied (pre-FEAT-3
+/// `Global` — no `block_properties.space` filter is applied (pre-
 /// behaviour, plus journal / settings views that intentionally span all
 /// spaces). `Active(SpaceId)` — restrict results to blocks belonging to
 /// the given space.
@@ -269,13 +269,13 @@ impl SpaceScope {
 }
 
 // ---------------------------------------------------------------------------
-// Block-space resolution helper (PEND-15 Phase 2 foundation)
+// Block-space resolution helper (Phase 2 foundation)
 // ---------------------------------------------------------------------------
 
 /// Resolve a block's owning space via the canonical
 /// `COALESCE(b.page_id, b.id) → block_properties.space` lookup.
 ///
-/// PEND-15 Phase 2 helper. Used by every same-space enforcement
+/// Phase 2 helper. Used by every same-space enforcement
 /// entry point (`set_property` ref-type validation, `edit_block`
 /// content-scan, `add_tag`, sync-ingress rejection, bulk-import
 /// scan). All enforcement points share this helper so the
@@ -291,7 +291,7 @@ impl SpaceScope {
 ///   itself soft-deleted. This is the case for (a) tag blocks not yet
 ///   assigned to a space, (b) space blocks themselves (they ARE the
 ///   space; their `space_id` is NULL — they don't point at themselves),
-///   (c) pre-FEAT-3 blocks that haven't been migrated to a space yet
+///   (c) pre- blocks that haven't been migrated to a space yet
 ///   (rare; bootstrap fast-path normally covers this), (d) the block
 ///   being soft-deleted (`deleted_at IS NOT NULL`).
 /// - `Err(AppError::Database)` — DB error (rare; would propagate
@@ -582,7 +582,7 @@ mod tests {
     //
     // Confirms `#[sqlx(transparent)]` on `SpaceId` lets `query_scalar!` and
     // `query_as!` decode a `TEXT` column as `SpaceId` via the
-    // `SELECT … as "x: SpaceId"` cast hint — the same pattern MAINT-113
+    // `SELECT … as "x: SpaceId"` cast hint — the same pattern
     // uses for `ActiveBlockId`.
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -613,7 +613,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // resolve_block_space — PEND-15 Phase 2 helper
+    // Resolve_block_space — Phase 2 helper
     // -----------------------------------------------------------------
 
     use crate::spaces::{SPACE_PERSONAL_ULID, SPACE_WORK_ULID};

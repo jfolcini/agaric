@@ -1,7 +1,7 @@
 //! Read-only [`ToolRegistry`] impl — the v1 MCP tool surface.
 //!
-//! FEAT-4c wired nine read-only tools into the MCP dispatcher established by
-//! FEAT-4a/4b; #633 added `list_spaces` (space discovery) as the tenth.
+//! wired nine read-only tools into the MCP dispatcher established by
+//! /4b; #633 added `list_spaces` (space discovery) as the tenth.
 //! Each tool is a **thin wrapper** around an existing
 //! `*_inner` command handler so the op-log / event-sourcing / sqlx-compile-time-query
 //! invariants of the frontend path apply verbatim to agent calls
@@ -12,14 +12,14 @@
 //! | Tool | Backing `*_inner` | Notes |
 //! |------|-------------------|-------|
 //! | `list_pages` | [`list_pages_inner`](crate::commands::list_pages_inner) | Cursor paginated. Limit clamped server-side to 100. |
-//! | `get_page` | [`get_page_inner`](crate::commands::get_page_inner) | Composes `get_active_block_inner` + paginated subtree via `page_id`. M-98: soft-deleted pages → `NotFound`. |
+//! | `get_page` | [`get_page_inner`](crate::commands::get_page_inner) | Composes `get_active_block_inner` + paginated subtree via `page_id`. soft-deleted pages → `NotFound`. |
 //! | `search` | [`search_blocks_inner`](crate::commands::search_blocks_inner) | FTS5. Result count capped at 50, snippet length at 512 chars. |
-//! | `get_block` | [`get_active_block_inner`](crate::commands::get_active_block_inner) | M-98: soft-deleted blocks → `NotFound`. |
+//! | `get_block` | [`get_active_block_inner`](crate::commands::get_active_block_inner) | soft-deleted blocks → `NotFound`. |
 //! | `list_backlinks` | [`list_backlinks_grouped_inner`](crate::commands::list_backlinks_grouped_inner) | Grouped by source page. |
-//! | `list_tags` | [`list_tags_inner`](crate::commands::list_tags_inner) | Cursor paginated (M-85). Limit clamped server-side to 100. |
-//! | `list_property_defs` | [`list_property_defs_inner`](crate::commands::list_property_defs_inner) | Typed property schema; cursor paginated (M-85). |
+//! | `list_tags` | [`list_tags_inner`](crate::commands::list_tags_inner) | Cursor paginated. Limit clamped server-side to 100. |
+//! | `list_property_defs` | [`list_property_defs_inner`](crate::commands::list_property_defs_inner) | Typed property schema; cursor paginated. |
 //! | `get_agenda` | [`list_projected_agenda_inner`](crate::commands::list_projected_agenda_inner) | Date-range agenda projection. |
-//! | `journal_for_date` | [`journal_for_date_inner`](crate::commands::journal_for_date_inner) | Idempotent date → page lookup. **M-84 carve-out:** on first read-of-the-day this RO tool emits a single `CreateBlock` op (origin `agent:<name>`) for the missing journal page; see the M-82/M-84 commentary on [`ReadOnlyTools`] below. |
+//! | `journal_for_date` | [`journal_for_date_inner`](crate::commands::journal_for_date_inner) | Idempotent date → page lookup. ** carve-out:** on first read-of-the-day this RO tool emits a single `CreateBlock` op (origin `agent:<name>`) for the missing journal page; see the  commentary on [`ReadOnlyTools`] below. |
 //! | `list_spaces` | [`list_spaces_registry_inner`](crate::commands::list_spaces_registry_inner) | #633 — space discovery for agents. Returns `{ id, name, is_default }` per live space from the canonical `spaces` registry (#804). |
 //!
 //! # Actor scoping
@@ -30,7 +30,7 @@
 //! normally a no-op, but it future-proofs any direct invocation of
 //! [`ReadOnlyTools::call_tool`] (e.g. tests, diagnostics) against a missing
 //! task-local — v1 commands do not call `current_actor()` anywhere, so the
-//! plumbing is latent until FEAT-4h populates the op-log `origin` column.
+//! plumbing is latent until populates the op-log `origin` column.
 //!
 //! # Cap enforcement
 //!
@@ -38,7 +38,7 @@
 //!
 //! - **Result count:** `search` is capped at [`SEARCH_RESULT_CAP`] (50),
 //!   list-style tools at [`LIST_RESULT_CAP`] (100), `get_agenda` at
-//!   [`AGENDA_RESULT_CAP`] (500). L-119: a `limit` outside `[1, cap]`
+//!   [`AGENDA_RESULT_CAP`] (500). a `limit` outside `[1, cap]`
 //!   is **rejected** as [`AppError::Validation`] (→ JSON-RPC `-32602
 //!   invalid params`) rather than silently clamped — matching the
 //!   strict `serde(deny_unknown_fields)` posture used elsewhere on
@@ -51,7 +51,7 @@
 //!   is always valid UTF-8 even when the content contains multi-byte
 //!   codepoints (CJK, emoji, etc.).
 //! - **Filter-term budget (#699):** `search` rejects requests whose
-//!   combined `tag_ids` + PEND-65 `filter` vector element count exceeds
+//!   combined `tag_ids` + `filter` vector element count exceeds
 //!   [`SEARCH_FILTER_TERMS_CAP`] (= SQLite's bind-parameter limit) —
 //!   such a query could never execute anyway; the boundary check turns
 //!   the failure into an actionable `-32602`.
@@ -80,7 +80,7 @@ use crate::materializer::Materializer;
 use crate::space::{SpaceId, SpaceScope};
 
 // ---------------------------------------------------------------------------
-// Caps — enforced at the tool boundary (FEAT-4c decision)
+// Caps — enforced at the tool boundary (decision)
 // ---------------------------------------------------------------------------
 
 /// Maximum results returned by the `search` tool. Below
@@ -104,14 +104,14 @@ pub use crate::commands::MCP_PAGE_LIMIT_CAP as LIST_RESULT_CAP;
 pub const SEARCH_SNIPPET_CAP: usize = 512;
 
 /// Cap for `get_agenda`'s `limit` — advertised in the tool schema and
-/// enforced strictly at the tool boundary (L-119): out-of-range values
+/// Enforced strictly at the tool boundary: out-of-range values
 /// surface as [`AppError::Validation`]. The matching ceiling baked
 /// into [`list_projected_agenda_inner`] remains as a defense-in-depth
 /// backstop for any non-MCP caller.
 pub const AGENDA_RESULT_CAP: i64 = 500;
 
 /// #699 — upper bound on the combined number of `search` filter terms
-/// (`tag_ids` plus every PEND-65 `filter` vector element).
+/// (`tag_ids` plus every `filter` vector element).
 ///
 /// Not an invented number: this is [`crate::db::MAX_SQL_PARAMS`] (999),
 /// SQLite's per-statement bind-parameter limit — the same bound the
@@ -186,15 +186,15 @@ struct SearchArgs {
     parent_id: Option<String>,
     #[serde(default)]
     tag_ids: Option<Vec<String>>,
-    /// FEAT-3p4 — the active space's ULID. Required: every search runs
+    /// The active space's ULID. Required: every search runs
     /// inside a single space and the FTS5 hits are restricted to blocks
     /// whose owning page carries `space = ?space_id`. Agents that do not
     /// yet track a "current space" must pick one explicitly (typically
     /// the `is_default` space surfaced via the `list_spaces` tool, #633).
     space_id: String,
-    /// PEND-65 — optional structured filter set mirroring the
+    /// Optional structured filter set mirroring the
     /// `SearchFilter` user-facing surface. Omitted = the agent runs a
-    /// query-string-only search (the pre-PEND-65 contract). When
+    /// Query-string-only search (the pre- contract). When
     /// present, the handler maps each field 1:1 onto the underlying
     /// `SearchFilter` and dispatches as the Tauri command path does.
     /// Inline filter syntax (`tag:` / `state:` / `prop:`…) is NOT
@@ -204,7 +204,7 @@ struct SearchArgs {
     filter: Option<SearchFilterArgs>,
 }
 
-/// PEND-65 — JSON wire shape for the MCP `search.filter` argument.
+/// JSON wire shape for the MCP `search.filter` argument.
 ///
 /// Mirrors [`crate::commands::queries::SearchFilter`] field-for-field
 /// (minus `parent_id` / `tag_ids` / `space_id`, which the existing
@@ -258,7 +258,7 @@ struct ListBacklinksArgs {
     cursor: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
-    /// FEAT-3p4 — when supplied, restrict backlinks to source blocks
+    /// When supplied, restrict backlinks to source blocks
     /// whose owning page lives in this space. Optional: omitting the
     /// field returns the unscoped (cross-space) view kept for callers
     /// that have not migrated.
@@ -293,7 +293,7 @@ struct GetAgendaArgs {
     cursor: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
-    /// FEAT-3p4 — when supplied, restrict the agenda to blocks whose
+    /// When supplied, restrict the agenda to blocks whose
     /// owning page lives in this space. Optional: omitting the field
     /// returns the unscoped (cross-space) view kept for callers that
     /// have not migrated.
@@ -312,7 +312,7 @@ struct ListSpacesArgs {}
 #[serde(deny_unknown_fields)]
 struct JournalForDateArgs {
     date: String,
-    /// FEAT-3p5 — the active space's ULID. Required: every journal page
+    /// The active space's ULID. Required: every journal page
     /// belongs to a space. Agents that do not yet track a "current
     /// space" must pick one explicitly (typically the `is_default`
     /// space surfaced via the `list_spaces` tool, #633).
@@ -329,10 +329,10 @@ struct JournalForDateArgs {
 /// journal-page creation is the only side-effect allowed in v1.
 ///
 /// Journal-page creation is reversible (creates an ordinary `page` block
-/// via `create_block_inner`), matching the FEAT-4 invariant that v1 never
+/// Via `create_block_inner`), matching the invariant that v1 never
 /// exposes non-reversible ops.
 ///
-/// M-82: `journal_for_date` is the only RO tool with a write side-effect —
+/// `journal_for_date` is the only RO tool with a write side-effect —
 /// it calls `create_block_inner` when the requested date has no existing
 /// page. The reader pool sets `PRAGMA query_only = ON`, so feeding it to
 /// the create path raises `SQLITE_READONLY`. The struct therefore carries
@@ -340,7 +340,7 @@ struct JournalForDateArgs {
 /// and the lookup branch of `journal_for_date`, while `writer_pool` is
 /// used by `journal_for_date` whenever it has to insert a new page.
 ///
-/// M-84: because of the M-82 carve-out, **enabling the read-only MCP
+/// Because of the carve-out, **enabling the read-only MCP
 /// server implicitly grants the agent permission to append a single
 /// `CreateBlock` op to `op_log` (origin `agent:<name>`) on the first
 /// read-of-the-day for any space**. The op is reversible (ordinary
@@ -348,7 +348,7 @@ struct JournalForDateArgs {
 /// activity feed like any other agent-authored write, but it is **not**
 /// a pure read. The Settings "Read-only access" tooltip
 /// (`agentAccess.roToggleDescription` in `src/lib/i18n.ts`) and the
-/// FEAT-4 surfaces this carve-out to the
+/// Surfaces this carve-out to the
 /// user. Splitting `journal_for_date` into RO+RW halves was rejected as
 /// a public API change requiring explicit user approval — the
 /// docs-only fix preserves the v1 tool surface.
@@ -357,12 +357,12 @@ pub struct ReadOnlyTools {
     /// Writer pool from `DbPools::write` — used exclusively by
     /// `journal_for_date` when it needs to create a missing journal
     /// page. The other eight RO tools continue to use `pool` (reader)
-    /// so the read/write capacity split is preserved. (M-82.)
+    /// So the read/write capacity split is preserved. (.)
     writer_pool: SqlitePool,
     materializer: Materializer,
     /// Local-device id used when a tool has to write (today only
     /// `journal_for_date` when the requested date page does not exist
-    /// yet). Namespaced so future RW tools (FEAT-4h) can stamp the same
+    /// Yet). Namespaced so future RW tools can stamp the same
     /// origin without a second field.
     device_id: String,
 }
@@ -375,7 +375,7 @@ impl ReadOnlyTools {
     /// - `writer_pool` is the *writer* pool (`DbPools::write`) and backs
     ///   the `journal_for_date` create branch — opening `BEGIN IMMEDIATE`
     ///   on the read pool fails with `SQLITE_READONLY` because the read
-    ///   pool sets `PRAGMA query_only = ON`. (M-82.)
+    ///   Pool sets `PRAGMA query_only = ON`. (.)
     /// - `materializer` carries its own writer-pool handle internally;
     ///   passed through unchanged.
     pub fn new(
@@ -397,7 +397,7 @@ impl ReadOnlyTools {
 ///
 /// Lifted out of [`ToolRegistry::list_tools`] so callers that need the
 /// names without a constructed registry (notably the privacy-guard test
-/// in `summarise.rs`, MAINT-136) can drive iteration from the live
+/// In `summarise.rs`) can drive iteration from the live
 /// metadata. The `&self` impl below just delegates here.
 pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
     vec![
@@ -430,7 +430,7 @@ impl ToolRegistry for ReadOnlyTools {
         // with the same value) so direct `call_tool(...)` invocations
         // (tests, diagnostics) see the actor without requiring the
         // caller to know about `ACTOR`. See `mcp::actor` tests.
-        // MAINT-150 (h): the ACTOR scope + name-clone boilerplate is
+        // The ACTOR scope + name-clone boilerplate is
         // shared with `tools_rw` via `super::dispatch::scoped_dispatch`.
         let pool = self.pool.clone();
         let writer_pool = self.writer_pool.clone();
@@ -447,7 +447,7 @@ impl ToolRegistry for ReadOnlyTools {
                 TOOL_LIST_PROPERTY_DEFS => handle_list_property_defs(&pool, args).await,
                 TOOL_GET_AGENDA => handle_get_agenda(&pool, args).await,
                 TOOL_JOURNAL_FOR_DATE => {
-                    // M-82: route `journal_for_date` to the writer
+                    // Route `journal_for_date` to the writer
                     // pool because `journal_for_date_inner` opens
                     // `BEGIN IMMEDIATE` and inserts into `op_log` +
                     // `blocks` whenever the requested date has no
@@ -517,7 +517,7 @@ fn tool_desc_search() -> ToolDescription {
         name: TOOL_SEARCH.to_string(),
         description:
             "Full-text search across block content (FTS5). Returns BlockRow records; content \
-             is truncated to 512 chars per result. PEND-65 — pass `filter` for structured \
+             is truncated to 512 chars per result. pass `filter` for structured \
              narrowing (state / priority / due / scheduled / property / page-name globs / \
              block-type / case-sensitive / whole-word / regex toggles)."
                 .to_string(),
@@ -542,46 +542,46 @@ fn tool_desc_search() -> ToolDescription {
                 },
                 "space_id": {
                     "type": "string",
-                    "description": "FEAT-3p4 — ULID of the space the search runs inside. Required: every FTS5 hit is restricted to blocks whose owning page carries `space = ?space_id`.",
+                    "description": "ULID of the space the search runs inside. Required: every FTS5 hit is restricted to blocks whose owning page carries `space = ?space_id`.",
                 },
                 "filter": {
                     "type": "object",
                     "additionalProperties": false,
-                    "description": "PEND-65 — structured filter set mirroring the user-facing `SearchFilter` (omit for a query-string-only search).",
+                    "description": "Structured filter set mirroring the user-facing `SearchFilter` (omit for a query-string-only search).",
                     "properties": {
                         "include_page_globs": {
                             "type": "array",
                             "items": { "type": "string" },
-                            "description": "PEND-54 — page-name glob include list (SQLite GLOB syntax, `{a,b}` brace expansion). Bare tokens are wrapped with `*…*`.",
+                            "description": "Page-name glob include list (SQLite GLOB syntax, `{a,b}` brace expansion). Bare tokens are wrapped with `*…*`.",
                         },
                         "exclude_page_globs": {
                             "type": "array",
                             "items": { "type": "string" },
-                            "description": "PEND-54 — page-name glob exclude list.",
+                            "description": "Page-name glob exclude list.",
                         },
                         "case_sensitive": { "type": "boolean" },
                         "whole_word": { "type": "boolean" },
-                        "is_regex": { "type": "boolean", "description": "PEND-55 — treat `query` as a regex (FTS5 bypassed)." },
-                        "block_type_filter": { "type": "string", "description": "PEND-51 — restrict to a single `blocks.block_type` value (e.g. `'page'`)." },
+                        "is_regex": { "type": "boolean", "description": "Treat `query` as a regex (FTS5 bypassed)." },
+                        "block_type_filter": { "type": "string", "description": "Restrict to a single `blocks.block_type` value (e.g. `'page'`)." },
                         "state_filter": {
                             "type": "array",
                             "items": { "type": "string" },
-                            "description": "PEND-53 — `todo_state IN (...)`. Literal `'none'` means `todo_state IS NULL`.",
+                            "description": "`todo_state IN (...)`. Literal `'none'` means `todo_state IS NULL`.",
                         },
                         "priority_filter": { "type": "array", "items": { "type": "string" } },
                         "excluded_state_filter": {
                             "type": "array",
                             "items": { "type": "string" },
-                            "description": "PEND-63 — `(todo_state IS NULL OR todo_state NOT IN (...))`. Literal `'none'` flips to `todo_state IS NOT NULL`.",
+                            "description": "`(todo_state IS NULL OR todo_state NOT IN (...))`. Literal `'none'` flips to `todo_state IS NOT NULL`.",
                         },
                         "excluded_priority_filter": { "type": "array", "items": { "type": "string" } },
                         "due_filter": {
                             "type": "object",
-                            "description": "PEND-53 — date predicate on `blocks.due_date`. One of `{ \"named\": \"today\"|\"this-week\"|... }` or `{ \"op\": { \"op\": \"lt\"|..., \"date\": \"YYYY-MM-DD\" } }`.",
+                            "description": "Date predicate on `blocks.due_date`. One of `{ \"named\": \"today\"|\"this-week\"|... }` or `{ \"op\": { \"op\": \"lt\"|..., \"date\": \"YYYY-MM-DD\" } }`.",
                         },
                         "scheduled_filter": {
                             "type": "object",
-                            "description": "PEND-53 — same shape as `due_filter` but on `blocks.scheduled_date`.",
+                            "description": "Same shape as `due_filter` but on `blocks.scheduled_date`.",
                         },
                         "property_filters": {
                             "type": "array",
@@ -593,7 +593,7 @@ fn tool_desc_search() -> ToolDescription {
                                 },
                                 "required": ["key", "value"],
                             },
-                            "description": "PEND-53 — AND-joined property predicates. PEND-64 matches across `value_text` / `value_num` / `value_date` / `value_ref` with type coercion.",
+                            "description": "AND-joined property predicates. Matches across `value_text` / `value_num` / `value_date` / `value_ref` with type coercion.",
                         },
                         "excluded_property_filters": {
                             "type": "array",
@@ -649,7 +649,7 @@ fn tool_desc_list_backlinks() -> ToolDescription {
                 },
                 "space_id": {
                     "type": "string",
-                    "description": "FEAT-3p4 — optional ULID of the space to scope backlinks to. Omit for the unscoped (cross-space) view."
+                    "description": "Optional ULID of the space to scope backlinks to. Omit for the unscoped (cross-space) view."
                 },
             },
         }),
@@ -667,7 +667,7 @@ fn tool_desc_list_tags() -> ToolDescription {
             "properties": {
                 "cursor": {
                     "type": "string",
-                    "description": "Opaque pagination cursor from a prior response (M-85).",
+                    "description": "Opaque pagination cursor from a prior response.",
                 },
                 "limit": {
                     "type": "integer",
@@ -692,7 +692,7 @@ fn tool_desc_list_property_defs() -> ToolDescription {
             "properties": {
                 "cursor": {
                     "type": "string",
-                    "description": "Opaque pagination cursor from a prior response (M-85).",
+                    "description": "Opaque pagination cursor from a prior response.",
                 },
                 "limit": {
                     "type": "integer",
@@ -720,7 +720,7 @@ fn tool_desc_get_agenda() -> ToolDescription {
                 "end_date":   { "type": "string", "description": "Inclusive YYYY-MM-DD upper bound." },
                 "cursor": {
                     "type": "string",
-                    "description": "Opaque cursor returned by a previous response's `next_cursor` to fetch the next page (M-25)."
+                    "description": "Opaque cursor returned by a previous response's `next_cursor` to fetch the next page."
                 },
                 "limit": {
                     "type": "integer",
@@ -730,7 +730,7 @@ fn tool_desc_get_agenda() -> ToolDescription {
                 },
                 "space_id": {
                     "type": "string",
-                    "description": "FEAT-3p4 — optional ULID of the space to scope the agenda to. Omit for the unscoped (cross-space) view."
+                    "description": "Optional ULID of the space to scope the agenda to. Omit for the unscoped (cross-space) view."
                 },
             },
         }),
@@ -740,10 +740,10 @@ fn tool_desc_get_agenda() -> ToolDescription {
 fn tool_desc_journal_for_date() -> ToolDescription {
     ToolDescription {
         name: TOOL_JOURNAL_FOR_DATE.to_string(),
-        // PEND-26 N4: lead with the side-effect so an LLM agent skimming
+        // Lead with the side-effect so an LLM agent skimming
         // a tool list does not classify this as read-only based on the
         // file group / leading verb. The tool emits a `CreateBlock` op
-        // with origin `agent:<name>` on first read-of-the-day (M-82 / M-84).
+        // With origin `agent:<name>` on first read-of-the-day.
         description:
             "Creates the page if missing (one `CreateBlock` op with origin `agent:<name>`), \
              then returns the journal page for `space_id` on `date`. \
@@ -757,7 +757,7 @@ fn tool_desc_journal_for_date() -> ToolDescription {
                 "date": { "type": "string", "description": "YYYY-MM-DD date string." },
                 "space_id": {
                     "type": "string",
-                    "description": "ULID of the space the daily journal belongs to (FEAT-3p5)."
+                    "description": "ULID of the space the daily journal belongs to."
                 },
             },
         }),
@@ -784,7 +784,7 @@ fn tool_desc_list_spaces() -> ToolDescription {
 // Handler implementations
 //
 // Each handler: (1) parse args, (2) validate `limit` against the schema's
-// `[1, cap]` advertised range (L-119), (3) delegate to `*_inner`,
+// `[1, cap]` advertised range, (3) delegate to `*_inner`,
 // (4) serialise result to `serde_json::Value`. Errors from `*_inner`
 // propagate as `AppError` — the server translates them to JSON-RPC codes
 // (`-32001` for `NotFound`, `-32602` for `Validation`/`InvalidOperation`,
@@ -792,7 +792,7 @@ fn tool_desc_list_spaces() -> ToolDescription {
 // ---------------------------------------------------------------------------
 
 /// Reject `limit` values outside the documented `[1, cap]` range with
-/// an [`AppError::Validation`] (L-119). The dispatcher then surfaces
+/// An [`AppError::Validation`]. The dispatcher then surfaces
 /// it as JSON-RPC `-32602 invalid params` via `app_error_to_rmcp`,
 /// matching the strict `serde(deny_unknown_fields)` posture used
 /// elsewhere on the MCP boundary. Silent clamping previously hid
@@ -831,9 +831,9 @@ async fn handle_list_pages(pool: &SqlitePool, args: Value) -> Result<Value, AppE
 async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetPageArgs = parse_args(TOOL_GET_PAGE, args)?;
     let limit = validate_limit(TOOL_GET_PAGE, args.limit, LIST_RESULT_CAP)?;
-    // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
+    // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let page_id = normalize_ulid_arg(&args.page_id);
-    // MAINT-150 (g): the FEAT-3 Phase 7 space-membership lookup lives
+    // The Phase 7 space-membership lookup lives
     // inside `get_page_unscoped_inner` so this module stays a thin
     // wrapper around `*_inner`. MCP agents are intentionally unscoped
     // — every page they can name belongs to its own space by
@@ -937,23 +937,23 @@ fn validate_search_term_budget(args: &SearchArgs) -> Result<(), AppError> {
 
 async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: SearchArgs = parse_args(TOOL_SEARCH, args)?;
-    // L-119: reject out-of-range explicitly; default to SEARCH_RESULT_CAP
+    // Reject out-of-range explicitly; default to SEARCH_RESULT_CAP
     // when the caller omits `limit` so PageRequest::new does not fall
     // back to MAX_PAGE_SIZE=200.
     let validated = validate_limit(TOOL_SEARCH, args.limit, SEARCH_RESULT_CAP)?;
     let limit = Some(validated.unwrap_or(SEARCH_RESULT_CAP));
     // #699 — bound the input vectors before they reach SQL.
     validate_search_term_budget(&args)?;
-    // L-121: normalise ULID-shaped IDs (parent, each tag, and space) at the
+    // Normalise ULID-shaped IDs (parent, each tag, and space) at the
     // MCP boundary so a lowercase ULID matches the canonical uppercase store.
     let parent_id = args.parent_id.as_deref().map(normalize_ulid_arg);
     let tag_ids = args
         .tag_ids
         .map(|v| v.iter().map(|s| normalize_ulid_arg(s)).collect());
-    // PEND-65 — fold the optional structured `filter` arg into the
+    // Fold the optional structured `filter` arg into the
     // `SearchFilter` passed to `search_blocks_inner`. Omitting `filter`
-    // preserves the pre-PEND-65 contract (no metadata / glob / toggle
-    // filters applied). FEAT-3p4 — `space_id` is always required and
+    // Preserves the pre- contract (no metadata / glob / toggle
+    // Filters applied). `space_id` is always required and
     // comes from the top-level arg; `parent_id` / `tag_ids` likewise
     // stay at the top level to keep the existing wire contract
     // backward-compatible.
@@ -1013,9 +1013,9 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
 
 async fn handle_get_block(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetBlockArgs = parse_args(TOOL_GET_BLOCK, args)?;
-    // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
+    // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let block_id = normalize_ulid_arg(&args.block_id);
-    // M-98 — `get_active_block_inner` (not `get_block_inner`) so an
+    // `get_active_block_inner` (not `get_block_inner`) so an
     // agent cannot fetch tombstoned rows. The MCP read surface
     // mirrors the Tauri IPC `get_block` command's contract.
     let resp = get_active_block_inner(pool, block_id.into()).await?;
@@ -1025,9 +1025,9 @@ async fn handle_get_block(pool: &SqlitePool, args: Value) -> Result<Value, AppEr
 async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: ListBacklinksArgs = parse_args(TOOL_LIST_BACKLINKS, args)?;
     let limit = validate_limit(TOOL_LIST_BACKLINKS, args.limit, LIST_RESULT_CAP)?;
-    // L-121: normalise ULID-shaped IDs to uppercase at the MCP boundary.
+    // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let block_id = normalize_ulid_arg(&args.block_id);
-    // PEND-18 Phase 2 — translate the JSON-side `space_id: Option<String>`
+    // Phase 2 — translate the JSON-side `space_id: Option<String>`
     // into a `SpaceScope` before crossing into `_inner`. The wire shape
     // stays the same; the type-system gate moves to the call boundary.
     let scope = match args.space_id {
@@ -1064,7 +1064,7 @@ async fn handle_list_property_defs(pool: &SqlitePool, args: Value) -> Result<Val
 async fn handle_get_agenda(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetAgendaArgs = parse_args(TOOL_GET_AGENDA, args)?;
     let limit = validate_limit(TOOL_GET_AGENDA, args.limit, AGENDA_RESULT_CAP)?;
-    // PEND-18 Phase 2 — translate the JSON-side `space_id: Option<String>`
+    // Phase 2 — translate the JSON-side `space_id: Option<String>`
     // into a `SpaceScope` before crossing into `_inner`. The wire shape
     // stays the same; the type-system gate moves to the call boundary.
     let scope = match args.space_id {
@@ -1085,7 +1085,7 @@ async fn handle_get_agenda(pool: &SqlitePool, args: Value) -> Result<Value, AppE
 
 /// Handle the `journal_for_date` MCP tool call.
 ///
-/// **M-84 — RO tool with a write side-effect.** Despite living on the
+/// **RO tool with a write side-effect.** Despite living on the
 /// read-only [`ReadOnlyTools`] registry, this handler may emit a single
 /// `CreateBlock` op (origin `agent:<name>`) when the requested date
 /// has no existing journal page in the given space. The op lands in
@@ -1093,7 +1093,7 @@ async fn handle_get_agenda(pool: &SqlitePool, args: Value) -> Result<Value, AppE
 /// is reversible from the agent activity feed like any other
 /// agent-authored write. The first call for a given (space, date)
 /// pair therefore mutates state; subsequent calls for the same pair
-/// are pure lookups (idempotent per-space). See the M-82/M-84 block
+/// Are pure lookups (idempotent per-space). See the block
 /// on [`ReadOnlyTools`] for the rationale and for why this is wired
 /// to the writer pool instead of the reader pool.
 async fn handle_journal_for_date(
@@ -1108,7 +1108,7 @@ async fn handle_journal_for_date(
             "tool `{TOOL_JOURNAL_FOR_DATE}`: `date` must be YYYY-MM-DD — {e}"
         ))
     })?;
-    // L-121 / #694: normalise the space ULID at the MCP boundary like
+    // / #694: normalise the space ULID at the MCP boundary like
     // every other handler — the per-space lookup inside
     // `resolve_or_create_journal_page` matches `blocks.space_id`
     // case-sensitively, so a lowercase ULID previously surfaced as a
@@ -1139,11 +1139,11 @@ async fn handle_list_spaces(pool: &SqlitePool, args: Value) -> Result<Value, App
 mod tests;
 
 // ---------------------------------------------------------------------------
-// M-82 tests — split-pool semantics for `journal_for_date`
+// Tests — split-pool semantics for `journal_for_date`
 //
 // These tests exercise the production wiring that `mk_tools()` deliberately
 // does not: separate reader (`PRAGMA query_only = ON`) and writer pools,
-// just like `init_pools()`. The bug fixed by M-82 was that `ReadOnlyTools`
+// Just like `init_pools()`. The bug fixed by was that `ReadOnlyTools`
 // was constructed with the reader pool only, so the very first
 // `journal_for_date` call for a missing date hit `BEGIN IMMEDIATE` + INSERT
 // against `query_only = ON` and surfaced as JSON-RPC `-32603`.
@@ -1170,7 +1170,7 @@ mod tests_m82 {
         }
     }
 
-    /// FEAT-3p5 helper for the M-82 split-pool fixture: create a single
+    /// Helper for the split-pool fixture: create a single
     /// space on the *writer* pool (the reader pool is `query_only = ON`
     /// and would reject the CreateBlock op).
     ///
@@ -1211,7 +1211,7 @@ mod tests_m82 {
         (tools, mat, dir)
     }
 
-    /// Reproduction of the M-82 production failure: with the old wiring
+    /// Reproduction of the production failure: with the old wiring
     /// (`pool` = reader-only) the very first `journal_for_date` call for
     /// a missing date opens `BEGIN IMMEDIATE` and INSERTs into `op_log`
     /// + `blocks`, which `query_only = ON` rejects as `SQLITE_READONLY`
@@ -1221,7 +1221,7 @@ mod tests_m82 {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn journal_for_date_uses_writer_pool_for_missing_date() {
         let (tools, mat, _dir) = mk_split_tools().await;
-        // FEAT-3p5: seed a space on the writer pool so the lookup has
+        // Seed a space on the writer pool so the lookup has
         // somewhere to scope under.
         let space = mk_space(&tools.writer_pool, &mat, "Personal").await;
 
@@ -1255,14 +1255,14 @@ mod tests_m82 {
     /// Sanity check that the lookup branch of `journal_for_date` works
     /// across pool wirings: idempotency on a date that already has a
     /// page must succeed whether the registry is wired with the
-    /// production split (reader pool + writer pool, M-82 fix) or the
+    /// Production split (reader pool + writer pool, fix) or the
     /// legacy combined `init_pool` wiring used by the in-tree test
     /// fixture (`mk_tools()`). The lookup-then-return path inside
     /// `journal_for_date_inner` uses `BEGIN IMMEDIATE` to keep the
     /// SELECT-then-INSERT pair atomic against concurrent callers; the
     /// transaction commits without inserting when the page exists, so
     /// any pool that can acquire the writer lock is sufficient. With
-    /// the M-82 fix applied, both wirings use the writer pool for this
+    /// The fix applied, both wirings use the writer pool for this
     /// path and resolve to the same `BlockRow.id`.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn journal_for_date_finds_existing_page_via_either_pool() {
@@ -1292,7 +1292,7 @@ mod tests_m82 {
         // writer lock when the second `call_tool` opens its
         // BEGIN IMMEDIATE, causing the lookup branch to wait through the
         // 5s busy_timeout and the whole test to drift to ~30s/retry —
-        // surfaced as a 1-in-3 flake during the M-6 hygiene sweep.
+        // Surfaced as a 1-in-3 flake during the hygiene sweep.
         mat_split.flush_background().await.unwrap();
         mat_split.flush_background().await.unwrap();
 

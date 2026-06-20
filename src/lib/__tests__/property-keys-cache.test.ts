@@ -1,5 +1,5 @@
 /**
- * Tests for `src/lib/property-keys-cache.ts` (PEND-35 Tier 2.5).
+ * Tests for `src/lib/property-keys-cache.ts`.
  *
  * The cache primitives moved out of `usePropertyKeysCache` so non-React
  * callers (slash-command picker) can share the same module-level state.

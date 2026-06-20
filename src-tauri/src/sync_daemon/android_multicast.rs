@@ -1,4 +1,4 @@
-//! BUG-39: Android WiFi multicast lock.
+//! Android WiFi multicast lock.
 //!
 //! On Android 6+ (SDK 23+) an app must call
 //! [`WifiManager.createMulticastLock()`] and `acquire()` before the

@@ -1,5 +1,5 @@
 /**
- * useInPageFindStore — Zustand singleton for the in-page find toolbar (PEND-52).
+ * UseInPageFindStore — Zustand singleton for the in-page find toolbar.
  *
  * Owns:
  *
@@ -18,7 +18,7 @@
  *    the toolbar — there's nothing to search.
  *  - `lastQuery` — preserved across `close()` so re-opening the toolbar
  *    (with no selection) restores the previous query. Locked-in
- *    behaviour from the PEND-52 plan, Q3.
+ * Behaviour from the plan, Q3.
  *
  * Match collection itself lives in `InPageFind.tsx` — the store stays
  * pure (no DOM access, no side effects). This keeps unit tests simple

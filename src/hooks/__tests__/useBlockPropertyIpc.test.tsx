@@ -69,8 +69,8 @@ describe('useBlockPropertyIpc.getProperties', () => {
 })
 
 describe('useBlockPropertyIpc.listPropertyDefs', () => {
-  it('invokes list_property_defs and returns the PageResponse envelope (M-85)', async () => {
-    // M-85: `list_property_defs` is now cursor-paginated, so the IPC
+  it('invokes list_property_defs and returns the PageResponse envelope', async () => {
+    // `list_property_defs` is now cursor-paginated, so the IPC
     // response shape is `{ items, next_cursor, has_more }`.
     const defs = [{ key: 'effort', value_type: 'number', label: 'Effort', icon: null }]
     const page = { items: defs, next_cursor: null, has_more: false }
@@ -93,10 +93,10 @@ describe('useBlockPropertyIpc.listPropertyDefs', () => {
   })
 
   // #976 finding 8 — the single-page happy path above only covers
-  // `has_more=false` / `next_cursor=null`. These pin the M-85 pagination
+  // `has_more=false` / `next_cursor=null`. These pin the pagination
   // contract: a NON-terminal page (`has_more=true` + a `next_cursor`) must be
   // surfaced verbatim so a consumer can detect there are more pages.
-  it('surfaces a non-terminal page (has_more=true with next_cursor) verbatim (M-85)', async () => {
+  it('surfaces a non-terminal page (has_more=true with next_cursor) verbatim', async () => {
     const page = {
       items: [{ key: 'effort', value_type: 'number', label: 'Effort', icon: null }],
       next_cursor: 'cursor-page-2',
@@ -121,7 +121,7 @@ describe('useBlockPropertyIpc.listPropertyDefs', () => {
   // a cursor-conditional `mockImplementation`, asserting both IPC invocations
   // chain the cursor correctly and the loop terminates on `has_more=false`
   // (pattern: UnfinishedTasks.test.tsx).
-  it('iterates through paginated results, chaining next_cursor until has_more=false (M-85)', async () => {
+  it('iterates through paginated results, chaining next_cursor until has_more=false', async () => {
     const pageA = {
       items: [{ key: 'effort', value_type: 'number', label: 'Effort', icon: null }],
       next_cursor: 'cursor-2',

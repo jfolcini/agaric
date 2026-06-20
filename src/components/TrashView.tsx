@@ -6,7 +6,7 @@
  * Multi-select with shift-click range selection and batch actions.
  * Original location breadcrumbs via batchResolve.
  *
- * Sub-pieces extracted for testability (MAINT-128):
+ * Sub-pieces extracted for testability:
  *  - useTrashFilter (hook); multi-select via shared useListMultiSelect
  *  - TrashRowItem (presentational sibling)
  *  - TrashPurgeDialog / TrashBatchPurgeDialog / TrashBatchRestoreDialog
@@ -62,7 +62,7 @@ export function TrashView(): React.ReactElement {
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const queryFn = useCallback(
     (cursor?: string) =>
-      // FEAT-3 Phase 4 — trash is scoped to the active space (each
+      // Phase 4 — trash is scoped to the active space (each
       // space owns its own deletion set). The `?? ''` fallback is
       // intentional pre-bootstrap behaviour: empty string forces a
       // no-match SQL filter rather than a runtime null deref.
@@ -98,7 +98,7 @@ export function TrashView(): React.ReactElement {
   const [confirmEmptyTrash, setConfirmEmptyTrash] = useState(false)
   const [confirmRestoreAll, setConfirmRestoreAll] = useState(false)
 
-  // UX-275 sub-fix 8: prompt before restoring large batches (>5) so the user
+  // Sub-fix 8: prompt before restoring large batches (>5) so the user
   // doesn't unwind a long cascade with a misclick. Mirrors the existing
   // batch-purge confirmation flow.
   const BATCH_RESTORE_CONFIRM_THRESHOLD = 5
@@ -164,7 +164,7 @@ export function TrashView(): React.ReactElement {
 
   // ── Batch actions ────────────────────────────────────────────────
 
-  // PEND-35 Tier 2.2 — single IPC for the entire batch. The previous
+  // Single IPC for the entire batch. The previous
   // implementation looped `restoreBlock` per row (50 IMMEDIATE txs +
   // 50 op_log scopes for a 50-row selection); the backend now handles
   // the whole list in one tx. Resolve-store updates and per-row
@@ -195,7 +195,7 @@ export function TrashView(): React.ReactElement {
     }
   }, [blocks, selected, reload, clearSelection, t])
 
-  // UX-275 sub-fix 8: gated entry point for the batch restore action.
+  // Sub-fix 8: gated entry point for the batch restore action.
   // Restores immediately for small selections; surfaces a confirmation
   // dialog when the batch exceeds {@link BATCH_RESTORE_CONFIRM_THRESHOLD}.
   const requestBatchRestore = useCallback(() => {
@@ -222,7 +222,7 @@ export function TrashView(): React.ReactElement {
     requestBatchPurge,
   })
 
-  // PEND-35 Tier 2.2 — single IPC for the entire batch. Replaces a
+  // Single IPC for the entire batch. Replaces a
   // per-id loop where each iteration ran the full ~13-table cleanup
   // chain in its own IMMEDIATE tx; the backend now sweeps the whole
   // list in one tx, running each cleanup-chain query once. Cascade-
@@ -334,7 +334,7 @@ export function TrashView(): React.ReactElement {
       />
 
       {/* Filter input — SearchInput already provides an inline ✕ clear button
-          (UX-221) with proper touch-target + focus-ring + a11y per AGENTS.md. */}
+ with proper touch-target + focus-ring + a11y per AGENTS.md. */}
       {blocks.length > 0 && (
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -370,7 +370,7 @@ export function TrashView(): React.ReactElement {
           <Button variant="ghost" size="sm" onClick={clearSelection}>
             {t('trash.deselectAllButton')}
           </Button>
-          {/* UX-343 — surface the BATCH_RESTORE_CONFIRM_THRESHOLD boundary so
+          {/* surface the BATCH_RESTORE_CONFIRM_THRESHOLD boundary so
               users know a confirmation kicks in for selections > 5. */}
           <Tooltip>
             <TooltipTrigger asChild>
@@ -403,7 +403,7 @@ export function TrashView(): React.ReactElement {
             <Trash2 className="h-3.5 w-3.5" />
             {t('trash.purgeSelectedButton')}
           </Button>
-          {/* UX-275 sub-fix 6: surface Shift+Click range-select hint inside the toolbar. */}
+          {/*  sub-fix 6: surface Shift+Click range-select hint inside the toolbar. */}
           <span
             className="ml-auto hidden text-xs text-muted-foreground sm:inline"
             data-testid="trash-batch-hint"

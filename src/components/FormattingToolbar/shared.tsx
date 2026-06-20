@@ -1,5 +1,5 @@
 /**
- * Shared primitives for the `FormattingToolbar` decomposition (MAINT-219).
+ * Shared primitives for the `FormattingToolbar` decomposition.
  *
  * Extracted from the orchestrator so each per-group renderer file can
  * lean on the same `Tip` wrapper, render-mode union, and config-driven
@@ -22,7 +22,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 export type RenderMode = 'inline' | 'overflow' | 'sentinel'
 
 /**
- * Map of toolbar button label keys to keyboard-config shortcut ids (UX-301).
+ * Map of toolbar button label keys to keyboard-config shortcut ids.
  * Buttons listed here get their tooltip rebuilt as `${label} (${binding})`
  * via `tooltipWithShortcut`, picking up any user customisation. Buttons
  * absent from this map keep their existing `tip` i18n string.
@@ -40,7 +40,7 @@ export const TOOLBAR_SHORTCUT_IDS: Record<string, string> = {
 
 /**
  * Append the current keyboard binding for `shortcutId` to `label` so the
- * tooltip stays in sync with user customisations (UX-301). Returns the
+ * Tooltip stays in sync with user customisations. Returns the
  * plain label when the id is unknown so we never render an empty `()`
  * for buttons that lack a configurable shortcut.
  */

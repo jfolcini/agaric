@@ -1,7 +1,7 @@
 /**
  * Path history — per-space MRU of `path:` / `not-path:` glob strings.
  *
- * Backs the caret-anchored autocomplete popover (PEND-60 Phase 2): when the
+ * Backs the caret-anchored autocomplete popover (Phase 2): when the
  * user types `path:` or `not-path:` in the search input we surface their
  * recently-used globs for that space, newest-first.
  */

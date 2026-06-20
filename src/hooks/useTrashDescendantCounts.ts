@@ -1,10 +1,10 @@
 /**
- * useTrashDescendantCounts — UX-243 cascade-count fetcher for TrashView.
+ * UseTrashDescendantCounts — cascade-count fetcher for TrashView.
  *
  * Each trash row is a "root" of a cascade_soft_delete batch. This hook
  * resolves the count of sibling descendants sharing the root's
  * `deleted_at` so the row renderer can show "+N blocks" badges.
- * Extracted from TrashView.tsx for MAINT-128.
+ * Extracted from TrashView.tsx for.
  */
 
 import { useEffect, useMemo, useState } from 'react'

@@ -1,5 +1,5 @@
 /**
- * PEND-55 — tests for the search-history Zustand store.
+ * Tests for the search-history Zustand store.
  *
  * Coverage:
  * - `push` prepends to the MRU list, deduping by exact match.
@@ -111,7 +111,7 @@ describe('useSearchHistoryStore', () => {
     expect(state.bySpace[LEGACY_HISTORY_SPACE_KEY]).toEqual(['also-no-space', 'no-space'])
   })
 
-  // UX-11 — per-row delete.
+  // Per-row delete.
   it('removeEntry drops a single query, leaving siblings + other spaces intact', () => {
     const { push, removeEntry } = useSearchHistoryStore.getState()
     push(SPACE_A, 'alpha')
@@ -133,7 +133,7 @@ describe('useSearchHistoryStore', () => {
     expect(useSearchHistoryStore.getState().bySpace).toBe(before)
   })
 
-  // UX-11 — record-history toggle.
+  // Record-history toggle.
   it('push becomes a no-op while history is disabled, and resumes when re-enabled', () => {
     const { push, setHistoryEnabled } = useSearchHistoryStore.getState()
     push(SPACE_A, 'before')
@@ -148,7 +148,7 @@ describe('useSearchHistoryStore', () => {
   })
 })
 
-// FE-14 — corrupt-payload coercion on hydrate.
+// Corrupt-payload coercion on hydrate.
 describe('coerceBySpace', () => {
   it('returns {} for non-object inputs', () => {
     expect(coerceBySpace(null)).toEqual({})
@@ -178,7 +178,7 @@ describe('coerceBySpace', () => {
   })
 })
 
-// FE-14 — `migrate` hydration seam. zustand only invokes `migrate` on a
+// `migrate` hydration seam. zustand only invokes `migrate` on a
 // version MISMATCH (not on every load); when it does run it must coerce
 // `bySpace` *and* fall back to `historyEnabled: true` for corrupt / missing
 // persisted toggle values (and preserve a legitimate `false`).

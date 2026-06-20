@@ -217,7 +217,7 @@ async fn compaction_bypass_does_not_leak_to_sibling_connection() {
     );
 }
 
-/// PEND-35 Tier 3.1: migration 0048 retires the expression index
+/// Migration 0048 retires the expression index
 /// `idx_op_log_payload_block_id` from migration 0003 because the four
 /// remaining query sites in `pagination/history.rs` and
 /// `commands/history.rs` now read the native `op_log.block_id` column
@@ -303,7 +303,7 @@ async fn page_link_cache_table_post_migration_0065() {
     );
 }
 
-/// PEND-56b / migration 0069 (inbound shape refined by PEND-58d D2 /
+/// / migration 0069 (inbound shape refined by /
 /// migration 0070): `pages_cache` must carry the materialised
 /// `inbound_link_count` + `child_block_count` INTEGER columns with
 /// `NOT NULL DEFAULT 0`. The CURRENT inbound backfill (migration 0070)
@@ -356,14 +356,14 @@ async fn pages_cache_link_and_content_counts_post_migration_0069() {
     //     A_C2 -> PAGE_B      (inbound to PAGE_B, dedup'd by DISTINCT — but
     //                          source is distinct so it does count)
     //     A_C3 -> PAGE_B      (A_C3 is a soft-deleted SOURCE — excluded
-    //                          by `src.deleted_at IS NULL` per PEND-58d
+    // By `src.deleted_at IS NULL`
     //                          D2 / migration 0070, so it does NOT count)
     //     B_C1 -> PAGE_A      (inbound to PAGE_A)
     //     B_C1 -> A_C1        (inbound, but A_C1.page_id = PAGE_A so this
     //                          contributes one DISTINCT source to PAGE_A)
     //
     // Expected (matching the live IPC `COUNT(DISTINCT bl.source_id)`
-    // with the PEND-58d D2 source-side exclusions):
+    // With the source-side exclusions):
     //   PAGE_A.inbound_link_count = 1  (only B_C1 across both edges)
     //   PAGE_B.inbound_link_count = 2  (A_C1, A_C2; A_C3 is a deleted source)
     //   PAGE_A.child_block_count  = 2  (A_C1, A_C2 — A_C3 is deleted)
@@ -424,7 +424,7 @@ async fn pages_cache_link_and_content_counts_post_migration_0069() {
 
     // Re-run the corrected backfill (migration 0070 shape — the new
     // rows were inserted after migrations applied, so their counts are
-    // still the DEFAULT 0). PEND-58d D2: the inbound side now JOINs the
+    // Still the DEFAULT 0). the inbound side now JOINs the
     // source block and excludes same-page / self / deleted-source /
     // orphan edges, matching `recompute_pages_cache_counts_for_pages`
     // and `backlink/grouped.rs`.
@@ -480,7 +480,7 @@ async fn pages_cache_link_and_content_counts_post_migration_0069() {
         row_b.i, 2,
         "PAGE_B inbound count should be 2 (A_C1, A_C2 distinct sources; \
              A_C3 is a soft-deleted source, excluded by `src.deleted_at IS NULL` \
-             per PEND-58d D2)"
+)"
     );
     assert_eq!(row_b.c, 1, "PAGE_B child count should be 1 (B_C1)");
 

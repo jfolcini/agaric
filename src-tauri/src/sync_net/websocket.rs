@@ -30,7 +30,7 @@ pub struct MdnsService {
     daemon: mdns_sd::ServiceDaemon,
 }
 
-/// L-65: filter the host's interface addresses down to the set we are
+/// Filter the host's interface addresses down to the set we are
 /// willing to advertise on mDNS. Currently this is **RFC 1918 private
 /// IPv4 only** (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`).
 ///
@@ -72,7 +72,7 @@ impl MdnsService {
     /// Registers a `_agaric._tcp.local.` service with a TXT record
     /// containing `device_id=<id>`.  Returns the registered `ServiceInfo`.
     ///
-    /// L-65: the announcement is restricted to RFC 1918 private IPv4
+    /// The announcement is restricted to RFC 1918 private IPv4
     /// interfaces (10/8, 172.16/12, 192.168/16). The previous
     /// `enable_addr_auto()` call let `mdns-sd` enumerate every routable
     /// interface, which leaked the device IP onto guest WiFi / VPN /
@@ -81,7 +81,7 @@ impl MdnsService {
     /// adversarial-peer hardening; the change only narrows the set of
     /// addresses advertised.
     ///
-    /// Approach (b) per the L-65 task brief: the listener binds to
+    /// Approach (b) per the task brief: the listener binds to
     /// `0.0.0.0:0` so we cannot pin the announcement to a single bound
     /// IP (approach (a)); instead we enumerate `if_addrs::get_if_addrs`
     /// and filter. If the filter yields no addresses (host has only a
@@ -99,7 +99,7 @@ impl MdnsService {
         let interfaces = if_addrs::get_if_addrs().unwrap_or_else(|e| {
             tracing::warn!(
                 error = %e,
-                "L-65: if_addrs::get_if_addrs failed; falling back to enable_addr_auto"
+                "if_addrs::get_if_addrs failed; falling back to enable_addr_auto"
             );
             Vec::new()
         });
@@ -108,7 +108,7 @@ impl MdnsService {
 
         let service_info = if announceable.is_empty() {
             tracing::warn!(
-                "L-65: no RFC 1918 private IPv4 interface found; \
+                "no RFC 1918 private IPv4 interface found; \
                  falling back to enable_addr_auto for mDNS announce"
             );
             mdns_sd::ServiceInfo::new(
@@ -164,7 +164,7 @@ impl MdnsService {
             }
             match tokio::time::timeout(remaining, receiver.recv_async()).await {
                 Ok(Ok(event)) => {
-                    // L-63: only `Resolved` events carry routable address
+                    // Only `Resolved` events carry routable address
                     // info; `Removed` events fire after the timeout window
                     // is over for the live peer set anyway, so the
                     // transient browse helper just drops them.
@@ -196,7 +196,7 @@ pub struct DiscoveredPeer {
     pub port: u16,
 }
 
-/// L-63: parsed mDNS event surface.
+/// Parsed mDNS event surface.
 ///
 /// Discovery (`Resolved`) and removal (`Removed`) used to be conflated:
 /// `parse_service_event` only ever returned `Some(DiscoveredPeer)` on
@@ -246,7 +246,7 @@ pub fn parse_service_event(event: mdns_sd::ServiceEvent) -> Option<ServiceEventK
     }
 }
 
-/// L-63: recover a device_id from the mDNS service fullname produced by
+/// Recover a device_id from the mDNS service fullname produced by
 /// [`MdnsService::announce`].
 ///
 /// Returns `None` if the fullname does not match the expected
@@ -268,13 +268,13 @@ pub(crate) fn device_id_from_service_fullname(fullname: &str) -> Option<String> 
 // 3. WebSocket Server
 // =========================================================================
 
-/// Maximum back-off duration for consecutive `accept()` failures (M-53).
+/// Maximum back-off duration for consecutive `accept()` failures.
 /// Used by [`compute_accept_backoff_duration`] and the comment at the
 /// call-site to keep both in sync.
 const ACCEPT_BACKOFF_CAP: Duration = Duration::from_secs(30);
 
 /// Compute the back-off duration for the *next* accept attempt after a
-/// run of consecutive `accept()` failures (M-53).
+/// Run of consecutive `accept()` failures.
 ///
 /// The schedule is `100ms × 2^(n-1)` capped at [`ACCEPT_BACKOFF_CAP`], where `n` is the
 /// 1-based count of consecutive failures (so the first failure waits
@@ -352,7 +352,7 @@ impl SyncServer {
         // layer (the stream is dropped) without spending handshake CPU/FDs.
         let session_limiter = Arc::new(Semaphore::new(MAX_CONCURRENT_RESPONDER_SESSIONS));
 
-        // M-53: track consecutive `accept()` failures so we back off
+        // Track consecutive `accept()` failures so we back off
         // exponentially before retrying. Reset to 0 after every
         // successful accept so the loop never punishes a transient
         // hiccup once it's recovered.
@@ -476,7 +476,7 @@ impl SyncServer {
                                 });
                             }
                             Err(e) => {
-                                // M-53: log with backoff so a runaway
+                                // Log with backoff so a runaway
                                 // accept failure (FD exhaustion, sysctl
                                 // limit, address-family weirdness) does
                                 // not spin a tight loop on the runtime.

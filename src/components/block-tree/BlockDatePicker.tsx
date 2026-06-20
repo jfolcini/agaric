@@ -9,7 +9,7 @@
  * scroll-lock, outside-click dismissal, and proper ARIA semantics.
  *
  * Extracted from BlockTree.tsx for file organization (F-22).
- * Refactored to Radix Dialog (UX-213) — removes the hand-rolled focus trap.
+ * Refactored to Radix Dialog — removes the hand-rolled focus trap.
  */
 
 import type React from 'react'

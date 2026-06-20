@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// A fully-materialised op log row, returned after a successful append.
 ///
-/// # Schema doc — `op_log.created_at` monotonic invariant (L-98)
+/// # Schema doc — `op_log.created_at` monotonic invariant
 ///
 /// `created_at` mirrors the `op_log.created_at` column, migrated to
 /// `INTEGER NOT NULL` epoch-milliseconds in migration `0079` (#109
@@ -23,7 +23,7 @@ pub struct OpRecord {
     pub op_type: String,
     pub payload: String,
     pub created_at: i64,
-    /// L-13: Rust-only sidecar caching the parsed `block_id` so callers
+    /// Rust-only sidecar caching the parsed `block_id` so callers
     /// on the materializer hot path (`dispatch::enqueue_background_tasks`)
     /// do not have to re-parse `payload` for the JSON `block_id` field.
     /// Populated at every construction site:

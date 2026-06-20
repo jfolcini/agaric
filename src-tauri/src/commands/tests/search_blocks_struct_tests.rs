@@ -1,4 +1,4 @@
-//! PEND-50 Phase 0 — wire-shape regression tests for the
+//! Phase 0 — wire-shape regression tests for the
 //! `search_blocks` IPC structs (`SearchFilter` request,
 //! `SearchBlockRow` response).
 //!
@@ -6,7 +6,7 @@
 //! frontend bindings (`src/lib/bindings.ts`). Specifically:
 //!
 //! - `SearchFilter` must deserialise from `{}` with every field
-//!   defaulted, so follow-up plans (PEND-54/55/53) can append fields
+//!   defaulted, so follow-up plans (55/53) can append fields
 //!   with `#[serde(default)]` without ever requiring the frontend to
 //!   send them.
 //! - `SearchBlockRow.snippet` must serialise as JSON `null` when
@@ -60,13 +60,13 @@ fn search_filter_roundtrip_serialise_deserialise_is_identity() {
         space_id: Some("01TESTSPACE000000000000001".into()),
         include_page_globs: vec!["Journal/*".into()],
         exclude_page_globs: vec!["Archive/**".into()],
-        // PEND-55
+        //
         case_sensitive: true,
         whole_word: true,
         is_regex: false,
-        // PEND-51
+        //
         block_type_filter: Some("page".into()),
-        // PEND-53 — additive wire compat; defaults left at empty.
+        // Additive wire compat; defaults left at empty.
         ..Default::default()
     };
     let json = serde_json::to_value(&original).unwrap();
@@ -84,7 +84,7 @@ fn search_filter_roundtrip_serialise_deserialise_is_identity() {
 
 #[test]
 fn search_filter_toggle_fields_default_to_false() {
-    // PEND-55 — additive wire compat. Old frontends that don't send
+    // Additive wire compat. Old frontends that don't send
     // these fields must observe today's behaviour (all toggles off).
     let filter: SearchFilter = serde_json::from_value(json!({})).unwrap();
     assert!(!filter.case_sensitive, "case_sensitive defaults to false");
@@ -94,7 +94,7 @@ fn search_filter_toggle_fields_default_to_false() {
 
 #[test]
 fn search_filter_glob_fields_default_to_empty_vec() {
-    // PEND-54: include/exclude page globs MUST default to empty
+    // Include/exclude page globs MUST default to empty
     // (the wire shape is "absent → no filter applied"); old
     // frontends that don't know about the fields keep working.
     let filter: SearchFilter = serde_json::from_value(json!({})).unwrap();
@@ -149,7 +149,7 @@ fn search_block_row_snippet_serialises_none_as_null_and_some_as_string() {
 }
 
 // ---------------------------------------------------------------------
-// PEND-55 — MatchOffset / match_offsets wire shape
+// MatchOffset / match_offsets wire shape
 // ---------------------------------------------------------------------
 
 #[test]
@@ -209,18 +209,18 @@ fn search_block_row_match_offsets_defaults_to_empty_vec() {
         v.get("match_offsets")
     );
     // The unused json_in handle silences an unused-let warning; the
-    // shape it documents is exactly the post-PEND-50 wire row.
+    // Shape it documents is exactly the post- wire row.
     let _ = json_in;
 }
 
 // ---------------------------------------------------------------------
-// PEND-53 — state / priority / due / scheduled / property wire shape
+// State / priority / due / scheduled / property wire shape
 // ---------------------------------------------------------------------
 
 #[test]
 fn search_filter_pend53_fields_default_to_empty() {
     // Old frontends that don't know about the new fields keep working;
-    // every PEND-53 field carries `#[serde(default)]`.
+    // Every field carries `#[serde(default)]`.
     let filter: SearchFilter = serde_json::from_value(json!({})).unwrap();
     assert!(filter.state_filter.is_empty());
     assert!(filter.priority_filter.is_empty());

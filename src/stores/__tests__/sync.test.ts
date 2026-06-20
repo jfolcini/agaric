@@ -19,7 +19,7 @@ describe('useSyncStore', () => {
       expect(state.lastSyncedAt).toBeNull()
       expect(state.opsReceived).toBe(0)
       expect(state.opsSent).toBe(0)
-      // PEND-06 Tier 2 — file-transfer progress fields default to a
+      // File-transfer progress fields default to a
       // "no transfer active" tuple so the UI hides the affordance.
       expect(state.filePhase).toBeNull()
       expect(state.filesDone).toBe(0)
@@ -141,7 +141,7 @@ describe('useSyncStore', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // setFileProgress / resetFileProgress (PEND-06 Tier 2)
+  // SetFileProgress / resetFileProgress
   // ---------------------------------------------------------------------------
   describe('setFileProgress', () => {
     it('records the active file-transfer phase and counters', () => {

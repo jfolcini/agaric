@@ -1,8 +1,8 @@
 /**
- * Keyboard shortcut configuration with localStorage persistence (UX-86).
+ * Keyboard shortcut configuration with localStorage persistence.
  *
  * Implementation is split across `keyboard-config/{catalog,tiptap,match,storage}.ts`
- * by concern (MAINT-127). This barrel re-exports the public surface so
+ * By concern. This barrel re-exports the public surface so
  * existing callers (`@/lib/keyboard-config` import path) keep working
  * verbatim.
  */

@@ -234,7 +234,7 @@ describe('AlertSection', () => {
     expect(screen.getByText('2025-01-15')).toBeInTheDocument()
   })
 
-  // PEND-28b L1: the date span has `shrink-0` so flex compression won't
+  // The date span has `shrink-0` so flex compression won't
   // truncate long localized relative-date strings on phones — pair it with
   // `truncate` so the span clips with an ellipsis instead of overflowing.
   it('date span has truncate in its className', () => {

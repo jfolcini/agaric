@@ -34,7 +34,7 @@ function makePropDef(key: string, valueType = 'text', options: string | null = n
 }
 
 /**
- * M-85: `list_property_defs` is now cursor-paginated and returns a
+ * `list_property_defs` is now cursor-paginated and returns a
  * `PageResponse<PropertyDefinition>` envelope instead of a flat array.
  * `pageOf` wraps the test-fixture array so `mockResolvedValueOnce(pageOf([...]))`
  * mirrors the wire shape the component actually consumes.
@@ -106,7 +106,7 @@ describe('PropertyDefinitionsList', () => {
     expect(screen.queryByText('Due Date')).not.toBeInTheDocument()
   })
 
-  // UX-248 — Unicode-aware fold via `matchesSearchFolded`.
+  // Unicode-aware fold via `matchesSearchFolded`.
   it('search matches accented property key via diacritic fold', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockResolvedValueOnce(
@@ -221,7 +221,7 @@ describe('PropertyDefinitionsList', () => {
 
     render(<PropertyDefinitionsList />)
 
-    // FE-M-8: error reporting now goes through reportIpcError —
+    // Error reporting now goes through reportIpcError —
     // toast carries only the localized message; the Error detail
     // is logged separately, not surfaced in the toast string.
     await waitFor(() => {
@@ -249,7 +249,7 @@ describe('PropertyDefinitionsList', () => {
     const createBtn = screen.getByRole('button', { name: /Create/i })
     await user.click(createBtn)
 
-    // FE-M-8: see loading test above.
+    // See loading test above.
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
         expect.stringContaining('Failed to create property definition'),
@@ -275,7 +275,7 @@ describe('PropertyDefinitionsList', () => {
     const confirmBtn = await screen.findByRole('button', { name: /^Delete$/i })
     await user.click(confirmBtn)
 
-    // FE-M-8: see loading test above.
+    // See loading test above.
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
         expect.stringContaining('Failed to delete property definition'),
@@ -302,7 +302,7 @@ describe('PropertyDefinitionsList', () => {
     mockedInvoke.mockRejectedValueOnce(new Error('Invalid JSON'))
 
     const optionsInput = screen.getByLabelText('Options JSON')
-    // UX-339: client-side parse validation now disables Save on invalid
+    // Client-side parse validation now disables Save on invalid
     // input, so the toast-on-server-error path requires a payload that
     // parses locally but is rejected by the backend mock.
     fireEvent.change(optionsInput, { target: { value: '["a"]' } })
@@ -310,7 +310,7 @@ describe('PropertyDefinitionsList', () => {
     const saveBtn = screen.getByRole('button', { name: /Save/i })
     await user.click(saveBtn)
 
-    // FE-M-8: see loading test above.
+    // See loading test above.
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
         expect.stringContaining('Failed to update options'),
@@ -340,7 +340,7 @@ describe('PropertyDefinitionsList', () => {
     render(<PropertyDefinitionsList />)
 
     await waitFor(() => {
-      // M-85: paginated wrapper threads `cursor` + `limit` (both null
+      // Paginated wrapper threads `cursor` + `limit` (both null
       // when omitted) through the IPC layer.
       expect(mockedInvoke).toHaveBeenCalledWith('list_property_defs', {
         cursor: null,
@@ -444,7 +444,7 @@ describe('PropertyDefinitionsList', () => {
     expect(deleteBtn).toHaveAttribute('aria-label', 'Delete property my-prop')
   })
 
-  // UX-344 — delete button must be reachable on desktop without hovering
+  // Delete button must be reachable on desktop without hovering
   // the row. Pin the visibility so a future "hide-until-hover" regression
   // is caught at test time.
   it('delete button is always visible (no opacity-0 / group-hover gating)', async () => {
@@ -462,8 +462,8 @@ describe('PropertyDefinitionsList', () => {
     expect(className).not.toMatch(/group-hover:opacity-100/)
   })
 
-  // UX-211: Options JSON placeholder resolves via t()
-  it('options JSON input placeholder resolves via t() (UX-211)', async () => {
+  // Options JSON placeholder resolves via t()
+  it('options JSON input placeholder resolves via t()', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockResolvedValueOnce(
       pageOf([makePropDef('status', 'select', '["open","closed"]')]),
@@ -481,8 +481,8 @@ describe('PropertyDefinitionsList', () => {
     ).toBeInTheDocument()
   })
 
-  // UX-201a: todo_state's options are locked (cycle is fixed by code + migration 0029)
-  describe('locked options for todo_state (UX-201a)', () => {
+  // Todo_state's options are locked (cycle is fixed by code + migration 0029)
+  describe('locked options for todo_state', () => {
     it('does NOT render the Edit options button for todo_state', async () => {
       mockedInvoke.mockResolvedValueOnce(
         pageOf([
@@ -514,7 +514,7 @@ describe('PropertyDefinitionsList', () => {
     })
 
     // #1431: the task-state cycle is fixed by design (none → TODO → DOING →
-    // DONE → CANCELLED → none, UX-202). The locked indicator carries a lock
+    // DONE → CANCELLED → none). The locked indicator carries a lock
     // icon with an explicit accessible label/title so screen-reader and
     // mouse-hover users learn the property is not editable.
     it('lock indicator exposes an accessible "fixed and not editable" label', async () => {
@@ -551,7 +551,7 @@ describe('PropertyDefinitionsList', () => {
       ).not.toBeInTheDocument()
     })
 
-    it('priority (not locked yet, UX-201b) still shows the Edit options button', async () => {
+    it('priority (not locked yet,) still shows the Edit options button', async () => {
       mockedInvoke.mockResolvedValueOnce(
         pageOf([makePropDef('priority', 'select', '["1","2","3"]')]),
       )
@@ -578,9 +578,9 @@ describe('PropertyDefinitionsList', () => {
     })
   })
 
-  // UX-319: explain WHY the todo_state cycle is fixed via a HelpCircle
+  // Explain WHY the todo_state cycle is fixed via a HelpCircle
   // tooltip on the todo_state row only.
-  describe('todo_state cycle help (UX-319)', () => {
+  describe('todo_state cycle help', () => {
     it('renders the HelpCircle on the todo_state row', async () => {
       mockedInvoke.mockResolvedValueOnce(
         pageOf([makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')]),
@@ -610,10 +610,10 @@ describe('PropertyDefinitionsList', () => {
     })
   })
 
-  // UX-201b: saving `priority.options` must refresh the shared priority
+  // Saving `priority.options` must refresh the shared priority
   // levels cache so the rest of the app (badge colours, agenda sort,
   // filter choices) reflects the new set without a reload.
-  describe('priority level refresh (UX-201b)', () => {
+  describe('priority level refresh', () => {
     it('updates getPriorityLevels() when priority options are saved', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce(
@@ -671,10 +671,10 @@ describe('PropertyDefinitionsList', () => {
     })
   })
 
-  // UX-339 — inline JSON validation in the options editor. The Save button
+  // Inline JSON validation in the options editor. The Save button
   // is disabled and an inline error is rendered when the input does not
   // parse as JSON. Empty input is treated as valid (clears options).
-  describe('inline options JSON validation (UX-339)', () => {
+  describe('inline options JSON validation', () => {
     it('empty input shows no error and Save is enabled', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce(
@@ -748,8 +748,8 @@ describe('PropertyDefinitionsList', () => {
     })
   })
 
-  // ── PEND-23 M3: PopoverContent labelled for screen-reader users ─────
-  describe('Edit options popover aria-label (PEND-23 M3)', () => {
+  // ── PopoverContent labelled for screen-reader users ─────
+  describe('Edit options popover aria-label', () => {
     it('labels the open popover with propertiesView.editOptionsPopoverLabel', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce(

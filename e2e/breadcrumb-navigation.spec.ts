@@ -1,8 +1,8 @@
 /**
- * E2E coverage for the path-style `<Breadcrumb>` primitive (FEAT-13).
+ * E2E coverage for the path-style `<Breadcrumb>` primitive.
  *
  * Two consumer surfaces use the primitive — both must keep working through
- * the FEAT-13 visual redesign (text-link styling, `aria-current="page"` on
+ * The visual redesign (text-link styling, `aria-current="page"` on
  * the final crumb):
  *
  * 1. **`BlockZoomBar`** — the zoom trail (`Home › Ancestor › … › Current`)
@@ -12,7 +12,7 @@
  *    `Ctrl+Shift+ArrowRight` indent shortcut), zoom into the leaf, and
  *    assert: (a) the breadcrumb `<nav>` renders with Home + 3 ancestor
  *    crumbs (4 visible crumbs total — Home is the leading icon), (b) the
- *    final crumb carries `aria-current="page"` per FEAT-13, (c) clicking
+ * Final crumb carries `aria-current="page"` per (c) clicking
  *    an intermediate `[data-zoom-crumb]` element navigates the zoom level
  *    to that ancestor (the new active crumb's id matches the clicked
  *    ancestor's block id).
@@ -27,18 +27,18 @@
  *
  * Selectors:
  *   - `[data-zoom-crumb]`        — every crumb in the BlockZoomBar trail
- *                                   (preserved from UX-215 by the primitive)
+ * (preserved by the primitive)
  *   - `[data-breadcrumb-crumb]`  — every crumb across both surfaces
- *   - `[aria-current="page"]`    — final crumb, FEAT-13 ARIA value
+ * `[aria-current="page"]` — final crumb, ARIA value
  *
- * Pre-FEAT-13 the breadcrumb had no e2e coverage at all
+ * Pre- the breadcrumb had no e2e coverage at all
  * (`grep -ri "breadcrumb\|zoom-crumb\|data-breadcrumb" e2e/` returned empty);
  * this spec is the first.
  */
 
 import { expect, focusBlockById, openPage, test, waitForBoot } from './helpers'
 
-test.describe('Breadcrumb navigation — BlockZoomBar zoom trail (FEAT-13)', () => {
+test.describe('Breadcrumb navigation — BlockZoomBar zoom trail', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -157,7 +157,7 @@ test.describe('Breadcrumb navigation — BlockZoomBar zoom trail (FEAT-13)', () 
     await expect(crumbs).toHaveCount(3)
 
     // The final crumb is the active one — it must be a span with
-    // aria-current="page" (FEAT-13 visual smoke check).
+    // Aria-current="page" (visual smoke check).
     const activeCrumb = breadcrumbNav.locator('[aria-current="page"]')
     await expect(activeCrumb).toBeVisible()
     await expect(activeCrumb).toHaveAttribute('data-zoom-crumb', leafId ?? '')
@@ -182,7 +182,7 @@ test.describe('Breadcrumb navigation — BlockZoomBar zoom trail (FEAT-13)', () 
   })
 })
 
-test.describe('Breadcrumb navigation — PageHeader namespace path (FEAT-13)', () => {
+test.describe('Breadcrumb navigation — PageHeader namespace path', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

@@ -18,7 +18,7 @@ const CONTENT_V2: &str = "draft version 2";
 /// Create a fresh SQLite pool with migrations applied (temp directory).
 ///
 /// Seeds `BLOCK_A` and `BLOCK_B` into the `blocks` table so that the
-/// FK introduced by migration 0038 (M-93,
+/// FK introduced by migration 0038 (
 /// `block_drafts.block_id REFERENCES blocks(id) ON DELETE CASCADE`)
 /// is satisfied for every `save_draft(.., BLOCK_A | BLOCK_B, ..)` call
 /// in this module. Tests that need additional ad-hoc block ids must
@@ -34,7 +34,7 @@ async fn test_pool() -> (SqlitePool, TempDir) {
 }
 
 /// Insert a stub `blocks` row so a draft can be saved for `block_id`
-/// without violating the M-93 FK. Idempotent (`INSERT OR IGNORE`).
+/// Without violating the FK. Idempotent (`INSERT OR IGNORE`).
 async fn seed_block(pool: &SqlitePool, block_id: &str) {
     sqlx::query(
         "INSERT OR IGNORE INTO blocks (id, block_type, content, position) \
@@ -573,13 +573,13 @@ async fn flush_draft_when_delete_draft_fails_after_op_commit() {
     );
 }
 
-// ── sweep_orphan_drafts (L-135) ─────────────────────────────────────
+// ── sweep_orphan_drafts ─────────────────────────────────────
 
 /// Seed two drafts:
 ///   * `BLOCK_A` — backed by a live block row (must survive the sweep)
 ///   * a soft-deleted block id — draft must be removed
 ///
-/// Migration 0038 (M-93) added a FK from `block_drafts.block_id` to
+/// Migration 0038 added a FK from `block_drafts.block_id` to
 /// `blocks(id) ON DELETE CASCADE`, so the historical "phantom block id
 /// with no `blocks` row" case is now schema-impossible — `save_draft`
 /// fails with `SQLITE_CONSTRAINT_FOREIGNKEY` before sweep can run.
@@ -636,7 +636,7 @@ async fn sweep_orphan_drafts_deletes_drafts_for_missing_blocks() {
 async fn sweep_orphan_drafts_returns_zero_when_all_drafts_are_live() {
     let (pool, _dir) = test_pool().await;
 
-    // BLOCK_A is auto-seeded by `test_pool` (M-93 FK).
+    // BLOCK_A is auto-seeded by `test_pool` (FK).
     save_draft(&pool, DEVICE, BLOCK_A, "live draft")
         .await
         .unwrap();
@@ -656,7 +656,7 @@ async fn sweep_orphan_drafts_no_op_on_empty_table() {
     assert_eq!(removed, 0, "empty draft table sweeps nothing");
 }
 
-/// PEND-28a M1: the boot one-shot of [`spawn_orphan_drafts_sweeper`]
+/// The boot one-shot of [`spawn_orphan_drafts_sweeper`]
 /// must drain orphan drafts produced by a previous session before any
 /// periodic tick fires. Asserts the orphan row is gone shortly after
 /// the task is spawned, then sets the shutdown flag so the loop exits.
@@ -668,7 +668,7 @@ async fn spawn_orphan_drafts_sweeper_runs_boot_one_shot() {
     let (pool, _dir) = test_pool().await;
 
     // Seed an orphan draft: parent block exists but is soft-deleted, so
-    // the M-93 FK still holds (FK references the row, not its
+    // The FK still holds (FK references the row, not its
     // `deleted_at`) but the sweeper should remove the draft.
     let soft_deleted = "01HZ0000000000000000SOFTDEL";
     sqlx::query(

@@ -307,9 +307,9 @@ async fn complete_sync_updates_peer_refs() {
     );
 }
 
-// ── PEND-24 M2: bookkeeping pair atomicity ──────────────────────────
+// ── bookkeeping pair atomicity ──────────────────────────
 
-/// PEND-24 M2: the post-session bookkeeping pair —
+/// The post-session bookkeeping pair —
 /// `peer_refs::upsert_peer_ref_in_tx` followed by `complete_sync_in_tx`
 /// — must commit atomically. Both writes share a single
 /// `BEGIN IMMEDIATE` transaction so a crash or error between them
@@ -365,7 +365,7 @@ async fn upsert_peer_ref_and_complete_sync_share_tx_commits_both_atomically() {
     );
 }
 
-/// PEND-24 M2: when the inner write fails, the whole transaction must
+/// When the inner write fails, the whole transaction must
 /// roll back — including the preceding `upsert_peer_ref_in_tx`. The
 /// peer row must NOT exist after the failure so the next session
 /// retries from a clean state instead of seeing a stranded row whose
@@ -373,7 +373,7 @@ async fn upsert_peer_ref_and_complete_sync_share_tx_commits_both_atomically() {
 ///
 /// The failure is forced with a SQLite trigger that calls
 /// `RAISE(ABORT)` on `UPDATE peer_refs` — the same pattern used by
-/// `set_page_aliases_in_transaction` (M-21) elsewhere in the suite.
+/// `set_page_aliases_in_transaction` elsewhere in the suite.
 #[tokio::test]
 async fn upsert_peer_ref_and_complete_sync_share_tx_rolls_back_on_inner_failure() {
     let (pool, _dir) = test_pool().await;
@@ -418,7 +418,7 @@ async fn upsert_peer_ref_and_complete_sync_share_tx_rolls_back_on_inner_failure(
     // Post-condition: the peer row must NOT exist. If the upsert had
     // committed independently, this `get` would return `Some(_)` with
     // a NULL `last_hash`, leaving the next session with a stranded
-    // peer-ref row — exactly the regression PEND-24 M2 prevents.
+    // Peer-ref row — exactly the regression prevents.
     let peer = crate::peer_refs::get_peer_ref(&pool, "peer-tx-rollback")
         .await
         .unwrap();
@@ -498,7 +498,7 @@ async fn op_transfer_from_op_record_roundtrip() {
 /// (or a `From` impl regresses to drop a field), this test fails and
 /// forces the contract to be re-asserted explicitly.
 ///
-/// `block_id` is `#[serde(skip, default)]` on `OpRecord` (L-13 sidecar
+/// `block_id` is `#[serde(skip, default)]` on `OpRecord` (sidecar
 /// not part of the wire identity), so JSON serialization elides it on
 /// both sides — this is intentional.
 #[test]
@@ -534,12 +534,12 @@ fn op_transfer_and_op_record_remain_structurally_identical_i_sync_4() {
     );
 }
 
-/// L-13: the wire-side `From<OpTransfer>` conversion must NOT parse
+/// The wire-side `From<OpTransfer>` conversion must NOT parse
 /// the payload — `apply_remote_ops` already does a validation parse
 /// and populates the sidecar from that single parse. Doing it here
 /// would double the JSON parse cost on the sync hot path (catch-up
 /// after Android resume, multi-thousand-op batches), regressing
-/// exactly the workload L-13 was filed against. Leaving the sidecar
+/// Exactly the workload was filed against. Leaving the sidecar
 /// `None` on the wire conversion is correct as long as
 /// `apply_remote_ops` (the validation-parse piggyback) runs before
 /// any code path that observes `record.block_id` for a sync'd op.
@@ -559,7 +559,7 @@ fn op_transfer_from_leaves_block_id_unpopulated_l13() {
     let record: OpRecord = transfer.into();
     assert_eq!(
         record.block_id, None,
-        "L-13: From<OpTransfer> must NOT parse — block_id sidecar is \
+        "From<OpTransfer> must NOT parse — block_id sidecar is \
          populated by `apply_remote_ops` from its existing validation \
          parse so sync stays at one parse per op (not two)"
     );
@@ -754,7 +754,7 @@ async fn orchestrator_loro_sync_without_registry_fails_session() {
 
 // ── State validation tests ──────────────────────────────────────────
 
-/// Regression test for MAINT-86: `handle_message` must not silently
+/// Regression test for `handle_message` must not silently
 /// reject stray `SnapshotOffer` messages. The snapshot catch-up
 /// sub-flow runs at the daemon layer (`sync_daemon::snapshot_transfer`)
 /// after the main loop exits with `ResetRequired`. If `SnapshotOffer`
@@ -1202,7 +1202,7 @@ async fn orchestrator_accepts_matching_peer_device_id() {
 }
 
 // ======================================================================
-// BUG-27 — orchestrator refuses to record sync with empty peer_id
+// Orchestrator refuses to record sync with empty peer_id
 // ======================================================================
 
 /// If a HeadExchange only contains the local device_id (peer never
@@ -1237,7 +1237,7 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
     // `head_exchange_outgoing_loro` takes the per-space LoroSync path
     // (transitioning to `StreamingOps`) instead of the empty-registry
     // short-circuit (which would transition straight to `Complete` and
-    // bypass the BUG-27 SyncComplete handler we are exercising here).
+    // Bypass the SyncComplete handler we are exercising here).
     // The block payload itself is irrelevant — we just need at least
     // one registered space.
     let state = crate::loro::shared::install_for_test();
@@ -1319,7 +1319,7 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
             .unwrap();
     assert_eq!(
         empty_peer_rows, 0,
-        "BUG-27: no peer_refs row must be created with an empty peer_id"
+        "no peer_refs row must be created with an empty peer_id"
     );
 
     materializer.shutdown();
@@ -1802,7 +1802,7 @@ async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
     materializer.shutdown();
 }
 
-// ── MAINT-21: tracing span emission ─────────────────────────────────
+// ── tracing span emission ─────────────────────────────────
 
 /// Thread-safe buffered writer for in-process log capture.
 ///
@@ -1836,7 +1836,7 @@ impl SpanBufWriter {
     }
 }
 
-/// MAINT-21: `SyncOrchestrator::handle_message` must execute inside a
+/// `SyncOrchestrator::handle_message` must execute inside a
 /// `sync_msg` span so every log line emitted during message dispatch
 /// (error events, state transitions, protocol warnings) carries the
 /// span prefix — enabling operators to correlate log lines back to the

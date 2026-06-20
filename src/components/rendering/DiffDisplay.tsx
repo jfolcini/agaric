@@ -51,19 +51,19 @@ function findScrollableAncestor(el: HTMLElement | null): HTMLElement | null {
  * stay out of the text content (and the a11y tree) — the <ins>/<del> tags
  * already convey the semantics to assistive tech.
  *
- * UX-265 sub-fix 5: when the diff has more than {@link LARGE_DIFF_THRESHOLD}
+ * Sub-fix 5: when the diff has more than {@link LARGE_DIFF_THRESHOLD}
  * spans, the first {@link COLLAPSED_SPAN_COUNT} are shown by default and a
  * `t('diff.showMore')` button reveals the rest. Click the same button
  * (now `t('diff.collapse')`) to re-collapse.
  *
- * UX-275 sub-fix 1: the diff is wrapped in a labelled region and exposes
+ * Sub-fix 1: the diff is wrapped in a labelled region and exposes
  * prev/next "hunk" navigation. A *hunk* is a maximal run of consecutive spans
  * whose `tag !== 'Equal'` — i.e. a contiguous patch of changes flanked by
  * unchanged context. Buttons step through hunks and `scrollIntoView` the
  * first span of the active hunk so large diffs are no longer one
  * impenetrable paragraph for keyboard / SR users.
  *
- * PEND-17 Part A: the active hunk receives a visible ring so prev/next have
+ * Part A: the active hunk receives a visible ring so prev/next have
  * obvious feedback; `scrollIntoView` is skipped when the target is already
  * fully visible in its scrollable ancestor; the nav is hidden entirely for
  * single-hunk diffs (nothing to navigate); the counter sits to the left of

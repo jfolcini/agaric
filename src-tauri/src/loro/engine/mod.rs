@@ -157,7 +157,7 @@ pub fn peer_id_for_epoch(device_id: &str, epoch: u64) -> PeerID {
 }
 
 /// **Legacy** top-level LoroMap key holding the per-block sub-maps from
-/// the pre-PEND-80-Phase-3 flat-map engine model (`loro_doc.getMap("blocks")`
+/// The pre--Phase-3 flat-map engine model (`loro_doc.getMap("blocks")`
 /// -> `LoroMap<block_id, BlockData>`, where `BlockData` carried the
 /// `parent_id`/`position` scalars directly).
 ///
@@ -168,7 +168,7 @@ pub fn peer_id_for_epoch(device_id: &str, epoch: u64) -> PeerID {
 /// root — the block hierarchy is the tree at [`BLOCKS_TREE_ROOT`].
 const LEGACY_BLOCKS_ROOT: &str = "blocks";
 
-/// Top-level [`LoroTree`] key holding the block hierarchy (PEND-80 Phase 3).
+/// Top-level [`LoroTree`] key holding the block hierarchy (Phase 3).
 ///
 /// Each block is a tree node (`TreeID`); the node's **meta map**
 /// (`tree.get_meta(node)`) carries the scalar fields ([`FIELD_BLOCK_ID`],
@@ -265,12 +265,12 @@ const FIELD_SIBLING_ORDER_V: &str = "sibling_order_v";
 const SIBLING_ORDER_VERSION: i64 = 1;
 
 /// Engine on-disk format version. `1` = the legacy flat-map block model
-/// (no longer supported); `2` = the [`LoroTree`] block hierarchy (PEND-80
+/// (no longer supported); `2` = the [`LoroTree`] block hierarchy (
 /// Phase 3). The v1→v2 forward-migration was retired in #332 once every
 /// persisted snapshot had been re-saved as v2; [`LoroEngine::import`] now
 /// rejects a stray v1 snapshot loudly via
 /// [`LoroEngine::reject_legacy_v1_snapshot`] instead of migrating it. A future
-/// protocol-version handshake (PEND-81) may gate raw-byte merges across
+/// Protocol-version handshake may gate raw-byte merges across
 /// formats; the maintainer does not sync today.
 ///
 /// #1584: this version is now *stamped* into [`ENGINE_META_ROOT`] under
@@ -302,13 +302,13 @@ pub struct BlockSnapshot {
     pub position: i64,
 }
 
-/// A property value as the engine stores it natively (PEND-80 §2.1).
+/// A property value as the engine stores it natively.
 ///
 /// `Num`/`Bool` are persisted as native `LoroValue::Double`/`Bool` so the
 /// engine is type-lossless; `Str` covers text/date/ref/select (all
 /// `LoroValue::String` in Loro — disambiguated at the SQL projection by
 /// `property_definitions.value_type`; this is the encoding chosen for the
-/// open PEND-80 §8 Q5, kept reversible and migration-free). `Null` is an
+/// Open kept reversible and migration-free). `Null` is an
 /// explicit clear, distinct from a key being absent.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PropertyValue {
@@ -385,7 +385,7 @@ impl PropertyValue {
 /// Production-side wrapper around a `LoroDoc`.  Owns one document per
 /// space (per SPIKE-REPORT.md §4.1 — per-space-doc design).
 ///
-/// ## Block hierarchy: [`LoroTree`] (PEND-80 Phase 3)
+/// ## Block hierarchy: [`LoroTree`] (Phase 3)
 ///
 /// Blocks are a [`LoroTree`] at [`BLOCKS_TREE_ROOT`]. `create`/`move`/
 /// `delete`/`purge` map to tree ops; the parent is the tree structure, so
@@ -408,7 +408,7 @@ impl PropertyValue {
 /// the old `midpointPosition`/`computePosition` frontend arithmetic is gone.
 /// Phase-3's original deferral of fractional reorder (§3a "open risk #1") is
 /// resolved here. Cross-peer reorder convergence under future sync is the one
-/// remaining open question (PEND-81).
+/// Remaining open question.
 ///
 /// ## `block_id ↔ TreeID` indirection
 ///
@@ -527,7 +527,7 @@ impl LoroEngine {
 // -----------------------------------------------------------------
 
 /// Tree slot/position mechanics, the `block_id -> TreeID` index, and the
-/// pending-parent reconciler (PEND-80 Phase 3).
+/// Pending-parent reconciler (Phase 3).
 mod tree;
 
 /// One-time legacy (pre-#400) sibling-order migration cluster.
@@ -745,7 +745,7 @@ fn list_find_string(list: &LoroList, needle: &str) -> Option<usize> {
 mod tests {
     use super::peer_id_from_device_id;
 
-    // PEND-80 §2.1: the engine stores property values with their native type
+    // The engine stores property values with their native type
     // (Num/Bool) and round-trips them losslessly via `read_all_properties_typed`,
     // while the legacy string path stays back-compatible.
     #[test]
@@ -1402,7 +1402,7 @@ mod op_coverage_tests {
             "an alive block must read back deleted_at = None"
         );
         // After delete, the real timestamp round-trips losslessly
-        // (PEND-80 Phase 2 — was a fixed marker before). #668: production
+        // (Phase 2 — was a fixed marker before). #668: production
         // writes epoch-ms decimal strings (`created_at.to_string()`), not
         // RFC-3339 — the fixture must match that wire format.
         engine
@@ -1797,7 +1797,7 @@ mod sync_vv_tests {
     }
 }
 
-/// PEND-80 Phase 3 — LoroTree block hierarchy: tree-op behaviour, the
+/// Phase 3 — LoroTree block hierarchy: tree-op behaviour, the
 /// flat-map → tree snapshot migration, and concurrent-move convergence.
 #[cfg(test)]
 mod tree_tests {

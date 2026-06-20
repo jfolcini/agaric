@@ -3,7 +3,7 @@
  *
  * Agaric does not use a router (Tauri WebView, no react-router). The
  * Settings panel however benefits from `?settings=keyboard` style links
- * for support / sharing / bookmarking purposes (UX-276). These helpers
+ * For support / sharing / bookmarking purposes. These helpers
  * implement the smallest viable surface — read + write a single
  * `settings` query param via `history.replaceState`, never push.
  *

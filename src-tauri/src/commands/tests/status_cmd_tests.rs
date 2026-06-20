@@ -26,7 +26,7 @@ async fn get_status_returns_initial_metrics() {
         status.total_background_dispatched, 0,
         "fresh materializer should have zero background ops"
     );
-    // MAINT-24: new fields exposed
+    // New fields exposed
     assert_eq!(status.bg_dropped, 0, "fresh materializer drops zero tasks");
     assert_eq!(
         status.bg_deduped, 0,

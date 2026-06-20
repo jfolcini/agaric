@@ -1,10 +1,10 @@
 /**
  * useAliasResolution — supplements FTS results with `[[alias]]` matches.
  *
- * PEND-30 D-3 — extracted from `SearchPanel.tsx` (lines 193-228 of the
+ * D-3 — extracted from `SearchPanel.tsx` (lines 193-228 of the
  * original 672-line file). Behaviour-preserving lift: the effect body,
  * the cancellation-flag pattern, the `currentSpaceId` scoping
- * (PEND-35 Tier 1.2), and the dedup-vs-results guard are all
+ *and the dedup-vs-results guard are all
  * unchanged.
  *
  * Returns `{ aliasMatch, aliasQuery }` for the caller to render. When
@@ -51,7 +51,7 @@ export function useAliasResolution(
   const trimmed = query.trim()
   const isEmpty = trimmed.length === 0
 
-  // FE-12 — resolution depends only on the query + space, NOT on the
+  // Resolution depends only on the query + space, NOT on the
   // `results` array. Keying the effect on `results` re-fired the alias
   // IPC (and a getBlock) on every pagination / refetch identity change.
   // The "already in the result list" suppression is a cheap render-time
@@ -63,9 +63,9 @@ export function useAliasResolution(
       return
     }
     let cancelled = false
-    // PEND-35 Tier 1.2 — pass `spaceId: currentSpaceId` so an alias
+    // Pass `spaceId: currentSpaceId` so an alias
     // pointing at a foreign-space page does not surface here. Mirrors
-    // the FEAT-3p4 active-space scoping the prefix picker already uses.
+    // The active-space scoping the prefix picker already uses.
     resolvePageByAlias({ alias: trimmed, spaceId: currentSpaceId })
       .then(async (result) => {
         if (cancelled) return
@@ -121,7 +121,7 @@ export function useAliasResolution(
     return { aliasMatch: null, aliasQuery: '' }
   }
 
-  // FE-12 — hide the card when the resolved page already appears in the
+  // Hide the card when the resolved page already appears in the
   // result list. Done at render (not in the resolution effect) so a
   // changing `results` array no longer re-triggers the IPC.
   if (aliasMatch && results.some((r) => r.id === aliasMatch.id)) {

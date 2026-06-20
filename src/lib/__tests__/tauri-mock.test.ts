@@ -35,7 +35,7 @@ function invoke(cmd: string, args: Record<string, unknown> = {}): unknown {
   return ipcHandler(cmd, args)
 }
 
-// TEST-31: Pin the clock to a fixed non-midnight-boundary moment so that
+// Pin the clock to a fixed non-midnight-boundary moment so that
 // any `new Date()` calls in the mock's seed code and this file's assertions
 // always see the same YYYY-MM-DD / week boundaries. Prevents cross-midnight
 // flakes on long CI shards or when tests run across a date rollover.
@@ -2197,7 +2197,7 @@ describe('compute_edit_diff', () => {
 // ---------------------------------------------------------------------------
 
 describe('property definition commands', () => {
-  // M-85: `list_property_defs` is paginated. The mock returns a
+  // `list_property_defs` is paginated. The mock returns a
   // `PageResponse<PropertyDefinition>` envelope; tests destructure
   // `.items` and ignore the cursor (mock fixture is single-page).
   it('list_property_defs returns seed definitions', () => {
@@ -2437,7 +2437,7 @@ describe('get_device_id', () => {
 
 describe('start_pairing', () => {
   it('returns pairing info with passphrase and qr_svg', () => {
-    // M-34: PairingInfo carries only passphrase + qr_svg. mDNS owns
+    // PairingInfo carries only passphrase + qr_svg. mDNS owns
     // discovery + address resolution end-to-end, so the response has no
     // host/port fields.
     const result = invoke('start_pairing') as Record<string, unknown>
@@ -2586,9 +2586,9 @@ describe('delete_attachment', () => {
 // ---------------------------------------------------------------------------
 
 describe('list_projected_agenda', () => {
-  it('returns an empty cursor-paginated page (M-25)', () => {
+  it('returns an empty cursor-paginated page', () => {
     // The real backend returns `PageResponse<ProjectedAgendaEntry>` after
-    // M-25 cursor pagination. The mock must match — handlers that read
+    // Cursor pagination. The mock must match — handlers that read
     // `response.items` (e.g. `useDuePanelData`) crash on a bare-array stub.
     const result = invoke('list_projected_agenda', {
       startDate: '2026-01-01',
@@ -2714,7 +2714,7 @@ describe('import_markdown', () => {
 })
 
 // ---------------------------------------------------------------------------
-// LinkMetadata commands (TEST-15)
+// LinkMetadata commands
 // ---------------------------------------------------------------------------
 
 describe('LinkMetadata commands', () => {
@@ -2752,7 +2752,7 @@ describe('LinkMetadata commands', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Default case warning (TEST-16)
+// Default case warning
 // ---------------------------------------------------------------------------
 
 describe('default case warning', () => {
@@ -2808,7 +2808,7 @@ describe('list_undated_tasks', () => {
 })
 
 // ---------------------------------------------------------------------------
-// MAINT-160: MCP read-only handlers
+// MCP read-only handlers
 // ---------------------------------------------------------------------------
 
 describe('get_mcp_status', () => {
@@ -2846,7 +2846,7 @@ describe('mcp_disconnect_all', () => {
 })
 
 // ---------------------------------------------------------------------------
-// MAINT-160: MCP read-write handlers
+// MCP read-write handlers
 // ---------------------------------------------------------------------------
 
 describe('get_mcp_rw_status', () => {
@@ -2880,7 +2880,7 @@ describe('mcp_rw_disconnect_all', () => {
 })
 
 // ---------------------------------------------------------------------------
-// MAINT-160: trash_descendant_counts
+// Trash_descendant_counts
 // ---------------------------------------------------------------------------
 
 describe('trash_descendant_counts', () => {
@@ -2912,7 +2912,7 @@ describe('trash_descendant_counts', () => {
 })
 
 // ---------------------------------------------------------------------------
-// PEND-35 Tier 2.8: first_child_for_blocks
+// First_child_for_blocks
 // ---------------------------------------------------------------------------
 
 describe('first_child_for_blocks', () => {
@@ -2968,7 +2968,7 @@ describe('first_child_for_blocks', () => {
 })
 
 // ---------------------------------------------------------------------------
-// MAINT-160: quick_capture_block
+// Quick_capture_block
 // ---------------------------------------------------------------------------
 
 describe('quick_capture_block', () => {
@@ -2998,7 +2998,7 @@ describe('quick_capture_block', () => {
 })
 
 // ---------------------------------------------------------------------------
-// MAINT-226 — scope-filter parity across every scope-aware mock handler.
+// Scope-filter parity across every scope-aware mock handler.
 //
 // Each backend command listed in `src-tauri/src/commands/*.rs` whose
 // signature includes `scope: SpaceScope` MUST be honoured by the matching
@@ -3014,7 +3014,7 @@ describe('quick_capture_block', () => {
 // treats as global) should INCLUDE it.
 // ---------------------------------------------------------------------------
 
-describe('MAINT-226 — scope-filter parity', () => {
+describe('scope-filter parity', () => {
   const SPACE_OTHER = 'SPACE_OTHER_TEST'
 
   /** Seed a foreign-space page + content block referencing PAGE_GETTING_STARTED. */
@@ -3334,7 +3334,7 @@ describe('MAINT-226 — scope-filter parity', () => {
 
   // -------------------------------------------------------------------------
   // Sanity: count_backlinks_batch / resolve_page_by_alias /
-  // list_page_aliases_by_prefix already filtered prior to MAINT-226. We
+  // List_page_aliases_by_prefix already filtered prior to. We
   // include a single re-verification here so a future regression that
   // breaks ALL three is still caught by this single audit block.
   // -------------------------------------------------------------------------
@@ -3369,7 +3369,7 @@ describe('MAINT-226 — scope-filter parity', () => {
 
 // ---------------------------------------------------------------------------
 // list_pages_with_metadata — compound-filter narrowing + real total_count
-// (PEND-58d T-M1). Each filter primitive mirrors the REAL backend semantics
+// (T-M1). Each filter primitive mirrors the REAL backend semantics
 // in src-tauri/src/filters/primitive.rs; these assert the mock narrows the
 // seeded page set and reports a paginatable-independent total_count.
 // ---------------------------------------------------------------------------
@@ -3530,7 +3530,7 @@ describe('list_pages_with_metadata — compound filters', () => {
   })
 
   it('reports total_count on the first page and null on cursor pages (D6 null-retention)', () => {
-    // PEND-58d D6 — the backend computes `total_count` only on the first
+    // The backend computes `total_count` only on the first
     // page (cursor == null); subsequent cursor pages return null and the
     // frontend (`PageBrowser`'s `displayTotalCount`) retains the first value.
     const first = invoke('list_pages_with_metadata', {
@@ -3609,7 +3609,7 @@ describe('list_pages_with_metadata — compound filters', () => {
 
 // ---------------------------------------------------------------------------
 // list_pages_with_metadata — inbound link count + same-page exclusion
-// (PEND-58e E12). The mock's `pageLinkStats` mirrors the backend's
+// The mock's `pageLinkStats` mirrors the backend's
 // `pages_cache.inbound_link_count` (migration 0070): an edge counts toward a
 // page's inbound total ONLY when its source belongs to a DIFFERENT page.
 // ---------------------------------------------------------------------------

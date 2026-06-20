@@ -6,7 +6,7 @@
  * callers don't repeat the pill / border / focus styles. Single-select
  * by default; pass `type="multiple"` for multi-select.
  *
- * Used by the per-block history panel (PEND-17 Part B) for the
+ * Used by the per-block history panel (Part B) for the
  * t('history.diffMode.justThisChange') / t('history.diffMode.comparedToCurrent')
  * diff-mode switcher.
  */

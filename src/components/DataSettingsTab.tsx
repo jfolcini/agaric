@@ -1,5 +1,5 @@
 /**
- * DataSettingsTab — Import/Export data management (UX-144).
+ * DataSettingsTab — Import/Export data management.
  *
  * Provides:
  *  - Import: select .md files to create pages from Logseq/Markdown content
@@ -23,7 +23,7 @@ import { importMarkdown } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 
 /**
- * UX-385 — sanitize a space's display name for use inside an export
+ * Sanitize a space's display name for use inside an export
  * filename. Lowercases, collapses any run of non-alphanumeric characters
  * (whitespace, punctuation, emoji, …) into a single `-`, and trims
  * leading/trailing dashes so we never emit `agaric-export--2025-01-01.zip`.
@@ -47,25 +47,25 @@ export function DataSettingsTab(): React.ReactElement {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
-  // UX-283: per-file progress for multi-file imports — shows
+  // Per-file progress for multi-file imports — shows
   // `t('data.importingProgress', { index, total, name })` while the loop runs.
   const [currentFileIndex, setCurrentFileIndex] = useState<number | null>(null)
   const [currentFileName, setCurrentFileName] = useState('')
   const [totalFiles, setTotalFiles] = useState(0)
-  // UX-384: cumulative blocks created and bytes processed across files
+  // Cumulative blocks created and bytes processed across files
   // already imported in the current run. Surfaced as a secondary line so
   // a multi-file run with one large file still shows forward motion
   // between file-index ticks.
   const [blocksProcessed, setBlocksProcessed] = useState(0)
   const [bytesProcessed, setBytesProcessed] = useState(0)
-  // #128 (PEND-38 / PEND-06 Tier 3) — per-block progress streamed from the
+  // #128 — per-block progress streamed from the
   // backend over a Channel for the file currently being imported. Lets a
   // single large file show forward motion (blocks N of M) instead of a
   // stalled file-level bar. Reset at the start of each file.
   const [currentFileBlocksDone, setCurrentFileBlocksDone] = useState(0)
   const [currentFileBlocksTotal, setCurrentFileBlocksTotal] = useState(0)
   const [exporting, setExporting] = useState(false)
-  // PEND-35 Tier 1.1 — stable id wires the disabled-button's
+  // Stable id wires the disabled-button's
   // `aria-describedby` to the visible `t('data.importSpaceNotReady')`
   // hint, so screen-reader users hear WHY the button is unactionable.
   // The hint also fixes the mobile/touch path: the `title` attribute
@@ -78,7 +78,7 @@ export function DataSettingsTab(): React.ReactElement {
       const files = e.target.files
       if (!files || files.length === 0) return
 
-      // PEND-35 Tier 1.1 — `import_markdown` now requires a space_id;
+      // `import_markdown` now requires a space_id;
       // the backend rejects empty / unknown ULIDs with
       // `AppError::Validation`. The Choose-Files button is disabled
       // when `currentSpaceId` is null (see the `disabled` prop below),
@@ -181,7 +181,7 @@ export function DataSettingsTab(): React.ReactElement {
     try {
       const blob = await exportGraphAsZip(currentSpaceId)
       const date = new Date().toISOString().slice(0, 10)
-      // UX-385: include the active space name so a ZIP downloaded weeks
+      // Include the active space name so a ZIP downloaded weeks
       // ago can still be matched to the space it came from. Skip the
       // `<spaceName>-` segment when no space is active or the sanitized
       // name is empty (e.g. an all-emoji name) to avoid double-dashes.
@@ -226,7 +226,7 @@ export function DataSettingsTab(): React.ReactElement {
               variant="outline"
               size="sm"
               onClick={() => fileInputRef.current?.click()}
-              // PEND-35 Tier 1.1 — `import_markdown` now requires a
+              // `import_markdown` now requires a
               // valid `space_id`; gate the button on the SpaceStore
               // having an active space so we never call the IPC with
               // an empty string. On the rare first-boot path before
@@ -245,7 +245,7 @@ export function DataSettingsTab(): React.ReactElement {
             </Button>
           </div>
           {currentSpaceId == null && (
-            // PEND-35 Tier 1.1 — visible inline hint on the
+            // Visible inline hint on the
             // pre-bootstrap disabled state. `role="status"` +
             // `aria-live="polite"` so screen readers announce the
             // reason once the SpaceStore hydration kicks the user
@@ -275,7 +275,7 @@ export function DataSettingsTab(): React.ReactElement {
                   name: currentFileName,
                 })}
               </p>
-              {/* UX-384: secondary line showing cumulative blocks and
+              {/* secondary line showing cumulative blocks and
                   bytes processed so far. Hidden on the very first file
                   (before any IPC has returned) to avoid showing
                   "0 blocks · 0 B" — once at least one file completes,
@@ -292,7 +292,7 @@ export function DataSettingsTab(): React.ReactElement {
                   })}
                 </p>
               )}
-              {/* UX-12: paired progress bar so users get a visual signal
+              {/* paired progress bar so users get a visual signal
                   alongside the textual "Importing N of M" message. No
                   design-system Progress primitive yet — use the native
                   <progress> element. */}
@@ -302,7 +302,7 @@ export function DataSettingsTab(): React.ReactElement {
                 value={currentFileIndex}
                 max={totalFiles}
               />
-              {/* #128 (PEND-38 / PEND-06 Tier 3) — intra-file per-block
+              {/* #128 () — intra-file per-block
                   progress streamed over a Channel. Shown only once the
                   backend reports a block count (>0) for the current file,
                   so a small / headings-only file doesn't flash an empty

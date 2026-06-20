@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────
-// PEND-47 — generate an OpenVEX 0.2.0 JSON document for the current
+// Generate an OpenVEX 0.2.0 JSON document for the current
 // release from `src-tauri/deny.toml`'s `[advisories].ignore` array.
 //
 // Why this exists: every release ships per-platform SBOMs (SPDX-JSON +
@@ -42,7 +42,7 @@ const AUTHOR = 'Agaric maintainers <jfolcini86@gmail.com>'
 // Rationale-substring → OpenVEX (status, justification) mapping.
 // Tested case-insensitively. First match wins. An entry that matches
 // nothing falls through to `under_investigation` and prints a warning
-// to stderr — does not fail the build (per PEND-47 spec).
+// To stderr — does not fail the build (spec).
 const STATUS_MAP = [
   // Transitive / binding-only dependencies — vulnerable code is reachable
   // in principle but not from Agaric's call graph because the dep ships

@@ -79,7 +79,7 @@ export function TemplatesView(): React.ReactElement {
     setLoading(true)
     try {
       const pages = await loadTemplatePagesWithPreview(currentSpaceId)
-      // PEND-35 Tier 2.8 — `blockType: 'page'` is pushed into SQL via
+      // `blockType: 'page'` is pushed into SQL via
       // Tier 3.4's `query_by_property` push-down filter so non-page
       // rows never cross the IPC boundary.
       // The membership cap MUST match `loadTemplatePagesWithPreview`'s
@@ -118,7 +118,7 @@ export function TemplatesView(): React.ReactElement {
     if (!name) return
     setIsCreating(true)
     try {
-      // BUG-1 / H-3b — route page creation through `createPageInSpace`
+      // / H-3b — route page creation through `createPageInSpace`
       // so templates land with their `space` ref property set
       // atomically. The legacy `createBlock({ blockType: 'page' })`
       // call leaked unscoped templates that disappeared from the
@@ -160,7 +160,7 @@ export function TemplatesView(): React.ReactElement {
     useTabsStore.getState().navigateToPage(id, content)
   }, [])
 
-  // UX-248 — Unicode-aware fold.
+  // Unicode-aware fold.
   const filtered = templates.filter((tpl) => matchesSearchFolded(tpl.content, search))
 
   return (

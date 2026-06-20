@@ -40,7 +40,7 @@ export function renderBlockLink(
   const linkId = node.attrs.id
   const title = ctx.resolveBlockTitle?.(linkId) ?? `[[${linkId.slice(0, 8)}...]]`
   const status = ctx.resolveBlockStatus?.(linkId) ?? 'active'
-  // PEND-83 Bug 1: inline `[[link]]` chip renders the LEAF only. The full
+  // Bug 1: inline `[[link]]` chip renders the LEAF only. The full
   // path stays available via the `title=""` tooltip — the chip lives inside
   // flowing text where a full namespaced path overflows the line.
   const { label } = getPageDisplayName(title, 'leaf')

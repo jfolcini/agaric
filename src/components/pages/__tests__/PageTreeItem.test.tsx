@@ -97,7 +97,7 @@ describe('PageTreeItem', () => {
       expect(screen.queryByRole('button', { name: /^Delete / })).not.toBeInTheDocument()
     })
 
-    it('delete button has focus-visible:opacity-100 for keyboard discoverability (UX-261)', () => {
+    it('delete button has focus-visible:opacity-100 for keyboard discoverability', () => {
       const onDelete = vi.fn()
       const node = makeLeaf('Deletable', 'Deletable', 'P1')
       render(<PageTreeItem node={node} {...defaultProps} onDelete={onDelete} />)
@@ -262,7 +262,7 @@ describe('PageTreeItem', () => {
     })
   })
 
-  describe('UX-333 — Plus buttons are visible on desktop without hover', () => {
+  describe('Plus buttons are visible on desktop without hover', () => {
     it('namespace Plus button is not hidden behind opacity-0/group-hover', () => {
       const child = makeLeaf('child', 'ns/child', 'P1')
       const node = makeNamespace('ns', 'ns', [child])
@@ -284,7 +284,7 @@ describe('PageTreeItem', () => {
     })
   })
 
-  describe('UX-1 — focus-visible ring + aria-labels on hand-rolled buttons', () => {
+  describe('focus-visible ring + aria-labels on hand-rolled buttons', () => {
     const ringClasses = ['focus-ring-visible']
 
     it('leaf page button has focus-visible ring tokens', () => {

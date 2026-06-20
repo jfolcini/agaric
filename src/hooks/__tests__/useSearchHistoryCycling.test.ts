@@ -1,5 +1,5 @@
 /**
- * PEND-55 — tests for `useSearchHistoryCycling`.
+ * Tests for `useSearchHistoryCycling`.
  *
  * Coverage:
  * - `↑` when input empty fills with most-recent entry.

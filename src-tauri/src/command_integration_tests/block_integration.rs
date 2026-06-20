@@ -694,7 +694,7 @@ async fn deleted_blocks_excluded_from_list_blocks() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1260,7 +1260,7 @@ async fn purge_block_removes_tags_properties_attachments_links() {
     assert!(exists.is_none(), "blocks row must be purged");
 }
 
-// BUG-46 regression: `purge_block_inner` previously only cleaned
+// Regression: `purge_block_inner` previously only cleaned
 // `block_tag_inherited` rows whose `block_id` or `inherited_from` columns
 // pointed into the descendant set, leaving rows whose `tag_id` column
 // referenced the purged tag — which violates the FK when the tag row is
@@ -1445,7 +1445,7 @@ async fn list_blocks_top_level_returns_root_blocks() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1485,7 +1485,7 @@ async fn list_blocks_with_parent_id_returns_children_only() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1520,7 +1520,7 @@ async fn list_blocks_with_block_type_filter_returns_matching_type() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1545,7 +1545,7 @@ async fn list_blocks_empty_db_returns_empty_page_no_more() {
         None,
         None,
         None,
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
@@ -1618,7 +1618,7 @@ async fn pagination_walk_all_pages_no_duplicates() {
         .unwrap();
     }
     // Drain bg dispatches before paginating (same root cause as the
-    // five flaky pagination tests fixed in #106's PR — post-MAINT-112
+    // Five flaky pagination tests fixed in #106's PR — post-
     // content creates enqueue bg ops and list_blocks_inner joins on
     // materializer-affected state).
     settle(&mat).await;
@@ -1639,7 +1639,7 @@ async fn pagination_walk_all_pages_no_duplicates() {
             None,
             cursor,
             Some(4),
-            TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+            TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
         )
         .await
         .unwrap();
@@ -1689,7 +1689,7 @@ async fn pagination_limit_1_produces_single_item_pages() {
             None,
             cursor,
             Some(1),
-            TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+            TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
         )
         .await
         .unwrap();

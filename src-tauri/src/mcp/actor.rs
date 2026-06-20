@@ -4,14 +4,14 @@
 //! the implicit [`Actor::User`]. MCP requests, by contrast, originate from an
 //! external agent identified by `clientInfo.name` in the `initialize`
 //! handshake. The dispatcher wraps each `tools/call` in
-//! `ACTOR.scope(ctx, ...)` so downstream code (activity feeds in FEAT-4d,
-//! op-log `origin` population in v2 via FEAT-4h) can discover who requested
+//! `ACTOR.scope(ctx,...)` so downstream code (activity feeds in,
+//! op-log `origin` population in v2 via) can discover who requested
 //! the operation via [`current_actor`] without threading the context through
 //! every function signature.
 //!
 //! # PII hygiene
 //!
-//! Agent names are self-reported and land in the activity feed (FEAT-4d).
+//! Agent names are self-reported and land in the activity feed.
 //! The [`Actor`] type therefore uses a **manual** `Debug` impl that logs the
 //! discriminant only (`"User"` / `"Agent"`) and suppresses the `name` field.
 //! Structured logging callsites that want the name must read it explicitly,
@@ -59,7 +59,7 @@ impl fmt::Debug for Actor {
 
 impl Actor {
     /// Render this actor as the string written into `op_log.origin`
-    /// (FEAT-4h v2). `Actor::User` → `"user"`, `Actor::Agent { name }`
+    /// (v2). `Actor::User` → `"user"`, `Actor::Agent { name }`
     /// → `"agent:<name>"`.
     ///
     /// Consumed by [`crate::op_log::append_local_op_in_tx`] via
@@ -251,7 +251,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // origin_tag — FEAT-4h slice 1
+    // Origin_tag — slice 1
     // -----------------------------------------------------------------------
 
     #[test]

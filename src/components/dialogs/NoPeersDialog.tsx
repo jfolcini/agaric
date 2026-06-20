@@ -1,5 +1,5 @@
 /**
- * NoPeersDialog — sidebar Sync click guard (BUG-2).
+ * NoPeersDialog — sidebar Sync click guard.
  *
  * The sidebar Sync button is the user's primary signpost for "I want to
  * sync now". When no devices are paired, `useSyncTrigger.syncAll()`
@@ -44,7 +44,7 @@ interface NoPeersDialogProps {
 
 /**
  * Discoverable replacement for the silent `peers.length === 0` no-op
- * (BUG-2). Pure presentational — all behaviour is driven by the parent
+ *. Pure presentational — all behaviour is driven by the parent
  * via props.
  */
 export function NoPeersDialog({

@@ -1,12 +1,12 @@
 /**
- * Tests for SearchPanel — E2E-A5 (PEND-58g): the palette→panel
+ * Tests for SearchPanel — E2E-A5: the palette→panel
  * `pendingViewQuery` handoff.
  *
  * SearchPanel's mount effect reads
  * `useCommandPaletteStore.getState().pendingViewQuery`:
  *  - non-null AND length > 0 → seed input + debouncedQuery + `searched`,
  *    fire the search, then clear the slot;
- *  - `''` (empty-string escalation seed, PEND-61 CR) → seed nothing but
+ * `''` (empty-string escalation seed) → seed nothing but
  *    STILL clear the slot.
  *
  * Unlike the capped test, we do NOT mock `usePaginatedQuery`; the real hook
@@ -29,10 +29,10 @@ import { useTabsStore } from '../../stores/tabs'
 import { useCommandPaletteStore } from '../../stores/useCommandPaletteStore'
 import { SearchPanel } from '../SearchPanel'
 
-// PEND-58f FE-3 — mirror the main SearchPanel.test.tsx virtualizer mock.
+// Mirror the main SearchPanel.test.tsx virtualizer mock.
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
-// UX-153: Mock resolvePageByAlias separately so alias-resolution calls don't
+// Mock resolvePageByAlias separately so alias-resolution calls don't
 // consume values from the FIFO invoke mock queue.
 vi.mock('../../lib/tauri', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/tauri')>()
@@ -61,7 +61,7 @@ beforeEach(() => {
     activeTabIndex: 0,
   })
   useSearchHistoryStore.setState({ bySpace: {}, historyEnabled: true })
-  // FEAT-3 Phase 2 — seed the SpaceStore so the render gets past the skeleton.
+  // Phase 2 — seed the SpaceStore so the render gets past the skeleton.
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_TEST',
     availableSpaces: [
@@ -82,7 +82,7 @@ describe('SearchPanel — pendingViewQuery handoff (E2E-A5)', () => {
   it('seeds the input and fires the search for a non-empty handoff, then clears the slot', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    // PEND-51 — the palette wrote a handoff query before the panel mounts.
+    // The palette wrote a handoff query before the panel mounts.
     useCommandPaletteStore.setState({ pendingViewQuery: 'hello' })
 
     render(<SearchPanel />)
@@ -104,10 +104,10 @@ describe('SearchPanel — pendingViewQuery handoff (E2E-A5)', () => {
     expect(useCommandPaletteStore.getState().pendingViewQuery).toBeNull()
   })
 
-  it('clears the slot but seeds nothing for an empty-string handoff (PEND-61 CR)', async () => {
+  it('clears the slot but seeds nothing for an empty-string handoff', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
-    // PEND-61 CR — the "Search everywhere" command writes `''` to land the
+    // The "Search everywhere" command writes `''` to land the
     // user on this panel with a clean input. Slot must still be cleared.
     useCommandPaletteStore.setState({ pendingViewQuery: '' })
 

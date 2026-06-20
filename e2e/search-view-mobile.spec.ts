@@ -1,5 +1,5 @@
 /**
- * E2E — PEND-58g E2E-A9: the full SearchPanel (find-in-files view) at a
+ * E2E — E2E-A9: the full SearchPanel (find-in-files view) at a
  * mobile viewport.
  *
  * `search-sheet-mobile.spec.ts` covers the mobile search SHEET (the embedded
@@ -21,7 +21,7 @@ import { expect, test, waitForBoot } from './helpers'
 // describe.
 const iPhone13 = devices['iPhone 13']
 
-test.describe('Search view — full panel at mobile viewport (PEND-58g E2E-A9)', () => {
+test.describe('Search view — full panel at mobile viewport (E2E-A9)', () => {
   test.use({
     viewport: iPhone13.viewport,
     hasTouch: iPhone13.hasTouch,

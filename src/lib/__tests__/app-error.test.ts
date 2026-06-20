@@ -1,5 +1,5 @@
 /**
- * PEND-73 Phase 2 — tests for the AppError narrowing helpers.
+ * Phase 2 — tests for the AppError narrowing helpers.
  *
  * Issue #106 — additional coverage for the discriminated `not_found`,
  * `pool_busy`, `conflict`, `database` kinds and the shared

@@ -1,5 +1,5 @@
 /**
- * E2E — PEND-58f search-view toggles (E2E-1) + invalid-regex inline error
+ * E2E — search-view toggles (E2E-1) + invalid-regex inline error
  * (E2E-2).
  *
  * The web+mock harness has no real Rust FTS/regex pipeline, so "exercise the
@@ -9,7 +9,7 @@
  *   - clicking each toggle flips its `aria-pressed` + `data-state`;
  *   - the toggle state is reflected in the IPC payload (`filter.caseSensitive`
  *     / `wholeWord` / `isRegex`) the panel sends to `search_blocks`;
- *   - regex mode is symmetric with normal mode (PEND-58g cluster-1): structured
+ * Regex mode is symmetric with normal mode (cluster-1): structured
  *     tokens are parsed out and applied as filter params, only the free-text
  *     remainder is the regex pattern;
  *   - an invalid regex surfaces inline (`search-inline-error`) and a
@@ -46,7 +46,7 @@ async function searchAndAwaitIpc(page: import('@playwright/test').Page, query: s
     .toBeGreaterThan(0)
 }
 
-test.describe('Search toggles (PEND-58f E2E-1)', () => {
+test.describe('Search toggles (E2E-1)', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
     await installIpcRecorder(page)
@@ -67,7 +67,7 @@ test.describe('Search toggles (PEND-58f E2E-1)', () => {
       await btn.click()
       await expect(btn).toHaveAttribute('aria-pressed', 'true')
       await expect(btn).toHaveAttribute('data-state', 'on')
-      // UX-15 — shape-only active dot renders when pressed.
+      // Shape-only active dot renders when pressed.
       await expect(page.getByTestId(`${testId}-active-dot`)).toBeVisible()
       // Reset so toggles don't interact across the loop.
       await btn.click()
@@ -108,11 +108,11 @@ test.describe('Search toggles (PEND-58f E2E-1)', () => {
     page,
   }) => {
     await page.getByTestId('search-toggle-regex').click()
-    // PEND-58g cluster-1 (DSL-A8 / UX-A4, decided with the user) — regex mode is
+    // Cluster-1 (decided with the user) — regex mode is
     // SYMMETRIC with normal mode: a structured token (`state:`) is parsed out of
     // the input and applied as a SQL filter; only the free-text remainder
     // ('W.*come') is forwarded as the regex pattern. This replaced the original
-    // PEND-58f contract (regex forwarded the raw string verbatim and dropped
+    // Contract (regex forwarded the raw string verbatim and dropped
     // filters), which this test used to assert. A `state:` token is used (not a
     // tag) so the assertion is synchronous — no async tag-id resolution to race.
     await searchAndAwaitIpc(page, 'W.*come state:TODO')
@@ -127,7 +127,7 @@ test.describe('Search toggles (PEND-58f E2E-1)', () => {
   })
 })
 
-test.describe('Search backend-error surface (PEND-58f E2E-2)', () => {
+test.describe('Search backend-error surface (E2E-2)', () => {
   test.afterEach(async ({ page }) => {
     await page.evaluate(() => {
       ;(window as unknown as MockErrorWindow).__clearMockErrors?.()
@@ -164,7 +164,7 @@ test.describe('Search backend-error surface (PEND-58f E2E-2)', () => {
     await expect(page.getByTestId('search-error-state')).toHaveCount(0)
   })
 
-  test('a non-regex backend error renders a visible error state (UX-2)', async ({ page }) => {
+  test('a non-regex backend error renders a visible error state', async ({ page }) => {
     await openSearchView(page)
     await page.evaluate(() => {
       ;(window as unknown as MockErrorWindow).__injectMockError?.(
@@ -177,7 +177,7 @@ test.describe('Search backend-error surface (PEND-58f E2E-2)', () => {
     await input.fill('anything')
     await input.press('Enter')
 
-    // UX-2 — generic (non-regex) failures previously left the panel blank;
+    // Generic (non-regex) failures previously left the panel blank;
     // they now render a visible, role="alert" error state.
     const errorState = page.getByTestId('search-error-state')
     await expect(errorState).toBeVisible()

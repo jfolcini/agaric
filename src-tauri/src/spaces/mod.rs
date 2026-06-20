@@ -1,4 +1,4 @@
-//! FEAT-3 Phase 1: Spaces.
+//! Phase 1: Spaces.
 //!
 //! A "space" is a top-level page block marked with `is_space = "true"` that
 //! partitions user content into independent contexts (e.g. "Personal",

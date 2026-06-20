@@ -1,5 +1,5 @@
 /**
- * Palette command registry (PEND-67 Phase 8).
+ * Palette command registry (Phase 8).
  *
  * Extracted from `CommandPalette.tsx`'s in-component `useMemo` so the
  * registry is reachable from outside the palette body. Phase 8's
@@ -115,7 +115,7 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
     labelKey: 'palette.cmdSearchEverywhere',
     category: 'action',
     icon: FileSearch,
-    // PEND-67 Phase 1 — `focusSearch` is the find-in-files chord
+    // Phase 1 — `focusSearch` is the find-in-files chord
     // (Ctrl+Shift+F by default). This command produces the same
     // outcome from the palette.
     shortcutId: 'focusSearch',

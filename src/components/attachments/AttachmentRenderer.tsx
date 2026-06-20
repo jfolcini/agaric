@@ -159,7 +159,7 @@ export interface AttachmentRendererProps {
 }
 
 /**
- * Renders a single image attachment from raw bytes (PEND-76 F2).
+ * Renders a single image attachment from raw bytes.
  *
  * The asset protocol is disabled, so we fetch the file's bytes over IPC via
  * `readAttachment`, wrap them in a `Blob`, and render the resulting

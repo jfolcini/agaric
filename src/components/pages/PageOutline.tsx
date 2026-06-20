@@ -71,7 +71,7 @@ export function PageOutline() {
 
   return (
     <Sheet>
-      {/* UX-361: pair the icon-only outline trigger with a Tooltip so the
+      {/* pair the icon-only outline trigger with a Tooltip so the
           aria-label is also discoverable by sighted mouse users on hover.
           Tooltip wraps SheetTrigger; both use Radix `Slot` (asChild) so the
           hover and click handlers compose onto the same Button. */}

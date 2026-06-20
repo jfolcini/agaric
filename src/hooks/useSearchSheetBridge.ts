@@ -87,7 +87,7 @@ function bridgeForMode(mode: SearchSheetMode): BridgeStore {
  * Returns nothing — pure side effects.
  */
 export function useSearchSheetBridge(open: boolean, mode: SearchSheetMode): void {
-  // PEND-73 Phase 4.R2 — track the most recent value the bridge wrote
+  // Phase 4.R2 — track the most recent value the bridge wrote
   // INTO the segment store. The subscription listener below mirrors
   // segment → sheet on every observed change; without this ref, our
   // own bridge.setQuery(seed) call below would echo back through the
@@ -125,7 +125,7 @@ export function useSearchSheetBridge(open: boolean, mode: SearchSheetMode): void
         return
       }
       if (q !== useSearchSheetStore.getState().query) {
-        // FE-8 — route through the `setQuery` action (single write
+        // Route through the `setQuery` action (single write
         // path) instead of a raw `setState`, so the sheet store has
         // exactly one mutator for `query`. The action is otherwise
         // dead code; this makes it the canonical write site.

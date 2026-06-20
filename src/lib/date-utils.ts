@@ -212,7 +212,7 @@ export function getTodayString(): string {
 }
 
 /**
- * BUG-48 follow-up — return the inclusive `[startDate, endDate]` range that
+ * Follow-up — return the inclusive `[startDate, endDate]` range that
  * covers the 6-week (~42-day) calendar grid centred on `date`'s month. The
  * grid begins at the first day-of-week boundary on or before the 1st of
  * `date`'s month and spans 42 consecutive days, matching what

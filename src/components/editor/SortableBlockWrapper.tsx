@@ -1,5 +1,5 @@
 /**
- * SortableBlockWrapper — per-block row wrapper for BlockListRenderer (MAINT-55).
+ * SortableBlockWrapper — per-block row wrapper for BlockListRenderer.
  *
  * Extracted from BlockListRenderer's `visibleItems.map` body so the parent's
  * cognitive complexity stays within the oxlint eslint/complexity threshold. This component owns
@@ -9,7 +9,7 @@
  *
  * Per-block action callbacks and reference resolvers used to be drilled
  * through this component verbatim. They now flow via
- * `BlockActionsProvider` / `BlockResolversProvider` (MAINT-118), so this
+ * `BlockActionsProvider` / `BlockResolversProvider`, so this
  * file no longer mentions them at all — SortableBlock reads them directly
  * from context.
  */
@@ -122,7 +122,7 @@ function SortableBlockWrapperInner({
 
   // Per-id memoized ref callback — same function identity across
   // renders for a given block.id, and unobserves the exact element
-  // on unmount (BUG-29).
+  // On unmount.
   const observeRef = viewport.createObserveRef(block.id)
 
   // #1067 — subscribe to THIS block's off-screen membership via a per-id

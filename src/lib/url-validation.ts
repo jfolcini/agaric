@@ -1,5 +1,5 @@
 /**
- * URL validation helpers for user-entered links (PEND-23 L2).
+ * URL validation helpers for user-entered links.
  *
  * Centralises the blocked-scheme denylist and the `normalizeUrl` /
  * `isAllowedUrl` pair previously inlined in `LinkEditPopover.tsx`.

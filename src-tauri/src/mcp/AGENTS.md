@@ -4,9 +4,9 @@
 
 ## Production framing = `rmcp` adapter
 
-The production path for MCP `tools/list` and `tools/call` dispatch is **`RmcpAdapter`** in `rmcp_adapter.rs` (renamed from `RmcpReadOnlyAdapter` in #693 — it serves BOTH surfaces, parameterised on `McpSurface` so `get_info` advertises the surface it actually fronts). The historical hand-rolled JSON-RPC framing in `server.rs` (`make_success`, `parse_request`, `dispatch`, `handle_*`) was deleted in MAINT-111. **Do not reintroduce hand-rolled framing**; if you need a new MCP method, add it via `rmcp`'s `ServerHandler` trait impl.
+The production path for MCP `tools/list` and `tools/call` dispatch is **`RmcpAdapter`** in `rmcp_adapter.rs` (renamed from `RmcpReadOnlyAdapter` in #693 — it serves BOTH surfaces, parameterised on `McpSurface` so `get_info` advertises the surface it actually fronts). The historical hand-rolled JSON-RPC framing in `server.rs` (`make_success`, `parse_request`, `dispatch`, `handle_*`) was deleted in. **Do not reintroduce hand-rolled framing**; if you need a new MCP method, add it via `rmcp`'s `ServerHandler` trait impl.
 
-`run_connection` in `server.rs` is the per-connection lifecycle wrapper: it owns the FEAT-4e disconnect grace period + `McpLifecycle::active_connections` counter, then delegates the wire loop to `adapter.serve(stream)`. **Touch the lifecycle wrapper for connection-level concerns (grace, listener teardown); touch the adapter for tool dispatch.**
+`run_connection` in `server.rs` is the per-connection lifecycle wrapper: it owns the disconnect grace period + `McpLifecycle::active_connections` counter, then delegates the wire loop to `adapter.serve(stream)`. **Touch the lifecycle wrapper for connection-level concerns (grace, listener teardown); touch the adapter for tool dispatch.**
 
 ## `ToolRegistry` trait — the IPC seam
 
@@ -63,7 +63,7 @@ This is mapped from `AppError::NotFound` by `app_error_to_rmcp` in `rmcp_adapter
 
 When a tool errors, the activity feed clips the error message to 200 Unicode scalars (`ERROR_CLIP_CAP` in `mcp/server.rs`). Char-based clipping always lands on a UTF-8 boundary; safe to serialise as JSON. Long error chains don't bloat the feed.
 
-## L-113 disconnect grace period
+## disconnect grace period
 
 When `mcp_disconnect_all` fires while a `tools/call` is mid-flight, `run_connection`'s `select!` wraps the in-flight future in `tokio::time::timeout(MCP_DISCONNECT_GRACE_PERIOD, fut)` so the call gets up to 2 s to return its reply before the stream is dropped. **The DB layer commits before any further `.await`, so cancellation safety is preserved either way** — the grace period only affects whether the agent sees the reply / whether the activity feed sees the entry.
 
@@ -88,7 +88,7 @@ The RO surface is **vault-wide read-only by design**: an agent given one `space_
 
 - **`tools_ro::tests` + `tools_rw::tests`** cover input validation + happy path + at least one error path per tool. Use `test_pool()` + materializer fixture.
 - **`rmcp_adapter::tests`** covers the adapter end-to-end (parity tests against canonical wire JSON, search round-trip, unknown-tool error mapping).
-- **`server::tests` + `server::tests_rmcp`** cover the lifecycle wrapper (`run_connection`, H-2 shutdown gate, L-113 grace period).
+- **`server::tests` + `server::tests_rmcp`** cover the lifecycle wrapper (`run_connection`, H-2 shutdown gate, grace period).
 
 New tools require a matching test in `tools_ro::tests` or `tools_rw::tests`. New protocol-error paths require a test in `server/tests_rmcp.rs`.
 

@@ -4,12 +4,12 @@
  * Delegates to:
  * - useBlockCollapse — collapse/expand state
  * - useBlockZoom — zoom navigation + breadcrumbs
- * - useBlockLinkResolve — `[[ULID]]` cache scan + batch resolve (MAINT-128)
- * - useBlockPropertiesBatch — per-block extra-property fetch (MAINT-128)
- * - useBlockNavigateToLink — `handleNavigate` + `handleNavigateRef` (MAINT-128)
+ * UseBlockLinkResolve — `[[ULID]]` cache scan + batch resolve
+ * UseBlockPropertiesBatch — per-block extra-property fetch
+ * UseBlockNavigateToLink — `handleNavigate` + `handleNavigateRef`
  * - useBlockFlush — editor flush + split + checkbox/todo persistence
  * - useBlockAutoCreateFirstBlock — H-9 first-block-on-empty-page effect
- * - useBlockTreeContextBags — memoised action + resolver bags (MAINT-118)
+ * UseBlockTreeContextBags — memoised action + resolver bags
  * - BlockZoomBar — zoom breadcrumb UI
  * - BlockListRenderer — SortableContext + block map
  * - BlockHistorySheet — block history overlay
@@ -266,7 +266,7 @@ export function BlockTree({
   })
 
   // ── Context-aware placeholder for the editor ────────────────────────
-  // UX-309: default empty-block placeholder advertises the slash-command palette,
+  // Default empty-block placeholder advertises the slash-command palette,
   // which was previously only discoverable via `?` keyboard help. The first child
   // of an empty page keeps the more specific template hint.
   const editorPlaceholder = useMemo(() => {
@@ -305,7 +305,7 @@ export function BlockTree({
   // hazard (a thrown/abandoned render would publish a handle from a render
   // that never committed).
 
-  // #82 (PEND-66) — publish this BlockTree's roving editor to the module
+  // #82 — publish this BlockTree's roving editor to the module
   // registry so app-level UI outside the tree (the command palette's
   // `[[Page]]` insert) can run undo-preserving commands. Keyed on FOCUS,
   // not mount: the journal week/month views mount several BlockTrees at
@@ -510,7 +510,7 @@ export function BlockTree({
 
   // Scan loaded blocks for [[ULID]] tokens not yet in the resolve cache
   // and batch-fetch them. See `useBlockLinkResolve` for the cache-scope
-  // and FEAT-3p7 rationale. #1268 — scoped to the viewport window so a
+  // And rationale. #1268 — scoped to the viewport window so a
   // single edit on a large page no longer re-scans + re-resolves the whole
   // page; a row scrolled into view enters `windowedBlocks` and resolves then.
   useBlockLinkResolve(windowedBlocks)
@@ -832,7 +832,7 @@ export function BlockTree({
     zoomIn: handleZoomIn,
   })
 
-  // ── Click on whitespace within block tree closes editor (UX-M9) ──
+  // ── Click on whitespace within block tree closes editor ──
   const handleContainerPointerDown = useCallback(
     (e: React.PointerEvent) => {
       if (e.target !== e.currentTarget) return
@@ -878,7 +878,7 @@ export function BlockTree({
     return getDragDescendants(blocks, dnd.activeId).size + 1
   }, [blocks, dnd.activeId, dnd.isMultiDrag, dnd.dragRoots])
 
-  // ── Action / resolver bags published via context (MAINT-118) ────────
+  // ── Action / resolver bags published via context ────────
   // Memoised so descendants only re-render when callbacks change.
   const { blockActions, blockResolvers } = useBlockTreeContextBags({
     onNavigate: handleNavigate,
@@ -908,7 +908,7 @@ export function BlockTree({
     resolveTagStatus: resolve.resolveTagStatus,
   })
 
-  // ── Batch attachment counts (MAINT-131) ─────────────────────────────
+  // ── Batch attachment counts ─────────────────────────────
   // Single IPC that publishes block_id → count to all SortableBlock
   // descendants, replacing N per-row `listAttachments` IPCs for the badge
   // count. #1268 — scoped to the viewport window (`windowedBlocks`) rather

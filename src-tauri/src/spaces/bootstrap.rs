@@ -21,13 +21,13 @@ use crate::op::{CreateBlockPayload, OpPayload, SetPropertyPayload};
 use crate::op_log::{self, OpRecord};
 use crate::ulid::BlockId;
 
-/// M-92 — chunk size for the batched `block_properties` UPSERT in
+/// Chunk size for the batched `block_properties` UPSERT in
 /// [`migrate_pages_to_personal_space_batched`].
 ///
 /// `block_properties` is `(block_id, key, value_text, value_num, value_date,
 /// value_ref)` — six bound params per row. SQLite caps bind parameters at
 /// [`MAX_SQL_PARAMS`] (999) per statement, giving 166 rows per chunk. Mirrors
-/// the chunked-INSERT convention from `cache/block_tag_refs.rs` (M-18).
+/// The chunked-INSERT convention from `cache/block_tag_refs.rs`.
 const PROPERTIES_INSERT_CHUNK: usize = MAX_SQL_PARAMS / 6;
 
 /// Reserved ULID for the seeded "Personal" space.
@@ -39,17 +39,17 @@ pub const SPACE_PERSONAL_ULID: &str = "00000000000000000AGAR1CPER";
 /// Reserved ULID for the seeded "Work" space.
 pub const SPACE_WORK_ULID: &str = "00000000000000000AGAR1CWRK";
 
-/// FEAT-3p10 — default accent color token for the seeded "Personal" space.
+/// Default accent color token for the seeded "Personal" space.
 ///
 /// The value is a free-form palette token (matching `index.css`'s
 /// `--accent-emerald` etc.). Stored on the space block as
 /// `block_properties(key='accent_color', value_text=…)`.
 pub const SPACE_PERSONAL_DEFAULT_ACCENT: &str = "accent-emerald";
 
-/// FEAT-3p10 — default accent color token for the seeded "Work" space.
+/// Default accent color token for the seeded "Work" space.
 pub const SPACE_WORK_DEFAULT_ACCENT: &str = "accent-blue";
 
-/// MAINT-1 — One-shot migration threshold.
+/// One-shot migration threshold.
 ///
 /// ULID corresponding to the UTC timestamp `2026-04-26T22:00:00Z`
 /// (`1_777_240_800_000` ms since the Unix epoch). Computed via
@@ -78,7 +78,7 @@ pub const MIGRATION_THRESHOLD_ULID: &str = "01KQ5WWYR00000000000000000";
 /// page that arrives without a `space` property — via a misbehaving
 /// frontend, sync replay from a peer that bypassed the invariant, or
 /// any other path — is captured and assigned to the Personal space
-/// (BUG-1 / L-133).
+/// .
 ///
 /// The backfill is naturally idempotent: only fires for pages WITHOUT
 /// a `space` property, so steady-state boots emit zero new ops. The
@@ -95,7 +95,7 @@ pub async fn bootstrap_spaces(
     device_id: &str,
     materializer: &Materializer,
 ) -> Result<(), AppError> {
-    // BUG-1 / L-133 — split the seeded-block creation fast-path from
+    // / split the seeded-block creation fast-path from
     // the `pages_without_space` backfill. The seeded-block path stays
     // gated on `is_bootstrap_complete` (so we don't re-emit `is_space`
     // / `accent_color` ops every boot); the backfill runs every boot
@@ -103,7 +103,7 @@ pub async fn bootstrap_spaces(
     // page+space invariant (legacy callsites, sync replay, etc.).
     let seeded_blocks_already_done = is_bootstrap_complete(pool).await?;
 
-    // MAINT-112 (#110) — `CommandTx` so the op records emitted below
+    // (#110) — `CommandTx` so the op records emitted below
     // are coupled to a post-commit materializer dispatch instead of
     // being discarded. Helpers append the `OpRecord`s into `records`,
     // which we drain into the tx's pending queue before commit.
@@ -134,7 +134,7 @@ pub async fn bootstrap_spaces(
         .await?;
         let personal_is_space_set =
             ensure_is_space_property(&mut tx, device_id, SPACE_PERSONAL_ULID, &mut records).await?;
-        // FEAT-3p10 — seed the default `accent_color` for Personal. The
+        // Seed the default `accent_color` for Personal. The
         // helper short-circuits when the property already exists so a
         // re-run / partial-resume never piles up duplicate ops.
         let personal_accent_set = ensure_accent_color_property(
@@ -150,7 +150,7 @@ pub async fn bootstrap_spaces(
             ensure_space_block(&mut tx, device_id, SPACE_WORK_ULID, "Work", &mut records).await?;
         let work_is_space_set =
             ensure_is_space_property(&mut tx, device_id, SPACE_WORK_ULID, &mut records).await?;
-        // FEAT-3p10 — seed the default `accent_color` for Work. Same
+        // Seed the default `accent_color` for Work. Same
         // idempotency guard as Personal above.
         let work_accent_set = ensure_accent_color_property(
             &mut tx,
@@ -171,13 +171,13 @@ pub async fn bootstrap_spaces(
         )
     };
 
-    // BUG-1 / L-133 — always run, even when the seeded-block fast-path
+    // / always run, even when the seeded-block fast-path
     // skipped above. Naturally idempotent (only fires for pages
     // WITHOUT a `space` property). Index `idx_block_properties_space`
     // keeps the cost bounded.
     let pages_to_migrate = pages_without_space(&mut tx).await?;
     let migrated = pages_to_migrate.len();
-    // M-92 — batched migrator (chunked INSERT OR REPLACE + cached
+    // Batched migrator (chunked INSERT OR REPLACE + cached
     // property_definitions lookup) replacing the previous per-page
     // `set_property_in_tx` loop. For a 5000-page first-boot vault this
     // collapses ~20k SQL round-trips down to ~5k op_log appends + ~30
@@ -185,14 +185,14 @@ pub async fn bootstrap_spaces(
     migrate_pages_to_personal_space_batched(&mut tx, device_id, &pages_to_migrate, &mut records)
         .await?;
 
-    // PEND-15 Phase 1 — Path A tag-space bootstrap. Assign every
+    // Phase 1 — Path A tag-space bootstrap. Assign every
     // orphan tag (no `space` property) to the space that most
     // frequently references it, or Personal as fallback. Idempotent
     // — the inner query filters to tags WITHOUT a `space` property,
     // so steady-state boots see zero candidates.
     let tags_migrated = migrate_orphan_tags_to_space(&mut tx, device_id, &mut records).await?;
 
-    // MAINT-112 (#110) — couple every emitted op record to a
+    // (#110) — couple every emitted op record to a
     // post-commit cache rebuild. Mirrors `flush_all_drafts_inner`.
     for record in records {
         tx.enqueue_background(record);
@@ -268,7 +268,7 @@ async fn ensure_space_block(
         return Ok(false);
     }
 
-    // L-126: Use the validating constructor for hand-typed ULID
+    // Use the validating constructor for hand-typed ULID
     // constants. `from_trusted` is reserved for IDs that already came
     // from a prior `BlockId::new()`; the seeded space ULIDs are
     // hand-typed string literals and a banned Crockford char (`I`,
@@ -351,7 +351,7 @@ async fn ensure_is_space_property(
     Ok(true)
 }
 
-/// FEAT-3p10 — Ensure the seeded space block carries an `accent_color`
+/// Ensure the seeded space block carries an `accent_color`
 /// property pointing at the supplied default token (e.g.
 /// `accent-emerald`, `accent-blue`).
 ///
@@ -360,7 +360,7 @@ async fn ensure_is_space_property(
 /// pure no-op and emits no op. Returns `true` when a fresh op was
 /// appended, `false` when the property was already present.
 ///
-/// User-driven recolouring via the FEAT-3p6 "Manage spaces…" UI flows
+/// User-driven recolouring via the "Manage spaces…" UI flows
 /// through `set_property` and updates the same row — this seed never
 /// overwrites a user choice on a re-run.
 async fn ensure_accent_color_property(
@@ -398,10 +398,10 @@ async fn ensure_accent_color_property(
     Ok(true)
 }
 
-/// M-92 — batched migrator that assigns `space = SPACE_PERSONAL_ULID` to
+/// Batched migrator that assigns `space = SPACE_PERSONAL_ULID` to
 /// every page in `page_ids`.
 ///
-/// This is the perf path for the BUG-1 / L-133 every-boot backfill: a
+/// This is the perf path for the / every-boot backfill: a
 /// 5000-page first-boot vault used to round-trip ~20k SQL statements
 /// inside one bootstrap transaction (the per-page `set_property_in_tx`
 /// loop did 4 round-trips per page — definitions lookup, block existence
@@ -411,11 +411,11 @@ async fn ensure_accent_color_property(
 ///
 /// # Inherited invariants
 ///
-/// - **M-1 (op log append-only).** Each page still gets its own
+/// ** (op log append-only).** Each page still gets its own
 ///   `SetProperty` op via [`op_log::append_local_op_in_tx`] because the
 ///   per-row hash chain (`prev_hash` advance, `parent_seqs`) is part of
 ///   the op_log contract. Batching the op_log writes is a separate,
-///   larger refactor and is out of scope for M-92.
+/// Larger refactor and is out of scope for.
 /// - ** predicate.** [`pages_without_space`] already
 ///   filters to live, non-conflict pages with `block_type = 'page'`, so
 ///   the per-page block-existence probe in `set_property_in_tx` is
@@ -548,10 +548,10 @@ async fn pages_without_space(
     Ok(rows.into_iter().map(|r| r.id).collect())
 }
 
-/// MAINT-1 — One-shot migration: move every pre-existing Personal page
+/// One-shot migration: move every pre-existing Personal page
 /// into the Work space.
 ///
-/// # Kill-date plan (MAINT-152(e))
+/// # Kill-date plan ((e))
 ///
 /// **REMOVE AFTER `0.3.0`.** This entire function (plus
 /// [`migration_marker_set`] and [`pages_to_migrate`], plus the
@@ -568,7 +568,7 @@ async fn pages_without_space(
 /// somehow never booted into a `0.2.x` build (unlikely) will need a
 /// manual schema reset (re-import from snapshot or wipe `~/.local/share/
 /// com.agaric.app/notes.db`); document that in the `0.3.0` release notes.
-/// The associated entry (MAINT-152) and 08-MISC-015
+/// The associated entry and 08-MISC-015
 /// can be closed at the same time.
 ///
 /// The version target is intentionally conservative — `0.3.0` gives every
@@ -621,7 +621,7 @@ pub async fn migrate_personal_pages_to_work(
         return Ok(());
     }
 
-    // MAINT-112 (#110) — `CommandTx` so the page-rebind + marker
+    // (#110) — `CommandTx` so the page-rebind + marker
     // `set_property` ops are coupled to a post-commit cache dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "migrate_personal_pages_to_work").await?;
 
@@ -687,7 +687,7 @@ pub async fn migrate_personal_pages_to_work(
 /// Marker fast-path query: does the seeded Personal space block already
 /// carry `personal_to_work_migration_v1 = "true"`?
 ///
-/// MAINT-152(f) / 08-MISC-009: parameterised on `sqlx::Executor` so the
+/// (f) / 08-MISC-009: parameterised on `sqlx::Executor` so the
 /// same body serves both the outer pool-borrowing fast-path call and the
 /// inner BEGIN IMMEDIATE second-check call (`&mut *tx` reborrows the
 /// transaction's underlying connection). Replaced the
@@ -745,7 +745,7 @@ async fn pages_to_migrate(
     Ok(rows.into_iter().map(|r| r.id).collect())
 }
 
-/// PEND-15 Phase 1 — Path A tag-space bootstrap.
+/// Phase 1 — Path A tag-space bootstrap.
 ///
 /// Every tag block without a `space` property is assigned to the space
 /// that most frequently references it (via `block_tag_refs`). Tags with
@@ -877,7 +877,7 @@ pub async fn migrate_orphan_tags_to_space(
     Ok(migrated)
 }
 
-/// MAINT-112 (#110) test helper: run [`bootstrap_spaces`] with a
+/// (#110) test helper: run [`bootstrap_spaces`] with a
 /// throwaway [`Materializer`] that is shut down immediately after the
 /// call. The seeded-space + page-migration tests assert on the
 /// resulting DB rows / op_log, not on cache dispatch, so a transient
@@ -894,7 +894,7 @@ pub(crate) async fn bootstrap_spaces_for_test(
     result
 }
 
-/// MAINT-112 (#110) test helper: run [`migrate_personal_pages_to_work`]
+/// (#110) test helper: run [`migrate_personal_pages_to_work`]
 /// with a throwaway [`Materializer`]. See [`bootstrap_spaces_for_test`].
 #[cfg(test)]
 pub(crate) async fn migrate_personal_pages_to_work_for_test(

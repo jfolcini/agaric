@@ -25,7 +25,7 @@ use super::*;
 /// an `AddAttachment` op, inserts into the `attachments` table, and dispatches
 /// background cache tasks.
 ///
-/// M-29: also stat-checks the file at `app_data_dir.join(&fs_path)` inside
+/// Also stat-checks the file at `app_data_dir.join(&fs_path)` inside
 /// the IMMEDIATE transaction so a row is never committed without the
 /// underlying bytes on disk. The frontend writes the bytes via
 /// `@tauri-apps/plugin-fs` *before* invoking this command; if that write
@@ -70,7 +70,7 @@ pub async fn add_attachment_inner(
         )));
     }
 
-    // BUG-35: Reject `fs_path` values that would escape the app data dir
+    // Reject `fs_path` values that would escape the app data dir
     // (absolute paths, `..` traversal, drive prefixes). The full path
     // resolution happens later in read/write, but validating here stops
     // bad rows from ever reaching the `attachments` table.
@@ -101,7 +101,7 @@ pub async fn add_attachment_inner(
     // (block-exists check + op_log append + INSERT + commit). The block-exists
     // validation stays inside the tx (TOCTOU-safe relative to the insert).
 
-    // M-29: confirm the file really exists on disk before inserting the row.
+    // Confirm the file really exists on disk before inserting the row.
     // The frontend writes bytes via `@tauri-apps/plugin-fs` *before* invoking
     // `add_attachment`; without this guard, a silent FS-write failure leaves
     // the DB row pointing at a non-existent file and the sync layer eventually
@@ -109,7 +109,7 @@ pub async fn add_attachment_inner(
     // insert is irrelevant — sync GC reconciles missing attachments anyway
     // (AGENTS.md §Threat Model).
     let full_path = app_data_dir.join(&fs_path);
-    // PEND-20 H: async stat — avoids blocking on slow / contended storage
+    // H: async stat — avoids blocking on slow / contended storage
     // (Android eMMC, USB-mounted vaults).
     let metadata = tokio::fs::metadata(&full_path).await?;
     let on_disk_len = i64::try_from(metadata.len()).unwrap_or(i64::MAX);
@@ -124,9 +124,9 @@ pub async fn add_attachment_inner(
     // file-sync hashing helper (`read_attachment_file` → `blake3::hash(&data)
     // .to_hex()`) so the stored hash is byte-for-byte identical to the hash
     // the sync layer computes for the same bytes. The file is already on disk
-    // (the FE wrote it before invoking, and the M-29 stat above confirmed it).
-    // Synchronous std::fs read on the blocking pool (PEND-20 H), like the read
-    // path. A hash failure is fatal here: the bytes the M-29 stat just saw are
+    // (the FE wrote it before invoking, and the stat above confirmed it).
+    // Synchronous std::fs read on the blocking pool (H), like the read
+    // Path. A hash failure is fatal here: the bytes the stat just saw are
     // unreadable, so the row would be broken regardless. #1620: computed before
     // the writer tx opens so the up-to-50-MB read doesn't hold the writer lock.
     let content_hash = {
@@ -141,7 +141,7 @@ pub async fn add_attachment_inner(
     };
 
     // Single IMMEDIATE transaction: validation + op_log + attachments write.
-    // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "add_attachment").await?;
 
     // Validate block exists and is not deleted (TOCTOU-safe inside tx)
@@ -194,7 +194,7 @@ pub async fn add_attachment_inner(
     })
 }
 
-/// Add an attachment by passing the raw file bytes over IPC (PEND-76 F2).
+/// Add an attachment by passing the raw file bytes over IPC.
 ///
 /// The frontend reads the file into bytes (a browser `ArrayBuffer`) and hands
 /// them to this command; the **backend is the sole writer** — it generates the
@@ -247,7 +247,7 @@ pub async fn add_attachment_with_bytes_inner(
 
     // Write the bytes first (creates the attachments dir). `write_attachment_file`
     // is synchronous std::fs; run it on the blocking pool so a large write does
-    // not stall the async runtime (PEND-20 H rationale).
+    // Not stall the async runtime (H rationale).
     {
         let dir = app_data_dir.to_path_buf();
         let path = fs_path.clone();
@@ -323,7 +323,7 @@ pub async fn read_attachment_meta_inner(
     Ok(row)
 }
 
-/// Read an attachment's raw bytes by ID (PEND-76 F2).
+/// Read an attachment's raw bytes by ID.
 ///
 /// The render path calls this and wraps the bytes in a `blob:` URL (the CSP
 /// permits `blob:`), avoiding the asset protocol entirely.
@@ -332,7 +332,7 @@ pub async fn read_attachment_meta_inner(
 ///
 /// - [`AppError::NotFound`] — attachment row does not exist
 /// - [`AppError::Io`] — the file is missing on disk or unreadable
-/// - [`AppError::Validation`] — the stored `fs_path` is malformed (BUG-35 guard)
+/// [`AppError::Validation`] — the stored `fs_path` is malformed (guard)
 #[instrument(skip(pool, app_data_dir), err)]
 pub async fn read_attachment_inner(
     pool: &SqlitePool,
@@ -348,7 +348,7 @@ pub async fn read_attachment_inner(
     .await?
     .ok_or_else(|| AppError::NotFound(format!("attachment '{attachment_id}'")))?;
 
-    // Synchronous std::fs read on the blocking pool (PEND-20 H).
+    // Synchronous std::fs read on the blocking pool (H).
     let dir = app_data_dir.to_path_buf();
     let (bytes, _hash) = tokio::task::spawn_blocking(move || {
         crate::sync_files::read_attachment_file(&dir, &fs_path)
@@ -386,7 +386,7 @@ pub async fn delete_attachment_inner(
     attachment_id: AttachmentId,
 ) -> Result<(), AppError> {
     // Single IMMEDIATE transaction: validation + op_log + delete.
-    // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "delete_attachment").await?;
 
     // Validate attachment exists AND fetch its fs_path in one query.
@@ -513,7 +513,7 @@ pub async fn rename_attachment_inner(
 ///
 /// Pure read — no op log entry, no materializer dispatch.
 ///
-/// M-28: the `attachments` table declares a `deleted_at` column (see
+/// The `attachments` table declares a `deleted_at` column (see
 /// migration `0001_initial.sql`), but no code path ever writes a non-NULL
 /// value to it. Both [`delete_attachment_inner`] and the materializer's
 /// `OpType::DeleteAttachment` handler (`materializer/handlers.rs`) issue
@@ -555,7 +555,7 @@ pub async fn list_attachments_inner(
 /// Returns a `HashMap<block_id, Vec<AttachmentRow>>` where missing block IDs
 /// (those with no attachments OR not present in the database) are simply
 /// absent from the map. Frontend callers should default missing keys to `[]`.
-/// Counts are derivable as `result[id].len()` — PEND-35 Tier 2.7a folded the
+/// Counts are derivable as `result[id].len()` — folded the
 /// separate `get_batch_attachment_counts` command into this one (one less
 /// IPC, specta binding, and tauri-mock handler).
 ///
@@ -566,7 +566,7 @@ pub async fn list_attachments_inner(
 /// Empty `block_ids` returns an empty map (not an error). This matches the
 /// frontend pattern where a page with no blocks should not fail.
 ///
-/// MAINT-131 — replaces N per-block `list_attachments` IPCs (badge counts +
+/// Replaces N per-block `list_attachments` IPCs (badge counts +
 /// inline-image-render decisions) with a single batched query mounted at
 /// the BlockTree level.
 ///

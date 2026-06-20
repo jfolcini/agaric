@@ -19,7 +19,7 @@ beforeEach(() => {
 
 describe('loadTemplatePages', () => {
   it('returns pages with template property', async () => {
-    // PEND-35 Tier 2.8 — backend now drops non-page rows via the
+    // Backend now drops non-page rows via the
     // `block_type = 'page'` push-down filter (Tier 3.4), so the mock
     // only returns rows that already match.
     mockedInvoke.mockResolvedValueOnce({
@@ -34,7 +34,7 @@ describe('loadTemplatePages', () => {
 
     const result = await loadTemplatePages(null)
 
-    // PEND-35 Tier 2.8 — `blockType: 'page'` is pushed into SQL via
+    // `blockType: 'page'` is pushed into SQL via
     // Tier 3.4's `query_by_property` push-down, so the IPC carries it
     // in the `extraFilters` struct.
     expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
@@ -74,7 +74,7 @@ describe('loadTemplatePages', () => {
 
 describe('insertTemplateBlocks', () => {
   it('creates blocks from template children via a single batch IPC', async () => {
-    // PEND-35 Tier 4.3 + limit-clamp-followup — `insertTemplateBlocks`
+    // + limit-clamp-followup — `insertTemplateBlocks`
     // fetches the whole template subtree in ONE `load_page_subtree`
     // IPC, groups descendants by `parent_id`, accumulates one
     // `CreateBlockSpec` per descendant in DFS order, and fires ONE
@@ -138,7 +138,7 @@ describe('insertTemplateBlocks', () => {
   })
 
   it('insertTemplateBlocks copies nested children recursively', async () => {
-    // PEND-35 Tier 4.3 + limit-clamp-followup — for a template with
+    // + limit-clamp-followup — for a template with
     // depth 2 (TMPL → A → B) the batch fires once per depth level:
     // depth 0 creates A, depth 1 creates B with `parentId = NEW_A`
     // resolved from the previous batch's response. Both descendants
@@ -188,7 +188,7 @@ describe('insertTemplateBlocks', () => {
   })
 
   it('returns ids accumulated up to the failing batch level', async () => {
-    // PEND-35 Tier 4.3 — atomicity changed: a per-batch failure logs a
+    // Atomicity changed: a per-batch failure logs a
     // warning and returns the already-landed prefix from earlier
     // levels. (Each level is its own all-or-nothing tx; failures
     // aren't backed out across levels because the previous-level
@@ -392,7 +392,7 @@ describe('loadTemplatePagesWithPreview', () => {
       has_more: false,
       total_count: null,
     })
-    // PEND-35 Tier 2.8 — first_child_for_blocks([T1]) returns
+    // First_child_for_blocks([T1]) returns
     // { T1: child } in a single batch call.
     mockedInvoke.mockResolvedValueOnce({
       T1: {
@@ -407,7 +407,7 @@ describe('loadTemplatePagesWithPreview', () => {
     const result = await loadTemplatePagesWithPreview(null)
     expect(result).toHaveLength(1)
     expect(result[0]?.preview).toBe('## Attendees')
-    // PEND-35 Tier 2.8 \u2014 single batch IPC for previews. The per-template
+    // \u2014 single batch IPC for previews. The per-template
     // `list_blocks({ parentId, limit: 1 })` loop is gone.
     expect(mockedInvoke).toHaveBeenCalledWith('first_child_for_blocks', {
       blockIds: ['T1'],
@@ -672,7 +672,7 @@ describe('expandTemplateVariables — resolver map (#1450 Phase 1)', () => {
 
 describe('loadJournalTemplateForSpace', () => {
   it('returns null when the journal_template property is absent', async () => {
-    // PEND-35 Tier 2.4c — backend returns `null` for the missing row
+    // Backend returns `null` for the missing row
     // (single-key PK lookup), not an empty list of unrelated rows.
     mockedInvoke.mockResolvedValueOnce(null)
 
@@ -686,7 +686,7 @@ describe('loadJournalTemplateForSpace', () => {
   })
 
   it('returns value_text when journal_template is set', async () => {
-    // PEND-35 Tier 2.4c — single-row return shape from `get_property`.
+    // Single-row return shape from `get_property`.
     mockedInvoke.mockResolvedValueOnce({
       key: 'journal_template',
       value_text: '## Standup\n- TODOs',
@@ -705,7 +705,7 @@ describe('loadJournalTemplateForSpace', () => {
   })
 
   it('reads journal_template directly via PK lookup', async () => {
-    // PEND-35 Tier 2.4c — the SQL WHERE-key filter is the backend's
+    // The SQL WHERE-key filter is the backend's
     // job; the FE just trusts the row it gets back. This test pins
     // that the `journal_template` row is read directly via the PK
     // lookup (no client-side `find` over the full vocabulary).
@@ -743,7 +743,7 @@ describe('loadJournalTemplateForSpace', () => {
 
 describe('insertTemplateBlocksFromString', () => {
   it('creates one block per non-empty line via a single batch IPC', async () => {
-    // PEND-35 Tier 4.3 — N markdown lines collapse to ONE
+    // N markdown lines collapse to ONE
     // `create_blocks_batch` IPC. The previous N `create_block` IPCs
     // are gone.
     mockedInvoke.mockResolvedValueOnce([
@@ -816,7 +816,7 @@ describe('insertTemplateBlocksFromString', () => {
   })
 
   it('returns empty list and logs a warning when the batch IPC fails', async () => {
-    // PEND-35 Tier 4.3 — atomicity flipped from per-line to per-batch.
+    // Atomicity flipped from per-line to per-batch.
     // A batch failure rolls the whole template back; the wrapper logs
     // and returns `[]` rather than partially landing the prefix.
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})

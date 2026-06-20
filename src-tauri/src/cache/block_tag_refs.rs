@@ -1,5 +1,5 @@
 //! `block_tag_refs` — derived-state cache for inline `#[ULID]` tag
-//! references found inside block content (UX-250 Option A).
+//! references found inside block content (Option A).
 //!
 //! Mirrors the shape of `block_links` but:
 //! - scans for `#[ULID]` tokens via [`super::tag_ref_re`]
@@ -72,7 +72,7 @@ pub async fn reindex_block_tag_refs(pool: &SqlitePool, block_id: &str) -> Result
     let to_delete: Vec<&String> = old_targets.difference(&new_targets).collect();
     let to_insert: Vec<&String> = new_targets.difference(&old_targets).collect();
 
-    // PEND-15 Phase 3 — filter out cross-space tag-refs before inserting.
+    // Phase 3 — filter out cross-space tag-refs before inserting.
     // Tags are space-scoped (Path A); the write-time gate rejects
     // cross-space tag refs, and the cache must mirror that invariant.
     //
@@ -97,7 +97,7 @@ pub async fn reindex_block_tag_refs(pool: &SqlitePool, block_id: &str) -> Result
         return Ok(());
     }
 
-    // PERF-24: batch DELETE/INSERT via `json_each` — one round-trip per
+    // Batch DELETE/INSERT via `json_each` — one round-trip per
     // side regardless of the number of changed targets, replacing the
     // previous 2N round-trip per-target loops. Mirrors the
     // `cache/block_links.rs` pattern.
@@ -217,7 +217,7 @@ pub async fn reindex_block_tag_refs_split(
     let mut tx =
         crate::db::begin_immediate_logged(write_pool, "cache_block_tag_refs_reindex_write").await?;
 
-    // PERF-24: batch DELETE/INSERT via `json_each` — one round-trip per
+    // Batch DELETE/INSERT via `json_each` — one round-trip per
     // side regardless of the number of changed targets, replacing the
     // previous 2N round-trip per-target loops. Mirrors the
     // `cache/block_links.rs` pattern.
@@ -269,7 +269,7 @@ pub async fn reindex_block_tag_refs_split(
 }
 
 // ---------------------------------------------------------------------------
-// rebuild_block_tag_refs_cache — incremental sort-merge (M-2)
+// Rebuild_block_tag_refs_cache — incremental sort-merge
 // ---------------------------------------------------------------------------
 
 // DELETE binds 2 cols per row (source_id, tag_id) → `MAX_SQL_PARAMS / 2 = 499`.
@@ -480,7 +480,7 @@ async fn diff_against_current(
     Ok(changed)
 }
 
-/// Incremental rebuild of `block_tag_refs` (M-2 — was full DELETE +
+/// Incremental rebuild of `block_tag_refs` (was full DELETE +
 /// INSERT pre-refactor).
 ///
 /// Scans every non-deleted, non-conflict block's content, extracts
@@ -516,7 +516,7 @@ async fn rebuild_block_tag_refs_cache_impl(pool: &SqlitePool) -> Result<u64, App
     Ok(changed)
 }
 
-/// Read/write split variant of [`rebuild_block_tag_refs_cache`] (M-2).
+/// Read/write split variant of [`rebuild_block_tag_refs_cache`].
 ///
 /// Desired-pairs computation and the current-cache stream both read
 /// from `read_pool`; the final chunked DELETE + INSERT transaction runs
@@ -556,7 +556,7 @@ async fn rebuild_block_tag_refs_cache_split_impl(
 // ---------------------------------------------------------------------------
 //
 // These tests are intentionally local to this file rather than appended
-// to `cache/tests.rs` so that sibling M-19 subagents (agenda /
+// To `cache/tests.rs` so that sibling subagents (agenda /
 // projected_agenda) can append their own `_m19*` tests without merge
 // contention against this slice. The fixtures here are deliberately
 // minimal — broader coverage (cross-cache UNION semantics, idempotency,
@@ -744,7 +744,7 @@ mod tests {
         );
     }
 
-    // ----- M-2 tests --------------------------------------------------------
+    // ----- tests --------------------------------------------------------
 
     /// Seed 100 source blocks each referencing one tag → rebuild →
     /// mutate (some add new refs, some remove refs, some keep refs) →

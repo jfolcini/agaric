@@ -7,7 +7,7 @@
  *
  * When both `loadedCount` and `totalCount` are provided, renders a
  * secondary progress line below the button via `t('loadMore.progress')` so users
- * can gauge the remaining result set (UX-218).
+ * Can gauge the remaining result set.
  */
 
 import type React from 'react'

@@ -643,11 +643,11 @@ describe('BlockContextMenu', () => {
     document.body.removeChild(triggerEl)
   })
 
-  it('UX-11: falls back to the block gutter button when the trigger has been removed', () => {
+  it('falls back to the block gutter button when the trigger has been removed', () => {
     // Simulate a block whose trigger element was removed during the menu's
     // lifetime (e.g. block deleted by a remote sync). The menu should focus
     // the matching `[data-block-id]` gutter button rather than letting focus
-    // drop to <body>. MAINT-174: the marker is `data-context-trigger="true"`
+    // Drop to <body>. the marker is `data-context-trigger="true"`
     // on the gutter drag handle (intentionally narrower than `[role="button"]`,
     // which would also match inline date chips, property chips, etc.).
     const blockEl = document.createElement('div')
@@ -730,7 +730,7 @@ describe('BlockContextMenu', () => {
     })
 
     // #1445 — "Copy block reference" is always actionable (it only needs the
-    // blockId), so the menu is never a dead end here: the UX-12 short-circuit
+    // BlockId), so the menu is never a dead end here: the short-circuit
     // (null when zero actionable items) no longer fires once the bag empties.
     // The menu renders with exactly the Copy block reference row; the old
     // bag-driven items stay absent.
@@ -1083,14 +1083,14 @@ describe('BlockContextMenu', () => {
     })
   })
 
-  // ── Floating UI safeguards (MAINT-121) ───────────────────────────
+  // ── Floating UI safeguards ───────────────────────────
   //
   // These tests cover the four AGENTS.md §"Floating UI lifecycle
   // logging" requirements: autoUpdate, isConnected stale-unmount
   // guard, rAF-deferred outside-click registration, and
   // computePosition rejection fallback.
 
-  describe('floating-ui lifecycle safeguards (MAINT-121)', () => {
+  describe('floating-ui lifecycle safeguards', () => {
     it('safeguard #1 — registers an autoUpdate cleanup so the menu reflows on scroll/resize', async () => {
       const { autoUpdate, computePosition } = await import('@floating-ui/dom')
       const mockedAutoUpdate = vi.mocked(autoUpdate)
@@ -1223,13 +1223,13 @@ describe('BlockContextMenu', () => {
     })
   })
 
-  // ── MAINT-174 hardening cluster ──────────────────────────────────
+  // ── hardening cluster ──────────────────────────────────
   //
   // 1. Action errors keep the menu open + surface as toast + log.
   // 2. First-item focus refires when the visible item set changes.
   // 3. Close-fallback uses `data-context-trigger="true"` (not `[role="button"]`).
 
-  describe('MAINT-174 — action error handling', () => {
+  describe('action error handling', () => {
     it('synchronous action throw keeps menu open and shows toast', async () => {
       const user = userEvent.setup()
       const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
@@ -1301,7 +1301,7 @@ describe('BlockContextMenu', () => {
     })
   })
 
-  describe('MAINT-174 — first-item focus refires on item-set change', () => {
+  describe('first-item focus refires on item-set change', () => {
     it('refocuses the first item when the visible set grows (hasChildren toggle)', async () => {
       // Render initially without children — no Collapse/Expand item is shown.
       const { rerender, props } = renderMenu({ hasChildren: false })
@@ -1352,7 +1352,7 @@ describe('BlockContextMenu', () => {
     })
   })
 
-  describe('MAINT-174 — close-fallback selector', () => {
+  describe('close-fallback selector', () => {
     it('focuses the [data-context-trigger="true"] gutter button, not a [role="button"] sibling', () => {
       // Same block has both a `[role="button"]` chip (e.g. an inline date
       // chip) and a `[data-context-trigger="true"]` gutter button. The
@@ -1717,7 +1717,7 @@ describe('BlockContextMenu actions bag (#1020)', () => {
     )
     // #1445 — even with an empty bag the menu is not a dead end: "Copy block
     // reference" is always actionable, so the menu renders with that single row
-    // (the UX-12 null short-circuit only fired when there were ZERO actionable
+    // (the null short-circuit only fired when there were ZERO actionable
     // items, which can no longer happen).
     const menu = screen.getByRole('menu')
     expect(within(menu).getByText(t('contextMenu.copyBlockRef'))).toBeInTheDocument()

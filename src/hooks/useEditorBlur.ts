@@ -13,7 +13,7 @@
  * formatting toolbar) are part of the editor lifecycle and must not prevent
  * save on external blur.
  *
- * Extracted from EditableBlock (M-42) for testability and reuse.
+ * Extracted from EditableBlock for testability and reuse.
  */
 
 import type React from 'react'
@@ -28,7 +28,7 @@ import { logger } from '../lib/logger'
  * Single-attribute opt-in for transient UI elements (popups, toolbars,
  * pickers) that should NOT cause the editor to unmount when they receive
  * focus. New overlays opt in via markup — `<div data-editor-portal>…` —
- * instead of editing a hardcoded selector list (PEND-30 L-3).
+ * Instead of editing a hardcoded selector list.
  *
  * The legacy `EDITOR_PORTAL_SELECTORS` array (8 class selectors) is gone:
  * `.suggestion-popup`, `.suggestion-list`, `.formatting-toolbar`, `.rdp`
@@ -100,7 +100,7 @@ export function useEditorBlur(params: {
 
       // Step 4a: Don't unmount if focus moved to a portal-tagged overlay
       // (suggestion popup, formatting toolbar, date picker, …). All such
-      // transient UI elements opt in via `data-editor-portal` (PEND-30 L-3).
+      // Transient UI elements opt in via `data-editor-portal`.
       const related = e.relatedTarget as HTMLElement | null
       if (related?.closest(EDITOR_PORTAL_SELECTOR)) {
         logger.debug('EditorBlur', 'blur prevented — focus moved to portal', { blockId })

@@ -1713,7 +1713,7 @@ describe('code blocks', () => {
     }
   })
 
-  // -- BUG-1: variable-length CommonMark fences ------------------------------
+  // -- variable-length CommonMark fences ------------------------------
 
   it('serializes with a longer fence when content contains a triple-backtick line', () => {
     // Code about Markdown — content has a nested ```javascript fence
@@ -2165,7 +2165,7 @@ describe('horizontal rule', () => {
   })
 })
 
-// -- parse recursion depth guard (MAINT-11) -----------------------------------
+// -- parse recursion depth guard -----------------------------------
 
 describe('parse recursion depth guard', () => {
   /** Extract the flattened plain-text concatenation of a parsed doc. */
@@ -2437,9 +2437,9 @@ describe('external link scan edge cases', () => {
   })
 })
 
-// -- MAINT-183: serializer is dependency-free; callback contract -------------
+// -- serializer is dependency-free; callback contract -------------
 
-describe('MAINT-183: onUnknownNode callback', () => {
+describe('onUnknownNode callback', () => {
   it('invokes the callback once per inline unknown-node occurrence', () => {
     const onUnknownNode = vi.fn()
     const unknown = { type: 'video_embed' } as unknown as InlineNode
@@ -2467,13 +2467,13 @@ describe('MAINT-183: onUnknownNode callback', () => {
   })
 })
 
-// -- UX-281: unknown-node user-facing toast (rate-limited) --------------------
+// -- unknown-node user-facing toast (rate-limited) --------------------
 //
 // Integration tests for the `notifyUnknownNodeTypeToast` helper that wraps
 // the serializer's `onUnknownNode` callback with toast + logger + dedup. The
-// helper lives in `markdown-serialize-toast.ts` (MAINT-183).
+// Helper lives in `markdown-serialize-toast.ts`.
 
-describe('UX-281: unknown-node toast', () => {
+describe('unknown-node toast', () => {
   beforeEach(() => {
     __resetSerializerToastsForTests()
     vi.mocked(toast.warning).mockClear()
@@ -2558,10 +2558,10 @@ describe('UX-281: unknown-node toast', () => {
   })
 })
 
-// -- FEAT-3p7 — foreign-space [[ULID]] round-trip stability -------------------
+// -- foreign-space [[ULID]] round-trip stability -------------------
 
 /**
- * FEAT-3p7 regression: a `block_link` whose target lives in a different
+ * Regression: a `block_link` whose target lives in a different
  * space than the user is currently viewing must serialize to the
  * literal `[[ULID]]` text, NOT a "Loading…" placeholder or the chip's
  * resolved title. The serializer never consults `useResolveStore` —
@@ -2570,7 +2570,7 @@ describe('UX-281: unknown-node toast', () => {
  * resolved). The test pins this contract so a future "smart"
  * serializer that tries to inline the title can't regress quietly.
  */
-describe('FEAT-3p7: foreign-space block_link round-trip is stable', () => {
+describe('foreign-space block_link round-trip is stable', () => {
   const FOREIGN_ULID = '01H8XYABCDEFGHJKMNPQRSTVWX'
 
   it('serialize emits literal [[ULID]] regardless of any external title state', () => {

@@ -1,6 +1,6 @@
 /**
  * useToolbarOverflow — priority-based overflow hook for the per-block
- * `FormattingToolbar` (PEND-33 Layer B).
+ * `FormattingToolbar` (Layer B).
  *
  * Inputs:
  *  - `containerRef`: ref to the toolbar's visible container. The hook
@@ -42,7 +42,7 @@ export const OVERFLOW_TRIGGER_WIDTH_PX = 28
 /**
  * Reserve added to popover-trigger items (heading, code block) to absorb
  * width drift caused by the variable inner badge (level number /
- * language label). Plan PEND-33 line 429-436.
+ * Language label). Plan line 429-436.
  */
 export const POPOVER_TRIGGER_VARIABLE_RESERVE_PX = 24
 

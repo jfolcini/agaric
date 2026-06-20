@@ -79,7 +79,7 @@ describe('useQueryExecution', () => {
     expect(result.current.error).toBeNull()
   })
 
-  // PEND-35 Tier 2.10b — filtered queries collapse from N IPCs (one
+  // Filtered queries collapse from N IPCs (one
   // per sub-filter) + JS intersection to ONE IPC into
   // `filtered_blocks_query`. Pre-Tier-2.10b this test mocked
   // `query_by_property` twice and asserted the JS-side intersection;
@@ -323,7 +323,7 @@ describe('useQueryExecution', () => {
     expect(result.current.results).toHaveLength(0)
   })
 
-  // PEND-22: stale-fetch guard. When `expression` changes before the previous
+  // Stale-fetch guard. When `expression` changes before the previous
   // IPC resolves, the older (slower) fetch must NOT clobber the newer
   // (faster) fetch's results. The hook uses a monotonic `reqIdRef` counter:
   // each `fetchResults` call captures `myReqId = ++reqIdRef.current` and
@@ -539,7 +539,7 @@ describe('fetchBacklinksQuery', () => {
   })
 })
 
-// PEND-35 Tier 2.10b — `fetchFilteredQuery` no longer fans out one
+// `fetchFilteredQuery` no longer fans out one
 // IPC per sub-filter and intersects in JS; it delegates to the new
 // `filtered_blocks_query` IPC which composes the AND in SQL via
 // EXISTS subqueries. Pre-Tier-2.10b the FE silently dropped any
@@ -633,7 +633,7 @@ describe('fetchFilteredQuery', () => {
     ).rejects.toThrow('sub-query failed')
   })
 
-  // **Load-bearing regression test** for the silent-cap bug PEND-35
+  // **Load-bearing regression test** for the silent-cap bug
   // Tier 2.10b fixes. Pre-fix: each sub-query was capped at 200 rows
   // BEFORE the JS-side intersection — any AND-set member outside any
   // one sub-query's top-200 was silently dropped. Post-fix: the

@@ -1,9 +1,9 @@
 /**
- * Integration tests for PEND-50 Phase 1 — page-grouped search result
+ * Integration tests for Phase 1 — page-grouped search result
  * rendering, `<mark>` snippet highlighting, and the result count summary.
  *
  * These cases live in a new file (not `SearchPanel.test.tsx`) so the
- * page-grouping surface stays auditable in isolation as PEND-51 / 54 /
+ * Page-grouping surface stays auditable in isolation as / 54 /
  * 55 / 53 extend it.
  */
 
@@ -21,7 +21,7 @@ import { useSpaceStore } from '../../stores/space'
 import { useTabsStore } from '../../stores/tabs'
 import { SearchPanel } from '../SearchPanel'
 
-// PEND-58f FE-3 — the per-group result listbox is now virtualized
+// The per-group result listbox is now virtualized
 // (`@tanstack/react-virtual`). jsdom gives the scroll container zero
 // height, which would collapse the virtual window to zero rows; mirror the
 // AgendaResults / HistoryView test mock so the virtualizer yields every row
@@ -92,7 +92,7 @@ function typeAndSubmit(input: HTMLElement, value: string) {
   if (form) fireEvent.submit(form)
 }
 
-describe('PEND-50 Phase 1 — SearchPanel page grouping', () => {
+describe(' Phase 1 — SearchPanel page grouping', () => {
   it('renders 3 listboxes for 9 matches across 3 pages with correct per-group counts', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'search_blocks') {
@@ -401,7 +401,7 @@ describe('PEND-50 Phase 1 — SearchPanel page grouping', () => {
         return {
           items: [
             // A page-type hit on the title (no content snippet) —
-            // PEND-50 recommendation: "1 match (in name)".
+            // Recommendation: "1 match (in name)".
             makeSearchRow({
               id: 'PAGE_A',
               block_type: 'page',

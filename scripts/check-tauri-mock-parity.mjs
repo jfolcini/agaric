@@ -12,7 +12,7 @@
 // up on a "no handler" warning. This script catches the gap at the
 // moment `bindings.ts` is regenerated, not weeks later in CI.
 //
-// Originally added after FEAT-3 Phase 2 shipped `list_spaces` +
+// Originally added after Phase 2 shipped `list_spaces` +
 // `create_page_in_space` to the backend without any mock entries; the
 // resulting silent `null` responses broke 11 Playwright tests across
 // 7 spec files in the 0.1.0 release run.
@@ -44,7 +44,7 @@ const HANDLERS = path.join(ROOT, 'src/lib/tauri-mock/handlers.ts')
 // only ever shrink, never grow — adding a new IPC command without a
 // handler means that command will silently return `null` to the UI.
 const KNOWN_UNMOCKED = new Set([
-  // (Empty — MAINT-160 added mock handlers for the previous 15 entries
+  // (Empty — added mock handlers for the previous 15 entries
   // (5 GCal + 4 MCP RO + 4 MCP RW + trash_descendant_counts + quick_capture_block)
   // covering Google Calendar, MCP RO/RW, trash descendant counts, and
   // quick-capture. Re-introduce entries here only with a comment that

@@ -44,7 +44,7 @@ export function useBlockMultiSelect({
   // `batchInProgress` (state) is surfaced to the UI (disables buttons in
   // BlockContextMenu). `batchInProgressRef` is the reentrancy guard — using a
   // ref here prevents cascade re-renders caused by rebuilding the useCallback
-  // identity on every flag flip (#MAINT-9).
+  // Identity on every flag flip (#).
   const [batchInProgress, setBatchInProgress] = useState(false)
   const batchInProgressRef = useRef(false)
 
@@ -63,7 +63,7 @@ export function useBlockMultiSelect({
         pageStore.setState((s) => ({
           blocks: s.blocks.map((b) => (idSet.has(b.id) ? { ...b, todo_state: state } : b)),
         }))
-        // PEND-35 Tier 2.1 — one IPC for the whole batch (was N).
+        // One IPC for the whole batch (was N).
         // Backend wraps the per-block op_log appends + materialised
         // `blocks.todo_state` writes in a single IMMEDIATE tx.
         let successCount = 0
@@ -132,7 +132,7 @@ export function useBlockMultiSelect({
     setBatchInProgress(true)
     try {
       const ids = [...selectedBlockIds]
-      // PEND-35 Tier 2.1 — the MAINT-173 ancestor pre-walk is no
+      // The ancestor pre-walk is no
       // longer needed. The single-row `deleteBlock` IPC required the
       // FE to filter selected descendants client-side because each
       // root ran in its own IMMEDIATE tx and the cascade-races would

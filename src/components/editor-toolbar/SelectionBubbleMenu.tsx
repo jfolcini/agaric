@@ -7,7 +7,7 @@
  * it stays hidden over a NodeSelection (chips / image atoms) where the mark
  * toggles would be meaningless (#924).
  *
- * Hoisted out of FormattingToolbar (PEND-33 Layer A) — every action in this
+ * Hoisted out of FormattingToolbar (Layer A) — every action in this
  * group requires a selection to be meaningful, so a contextual hover bar is
  * the right surface and frees the always-visible toolbar from these 6 buttons.
  *
@@ -55,7 +55,7 @@ function getLinkMarkRange(editor: Editor): { from: number; to: number } | undefi
 
 /**
  * Append the current keyboard binding for `shortcutId` to `label` so the
- * tooltip stays in sync with user customisations (UX-301). Returns the
+ * Tooltip stays in sync with user customisations. Returns the
  * plain label when the id is unknown so we never render an empty `()`.
  */
 function tooltipWithShortcut(label: string, shortcutId: string): string {
@@ -175,7 +175,7 @@ export function SelectionBubbleMenu({
 
   // Listen for Ctrl+K custom event dispatched by the ExternalLink extension.
   // The bubble menu owns this handler now (moved from FormattingToolbar in
-  // PEND-33 Layer A) — Ctrl+K still opens the popover even when the bubble
+  // Layer A) — Ctrl+K still opens the popover even when the bubble
   // menu itself is not visible (i.e. when the selection is empty), because
   // the extension dispatches the event on the editor's DOM directly.
   useEffect(() => {

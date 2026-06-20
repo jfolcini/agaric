@@ -76,7 +76,7 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     // Apply bold via keyboard shortcut (Ctrl+B). Under heavy parallel load
     // the toolbar's overflow wrapper can intercept pointer events on the
     // Bold button; the keyboard shortcut bypasses the pointer-event
-    // pipeline entirely and dispatches directly to the editor (TEST-3
+    // Pipeline entirely and dispatches directly to the editor (
     // flake, session 679).
     await page.keyboard.press('Control+b')
 
@@ -235,7 +235,7 @@ test.describe('Link buttons', () => {
     // Under heavy parallel load the toolbar may not have rendered the
     // External link button yet. Use the keyboard shortcut (Ctrl+K) which
     // dispatches directly to the editor DOM, bypassing toolbar rendering
-    // entirely (TEST-3 flake, session 679).
+    // Entirely (flake, session 679).
     await page.keyboard.press('Control+k')
 
     // The LinkEditPopover should appear with its URL input

@@ -11,7 +11,7 @@
  * primitives auto-close on click, while Sheet has no equivalent and the
  * caller must close via `onOpenChange(false)`).
  *
- * **`kind` discriminant (MAINT-215):**
+ * **`kind` discriminant:**
  *  - `'alert'` (default) — desktop returns `AlertDialog` parts. Use for
  *    confirmation prompts that must trap interaction until the user
  *    decides (e.g. delete confirmations). `ConfirmDialog` is the canonical

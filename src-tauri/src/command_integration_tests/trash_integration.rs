@@ -119,7 +119,7 @@ async fn restore_all_deleted_handles_cascade_deleted_blocks() {
     assert!(chd.deleted_at.is_none(), "child must be restored");
 }
 
-/// MAINT-214 (a): `restore_all_deleted_inner` must refresh the
+/// `restore_all_deleted_inner` must refresh the
 /// denormalised `page_id` column synchronously inside its own tx,
 /// mirroring the M6 fix in `restore_block_inner`
 /// (`commands/blocks/crud.rs:1028-1099`). Pre-fix, the column was only
@@ -135,7 +135,7 @@ async fn restore_all_deleted_handles_cascade_deleted_blocks() {
 /// 3. Soft-delete `leaf` individually.
 /// 4. Shut the materialiser down so the async `RebuildPageIds` task
 ///    cannot mask the sync-update behaviour we are testing.
-/// 5. Call `restore_all_deleted_inner`. With the MAINT-214 fix this
+/// 5. Call `restore_all_deleted_inner`. With the fix this
 ///    synchronously rewrites `leaf.page_id = page_b` inside the
 ///    restore tx. Without the fix, the sync path would not touch
 ///    page_id at all; with the materialiser blocked there is no
@@ -214,7 +214,7 @@ async fn restore_all_deleted_synchronously_refreshes_page_id() {
     settle(&mat).await;
 
     // Shut the materialiser down so async RebuildPageIds cannot
-    // catch up — only the sync MAINT-214 fix can produce the
+    // Catch up — only the sync fix can produce the
     // expected post-state.
     mat.shutdown();
 
@@ -231,7 +231,7 @@ async fn restore_all_deleted_synchronously_refreshes_page_id() {
     assert_eq!(
         leaf_page_after_restore.as_deref(),
         Some(page_b.id.as_str()),
-        "MAINT-214 (a): restore_all_deleted_inner must synchronously \
+        "restore_all_deleted_inner must synchronously \
          refresh page_id to the current ancestor (page_b), NOT the \
          pre-move page_a"
     );
@@ -461,7 +461,7 @@ async fn purge_all_deleted_preserves_non_deleted_blocks() {
 }
 
 // ======================================================================
-// UX-243: roots-only trash listing + descendant counts round-trip
+// Roots-only trash listing + descendant counts round-trip
 // ======================================================================
 
 /// After cascade_soft_delete on a page with children, `list_trash_inner`
@@ -608,7 +608,7 @@ async fn purge_root_from_trash_removes_descendants() {
     }
 }
 
-// BUG-46 regression: the bulk purge path previously left orphan
+// Regression: the bulk purge path previously left orphan
 // `block_tag_inherited` rows whose `tag_id` column pointed at a
 // soft-deleted tag, causing an FK violation (SQLITE_CONSTRAINT_FOREIGNKEY
 // / 787) when the tag was about to be physically removed. Seed a live

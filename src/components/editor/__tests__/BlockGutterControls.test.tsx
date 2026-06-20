@@ -426,8 +426,8 @@ describe('BlockGutterControls gutter button classes', () => {
     expect(historyBtn.className).toContain('group-hover:pointer-events-auto')
   })
 
-  it('all three gutter buttons carry the touch-target utility class (UX-245)', () => {
-    // Regression for UX-245: the .touch-target utility now sets both min-height
+  it('all three gutter buttons carry the touch-target utility class', () => {
+    // Regression for the.touch-target utility now sets both min-height
     // and min-width to 44px under (pointer: coarse) so the 20-px-wide gutter
     // buttons meet WCAG 2.5.8 on touch devices. jsdom cannot evaluate the
     // @media query, so we assert structural presence of the utility class
@@ -626,7 +626,7 @@ describe('BlockGutterControls accessibility', () => {
   })
 })
 
-/* ── Touch (pointer: coarse) — UX-281 overflow Sheet ─────────────── */
+/* ── Touch (pointer: coarse) — overflow Sheet ─────────────── */
 
 describe('BlockGutterControls (touch / pointer:coarse)', () => {
   let originalMatchMedia: PropertyDescriptor | undefined
@@ -660,13 +660,13 @@ describe('BlockGutterControls (touch / pointer:coarse)', () => {
 
     const overflow = screen.getByTestId('more-actions')
     // The aria-label is now enumerated based on available actions
-    // (UX-306) — see the dedicated tests below for that contract.
+    // See the dedicated tests below for that contract.
     expect(overflow).toHaveAttribute('aria-haspopup', 'dialog')
     expect(overflow).toHaveAttribute('aria-expanded', 'false')
   })
 
-  // ── UX-305: touch drag handle long-press hint ─────────────────────
-  it('drag handle aria-label surfaces the long-press hint on touch (UX-305)', () => {
+  // ── touch drag handle long-press hint ─────────────────────
+  it('drag handle aria-label surfaces the long-press hint on touch', () => {
     renderWithTooltip(
       <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
     )
@@ -733,8 +733,8 @@ describe('BlockGutterControls (touch / pointer:coarse)', () => {
     expect(overflow.className.split(/\s+/).some((c) => c.startsWith('bg-'))).toBe(false)
   })
 
-  // ── UX-306: more-actions aria-label enumerates available actions ──
-  it('more-actions aria-label enumerates History and Delete when both are provided (UX-306)', () => {
+  // ── more-actions aria-label enumerates available actions ──
+  it('more-actions aria-label enumerates History and Delete when both are provided', () => {
     renderWithTooltip(
       <BlockGutterControls blockId="B1" onDelete={vi.fn()} onShowHistory={vi.fn()} />,
     )
@@ -746,7 +746,7 @@ describe('BlockGutterControls (touch / pointer:coarse)', () => {
     expect(overflow).toHaveAttribute('aria-label', expected)
   })
 
-  it('more-actions aria-label enumerates only Delete when onShowHistory is undefined (UX-306)', () => {
+  it('more-actions aria-label enumerates only Delete when onShowHistory is undefined', () => {
     renderWithTooltip(<BlockGutterControls blockId="B1" onDelete={vi.fn()} />)
 
     const overflow = screen.getByTestId('more-actions')

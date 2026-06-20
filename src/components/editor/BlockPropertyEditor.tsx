@@ -1,7 +1,7 @@
 /**
  * BlockPropertyEditor — inline edit popup for block properties.
  *
- * MAINT-103: Renders the popup as a React portal anchored to a 0×0 placeholder
+ * Renders the popup as a React portal anchored to a 0×0 placeholder
  * sibling and positions it with `@floating-ui/dom` (`computePosition` +
  * `autoUpdate`). This mirrors `suggestion-renderer.ts` so the popup escapes
  * `overflow: hidden` ancestors and reflows on scroll/resize. The portal carries
@@ -61,7 +61,7 @@ export function BlockPropertyEditor({
   const propPopupRef = useRef<HTMLDivElement | null>(null)
   const keyAnchorRef = useRef<HTMLSpanElement | null>(null)
   const keyPopupRef = useRef<HTMLDivElement | null>(null)
-  // PEND-23 H1 — stable id base for select-options listbox so each option
+  // Stable id base for select-options listbox so each option
   // can carry a unique `id` referenced by `aria-activedescendant`.
   const selectListboxId = useId()
 
@@ -186,7 +186,7 @@ export function BlockPropertyEditor({
             { key: editingProp.key },
             err,
           )
-          // MAINT-175: push popup off-screen on failure so it doesn't
+          // Push popup off-screen on failure so it doesn't
           // float orphaned mid-page after the anchor scrolls or moves.
           applySafePosition(popup, null)
         })
@@ -272,7 +272,7 @@ export function BlockPropertyEditor({
             { oldKey: editingKey.oldKey },
             err,
           )
-          // MAINT-175: push popup off-screen on failure so it doesn't
+          // Push popup off-screen on failure so it doesn't
           // float orphaned mid-page after the anchor scrolls or moves.
           applySafePosition(popup, null)
         })
@@ -319,7 +319,7 @@ export function BlockPropertyEditor({
       aria-label={t('block.editProperty')}
     >
       {selectOptions ? (
-        // PEND-23 H1 — listbox semantics so screen-reader / keyboard users
+        // Listbox semantics so screen-reader / keyboard users
         // see a navigable list rather than a stack of generic buttons.
         // Mirrors the in-repo pattern in `TagValuePicker.tsx:172–199`.
         (() => {
@@ -396,7 +396,7 @@ export function BlockPropertyEditor({
           />
           <ScrollArea className="max-h-48 flex flex-col gap-0.5">
             {(() => {
-              // UX-248 — Unicode-aware fold.
+              // Unicode-aware fold.
               const filtered = refPages.filter((page) =>
                 matchesSearchFolded(page.content || '', refSearch),
               )

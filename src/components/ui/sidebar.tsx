@@ -127,7 +127,7 @@ const SidebarProvider = ({
         {...props}
       >
         {/*
-            UX-260 sub-fix 1: 3px coarse-pointer-only edge gradient hint that
+             sub-fix 1: 3px coarse-pointer-only edge gradient hint that
             tells touch users a sidebar lives behind the left edge.
             `pointer:coarse` only — desktop layout unaffected. Hidden when
             the sidebar is already open on mobile.
@@ -212,13 +212,13 @@ const Sidebar = ({
       </Sheet>
     )
 
-    // UX-231: `collapsible="offcanvas"` keeps the original Sheet-only
+    // `collapsible="offcanvas"` keeps the original Sheet-only
     // behaviour so other consumers of this shadcn primitive are unaffected.
     if (collapsible === 'offcanvas') {
       return sheet
     }
 
-    // UX-231: `collapsible="icon"` on mobile renders a persistent 48-px
+    // `collapsible="icon"` on mobile renders a persistent 48-px
     // icon rail AND the Sheet. The rail is always visible; the Sheet slides
     // in on top when `openMobile` becomes true. The rail's ancestor carries
     // `data-collapsible="icon"` so `SidebarMenuButton` (and every other
@@ -401,7 +401,7 @@ const SidebarInset = ({ ref, className, ...props }: React.ComponentProps<'main'>
       ref={ref}
       data-slot="sidebar-inset"
       className={cn(
-        // UX-231 belt-and-braces: `overflow-x-hidden` stops any lateral
+        // Belt-and-braces: `overflow-x-hidden` stops any lateral
         // overflow from a SidebarInset descendant (e.g., a long tab row)
         // from bleeding to the document and pushing the app shell off the
         // viewport. Vertical overflow is unaffected.
@@ -467,7 +467,7 @@ const SidebarSeparator = ({ ref, className, ...props }: React.ComponentProps<typ
 }
 SidebarSeparator.displayName = 'SidebarSeparator'
 
-// Agaric override (UX-208): use ScrollArea per AGENTS.md mandate.
+// Agaric override: use ScrollArea per AGENTS.md mandate.
 // The original shadcn primitive uses bare `overflow-auto`; AGENTS.md §
 // "Mandatory patterns" requires `ScrollArea` for every scrollable container.
 // Keep this comment in place so future shadcn pulls don't silently revert.
@@ -507,7 +507,7 @@ const SidebarGroup = ({ ref, className, ...props }: React.ComponentProps<'div'>)
       data-sidebar="group"
       className={cn(
         'relative flex w-full min-w-0 flex-col p-2',
-        // UX-231: inside the mobile icon rail the 48-px rail width is
+        // Inside the mobile icon rail the 48-px rail width is
         // reserved for 44-px touch targets, so strip horizontal padding via
         // the ancestor `data-mobile-rail="true"` attribute (set on the
         // unnamed-`group` rail wrapper). Vertical padding is preserved.
@@ -610,7 +610,7 @@ const SidebarMenuItem = ({ ref, className, ...props }: React.ComponentProps<'li'
 SidebarMenuItem.displayName = 'SidebarMenuItem'
 
 const sidebarMenuButtonVariants = cva(
-  // UX-231: on touch / coarse-pointer devices, enforce the 44-px WCAG
+  // On touch / coarse-pointer devices, enforce the 44-px WCAG
   // Target Size minimum when the sidebar is collapsed to icon-only mode via
   // `[@media(pointer:coarse)]:group-data-[collapsible=icon]:size-11!`. The
   // desktop default stays at `size-8` (32 px) because pointer precision is

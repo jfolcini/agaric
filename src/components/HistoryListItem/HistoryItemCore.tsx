@@ -97,7 +97,7 @@ export function opIcon(opType: string): LucideIcon {
 
 export interface HistoryItemCoreProps {
   entry: HistoryEntry
-  /** When omitted, the diff-toggle button is hidden (PEND-17 Part B —
+  /** When omitted, the diff-toggle button is hidden (Part B —
    *  `BlockHistoryItem` drives expansion from the row click instead). */
   isExpanded?: boolean
   isLoadingDiff?: boolean
@@ -201,7 +201,7 @@ export function HistoryItemCore({
         )}
       </div>
       {/* Diff toggle — only when the parent supplies an `onToggleDiff`
-          handler. PEND-17 Part B `BlockHistoryItem` omits it and drives
+          handler.  Part B `BlockHistoryItem` omits it and drives
           expansion from the whole-row click target instead. */}
       {entry.op_type === 'edit_block' && onToggleDiff && (
         <Button

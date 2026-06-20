@@ -1,5 +1,5 @@
 /**
- * Tests for BugReportDialog (FEAT-5).
+ * Tests for BugReportDialog.
  *
  * - render + axe a11y audit
  * - title/description toggles update state
@@ -23,7 +23,7 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 
-// MAINT-215: useDialogOrSheet branches on useIsMobile. Default to the
+// UseDialogOrSheet branches on useIsMobile. Default to the
 // desktop (Dialog) path so the pre-existing test bodies keep their
 // semantics; the dedicated viewport-switch describe at the bottom
 // overrides this.
@@ -38,7 +38,7 @@ const mockedToastSuccess = vi.mocked(toast.success)
 
 // Mock open-url + download so the primary button path runs without touching
 // `@tauri-apps/plugin-shell` or the DOM download machinery.
-// MAINT-177: openUrl now returns Promise<boolean> reflecting whether the
+// OpenUrl now returns Promise<boolean> reflecting whether the
 // browser actually opened — the mock signature follows.
 const openUrlMock = vi.fn<(url: string) => Promise<boolean>>()
 vi.mock('@/lib/open-url', () => ({
@@ -77,14 +77,14 @@ function setupDefaultIpcMocks() {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // MAINT-177: default to `true` (browser opened) so existing tests assert
-  // the success path. The MAINT-177 failure-path test below overrides this.
+  // Default to `true` (browser opened) so existing tests assert
+  // The success path. The failure-path test below overrides this.
   openUrlMock.mockResolvedValue(true)
   setupDefaultIpcMocks()
   // Re-arm the wrapper mock — `vi.clearAllMocks()` clears the default
   // resolution installed at module load.
   mockedWriteText.mockResolvedValue(undefined)
-  // MAINT-215: reset to desktop so cross-test mobile overrides never leak.
+  // Reset to desktop so cross-test mobile overrides never leak.
   mockedUseIsMobile.mockReturnValue(false)
 })
 
@@ -174,8 +174,8 @@ describe('BugReportDialog', () => {
     })
   })
 
-  // ── UX-383: Redact toggle sibling layout ────────────────────────────
-  describe('redact switch sibling layout (UX-383)', () => {
+  // ── Redact toggle sibling layout ────────────────────────────
+  describe('redact switch sibling layout', () => {
     it('redact switch is visible regardless of include-logs state', async () => {
       const user = userEvent.setup()
       render(<BugReportDialog open={true} onOpenChange={() => {}} />)
@@ -301,7 +301,7 @@ describe('BugReportDialog', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
-  // MAINT-177: when openUrl resolves false (Tauri shell errored AND
+  // When openUrl resolves false (Tauri shell errored AND
   // window.open was popup-blocked), the dialog must surface an error,
   // copy the issue URL to the clipboard as a manual escape hatch, and
   // stay open instead of claiming success.
@@ -352,7 +352,7 @@ describe('BugReportDialog', () => {
     }
   })
 
-  // MAINT-177 (reviewer follow-up): when openUrl resolves false AND the
+  // (reviewer follow-up): when openUrl resolves false AND the
   // clipboard fallback also rejects, the user has no way to recover the
   // URL — the error toast must switch to the no-clipboard variant so the
   // wording directs them to the Copy report button rather than promising
@@ -545,8 +545,8 @@ describe('BugReportDialog', () => {
     )
   })
 
-  // ── UX-277: per-log preview sub-dialog ───────────────────────────────
-  describe('log preview sub-dialog (UX-277)', () => {
+  // ── per-log preview sub-dialog ───────────────────────────────
+  describe('log preview sub-dialog', () => {
     const longContent = `${'a'.repeat(600)}END`
     const shortContent = 'short log line\n'
 
@@ -757,8 +757,8 @@ describe('BugReportDialog', () => {
     })
   })
 
-  // ── UX-12: required-marker on confirmation checkbox ─────────────────
-  describe('confirmation checkbox required marker (UX-12)', () => {
+  // ── required-marker on confirmation checkbox ─────────────────
+  describe('confirmation checkbox required marker', () => {
     it('renders aria-required="true" on the confirmation checkbox', async () => {
       render(<BugReportDialog open={true} onOpenChange={() => {}} />)
 
@@ -788,8 +788,8 @@ describe('BugReportDialog', () => {
     })
   })
 
-  // ── UX-12: View full log toggle in the per-log preview sub-dialog ───
-  describe('preview "View full log" toggle (UX-12)', () => {
+  // ── View full log toggle in the per-log preview sub-dialog ───
+  describe('preview "View full log" toggle', () => {
     const longContent = `${'a'.repeat(600)}END`
 
     function setupOneLongLog() {
@@ -840,7 +840,7 @@ describe('BugReportDialog', () => {
     })
   })
 
-  // ── PEND-28b M1 → pending/dialog-responsiveness-primitive-2026-05-13:
+  // ── → pending/dialog-responsiveness-primitive-2026-05-13:
   // scrollable body keeps title and footer fixed. The custom ScrollArea
   // wrapper became a DialogBody slot baked into the Dialog primitive; the
   // ScrollArea is now an implementation detail of DialogBody.
@@ -869,8 +869,8 @@ describe('BugReportDialog', () => {
     })
   })
 
-  // ── PEND-23 L7: nested log-preview dialog autofocuses close button ──
-  describe('log preview close button autoFocus (PEND-23 L7)', () => {
+  // ── nested log-preview dialog autofocuses close button ──
+  describe('log preview close button autoFocus', () => {
     it('focuses the close button when the preview dialog opens', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -924,13 +924,13 @@ describe('BugReportDialog', () => {
     expect(descInput.value).toBe('stack trace here')
   })
 
-  // ─── MAINT-215: useDialogOrSheet('dialog') viewport switch ─────────────
+  // ─── useDialogOrSheet('dialog') viewport switch ─────────────
   //
   // On phones < 768 px the outer shell renders as a bottom Sheet so the
   // footer actions sit within thumb reach. The form body, IPC wiring, and
   // confirm checkbox are identical on both paths — assert the dialog mounts
   // and the form fields are reachable under both viewports.
-  describe('viewport switch (MAINT-215)', () => {
+  describe('viewport switch', () => {
     it('renders form body on mobile (Sheet path)', async () => {
       mockedUseIsMobile.mockReturnValue(true)
 

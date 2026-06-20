@@ -1,6 +1,6 @@
 /**
  * Unicode-aware case-insensitive substring matching for interactive
- * search / filter surfaces (UX-247).
+ * Search / filter surfaces.
  *
  * `String.prototype.toLowerCase()` is not locale-aware and has three
  * well-known substring-match failure modes:

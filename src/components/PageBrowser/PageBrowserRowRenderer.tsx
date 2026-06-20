@@ -4,7 +4,7 @@
  * sub-renderers (header / page / tree-page). All state is passed in as
  * props — this sibling is presentational and stateless.
  *
- * Extracted from `PageBrowser.tsx` (MAINT-128).
+ * Extracted from `PageBrowser.tsx`.
  */
 
 import type { VirtualItem } from '@tanstack/react-virtual'
@@ -39,7 +39,7 @@ export interface PageBrowserRowRendererProps {
   onCreateUnder: (namespacePath: string) => void
   onDeleteRequest: (target: { id: string; name: string } | null) => void
   /**
-   * #81 / PEND-57 — batch multi-select. `selectedIds` carries the ids of
+   * #81 / batch multi-select. `selectedIds` carries the ids of
    * every page currently in the selection; `onToggleMultiSelect` flips
    * one row. Threaded to the leaf page rows so each renders its
    * selection checkbox. Tree-page and header rows ignore these (the
@@ -48,7 +48,7 @@ export interface PageBrowserRowRendererProps {
   selectedIds: ReadonlySet<string>
   onToggleMultiSelect: (pageId: string, e: React.MouseEvent) => void
   /**
-   * PEND-56 Phase 3 — active density mode for the `<DensityRow>` body.
+   * Phase 3 — active density mode for the `<DensityRow>` body.
    */
   density: DensityMode
 }
@@ -67,7 +67,7 @@ export function PageBrowserRowRenderer(
   const { row } = props
   if (row.kind === 'header') return <HeaderRow {...props} row={row} />
   if (row.kind === 'tree-page') return <TreePageRow {...props} row={row} />
-  // PEND-56 Phase 3 — leaf `page` rows render via `<DensityRow>`
+  // Phase 3 — leaf `page` rows render via `<DensityRow>`
   // (metadata-aware, density-aware). The density-aware row reads its
   // metadata via a cast through `PageWithMetadataRow` (the IPC payload
   // is a structural superset).
@@ -149,7 +149,7 @@ function TreePageRow({
 }: TreePageRowProps): React.ReactElement {
   const { node, pageIndex, depth } = row
   // Tree-page rows wrap a recursive `PageTreeItem` whose own
-  // buttons handle activation/expand. Under MAINT-162 the page-list
+  // Buttons handle activation/expand. Under the page-list
   // viewport is `role="grid"`, so each tree-page wrapper is a
   // `role="row"` containing a single `role="gridcell"` that hosts
   // the recursive button tree. For keyboard-nav visibility we apply
@@ -159,7 +159,7 @@ function TreePageRow({
   return (
     <div
       key={virtualRow.key}
-      // UX-331 — stable id so the grid container's `aria-activedescendant`
+      // Stable id so the grid container's `aria-activedescendant`
       // can point at this row when keyboard nav lands on it.
       id={`page-row-${node.fullPath}`}
       data-index={virtualRow.index}
@@ -190,7 +190,7 @@ function TreePageRow({
 }
 
 /**
- * PEND-56 Phase 3 — adapter from the row-renderer's props plus the
+ * Phase 3 — adapter from the row-renderer's props plus the
  * `PageBrowserRow` discriminated union member to the typed primitive
  * props that `<DensityRow>` expects.
  *
@@ -243,7 +243,7 @@ function DensityPageRow({
   const hasScheduled = meta.flags?.hasScheduled ?? false
   const hasDue = meta.flags?.hasDue ?? false
 
-  // PEND-56 Phase 3 — stabilise the bridging callback so `React.memo`'s
+  // Phase 3 — stabilise the bridging callback so `React.memo`'s
   // shallow compare on `<DensityRow>` hits across parent re-renders.
   // Without the `useCallback` the inline arrow allocated a fresh
   // function identity per render of every row, defeating the memo for

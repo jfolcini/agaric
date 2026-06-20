@@ -3,9 +3,9 @@
  *
  * Trigger button shows the resolved title (or the empty-state placeholder);
  * the popover hosts a search input + a scrollable list of pages with a
- * Spinner gated on the per-page save promise (UX-272 sub-fix 8). When the
+ * Spinner gated on the per-page save promise (sub-fix 8). When the
  * `onCreateNewPage` callback is wired and the search has content, the empty
- * state offers a `t('properties.createNewPageAction', { name })` affordance (UX-272 sub-fix 1).
+ * State offers a `t('properties.createNewPageAction', { name })` affordance (sub-fix 1).
  */
 
 import { FileSearch, Plus } from 'lucide-react'

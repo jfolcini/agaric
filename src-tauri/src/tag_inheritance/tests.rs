@@ -60,7 +60,7 @@ async fn soft_delete(pool: &SqlitePool, id: &str) {
 }
 
 // ======================================================================
-// apply_op_tag_inheritance — MAINT-45 consolidated dispatcher
+// Apply_op_tag_inheritance — consolidated dispatcher
 // ======================================================================
 
 #[tokio::test]
@@ -939,7 +939,7 @@ async fn rebuild_all_split_multi_tag() {
 }
 
 // ======================================================================
-// M-40: depth limit doesn't break shallow trees
+// Depth limit doesn't break shallow trees
 // ======================================================================
 
 #[tokio::test]
@@ -978,13 +978,13 @@ async fn depth_limit_shallow_tree_works() {
 }
 
 // ======================================================================
-// L-93 / L-94 — `rebuild_all_split` is now a single BEGIN IMMEDIATE tx
+// `rebuild_all_split` is now a single BEGIN IMMEDIATE tx
 // ======================================================================
 
 /// Parity oracle: `rebuild_all_split` must produce a byte-identical
 /// `block_tag_inherited` row set to the unified `rebuild_all`. This
 /// is the proof that the split variant is functionally equivalent
-/// after the L-93/L-94 fix collapsed it onto the same recursive-CTE
+/// After the fix collapsed it onto the same recursive-CTE
 /// `INSERT … SELECT` shape.
 #[tokio::test]
 async fn rebuild_all_split_matches_unified_rebuild_all() {
@@ -1032,7 +1032,7 @@ async fn rebuild_all_split_matches_unified_rebuild_all() {
     );
 }
 
-/// L-93: prove correctness on a fixture that crosses the previous
+/// Prove correctness on a fixture that crosses the previous
 /// 500-row chunking threshold. Before the fix the split variant
 /// issued one `INSERT` per row inside a single tx; after the fix it
 /// issues one `INSERT … SELECT`. This test exercises the path with
@@ -1075,7 +1075,7 @@ async fn rebuild_all_split_large_fixture_matches_unified() {
     );
 }
 
-/// L-94: when an incremental `apply_op_tag_inheritance(AddTag)`
+/// When an incremental `apply_op_tag_inheritance(AddTag)`
 /// runs concurrently with `rebuild_all_split`, the AddTag's effect
 /// must be observable in `block_tag_inherited` after both
 /// operations complete — regardless of which one wins the writer
@@ -1159,16 +1159,16 @@ async fn rebuild_all_split_serialises_with_concurrent_add_tag() {
     );
 
     // TAG_NEW must also be present for both descendants — this is
-    // the L-94 regression test. With the old read-then-DELETE-then-
+    // The regression test. With the old read-then-DELETE-then-
     // INSERT shape, a schedule existed where the AddTag's
     // propagated rows were wiped by the rebuild's DELETE.
     assert!(
         rows.contains(&("RACE_CHILD".into(), "TAG_NEW".into(), "RACE_ROOT".into())),
-        "TAG_NEW must inherit to RACE_CHILD after concurrent rebuild + AddTag (L-94), got: {rows:?}",
+        "TAG_NEW must inherit to RACE_CHILD after concurrent rebuild + AddTag, got: {rows:?}",
     );
     assert!(
         rows.contains(&("RACE_GRAND".into(), "TAG_NEW".into(), "RACE_ROOT".into())),
-        "TAG_NEW must inherit to RACE_GRAND after concurrent rebuild + AddTag (L-94), got: {rows:?}",
+        "TAG_NEW must inherit to RACE_GRAND after concurrent rebuild + AddTag, got: {rows:?}",
     );
 
     // No spurious extra rows: 2 descendants × 2 tags = 4 rows.

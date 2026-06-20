@@ -77,12 +77,12 @@ export function createPickerPlugin(cfg: PickerPluginConfig) {
   })
 }
 
-// ── MAINT-203 ──────────────────────────────────────────────────────────────
+// ── ──────────────────────────────────────────────────────────────
 //
 // Shared async resolve-and-insert path for the 3 token-inserting pickers
 // (AtTagPicker `#TAG`, BlockLinkPicker `[[ULID]]`, BlockRefPicker `((ULID))`).
 //
-// All three implement the same FE-M-15 race-condition guard:
+// All three implement the same race-condition guard:
 //   - capture `insertPos` *before* the async resolve fires
 //   - on resolve, check `insertPos <= editor.state.doc.content.size` —
 //     `insertContentAt` clamps silently when the offset is past doc end,
@@ -140,7 +140,7 @@ export async function resolveAndInsertPickerToken({
   loggerComponent,
   errorMessage,
 }: ResolveAndInsertPickerTokenOptions): Promise<void> {
-  // FE-M-15: insertContentAt clamps silently when insertPos is past the
+  // InsertContentAt clamps silently when insertPos is past the
   // doc's end (e.g. user cleared/shrank the doc while the async resolve
   // was in flight), so the existing try/catch never fires on that path.
   // Validate before each insertContentAt(insertPos, ...) call; on a stale

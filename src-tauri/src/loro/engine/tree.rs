@@ -1,4 +1,4 @@
-//! Tree slot/position mechanics for [`LoroEngine`] (PEND-80 Phase 3).
+//! Tree slot/position mechanics for [`LoroEngine`] (Phase 3).
 //!
 //! The block hierarchy is a `LoroTree` at `BLOCKS_TREE_ROOT`; these methods
 //! centralise node lookup + meta access (the `block_id -> TreeID` index and

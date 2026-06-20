@@ -65,7 +65,7 @@ export function CommandsModeBody({
   onClose: () => void
   t: ReturnType<typeof useTranslation>['t']
 }): React.ReactElement {
-  // PEND-61 CR-2 — the mode router at the parent (`PaletteBody`) has
+  // The mode router at the parent (`PaletteBody`) has
   // already stripped the leading `>` from the store query when the
   // user typed it as the entry shortcut. Filtering by `query` directly
   // is correct; calling `commandsModeQuery(query)` here would shift
@@ -74,7 +74,7 @@ export function CommandsModeBody({
   const query = useCommandPaletteStore((s) => s.query)
   const filter = query.toLowerCase().trim()
 
-  // PEND-67 Phase 8 — registry hoisted to `lib/palette-commands.ts`
+  // Phase 8 — registry hoisted to `lib/palette-commands.ts`
   // so the global `runLastCommand` shortcut can execute by id without
   // mounting the palette body. Here we adapt each spec into the
   // shape the rest of the body expects: a flat `label` (resolved via
@@ -101,7 +101,7 @@ export function CommandsModeBody({
     [commands, filter],
   )
 
-  // PEND-67 Phase 2 — Recent commands strip. Only rendered when the
+  // Phase 2 — Recent commands strip. Only rendered when the
   // filter is empty (typed input hides it so the registry filter has
   // the floor). Read once on mount; the list is small and the palette
   // re-mounts every open.

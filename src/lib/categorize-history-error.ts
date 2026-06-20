@@ -9,7 +9,7 @@
  *
  * Best-effort detection: inspects HTTP-shaped errors (`{ status: 5xx }`,
  * `{ code: '5xx...' }`) first, then falls back to substring matches
- * against the lower-cased message. UX-275 sub-fix 7.
+ * Against the lower-cased message. sub-fix 7.
  */
 
 export type HistoryErrorCategory = 'network' | 'server' | 'unknown'

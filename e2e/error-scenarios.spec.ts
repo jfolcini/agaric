@@ -77,7 +77,7 @@ test.describe('Error scenarios', () => {
     await openGettingStarted(page)
 
     // Click the first seed block to open the editor. Static blocks are
-    // passive div containers (MAINT-162), located via data-testid.
+    // Passive div containers, located via data-testid.
     const firstBlock = page.locator('[data-testid="block-static"]').first()
     await firstBlock.click()
 

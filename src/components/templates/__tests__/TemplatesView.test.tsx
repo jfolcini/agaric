@@ -68,7 +68,7 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
   })
-  // BUG-1 / H-3b — TemplatesView routes page creation through
+  // / H-3b — TemplatesView routes page creation through
   // `createPageInSpace`, which reads `useSpaceStore.getState().currentSpaceId`.
   // Seed the store so the create-template path doesn't bail.
   useSpaceStore.setState({
@@ -115,7 +115,7 @@ describe('TemplatesView', () => {
   })
 
   it('renders template list with preview', async () => {
-    // PEND-35 Tier 2.8 — preview fetches go through the
+    // Preview fetches go through the
     // `first_child_for_blocks` batch IPC, not per-template `list_blocks`.
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'query_by_property') {
@@ -147,7 +147,7 @@ describe('TemplatesView', () => {
     expect(screen.getByText('First section of meeting notes')).toBeInTheDocument()
     expect(screen.getByText('Review items for the week')).toBeInTheDocument()
 
-    // PEND-35 Tier 2.8 — a single batch IPC for previews; no per-template
+    // A single batch IPC for previews; no per-template
     // `list_blocks` call.
     const firstChildCalls = mockedInvoke.mock.calls.filter(
       ([cmd]) => cmd === 'first_child_for_blocks',
@@ -194,7 +194,7 @@ describe('TemplatesView', () => {
     expect(screen.queryByText('Weekly Review')).not.toBeInTheDocument()
   })
 
-  // UX-248 — Unicode-aware fold: template search matches Turkish /
+  // Unicode-aware fold: template search matches Turkish /
   // German / accented titles via `matchesSearchFolded`.
   it('template search matches Turkish İstanbul when query is lowercase istanbul', async () => {
     const user = userEvent.setup()
@@ -316,7 +316,7 @@ describe('TemplatesView', () => {
     expect(toast.success).toHaveBeenCalledWith('Removed template status from Meeting Notes')
   })
 
-  // UX-334 — remove button must be reachable on desktop without hovering
+  // Remove button must be reachable on desktop without hovering
   // the row. Pin the visibility so a future "hide-until-hover" regression
   // is caught at test time.
   it('remove button is always visible (no opacity-0 / group-hover gating)', async () => {
@@ -712,7 +712,7 @@ describe('TemplatesView', () => {
     await user.type(searchInput, 'zzzzz')
 
     expect(screen.queryByText('Meeting Notes')).not.toBeInTheDocument()
-    // UX-12 — the "no search results" message now includes the total
+    // The "no search results" message now includes the total
     // template count so users have context for the empty state.
     expect(
       screen.getByText('No templates match your search (3 templates total).'),
@@ -769,7 +769,7 @@ describe('TemplatesView', () => {
     })
   })
 
-  // ── UX-204: create template form ───────────────────────────────────
+  // ── create template form ───────────────────────────────────
 
   describe('create template form', () => {
     it('renders input and Create button', async () => {
@@ -807,7 +807,7 @@ describe('TemplatesView', () => {
 
     it('valid submit calls create_page_in_space then setProperty with template=true', async () => {
       const user = userEvent.setup()
-      // BUG-1 / H-3b — TemplatesView routes page creation through
+      // / H-3b — TemplatesView routes page creation through
       // `create_page_in_space` (returns the new ULID as a plain string).
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage

@@ -663,7 +663,7 @@ pub async fn project_remove_tag_to_sql(
 ///   mirrored into the engine), so projecting it per-block here would
 ///   resurrect soft-deleted descendants. Remote delete/restore and
 ///   tag/property *changes* therefore still require a per-op projection
-///   pass — out of scope for this core-shape upsert (see PEND-76 F1).
+///   Pass — out of scope for this core-shape upsert.
 ///
 ///   [`import_with_changed_blocks`]: crate::loro::engine::LoroEngine::import_with_changed_blocks
 /// * `None` → engine has no record of `block_id`.  The plan
@@ -752,7 +752,7 @@ pub async fn project_block_full_to_sql(
 /// `block_properties` table (non-reserved keys) and the dedicated
 /// `blocks` hot-path columns (reserved keys) after a sync-pull import.
 ///
-/// This closes the PEND-76 F1 property-propagation residual:
+/// This closes the property-propagation residual:
 /// [`project_block_full_to_sql`] deliberately touches only the core
 /// `blocks` columns, so remote `SetProperty` / `DeleteProperty` changes
 /// would otherwise never reach SQL.  `apply_remote` calls this helper
@@ -769,7 +769,7 @@ pub async fn project_block_full_to_sql(
 /// remote is absent from `props`, so the stale SQL row is swept by the
 /// up-front DELETE and never re-inserted.
 ///
-/// ## Typed-column routing (PEND-80 Phase 4)
+/// ## Typed-column routing (Phase 4)
 ///
 /// The engine stores each value as a native [`PropertyValue`]
 /// (`Num`/`Bool`/`Str`/`Null`), so numbers and booleans route **directly**
@@ -785,7 +785,7 @@ pub async fn project_block_full_to_sql(
 /// (no INSERT; the up-front DELETE already cleared any prior row), matching
 /// "cleared property" semantics.
 ///
-/// ## Reserved keys → hot-path `blocks` columns (PEND-81 §2A)
+/// ## Reserved keys → hot-path `blocks` columns
 ///
 /// Reserved property keys (`todo_state`, `priority`, `due_date`,
 /// `scheduled_date`) live on dedicated `blocks` columns, not in
@@ -953,7 +953,7 @@ pub async fn reproject_block_properties_from_engine(
         .await?;
     }
 
-    // Reserved hot-path keys → dedicated `blocks` columns (PEND-81 §2A).
+    // Reserved hot-path keys → dedicated `blocks` columns.
     // Authoritative-replace: collect each reserved key's engine value (None
     // when absent / cleared on the remote), then a single UPDATE sets all
     // four columns at once — present keys to their value, absent keys to
@@ -993,7 +993,7 @@ pub async fn reproject_block_properties_from_engine(
 /// Re-project a block's full tag set from the engine into the SQL
 /// `block_tags` table after a sync-pull import.
 ///
-/// This closes the PEND-81 §2A tag-propagation residual:
+/// This closes the tag-propagation residual:
 /// [`project_block_full_to_sql`] touches only the core `blocks` columns,
 /// so remote `AddTag` / `RemoveTag` changes would otherwise never reach
 /// SQL.  `apply_remote` calls this helper per changed block with the
@@ -1055,7 +1055,7 @@ pub async fn reproject_block_tags_from_engine(
 }
 
 /// Re-project a block's soft-delete state from the engine into SQL
-/// after a sync-pull import (PEND-80 Phase 2).
+/// After a sync-pull import (Phase 2).
 ///
 /// [`project_block_full_to_sql`] deliberately preserves `deleted_at`
 /// (re-deriving it per-block would resurrect soft-deleted descendants),
@@ -1066,7 +1066,7 @@ pub async fn reproject_block_tags_from_engine(
 /// [`crate::loro::engine::LoroEngine::read_deleted_at`]).
 ///
 /// The engine stores `deleted_at` on the **delete seed only** (the
-/// descendant cascade is an SQL/app derivation per the PEND-80
+/// Descendant cascade is an SQL/app derivation per the
 /// boundary), so this helper re-derives the cascade in SQL rather than
 /// trusting per-block engine state:
 ///
@@ -2322,7 +2322,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // PEND-76 F1 — inbound-sync full-block projection must UPSERT, not
+    // Inbound-sync full-block projection must UPSERT, not
     // REPLACE (REPLACE cascade-wipes the whole space's derived state).
     // ---------------------------------------------------------------------
 
@@ -2592,7 +2592,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // PEND-76 F1 — inbound property re-projection into block_properties.
+    // Inbound property re-projection into block_properties.
     // ---------------------------------------------------------------------
 
     /// Load all `property_definitions` rows into a `key → value_type` map.
@@ -2647,7 +2647,7 @@ mod tests {
         seed_block_and_property_defs(&pool).await;
 
         let bid = BlockId::from_trusted(BLOCK_A);
-        // Native typed values (PEND-80 Phase 4): Num/Bool route directly to
+        // Native typed values (Phase 4): Num/Bool route directly to
         // value_num/value_bool with no string round-trip or value_type lookup.
         let props = vec![
             ("note".to_string(), pv("hello")),
@@ -2964,7 +2964,7 @@ mod tests {
 
     #[tokio::test]
     async fn reproject_native_num_ignores_diverged_value_type_and_avoids_fk_abort() {
-        // PEND-80 Phase 4: a native `Num` routes straight to value_num,
+        // Phase 4: a native `Num` routes straight to value_num,
         // ignoring `property_definitions.value_type`. This is the safety
         // win over the old string+value_type path: if a key is declared
         // `ref` here (e.g. a cross-peer definition divergence) but the
@@ -3045,7 +3045,7 @@ mod tests {
 
     #[tokio::test]
     async fn reproject_routes_reserved_keys_to_blocks_columns() {
-        // PEND-81 §2A: reserved hot-path keys must land on the dedicated
+        // Reserved hot-path keys must land on the dedicated
         // `blocks` columns (todo_state / priority / due_date /
         // scheduled_date), NOT in block_properties.
         let (pool, _dir) = fresh_pool().await;
@@ -3141,7 +3141,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // PEND-81 §2A — inbound tag re-projection into block_tags.
+    // Inbound tag re-projection into block_tags.
     // ---------------------------------------------------------------------
 
     /// Seed the owning block plus two tag blocks so the `block_tags` FK

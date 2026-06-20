@@ -1,5 +1,5 @@
 /**
- * Tests for SelectionBubbleMenu component (PEND-33 Layer A).
+ * Tests for SelectionBubbleMenu component (Layer A).
  *
  * The bubble menu hosts the 5 mark toggles (Bold, Italic, Code, Strike,
  * Highlight) and the External Link button + popover, hoisted out of
@@ -14,8 +14,8 @@
  *  - External link popover wiring (open via click, open via Ctrl+K event,
  *    pre-fills URL/label, savedSelection threading)
  *  - role="toolbar" + aria-controls + aria-labels
- *  - Tooltip tooltips append keyboard bindings (UX-301)
- *  - max-w-[calc(100vw-2rem)] viewport-clamp on link popover (PEND-28 H5)
+ * Tooltip tooltips append keyboard bindings
+ * Max-w-[calc(100vw-2rem)] viewport-clamp on link popover
  *  - axe audit
  */
 
@@ -134,7 +134,7 @@ vi.mock('@/components/ui/separator', () => ({
 }))
 
 // Mock Tooltip primitives — Radix portals tooltip content lazily; render
-// the label inline so tests can assert on tooltip text (UX-301).
+// The label inline so tests can assert on tooltip text.
 vi.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -354,7 +354,7 @@ describe('SelectionBubbleMenu', () => {
   // ── Rendering ────────────────────────────────────────────────────────
 
   describe('rendering', () => {
-    // UX-929 F5: the bubble container gains an entry animation matching the
+    // The bubble container gains an entry animation matching the
     // tooltip/suggestion popups (animate-in fade-in-0 zoom-in-95). The
     // duration-fast token collapses to 0 under prefers-reduced-motion.
     it('carries the enter-animation utility classes on the container', () => {
@@ -768,9 +768,9 @@ describe('SelectionBubbleMenu', () => {
     })
   })
 
-  // ── PEND-28 H5: editor portals carry viewport-clamp ───────────────────
+  // ── editor portals carry viewport-clamp ───────────────────
 
-  describe('viewport-clamp class on editor portals (PEND-28 H5)', () => {
+  describe('viewport-clamp class on editor portals', () => {
     it('link popover carries max-w-[calc(100vw-2rem)]', () => {
       render(<SelectionBubbleMenu editor={makeEditor()} />)
       const popovers = screen.getAllByTestId('popover-content')

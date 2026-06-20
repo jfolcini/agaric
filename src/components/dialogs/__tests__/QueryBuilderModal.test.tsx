@@ -46,7 +46,7 @@ describe('QueryBuilderModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      // M-85: `list_property_defs` returns a paginated PageResponse envelope.
+      // `list_property_defs` returns a paginated PageResponse envelope.
       if (cmd === 'list_property_defs')
         return { items: [], next_cursor: null, has_more: false, total_count: null }
       return null
@@ -410,7 +410,7 @@ describe('QueryBuilderModal', () => {
   })
 
   // -----------------------------------------------------------------------
-  // UX-316: plain-English readable preview line above the raw expression.
+  // Plain-English readable preview line above the raw expression.
   // Lets users without prior knowledge of the `type:... key:...` syntax
   // verify intent at a glance.
   // -----------------------------------------------------------------------
@@ -463,7 +463,7 @@ describe('QueryBuilderModal', () => {
   })
 
   // -----------------------------------------------------------------------
-  // UX-317: operator dropdown rows show text descriptions next to the glyph
+  // Operator dropdown rows show text descriptions next to the glyph
   // (the trigger keeps showing only the symbol via Radix auto-mirror).
   // -----------------------------------------------------------------------
   it('renders operator dropdown options with both glyph and text description', async () => {
@@ -495,11 +495,11 @@ describe('QueryBuilderModal', () => {
   })
 
   // -----------------------------------------------------------------------
-  // UX-274: property-key validation against listPropertyDefs()
+  // Property-key validation against listPropertyDefs()
   // -----------------------------------------------------------------------
   describe('property-key validation', () => {
     it('populates the datalist with known property definitions', async () => {
-      // M-85: paginated `list_property_defs` envelope.
+      // Paginated `list_property_defs` envelope.
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_property_defs') {
           return {
@@ -532,7 +532,7 @@ describe('QueryBuilderModal', () => {
       // Input is wired to the datalist
       const keyInput = screen.getByLabelText(/property key/i) as HTMLInputElement
       expect(keyInput.getAttribute('list')).toBe('qb-prop-key-list')
-      // UX-8: input also exposes ARIA autocomplete semantics for the datalist
+      // Input also exposes ARIA autocomplete semantics for the datalist
       expect(keyInput.getAttribute('aria-autocomplete')).toBe('list')
       expect(keyInput.getAttribute('aria-controls')).toBe('qb-prop-key-list')
     })
@@ -564,7 +564,7 @@ describe('QueryBuilderModal', () => {
       const keyInput = screen.getByLabelText(/property key/i) as HTMLInputElement
       await user.type(keyInput, 'unknown_key')
 
-      // Warning is announced (aria-live=polite) and input is marked invalid (UX-8)
+      // Warning is announced (aria-live=polite) and input is marked invalid
       const warning = screen.getByText(/not yet defined/i)
       expect(warning).toBeInTheDocument()
       expect(warning.getAttribute('aria-live')).toBe('polite')
@@ -656,7 +656,7 @@ describe('QueryBuilderModal', () => {
     // mount-effect `listPropertyDefs()` rejects, the component SILENTLY
     // handles the failure: it logs a warning and falls back to an empty
     // `knownPropertyKeys` list (no toast, no banner). The observable
-    // contract is the fail-safe documented at UX-274 — with zero known
+    // Contract is the fail-safe documented at with zero known
     // keys the modal renders fine, the datalist is empty, and NO
     // "not yet defined" warning fires even for an arbitrary key (avoiding
     // a false positive on every key). We assert it reaches that safe state

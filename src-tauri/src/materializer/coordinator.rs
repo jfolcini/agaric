@@ -32,18 +32,18 @@ pub(super) const OP_LOG_COUNT_CACHE_TTL_MS: u64 = 60_000;
 
 #[derive(Clone)]
 pub struct Materializer {
-    /// L-1: the foreground sender is set once during [`Self::build`] and
+    /// The foreground sender is set once during [`Self::build`] and
     /// never replaced. `OnceLock` removes the per-call `Mutex` acquisition
     /// from the [`Self::fg_sender`] hot path while still gating
     /// post-shutdown sends through [`Self::shutdown_flag`].
     pub(super) fg_tx: Arc<OnceLock<mpsc::Sender<MaterializeTask>>>,
-    /// L-1: see [`Self::fg_tx`] — same write-once shape for the
+    /// See [`Self::fg_tx`] — same write-once shape for the
     /// background queue sender.
     pub(super) bg_tx: Arc<OnceLock<mpsc::Sender<MaterializeTask>>>,
     pub(super) shutdown_flag: Arc<AtomicBool>,
     pub(super) metrics: Arc<QueueMetrics>,
     pub(super) reader_pool: SqlitePool,
-    /// PEND-03: write-capable pool used by the queue-saturation drop
+    /// Write-capable pool used by the queue-saturation drop
     /// path in [`Self::try_enqueue_background`] to persist dropped
     /// global cache rebuilds to `materializer_retry_queue`. The
     /// `reader_pool` enforces `PRAGMA query_only = ON` so it cannot
@@ -69,7 +69,7 @@ pub struct Materializer {
     /// `cleanup_orphaned_attachments` short-circuits with a debug log
     /// when the dir is not set.
     pub(super) app_data_dir: Arc<OnceLock<PathBuf>>,
-    /// M-12: tracks every tokio task spawned via [`Self::spawn_task`] so
+    /// Tracks every tokio task spawned via [`Self::spawn_task`] so
     /// [`Self::shutdown`] can call `abort_all()` on them. Without this,
     /// long-running futures (e.g. an FTS rebuild taking many seconds)
     /// kept running after the `shutdown_flag` flip and channel-sender
@@ -181,7 +181,7 @@ impl Materializer {
         Self::build(write_pool, Some(read_pool.clone()), read_pool, None)
     }
 
-    /// PERF-24: construct a `Materializer` wired up to app-foreground
+    /// Construct a `Materializer` wired up to app-foreground
     /// lifecycle hooks.
     ///
     /// The internal metrics-snapshot task skips its body when
@@ -225,7 +225,7 @@ impl Materializer {
         #[cfg(test)]
         let block_count_test_hooks = BlockCountTestHooks::new();
         let app_data_dir: Arc<OnceLock<PathBuf>> = Arc::new(OnceLock::new());
-        // M-12: JoinSet must exist before the four `spawn_task` calls
+        // JoinSet must exist before the four `spawn_task` calls
         // below so every task we spawn is registered for abort-on-shutdown.
         let tasks: Arc<Mutex<JoinSet<()>>> = Arc::new(Mutex::new(JoinSet::new()));
         {
@@ -234,7 +234,7 @@ impl Materializer {
             let m = metrics.clone();
             Self::spawn_task(&tasks, consumer::run_foreground(p, fg_rx, s, m));
         }
-        // PEND-03: clone write_pool for the queue-saturation persistence
+        // Clone write_pool for the queue-saturation persistence
         // path before moving the original into `run_background`.
         let write_pool_for_struct = write_pool.clone();
         {
@@ -289,7 +289,7 @@ impl Materializer {
             let s = shutdown_flag.clone();
             Self::spawn_task(&tasks, Self::metrics_snapshot_task(m, s, lifecycle));
         }
-        // L-1: senders live in `OnceLock`s instead of `Mutex<Option<…>>`
+        // Senders live in `OnceLock`s instead of `Mutex<Option<…>>`
         // since they are written exactly once here and never replaced.
         // Reads stay lock-free on the hot path; post-shutdown gating is
         // handled by checking `shutdown_flag` inside `fg_sender` /
@@ -345,7 +345,7 @@ impl Materializer {
 
     /// Periodic (5 min) metrics snapshot task.
     ///
-    /// PERF-24: when `lifecycle` is `Some` and `is_foreground` reads
+    /// When `lifecycle` is `Some` and `is_foreground` reads
     /// `false`, the snapshot body is skipped for that tick. The tick
     /// itself still fires so the interval's internal deadline stays
     /// aligned — we just don't pay for the atomic reads or the tracing
@@ -390,7 +390,7 @@ impl Materializer {
         }
     }
 
-    /// M-12: spawn `future` on a tokio runtime and register its handle
+    /// Spawn `future` on a tokio runtime and register its handle
     /// on `tasks` so [`Self::shutdown`] can abort it.
     ///
     /// `JoinSet::spawn` calls `tokio::runtime::Handle::current()` and
@@ -398,7 +398,7 @@ impl Materializer {
     /// callback runs synchronously on the main thread, *outside* any
     /// runtime — `tauri::async_runtime::spawn` works there only because
     /// it dispatches through Tauri's stored handle, not via
-    /// `Handle::current()`. To keep the M-12 abort-on-shutdown
+    /// `Handle::current()`. To keep the abort-on-shutdown
     /// semantics while not panicking in `setup`, we bind the task
     /// explicitly via `JoinSet::spawn_on` to either:
     ///   - the current Tokio runtime when one exists (tests under
@@ -406,7 +406,7 @@ impl Materializer {
     ///   - Tauri's stored `async_runtime` handle as a fallback (the
     ///     non-async `setup` callback path).
     ///
-    /// `pub(super)` so sibling modules — in particular the M-12
+    /// `pub(super)` so sibling modules — in particular the
     /// regression test in `materializer::tests` — can spawn directly
     /// onto the same `JoinSet` and observe abort-on-shutdown semantics.
     pub(super) fn spawn_task<F>(tasks: &Arc<Mutex<JoinSet<()>>>, future: F)
@@ -549,7 +549,7 @@ impl Materializer {
     /// their `.store(simulated_count, …)`. Otherwise the stale initial
     /// writer may race with the simulation and clobber the value after it
     /// has been set, producing a deterministic-in-isolation but
-    /// parallelism-flaky test (TEST-2).
+    /// Parallelism-flaky test.
     ///
     /// The method is cheap in the common "already initialized" case — a
     /// single Acquire atomic load. Production code does not call this:
@@ -625,7 +625,7 @@ impl Materializer {
 
     pub async fn enqueue_foreground(&self, task: MaterializeTask) -> Result<(), AppError> {
         let tx = self.fg_sender()?;
-        // MAINT-24 / L-12: avoid the TOCTOU on `tx.capacity()` — a snapshot
+        // / avoid the TOCTOU on `tx.capacity()` — a snapshot
         // read followed by `send().await` is racy because the consumer can
         // drain the channel between the check and the send, so the old
         // `capacity() == 0` precondition under-counted real wait events.
@@ -679,14 +679,14 @@ impl Materializer {
                 Ok(())
             }
             Err(mpsc::error::TrySendError::Full(task)) => {
-                // M-7 / M-8: when the bounded background channel is full,
+                // When the bounded background channel is full,
                 // we shed the task and warn — but every dropped fan-out
                 // (RebuildTagsCache, RebuildAgendaCache, …) must also be
                 // visible in the `StatusInfo.bg_dropped` counter. Without
                 // this increment, sustained backpressure silently degrades
                 // cache freshness with no observable signal.
                 //
-                // PEND-03 + audit #423: a task shed *here* at enqueue time
+                // + audit #423: a task shed *here* at enqueue time
                 // never reaches the consumer's failure path, so it must be
                 // persisted to `materializer_retry_queue` directly or it is
                 // lost with no self-healing. This applies to BOTH global
@@ -787,14 +787,14 @@ impl Materializer {
     ///   2. Drop the foreground / background mpsc senders so any
     ///      future `enqueue_*` call returns `AppError::Channel` and the
     ///      consumer-side `recv()` resolves to `None`.
-    ///   3. M-12: `abort_all()` every task tracked on [`Self::tasks`].
-    ///      This covers long-running futures (e.g. an in-progress FTS
-    ///      rebuild) that would otherwise outlive the shutdown signal
-    ///      and try to use the writer pool after the surrounding
-    ///      tear-down sequence (sync stop → materializer flush → DB
-    ///      close) had torn it down — the symptom on the user's
-    ///      machine being writer-pool-closed errors in logs and a
-    ///      slow / hung exit.
+    /// 3. `abort_all()` every task tracked on [`Self::tasks`].
+    ///    This covers long-running futures (e.g. an in-progress FTS
+    ///    rebuild) that would otherwise outlive the shutdown signal
+    ///    and try to use the writer pool after the surrounding
+    ///    tear-down sequence (sync stop → materializer flush → DB
+    ///    close) had torn it down — the symptom on the user's
+    ///    machine being writer-pool-closed errors in logs and a
+    ///    slow / hung exit.
     ///
     /// `shutdown()` is intentionally **sync and non-blocking**: it
     /// signals cancellation but does not wait for tasks to drain.
@@ -806,14 +806,14 @@ impl Materializer {
     /// drain here so a stuck task can never block process exit.
     pub fn shutdown(&self) {
         self.shutdown_flag.store(true, Ordering::Release);
-        // L-1: with senders living in `OnceLock`s we cannot drop them
+        // With senders living in `OnceLock`s we cannot drop them
         // here to wake the consumer's `recv().await`. The `tasks`
         // `abort_all()` below cancels each consumer at its next await
         // point (which is the `recv().await`), and post-shutdown
         // `fg_sender` / `bg_sender` calls return `Channel(...)` because
         // they short-circuit on `shutdown_flag`. Future `try_send` calls
         // also surface `Closed` once the consumer's receiver drops.
-        // M-12: abort tracked tasks. Brief lock — `abort_all` is sync
+        // Abort tracked tasks. Brief lock — `abort_all` is sync
         // and just signals; tasks finalize asynchronously.
         self.tasks
             .lock()
@@ -869,7 +869,7 @@ impl Materializer {
             .map(|tx| BACKGROUND_CAPACITY - tx.capacity())
             .unwrap_or(0);
 
-        // MAINT-24: convert the raw epoch-ms atomic to RFC 3339 and derive
+        // Convert the raw epoch-ms atomic to RFC 3339 and derive
         // "seconds since last batch". last_materialize_ms==0 means "no
         // batch recorded yet" (initial state).
         let last_ms = self.metrics.last_materialize_ms.load(Ordering::Relaxed);

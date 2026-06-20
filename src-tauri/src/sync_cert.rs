@@ -81,7 +81,7 @@ fn unexpected_create_error(e: std::io::Error) -> AppError {
     e.into()
 }
 
-/// M-54: minimum age of an orphaned `.pem` (no matching `.hash`) before it
+/// Minimum age of an orphaned `.pem` (no matching `.hash`) before it
 /// is treated as a real torn write rather than a concurrent-startup race.
 ///
 /// The genuine torn-write case follows a process crash and a subsequent
@@ -146,7 +146,7 @@ pub fn get_or_create_sync_cert(config_path: &Path, device_id: &str) -> Result<Sy
     let pem_path = config_path.with_extension("pem");
     let hash_path = config_path.with_extension("hash");
 
-    // M-54: torn-write recovery.
+    // Torn-write recovery.
     //
     // The create path below writes `.pem` and `.hash` in two separate
     // `sync_all` phases. If the process crashes / power-fails between
@@ -168,7 +168,7 @@ pub fn get_or_create_sync_cert(config_path: &Path, device_id: &str) -> Result<Sy
     // [`read_existing_cert`].
     if pem_path.exists() && !hash_path.exists() && pem_orphan_is_stale(&pem_path) {
         tracing::warn!(
-            "sync_cert: M-54 torn write detected — '{}' exists without '{}'; \
+            "sync_cert:  torn write detected — '{}' exists without '{}'; \
              deleting orphaned PEM so a fresh cert can be regenerated",
             pem_path.display(),
             hash_path.display()
@@ -202,7 +202,7 @@ pub fn get_or_create_sync_cert(config_path: &Path, device_id: &str) -> Result<Sy
             hash_file.write_all(cert.cert_hash.as_bytes())?;
             hash_file.sync_all()?;
 
-            // M-55: POSIX only guarantees directory entries reach stable
+            // POSIX only guarantees directory entries reach stable
             // storage after `fsync(parent_dir_fd)`. Without this, a power
             // loss could leave the `.pem` / `.hash` data persisted but the
             // directory entries absent, causing the app to regenerate a
@@ -287,7 +287,7 @@ fn read_existing_cert(pem_path: &Path, hash_path: &Path) -> Result<SyncCert, App
     // Recompute `SHA-256(DER(cert_pem))` exactly as the write side does in
     // `generate_self_signed_cert` (DER bytes -> SHA-256 -> lowercase hex) and
     // confirm it matches the stored hash. On mismatch, return the same corrupt
-    // error so the M-54 recovery path regenerates a consistent cert+hash pair.
+    // Error so the recovery path regenerates a consistent cert+hash pair.
     let computed_hash = {
         use sha2::{Digest, Sha256};
         let cert_der = pem_to_der(&cert_pem)
@@ -522,7 +522,7 @@ mod tests {
     /// A well-formed (64 hex) but *wrong* `.hash` — e.g. swapped from
     /// another device or hand-edited — must be rejected so the device
     /// never advertises a hash that mismatches its own certificate.
-    /// The mismatch surfaces as the same corrupt-cert error the M-54
+    /// The mismatch surfaces as the same corrupt-cert error the
     /// recovery path consumes, so a fresh consistent pair is regenerated.
     #[test]
     fn tampered_hash_with_valid_hex_but_wrong_value_returns_error() {
@@ -608,9 +608,9 @@ mod tests {
         );
     }
 
-    // ── M-54: torn-write recovery ───────────────────────────────────────
+    // ── torn-write recovery ───────────────────────────────────────
 
-    /// Regression for M-54: a previous launch crashed between the two
+    /// Regression for a previous launch crashed between the two
     /// `sync_all` calls in the create path, leaving `.pem` on disk
     /// without a matching `.hash`. The next call to
     /// [`get_or_create_sync_cert`] must NOT error with "hash file
@@ -640,7 +640,7 @@ mod tests {
         );
 
         // Step 3: wait long enough for the `.pem` mtime to age past the
-        // M-54 staleness threshold so the recovery path treats the
+        // Staleness threshold so the recovery path treats the
         // orphan as a real torn write rather than a concurrent-startup
         // race (#460). The threshold is 500 ms; sleep a bit longer.
         std::thread::sleep(std::time::Duration::from_millis(600));
@@ -649,13 +649,10 @@ mod tests {
         // produce a fresh `.pem` + `.hash` pair.
         let recovered = get_or_create_sync_cert(&base, "m54-torn-write").unwrap();
 
-        assert!(
-            pem_path.exists(),
-            "PEM must be re-created after M-54 recovery"
-        );
+        assert!(pem_path.exists(), "PEM must be re-created after  recovery");
         assert!(
             hash_path.exists(),
-            "hash must be re-created after M-54 recovery"
+            "hash must be re-created after  recovery"
         );
 
         // Step 5: the new hash file content must match the new returned
@@ -665,7 +662,7 @@ mod tests {
         assert_eq!(
             on_disk_hash.trim(),
             recovered.cert_hash,
-            "hash file content must match returned cert_hash after M-54 recovery"
+            "hash file content must match returned cert_hash after  recovery"
         );
         assert_eq!(
             recovered.cert_hash.len(),
@@ -682,7 +679,7 @@ mod tests {
         // ECDSA key per call).
         assert_ne!(
             initial.cert_hash, recovered.cert_hash,
-            "M-54 recovery must regenerate a fresh cert, not resurrect the orphan"
+            " recovery must regenerate a fresh cert, not resurrect the orphan"
         );
 
         // Step 6: a subsequent call must now hit the read-existing path
@@ -708,7 +705,7 @@ mod tests {
 
         // Synthesize a fresh `.pem` without a `.hash`. Because the file
         // is just-written, its mtime is well within the 500 ms
-        // staleness window — the M-54 detector must NOT fire.
+        // Staleness window — the detector must NOT fire.
         fs::write(
             base.with_extension("pem"),
             "-----BEGIN CERTIFICATE-----\ndata\n-----END CERTIFICATE-----\n\
@@ -723,7 +720,7 @@ mod tests {
         );
         assert!(
             base.with_extension("pem").exists(),
-            "fresh `.pem` must NOT be deleted by M-54 recovery"
+            "fresh `.pem` must NOT be deleted by  recovery"
         );
     }
 
@@ -846,7 +843,7 @@ mod tests {
                 // a budget that comfortably covers the worst case so the
                 // test is not flaky under load. The `M54_TORN_WRITE_STALENESS`
                 // threshold (500 ms) is still longer than any individual
-                // sleep so the M-54 path will not delete a fresh PEM
+                // Sleep so the path will not delete a fresh PEM
                 // mid-write.
                 for _ in 0..100 {
                     match get_or_create_sync_cert(&p, "DEVICE_RACE") {
@@ -881,7 +878,7 @@ mod tests {
 }
 
 // ===========================================================================
-// M-55: parent directory fsync after cert + hash file creation
+// Parent directory fsync after cert + hash file creation
 // ===========================================================================
 
 #[cfg(test)]
@@ -890,7 +887,7 @@ mod tests_m55 {
     use tempfile::TempDir;
 
     /// Sanity: happy path — both `.pem` and `.hash` exist after creation.
-    /// (Mirrors `tests::creates_cert_files_on_first_call` so M-55 has its
+    /// (Mirrors `tests::creates_cert_files_on_first_call` so has its
     /// own minimal regression check at the bottom of the file.)
     #[test]
     fn get_or_create_sync_cert_creates_pem_and_hash() {
@@ -910,7 +907,7 @@ mod tests_m55 {
         assert_eq!(cert.cert_hash.len(), 64, "hash must be 64 hex chars");
     }
 
-    /// On Unix, the parent-dir fsync added for M-55 must not break the
+    /// On Unix, the parent-dir fsync added for must not break the
     /// happy path: the function still returns Ok and both files are
     /// visible from a freshly-opened handle (i.e. through the filesystem,
     /// not via the writer's own file descriptor).
@@ -930,7 +927,7 @@ mod tests_m55 {
         let result = get_or_create_sync_cert(&base, "m55-device-fsync");
         assert!(
             result.is_ok(),
-            "get_or_create_sync_cert must return Ok on this platform after M-55, got: {:?}",
+            "get_or_create_sync_cert must return Ok on this platform after got: {:?}",
             result.as_ref().err()
         );
 

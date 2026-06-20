@@ -1,5 +1,5 @@
 /**
- * useShouldShowMobileChrome — PEND-68 composite gate.
+ * UseShouldShowMobileChrome — composite gate.
  *
  * `useIsMobile()` returns true only below 768 px (phone). That leaves
  * iPad portrait (768 px) and tablet-with-keyboard cases in a UX dead

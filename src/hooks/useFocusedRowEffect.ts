@@ -16,7 +16,7 @@
  * `containerRef.current`. When the id is null or the element isn't
  * mounted yet, the scroll/class effect is a no-op.
  *
- * Used by `LinkedReferences` and `UnlinkedReferences` (MAINT-129).
+ * Used by `LinkedReferences` and `UnlinkedReferences`.
  */
 
 import { type DependencyList, type RefObject, useEffect } from 'react'

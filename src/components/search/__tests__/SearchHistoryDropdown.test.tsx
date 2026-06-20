@@ -1,5 +1,5 @@
 /**
- * PEND-55 — tests for `<SearchHistoryDropdown>`.
+ * Tests for `<SearchHistoryDropdown>`.
  *
  * Coverage:
  * - Hidden when `visible={false}`.
@@ -18,7 +18,7 @@ import { axe } from 'vitest-axe'
 
 import { SearchHistoryDropdown, type SearchHistoryDropdownProps } from '../SearchHistoryDropdown'
 
-// PEND-73 Phase 3.U2 — props gained `listboxId` + `activeIndex` for the
+// Phase 3.U2 — props gained `listboxId` + `activeIndex` for the
 // listbox/combobox a11y wiring. The helper supplies stable defaults so
 // existing tests don't have to thread them on every call.
 function renderDropdown(
@@ -88,7 +88,7 @@ describe('SearchHistoryDropdown', () => {
     expect(onPick).toHaveBeenCalledWith('alpha')
   })
 
-  // UX-11 — per-row delete + record-history toggle.
+  // Per-row delete + record-history toggle.
   it('per-row delete affordance calls onRemoveEntry without picking the row', async () => {
     const user = userEvent.setup()
     const onRemoveEntry = vi.fn()
@@ -149,7 +149,7 @@ describe('SearchHistoryDropdown', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // PEND-73 Phase 3.U2 — listbox a11y assertions
+  // Phase 3.U2 — listbox a11y assertions
   it('listbox has the supplied id so the input can wire aria-controls', () => {
     renderDropdown({ entries: ['alpha'], listboxId: 'history-lb-42' })
     expect(screen.getByRole('listbox')).toHaveAttribute('id', 'history-lb-42')
@@ -191,7 +191,7 @@ describe('SearchHistoryDropdown', () => {
     expect(screen.getByRole('listbox')).not.toHaveAttribute('aria-activedescendant')
   })
 
-  // UX-A7 — the per-row delete affordance already had a coarse-pointer 44px
+  // The per-row delete affordance already had a coarse-pointer 44px
   // target; the row body, Clear-history, and the enable/disable toggle did not.
   it('gives the rows and footer controls a coarse-pointer 44px target', () => {
     renderDropdown({ entries: ['alpha', 'beta'] })

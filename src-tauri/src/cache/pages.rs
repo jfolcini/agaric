@@ -13,7 +13,7 @@ use crate::error::AppError;
 /// more efficiently than two separate streams crossing the process
 /// boundary.
 ///
-/// The M-2 "skip unchanged → preserve `updated_at`" semantic is
+/// The "skip unchanged → preserve `updated_at`" semantic is
 /// preserved by the `WHERE pages_cache.title != excluded.title`
 /// predicate on the `DO UPDATE` clause: a hit with an identical title
 /// is a no-op so `updated_at` keeps its prior value. Dropping that
@@ -94,7 +94,7 @@ async fn apply_sort_merge_rebuild(
 /// materialised value actually differs, so `rows_affected()` is exactly
 /// the number of pages whose counts changed. This also keeps
 /// `updated_at` stable: the count UPDATE never writes `updated_at`, so
-/// the M-2 recency semantic is owned solely by the title UPSERT's
+/// The recency semantic is owned solely by the title UPSERT's
 /// `WHERE title != excluded.title`.
 pub(crate) async fn recompute_all_pages_cache_counts(
     write_conn: &mut sqlx::SqliteConnection,
@@ -142,7 +142,7 @@ pub(crate) async fn recompute_all_pages_cache_counts(
 }
 
 // ---------------------------------------------------------------------------
-// rebuild_pages_cache (p1-t19, M-2; #112 set-based form)
+// Rebuild_pages_cache (p1-t19,; #112 set-based form)
 // ---------------------------------------------------------------------------
 
 /// Incremental rebuild of `pages_cache`.
@@ -151,7 +151,7 @@ pub(crate) async fn recompute_all_pages_cache_counts(
 /// 1. `INSERT … SELECT FROM blocks ON CONFLICT(page_id) DO UPDATE …
 ///    WHERE pages_cache.title != excluded.title` — adds new pages and
 ///    refreshes title + `updated_at` only when the title actually
-///    changed. Unchanged-title hits are no-ops (M-2 semantic: their
+///    Changed. Unchanged-title hits are no-ops (semantic: their
 ///    `updated_at` is preserved).
 /// 2. `DELETE FROM pages_cache WHERE page_id NOT IN (live page IDs)` —
 ///    sweeps cache rows whose source block was soft-deleted, hard
@@ -209,7 +209,7 @@ async fn rebuild_pages_cache_counts_impl(pool: &SqlitePool) -> Result<u64, AppEr
 // Read/write split variant (Phase 1A)
 // ---------------------------------------------------------------------------
 
-/// Read/write split variant of [`rebuild_pages_cache`] (M-17, M-2).
+/// Read/write split variant of [`rebuild_pages_cache`].
 ///
 /// Reads desired and current page rows from `read_pool` and applies the
 /// incremental diff on `write_pool`. Mirrors the single-pool sort-merge
@@ -255,12 +255,12 @@ async fn rebuild_pages_cache_split_impl(
 }
 
 // ---------------------------------------------------------------------------
-// M-2 sort-merge tests
+// Sort-merge tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
-    //! Tests scoped to this file (M-2) so the parent `cache::tests`
+    //! Tests scoped to this file so the parent `cache::tests`
     //! module is not touched. Helpers are local copies of the patterns
     //! in `cache/tests.rs`.
     use super::*;
@@ -412,7 +412,7 @@ mod tests {
     /// soft-deleted, content-cleared) and verifies:
     ///   (a) `pages_cache` rows match the expected set,
     ///   (b) `updated_at` was refreshed **only** for the title-changed
-    ///       row (M-2 semantic — the `WHERE pages_cache.title !=
+    /// Row (semantic — the `WHERE pages_cache.title !=
     ///       excluded.title` predicate on the ON CONFLICT DO UPDATE is
     ///       what keeps cache recency from regressing).
     ///
@@ -504,7 +504,7 @@ mod tests {
             ts_after_for("PAGEBBBB"),
             ts_same_before,
             "title-unchanged row must preserve its prior updated_at \
-             (M-2 invariant — the `WHERE title != excluded.title` \
+             (invariant — the `WHERE title != excluded.title` \
              predicate on ON CONFLICT DO UPDATE is mandatory)",
         );
     }

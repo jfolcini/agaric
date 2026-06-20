@@ -1,6 +1,6 @@
 /**
  * Tests for `SearchResultBlockRow` — the single search result row with
- * snippet highlighting (PEND-50 Phase 1).
+ * Snippet highlighting (Phase 1).
  *
  * Covers the row chrome (focus state, click handler, role=option,
  * loading spinner, badge for page/tag rows) plus the snippet fallback
@@ -169,7 +169,7 @@ describe('SearchResultBlockRow', () => {
     expect(onClick).toHaveBeenCalledOnce()
   })
 
-  // PEND-73 Phase 3.U3 — the Enter/Space row-level keyDown handler was
+  // Phase 3.U3 — the Enter/Space row-level keyDown handler was
   // dead code: the row has `tabIndex={-1}` so nothing in real usage
   // (including ARIA combobox patterns with aria-activedescendant) ever
   // focuses it, meaning the keydown event never fires through the row.

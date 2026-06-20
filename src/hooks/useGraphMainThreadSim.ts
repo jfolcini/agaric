@@ -1,11 +1,11 @@
 /**
  * useGraphMainThreadSim — exposes a stable `runMainThread` callback that
  * runs the d3-force simulation on the main thread. Extracted from
- * `useGraphSimulation` per MAINT-127.
+ * `useGraphSimulation`.
  *
  * Used both as the no-Worker fallback (jsdom, older runtimes) and as the
  * post-failure recovery path when the worker dispatches `error` /
- * `messageerror` (BUG-45).
+ * `messageerror`.
  */
 
 import { useCallback } from 'react'

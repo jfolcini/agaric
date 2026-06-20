@@ -11,7 +11,7 @@
  * with `null` (unmount) we unobserve the exact element that was
  * observed for that id, so detached DOM nodes are released
  * immediately instead of lingering in the observer's internal
- * strong-ref set until the hook itself unmounts (BUG-29).
+ * Strong-ref set until the hook itself unmounts.
  *
  * Identity stability (#1067): off-screen membership lives in a
  * ref-backed external store, NOT React state. The returned

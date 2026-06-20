@@ -1,5 +1,5 @@
 /**
- * Tests for useTrashDescendantCounts — UX-243 cascade-count badges
+ * Tests for useTrashDescendantCounts — cascade-count badges
  * fetched via the `trashDescendantCounts` IPC, with cancellation on
  * prop change and a warn-logged empty fallback on failure.
  */

@@ -46,9 +46,9 @@ export function DateChipEditor({
   const { t } = useTranslation()
   const { setDueDate, setScheduledDate } = useBlockReschedule()
 
-  // Date input hook (M-29) — manages input state + NL preview.
+  // Date input hook — manages input state + NL preview.
   // Seed with currentDate so opening the editor on a block that already
-  // has a due/scheduled date pre-fills the input (PEND-23 M1).
+  // Has a due/scheduled date pre-fills the input.
   const { dateInput, datePreview, handleChange } = useDateInput({
     initialValue: currentDate ?? '',
   })

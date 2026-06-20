@@ -149,7 +149,7 @@ describe('DeviceManagement', () => {
     expect(screen.getByText('Local Device ID')).toBeInTheDocument()
   })
 
-  it('exposes stable testids on the local device id label and value (TEST-1c)', async () => {
+  it('exposes stable testids on the local device id label and value', async () => {
     // e2e/sync-ui.spec.ts targets these test-ids instead of the English
     // label text (which has been i18n-ified to "Local Device ID"). Keep
     // them in sync if renaming the UI string.
@@ -236,7 +236,7 @@ describe('DeviceManagement', () => {
     await user.click(syncBtns[0] as HTMLElement)
 
     await waitFor(() => {
-      // PEND-06: `startSync` constructs a `Channel<SyncProgressUpdate>`
+      // `startSync` constructs a `Channel<SyncProgressUpdate>`
       // and forwards it as `progress`. The exact channel instance is an
       // implementation detail; assert the IPC name + peerId only.
       expect(mockedInvoke).toHaveBeenCalledWith(
@@ -852,7 +852,7 @@ describe('DeviceManagement', () => {
     const unpairBtn = screen.getByRole('button', { name: /Unpair/i })
     await user.click(unpairBtn)
 
-    // UX-267: confirmation copy is now generic (does not interpolate the
+    // Confirmation copy is now generic (does not interpolate the
     // device name) and reassures the user that data is retained locally.
     expect(
       screen.getByText(

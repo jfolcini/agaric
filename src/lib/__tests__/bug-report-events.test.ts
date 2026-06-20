@@ -1,5 +1,5 @@
 /**
- * Tests for the `bug-report-events` helper module (UX-279).
+ * Tests for the `bug-report-events` helper module.
  *
  * Covers:
  *  - event name constant is the documented value

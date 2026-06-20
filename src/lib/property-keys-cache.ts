@@ -5,7 +5,7 @@
  * Originally lived inside `src/hooks/usePropertyKeysCache.ts` but the
  * cache state (Map, in-flight promises, subscriber set, lazy listener
  * init) is plain JavaScript — only the React `useSyncExternalStore`
- * binding required hook scope. PEND-35 Tier 2.5 surfaced a non-React
+ * Binding required hook scope. surfaced a non-React
  * caller (`searchPropertyKeys` in `src/lib/slash-commands.ts`) that
  * fired a fresh `list_property_keys` IPC on every keystroke, so the
  * primitives (`fetchPropertyKeysOnce`, `getCachedPropertyKeys`,

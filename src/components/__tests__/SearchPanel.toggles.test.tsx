@@ -1,5 +1,5 @@
 /**
- * PEND-55 — integration tests for `<SearchPanel>` toggles + history.
+ * Integration tests for `<SearchPanel>` toggles + history.
  *
  * Coverage:
  * - Clicking a toggle changes the IPC payload's `caseSensitive` /
@@ -31,7 +31,7 @@ import { useSpaceStore } from '../../stores/space'
 import { useTabsStore } from '../../stores/tabs'
 import { SearchPanel } from '../SearchPanel'
 
-// PEND-58f FE-3 — virtualized result listbox: render every row in jsdom
+// Virtualized result listbox: render every row in jsdom
 // (zero-height scroll container would otherwise window to zero rows) so the
 // match-offset `<mark>` assertion below can find the rendered row.
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
@@ -61,7 +61,7 @@ function lastFilter(): Record<string, unknown> | null {
   return last[1].filter
 }
 
-// DSL-A8 — the raw query string forwarded to `search_blocks`. In regex
+// The raw query string forwarded to `search_blocks`. In regex
 // mode this must be the parsed free-text remainder (the regex pattern),
 // NOT the full input including filter tokens like `tag:`.
 function lastQuery(): string | null {
@@ -93,7 +93,7 @@ describe('SearchPanel toggles', () => {
     fireEvent.click(regexButton)
     expect(regexButton).toHaveAttribute('aria-pressed', 'true')
 
-    // PEND-58g NEW-2 — flipping regex mode swaps in the regex placeholder.
+    // NEW-2 — flipping regex mode swaps in the regex placeholder.
     const input = screen.getByPlaceholderText(t('search.searchPlaceholderRegex'))
     typeAndSubmit(input, '^TODO')
 
@@ -106,7 +106,7 @@ describe('SearchPanel toggles', () => {
     })
   })
 
-  // DSL-A8 / UX-A4 — regex mode is symmetric with non-regex mode: filter
+  // Regex mode is symmetric with non-regex mode: filter
   // tokens are parsed OUT of the input and applied as structural SQL
   // filters; only the remaining free text is the regex pattern.
   it('regex mode applies structural filters AND sends only the free text as the pattern', async () => {
@@ -227,9 +227,9 @@ describe('SearchPanel toggles', () => {
   })
 })
 
-// PEND-58g NEW-2 — a visual + a11y cue that the input free-text is matched
+// NEW-2 — a visual + a11y cue that the input free-text is matched
 // as a regular expression when regex mode is on.
-describe('SearchPanel regex-mode input cue (PEND-58g NEW-2)', () => {
+describe('SearchPanel regex-mode input cue (NEW-2)', () => {
   it('off by default: normal placeholder, no font-mono, no regex hint', () => {
     mockedInvoke.mockResolvedValue(emptyPage)
     render(<SearchPanel />)
@@ -361,7 +361,7 @@ describe('SearchPanel match-offset rendering', () => {
   })
 })
 
-describe('SearchPanel invalid-regex announcement (UX-A2)', () => {
+describe('SearchPanel invalid-regex announcement', () => {
   it('does not double-announce: the status live region stays silent on an invalid regex', async () => {
     // The backend rejects an unparseable pattern with the `InvalidRegex:`
     // prefix; SearchPanel surfaces the specific message inline in the
@@ -391,7 +391,7 @@ describe('SearchPanel invalid-regex announcement (UX-A2)', () => {
   })
 
   it('does NOT surface the inline regex alert for an `InvalidRegex:` error when regex mode is OFF', async () => {
-    // PEND-70 CR11 — case-sensitive / whole-word mode builds a *literal*
+    // Case-sensitive / whole-word mode builds a *literal*
     // match regex server-side; an oversized literal makes the backend reject
     // with an `InvalidRegex:`-prefixed message even though the user never
     // enabled regex. The inline "invalid regex" alert must NOT fire in that
@@ -426,7 +426,7 @@ describe('SearchPanel invalid-regex announcement (UX-A2)', () => {
 
   it('still announces the generic failure for a non-regex backend error', async () => {
     // A plain backend error (no `InvalidRegex:` prefix) must still light
-    // up the status region — UX-A2 only suppresses the regex case.
+    // Up the status region — only suppresses the regex case.
     mockedInvoke.mockImplementation(async (cmd) => {
       if (cmd === 'search_blocks') {
         throw new Error('database is locked')

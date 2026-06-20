@@ -6,7 +6,7 @@
  * logger.warn on failure and re-throws so callers retain their
  * existing fire-and-forget / await error handling.
  *
- * MAINT-131 — closes the last hook-wrap row.
+ * Closes the last hook-wrap row.
  */
 
 import { useCallback } from 'react'

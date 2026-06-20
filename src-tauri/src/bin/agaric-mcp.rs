@@ -25,7 +25,7 @@ use std::process::ExitCode;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
-// MAINT-150 (i): consume the canonical identifiers from
+// Consume the canonical identifiers from
 // `agaric_lib::mcp` instead of redeclaring them locally. Keeping the
 // path constants in one place prevents the stub binary from drifting
 // from the in-process server (e.g. a default socket-filename change

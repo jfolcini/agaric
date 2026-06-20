@@ -4,21 +4,21 @@
 //! session. Concretely:
 //!
 //! * **Peer discovery** — mDNS browse + announce, including the
-//!   Android `WifiManager.MulticastLock` workaround (BUG-39) and the
+//!   Android `WifiManager.MulticastLock` workaround and the
 //!   graceful-fallback path when raw multicast UDP is unavailable
-//!   (BUG-38).
+//!   .
 //! * **Per-peer scheduling** — exponential backoff, "due for resync"
-//!   tick, foreground/background gating (PERF-24), and a dormant-mode
+//!   tick, foreground/background gating, and a dormant-mode
 //!   waiter that defers mDNS / TLS listener startup until the user
-//!   pairs a device (PERF-25).
+//!   pairs a device.
 //! * **Per-peer mutual exclusion** — a `try_lock_peer` mutex prevents
 //!   two concurrent sessions with the same device.
 //! * **Connection setup** — multi-address connect with TOFU cert
-//!   pinning (L-62) and address persistence to `peer_refs`.
+//!   pinning and address persistence to `peer_refs`.
 //! * **Snapshot catch-up orchestration** — when the per-session state
 //!   machine reaches [`SyncState::ResetRequired`], this layer hands
 //!   control to [`super::snapshot_transfer`] for a snapshot-driven
-//!   recovery (FEAT-6).
+//!   recovery.
 //! * **File-transfer orchestration** — after the per-session state
 //!   machine reaches [`SyncState::Complete`], this layer hands control
 //!   to [`crate::sync_files`] for the bidirectional attachment
@@ -29,7 +29,7 @@
 //!   failure, sync complete) directly.
 //! * **Cancellation** — owns the [`AtomicBool`] cancel flag observed
 //!   by `run_sync_session` and threaded into `sync_files` so the user
-//!   can abort multi-gigabyte attachment transfers (M-46, M-47).
+//!   can abort multi-gigabyte attachment transfers.
 //!
 //! ## What this module does **not** own
 //!
@@ -96,7 +96,7 @@ pub(crate) async fn daemon_loop(
     cancel: Arc<AtomicBool>,
     lifecycle: LifecycleHooks,
 ) -> Result<(), AppError> {
-    // BUG-39: Acquire WifiManager.MulticastLock on Android so the
+    // Acquire WifiManager.MulticastLock on Android so the
     // `mdns-sd` crate's UDP multicast sockets receive packets. Held in
     // a local binding so `Drop` releases it on function exit (graceful
     // shutdown or error return). On non-Android targets this is a no-op.
@@ -119,7 +119,7 @@ pub(crate) async fn daemon_loop(
     // log a warning, emit `SyncEvent::MdnsDisabled` so the frontend can
     // surface the reason, and continue without peer discovery. Sync still
     // works via manual IP entry (stored in peer_refs); the mDNS branch in
-    // the select! loop is simply never triggered. See BUG-38 / BUG-39.
+    // The select! loop is simply never triggered. See.
     let mdns = handle_mdns_init_result(MdnsService::new(), &event_sink);
 
     // 2. Start TLS WebSocket server (responder mode — #615)
@@ -230,7 +230,7 @@ pub(crate) async fn daemon_loop(
     let mut resync_interval = tokio::time::interval(std::time::Duration::from_secs(30));
     resync_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    // L-56: counter driving the coarse (~hourly) peer-lock GC cadence; see
+    // Counter driving the coarse (~hourly) peer-lock GC cadence; see
     // `maybe_gc_peer_locks` and `RESYNC_TICKS_PER_GC`.
     let mut resync_ticks_since_gc: u64 = 0;
 
@@ -259,7 +259,7 @@ pub(crate) async fn daemon_loop(
                     // spawned alternative; refactoring Branch A is tracked
                     // in #490 M3.
                     //
-                    // M-46: Branch A is single-shot (one peer per discovery
+                    // Branch A is single-shot (one peer per discovery
                     // event), so the bool return is informational only — no
                     // for-loop to break out of. Discard explicitly.
                     let _cancelled = try_sync_with_peer(&ctx, &peer, &refs).await;
@@ -268,7 +268,7 @@ pub(crate) async fn daemon_loop(
 
             // Branch B: debounced local-change notification
             //
-            // L-61: peers are dispatched concurrently via `JoinSet` so a
+            // Peers are dispatched concurrently via `JoinSet` so a
             // flaky peer's protocol timeout doesn't hold up the rest of
             // the round. Per-peer mutual exclusion is still enforced
             // inside `try_sync_with_peer` via `scheduler.try_lock_peer`,
@@ -315,7 +315,7 @@ pub(crate) async fn daemon_loop(
                 while let Some(result) = join_set.join_next().await {
                     match result {
                         Ok((peer_id, was_cancelled)) => {
-                            // M-46: when one peer's session reports the
+                            // When one peer's session reports the
                             // cancel flag was observed, abort the rest
                             // of this round's still-in-flight tasks.
                             // The shared `cancel` flag normally
@@ -346,7 +346,7 @@ pub(crate) async fn daemon_loop(
 
             // Branch C: periodic resync check (30s interval)
             //
-            // PERF-24: when the app is backgrounded (`lifecycle.is_foreground`
+            // When the app is backgrounded (`lifecycle.is_foreground`
             // == false), short-circuit the body so we don't spin up DB
             // queries and network connections while the user isn't looking.
             // We still drain the tick so the interval timer's internal
@@ -356,7 +356,7 @@ pub(crate) async fn daemon_loop(
                     continue;
                 }
 
-                // L-56: prune the scheduler's monotonically-growing
+                // Prune the scheduler's monotonically-growing
                 // `peer_locks` map on a coarse (~hourly) cadence.
                 maybe_gc_peer_locks(&scheduler, &mut resync_ticks_since_gc);
 
@@ -365,7 +365,7 @@ pub(crate) async fn daemon_loop(
                 discovered.retain(|_, (_, last_seen)| *last_seen > stale_threshold);
 
                 let refs = list_peer_refs_or_empty(&pool, "periodic_resync").await;
-                // L-76: pass `&refs` directly; the scheduler projects
+                // Pass `&refs` directly; the scheduler projects
                 // `peer_id` / `synced_at` itself, so we no longer
                 // clone every paired peer's id+timestamp on every
                 // 30 s tick.
@@ -385,7 +385,7 @@ pub(crate) async fn daemon_loop(
                 // by up to HANDSHAKE_TIMEOUT per due peer. See Branch B's
                 // JoinSet refactor for the concurrent alternative (#490 M3).
                 //
-                // M-46: run_sequential_sync_round iterates peers in order
+                // Run_sequential_sync_round iterates peers in order
                 // and breaks as soon as any peer reports cancellation, so a
                 // "stop this round" cancel is honoured for every subsequent
                 // peer, not just the one currently syncing.
@@ -417,7 +417,7 @@ pub(crate) async fn daemon_loop(
                 .await;
             }
 
-            // Branch D: foreground transition (PERF-24)
+            // Branch D: foreground transition
             //
             // When the app returns to foreground we may have missed one
             // or more resync ticks. Reset the interval timer so the
@@ -448,7 +448,7 @@ pub(crate) async fn daemon_loop(
 }
 
 // ---------------------------------------------------------------------------
-// maybe_gc_peer_locks — coarse-cadence peer-lock garbage collection (L-56)
+// Maybe_gc_peer_locks — coarse-cadence peer-lock garbage collection
 // ---------------------------------------------------------------------------
 
 /// Number of resync ticks between [`SyncScheduler::gc_unused_peer_locks`]
@@ -481,7 +481,7 @@ fn maybe_gc_peer_locks(scheduler: &SyncScheduler, ticks_since_gc: &mut u64) {
 // ---------------------------------------------------------------------------
 
 /// Translate the outcome of [`MdnsService::new`] into an optional service
-/// handle, emitting [`SyncEvent::MdnsDisabled`] on failure (BUG-38).
+/// Handle, emitting [`SyncEvent::MdnsDisabled`] on failure.
 ///
 /// Extracted as a separate function so a unit test can exercise the
 /// failure path without actually creating a real `MdnsService` (which
@@ -530,7 +530,7 @@ async fn list_peer_refs_or_empty(pool: &SqlitePool, cycle: &'static str) -> Vec<
 }
 
 // ---------------------------------------------------------------------------
-// try_connect_each_address — L-62 multi-address connect helper
+// Try_connect_each_address — multi-address connect helper
 // ---------------------------------------------------------------------------
 
 /// Attempt `sync_net::connect_to_peer` against each address in
@@ -615,12 +615,12 @@ pub(crate) struct SyncSessionContext<'a> {
 /// lock.  On success the backoff is reset; on failure a failure is recorded
 /// which doubles the next retry delay.
 ///
-/// MAINT-21: wrapped in a `sync` span so every log line emitted during the
+/// Wrapped in a `sync` span so every log line emitted during the
 /// session (including those from nested `run_sync_session`,
 /// `SyncOrchestrator::handle_message`, and file-transfer helpers) shares a
 /// `sync{peer=ULID}` prefix when the tracing subscriber includes span info.
 ///
-/// # Return value (M-46)
+/// # Return value
 ///
 /// Returns `true` iff the cancel flag was observed set when the sync
 /// session ended — i.e., the user invoked `cancel_active_sync()` while
@@ -690,7 +690,7 @@ pub(crate) async fn try_sync_with_peer(
     // `owns == true`, which is set exactly once — immediately before we run the
     // real session (step 7). Every early-exit path returns with `owns == false`
     // and therefore leaves the shared flag untouched: a pending user cancel
-    // stays set for the sibling / next attempt to observe (M-46), and a stale
+    // Stays set for the sibling / next attempt to observe, and a stale
     // un-set flag stays un-set.
     struct CancelGuard<'a> {
         cancel: &'a AtomicBool,
@@ -710,7 +710,7 @@ pub(crate) async fn try_sync_with_peer(
 
     // 1. Backoff gate
     if !ctx.scheduler.may_retry(peer_id) {
-        // M-46: no real session ran, cancellation is moot for this peer.
+        // No real session ran, cancellation is moot for this peer.
         // #637: guard.owns is still false, so we leave the shared cancel
         // flag untouched — a user cancel aimed at a sibling survives.
         return false;
@@ -718,17 +718,17 @@ pub(crate) async fn try_sync_with_peer(
 
     // 2. Per-peer mutex (prevents concurrent syncs to the same peer)
     let Some(_guard) = ctx.scheduler.try_lock_peer(peer_id) else {
-        // M-46: already syncing with this peer; no real session ran here.
+        // Already syncing with this peer; no real session ran here.
         // #637: guard.owns is still false → don't clear a sibling's cancel.
         return false;
     };
 
     // 3. Resolve all addresses from discovered peer info, in connection
-    //    priority order (L-62). Empty list ⇒ no useable address.
+    // Priority order. Empty list ⇒ no useable address.
     let addrs = format_peer_addresses(peer);
     if addrs.is_empty() {
         tracing::warn!(peer_id, "peer has no addresses, skipping sync");
-        // M-46: no real session ran, cancellation is moot for this peer.
+        // No real session ran, cancellation is moot for this peer.
         // #637: guard.owns is still false → don't clear a sibling's cancel.
         return false;
     }
@@ -744,7 +744,7 @@ pub(crate) async fn try_sync_with_peer(
         ops_sent: 0,
     });
 
-    // 6. L-62: try every advertised address in order (IPv4 → IPv6
+    // 6. try every advertised address in order (IPv4 → IPv6
     //    non-link-local → IPv6 link-local). The first successful TLS
     //    handshake wins; if all fail, surface a combined error so the
     //    user can see exactly which addresses were attempted instead of
@@ -764,7 +764,7 @@ pub(crate) async fn try_sync_with_peer(
                     message: format!("Connection failed: {combined}"),
                     remote_device_id: peer_id.clone(),
                 });
-                // M-46: connection never established, no real session ran.
+                // Connection never established, no real session ran.
                 // #637: guard.owns is still false → don't clear a sibling's
                 // cancel; this early-exit must not swallow a pending user
                 // cancel aimed at a still-running peer.
@@ -777,7 +777,7 @@ pub(crate) async fn try_sync_with_peer(
     // #637: we have committed to a real sync session — connection established,
     // per-peer lock held, addresses resolved. From here on this task OWNS the
     // cancel: it is the task that `run_sync_session` checks the flag in, the
-    // one that may observe & report a user cancel (M-46), and therefore the
+    // One that may observe & report a user cancel, and therefore the
     // legitimate resetter. Mark the guard so its Drop clears the shared flag
     // when the session ends (whether it completed normally or was cancelled).
     _cancel_guard.owns = true;
@@ -854,7 +854,7 @@ pub(crate) async fn try_sync_with_peer(
         }
     }
 
-    // M-46: capture the cancel flag's live state BEFORE `_cancel_guard`
+    // Capture the cancel flag's live state BEFORE `_cancel_guard`
     // clears it on Drop. The guard is the *first* local declared in this
     // function so it drops *last* (Rust drops locals in reverse declaration
     // order); both `conn.close()` below and this read therefore observe
@@ -878,7 +878,7 @@ pub(crate) async fn try_sync_with_peer(
 }
 
 // ---------------------------------------------------------------------------
-// run_sequential_sync_round — M-46 break-on-cancel iteration helper
+// Run_sequential_sync_round — break-on-cancel iteration helper
 // ---------------------------------------------------------------------------
 
 /// Iterate over `peer_ids` calling `sync_fn` for each one in order,
@@ -918,7 +918,7 @@ where
 /// 3. Returns `Ok(())` on `SyncState::Complete`, or `Err` on failure /
 ///    timeout.
 ///
-/// FEAT-6: if the main loop exits with `state == ResetRequired` (the
+/// If the main loop exits with `state == ResetRequired` (the
 /// responder signalled that its op log has compacted past our heads),
 /// attempt a snapshot-driven catch-up via
 /// [`snapshot_transfer::try_receive_snapshot_catchup`]. On success the
@@ -979,7 +979,7 @@ pub(crate) async fn run_sync_session(
                         "sync ended in terminal state: {state:?}"
                     )));
                 }
-                // FEAT-6: `ResetRequired` is no longer a terminal failure —
+                // `ResetRequired` is no longer a terminal failure —
                 // break out of the delta-sync loop and attempt snapshot
                 // catch-up below. Any other `None` branch falls through
                 // and the loop re-checks `is_terminal()`.
@@ -990,7 +990,7 @@ pub(crate) async fn run_sync_session(
         }
     }
 
-    // FEAT-6: Snapshot-driven catch-up (post-ResetRequired).
+    // Snapshot-driven catch-up (post-ResetRequired).
     //
     // When the responder signalled `ResetRequired`, its op log has
     // compacted past our advertised heads so we cannot resume via
@@ -1002,7 +1002,7 @@ pub(crate) async fn run_sync_session(
     // post-snapshot deltas via a normal `HeadExchange`.
     if matches!(orch.session().state, SyncState::ResetRequired) {
         let peer_id = orch.session().remote_device_id.clone();
-        // L-66: pass the orchestrator's daemon-provided
+        // Pass the orchestrator's daemon-provided
         // `expected_remote_id` so the catch-up can mirror the
         // SyncComplete fallback when `peer_id` is empty (HeadExchange
         // carried only our own heads).
@@ -1051,14 +1051,14 @@ pub(crate) async fn run_sync_session(
     // After the op-sync completes, transfer missing attachment files.
     // The initiator requests first, then responds to the responder's request.
     //
-    // M-47: thread the same `cancel` flag through so a multi-gigabyte
+    // Thread the same `cancel` flag through so a multi-gigabyte
     // attachment transfer can be aborted between files when the user
     // hits "cancel sync" (otherwise the run_sync_session loop's cancel
     // check is dead code once we reach this phase).
     if orch.is_succeeded() {
         match crate::sync_files::app_data_dir_from_pool(pool).await {
             Ok(app_data_dir) => {
-                // PEND-06 Tier 2 — wire the active sync's event sink into
+                // Wire the active sync's event sink into
                 // file transfer so per-frame progress lands on the same
                 // `Channel<SyncProgressUpdate>` that streamed op-sync
                 // transitions. `expected_remote_id` is the device id we
@@ -1112,7 +1112,7 @@ mod tests {
     use super::*;
     use crate::sync_events::RecordingEventSink;
 
-    /// BUG-38: when mDNS init returns `Err`, a `SyncEvent::MdnsDisabled`
+    /// When mDNS init returns `Err`, a `SyncEvent::MdnsDisabled`
     /// must be emitted so the frontend can surface the reason to the user.
     #[test]
     fn handle_mdns_init_result_emits_event_on_err() {
@@ -1171,7 +1171,7 @@ mod tests {
         }
     }
 
-    /// L-56: the production cadence gate (`maybe_gc_peer_locks`, the exact
+    /// The production cadence gate (`maybe_gc_peer_locks`, the exact
     /// function the daemon resync tick calls) must NOT sweep before
     /// `RESYNC_TICKS_PER_GC` ticks, and MUST sweep the idle peer lock once
     /// the threshold is reached. This proves GC actually runs in the

@@ -1,5 +1,5 @@
 /**
- * PEND-60 Phase 3 — Playwright e2e for caret-anchored autocomplete.
+ * Phase 3 — Playwright e2e for caret-anchored autocomplete.
  *
  * The unit + component layers (caret-anchor.test.ts /
  * AutocompletePopover.test.tsx) and the SearchPanel-integration vitest
@@ -13,7 +13,7 @@ import { expect, test } from '@playwright/test'
 
 import { waitForBoot } from './helpers'
 
-test.describe('Autocomplete (PEND-60)', () => {
+test.describe('Autocomplete', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await page
@@ -83,7 +83,7 @@ test.describe('Autocomplete (PEND-60)', () => {
     await expect(input).toBeFocused()
   })
 
-  // ── PEND-58f E2E-10 — dynamic autocomplete sources ──────────────────
+  // ── E2E-10 — dynamic autocomplete sources ──────────────────
   //
   // The `state:` happy path above covers the static source. These cover the
   // three *dynamic* sources the audit flagged as untested e2e: tag names via
@@ -143,7 +143,7 @@ test.describe('Autocomplete (PEND-60)', () => {
     await expect(page.getByTestId('autocomplete-item-Journal/2026-*')).toBeVisible()
   })
 
-  // ── PEND-58g E2E-A7 — static value anchors beyond `state:` ──────────
+  // ── E2E-A7 — static value anchors beyond `state:` ──────────
   //
   // `priority:`, `due:`, and `scheduled:` share the same static-projection
   // path as `state:` but expose distinct vocabularies (numeric priority

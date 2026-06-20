@@ -3,8 +3,8 @@
  * entering its value(s) before applying it to the backlink query.
  *
  * Extracted from BacklinkFilterBuilder.tsx for file organization
- * (MAINT-96).  Per-category form bodies are split into sibling files
- * under `categories/` (MAINT-128) — each form owns its own state
+ *. Per-category form bodies are split into sibling files
+ * Under `categories/` — each form owns its own state
  * slots and exposes a `getState()` slice via `useImperativeHandle`.
  * AddFilterRow remains the orchestrator: it owns the category
  * selector, holds a single ref to the currently mounted form, and

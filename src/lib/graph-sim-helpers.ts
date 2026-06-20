@@ -1,7 +1,7 @@
 /**
  * Pure d3 / worker / main-thread helpers for the graph force simulation.
  *
- * Extracted from `src/hooks/useGraphSimulation.ts` per MAINT-127. These
+ * Extracted from `src/hooks/useGraphSimulation.ts`. These
  * helpers have no React state — they are referentially-transparent
  * builders, drawers, and runners that the hooks compose into the
  * orchestrator's effect. Keep new pure graph helpers here.
@@ -79,7 +79,7 @@ export interface SimulationCtx {
  * `cleanup` tears down the simulation (called on effect cleanup).
  * `onResize` re-anchors the simulation's centering forces to the new
  * canvas dimensions. Called from the `ResizeObserver` on `svgRef.current`
- * so the graph stays centered when the view container resizes (UX-238).
+ * So the graph stays centered when the view container resizes.
  */
 export interface SimulationHandle {
   cleanup: () => void
@@ -144,7 +144,7 @@ function drawNodes(g: GSel, simNodes: GraphNode[]): NodeSel {
     .style('pointer-events', 'none')
     .style('user-select', 'none')
 
-  // UX-357: native SVG <title> tooltip carries the full label so truncated
+  // Native SVG <title> tooltip carries the full label so truncated
   // names ("prefix…") are still discoverable on hover.
   node.append('title').text((d) => d.label)
 
@@ -229,7 +229,7 @@ export function attachNodeRovingKeys(node: NodeSel): void {
 }
 
 /**
- * Attach click + keyboard activation to graph nodes (UX-270).
+ * Attach click + keyboard activation to graph nodes.
  *
  * Each node `<g>` has `role="button"` (set in `drawNodes`) and a roving
  * `tabindex` (#1725). This handler mirrors the native button activation
@@ -601,7 +601,7 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
       resolveEdgeEndpoints(ctx.simEdges, ctx.nodeById)
       ctx.applyPositions()
     } else if (msg.type === 'error') {
-      // PEND-22: structured error from the worker dispatcher's try/catch (or
+      // Structured error from the worker dispatcher's try/catch (or
       // the worker's global error/unhandledrejection handlers). Route through
       // the same `reportFailure` path as boundary `error` events so the
       // orchestrator falls back to the main-thread simulation.

@@ -177,7 +177,7 @@ describe('DuePanelFilters', () => {
     expect(screen.getByRole('button', { name: 'Properties' })).toBeInTheDocument()
   })
 
-  // UX-268 — touch-target sizing
+  // Touch-target sizing
   it('source filter pills include 44px min-width and min-height on coarse pointer', () => {
     render(<DuePanelFilters {...defaultProps} />)
 
@@ -188,7 +188,7 @@ describe('DuePanelFilters', () => {
     }
   })
 
-  // UX-324 — tooltip explaining the Due axis (the most ambiguous one
+  // Tooltip explaining the Due axis (the most ambiguous one
   // for users unfamiliar with Agaric's date model: hard deadline vs
   // soft scheduled start).
   it('shows a tooltip explaining the "Due" axis on hover', async () => {

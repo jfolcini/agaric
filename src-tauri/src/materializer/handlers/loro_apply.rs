@@ -40,7 +40,7 @@ use super::*;
 /// - Loro state isn't initialised (test scaffolding without
 ///   `install_for_test`).
 /// - Space cannot be resolved (orphan block, no `space` ancestor,
-///   pre-FEAT-3 row, fresh page-create with no SetProperty(space)
+///   Pre- row, fresh page-create with no SetProperty(space)
 ///   yet).
 ///
 /// In production both arms are unreachable — `init` runs at boot and
@@ -215,7 +215,7 @@ pub(crate) async fn apply_set_property_via_loro(
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
-        // PEND-80 §2.1: store the value with its native type so the engine is
+        // Store the value with its native type so the engine is
         // type-lossless (`value_num`→`Num`, `value_bool`→`Bool`); text/date/ref
         // are all strings, disambiguated at the SQL projection by
         // `property_definitions.value_type`. No typed field set ⇒ explicit
@@ -246,7 +246,7 @@ pub(crate) async fn apply_set_property_via_loro(
 /// Apply DeleteBlock through the engine then project to SQL.
 ///
 /// Engine `apply_delete_block` now stores the real `record.created_at`
-/// timestamp on the seed (PEND-80 Phase 2) — the same value the SQL
+/// Timestamp on the seed (Phase 2) — the same value the SQL
 /// projection stamps — so cohort identity for restore lookups is
 /// consistent between the engine and SQL, and lossless across sync.
 /// The cascade (descendant fanout) is handled on the SQL side via the
@@ -495,7 +495,7 @@ pub(super) async fn purge_block_sql_cascade(
     sqlx::query("PRAGMA defer_foreign_keys = ON")
         .execute(&mut *conn)
         .await?;
-    // PEND-20 C: materialise the descendants set ONCE into a TEMP
+    // C: materialise the descendants set ONCE into a TEMP
     // table, then read from the table in each cascade statement.
     // Pre-refactor each statement re-evaluated the recursive
     // `descendants_cte_purge!()` CTE end-to-end against the same
@@ -643,7 +643,7 @@ pub(super) async fn purge_block_sql_cascade(
     )
     .execute(&mut *conn)
     .await?;
-    // PEND-20 C: explicitly drop the temp table so the pooled
+    // C: explicitly drop the temp table so the pooled
     // connection's temp namespace is empty for the next caller.
     sqlx::query("DROP TABLE _purge_descendants")
         .execute(&mut *conn)
@@ -789,7 +789,7 @@ pub(crate) async fn apply_delete_property_via_loro(
 //   `crate::loro::shared::install_for_test`). Production always
 //   initialises via `crate::loro::shared::init` at boot.
 // - Space resolution fails (orphan block, no `space` ancestor, pre-
-//   FEAT-3 row). These rows write SQL but skip the engine apply; a
+// Row). These rows write SQL but skip the engine apply; a
 //   later op-log replay will reconcile engine state if the row gets a
 //   space.
 //

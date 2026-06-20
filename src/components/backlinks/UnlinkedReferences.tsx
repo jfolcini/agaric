@@ -70,14 +70,14 @@ export function UnlinkedReferences({
   const [truncated, setTruncated] = useState(false)
   const [filters, setFilters] = useState<BacklinkFilter[]>([])
   const [sort, setSort] = useState<BacklinkSort | null>(null)
-  // PEND-36 — `eval_unlinked_references` (backend) OR-joins title +
+  // `eval_unlinked_references` (backend) OR-joins title +
   // aliases into the FTS query, so a block that mentions ONLY an alias
   // surfaces here. The FE-side `handleLinkIt` then needs to know the
   // same alias set to perform the literal-text rewrite, otherwise the
   // regex compiled from `pageTitle` alone misses and the user is told
   // "linked" while the block silently reappears on the next refetch.
   const [aliases, setAliases] = useState<string[]>([])
-  // MAINT-189: shared cache replaces per-mount `listPropertyKeys()` IPC.
+  // Shared cache replaces per-mount `listPropertyKeys()` IPC.
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
@@ -93,13 +93,13 @@ export function UnlinkedReferences({
           limit: paginationLimit(20),
           spaceId: currentSpaceId,
         })
-        // TEST-4a: some callers (notably App-level smoke tests that resolve
+        // Some callers (notably App-level smoke tests that resolve
         // every `invoke` with a generic empty-page shape) return responses
         // where `groups` is missing. Narrow to an array at the state-setter
         // boundary so every downstream reader can rely on the declared
         // `BacklinkGroup[]` invariant.
         const respGroups = Array.isArray(resp.groups) ? resp.groups : []
-        // PEND-83 Bug 2 — pre-warm the resolve cache for source-page IDs.
+        // Bug 2 — pre-warm the resolve cache for source-page IDs.
         // Without this, `useBlockResolve.resolveTitle` falls back to the
         // `[[ULID-prefix...]]` placeholder for any source page that hasn't
         // been visited yet (e.g. a deeply nested child created in another
@@ -152,7 +152,7 @@ export function UnlinkedReferences({
   )
 
   // Fetch on mount and when pageId changes (eager — needed to know if we
-  // should render the panel at all, see UX-152 early-return below).
+  // Should render the panel at all, early-return below).
   useEffect(() => {
     setGroups([])
     setNextCursor(null)
@@ -167,7 +167,7 @@ export function UnlinkedReferences({
     setCollapsed(true)
   }, [pageId])
 
-  // Load tags on mount (PEND-29 B-6: cancellation flag avoids React 19
+  // Load tags on mount (B-6: cancellation flag avoids React 19
   // strict-mode "state update on unmounted component" warnings on rapid
   // mount/unmount).
   useEffect(() => {
@@ -186,7 +186,7 @@ export function UnlinkedReferences({
     }
   }, [])
 
-  // PEND-36 — load the page's aliases alongside the title so
+  // Load the page's aliases alongside the title so
   // `handleLinkIt` can rewrite alias-only mentions. Mirrors the
   // `getPageAliases(pageId)` pattern already used by `PageHeader`.
   useEffect(() => {
@@ -207,7 +207,7 @@ export function UnlinkedReferences({
 
   const handleLinkIt = useCallback(
     async (blockId: string, content: string) => {
-      // PEND-36 — try the canonical title first, then each alias in
+      // Try the canonical title first, then each alias in
       // declared order. The backend OR-joins title+aliases into the
       // FTS query so an alias-only mention surfaces here; without the
       // fallback, `replace(regex(pageTitle), …)` silently no-ops and
@@ -233,7 +233,7 @@ export function UnlinkedReferences({
         // CJK aliases, or aliases added between the search and the
         // click). Reuse the existing toast so the user sees something
         // other than a silent removal — keeping the failure mode
-        // visible was the whole point of PEND-36.
+        // Visible was the whole point of.
         logger.warn('UnlinkedReferences', 'No title/alias match found for Link it', {
           blockId,
           pageId,
@@ -280,7 +280,7 @@ export function UnlinkedReferences({
 
   const pageTitles = useMemo(() => {
     const map = new Map<string, string>()
-    // Defensive narrowing (TEST-4a): some App-level tests resolve
+    // Defensive narrowing: some App-level tests resolve
     // `listUnlinkedReferences` with a stubbed response where `groups` is not an
     // array. Before this guard, the `for..of` below threw inside render and
     // React printed a four-line "above error occurred in <UnlinkedReferences>"
@@ -356,7 +356,7 @@ export function UnlinkedReferences({
 
   // Render nothing when there are no unlinked references (and not loading): an
   // empty panel is clutter at the bottom of every page. This intentionally
-  // overrides the older UX-152 empty-state mandate for this panel (user
+  // Overrides the older empty-state mandate for this panel (user
   // decision, live UX review). When filters are active, keep the full panel
   // visible so the user can clear/adjust filters — otherwise the filter
   // controls vanish. The loading branch below still renders so nothing flashes
@@ -421,7 +421,7 @@ export function UnlinkedReferences({
           >
             {() => (
               <>
-                {/* Linked-vs-Unlinked distinction badge (UX-271) */}
+                {/* Linked-vs-Unlinked distinction badge */}
                 <div className="unlinked-references-link-type-badge flex justify-end px-2 pb-1">
                   <Badge tone="outline" className="text-muted-foreground">
                     {t('references.unlinkedBadge')}

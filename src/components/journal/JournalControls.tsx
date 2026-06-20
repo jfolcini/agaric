@@ -2,7 +2,7 @@
  * JournalControls — mode switcher + prev/next/today + agenda + calendar
  * rendered in the App header for the journal view.
  *
- * Extracted from `JournalPage.tsx` under MAINT-119.
+ * Extracted from `JournalPage.tsx` under.
  */
 
 import {
@@ -130,7 +130,7 @@ export function JournalControls(): React.ReactElement {
           : t('journal.nextMonth'),
   }
 
-  // UX-236: hide the Today button when already on today's daily journal.
+  // Hide the Today button when already on today's daily journal.
   // JournalControls only renders inside `currentView === 'journal'`, so the
   // view-level leg of the expression used in GlobalDateControls collapses here.
   // #1415 — the stream is permanently top-anchored at today, so the Today
@@ -200,9 +200,9 @@ export function JournalControls(): React.ReactElement {
 
       {/* Date navigation — prev/next/date-display hidden in agenda mode (no
           date context), but Today + Agenda + calendar stay visible so the
-          user can jump back into dated views (UX-235). */}
+          user can jump back into dated views. */}
       <div className="flex items-center gap-1">
-        {/* UX-260 sub-fix 2: surface the Alt+Left / Alt+Right / Alt+T
+        {/*  sub-fix 2: surface the Alt+Left / Alt+Right / Alt+T
             shortcuts via Tooltips so users discover the bindings without
             opening the KeyboardShortcuts sheet. */}
         {!hidesDateNav && (

@@ -78,7 +78,7 @@ macro_rules! agaric_commands {
     () => {
         ::tauri_specta::collect_commands![
             $crate::commands::blocks::crud::create_block,
-            // PEND-35 Tier 4.3 — atomic batch-create for templates: a
+            // Atomic batch-create for templates: a
             // 10-line journal template that previously fired 10
             // `create_block` IPCs now fires 1, with one IMMEDIATE tx
             // and one op_log scope covering every block + its
@@ -86,18 +86,18 @@ macro_rules! agaric_commands {
             $crate::commands::blocks::crud::create_blocks_batch,
             $crate::commands::blocks::crud::edit_block,
             $crate::commands::blocks::crud::delete_block,
-            // PEND-35 Tier 2.1 — multi-select batch delete: collapses
+            // Multi-select batch delete: collapses
             // the FE per-row IPC loop (50 IPCs for a 50-row delete)
             // into one IMMEDIATE tx with a single recursive CTE
             // seeded from every root simultaneously.
             $crate::commands::blocks::crud::delete_blocks_by_ids,
-            // #81 / PEND-57 — Pages multi-select bulk move-to-space:
+            // #81 / Pages multi-select bulk move-to-space:
             // collapses the per-row `set_property(space)` IPC loop into one
             // IMMEDIATE tx with a single op-log seq range.
             $crate::commands::blocks::crud::move_blocks_to_space,
             $crate::commands::blocks::crud::restore_block,
             $crate::commands::blocks::crud::purge_block,
-            // PEND-35 Tier 2.2 — TrashView batch restore/purge: collapses
+            // TrashView batch restore/purge: collapses
             // the per-row IMMEDIATE-tx loop (50 IPCs for a 50-row purge)
             // into a single tx running the cleanup chain once.
             $crate::commands::blocks::crud::restore_blocks_by_ids,
@@ -108,7 +108,7 @@ macro_rules! agaric_commands {
             $crate::commands::blocks::queries::get_block,
             $crate::commands::blocks::queries::batch_resolve,
             $crate::commands::tags::add_tag,
-            // #81 / PEND-57 — Pages multi-select bulk add-tag: collapses the
+            // #81 / Pages multi-select bulk add-tag: collapses the
             // per-row `add_tag` IPC loop into one IMMEDIATE tx with a single
             // op-log seq range (one `AddTag` op per newly-tagged block).
             $crate::commands::tags::add_tags_by_ids,
@@ -121,7 +121,7 @@ macro_rules! agaric_commands {
             // boot already emitted).
             $crate::commands::recovery::get_recovery_status,
             $crate::commands::queries::search_blocks,
-            // PEND-61 Phase 1 — partitioned palette search. One FTS scan
+            // Phase 1 — partitioned palette search. One FTS scan
             // returns `{ pages, blocks }` instead of the palette firing
             // two parallel `search_blocks` calls per keystroke.
             $crate::commands::queries::search_blocks_partitioned,
@@ -130,7 +130,7 @@ macro_rules! agaric_commands {
             // over IPC (the flat `query_by_tags` above stays for back-compat).
             $crate::commands::tags::query_by_tag_expr,
             $crate::commands::queries::query_by_property,
-            // PEND-35 Tier 2.10b — AND-intersected property + tag query
+            // AND-intersected property + tag query
             // resolved entirely in SQL via composed `EXISTS` subqueries.
             // Replaces the FE `useQueryExecution.fetchFilteredQuery` shape
             // that fanned out one IPC per sub-filter (each capped at 200
@@ -153,7 +153,7 @@ macro_rules! agaric_commands {
             $crate::commands::tags::list_inherited_tags_for_block,
             $crate::commands::properties::set_property,
             $crate::commands::properties::set_todo_state,
-            // PEND-35 Tier 2.1 — multi-select batch set-todo: collapses
+            // Multi-select batch set-todo: collapses
             // the per-row IPC loop (50 IPCs for "mark 50 done") into
             // one IMMEDIATE tx with one op_log scope.
             $crate::commands::properties::set_todo_state_batch,
@@ -168,7 +168,7 @@ macro_rules! agaric_commands {
             $crate::commands::history::revert_ops,
             $crate::commands::history::undo_page_op,
             $crate::commands::history::redo_page_op,
-            // PEND-35 Tier 4.4 — single-IPC undo-group sizing: replaces
+            // Single-IPC undo-group sizing: replaces
             // the FE's growing-window `list_page_history` re-fetch loop
             // after every Ctrl+Z with one recursive-CTE query that
             // walks consecutive same-device + within-window ops.
@@ -211,9 +211,9 @@ macro_rules! agaric_commands {
             $crate::commands::pages::export_page_markdown,
             // Agenda projection (#644)
             $crate::commands::agenda::list_projected_agenda,
-            // Undated tasks (FEAT-1)
+            // Undated tasks
             $crate::commands::agenda::list_undated_tasks,
-            // OS notifications for due / scheduled tasks (FEAT-11)
+            // OS notifications for due / scheduled tasks
             $crate::commands::notifier::notify_task,
             // Logseq/Markdown import (#660)
             $crate::commands::pages::import_markdown,
@@ -245,42 +245,42 @@ macro_rules! agaric_commands {
             // Bulk trash operations (B-46)
             $crate::commands::blocks::crud::restore_all_deleted,
             $crate::commands::blocks::crud::purge_all_deleted,
-            // Trash descendant counts (UX-243)
+            // Trash descendant counts
             $crate::commands::blocks::queries::trash_descendant_counts,
             // Trash count badge (ViewDispatcher trash badge) — pushes the count
             // into SQL so the badge is accurate regardless of trash size.
             $crate::commands::blocks::queries::count_trash,
-            // First-child-per-parent batch (PEND-35 Tier 2.8) — collapses the
+            // First-child-per-parent batch — collapses the
             // TemplatesView N+1 listBlocks(parentId, limit:1) preview loop.
             $crate::commands::blocks::queries::first_child_for_blocks,
-            // PEND-35 Tier 2.3 — get_blocks batch endpoint
+            // Get_blocks batch endpoint
             //   • get_blocks(ids) — full BlockRow batch.
             $crate::commands::blocks::queries::get_blocks,
-            // Link metadata (UX-165)
+            // Link metadata
             $crate::commands::link_metadata::fetch_link_metadata,
             $crate::commands::link_metadata::get_link_metadata,
-            // Bug report (FEAT-5)
+            // Bug report
             $crate::commands::bug_report::collect_bug_report_metadata,
             $crate::commands::bug_report::read_logs_for_report,
-            // MCP (FEAT-4e) — Settings "Agent access" tab
+            // MCP — Settings "Agent access" tab
             $crate::commands::mcp::get_mcp_status,
             $crate::commands::mcp::get_mcp_socket_path,
             $crate::commands::mcp::mcp_set_enabled,
             $crate::commands::mcp::mcp_disconnect_all,
             // MCP activity ring read surface (#695)
             $crate::commands::mcp::get_mcp_recent_activity,
-            // MCP RW (FEAT-4h slice 2)
+            // MCP RW (slice 2)
             $crate::commands::mcp::get_mcp_rw_status,
             $crate::commands::mcp::get_mcp_rw_socket_path,
             $crate::commands::mcp::mcp_rw_set_enabled,
             $crate::commands::mcp::mcp_rw_disconnect_all,
-            // Spaces (FEAT-3 Phase 1 + Phase 2 + Phase 6)
+            // Spaces (Phase 1 + Phase 2 + Phase 6)
             $crate::commands::spaces::list_spaces,
             $crate::commands::spaces::create_page_in_space,
             $crate::commands::spaces::create_space,
-            // Quick capture (FEAT-12) — desktop global-shortcut entry point
+            // Quick capture — desktop global-shortcut entry point
             $crate::commands::journal::quick_capture_block,
-            // Journal page lookup (BUG-48) — database-native date queries
+            // Journal page lookup — database-native date queries
             $crate::commands::journal::get_journal_page_by_date,
             $crate::commands::journal::list_journal_pages_in_range,
             // All-pages-in-space (export / graph) — no-pagination IPC for callers
@@ -290,7 +290,7 @@ macro_rules! agaric_commands {
             // Page subtree loader — single SELECT against the `page_id` index;
             // replaces the FE-side recursive `listBlocks` walk
             $crate::commands::pages::load_page_subtree,
-            // PEND-56 — paginated page list with metadata columns
+            // Paginated page list with metadata columns
             // (last-modified, inbound-link count, child-block count,
             // has-property bitmask) + richer sort taxonomy.
             $crate::commands::pages::list_pages_with_metadata,
@@ -390,7 +390,7 @@ mod proptest_db_harness;
 // LoroSync end-to-end integration tests live in
 // `sync_protocol::tests` (`loro_sync_e2e_*`).
 
-/// L-2: Wrap a boot-time `SELECT COUNT(*)` result so DB errors get a tracing
+/// Wrap a boot-time `SELECT COUNT(*)` result so DB errors get a tracing
 /// breadcrumb instead of being silently coerced to `0`. The fall-through
 /// behaviour is unchanged — callers still see `0` on error — but operators
 /// now have a chance of noticing when boot scheduling is being skipped
@@ -424,7 +424,7 @@ pub struct SyncCancelFlag(pub Arc<AtomicBool>);
 // behaviour is unchanged — crash-safety-by-design (each tick is its own
 // transaction) is what makes an abrupt exit correct, not a shutdown
 // signal. Re-introducing an exit-time purge is deliberately out of scope
-// (it risks the M-69 single-transaction invariant).
+// (it risks the single-transaction invariant).
 
 /// Keeps the tracing-appender non-blocking worker alive for the
 /// application lifetime.
@@ -432,14 +432,14 @@ pub struct SyncCancelFlag(pub Arc<AtomicBool>);
 /// The inner [`tracing_appender::non_blocking::WorkerGuard`] flushes
 /// buffered log writes when it is dropped.  Storing it in Tauri's managed
 /// state ensures it lives until the app exits, not just until `setup()`
-/// returns.  See BUG-34.
+/// Returns. See.
 pub struct LogGuard(pub tracing_appender::non_blocking::WorkerGuard);
 
 /// Return the logs directory given the application's data directory.
 ///
 /// Both [`crate::commands::get_log_dir`] and the tracing-appender setup
 /// in [`run`] must use this helper so the "Open logs folder" action and
-/// the on-disk log files cannot diverge across platforms. See BUG-34.
+/// The on-disk log files cannot diverge across platforms. See.
 pub fn log_dir_for_app_data(app_data_dir: &std::path::Path) -> std::path::PathBuf {
     app_data_dir.join("logs")
 }
@@ -532,7 +532,7 @@ fn disable_webkit_dmabuf_if_unset() {
 // ---------------------------------------------------------------------------
 
 /// Boot-phase 1 — install the tracing-appender file/stderr subscriber and
-/// keep the non-blocking worker guard alive in managed state (BUG-34 / #635).
+/// Keep the non-blocking worker guard alive in managed state (#635).
 ///
 /// Must run with the OS-correct `app_data_dir` so the on-disk log files and
 /// the "Open logs folder" action resolve to the same path on every platform.
@@ -542,7 +542,7 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    // BUG-34: Initialize tracing-appender using the OS-correct
+    // Initialize tracing-appender using the OS-correct
     // `app_data_dir` so the "Open logs folder" action (get_log_dir)
     // and the on-disk log files resolve to the same path on every
     // platform (Linux, macOS, Windows, Android).
@@ -578,7 +578,7 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     };
 
     // Preserve any user-provided `RUST_LOG` directives for
-    // `agaric` / `frontend` (BUG-40).
+    // `agaric` / `frontend`.
     let rust_log = std::env::var("RUST_LOG").unwrap_or_default();
     let directives = build_log_directives(&rust_log, &[("agaric", "info"), ("frontend", "info")]);
     let env_filter = EnvFilter::try_new(&directives)
@@ -621,7 +621,7 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
 
     // Issue #157 sub-item A — retention is now enforced by the
     // RollingFileAppender::builder().max_log_files(14) call above,
-    // continuously rather than boot-only. The previous M-45 boot
+    // Continuously rather than boot-only. The previous boot
     // sweep (`cleanup_old_log_files`) was removed along with its
     // tests.
 
@@ -683,7 +683,7 @@ fn build_materializer(
 
     // Create materializer — bg cache rebuilds read from read pool, write to write pool (P-8)
     //
-    // PERF-24: wire up the app-lifecycle hooks so the metrics-
+    // Wire up the app-lifecycle hooks so the metrics-
     // snapshot task stops emitting debug-level log lines while
     // the app is backgrounded on mobile. The same hooks are
     // later passed into the sync daemon below so its periodic
@@ -698,7 +698,7 @@ fn build_materializer(
     // `CleanupOrphanedAttachments` background task can locate
     // the `attachments/` subtree.
     //
-    // MAINT-229: schedule `cleanup_orphaned_attachments` at
+    // Schedule `cleanup_orphaned_attachments` at
     // boot and/or after compaction. Currently the only entry
     // point is `MaterializeTask::CleanupOrphanedAttachments`,
     // which is not yet enqueued from any production path; the
@@ -823,7 +823,7 @@ fn recover_and_bootstrap(
         tracing::warn!(error = %e, "failed to enqueue projected agenda cache rebuild at boot");
     }
 
-    // FEAT-3 Phase 1: seed the two default spaces (Personal + Work) and
+    // Phase 1: seed the two default spaces (Personal + Work) and
     // migrate every pre-existing page into Personal. Idempotent across
     // boots via an internal fast-path check. Failure is boot-fatal:
     // the app's "every page belongs to a space" invariant cannot be
@@ -918,7 +918,7 @@ fn spawn_boot_maintenance(
         let device_id_owned = device_id.to_owned();
         let materializer_handle = materializer.clone();
         tauri::async_runtime::spawn(async move {
-            // UX-165: Clean up stale link metadata entries (>30 days, non-auth).
+            // Clean up stale link metadata entries (>30 days, non-auth).
             match crate::link_metadata::cleanup_stale(&write_pool, 30).await {
                 Ok(deleted) => {
                     if deleted > 0 {
@@ -930,7 +930,7 @@ fn spawn_boot_maintenance(
                 }
             }
 
-            // M-3: Rebuild FTS index if the table is empty (post-migration 0006).
+            // Rebuild FTS index if the table is empty (post-migration 0006).
             let fts_count: i64 = log_or_zero(
                 sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM fts_blocks")
                     .fetch_one(&write_pool)
@@ -960,7 +960,7 @@ fn spawn_boot_maintenance(
                 }
             }
 
-            // UX-250: Rebuild `block_tag_refs` if the table is empty
+            // Rebuild `block_tag_refs` if the table is empty
             // but there is content to scan. Migration 0034 creates
             // the table but intentionally does not SQL-backfill
             // (SQLite lacks the regex support we need).
@@ -997,7 +997,7 @@ fn spawn_boot_maintenance(
                 }
             }
 
-            // MAINT-1: one-shot Personal→Work migration for the
+            // One-shot Personal→Work migration for the
             // maintainer's vault. Hardcoded-ULID-gated so fresh
             // installs are a no-op. Non-fatal; next boot retries.
             if let Err(e) = spaces::migrate_personal_pages_to_work(
@@ -1015,12 +1015,12 @@ fn spawn_boot_maintenance(
         });
     }
 
-    // FEAT-1: Rebuild page_id column at boot to ensure consistency.
+    // Rebuild page_id column at boot to ensure consistency.
     if let Err(e) = materializer.try_enqueue_background(MaterializeTask::RebuildPageIds) {
         tracing::warn!(error = %e, "failed to enqueue page_id rebuild at boot");
     }
 
-    // MAINT-229: enqueue the orphan-attachment GC at boot. The
+    // Enqueue the orphan-attachment GC at boot. The
     // function is non-retryable (the bg consumer drops on
     // saturation rather than persisting it), so a missed boot
     // tick is fine — the next boot picks it up. A second hook
@@ -1032,7 +1032,7 @@ fn spawn_boot_maintenance(
         tracing::warn!(error = %e, "failed to enqueue CleanupOrphanedAttachments at boot");
     }
 
-    // BUG-23: When drafts were recovered before the materializer was
+    // When drafts were recovered before the materializer was
     // created, the targeted FTS / block_links / tags / pages caches
     // are stale for those block_ids. Refresh them now and block until
     // the background queue drains so UI queries after setup never see
@@ -1065,7 +1065,7 @@ fn spawn_background_tasks(
     materializer: &materializer::Materializer,
     lifecycle: &lifecycle::LifecycleHooks,
 ) {
-    // BUG-22: Spawn the retry-queue sweeper so any per-block tasks
+    // Spawn the retry-queue sweeper so any per-block tasks
     // persisted by a previous session (or accumulated during this
     // one) get drained on a 60-second cadence. The sweeper uses
     // its own shutdown flag; it dies when this flag is set and
@@ -1081,8 +1081,8 @@ fn spawn_background_tasks(
         retry_shutdown,
     );
 
-    // PEND-28a M1: Spawn the orphan-drafts sweeper. Drafts whose
-    // parent block has been *soft-deleted* survive the M-93 FK
+    // Spawn the orphan-drafts sweeper. Drafts whose
+    // Parent block has been *soft-deleted* survive the FK
     // (which references the row, not its `deleted_at` column),
     // so without this periodic sweep they would accumulate and
     // surface as phantom drafts in the UI on next boot. The
@@ -1274,7 +1274,7 @@ fn spawn_background_tasks(
     maintenance::spawn_daemon(jobs, maintenance_shutdown);
 
     // Periodic Loro snapshot persistence. Re-instated after the
-    // PEND-09 parity flush task (which hosted the snapshot save
+    // Parity flush task (which hosted the snapshot save
     // on its tick) was deleted — that regression left
     // `loro_doc_state` permanently empty while the apply cursor
     // kept advancing, so on boot the engine could not be rebuilt
@@ -1328,7 +1328,7 @@ fn register_managed_state<R: tauri::Runtime>(
     app.manage(WritePool(pools.write));
     app.manage(ReadPool(pools.read));
     app.manage(write_ctx);
-    // PEND-70 P1-A — extension-state guard registry for
+    // -A — extension-state guard registry for
     // in-flight search IPCs. See `cancellation.rs`.
     app.manage(cancellation::CancellationRegistry::new());
     app.manage(device_id);
@@ -1344,7 +1344,7 @@ fn register_managed_state<R: tauri::Runtime>(
     let cancel_flag = Arc::new(AtomicBool::new(false));
     app.manage(SyncCancelFlag(cancel_flag.clone()));
 
-    // PERF-24 / #704: register the lifecycle hooks in managed state so
+    // / #704: register the lifecycle hooks in managed state so
     // future commands (e.g. a "sync now" action) can share the same
     // wake notifier, and install a window-event listener that flips
     // `is_foreground` on genuine background transitions.
@@ -1445,8 +1445,8 @@ struct SyncDaemonWiring {
 /// Boot-phase 13 — install the rustls CryptoProvider and spawn the
 /// [`SyncDaemon`](sync_daemon::SyncDaemon).
 ///
-/// PERF-25: `start_if_peers_exist` keeps the daemon dormant until a device is
-/// paired; PERF-24's lifecycle threading short-circuits the resync tick while
+/// `start_if_peers_exist` keeps the daemon dormant until a device is
+/// Paired; lifecycle threading short-circuits the resync tick while
 /// backgrounded.
 fn wire_sync_daemon(w: SyncDaemonWiring) {
     use tauri::Manager;
@@ -1456,13 +1456,13 @@ fn wire_sync_daemon(w: SyncDaemonWiring) {
 
     // Spawn SyncDaemon (#382, #383, #278)
     //
-    // PERF-25: Use `start_if_peers_exist` so the daemon enters
+    // Use `start_if_peers_exist` so the daemon enters
     // dormant mode when no peers are paired. mDNS announce/browse
     // and the TLS listener are deferred until the user pairs a
     // device. The dormant waiter wakes on `scheduler.notify_change`
     // (called by `confirm_pairing`) and on a periodic poll.
     //
-    // PERF-24: `_with_lifecycle` threads the foreground flag +
+    // `_with_lifecycle` threads the foreground flag +
     // wake notify into the daemon loop so its periodic resync
     // tick short-circuits while the app is backgrounded.
     tauri::async_runtime::spawn(async move {
@@ -1491,7 +1491,7 @@ fn wire_sync_daemon(w: SyncDaemonWiring) {
 /// servers need, gathered into a struct so [`wire_mcp_servers`] stays under
 /// the `too_many_arguments` ceiling.
 ///
-/// FEAT-4c / FEAT-4h slice 2 — the RO surface binds the reader pool (plus the
+/// Slice 2 — the RO surface binds the reader pool (plus the
 /// writer pool for `journal_for_date`'s sole write side-effect); the RW
 /// surface binds the writer pool (every RW tool mutates). Every field is a
 /// cheap `Arc`-backed clone taken before the originals move into managed state.
@@ -1508,9 +1508,9 @@ struct McpServerWiring {
 /// Boot-phase 14 — spawn the MCP read-only and read-write servers and register
 /// their managed lifecycle/gate/activity state.
 ///
-/// FEAT-4a/4h: each server is opt-in via its marker file; absent the marker
+/// /4h: each server is opt-in via its marker file; absent the marker
 /// the spawn helper logs and returns immediately. The reader/writer pool +
-/// materializer + device_id are passed in as cheap clones (FEAT-4c / slice 2).
+/// Materializer + device_id are passed in as cheap clones (slice 2).
 fn wire_mcp_servers<R: tauri::Runtime>(
     app: &tauri::App<R>,
     app_data_dir: &std::path::Path,
@@ -1528,31 +1528,31 @@ fn wire_mcp_servers<R: tauri::Runtime>(
         rw_device_id: mcp_rw_device_id,
     } = w;
 
-    // FEAT-4a — MCP read-only server. Opt-in via the `mcp-ro-enabled`
-    // marker file in `app_data_dir` (FEAT-4e wires the UI toggle).
+    // MCP read-only server. Opt-in via the `mcp-ro-enabled`
+    // Marker file in `app_data_dir` (wires the UI toggle).
     // When the marker is absent, `spawn_mcp_ro_task` logs and returns
     // immediately. When present, it binds the default socket and
     // spawns the serve loop. A second Agaric instance detects the
     // existing socket and logs a warning without crashing.
     //
-    // FEAT-4d — the cloned `AppHandle` is used to build the activity
+    // The cloned `AppHandle` is used to build the activity
     // emitter so completed tool calls surface on the `mcp:activity`
     // Tauri event bus.
     //
-    // FEAT-4c — the reader pool + materializer + device_id let the
+    // The reader pool + materializer + device_id let the
     // `ReadOnlyTools` registry dispatch the v1 nine-tool surface
     // without allocating new resources. `journal_for_date` is the
     // only tool that writes; it reuses the same materializer /
     // device_id the frontend uses so the op-log origin stays
     // consistent.
     //
-    // FEAT-4e — `McpLifecycle` is shared managed state so the
+    // `McpLifecycle` is shared managed state so the
     // Settings UI commands (`get_mcp_status`, `mcp_disconnect_all`,
     // `mcp_set_enabled`) can observe the connection counter and
     // fire the disconnect signal.
     let mcp_lifecycle = std::sync::Arc::new(mcp::McpLifecycle::new());
     app.manage(mcp_lifecycle.clone());
-    // L-46: gate that serialises rapid `mcp_set_enabled` toggles
+    // Gate that serialises rapid `mcp_set_enabled` toggles
     // so the marker write + spawn cannot interleave.
     app.manage(commands::McpToggleGate::new());
     // #695 — ONE shared activity ring, managed so the
@@ -1577,7 +1577,7 @@ fn wire_mcp_servers<R: tauri::Runtime>(
         Some((*mcp_lifecycle).clone()),
     );
 
-    // FEAT-4h slice 2 — parallel MCP **read-write** server. Opt-in
+    // Slice 2 — parallel MCP **read-write** server. Opt-in
     // via the `mcp-rw-enabled` marker file (independent of RO).
     // A second `McpLifecycle` is allocated so the RO and RW
     // servers track their own connection counts and disconnect
@@ -1586,7 +1586,7 @@ fn wire_mcp_servers<R: tauri::Runtime>(
     let mcp_rw_lifecycle_inner = std::sync::Arc::new(mcp::McpLifecycle::new());
     let mcp_rw_lifecycle = mcp::McpRwLifecycle(mcp_rw_lifecycle_inner.clone());
     app.manage(mcp_rw_lifecycle.clone());
-    // L-46: RW counterpart to McpToggleGate. RO and RW each hold
+    // RW counterpart to McpToggleGate. RO and RW each hold
     // their own gate so they do not block each other.
     app.manage(commands::McpRwToggleGate::new());
     mcp::spawn_mcp_rw_task(
@@ -1658,13 +1658,13 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     disable_webkit_dmabuf_if_unset();
 
-    // BUG-34: Tracing-appender setup moved into the Tauri `setup()` hook so
+    // Tracing-appender setup moved into the Tauri `setup()` hook so
     // it can use `app.path().app_data_dir()` (OS-correct location on every
     // platform) instead of a hard-coded Linux XDG path. The panic hook is
     // installed here early — it uses the global tracing subscriber and is
     // a no-op until the subscriber is installed in `setup()`.
 
-    // M-44 / #634: Install a custom panic hook so panics are captured in the
+    // / #634: Install a custom panic hook so panics are captured in the
     // log file AND survive `panic = "abort"` (release profile, Cargo.toml).
     //
     // Two abort-safety problems the previous hook had:
@@ -1715,7 +1715,7 @@ pub fn run() {
     #[cfg_attr(mobile, allow(unused_mut))]
     let mut tauri_builder = tauri::Builder::default();
 
-    // MAINT-106: tauri-plugin-single-instance MUST be the first plugin
+    // Tauri-plugin-single-instance MUST be the first plugin
     // registered (per upstream docs) so the second-instance probe runs
     // before any other plugin's setup hook touches the file system / DB.
     // The callback fires in the *original* (still-running) instance with
@@ -1726,7 +1726,7 @@ pub fn run() {
     // via the OS task model, so the plugin is gated behind `#[cfg(desktop)]`
     // (matching upstream's `desktop_only_plugin` posture).
     //
-    // FEAT-10: on Linux + Windows, OS deep-link activations spawn a
+    // On Linux + Windows, OS deep-link activations spawn a
     // **new** Agaric process with the URL as a CLI argument; the
     // single-instance handler is the only place we can intercept those
     // args and forward them to the still-running primary instance.  We
@@ -1744,7 +1744,7 @@ pub fn run() {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
-                // FEAT-10: forward the second instance's argv to the
+                // Forward the second instance's argv to the
                 // deep-link plugin running inside the primary instance.
                 // The plugin filters args by the configured schemes
                 // (`agaric` only, per `tauri.conf.json`) so non-deep-link
@@ -1754,9 +1754,9 @@ pub fn run() {
     }
 
     tauri_builder = tauri_builder
-        // FEAT-10: cross-platform deep-link routing for `agaric://` URLs.
+        // Cross-platform deep-link routing for `agaric://` URLs.
         // Required on desktop AND Android (Android OAuth via Custom-Tabs
-        // + PKCE + App-Link callback is the FEAT-5g unblocker).  See
+        // + PKCE + App-Link callback is the unblocker). See
         // `src-tauri/src/deeplink/mod.rs` for the URL → typed-event
         // router; `register_deeplink_handlers` is wired from the setup
         // hook below.  No `#[cfg(desktop)]` gate on purpose.
@@ -1765,11 +1765,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_process::init())
-        // MAINT-109: cross-platform platform/version/arch/locale/hostname
+        // Cross-platform platform/version/arch/locale/hostname
         // API used by `commands::collect_bug_report_metadata`.  Works on
         // both desktop and mobile, so no cfg gate.
         .plugin(tauri_plugin_os::init())
-        // FEAT-11: native OS notifications for due / scheduled tasks.
+        // Native OS notifications for due / scheduled tasks.
         // The `notify_task` command (commands::notifier::notify_task)
         // fires a notification through this plugin.  Cross-platform
         // (desktop + mobile), so no `#[cfg(desktop)]` gate.  Part of the
@@ -1777,7 +1777,7 @@ pub fn run() {
         // Updates" — move in lockstep with the other tauri-plugin-* crates.
         .plugin(tauri_plugin_notification::init());
 
-    // MAINT-108: remember window size / position / monitor / maximized
+    // Remember window size / position / monitor / maximized
     // state across launches.  Operates entirely Rust-side (no frontend
     // permission needed).  Desktop-only — Android/iOS handle window
     // state via the OS task lifecycle, so the plugin is gated behind
@@ -1787,7 +1787,7 @@ pub fn run() {
         tauri_builder = tauri_builder.plugin(tauri_plugin_window_state::Builder::default().build());
     }
 
-    // FEAT-12: register `tauri-plugin-global-shortcut` so the JS API can
+    // Register `tauri-plugin-global-shortcut` so the JS API can
     // bind / unbind the user-configured "quick capture" hotkey at runtime.
     // The plugin doesn't need a fixed binding at registration time —
     // bindings are registered/unregistered dynamically from the frontend
@@ -1799,7 +1799,7 @@ pub fn run() {
         tauri_builder = tauri_builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
     }
 
-    // FEAT-13: launch-on-login support.  Wired up to the Settings →
+    // Launch-on-login support. Wired up to the Settings →
     // General → "Launch on login" toggle (frontend reads/writes via
     // `@tauri-apps/plugin-autostart`'s `isEnabled` / `enable` /
     // `disable` IPC).  The `MacosLauncher::LaunchAgent` variant tells
@@ -1807,7 +1807,7 @@ pub fn run() {
     // LaunchAgents/<bundle-id>.plist` rather than the legacy AppleScript
     // approach (matches upstream's recommended default).  The
     // `--silent` arg is passed to the relaunched process so future
-    // FEAT-11 notifier / sync-daemon code can detect a "started at
+    // Notifier / sync-daemon code can detect a "started at
     // login" launch and avoid popping the main window to the front.
     // Desktop-only — Android/iOS expose start-at-boot via the OS task
     // model (foreground service / WorkManager / background fetch
@@ -1850,17 +1850,17 @@ pub fn run() {
             std::fs::create_dir_all(&app_data_dir)?;
             let db_path = app_data_dir.join("notes.db");
 
-            // BUG-34: tracing-appender setup using the OS-correct
+            // Tracing-appender setup using the OS-correct
             // `app_data_dir`; keeps the worker guard alive in managed state.
             init_logging(app, &app_data_dir);
 
-            // PEND-79: AppImage first-run desktop self-integration (Linux).
+            // AppImage first-run desktop self-integration (Linux).
             // No-op unless `$APPIMAGE` is set (only inside a running AppImage),
             // so deb/rpm, `cargo tauri dev`, and non-Linux are all excluded.
             #[cfg(target_os = "linux")]
             appimage_integration::integrate_appimage_if_running();
 
-            // FEAT-10: install the deep-link router as early as possible
+            // Install the deep-link router as early as possible
             // so launch-time `agaric://…` URLs are routed once the rest of
             // setup completes.  The frontend `useDeepLinkRouter` hook
             // additionally calls `getCurrent()` on mount to backfill any
@@ -1921,7 +1921,7 @@ pub fn run() {
                 cancel_flag: Arc::new(AtomicBool::new(false)),
             };
 
-            // FEAT-4c / FEAT-4h slice 2 — clone the pools + materializer +
+            // Slice 2 — clone the pools + materializer +
             // device_id the MCP RO and RW servers need before the move.
             let mcp_ro_read_pool = pools.read.clone();
             let mcp_ro_write_pool = pools.write.clone();
@@ -1951,7 +1951,7 @@ pub fn run() {
             };
             wire_sync_daemon(daemon_wiring);
 
-            // FEAT-4a / 4h — MCP read-only + read-write servers.
+            // / 4h — MCP read-only + read-write servers.
             wire_mcp_servers(
                 app,
                 &app_data_dir,
@@ -2285,13 +2285,13 @@ mod log_directives_tests {
 }
 
 // ===========================================================================
-// BUG-34: log_dir_for_app_data helper tests
+// Log_dir_for_app_data helper tests
 // ===========================================================================
 //
 // The same helper is used by the tracing-appender setup in `run()` and by
 // the `get_log_dir` Tauri command (via `src/commands/logging.rs`). These
 // tests pin down the invariant: both code paths MUST resolve to the same
-// path — "<app_data_dir>/logs" — regardless of platform.  Before BUG-34 was
+// Path — "<app_data_dir>/logs" — regardless of platform. Before was
 // fixed, `run()` hard-coded a Linux XDG path while `get_log_dir` used Tauri's
 // OS-correct resolver, so the two drifted on macOS / Windows.
 
@@ -2376,7 +2376,7 @@ mod log_dir_tests {
         );
     }
 
-    /// Integration-style regression test for BUG-34.
+    /// Integration-style regression test for.
     ///
     /// Before the fix, `run()` computed the log directory from `HOME`
     /// (Linux XDG layout) while `get_log_dir` used `app.path().app_data_dir()`,
@@ -2483,7 +2483,7 @@ mod panic_report_tests {
     }
 }
 
-// L-2: unit test for the boot-count error-logging helper.
+// Unit test for the boot-count error-logging helper.
 #[cfg(test)]
 mod log_or_zero_tests {
     use super::log_or_zero;
@@ -2532,7 +2532,7 @@ mod now_rfc3339_tests {
 
         assert!(
             t1.ends_with('Z'),
-            "now_rfc3339() output `{t1}` must end with `Z` — the L-98 \
+            "now_rfc3339() output `{t1}` must end with `Z` — the  \
              lex-monotonic invariant on op_log.created_at depends on every \
              stored timestamp sharing the same `…Z` shape (see the \
              doc-comment on `now_rfc3339` and on `op_log::OpRecord`)"

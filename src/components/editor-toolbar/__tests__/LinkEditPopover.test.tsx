@@ -11,7 +11,7 @@
  *  - a11y: axe audit
  *
  * `normalizeUrl` / `isAllowedUrl` unit tests live in
- * `src/lib/__tests__/url-validation.test.ts` (PEND-23 L2).
+ * `src/lib/__tests__/url-validation.test.ts`.
  */
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -50,7 +50,7 @@ vi.mock('@/components/ui/label', () => ({
   ),
 }))
 
-// Mock Tauri IPC functions used for link metadata prefetch (UX-165)
+// Mock Tauri IPC functions used for link metadata prefetch
 const mockFetchLinkMetadata = vi.fn().mockResolvedValue({})
 
 vi.mock('@/lib/tauri', () => ({
@@ -350,7 +350,7 @@ describe('LinkEditPopover', () => {
       expect(preventSpy).toHaveBeenCalledWith()
     })
 
-    it('triggers metadata prefetch after applying link (UX-165)', () => {
+    it('triggers metadata prefetch after applying link', () => {
       render(
         <LinkEditPopover
           editor={makeEditor()}
@@ -368,7 +368,7 @@ describe('LinkEditPopover', () => {
       expect(mockFetchLinkMetadata).toHaveBeenCalledWith('https://example.com')
     })
 
-    // MAINT-99: IPC error-path coverage. The metadata-prefetch IPC is
+    // IPC error-path coverage. The metadata-prefetch IPC is
     // fire-and-forget — the apply flow must complete (link inserted,
     // popover closed) and the rejection must be surfaced through
     // logger.warn rather than swallowed silently. A regression where
@@ -409,7 +409,7 @@ describe('LinkEditPopover', () => {
       })
     })
 
-    it('removes stored link mark after applying link (UX-177)', () => {
+    it('removes stored link mark after applying link', () => {
       render(
         <LinkEditPopover
           editor={makeEditor()}
@@ -663,7 +663,7 @@ describe('LinkEditPopover', () => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     })
 
-    // UX-12 — when the URL is rejected, the input itself must visually
+    // When the URL is rejected, the input itself must visually
     // signal the error (border-destructive) in addition to the inline
     // error text below it.
     it('adds border-destructive class to URL input when error is shown', () => {
@@ -800,7 +800,7 @@ describe('LinkEditPopover', () => {
     })
   })
 
-  // ── Label field (UX-181) ──────────────────────────────────────────────
+  // ── Label field ──────────────────────────────────────────────
 
   describe('label field', () => {
     it('renders label input with empty initial value for new links', () => {

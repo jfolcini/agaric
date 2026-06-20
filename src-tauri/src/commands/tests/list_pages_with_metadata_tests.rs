@@ -1,4 +1,4 @@
-//! PEND-56 Phase 1 — tests for `list_pages_with_metadata_inner`.
+//! Phase 1 — tests for `list_pages_with_metadata_inner`.
 //!
 //! Covers: the four metadata columns, all five sort modes, cursor
 //! pagination across modes, the has-property bitmask, space filtering,
@@ -22,7 +22,7 @@ use crate::filters::{FilterPrimitive, LastEditedSpec, PropertyPredicate, Propert
 
 /// Seed a page with the given id and content into [`TEST_SPACE_ID`].
 ///
-/// PEND-56b — also seeds the `pages_cache` row that the materializer
+/// Also seeds the `pages_cache` row that the materializer
 /// would write in production. The IPC reads
 /// `pc.{inbound_link_count, child_block_count}` from this row via a
 /// LEFT JOIN; without it the IPC would return 0 for both counts.
@@ -41,14 +41,14 @@ async fn seed_page(pool: &SqlitePool, id: &str, content: &str) {
     .unwrap();
 }
 
-/// PEND-56b — refresh `pages_cache.{inbound_link_count, child_block_count}`
+/// Refresh `pages_cache.{inbound_link_count, child_block_count}`
 /// for the given page from the canonical SELECT, mirroring what the
 /// materializer maintains in production. Used by `seed_link` /
 /// `seed_child` so the test fixtures see the same materialised values
 /// the IPC reads after the refactor. Mirrors the CURRENT inbound shape
 /// (migration 0070 / `recompute_pages_cache_counts_for_pages`): the
 /// source block is joined and same-page / self / deleted-source / orphan
-/// edges are excluded (PEND-58d D2).
+/// Edges are excluded.
 async fn refresh_page_cache_counts(pool: &SqlitePool, page_id: &str) {
     sqlx::query(
         "UPDATE pages_cache \
@@ -121,7 +121,7 @@ async fn seed_op_log(pool: &SqlitePool, block_id: &str, created_at: &str) {
 
 /// Seed an inbound link FROM `source` TO `target`.
 ///
-/// PEND-56b — also refreshes `pages_cache.inbound_link_count` for the
+/// Also refreshes `pages_cache.inbound_link_count` for the
 /// owning page of the target (which may be the target itself, if it
 /// is a page) so the IPC's materialised read sees the new link.
 async fn seed_link(pool: &SqlitePool, source: &str, target: &str) {
@@ -148,7 +148,7 @@ async fn seed_link(pool: &SqlitePool, source: &str, target: &str) {
 
 /// Seed a child content block under `parent_page`.
 ///
-/// PEND-56b — also refreshes `pages_cache.child_block_count` for the
+/// Also refreshes `pages_cache.child_block_count` for the
 /// parent so the IPC's materialised read sees the new child.
 async fn seed_child(pool: &SqlitePool, child_id: &str, parent_page: &str, content: &str) {
     insert_block(
@@ -191,7 +191,7 @@ async fn seed_tag(pool: &SqlitePool, block_id: &str, tag_id: &str) {
         .unwrap();
 }
 
-/// PEND-58b — seed a `block_properties(key, value_text)` row directly so a
+/// Seed a `block_properties(key, value_text)` row directly so a
 /// `HasProperty { op: Eq, value: Text }` filter can match. Mirrors the
 /// direct-write approach used by `assign_to_space` (the read layer reads
 /// `block_properties` regardless of how the row landed).
@@ -205,7 +205,7 @@ async fn seed_prop_text(pool: &SqlitePool, block_id: &str, key: &str, value: &st
         .unwrap();
 }
 
-/// PEND-58d T-B4 — seed a `block_properties(key, value_ref)` row so a
+/// T-B4 — seed a `block_properties(key, value_ref)` row so a
 /// `HasProperty { Eq/Ne { Ref } }` filter (compiled against `value_ref`)
 /// can match. The `value_ref → blocks(id)` FK is enforced (PRAGMA
 /// foreign_keys = ON in `init_pool`) and migration 0062's CHECK requires
@@ -230,7 +230,7 @@ async fn seed_prop_ref(pool: &SqlitePool, block_id: &str, key: &str, ref_id: &st
         .unwrap();
 }
 
-/// PEND-58d — set the fixed `blocks.priority` column on a page block so a
+/// Set the fixed `blocks.priority` column on a page block so a
 /// `Priority { priority }` filter (compiled to `b.priority = ?`) can
 /// match. Mirrors migration 0012's fixed-field shape.
 async fn seed_priority(pool: &SqlitePool, block_id: &str, priority: &str) {
@@ -250,7 +250,7 @@ fn filter(sort: PageSort) -> ListPagesWithMetadataFilter {
     }
 }
 
-/// PEND-58 — `filter()` plus a compound-filter primitive set.
+/// `filter()` plus a compound-filter primitive set.
 fn filter_with(sort: PageSort, filters: Vec<FilterPrimitive>) -> ListPagesWithMetadataFilter {
     ListPagesWithMetadataFilter {
         sort,
@@ -772,7 +772,7 @@ async fn legacy_cursor_without_discriminator_returns_requires_refresh() {
     seed_page(&pool, "01PAGE000000000000000000A1", "A").await;
 
     // A cursor lacking the position-slot discriminator (e.g. one
-    // emitted by `list_blocks` or a pre-PEND-56 client) must be
+    // Emitted by `list_blocks` or a pre- client) must be
     // rejected with RequiresRefresh.
     use base64::Engine;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -886,7 +886,7 @@ async fn soft_deleted_pages_excluded_from_results() {
     assert_eq!(contents, vec!["Live"]);
 }
 
-// ── PEND-56b — EXPLAIN QUERY PLAN snapshot tests ──────────────────────────
+// ── EXPLAIN QUERY PLAN snapshot tests ──────────────────────────
 //
 // The whole point of materialising `inbound_link_count` /
 // `child_block_count` into `pages_cache` is that the `MostLinked` /
@@ -902,7 +902,7 @@ async fn soft_deleted_pages_excluded_from_results() {
 // assert presence/absence of the table-name tokens that encode the
 // contract.
 
-/// PEND-58e E9 — run `EXPLAIN QUERY PLAN` against the **real** SQL the IPC
+/// Run `EXPLAIN QUERY PLAN` against the **real** SQL the IPC
 /// emits for `(sort, filters)` (first page, no cursor) and return the plan
 /// as a single newline-joined string.
 ///
@@ -966,18 +966,18 @@ async fn most_linked_query_plan_uses_pages_cache_not_block_links() {
         .await;
     }
     let plan = explain_query_plan_for(&pool, PageSort::MostLinked).await;
-    eprintln!("[PEND-56b EXPLAIN MostLinked]\n{plan}");
+    eprintln!("[ EXPLAIN MostLinked]\n{plan}");
     assert!(
         plan.to_lowercase().contains("pages_cache"),
         "MostLinked plan must reference pages_cache; got:\n{plan}"
     );
     assert!(
         !plan.to_lowercase().contains("block_links"),
-        "MostLinked plan must NOT scan block_links (PEND-56b regression); got:\n{plan}"
+        "MostLinked plan must NOT scan block_links (regression); got:\n{plan}"
     );
 }
 
-// ── PEND-58e E11 — perf-gate bulk seeders ─────────────────────────────────
+// ── perf-gate bulk seeders ─────────────────────────────────
 //
 // The original gates seeded TRIVIAL data: `most_linked` seeded ZERO links
 // (so the `MostLinked` ORDER BY ran over an all-zero materialised column —
@@ -1071,7 +1071,7 @@ async fn bulk_seed_link_skew(pool: &SqlitePool, page_ids: &[String]) {
     // 3. ONE bulk refresh of every page's materialised inbound count
     //    (mirrors `refresh_page_cache_counts`' inbound SELECT, run set-wide
     //    instead of per-page). Same-page / self / deleted-source / orphan
-    //    edges are excluded (PEND-58d D2 / migration 0070).
+    // Edges are excluded (migration 0070).
     sqlx::query(
         "UPDATE pages_cache \
          SET inbound_link_count = ( \
@@ -1141,14 +1141,14 @@ async fn bulk_seed_op_log_depth(pool: &SqlitePool, page_ids: &[String], depth: u
     }
 }
 
-/// PEND-56b — perf gate. Seeds a 20k-page fixture and times the
+/// Perf gate. Seeds a 20k-page fixture and times the
 /// `MostLinked` first-page query. The plan-snapshot tests above
 /// assert the *shape* of the query plan; this test asserts the
 /// *latency* delivered by that shape on the actual SQLite engine
 /// at the size that motivated the migration (Round 2 review
 /// measured the prior implementation at **335 ms @ 20k pages**).
 ///
-/// PEND-58e E11 — the fixture now seeds REALISTIC inbound-link skew (a few
+/// The fixture now seeds REALISTIC inbound-link skew (a few
 /// hub pages with hundreds of inbound links, a long sparse tail) via
 /// [`bulk_seed_link_skew`] instead of the original all-zero column, so the
 /// `MostLinked` ORDER BY does genuine comparison work over a non-degenerate
@@ -1170,11 +1170,11 @@ async fn most_linked_perf_gate_20k_pages() {
         seed_page(&pool, &pid, &format!("p{i}")).await;
         page_ids.push(pid);
     }
-    // Realistic inbound-link skew (PEND-58e E11) — multiple links per hub
+    // Realistic inbound-link skew — multiple links per hub
     // page, refreshed into the materialised count in one pass.
     bulk_seed_link_skew(&pool, &page_ids).await;
     let seed_ms = seed_start.elapsed().as_millis();
-    eprintln!("[PEND-56b PERF] seeded {n} pages (+skewed links) in {seed_ms} ms");
+    eprintln!("[ PERF] seeded {n} pages (+skewed links) in {seed_ms} ms");
 
     // Warm up (3×).
     for _ in 0..3 {
@@ -1193,8 +1193,8 @@ async fn most_linked_perf_gate_20k_pages() {
     }
     samples.sort();
     let median_ms = samples[samples.len() / 2];
-    eprintln!("[PEND-56b PERF] MostLinked @ 20k pages: samples={samples:?} median={median_ms} ms");
-    // Soft assertion — PEND-56b's acceptance criterion is "under
+    eprintln!("[ PERF] MostLinked @ 20k pages: samples={samples:?} median={median_ms} ms");
+    // Soft assertion — acceptance criterion is "under
     // 50 ms" (vs the prior 335 ms cliff). We allow 100 ms here to
     // absorb CI noise; if a future change pushes past 100 ms, the
     // assert fires as an early warning.
@@ -1204,7 +1204,7 @@ async fn most_linked_perf_gate_20k_pages() {
     );
 }
 
-/// PEND-58d D5 — perf gate for the `RecentlyModified` sort. Sibling of
+/// Perf gate for the `RecentlyModified` sort. Sibling of
 /// `most_linked_perf_gate_20k_pages`, but for the UN-materialised sort:
 /// `RecentlyModified` computes `MAX(op_log.created_at)` per page across
 /// the space (correlated subquery, served by `idx_op_log_block_id`)
@@ -1212,7 +1212,7 @@ async fn most_linked_perf_gate_20k_pages() {
 /// cost. This seeds the same 20k-page fixture with REALISTIC op-log depth
 /// (multiple rows per page) and times the first-page query.
 ///
-/// PEND-58e E11 — the original gate seeded exactly ONE op_log row per page,
+/// The original gate seeded exactly ONE op_log row per page,
 /// so the per-page `MAX(created_at)` subquery short-circuited on a single
 /// index probe (no real aggregation). This now seeds several op_log rows
 /// per page via [`bulk_seed_op_log_depth`] so the subquery aggregates over
@@ -1238,15 +1238,13 @@ async fn recently_modified_perf_gate_20k_pages() {
         seed_page(&pool, &pid, &format!("p{i}")).await;
         page_ids.push(pid);
     }
-    // Realistic op-log depth (PEND-58e E11): several rows per page so the
+    // Realistic op-log depth: several rows per page so the
     // per-page MAX(created_at) subquery aggregates over an index range
     // rather than short-circuiting on a single row.
     let op_log_depth = 8;
     bulk_seed_op_log_depth(&pool, &page_ids, op_log_depth).await;
     let seed_ms = seed_start.elapsed().as_millis();
-    eprintln!(
-        "[PEND-58d PERF] seeded {n} pages (+{op_log_depth} op_log rows each) in {seed_ms} ms"
-    );
+    eprintln!("[ PERF] seeded {n} pages (+{op_log_depth} op_log rows each) in {seed_ms} ms");
 
     // Warm up (3×).
     for _ in 0..3 {
@@ -1275,9 +1273,7 @@ async fn recently_modified_perf_gate_20k_pages() {
     }
     samples.sort();
     let median_ms = samples[samples.len() / 2];
-    eprintln!(
-        "[PEND-58d PERF] RecentlyModified @ 20k pages: samples={samples:?} median={median_ms} ms"
-    );
+    eprintln!("[ PERF] RecentlyModified @ 20k pages: samples={samples:?} median={median_ms} ms");
     // Soft assertion — the un-materialised correlated MAX subquery is the
     // motivation for the deferred `pages_cache.last_edited_at` work. We
     // allow 250 ms here (more headroom than MostLinked's materialised 100 ms
@@ -1290,7 +1286,7 @@ async fn recently_modified_perf_gate_20k_pages() {
     );
 }
 
-/// PEND-58e E11 — perf gate for a FILTERED query at scale. The existing
+/// Perf gate for a FILTERED query at scale. The existing
 /// gates time the *unfiltered* sort paths; none exercised the compound-filter
 /// fragment (`compile_pages_filters`) at 20k pages. This one does, and it
 /// deliberately combines the now-expensive `Orphan` primitive (cost tier 3 —
@@ -1330,7 +1326,7 @@ async fn filtered_query_perf_gate_20k_pages() {
         }
     }
     let seed_ms = seed_start.elapsed().as_millis();
-    eprintln!("[PEND-58e PERF] seeded {n} pages (+skewed links, +tags) in {seed_ms} ms");
+    eprintln!("[ PERF] seeded {n} pages (+skewed links, +tags) in {seed_ms} ms");
 
     let make_filter = || {
         // Request order is Orphan-first to prove the cost-reorder floats the
@@ -1363,11 +1359,9 @@ async fn filtered_query_perf_gate_20k_pages() {
     }
     samples.sort();
     let median_ms = samples[samples.len() / 2];
-    eprintln!(
-        "[PEND-58e PERF] Orphan+Tag filtered @ 20k pages: samples={samples:?} median={median_ms} ms"
-    );
+    eprintln!("[ PERF] Orphan+Tag filtered @ 20k pages: samples={samples:?} median={median_ms} ms");
     // Soft assertion — the filtered path also computes a `total_count` COUNT
-    // over the same predicates on the first page (PEND-58d D6), so the budget
+    // Over the same predicates on the first page, so the budget
     // covers both the fetch and the count. With the Tag clause pre-narrowing,
     // the correlated Orphan subquery runs over a small subset; 250 ms allows
     // CI noise. If a future change pushes past it, the cost ordering or an
@@ -1484,12 +1478,12 @@ async fn most_content_query_plan_uses_pages_cache_not_blocks_subquery() {
         plan.to_lowercase().contains("pages_cache"),
         "MostContent plan must reference pages_cache; got:\n{plan}"
     );
-    // PEND-58e E9 — this now plans the IPC's REAL SQL, which legitimately
+    // This now plans the IPC's REAL SQL, which legitimately
     // carries correlated scalar subqueries for the per-row METADATA columns
     // (`last_modified_at` over op_log, plus the four `has_*` EXISTS flags
     // over block_tags / blocks). What the materialised-count contract forbids
     // is the *sort key* `child_block_count` being recomputed via a
-    // correlated `COUNT(*) FROM blocks` aggregate (the pre-PEND-56b shape).
+    // Correlated `COUNT(*) FROM blocks` aggregate (the pre- shape).
     // So we pin the correlated-subquery COUNT to exactly the known metadata
     // aggregates (5): last_modified_at + has_tags + has_todo + has_scheduled
     // + has_due. If a regression reverts the sort key to a per-row count, a
@@ -1503,7 +1497,7 @@ async fn most_content_query_plan_uses_pages_cache_not_blocks_subquery() {
         correlated, 5,
         "MostContent plan must carry ONLY the 5 metadata correlated subqueries \
          (last_modified_at + 4 has_* flags) — a 6th means the child_block_count \
-         sort key regressed to a per-row COUNT (PEND-56b); got:\n{plan}"
+         sort key regressed to a per-row COUNT; got:\n{plan}"
     );
     assert!(
         !plan.to_lowercase().contains("block_links"),
@@ -1513,7 +1507,7 @@ async fn most_content_query_plan_uses_pages_cache_not_blocks_subquery() {
 
 #[tokio::test]
 async fn filtered_query_plan_explains_real_composed_ipc_sql() {
-    // PEND-58e E9 — assert the EXPLAIN harness now plans the IPC's REAL
+    // Assert the EXPLAIN harness now plans the IPC's REAL
     // composed SQL (base SELECT + compiled compound-filter fragment +
     // keyset), not a hand-rebuilt copy. We compose a Tag-filtered query and
     // EXPLAIN it; the plan must reference `block_tags` (proving the compiled
@@ -1550,7 +1544,7 @@ async fn filtered_query_plan_explains_real_composed_ipc_sql() {
     );
 }
 
-// ── PEND-58 Phase 3 — compound filters ────────────────────────────────────
+// ── Phase 3 — compound filters ────────────────────────────────────
 //
 // These exercise `ListPagesWithMetadataFilter.filters`: the allowed-keys
 // gate, cost-ordered AND-join, and the bind-threading that splices each
@@ -1651,7 +1645,7 @@ async fn filter_stub_and_tag_compose_with_and_semantics() {
 
 #[tokio::test]
 async fn filter_priority_and_tag_compose_correctly_despite_cost_reorder() {
-    // PEND-58d T-B5 — `compile_pages_filters` stable-sorts the request
+    // T-B5 — `compile_pages_filters` stable-sorts the request
     // primitives by `cost_hint` (Tag is 0, Priority is 1), so a request of
     // `[Priority, Tag]` is REORDERED to Tag-first and each fragment's
     // anonymous `?` is renumbered to an explicit `?N`. This test guards
@@ -1842,11 +1836,11 @@ async fn empty_filters_vec_matches_unfiltered_behaviour() {
     assert_eq!(a, vec!["Alpha", "Beta"]);
 }
 
-// ── PEND-58b — review-remediation backend tests ───────────────────────────
+// ── review-remediation backend tests ───────────────────────────
 
 #[tokio::test]
 async fn filter_stub_excludes_pages_with_one_or_two_children() {
-    // PEND-58b P2-E — boundary coverage. `Stub` is `child_block_count = 0`
+    // -E — boundary coverage. `Stub` is `child_block_count = 0`
     // (NOT the Phase-1 `< 3` threshold), so a page with exactly 1 or 2
     // non-deleted children must be EXCLUDED. Seed a 0-child stub, a
     // 1-child page, and a 2-child page; only the 0-child page passes.
@@ -1894,7 +1888,7 @@ async fn filter_stub_excludes_pages_with_one_or_two_children() {
 
 #[tokio::test]
 async fn filter_orphan_excludes_pages_whose_descendant_links_out() {
-    // PEND-58b P0-A — `Orphan`'s outbound `NOT EXISTS` must be scoped
+    // -A — `Orphan`'s outbound `NOT EXISTS` must be scoped
     // page-wide (every non-deleted block authored a link), not just the
     // page-block (title) row. Seed:
     //   (a) a true orphan — no links either direction;
@@ -1975,7 +1969,7 @@ async fn filter_orphan_excludes_pages_whose_descendant_links_out() {
 
 #[tokio::test]
 async fn filter_orphan_ignores_same_page_and_deleted_target_outbound_edges() {
-    // PEND-58d D19 — the Orphan outbound `NOT EXISTS` now joins the link's
+    // The Orphan outbound `NOT EXISTS` now joins the link's
     // TARGET block and excludes same-page edges (`tgt.page_id != b.id`) and
     // deleted targets (`tgt.deleted_at IS NULL`), mirroring the inbound D2
     // fix. So:
@@ -2058,7 +2052,7 @@ async fn filter_orphan_ignores_same_page_and_deleted_target_outbound_edges() {
 
 #[tokio::test]
 async fn total_count_reflects_full_space_unfiltered_and_reduces_under_filter() {
-    // PEND-58b P1-D — the metadata path must return a real `total_count`
+    // -D — the metadata path must return a real `total_count`
     // (was `None`, silently dropping the "X of Y" header chip). Unfiltered
     // it counts the whole space; with an active filter it reduces to the
     // matching subset, mirroring the count-alongside-fetch contract.
@@ -2113,7 +2107,7 @@ async fn total_count_reflects_full_space_unfiltered_and_reduces_under_filter() {
     assert_eq!(filtered.items.len(), 3);
 }
 
-// ── PEND-58d T-B4 — HasProperty end-to-end (every predicate × value) ──────
+// ── T-B4 — HasProperty end-to-end (every predicate × value) ──────
 //
 // Before D8 + D26 only `Eq + Text` ran end-to-end; the Ref combos compiled
 // to `unsupported()` and were rejected. These tests exercise the full
@@ -2336,7 +2330,7 @@ async fn has_property_ne_ref_excludes_matching_value_ref() {
 
 #[tokio::test]
 async fn all_search_only_primitives_rejected_on_pages_surface() {
-    // PEND-58b P2-C — parameterized over ALL FOUR search-only primitives
+    // -C — parameterized over ALL FOUR search-only primitives
     // (the prior test covered only `Regex`). Each must be rejected by the
     // Pages allowed-keys gate with the `InvalidFilter` prefix.
     let (pool, _dir) = test_pool().await;
@@ -2385,7 +2379,7 @@ async fn all_search_only_primitives_rejected_on_pages_surface() {
 
 #[tokio::test]
 async fn filter_tag_plus_cursor_paginates_without_dupes_or_drops() {
-    // PEND-58b P1-E — the only filter+cursor test used `Stub` (zero binds,
+    // -E — the only filter+cursor test used `Stub` (zero binds,
     // so `base = 1` and the offset arithmetic was never exercised). This
     // pages a BIND-CARRYING filter (`Tag`, 1 bind ⇒ `base = 2`) across a
     // cursor at limit = 2, asserting no dupes/drops over the keyset
@@ -2452,10 +2446,10 @@ async fn filter_tag_plus_cursor_paginates_without_dupes_or_drops() {
     );
 }
 
-// ── PEND-58d T-B2 — LastEdited end-to-end against seeded op_log ────────────
+// ── T-B2 — LastEdited end-to-end against seeded op_log ────────────
 //
 // Exercises all three `LastEditedSpec` variants against real `op_log`
-// rows, plus the PEND-58d D7 "no-op-log ⇒ epoch" rule. The dates are
+// Rows, plus the "no-op-log ⇒ epoch" rule. The dates are
 // pinned far enough apart (one "recent" page stamped ~now, one "old" page
 // stamped years ago) that the rolling-window comparisons are deterministic
 // regardless of when the suite runs.
@@ -2597,7 +2591,7 @@ async fn last_edited_range_bounds_inclusive() {
     );
 }
 
-// ── PEND-58d D15 — LastEdited Range date validation ───────────────────────
+// ── LastEdited Range date validation ───────────────────────
 
 #[tokio::test]
 async fn last_edited_range_rejects_malformed_and_empty_dates() {
@@ -2691,7 +2685,7 @@ async fn last_edited_range_accepts_bare_calendar_date() {
 
 #[tokio::test]
 async fn last_edited_range_bare_end_date_includes_whole_end_day() {
-    // PEND-58e E3 — a bare `YYYY-MM-DD` `end` bound must include edits made
+    // A bare `YYYY-MM-DDend` bound must include edits made
     // during the DAYTIME of the end day, not just at its midnight boundary.
     // Before the fix, a non-midnight edit on the end day
     // (`2026-03-01T09:00:00.123Z`) was bound against a verbatim
@@ -2757,7 +2751,7 @@ async fn last_edited_range_bare_end_date_includes_whole_end_day() {
     );
 }
 
-// ── PEND-58d T-B3 — Space + Priority IPC narrowing ────────────────────────
+// ── T-B3 — Space + Priority IPC narrowing ────────────────────────
 
 #[tokio::test]
 async fn filter_priority_narrows_to_matching_priority() {
@@ -2857,7 +2851,7 @@ async fn filter_space_matching_request_scope_is_a_noop_narrowing() {
     );
 }
 
-// ── PEND-58d D6 — total_count gated to the first page ─────────────────────
+// ── total_count gated to the first page ─────────────────────
 
 #[tokio::test]
 async fn total_count_present_on_first_page_and_none_on_cursor_page() {
@@ -2904,7 +2898,7 @@ async fn total_count_present_on_first_page_and_none_on_cursor_page() {
     );
 }
 
-// ── PEND-58d T-B7 — per-mode cursor discriminator round-trip ──────────────
+// ── T-B7 — per-mode cursor discriminator round-trip ──────────────
 
 #[tokio::test]
 async fn every_sort_mode_cursor_round_trips_and_rejects_cross_mode() {
@@ -2979,7 +2973,7 @@ async fn every_sort_mode_cursor_round_trips_and_rejects_cross_mode() {
 // BEHAVIOUR CHANGE (maintainer-authorised, user-visible): the Pages
 // path-glob filter switched from the `title COLLATE NOCASE LIKE ?` dialect
 // (LIKE `%`/`_` substring semantics) to the SAME `LOWER(title) GLOB ?`
-// dialect Search uses (after #1320 PR-2): `GLOB` wildcards (`*`/`?`),
+// Dialect Search uses (after #1320): `GLOB` wildcards (`*`/`?`),
 // `{a,b}` brace expansion, and `[class]` character classes. These tests
 // pin the new behaviour end-to-end through `list_pages_with_metadata_inner`
 // (seeding `pages_cache` rows and asserting the page set the GLOB filter

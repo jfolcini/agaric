@@ -1,4 +1,4 @@
-//! PEND-53 — state / priority / due / scheduled / property predicate
+//! state / priority / due / scheduled / property predicate
 //! SQL composition for `search_blocks`.
 //!
 //! Sits next to [`super::glob_filter`] in shape: a pure pre-processing
@@ -26,7 +26,7 @@
 //!
 //! ## Property column matching
 //!
-//! PEND-64 — `prop:KEY=VALUE` matches **all four user-facing typed
+//! `prop:KEY=VALUE` matches **all four user-facing typed
 //! columns** (`value_text`, `value_num`, `value_date`, `value_ref`)
 //! with type-coerced bind variants. The user never has to know which
 //! column their property lives in: the SQL emits a four-way OR with
@@ -63,7 +63,7 @@ pub struct MetadataPredicates {
     /// [`Self::state_values`].
     pub priority_values: Vec<String>,
     pub priority_is_null: bool,
-    /// PEND-63 — resolved `excluded_state_filter`. Empty + flag-false
+    /// Resolved `excluded_state_filter`. Empty + flag-false
     /// means "no exclusion". SQL emits
     /// `(col IS NULL OR col NOT IN (...))`; the `IS NULL` branch is
     /// always included so blocks with no state aren't accidentally
@@ -72,7 +72,7 @@ pub struct MetadataPredicates {
     /// `col IS NOT NULL`).
     pub excluded_state_values: Vec<String>,
     pub excluded_state_not_null: bool,
-    /// PEND-63 — symmetric to [`Self::excluded_state_values`] /
+    /// Symmetric to [`Self::excluded_state_values`] /
     /// [`Self::excluded_state_not_null`] for `blocks.priority`.
     pub excluded_priority_values: Vec<String>,
     pub excluded_priority_not_null: bool,
@@ -112,7 +112,7 @@ pub enum DatePredicate {
     Op { op: DateOp, date: String },
 }
 
-/// PEND-64 — typed bind values emitted by [`append_metadata_sql`].
+/// Typed bind values emitted by [`append_metadata_sql`].
 ///
 /// Property `prop:` matching now spans four typed columns
 /// (`value_text` / `value_num` / `value_date` / `value_ref`), so the
@@ -213,7 +213,7 @@ pub fn prepare_metadata_with_today(
         }
     }
 
-    // PEND-63 — excluded_state_filter; `none` flips to `IS NOT NULL`.
+    // Excluded_state_filter; `none` flips to `IS NOT NULL`.
     for s in &filter.excluded_state_filter {
         if s.eq_ignore_ascii_case("none") {
             out.excluded_state_not_null = true;
@@ -222,7 +222,7 @@ pub fn prepare_metadata_with_today(
         }
     }
 
-    // PEND-63 — excluded_priority_filter; same shape.
+    // Excluded_priority_filter; same shape.
     for p in &filter.excluded_priority_filter {
         if p.eq_ignore_ascii_case("none") {
             out.excluded_priority_not_null = true;
@@ -238,7 +238,7 @@ pub fn prepare_metadata_with_today(
         out.scheduled = Some(resolve_date_filter(df, today)?);
     }
 
-    // BE-8 (PEND-58f) — reject an empty `prop:` key, matching the
+    // BE-8 — reject an empty `prop:` key, matching the
     // dedicated `query_by_property_inner` command's contract ("property
     // key must not be empty"). Without this, an empty key produced a
     // `bp.key = ''` clause that silently matches nothing — a confusing
@@ -408,7 +408,7 @@ pub fn append_metadata_sql(
         &format!("{block_alias}.priority"),
     );
 
-    // PEND-63 — excluded priority --------------------------------------
+    // Excluded priority --------------------------------------
     append_text_not_in_or_not_null(
         sql,
         next_param,
@@ -431,12 +431,12 @@ pub fn append_metadata_sql(
     binds
 }
 
-/// PEND-64 — emit one `[NOT ]EXISTS` clause for a `prop:KEY=VALUE`
+/// Emit one `[NOT ]EXISTS` clause for a `prop:KEY=VALUE`
 /// filter that matches across all four user-facing typed columns
 /// (`value_text` / `value_num` / `value_date` / `value_ref`).
 ///
 /// For `pf.value.is_empty()`, falls back to the key-presence-only
-/// shape (pre-PEND-64 behaviour). Otherwise emits a four-way OR with
+/// Shape (pre- behaviour). Otherwise emits a four-way OR with
 /// type-coerced bind variants — `value_num` / `value_date` /
 /// `value_ref` bind as `NULL` when the user's value doesn't parse as
 /// that type, so the corresponding branch evaluates to `NULL`
@@ -584,7 +584,7 @@ fn append_text_in_or_null(
     sql.push_str(&format!("\n           AND ({})", parts.join(" OR ")));
 }
 
-/// PEND-63 — emit the inverted clause for `not-state:` / `not-priority:`.
+/// Emit the inverted clause for `not-state:` / `not-priority:`.
 ///
 /// Shape: `(column IS NULL OR column NOT IN (?, ?, ...))`. The
 /// `IS NULL` branch is **always included by design** so a "blocks NOT
@@ -605,7 +605,7 @@ fn append_text_not_in_or_not_null(
     }
     let mut parts: Vec<String> = Vec::new();
     if !values.is_empty() {
-        // SQL-6 (PEND-58f) — defensive guard against the SQL three-valued
+        // Defensive guard against the SQL three-valued
         // `NOT IN (…, NULL)` trap. In SQL, `x NOT IN (a, b, NULL)` is
         // NULL (never TRUE) for *every* non-matching `x`, because the
         // comparison against the NULL element yields UNKNOWN — so a list
@@ -633,7 +633,7 @@ fn append_text_not_in_or_not_null(
             .collect();
         // NULL-inclusive inversion: a row with `column IS NULL` is
         // counted as "not in the excluded set". This `IS NULL` lives
-        // OUTSIDE the `IN (...)` list (see the SQL-6 note above) so the
+        // OUTSIDE the `IN (...)` list (see the note above) so the
         // 3-valued `NOT IN (…, NULL)` trap cannot arise.
         parts.push(format!(
             "{column} IS NULL OR {column} NOT IN ({})",
@@ -938,7 +938,7 @@ mod tests {
         assert_eq!(m.property_excludes[0].key, "archived");
     }
 
-    /// BE-8 (PEND-58f) — an empty (or whitespace-only) `prop:` key is
+    /// BE-8 — an empty (or whitespace-only) `prop:` key is
     /// rejected, matching `query_by_property_inner`'s contract.
     #[test]
     fn empty_property_key_is_rejected() {
@@ -976,7 +976,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // PEND-63 — excluded state / priority resolution
+    // Excluded state / priority resolution
     // -----------------------------------------------------------------
 
     #[test]
@@ -1048,7 +1048,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // PEND-64 — `prop:` four-column matching
+    // `prop:` four-column matching
     // -----------------------------------------------------------------
 
     #[test]
@@ -1200,7 +1200,7 @@ mod tests {
         // 26 chars valid alphanumeric → uppercased. The codebase's
         // existing `normalize_ulid_arg` accepts the strict Crockford
         // set plus I/L/O/U as aliases (matching `crockford_decode_char`),
-        // so this PEND-64 helper is intentionally lenient.
+        // So this helper is intentionally lenient.
         assert_eq!(
             parse_ulid("01hkq2rwwwgm34rtgfe9xcryz4").as_deref(),
             Some("01HKQ2RWWWGM34RTGFE9XCRYZ4"),

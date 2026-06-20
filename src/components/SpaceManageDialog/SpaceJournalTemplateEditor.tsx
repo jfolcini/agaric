@@ -2,7 +2,7 @@
  * SpaceJournalTemplateEditor — markdown textarea for the per-space
  * `journal_template` override.
  *
- * Extracted from `SpaceRowEditor` (PEND-30 D-2). The pre-extraction
+ * Extracted from `SpaceRowEditor` (D-2). The pre-extraction
  * version carried a `journalTemplateInitializedRef` flag that fired
  * once when the parent's async-resolved `initialJournalTemplate` prop
  * transitioned from `undefined` to a defined string. The ref existed
@@ -75,7 +75,7 @@ export function SpaceJournalTemplateEditor({
   const [committedJournalTemplate, setCommittedJournalTemplate] = useState<string>(initialValue)
   const [savingJournalTemplate, setSavingJournalTemplate] = useState(false)
   const journalTemplateInputId = useId()
-  // FEAT-3p5b — id on the hint paragraph so the textarea can announce
+  // Id on the hint paragraph so the textarea can announce
   // it via `aria-describedby`. The hint paragraph is short ("Tip:
   // per-space template overrides the global journal-template page.")
   // and useful context for a screen-reader user encountering the field

@@ -1,5 +1,5 @@
 /**
- * PEND-70 CR8 MAJOR-1 — tests for `<PropFilterForm>` round-trip validation.
+ * Tests for `<PropFilterForm>` round-trip validation.
  *
  * The prop DSL has no quoting, so a KEY containing whitespace / `=` / `"`,
  * or a VALUE containing whitespace / `"`, would silently corrupt the
@@ -34,7 +34,7 @@ const valueInput = (): HTMLElement => screen.getByLabelText(t('search.filterHelp
 const addButton = (): HTMLElement =>
   screen.getByRole('button', { name: t('search.filterHelper.add') })
 
-describe('PropFilterForm — round-trip validation (PEND-70 CR8 MAJOR-1)', () => {
+describe('PropFilterForm — round-trip validation', () => {
   it('rejects a key containing `=` — Add disabled + inline error', async () => {
     const user = userEvent.setup()
     const { onAddFilter } = setup()

@@ -24,7 +24,7 @@ pub use types::*;
 /// pack the IDs into a single JSON-array bind and let SQLite expand them
 /// through `json_each`. Shared by `backlink::sort`, `backlink::query`,
 /// `backlink::grouped`, and `backlink::filters` so the threshold lives in
-/// one place. (L-82/L-83/L-84)
+/// One place.
 pub(crate) const SMALL_IN_LIMIT: usize = 500;
 
 /// Vault-wide ceiling on the number of FTS-matched block ids a single

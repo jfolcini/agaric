@@ -9,7 +9,7 @@ use crate::op_log;
 // Undo/Redo tests
 // ======================================================================
 //
-// TEST-24: Removed 13 `tokio::time::sleep(Duration::from_millis(2))` calls
+// Removed 13 `tokio::time::sleep(Duration::from_millis(2))` calls
 // that were used to ensure consecutive ops got distinct timestamps. They
 // are no longer necessary because every undo/redo query in this code path
 // uses `(created_at, seq[, device_id])` lexicographic ordering, and `seq`
@@ -1799,7 +1799,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
 
     // 2. Add an attachment to the child block
     let att_id = "ATT_UNDO_001";
-    // TEST-30: explicit timestamps (instead of consecutive `now_rfc3339()`
+    // Explicit timestamps (instead of consecutive `now_rfc3339()`
     // calls) so the ATT and subsequent DEL op cannot share a millisecond and
     // make the (created_at, seq) ordering test-fragile. Sibling sites in this
     // file already use `append_local_op_at` with explicit strings; this
@@ -1840,7 +1840,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
     .unwrap();
 
     // 3. Delete the attachment (append delete_attachment op + soft-delete)
-    // TEST-30: explicit timestamp strictly after `att_ts` for deterministic
+    // Explicit timestamp strictly after `att_ts` for deterministic
     // ordering (see comment at the att_ts declaration above).
     let del_ts: i64 = 4_072_161_601_000;
     op_log::append_local_op_at(
@@ -4628,7 +4628,7 @@ async fn undo_set_space_restores_space_id_604() {
 }
 
 // ======================================================================
-// PEND-18 Phase 2 — SpaceScope parity test (commands/history.rs)
+// Phase 2 — SpaceScope parity test (commands/history.rs)
 // ======================================================================
 //
 // Asserts that `list_page_history_inner` honours the `&SpaceScope`

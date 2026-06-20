@@ -1,5 +1,5 @@
 /**
- * PEND-54 — tests for the chip-row projection of the parsed AST.
+ * Tests for the chip-row projection of the parsed AST.
  */
 
 import { render, screen } from '@testing-library/react'
@@ -29,7 +29,7 @@ describe('FilterChipRow', () => {
     expect(screen.getByText('path:Journal/*')).toBeInTheDocument()
   })
 
-  it('labels a valid chip group via i18n, not a hardcoded string (UX-10)', () => {
+  it('labels a valid chip group via i18n, not a hardcoded string', () => {
     const filters: FilterToken[] = [{ kind: 'tag', value: 'urgent', span: [0, 11] }]
     render(<FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />)
     // The translated `search.filterGroupLabel` resolves to "Filter: …".
@@ -75,7 +75,7 @@ describe('FilterChipRow', () => {
     expect(pill).toHaveAttribute('title', 'InvalidGlob: unbalanced bracket')
   })
 
-  // PEND-53 — new token kinds render via tokenSource(), no special branch.
+  // New token kinds render via tokenSource(), no special branch.
 
   it('renders state / priority chips with the canonical label', () => {
     const filters: FilterToken[] = [

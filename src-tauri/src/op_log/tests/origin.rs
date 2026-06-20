@@ -1,11 +1,11 @@
-//! FEAT-4h `op_log.origin` column, block_id extraction (L-1), and L-13 sidecar tests.
+//! `op_log.origin` column, block_id extraction, and sidecar tests.
 //!
 //! Split out of the former `op_log/mod.rs` `#[cfg(test)] mod tests` block (#1659).
 
 use super::*;
 
 // =========================================================================
-// FEAT-4h slice 1 — `op_log.origin` column
+// Slice 1 — `op_log.origin` column
 // =========================================================================
 
 /// Migration 0033 must have applied cleanly: the `origin` column exists,
@@ -248,13 +248,13 @@ async fn remote_op_insert_defaults_origin_to_user() {
     );
 }
 
-/// FEAT-4h slice 3: `append_local_op_in_tx` must populate the
+/// Slice 3: `append_local_op_in_tx` must populate the
 /// `LAST_APPEND` task-local with the freshly-inserted `(device_id,
 /// seq)` pair when a scope is active. Outside a scope (the
 /// frontend-invoked path) the call is a silent no-op — that path is
 /// covered in `task_locals::tests::record_append_outside_scope_is_silent_noop`.
 ///
-/// L-114: storage is `RefCell<Vec<OpRef>>` so multiple appends
+/// Storage is `RefCell<Vec<OpRef>>` so multiple appends
 /// inside the same scope all retain. `take_appends()` drains the
 /// list; for a single-call test this yields a one-element Vec.
 #[tokio::test]
@@ -299,9 +299,9 @@ async fn append_local_op_in_tx_populates_last_append_inside_scope() {
     );
 }
 
-// ── extract_block_id_from_payload (L-1) ───────────────────────────
+// ── extract_block_id_from_payload ───────────────────────────
 
-/// L-1: a well-formed payload returns the `block_id` value as
+/// A well-formed payload returns the `block_id` value as
 /// before — the warn-on-malformed change must not regress the
 /// happy path.
 #[test]
@@ -311,7 +311,7 @@ fn extract_block_id_from_payload_returns_value_for_well_formed_json() {
     assert_eq!(got, Some("BLKHAPPY".to_owned()));
 }
 
-/// L-1: a payload without a `block_id` field (e.g. the
+/// A payload without a `block_id` field (e.g. the
 /// `delete_attachment` op which targets an `attachment_id` only)
 /// returns `None` cleanly with no warn log emitted — only parse
 /// failures are warned, missing fields are not an error.
@@ -322,7 +322,7 @@ fn extract_block_id_from_payload_missing_field_returns_none() {
     assert_eq!(got, None);
 }
 
-/// L-1: malformed JSON must (a) still return `None` so existing
+/// Malformed JSON must (a) still return `None` so existing
 /// callers' behaviour is preserved, and (b) emit a `warn`-level
 /// log including a truncated payload prefix so the failure is
 /// observable.  Without this, a future caller without an upstream
@@ -402,7 +402,7 @@ async fn extract_block_id_from_payload_warns_with_payload_prefix_on_malformed_js
     );
 }
 
-/// L-1: a multi-MB malformed payload must not flood the log line —
+/// A multi-MB malformed payload must not flood the log line —
 /// the prefix is truncated to the first 80 chars so the warn log
 /// stays bounded regardless of input size.
 #[tokio::test]
@@ -467,9 +467,9 @@ async fn extract_block_id_from_payload_truncates_prefix_to_80_chars() {
     );
 }
 
-// ── L-13: cached `block_id` sidecar ───────────────────────────────
+// ── cached `block_id` sidecar ───────────────────────────────
 
-/// L-13: every op-type that carries a `block_id` must populate the
+/// Every op-type that carries a `block_id` must populate the
 /// `OpRecord::block_id` sidecar at append-time so the materializer
 /// hot path (`dispatch::enqueue_background_tasks`) can read it
 /// without a second JSON parse.  The only payload variant that
@@ -498,7 +498,7 @@ async fn op_record_caches_extracted_block_id_l13() {
         assert_eq!(record.seq, seq_so_far, "seq monotonicity for {label}");
         assert_eq!(
             record.block_id, expected_block_id,
-            "L-13: cached block_id must equal the typed payload's block_id for {label}",
+            "cached block_id must equal the typed payload's block_id for {label}",
         );
 
         // Parity oracle: the cached field must match what
@@ -507,14 +507,14 @@ async fn op_record_caches_extracted_block_id_l13() {
         let from_payload = extract_block_id_from_payload(&record.payload);
         assert_eq!(
             record.block_id, from_payload,
-            "L-13: cached block_id must agree with extract_block_id_from_payload for {label} \
+            "cached block_id must agree with extract_block_id_from_payload for {label} \
                  (oracle: cached={:?}, parsed={:?})",
             record.block_id, from_payload,
         );
     }
 }
 
-/// L-13: a record fetched from the DB via `get_op_by_seq` must
+/// A record fetched from the DB via `get_op_by_seq` must
 /// also carry the cached `block_id` sidecar — populated from the
 /// indexed `op_log.block_id` column (migration 0030) projected by
 /// the SELECT.  Without this, a post-restore / cross-session read
@@ -539,12 +539,12 @@ async fn get_op_by_seq_populates_block_id_sidecar_l13() {
     assert_eq!(
         fetched.block_id.as_deref(),
         Some("BLK-L13"),
-        "L-13: DB-read path must populate the cached sidecar from \
+        "DB-read path must populate the cached sidecar from \
              the indexed op_log.block_id column",
     );
 }
 
-/// L-13 (sibling of `get_op_by_seq_populates_block_id_sidecar_l13`):
+/// (sibling of `get_op_by_seq_populates_block_id_sidecar_l13`):
 /// the bulk read path (`get_ops_since`) must also project
 /// `op_log.block_id` so every row in the result set has the cached
 /// sidecar populated.  This is the path the materializer uses on
@@ -575,7 +575,7 @@ async fn get_ops_since_populates_block_id_sidecar_l13() {
         assert_eq!(
             op.block_id.as_deref(),
             Some(expected.as_str()),
-            "L-13: get_ops_since must populate block_id sidecar at index {i}",
+            "get_ops_since must populate block_id sidecar at index {i}",
         );
     }
 }

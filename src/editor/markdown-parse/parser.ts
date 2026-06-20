@@ -10,7 +10,7 @@
  * primitive, the result/state shapes and the parse-independent pure helpers
  * live in the `./vocab` leaf.
  *
- * Extracted from the original `markdown-parse.ts` monolith (MAINT-117). The
+ * Extracted from the original `markdown-parse.ts` monolith. The
  * public API is still exposed via the `markdown-parse.ts` barrel.
  *
  * Zero external dependencies. O(n) in the input length.

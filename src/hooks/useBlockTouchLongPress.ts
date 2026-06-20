@@ -45,7 +45,7 @@ export function useBlockTouchLongPress({
 }: UseBlockTouchLongPressOptions): UseBlockTouchLongPressReturn {
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const touchStartPos = useRef<{ x: number; y: number } | null>(null)
-  // BUG-37: keep a reference to the touchstart event so we can call
+  // Keep a reference to the touchstart event so we can call
   // `preventDefault()` when the long-press is *recognized* (after 400ms).
   // This suppresses the browser's native text-selection / magnifier UI
   // that would otherwise compete with our custom context menu.
@@ -73,7 +73,7 @@ export function useBlockTouchLongPress({
         // without opening the menu. The eager cancel (`clearLongPress` on
         // drag-start) is the primary path; this covers any timer that outraced it.
         if (!isDraggingRef.current) {
-          // BUG-37: prevent the native text-select / magnifier that Android /
+          // Prevent the native text-select / magnifier that Android /
           // iOS WebViews trigger on long-press. Best-effort even on passive
           // listeners — clearing the native selection belt-and-suspenders.
           try {

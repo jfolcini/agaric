@@ -1,5 +1,5 @@
 /**
- * MonthlyDayCell — compact day cell for the monthly calendar grid (UX-83).
+ * MonthlyDayCell — compact day cell for the monthly calendar grid.
  * Shows date number, colored count dots, and handles click-to-navigate.
  */
 
@@ -84,7 +84,7 @@ export function MonthlyDayCell({
       </span>
 
       {/* Count dots — use the -foreground color tokens for WCAG contrast
-          against the cell background in both light and dark modes (UX-199). */}
+          against the cell background in both light and dark modes. */}
       {totalCount > 0 && (
         <div className="flex flex-wrap gap-0.5 mt-1">
           {agendaCountsBySource &&

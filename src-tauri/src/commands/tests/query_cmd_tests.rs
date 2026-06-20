@@ -1248,7 +1248,7 @@ async fn query_by_property_defaults_to_eq() {
 }
 
 // ======================================================================
-// PEND-35 Tier 1.5 — query_by_property_inner exclude_parent_id +
+// Query_by_property_inner exclude_parent_id +
 // content_non_empty filters (DonePanel pagination correctness)
 // ======================================================================
 //
@@ -1513,7 +1513,7 @@ async fn query_by_property_excludes_todo_states_reserved_due_date() {
 }
 
 // ======================================================================
-// PEND-35 Tier 3.4 — query_by_property_inner block_type +
+// Query_by_property_inner block_type +
 // value_text_in + value_date_range push-downs
 // ======================================================================
 //
@@ -1764,7 +1764,7 @@ async fn query_by_property_value_text_in_rejects_with_value_text() {
 }
 
 // ======================================================================
-// PEND-35 Tier 3.4 — query_by_tags_inner block_type push-down
+// Query_by_tags_inner block_type push-down
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1937,7 +1937,7 @@ async fn count_backlinks_batch_excludes_deleted_source_blocks() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_backlinks_batch_single_id_returns_expected_count() {
-    // Regression test for PERF-17: json_each conversion preserves single-ID semantics.
+    // Regression test for json_each conversion preserves single-ID semantics.
     let (pool, _dir) = test_pool().await;
 
     insert_block(&pool, "SNG_TGT", "page", "target", None, None).await;
@@ -1968,7 +1968,7 @@ async fn count_backlinks_batch_single_id_returns_expected_count() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_backlinks_batch_large_input_beyond_sqlite_param_limit() {
-    // Regression test for PERF-17: json_each avoids the SQLite ~999 bind-parameter
+    // Regression test for json_each avoids the SQLite ~999 bind-parameter
     // limit that the old `IN (?, ?, …)` format-string approach hit at scale.
     let (pool, _dir) = test_pool().await;
 
@@ -2017,7 +2017,7 @@ async fn count_backlinks_batch_large_input_beyond_sqlite_param_limit() {
 }
 
 // ----------------------------------------------------------------------
-// PEND-35 Tier 1.6 — `count_backlinks_batch_inner` honours `&SpaceScope`
+// `count_backlinks_batch_inner` honours `&SpaceScope`
 // ----------------------------------------------------------------------
 //
 // Without space-scoping a page in space A could surface a non-zero
@@ -2026,7 +2026,7 @@ async fn count_backlinks_batch_large_input_beyond_sqlite_param_limit() {
 // from each space, and asserts:
 //   - Active(A) sees only the A-source backlink.
 //   - Active(B) sees only the B-source backlink.
-//   - Global counts both (parity with the pre-PEND-35 behaviour).
+// Global counts both (parity with the pre- behaviour).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_backlinks_batch_active_scope() {
     let (pool, _dir) = test_pool().await;
@@ -2123,7 +2123,7 @@ async fn count_backlinks_batch_active_scope() {
 }
 
 // ======================================================================
-// FEAT-3p4 — space scoping for query_by_tags_inner
+// Space scoping for query_by_tags_inner
 // ======================================================================
 //
 // These tests cover the `Some(space_id)` branch of `query_by_tags_inner`
@@ -2296,7 +2296,7 @@ async fn query_by_tags_disjointness_feat3p4() {
     assert_eq!(b_ids.len(), 2);
 }
 
-// PEND-18 Phase 2 — parity test: `&SpaceScope::Global` reproduces the
+// Phase 2 — parity test: `&SpaceScope::Global` reproduces the
 // pre-migration `space_id: None` behaviour bit-for-bit. Fixtures span
 // two spaces; the global query must return the union of every block in
 // the universe (i.e. no `block_properties.space` filter is applied at
@@ -2379,7 +2379,7 @@ async fn query_by_tags_inner_global_matches_legacy_none_pend18() {
 }
 
 // ======================================================================
-// FEAT-3p4 — space scoping for query_by_property_inner
+// Space scoping for query_by_property_inner
 // ======================================================================
 //
 // These tests cover both routing branches: the reserved-column branch
@@ -2607,7 +2607,7 @@ async fn query_by_property_disjointness_feat3p4() {
 }
 
 // ----------------------------------------------------------------------
-// PEND-18 Phase 2 parity test — `&SpaceScope::Global` is byte-equivalent
+// Phase 2 parity test — `&SpaceScope::Global` is byte-equivalent
 // to the pre-migration `None` shape, and `&SpaceScope::Active(_)` to
 // `Some(_)`. Asserted on `query_by_property_inner` because it is the
 // largest fan-in `_inner` in the queries domain (18 test call sites,
@@ -2731,7 +2731,7 @@ async fn query_by_property_global_equals_union_of_actives_pend18_parity() {
 }
 
 // ======================================================================
-// FEAT-3p4 — space scoping for backlink read-side commands
+// Space scoping for backlink read-side commands
 // ======================================================================
 //
 // Helper: insert a directed `block_links(source_id -> target_id)` row.
@@ -3606,7 +3606,7 @@ async fn list_unlinked_references_disjointness_feat3p4() {
 }
 
 // ======================================================================
-// FEAT-3p4 — space scoping for list_page_links_inner (graph view)
+// Space scoping for list_page_links_inner (graph view)
 // ======================================================================
 //
 // Build a fixture with two source pages (one per space) linking to two
@@ -3805,7 +3805,7 @@ async fn list_page_links_disjointness_feat3p4() {
     assert_eq!(b.len(), 1);
 }
 
-/// PEND-20 F parity: the CTE-based space-filter dedup must produce
+/// F parity: the CTE-based space-filter dedup must produce
 /// identical results to the previous twice-inlined subquery shape.
 ///
 /// Fixture: source page only in space A; target page only in space B
@@ -3883,7 +3883,7 @@ async fn list_page_links_cte_parity_with_inlined_subquery_pend20f() {
             .iter()
             .cloned()
             .collect(),
-        "PEND-20 F: scoped A must yield exactly the within-A edge after CTE refactor",
+        " F: scoped A must yield exactly the within-A edge after CTE refactor",
     );
     assert_eq!(
         edges_b,
@@ -3891,19 +3891,19 @@ async fn list_page_links_cte_parity_with_inlined_subquery_pend20f() {
             .iter()
             .cloned()
             .collect(),
-        "PEND-20 F: scoped B must yield exactly the within-B edge after CTE refactor",
+        " F: scoped B must yield exactly the within-B edge after CTE refactor",
     );
     // The unscoped query (which never enters the CTE branch) should
     // see all four edges, including the two cross-space ones.
     assert_eq!(
         edges_unscoped.len(),
         4,
-        "PEND-20 F: unscoped query must surface every edge regardless of space",
+        " F: unscoped query must surface every edge regardless of space",
     );
 }
 
 // ======================================================================
-// PEND-18 Phase 2 — SpaceScope parity test
+// Phase 2 — SpaceScope parity test
 // ======================================================================
 //
 // Asserts that `query_by_property_inner` honours the `&SpaceScope`
@@ -3987,7 +3987,7 @@ async fn pend18_query_by_property_scope_parity() {
 }
 
 // ======================================================================
-// PEND-35 Tier 2.3 — get_blocks (full BlockRow batch)
+// Get_blocks (full BlockRow batch)
 // ======================================================================
 
 /// Seeds 5 blocks with diverse types/states + asserts the inner returns
@@ -4184,7 +4184,7 @@ async fn trash_descendant_counts_rejects_oversize() {
 }
 
 // ======================================================================
-// PEND-35 Tier 2.10b — filtered_blocks_query_inner
+// Filtered_blocks_query_inner
 // ======================================================================
 //
 // AND-intersection of property + tag predicates resolved entirely in
@@ -4308,7 +4308,7 @@ async fn filtered_blocks_query_property_plus_tag() {
     );
 }
 
-/// **Load-bearing regression test** for the silent-cap bug PEND-35
+/// **Load-bearing regression test** for the silent-cap bug
 /// Tier 2.10b fixes.
 ///
 /// The old shape (`useQueryExecution.fetchFilteredQuery`) issued one

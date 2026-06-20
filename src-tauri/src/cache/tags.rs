@@ -13,7 +13,7 @@ const INSERT_CHUNK: usize = MAX_SQL_PARAMS / 4; // 249
 const DELETE_CHUNK: usize = MAX_SQL_PARAMS; // 999
 
 // ---------------------------------------------------------------------------
-// Desired-state SQL (M-2)
+// Desired-state SQL
 // ---------------------------------------------------------------------------
 
 /// Projection that computes the desired state of `tags_cache` from the
@@ -21,7 +21,7 @@ const DELETE_CHUNK: usize = MAX_SQL_PARAMS; // 999
 /// pool) and [`rebuild_tags_cache_split_impl`] (read/write split) so
 /// the two implementations cannot silently diverge.
 ///
-/// UX-250 semantics (preserved verbatim from the pre-M-2 full rebuild):
+/// Semantics (preserved verbatim from the pre-M-2 full rebuild):
 ///   - `usage_count` counts DISTINCT `block_id`s from the UNION of
 ///     `block_tags` (explicit) ∪ `block_tag_refs` (inline `#[ULID]`).
 ///   - Both joins enforce `deleted_at IS NULL` on the referenced block.
@@ -188,7 +188,7 @@ async fn refresh_tag_usage_count_impl(pool: &SqlitePool, tag_id: &str) -> Result
 }
 
 // ---------------------------------------------------------------------------
-// Apply diff (M-2)
+// Apply diff
 // ---------------------------------------------------------------------------
 
 /// Apply a tags diff inside an open transaction in chunks bounded by
@@ -254,7 +254,7 @@ async fn apply_tags_diff(
 }
 
 // ---------------------------------------------------------------------------
-// Sort-merge rebuild core (M-2)
+// Sort-merge rebuild core
 // ---------------------------------------------------------------------------
 
 /// Stream-walk the desired and current tag rows in lockstep, computing
@@ -340,10 +340,10 @@ async fn apply_sort_merge_rebuild(
 }
 
 // ---------------------------------------------------------------------------
-// rebuild_tags_cache (p1-t18, M-2)
+// Rebuild_tags_cache (p1-t18)
 // ---------------------------------------------------------------------------
 
-/// Incremental rebuild of `tags_cache` (M-2 — was full DELETE + INSERT
+/// Incremental rebuild of `tags_cache` (was full DELETE + INSERT
 /// pre-refactor).
 ///
 /// Instead of a full `DELETE FROM tags_cache; INSERT SELECT …` two-pass
@@ -391,7 +391,7 @@ async fn rebuild_tags_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
 // Read/write split variant (Phase 1A)
 // ---------------------------------------------------------------------------
 
-/// Read/write split variant of [`rebuild_tags_cache`] (M-17, M-2).
+/// Read/write split variant of [`rebuild_tags_cache`].
 ///
 /// Reads desired and current tag rows from `read_pool` and applies the
 /// incremental diff on `write_pool`. Mirrors the single-pool sort-merge
@@ -434,12 +434,12 @@ async fn rebuild_tags_cache_split_impl(
 }
 
 // ---------------------------------------------------------------------------
-// M-2 sort-merge tests
+// Sort-merge tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
-    //! Tests scoped to this file (M-2). Helpers are local copies of the
+    //! Tests scoped to this file. Helpers are local copies of the
     //! patterns in `cache/tests.rs`.
     use super::*;
     use crate::db::init_pool;

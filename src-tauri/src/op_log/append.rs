@@ -46,7 +46,7 @@ pub async fn append_local_op(
 /// This is used by command handlers to wrap both the op_log append
 /// and the blocks-table write in a single atomic transaction.
 ///
-/// # Transaction mode requirement (L-5)
+/// # Transaction mode requirement
 ///
 /// **The caller MUST open the transaction with `BEGIN IMMEDIATE`** (e.g.
 /// via [`sqlx::SqlitePool::begin_with`]`("BEGIN IMMEDIATE")` or
@@ -128,7 +128,7 @@ async fn append_local_op_in_tx_with_provenance(
     created_at: i64,
     is_undo: bool,
 ) -> Result<OpRecord, AppError> {
-    // L-98: `op_log.created_at` is INTEGER epoch-ms (migration 0079);
+    // `op_log.created_at` is INTEGER epoch-ms (migration 0079);
     // reverse-op "find prior op" queries compare it numerically. No
     // shape assertion is needed — integer ordering is intrinsically
     // monotonic. See the doc-comment on `OpRecord`.
@@ -151,7 +151,7 @@ async fn append_local_op_in_tx_with_provenance(
     // the op_log.payload column contains only the operation-specific fields.
     let payload_json = serialize_inner_payload(&op_payload)?;
 
-    // PERF-26: extract block_id for the indexed column (added in migration
+    // Extract block_id for the indexed column (added in migration
     // 0030). Reads from the typed enum — O(1), no JSON re-parse. Returns
     // None for `delete_attachment` which targets an attachment_id only.
     let block_id: Option<&str> = op_payload.block_id();
@@ -202,7 +202,7 @@ async fn append_local_op_in_tx_with_provenance(
         &payload_json,
     );
 
-    // FEAT-4h slice 1: stamp the op with the initiating actor's origin tag
+    // Slice 1: stamp the op with the initiating actor's origin tag
     // (migration 0033). Outside an MCP `ACTOR.scope(...)` — i.e. every
     // frontend-invoked command — `current_actor()` returns `Actor::User`,
     // which yields `"user"` and matches the column default. Inside an MCP
@@ -240,13 +240,13 @@ async fn append_local_op_in_tx_with_provenance(
     .execute(&mut **tx)
     .await?;
 
-    // FEAT-4h slice 3: populate the task-local `LAST_APPEND` cell so the
+    // Slice 3: populate the task-local `LAST_APPEND` cell so the
     // MCP dispatch layer can attach an `OpRef` to the emitted
     // `mcp:activity` entry for per-entry Undo. Silent no-op outside a
     // `task_locals::LAST_APPEND` scope — i.e. every frontend-invoked
     // command.
     //
-    // MAINT-150 (j): the task-local lives in `crate::task_locals` (a
+    // The task-local lives in `crate::task_locals` (a
     // neutral home) rather than `crate::mcp`, so this core module no
     // longer depends on the `mcp` integration.
     crate::task_locals::record_append(crate::op::OpRef {
@@ -262,7 +262,7 @@ async fn append_local_op_in_tx_with_provenance(
         op_type,
         payload: payload_json,
         created_at,
-        // L-13: cache the typed payload's block_id sidecar so the
+        // Cache the typed payload's block_id sidecar so the
         // materializer hot path (`dispatch::enqueue_background_tasks`)
         // does not re-parse `payload` to recover the same value.
         block_id: block_id.map(str::to_owned),
@@ -295,7 +295,7 @@ pub async fn append_local_op_at(
     op_payload: OpPayload,
     created_at: i64,
 ) -> Result<OpRecord, AppError> {
-    // L-98: `op_log.created_at` is INTEGER epoch-ms (migration 0079) —
+    // `op_log.created_at` is INTEGER epoch-ms (migration 0079) —
     // numeric ordering, no shape assertion needed. See `OpRecord`.
 
     // BEGIN IMMEDIATE eagerly acquires the write lock, preventing

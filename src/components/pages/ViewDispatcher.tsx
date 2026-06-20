@@ -1,5 +1,5 @@
 /**
- * ViewDispatcher — extracted from App.tsx (MAINT-124 step 4 / final).
+ * ViewDispatcher — extracted from App.tsx (final).
  *
  * Owns:
  * - The `currentView`-based switch over view components (was the
@@ -15,7 +15,7 @@
  * - `useHeaderLabel` — used by the App shell header, exported so
  *   App.tsx can keep its existing import.
  *
- * MAINT-124 step 4 — last of the four originally-planned extractions
+ * Last of the four originally-planned extractions
  * (after `useAppKeyboardShortcuts`, `<AppSidebar>`, `useAppDialogs`).
  * This batch is a pure code move: behaviour is preserved verbatim.
  */
@@ -36,7 +36,7 @@ import { useSpaceStore } from '@/stores/space'
 import { type PageEntry, selectPageStack, useTabsStore } from '@/stores/tabs'
 
 // ---------------------------------------------------------------------------
-// Lazy-loaded views — PERF-24
+// Lazy-loaded views
 // ---------------------------------------------------------------------------
 //
 // Only the journal (default view) and the sidebar/header shell are in the
@@ -167,8 +167,8 @@ function JournalFallback(): ReactElement {
 /**
  * Renders the main view body based on `currentView`. Extracted from `App`
  * so the parent component stays well under the cognitive-complexity budget
- * (MAINT-52). Each branch is a `FeatureErrorBoundary` so a crashed view
- * never unmounts the shell. Non-journal views are lazy-loaded (PERF-24);
+ *. Each branch is a `FeatureErrorBoundary` so a crashed view
+ * Never unmounts the shell. Non-journal views are lazy-loaded;
  * the nested `Suspense` boundary shows a skeleton until the chunk arrives.
  */
 export function ViewDispatcher({
@@ -177,7 +177,7 @@ export function ViewDispatcher({
   onPageSelect,
   navigateToPage,
 }: ViewDispatcherProps): ReactElement {
-  // PERF-19 (tier-3): `goBack` is consumed only by the `page-editor`
+  // (tier-3): `goBack` is consumed only by the `page-editor`
   // branch below — subscribing here instead of forwarding from App.tsx
   // removes one `useTabsStore` selector from the App shell. The action
   // reference is stable across renders, so the cost of subscribing at

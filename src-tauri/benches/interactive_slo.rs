@@ -391,7 +391,7 @@ async fn seed_export_page(pool: &SqlitePool, page_id: &str, n: usize) {
 async fn seed_resolve_fixture(pool: &SqlitePool, n: usize) -> Vec<String> {
     // Density chosen to match the real-world shape: ~1 page per 100
     // content blocks gives 1000 pages at 100K total — close to the
-    // upper end of what FEAT-3 telemetry sees in active vaults. Keep
+    // Upper end of what telemetry sees in active vaults. Keep
     // PAGE_COUNT < FIXTURE_SIZE so the round-robin distribution
     // produces ≥1 block per page.
     const PAGE_COUNT: usize = 1_000;

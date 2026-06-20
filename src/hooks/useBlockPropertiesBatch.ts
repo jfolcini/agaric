@@ -7,7 +7,7 @@
  * Built-in fields are filtered out because they already render via the
  * dedicated badges (TodoToggle, PriorityBadge, DueChip, ScheduleChip).
  * Empty values are dropped so the row UI doesn't render empty rows.
- * Extracted from BlockTree.tsx for MAINT-128.
+ * Extracted from BlockTree.tsx for.
  *
  * Identity invariants (PEND/perf): the effect re-fires only when the
  * *set of block ids* changes, not on every fresh `blocks` array — a

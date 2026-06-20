@@ -1,5 +1,5 @@
 /**
- * MonthlyView — 7-column CSS Grid calendar for the entire month (UX-83).
+ * MonthlyView — 7-column CSS Grid calendar for the entire month.
  *
  * Replaces the old vertical DaySection list with a compact calendar grid.
  * Each cell is a MonthlyDayCell showing date number, colored count dots,

@@ -142,7 +142,7 @@ export function BlockContextMenu({
 
   // ── Close on click outside ───────────────────────────────────────
   // Defer registration by one animation frame so the same pointerdown
-  // event that opened the menu does not immediately close it (BUG-2 /
+  // Event that opened the menu does not immediately close it (
   // mirrors `suggestion-renderer.ts` and `BlockPropertyEditor.tsx`).
   useEffect(() => {
     const handlePointerDown = (e: PointerEvent) => {

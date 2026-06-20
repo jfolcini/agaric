@@ -86,7 +86,7 @@ pub async fn flush_draft_inner(
     }
 
     // 4. prev_edit lookup (same logic as edit_block_inner) inside the tx.
-    //    MAINT-147 (b): delegates to the shared helper in
+    // Delegates to the shared helper in
     //    `commands::blocks::crud` so both call sites stay in lockstep.
     let prev_edit = super::blocks::find_prev_edit_in_tx(&mut tx, block_id_str).await?;
 
@@ -104,7 +104,7 @@ pub async fn flush_draft_inner(
 /// Result of [`flush_all_drafts_inner`]: how many drafts were processed
 /// inside the single transaction.
 ///
-/// PEND-35 Tier 2.12: returned by the boot-recovery one-IPC flush so the
+/// Returned by the boot-recovery one-IPC flush so the
 /// frontend can surface a recovery toast / log line.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct FlushAllDraftsResult {
@@ -115,7 +115,7 @@ pub struct FlushAllDraftsResult {
 }
 
 /// Flush every draft in `block_drafts` inside a single `BEGIN IMMEDIATE`
-/// transaction (PEND-35 Tier 2.12).
+/// Transaction.
 ///
 /// Loops the body of [`flush_draft_inner`] server-side over every draft
 /// row, accumulating one `edit_block` op per live target into the same
@@ -137,7 +137,7 @@ pub struct FlushAllDraftsResult {
 ///   succeed in isolation.
 ///
 /// The alternative — savepoint-per-draft for partial recovery — was
-/// considered and rejected per the PEND-35 audit: this command only
+/// Considered and rejected per the audit: this command only
 /// fires at boot with a small N of orphans, and a savepoint loop would
 /// re-introduce the per-draft round-trip cost the consolidation is
 /// designed to eliminate.
@@ -395,7 +395,7 @@ mod tests_h12 {
     // -- H-12a: target block missing entirely ------------------------------
     //
     // The "target block has no row in `blocks` at all" case is now
-    // unreachable: migration 0038 (M-93) added a FOREIGN KEY from
+    // Unreachable: migration 0038 added a FOREIGN KEY from
     // `block_drafts.block_id` to `blocks(id)` ON DELETE CASCADE, so any
     // attempt to seed an orphan draft fails with `SQLITE_CONSTRAINT_FOREIGNKEY`
     // up front. The `flush_draft_inner` H-12a guard ("target block missing
@@ -484,7 +484,7 @@ mod tests_h12 {
         mat.shutdown();
     }
 
-    // -- M-93: schema invariant — block_drafts FK to blocks(id) ------------
+    // -- schema invariant — block_drafts FK to blocks(id) ------------
     //
     // These two tests lock down the migration 0038 invariant: a draft can
     // only exist for an existing `blocks(id)`, and hard-deleting the block
@@ -521,7 +521,7 @@ mod tests_h12 {
             .unwrap();
         assert_eq!(
             count, 0,
-            "M-93: hard-deleting a block must cascade to block_drafts (FK ON DELETE CASCADE)",
+            "hard-deleting a block must cascade to block_drafts (FK ON DELETE CASCADE)",
         );
     }
 

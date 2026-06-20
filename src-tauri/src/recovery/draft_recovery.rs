@@ -31,7 +31,7 @@ use crate::ulid::BlockId;
 /// past the synthetic seq — risking old-text resurrection on a later CRDT
 /// merge or `save_all_engines`. Background cache rebuilds (tags, pages,
 /// FTS, block_links) are still handled separately by
-/// `refresh_caches_for_recovered_drafts` (BUG-23).
+/// `refresh_caches_for_recovered_drafts`.
 pub(super) async fn recover_single_draft(
     pool: &SqlitePool,
     device_id: &str,
@@ -39,7 +39,7 @@ pub(super) async fn recover_single_draft(
     draft: &crate::draft::Draft,
     existing_block_ids: &HashSet<String>,
 ) -> Result<bool, AppError> {
-    // F07 / L-135: If the block has been soft-deleted or doesn't exist in
+    // F07 / If the block has been soft-deleted or doesn't exist in
     // the blocks table, the draft is orphan noise — skip the synthetic op
     // and report "already flushed" so the caller deletes the draft row.
     //
@@ -48,7 +48,7 @@ pub(super) async fn recover_single_draft(
     //
     // Logged at warn level (not info) because an orphan draft for a
     // missing/deleted block usually means the parent was soft-deleted
-    // before the periodic `spawn_orphan_drafts_sweeper` (PEND-28a M1,
+    // Before the periodic `spawn_orphan_drafts_sweeper` (
     // wired session 671) ran — worth a breadcrumb.
     if !existing_block_ids.contains(draft.block_id.as_str()) {
         tracing::warn!(block_id = %draft.block_id, "skipping draft for missing/deleted block");
@@ -110,7 +110,7 @@ pub(super) async fn recover_single_draft(
     // anchor seq backfills to 0, so ANY existing op on the local device has
     // `seq > 0` and supersedes it — the safe bias that defers to existing ops.
     //
-    // PERF-26: uses the indexed op_log.block_id column (migration 0030)
+    // Uses the indexed op_log.block_id column (migration 0030)
     // for O(log N) block-scoped lookups instead of json_extract across the
     // full table. block_id is populated on insert by append_local_op_in_tx
     // and insert_remote_op using OpPayload::block_id() / JSON extraction.
@@ -228,7 +228,7 @@ pub(super) async fn recover_single_draft(
 /// could select a causally-earlier op from a device with a faster clock
 /// over a causally-later op from a device with a slower clock.
 ///
-/// PERF-26: the create_block fallback path uses the indexed op_log.block_id
+/// The create_block fallback path uses the indexed op_log.block_id
 /// column (migration 0030) for O(log N) lookups instead of json_extract
 /// across the full table.
 pub async fn find_prev_edit(

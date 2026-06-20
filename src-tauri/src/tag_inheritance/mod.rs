@@ -15,14 +15,14 @@
 //! doc comments for the specific rationale.
 //!
 //! Every recursive CTE in this module is built from the macro family in
-//! [`crate::tag_inheritance_macros`] (MAINT-141). The macros bake in
+//! [`crate::tag_inheritance_macros`]. The macros bake in
 //! invariant #9 ( filter, `subtree_unfiltered` excepted)
 //! and the [`crate::tag_inheritance_macros::MAX_TAG_INHERITANCE_DEPTH`]
 //! depth bound. Do **not** hand-roll a new `WITH RECURSIVE` block here —
 //! extend the macro family instead.
 //!
 //! Use [`apply_op_tag_inheritance`] as the single entry point for materializer
-//! handlers — MAINT-45. Adding a new op type that affects inheritance only
+//! handlers —. Adding a new op type that affects inheritance only
 //! requires extending the match in that one place.
 
 mod incremental;
@@ -35,7 +35,7 @@ use sqlx::SqliteConnection;
 use crate::error::AppError;
 use crate::op::OpPayload;
 
-// MAINT-142: helpers are `pub(crate)` because the documented single entry
+// Helpers are `pub(crate)` because the documented single entry
 // point is `apply_op_tag_inheritance`. Pre-existing in-crate call-sites
 // (commands/blocks/crud.rs, commands/blocks/move_ops.rs, commands/tags.rs,
 // materializer/handlers.rs) continue to invoke specific helpers directly
@@ -53,7 +53,7 @@ pub use rebuild::rebuild_all;
 ///
 /// This is the **single entry point** that the materializer and command
 /// handlers use to keep `block_tag_inherited` in sync after an op lands.
-/// Having one place for the fan-out prevents the class of drift MAINT-45
+/// Having one place for the fan-out prevents the class of drift
 /// calls out: adding a new op type now requires exactly one match arm
 /// here, and the compiler will point at it if the enum changes.
 ///

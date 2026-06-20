@@ -1,4 +1,4 @@
-//! PEND-54 — page-name glob filter parsing and expansion.
+//! page-name glob filter parsing and expansion.
 //!
 //! The frontend ships raw glob entries (`include_page_globs`,
 //! `exclude_page_globs`) on the `SearchFilter` struct. This module

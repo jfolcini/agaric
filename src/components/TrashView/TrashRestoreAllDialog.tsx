@@ -1,7 +1,7 @@
 /**
  * TrashRestoreAllDialog — confirms restoring every trashed block to
  * its original location (the `t('trash.restoreAllHeaderButton')`
- * header action). Sibling extracted from TrashView.tsx for MAINT-128.
+ * Header action). Sibling extracted from TrashView.tsx for.
  */
 
 import type React from 'react'

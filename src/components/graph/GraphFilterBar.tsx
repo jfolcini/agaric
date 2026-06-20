@@ -1,5 +1,5 @@
 /**
- * GraphFilterBar — multi-dimension filter UI for the graph view (UX-205).
+ * GraphFilterBar — multi-dimension filter UI for the graph view.
  *
  * Shows each active filter as a removable pill, plus a `t('graph.filter.addFilter')` button
  * that opens a popover for picking a dimension and value. Built on top of
@@ -44,7 +44,7 @@ import {
 import { logger } from '@/lib/logger'
 
 /**
- * UX-270: localStorage key for persisting the user's graph filters across
+ * LocalStorage key for persisting the user's graph filters across
  * navigation. Stored as a JSON-serialised `GraphFilter[]`. Reads + writes are
  * wrapped in `try/catch` to survive corrupted or unavailable storage (private
  * browsing, quota exceeded, SSR), and guarded by `typeof window !==
@@ -166,7 +166,7 @@ function AddFilterForm({
 }: AddFilterFormProps): React.ReactElement {
   const { t } = useTranslation()
 
-  // UX-201b: subscribe to the user-configured priority levels so the
+  // Subscribe to the user-configured priority levels so the
   // filter checkbox list reflects the live set without a reload.
   const priorityLevels = usePriorityLevels()
 
@@ -269,7 +269,7 @@ function AddFilterForm({
           {allTags.length === 0 ? (
             <p className="text-xs text-muted-foreground">{t('graph.filter.tagNoTags')}</p>
           ) : (
-            // UX-270: replace bare `overflow-y-auto` with the shared ScrollArea
+            // Replace bare `overflow-y-auto` with the shared ScrollArea
             // primitive (AGENTS.md mandates ScrollArea for every scrollable
             // container — see `SourcePageFilter` for the reference pattern).
             <ScrollArea className="max-h-40">
@@ -280,7 +280,7 @@ function AddFilterForm({
                     className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-muted"
                   >
                     {/*
-                     * UX-270: the visible <span> is the single source of truth
+                     * The visible <span> is the single source of truth
                      * for the checkbox's accessible name. We wire it up with
                      * `aria-labelledby` (not `aria-label`) so the name stays in
                      * one place — see the matching test in GraphFilterBar.test.
@@ -403,7 +403,7 @@ export function GraphFilterBar({
   const { t } = useTranslation()
   const [popoverOpen, setPopoverOpen] = useState(false)
 
-  // UX-270: hydrate persisted filters once on mount, then write to
+  // Hydrate persisted filters once on mount, then write to
   // localStorage whenever the controlled `filters` prop changes. The write
   // effect skips its very first run so it doesn't clobber the just-loaded
   // persisted value with the parent's pre-hydration default (empty) state

@@ -572,14 +572,14 @@ describe('StatusPanel', () => {
       expect(screen.getByText('Syncing...')).toBeInTheDocument()
     })
 
-    // UX-266 — sub-fix 2: each sync state renders a distinct lucide
+    // Sub-fix 2: each sync state renders a distinct lucide
     // icon next to the dot so colour-blind users (and anyone glancing
     // at the panel) can tell the states apart beyond colour. The icon
     // is decorative — the text label carries the canonical state.
     //
     // #1076: the `discovering` / `pairing` icon cases were removed with
     // those (dead, never-written) SyncState members.
-    describe('per-state icon (UX-266)', () => {
+    describe('per-state icon', () => {
       it('renders a CheckCircle-style icon for the idle state', async () => {
         mockSyncStoreState.peers = [{ peer_id: 'P1' }]
         mockSyncStoreState.state = 'idle'

@@ -1,12 +1,12 @@
 /**
  * Renderers for the heading-level and code-block-language popover
- * triggers that live in Group 0 of `FormattingToolbar` (MAINT-219).
+ * Triggers that live in Group 0 of `FormattingToolbar`.
  *
  * These two buttons can't go through `renderConfigButton` because they
  * open Radix `Popover`s anchored to themselves. Their open/close state
  * is owned by the orchestrator and threaded in via props so the
  * orchestrator can also flip it from the overflow popover's selection
- * handlers (MAINT-221 contract).
+ * Handlers (contract).
  */
 
 import type { Editor } from '@tiptap/react'

@@ -12,7 +12,7 @@
  * `usePageBrowserDensity`), and the virtualized-list concerns
  * (scroll-restoration, auto-load, keyboard) — then renders
  * `PageBrowserHeader` + `PageBrowserRowRenderer` inside a virtualized
- * list (MAINT-128 / #1263).
+ * List (#1263).
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -60,7 +60,7 @@ interface PageBrowserProps {
 export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElement {
   const { t } = useTranslation()
 
-  // FEAT-3 Phase 2 — honour the current space. When the `SpaceStore`
+  // Phase 2 — honour the current space. When the `SpaceStore`
   // has not yet hydrated (`isReady === false`) we render a
   // `LoadingSkeleton` instead of firing the page query so the first
   // render never leaks cross-space pages. Once ready, `currentSpaceId`
@@ -69,7 +69,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const spaceIsReady = useSpaceStore((s) => s.isReady)
 
-  // PEND-56 Phase 3 — density preference threaded to
+  // Phase 3 — density preference threaded to
   // `<PageBrowserHeader>` (so the selector works) and to `estimateSize`
   // (so the rows measure correctly per density).
   const { density, setDensity } = usePageBrowserDensity()
@@ -164,7 +164,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const filteredPagesUnsorted = useMemo(() => {
     const trimmed = filterText.trim()
     if (!trimmed) return pages
-    // UX-247 — Unicode-aware case- / diacritic-insensitive match so
+    // Unicode-aware case- / diacritic-insensitive match so
     // Turkish (`İstanbul` ↔ `istanbul`), German (`Straße` ↔
     // `strasse`), and accented (`café` ↔ `cafe`) titles fold together
     // the way users expect from interactive filters.
@@ -207,7 +207,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     isSinglePageVault,
   })
 
-  // #81 / PEND-57 — batch multi-select over the visible (flat) page set.
+  // #81 / batch multi-select over the visible (flat) page set.
   // Keyed by page id and driven by the same `useListMultiSelect` primitive
   // TrashView / HistoryView use. Selection is additive: it does NOT touch
   // the single-row trash button / `usePageDelete` flow above. `filteredPages`
@@ -258,7 +258,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     setFilterAnnouncement,
   })
 
-  // PEND-30 L-5: wrap `estimateSize` in `useCallback` so its identity is
+  // Wrap `estimateSize` in `useCallback` so its identity is
   // stable across re-renders that don't change `groupedRows` or
   // density. TanStack Virtual treats option-identity changes as a
   // re-measure trigger — that's exactly what we want on a density
@@ -267,11 +267,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     (index: number) => {
       const row = groupedRows[index]
       if (row?.kind === 'header') return HEADER_ROW_HEIGHT
-      // PEND-56 Phase 3 — page-row height now driven by density.
+      // Phase 3 — page-row height now driven by density.
       // `tree-page` rows share the per-density leaf height (the
       // virtualizer's `measureElement` ref handler corrects to the
       // actual height when descendants expand the wrapper). The
-      // `regular` value (44 px) matches the pre-PEND-56 fixed height,
+      // `regular` value (44 px) matches the pre- fixed height,
       // so flag-off behaviour stays byte-identical.
       return DENSITY_ROW_HEIGHT[density]
     },
@@ -339,12 +339,12 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     virtualizer.scrollToIndex(rowIndex, { align: 'auto' })
   }, [focusedIndex, virtualizer])
 
-  // UX-331 — wire `aria-activedescendant` so screen readers can track
+  // Wire `aria-activedescendant` so screen readers can track
   // arrow-key focus moves. The id pattern mirrors the row renderer:
   // flat rows expose `page-row-${page.id}`; namespace-tree wrappers
   // expose `page-row-${node.fullPath}` (see `PageBrowserRowRenderer`).
   //
-  // PEND-58d D23b (a11y) — `aria-activedescendant` MUST reference an
+  // (a11y) — `aria-activedescendant` MUST reference an
   // element that is actually in the DOM. The list is virtualized, so a
   // focused row whose virtual index falls outside the current render
   // window has no rendered element, and pointing the attribute at its id
@@ -377,7 +377,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // returns zero rows must render the "no matches" state, not the
   // "No pages yet / Create your first page" empty-space state. Derive
   // `isFiltering` from the compound `filters` as well as the text input.
-  // PEND-58d D11 — the count chip needs to tell the two narrowing axes
+  // The count chip needs to tell the two narrowing axes
   // apart (free-text narrows the loaded set; chips narrow server-side), so
   // expose both booleans separately rather than the combined `isFiltering`.
   const hasTextQuery = filterText.trim().length > 0
@@ -388,7 +388,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // rows. Drives both the body branch and the grid-role suppression.
   const showNoMatch = isFiltering && filteredPages.length === 0
 
-  // PEND-58d D3 — the frontend-only sorts (`alphabetical`, `recent`,
+  // The frontend-only sorts (`alphabetical`, `recent`,
   // `created`) reorder only the loaded ≤50 rows client-side; their
   // visible order is globally accurate only once every page is loaded.
   // When more pages remain (`hasMore`), surface a cue in the header so
@@ -441,7 +441,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         />
       </ViewHeader>
 
-      {/* PEND-58 Phase 3 — compound-filter chip-row. Rendered when there
+      {/*  Phase 3 — compound-filter chip-row. Rendered when there
           are pages to groom OR filters are already active — the latter
           keeps the chips reachable when a filter narrows the result set
           to zero, so the user can always remove the filter that emptied
@@ -452,13 +452,13 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           onAddFilter={handleAddFilter}
           onRemoveFilter={handleRemoveFilter}
           onClearAll={handleClearAllFilters}
-          // PEND-58e E5 — resolve `tag:` chips to tag names (the chip
+          // Resolve `tag:` chips to tag names (the chip
           // previously showed the raw ULID because no resolver was passed).
           tagResolver={tagResolver}
         />
       )}
 
-      {/* #81 / PEND-57 — batch-action toolbar. Rendered only when ≥1 page
+      {/* #81 / batch-action toolbar. Rendered only when ≥1 page
           is selected (mirrors Trash/History). After a successful bulk op
           it clears the selection and `reload()`s so the existing query
           refetch path updates the view. */}
@@ -512,7 +512,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         // capping + scrolling (and virtualizing) for long ones.
         viewportClassName="max-h-[calc(100dvh-200px)]"
         viewportProps={{
-          // MAINT-162 — ARIA grid pattern for the page list. The
+          // ARIA grid pattern for the page list. The
           // viewport mixes flat-page rows, section headers, and
           // namespace-tree rows under one container; `role="grid"`
           // permits this heterogeneous mix where `role="listbox"`
@@ -530,7 +530,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                 'aria-label': hasStarred
                   ? t('pageBrowser.pageListGrouped')
                   : t('pageBrowser.pageList'),
-                // UX-331 — bind `aria-activedescendant` to the focused
+                // Bind `aria-activedescendant` to the focused
                 // row's stable id so screen readers track arrow-key
                 // focus moves without the inner buttons receiving DOM
                 // focus.
@@ -538,7 +538,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
               }),
           tabIndex: 0,
           // Section presence flags exposed for tests / styling hooks.
-          // FEAT-14 — the unified model means either or both can be
+          // The unified model means either or both can be
           // present independently; consumers that want section-aware
           // chrome key off these data attributes.
           'data-has-starred': hasStarred ? 'true' : 'false',
@@ -591,7 +591,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                 the outer viewport and a button rendered below it was
                 effectively off-screen.
 
-                PEND-58d D9 (a11y) — the button is a direct child of the
+                 (a11y) — the button is a direct child of the
                 `role="grid"` viewport, which `aria-required-children`
                 forbids (a grid's children must be rows). Wrap it in a
                 `role="row"` > `role="gridcell"` footer so it's a valid

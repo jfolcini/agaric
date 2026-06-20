@@ -1,5 +1,5 @@
 /**
- * E2E — PEND-58f search results: grouping + click-through + keyboard nav
+ * E2E — search results: grouping + click-through + keyboard nav
  * (E2E-8) and the alias-match card (E2E-9).
  *
  * The mock `search_blocks` handler returns raw seed blocks with NO
@@ -23,7 +23,7 @@ async function runSearch(page: import('@playwright/test').Page, query: string) {
   return region
 }
 
-test.describe('Search results — grouping + interaction (PEND-58f E2E-8)', () => {
+test.describe('Search results — grouping + interaction (E2E-8)', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
   })
@@ -184,7 +184,7 @@ test.describe('Tall search group — scroll geometry via ::before spacer (#737)'
   })
 })
 
-test.describe('Search alias-match card (PEND-58f E2E-9)', () => {
+test.describe('Search alias-match card (E2E-9)', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
   })

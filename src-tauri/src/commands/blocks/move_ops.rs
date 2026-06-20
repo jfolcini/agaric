@@ -68,9 +68,9 @@ pub async fn move_block_inner(
     // is a transient optimistic rank the materializer reprojects, so a caller can
     // no longer push a block into the synthetic sentinel tail bucket.)
     let new_parent_block_id = new_parent_id.as_ref().map(|s| BlockId::from_trusted(s));
-    // #1257 PR-4: keep the typed `MoveBlockPayload` so the command path can both
+    // #1257 keep the typed `MoveBlockPayload` so the command path can both
     // append it to the op_log AND drive `apply_move_block_via_loro` in-tx
-    // (mirrors PR-2's `create_payload`). The op-log carries an owned
+    // (`create_payload`). The op-log carries an owned
     // `OpPayload::MoveBlock(move_payload.clone())`.
     let move_payload = MoveBlockPayload {
         block_id: BlockId::from_trusted(&block_id),
@@ -82,7 +82,7 @@ pub async fn move_block_inner(
     // 3. Single IMMEDIATE transaction: validation + op_log + move.
     //    BEGIN IMMEDIATE eagerly acquires the write lock, preventing
     //    SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
-    //    and the actual mutation. MAINT-112: CommandTx couples commit
+    // And the actual mutation. CommandTx couples commit
     //    + post-commit dispatch so a failed commit never leaks the
     //    op_record to the materializer.
     let mut tx = CommandTx::begin_immediate(pool, "move_block").await?;
@@ -201,7 +201,7 @@ pub async fn move_block_inner(
             .await?
             .flatten();
 
-    // 5. #1257 PR-4: route the move through the SAME engine-apply + dense-rank
+    // 5. #1257 route the move through the SAME engine-apply + dense-rank
     //    reprojection the boot-replay / sync `ApplyOp` path uses, IN this
     //    CommandTx, INSTEAD of the inline provisional `UPDATE blocks SET
     //    parent_id, position`. `apply_move_block_via_loro`:

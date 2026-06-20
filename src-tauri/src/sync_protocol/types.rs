@@ -19,7 +19,7 @@ pub struct DeviceHead {
 /// The initiator's Loro version vector for one space, advertised in
 /// [`SyncMessage::HeadExchange`] so the responder can ship an incremental
 /// [`LoroSyncMessage::Update`] (the delta since this vv) instead of a full
-/// snapshot (MAINT-228 / #87 §10.5 per-peer-vv exchange).
+/// Snapshot (#87 §10.5 per-peer-vv exchange).
 ///
 /// `vv` is the opaque encoding from
 /// [`crate::loro::engine::LoroEngine::version_vector`]. A space the initiator
@@ -63,7 +63,7 @@ pub struct OpTransfer {
 
 impl From<OpRecord> for OpTransfer {
     fn from(r: OpRecord) -> Self {
-        // `OpRecord::block_id` is a Rust-only sidecar (L-13) and
+        // `OpRecord::block_id` is a Rust-only sidecar and
         // intentionally not included on the wire — it can always be
         // recovered from `payload` and is not part of the cross-device
         // identity of the op.
@@ -81,12 +81,12 @@ impl From<OpRecord> for OpTransfer {
 
 impl From<OpTransfer> for OpRecord {
     fn from(t: OpTransfer) -> Self {
-        // L-13: the wire transfer carries no `block_id` sidecar.
+        // The wire transfer carries no `block_id` sidecar.
         // Intentionally leave `block_id` as `None` here — parsing
         // `payload` for it would add a second `serde_json::from_str`
         // per sync'd op on top of the validation parse that
         // `apply_remote_ops` already performs, regressing exactly the
-        // hot path L-13 is meant to optimise. The sync receive path
+        // Hot path is meant to optimise. The sync receive path
         // (`apply_remote_ops`) populates the sidecar from its
         // existing validation parse so the cost stays at one parse
         // per op on the sync side. Tests / fixtures that build an

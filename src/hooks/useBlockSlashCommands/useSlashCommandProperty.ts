@@ -232,7 +232,7 @@ function handleAttach(ctx: SlashCommandContext): void {
       notify.error(ctx.t('blockTree.attachFileFailed'))
     }
   })
-  // FE-M-6: `input.click()` can throw on some platforms (e.g. when the user
+  // `input.click()` can throw on some platforms (e.g. when the user
   // gesture has been lost or the browser/webview blocks programmatic file
   // dialogs). Surface the failure instead of letting it bubble as an
   // unhandled rejection.

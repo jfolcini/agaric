@@ -11,7 +11,7 @@
  * Centralizes the IPC imports so the drawer is hook-driven and tests
  * can stub the hook instead of mocking three distinct exports of
  * `lib/tauri`. Mirrors the surface of `useBlockReschedule` /
- * `useLinkMetadata` / `useBatchAttachments`. MAINT-131 final pass.
+ * `useLinkMetadata` / `useBatchAttachments`. final pass.
  *
  * Distinct from `useBlockProperties` (which owns task-state / priority
  * cycling against the block store) and `usePropertySave` (which owns

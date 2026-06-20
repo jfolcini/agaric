@@ -1,5 +1,5 @@
 /**
- * PEND-58 Phase 3 — PageBrowserFilterRow tests.
+ * Phase 3 — PageBrowserFilterRow tests.
  *
  * The Radix Popover (inside the nested AddFilterPopover) is mocked to
  * render inline so the Add-Filter affordance is always present.

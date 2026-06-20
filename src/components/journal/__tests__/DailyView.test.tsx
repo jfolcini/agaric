@@ -160,8 +160,8 @@ describe('DailyView', () => {
   })
 })
 
-// ── UX-258 — scroll selectedBlockId into view + restore focus on mount ────
-describe('DailyView UX-258 selectedBlockId scroll-into-view', () => {
+// ── scroll selectedBlockId into view + restore focus on mount ────
+describe('DailyView  selectedBlockId scroll-into-view', () => {
   let scrollSpy: ReturnType<typeof vi.spyOn>
   const seededElements: HTMLElement[] = []
 

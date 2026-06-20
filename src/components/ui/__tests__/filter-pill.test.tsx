@@ -1,7 +1,7 @@
 /**
  * Tests for the FilterPill UI primitive.
  *
- * Validates (per TEST-1):
+ * Validates:
  *  - Renders with label + group role
  *  - Calls `onRemove` when the remove button is clicked
  *  - Keyboard: Delete and Backspace on the remove button trigger `onRemove`
@@ -158,9 +158,9 @@ describe('FilterPill', () => {
     expect(removeBtn.className).toContain('focus-ring-visible')
   })
 
-  // UX-2: the visible X icon scales up on coarse pointers so the tap area
+  // The visible X icon scales up on coarse pointers so the tap area
   // matches the 44 px button (visual–affordance mismatch fix).
-  it('UX-2: inner X icon scales to size-5 on coarse pointers', () => {
+  it('inner X icon scales to size-5 on coarse pointers', () => {
     const { container } = render(<FilterPill {...defaultProps} />)
 
     const svg = container.querySelector('button svg')

@@ -7,7 +7,7 @@
  * (`navigation.ts`, `journal.ts`, `tabs.ts`, `recent-pages.ts`) to key
  * into their `*BySpace` maps.
  *
- * Extracted in PEND-30 L-1 to remove the identical 3-line copy duplicated
+ * Extracted in to remove the identical 3-line copy duplicated
  * across the four stores.
  */
 

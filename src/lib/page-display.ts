@@ -1,5 +1,5 @@
 /**
- * page-display — single source of truth for hierarchical page-name display (PEND-83 Bug 1).
+ * Page-display — single source of truth for hierarchical page-name display (Bug 1).
  *
  * Page titles in this codebase are stored verbatim as `parent/child/leaf`
  * strings. Different surfaces render them differently — the tree shows

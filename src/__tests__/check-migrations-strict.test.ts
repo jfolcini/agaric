@@ -34,7 +34,7 @@ describe('check-migrations-strict.mjs', () => {
     expect(() => execFileSync('node', [SCRIPT, file])).toThrow(/must use STRICT mode/)
   })
 
-  it('does not false-positive on semicolon inside a line comment (MAINT-199)', () => {
+  it('does not false-positive on semicolon inside a line comment', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agaric-test-'))
     const file = join(dir, '0042_test.sql')
     writeFileSync(
@@ -47,7 +47,7 @@ describe('check-migrations-strict.mjs', () => {
     expect(() => execFileSync('node', [SCRIPT, file])).not.toThrow()
   })
 
-  it('does not false-positive on semicolon inside a block comment (MAINT-199)', () => {
+  it('does not false-positive on semicolon inside a block comment', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agaric-test-'))
     const file = join(dir, '0042_test.sql')
     writeFileSync(

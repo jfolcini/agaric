@@ -59,11 +59,11 @@ export function DonePanel({
 
   // Fetch blocks completed on the given date.
   //
-  // PEND-35 Tier 1.5 — `excludeParentId` and `contentNonEmpty` are
+  // `excludeParentId` and `contentNonEmpty` are
   // passed straight to the backend so cursor pagination, `total_count`,
   // and `t('donePanel.loadMore')` reflect the visible (post-filter) set instead of
   // the raw page. Previously the FE post-filtered each cursor page
-  // (UX-129 / B-74) which silently broke the cursor accounting on
+  // (B-74) which silently broke the cursor accounting on
   // partial pages.
   const fetchBlocks = useCallback(
     async (cursor?: string) => {
@@ -116,8 +116,8 @@ export function DonePanel({
           valueDate: date,
           limit: PAGINATION_LIMIT,
           spaceId: currentSpaceId,
-          // PEND-35 Tier 1.5 — push excludeParentId (B-74) and
-          // contentNonEmpty (UX-129) into SQL so totalCount/hasMore
+          // Push excludeParentId (B-74) and
+          // ContentNonEmpty into SQL so totalCount/hasMore
           // reflect the visible set rather than the raw page.
           ...(excludePageId !== undefined && { excludeParentId: excludePageId }),
           contentNonEmpty: true,
@@ -173,7 +173,7 @@ export function DonePanel({
     [blocks, pageTitles, t],
   )
 
-  // ── Keyboard navigation (UX-138) ────────────────────────────────────
+  // ── Keyboard navigation ────────────────────────────────────
   const flatItems = useMemo(() => grouped.flatMap((g) => g.items), [grouped])
 
   const {
@@ -264,7 +264,7 @@ export function DonePanel({
 
   // Render nothing when empty (and not loading): an empty "none yet" panel is
   // visual clutter on every journal day. This intentionally overrides the older
-  // UX-130 empty-state mandate for this panel (user decision, live UX review).
+  // Empty-state mandate for this panel (user decision, live UX review).
   // The loading branch stays so the panel doesn't flash an EmptyState mid-fetch.
   if (!loading && blocks.length === 0) {
     return null

@@ -14,7 +14,7 @@ const STORAGE_KEY = 'agaric:recent-pages'
 
 describe('useRecentPagesStore', () => {
   beforeEach(() => {
-    // FEAT-3 Phase 3 — clear both the flat MRU and the per-space slices so
+    // Phase 3 — clear both the flat MRU and the per-space slices so
     // a prior test's per-space write doesn't leak into the active view via
     // the selector fall-back path. #1149 — also reset `rawKeysMerged` so the
     // raw-key migration's one-time guard starts fresh each test.
@@ -155,9 +155,9 @@ describe('useRecentPagesStore', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // FEAT-3 Phase 3 — per-space MRU partitioning
+  // Phase 3 — per-space MRU partitioning
   // ---------------------------------------------------------------------------
-  describe('FEAT-3p3 per-space MRU', () => {
+  describe(' per-space MRU', () => {
     beforeEach(() => {
       useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [], isReady: true })
     })
@@ -270,7 +270,7 @@ describe('useRecentPagesStore', () => {
       expect(state.recentPagesBySpace['__legacy__']).toHaveLength(2)
     })
 
-    it('recordVisit builds from the active space slice, not a stale foreign flat mirror (PEND-78 Defect 1)', () => {
+    it('recordVisit builds from the active space slice, not a stale foreign flat mirror (Defect 1)', () => {
       useSpaceStore.setState({ currentSpaceId: 'space-A' })
       // Post-rehydrate inconsistency: the flat mirror holds space-B's list
       // while the active space is space-A (with its own slice).
@@ -299,7 +299,7 @@ describe('useRecentPagesStore', () => {
       ).toBe(false)
     })
 
-    it('boot: rehydrate with a foreign flat mirror + first-fire reconcile leaves no cross-space leak (PEND-78)', async () => {
+    it('boot: rehydrate with a foreign flat mirror + first-fire reconcile leaves no cross-space leak', async () => {
       // Order matters: change space FIRST so the subscriber's persist write
       // fires now, THEN seed localStorage so `rehydrate()` reads our blob
       // (not the just-written empty state).
@@ -335,7 +335,7 @@ describe('useRecentPagesStore', () => {
       expect(finalState.recentPagesBySpace['space-A']?.map((p) => p.pageId)).toEqual(['A2', 'A1'])
     })
 
-    it('first-fire reconciles the flat mirror to the active space slice (PEND-78 Defect 2)', () => {
+    it('first-fire reconciles the flat mirror to the active space slice (Defect 2)', () => {
       useSpaceStore.setState({ currentSpaceId: 'space-A' })
       // Set the foreign flat mirror AFTER the space change so only the
       // first-fire reconcile (not the diff-branch pull) can correct it.
@@ -562,7 +562,7 @@ describe('useRecentPagesStore', () => {
       expect(localStorage.getItem('recent_pages:space-1')).toBeNull()
     })
 
-    it('folds the pre-FEAT-3 unscoped `recent_pages` key into the __legacy__ slot', () => {
+    it('folds the pre- unscoped `recent_pages` key into the __legacy__ slot', () => {
       localStorage.setItem(
         'recent_pages',
         JSON.stringify([{ id: 'OLD', title: 'Old', visitedAt: '2024-01-01T00:00:00.000Z' }]),

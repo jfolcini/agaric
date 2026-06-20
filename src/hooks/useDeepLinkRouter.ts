@@ -1,6 +1,6 @@
 /**
  * useDeepLinkRouter — listens for routed deep-link events from the Rust
- * `deeplink::register_deeplink_handlers` router (FEAT-10) and translates
+ * `deeplink::register_deeplink_handlers` router and translates
  * them into navigation-store / settings-tab actions.
  *
  * Backend contract (`src-tauri/src/deeplink/mod.rs`):
@@ -136,7 +136,7 @@ function safeNavigateToPage(
  * target through `getBlock`:
  *
  *   - `kind === 'page'` → fetch the page's title so the journal redirect
- *     (UX-242) and the tab label work like every in-app navigation.
+ * And the tab label work like every in-app navigation.
  *   - `kind === 'block'` → resolve the containing page via the
  *     denormalized `blocks.page_id` column (maintained by the
  *     materializer: `page_id_self_for_pages` CHECK for pages, cross-page
@@ -240,7 +240,7 @@ export function handleOpenSettingsPayload(payload: unknown): void {
  * that translate routed deep-link events into navigation-store /
  * settings-tab side effects.  Cleans up listeners on unmount.
  *
- * MAINT-122: listener lifecycle (`listen()` → `unlisten()` + unmount
+ * Listener lifecycle (`listen()` → `unlisten()` + unmount
  * race) lives in `useTauriEventListener`; this hook owns the per-event
  * payload-validation + dispatch wrappers, the launch-URL backfill, and
  * the Tauri-only gate (`enabled`).

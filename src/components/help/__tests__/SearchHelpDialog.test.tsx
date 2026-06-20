@@ -1,5 +1,5 @@
 /**
- * PEND-58g UX-A9 — the Toggles help section's "Icon" column must render the
+ * The Toggles help section's "Icon" column must render the
  * same lucide icons the toolbar shows (CaseSensitive / WholeWord / Regex),
  * not the old `Aa` / `Ab|` / `.*` text glyphs, so users can map the help to
  * the actual toolbar buttons.

@@ -205,7 +205,7 @@ async fn purge_handler_cleans_projected_agenda_cache() {
 }
 
 // ======================================================================
-// PEND-20 C: cascade-purge materialises descendants once into a TEMP
+// C: cascade-purge materialises descendants once into a TEMP
 // table and DROPs it at the end of the handler. The 15 DELETE / UPDATE
 // statements then read from the temp table instead of re-evaluating the
 // recursive `descendants_cte_purge!()` CTE 15× per cascade.
@@ -279,7 +279,7 @@ async fn purge_handler_cascades_through_100_block_tree_and_cleans_temp_table() {
 
     // Drive a purge through the materializer foreground handler — this
     // exercises the `OpType::PurgeBlock` arm that was refactored under
-    // PEND-20 C to use the `_purge_descendants` TEMP table.
+    // C to use the `_purge_descendants` TEMP table.
     let r = make_op_record(
         &pool,
         OpPayload::PurgeBlock(PurgeBlockPayload {
@@ -317,7 +317,7 @@ async fn purge_handler_cascades_through_100_block_tree_and_cleans_temp_table() {
             .unwrap();
     assert!(
         leaked.is_none(),
-        "PEND-20 C: the _purge_descendants temp table must be dropped at the end of the handler"
+        " C: the _purge_descendants temp table must be dropped at the end of the handler"
     );
 }
 

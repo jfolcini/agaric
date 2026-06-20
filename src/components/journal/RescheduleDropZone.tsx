@@ -8,7 +8,7 @@
  * Coexists with dnd-kit (which handles same-page block reordering) because
  * this uses native HTML5 drag/drop events, not dnd-kit's pointer system.
  *
- * ## Keyboard accessibility (UX-274)
+ * ## Keyboard accessibility
  *
  * Drag-and-drop is intentionally pointer-only — keyboard users do **not**
  * need to interact with this drop zone. The keyboard-equivalent path for

@@ -1,6 +1,6 @@
 /**
  * Tests for `path-history` — per-space MRU of path-glob strings used in the
- * search input's caret-anchored autocomplete (PEND-60 Phase 2).
+ * Search input's caret-anchored autocomplete (Phase 2).
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'

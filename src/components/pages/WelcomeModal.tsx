@@ -39,7 +39,7 @@ const FEATURES = [
 ] as const
 
 async function createSamplePages(t: TFunction): Promise<void> {
-  // BUG-1 / H-3b — onboarding sample pages must land with a `space`
+  // / H-3b — onboarding sample pages must land with a `space`
   // ref property so they show up in the PageBrowser. At first boot
   // the bootstrap has just seeded Personal + Work; the active space
   // is whichever one the SpaceStore reconciled to (Personal by
@@ -111,7 +111,7 @@ export function WelcomeModal() {
     markOnboardingDone()
   }, [])
 
-  // UX-228: close the modal when the global "close all overlays" shortcut
+  // Close the modal when the global "close all overlays" shortcut
   // fires. Treat this as a dismissal (same as clicking outside the Radix
   // Dialog) so the onboarding flag is set and the modal does not re-open
   // on the next launch.
@@ -145,7 +145,7 @@ export function WelcomeModal() {
 
   if (bootState !== 'ready') return null
 
-  // MAINT-215: feature list renders inside DialogBody on desktop so it
+  // Feature list renders inside DialogBody on desktop so it
   // scrolls when the viewport is short; the mobile Sheet path keeps the
   // list inline (SheetContent already constrains height) so we don't nest
   // scroll regions.
@@ -153,7 +153,7 @@ export function WelcomeModal() {
     /*
       oxlint-disable-next-line jsx-a11y/no-redundant-roles -- explicit role="list" is
       required because Safari + VoiceOver strip the implicit list role
-      from a <ul> with `list-style: none` (Tailwind `list-none`). UX-278.
+      from a <ul> with `list-style: none` (Tailwind `list-none`). .
     */
     <ul role="list" className="grid list-none gap-4 py-2 pl-0">
       {FEATURES.map((feature) => (

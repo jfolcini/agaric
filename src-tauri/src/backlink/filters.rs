@@ -138,7 +138,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
         }
         match filter {
             BacklinkFilter::PropertyText { key, op, value } => {
-                // PERF-27: build the comparison clause dynamically so SQLite
+                // Build the comparison clause dynamically so SQLite
                 // filters by operator rather than materialising every row
                 // with this key and filtering in Rust.  Mirrors the pattern
                 // in `pagination/properties.rs::query_by_property`.
@@ -179,7 +179,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
             }
 
             BacklinkFilter::PropertyNum { key, op, value } => {
-                // PERF-27: push operator comparison into SQL so SQLite filters
+                // Push operator comparison into SQL so SQLite filters
                 // by operator rather than materialising every row with this
                 // key and filtering in Rust.  Mirrors the `PropertyText` arm
                 // above.
@@ -218,7 +218,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
             }
 
             BacklinkFilter::PropertyDate { key, op, value } => {
-                // PERF-27: push operator comparison into SQL so SQLite filters
+                // Push operator comparison into SQL so SQLite filters
                 // by operator rather than materialising every row with this
                 // key and filtering in Rust.  Mirrors the `PropertyText` arm
                 // above.
@@ -363,16 +363,16 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
             }
 
             BacklinkFilter::HasTag { tag_id } => {
-                // MAINT-143: shares leaf SQL with `tag_query::resolve_expr`
-                // (UX-250 inline-ref union semantics). The single source of
+                // Shares leaf SQL with `tag_query::resolve_expr`
+                // (inline-ref union semantics). The single source of
                 // truth is `tag_query::resolve_tag_leaves`.
                 let rows = resolve_tag_leaves(pool, tag_id, false).await?;
                 Ok(rows.into_iter().collect())
             }
 
             BacklinkFilter::HasTagPrefix { prefix } => {
-                // MAINT-143: shares leaf SQL with `tag_query::resolve_expr`
-                // (UX-250 inline-ref union semantics). The single source of
+                // Shares leaf SQL with `tag_query::resolve_expr`
+                // (inline-ref union semantics). The single source of
                 // truth is `tag_query::resolve_tag_prefix_leaves`.
                 let rows = resolve_tag_prefix_leaves(pool, prefix, false).await?;
                 Ok(rows.into_iter().collect())
@@ -499,7 +499,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                 if !included.is_empty() {
                     // Get all descendants of included pages.
                     // Positional IN-bind for ≤SMALL_IN_LIMIT, json_each fallback
-                    // above the threshold (L-84).
+                    // Above the threshold.
                     result = fetch_descendants_of(pool, included).await?;
 
                     // Apply exclusion on top of included set if needed
@@ -513,7 +513,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                 } else if !excluded.is_empty() {
                     // Exclusion-only: push exclusion into SQL to avoid loading full table.
                     // Positional IN-bind for ≤SMALL_IN_LIMIT, json_each fallback
-                    // above the threshold (L-84).
+                    // Above the threshold.
                     if excluded.len() <= SMALL_IN_LIMIT {
                         let placeholders = std::iter::repeat_n("?", excluded.len())
                             .collect::<Vec<_>>()
@@ -1050,7 +1050,7 @@ pub(crate) fn compile_backlink_filter<'a>(
 ///
 /// Uses a positional `IN (?,?,…)` clause when `roots.len() <=
 /// SMALL_IN_LIMIT`, falling back to `IN (SELECT value FROM json_each(?))`
-/// for larger inputs to dodge SQLite's variable-binding ceiling. (L-84)
+/// For larger inputs to dodge SQLite's variable-binding ceiling.
 async fn fetch_descendants_of(
     pool: &SqlitePool,
     roots: &[String],

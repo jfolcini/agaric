@@ -1,5 +1,5 @@
 /**
- * Tests for DataSettingsTab component (UX-144).
+ * Tests for DataSettingsTab component.
  *
  * Validates:
  *  - Renders import and export sections
@@ -7,7 +7,7 @@
  *  - File selection calls importMarkdown
  *  - Shows import result after success
  *  - Export button calls exportGraphAsZip
- *  - Export filename embeds the sanitized active space name (UX-385)
+ * Export filename embeds the sanitized active space name
  *  - Shows error toast on export failure
  *  - Has no a11y violations (axe)
  */
@@ -37,9 +37,9 @@ vi.mock('../../lib/tauri', () => ({
 
 import { toast } from 'sonner'
 
-// PEND-35 Tier 1.1 — `import_markdown` now requires `space_id`. Seed a
+// `import_markdown` now requires `space_id`. Seed a
 // default active space in `beforeEach` so the existing tests exercise
-// the happy path; per-test overrides (UX-385 filename test, the new
+// The happy path; per-test overrides (filename test, the new
 // "disabled when no space" test below) override this fixture.
 const DEFAULT_TEST_SPACE: SpaceRow = {
   id: 'SPACE_DEFAULT',
@@ -79,7 +79,7 @@ describe('DataSettingsTab', () => {
     expect(clickSpy).toHaveBeenCalled()
   })
 
-  it('file selection calls importMarkdown with the active spaceId (PEND-35)', async () => {
+  it('file selection calls importMarkdown with the active spaceId', async () => {
     const importResult = {
       page_title: 'Test Page',
       blocks_created: 5,
@@ -98,7 +98,7 @@ describe('DataSettingsTab', () => {
       fileInput.dispatchEvent(new Event('change', { bubbles: true }))
     })
 
-    // PEND-35 Tier 1.1 — `importMarkdown` takes `(content, filename,
+    // `importMarkdown` takes `(content, filename,
     // spaceId, onProgress?)`. Assert the active space's ULID flows
     // through so the backend can stamp `space = ?spaceId` on the imported
     // page. #128 added the 4th `onProgress` callback arg — assert it is a
@@ -113,8 +113,8 @@ describe('DataSettingsTab', () => {
     })
   })
 
-  it('disables the import button when no active space is selected (PEND-35)', () => {
-    // PEND-35 Tier 1.1 — `import_markdown` rejects empty / unknown
+  it('disables the import button when no active space is selected', () => {
+    // `import_markdown` rejects empty / unknown
     // ULIDs. Pre-bootstrap (no active space) the button must stay
     // disabled rather than firing a doomed IPC. Explicitly clear the
     // beforeEach seed for this test only.
@@ -130,8 +130,8 @@ describe('DataSettingsTab', () => {
     expect(importBtn).toBeDisabled()
   })
 
-  it('surfaces a visible + screen-reader-announced reason when import is gated (PEND-35)', () => {
-    // PEND-35 Tier 1.1 — A disabled button with only a `title`
+  it('surfaces a visible + screen-reader-announced reason when import is gated', () => {
+    // A disabled button with only a `title`
     // attribute is invisible on touch (`pointer:coarse`) and on
     // browsers that suppress tooltips for `disabled` controls
     // (Chromium drops the hover synth because the Button has
@@ -159,7 +159,7 @@ describe('DataSettingsTab', () => {
     expect(importBtn).toHaveAttribute('aria-describedby', hint.id)
   })
 
-  it('hides the import-not-ready hint once a space becomes active (PEND-35)', () => {
+  it('hides the import-not-ready hint once a space becomes active', () => {
     // Sanity check: when the SpaceStore eventually hydrates, the hint
     // disappears and `aria-describedby` is dropped — otherwise screen
     // readers would announce a stale "Select a space…" forever.
@@ -197,7 +197,7 @@ describe('DataSettingsTab', () => {
   })
 
   it('renders streamed per-block progress from the import channel (#128)', async () => {
-    // #128 (PEND-38 / PEND-06 Tier 3) — the 4th `onProgress` arg receives
+    // #128 — the 4th `onProgress` arg receives
     // `started` → `progress` → `complete` events over a Channel. Drive
     // them through the mock and assert the intra-file block bar + label
     // reflect the stream while the import is in flight.
@@ -282,7 +282,7 @@ describe('DataSettingsTab', () => {
     })
   })
 
-  it('export filename includes the sanitized active space name (UX-385)', async () => {
+  it('export filename includes the sanitized active space name', async () => {
     const user = userEvent.setup()
     const mockBlob = new Blob(['zip'], { type: 'application/zip' })
     mockExportGraphAsZip.mockResolvedValueOnce(mockBlob)
@@ -328,7 +328,7 @@ describe('DataSettingsTab', () => {
     })
   })
 
-  it('shows per-file progress text during multi-file import (UX-283)', async () => {
+  it('shows per-file progress text during multi-file import', async () => {
     let resolveFirst: (v: unknown) => void = () => {}
     let resolveSecond: (v: unknown) => void = () => {}
     mockImportMarkdown
@@ -377,7 +377,7 @@ describe('DataSettingsTab', () => {
     })
   })
 
-  it('shows cumulative blocks + bytes secondary line after first file completes (UX-384)', async () => {
+  it('shows cumulative blocks + bytes secondary line after first file completes', async () => {
     let resolveFirst: (v: unknown) => void = () => {}
     let resolveSecond: (v: unknown) => void = () => {}
     mockImportMarkdown
@@ -436,7 +436,7 @@ describe('DataSettingsTab', () => {
     })
   })
 
-  it('hides secondary progress line when no blocks/bytes are reported yet (UX-384)', async () => {
+  it('hides secondary progress line when no blocks/bytes are reported yet', async () => {
     let resolveFirst: (v: unknown) => void = () => {}
     mockImportMarkdown.mockImplementationOnce(
       () =>
@@ -468,7 +468,7 @@ describe('DataSettingsTab', () => {
     })
   })
 
-  it('renders a <progress> bar alongside the text during multi-file import (UX-12)', async () => {
+  it('renders a <progress> bar alongside the text during multi-file import', async () => {
     let resolveFirst: (v: unknown) => void = () => {}
     let resolveSecond: (v: unknown) => void = () => {}
     mockImportMarkdown

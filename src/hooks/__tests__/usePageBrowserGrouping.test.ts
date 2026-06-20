@@ -2,7 +2,7 @@
  * Tests for usePageBrowserGrouping — covers the two branch helpers
  * (`buildSinglePageBranch`, `buildMultiPageBranch`) and the
  * `sortTopLevelUnits` comparator that drive `PageBrowser`'s unified
- * `Starred` + `Pages` row model (FEAT-14).
+ * `Starred` + `Pages` row model.
  */
 
 import { renderHook } from '@testing-library/react'

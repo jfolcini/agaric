@@ -71,12 +71,12 @@ async fn snapshot_list_blocks_response() {
         None,
         None,
         Some(10),
-        TEST_SPACE_ID.into(), // FEAT-3 Phase 2: space_id unscoped
+        TEST_SPACE_ID.into(), //  Phase 2: space_id unscoped
     )
     .await
     .unwrap();
 
-    // TEST-10: exhaustive redactions covering every non-deterministic field
+    // Exhaustive redactions covering every non-deterministic field
     // surfaced by `PageResponse<BlockRow>` — block ids and ancestor refs are
     // ULIDs, `deleted_at` is an RFC 3339 timestamp, `next_cursor` is an
     // opaque base64 cursor. Each path is redacted unconditionally so the
@@ -131,7 +131,7 @@ async fn snapshot_status_info_response() {
 async fn snapshot_block_history_response() {
     let (pool, _dir) = test_pool().await;
 
-    // Insert deterministic op_log entries directly. PEND-20 B.2 — the
+    // Insert deterministic op_log entries directly. B.2 — the
     // `block_id` column must be populated explicitly because
     // `list_block_history` now queries that column instead of
     // `json_extract(payload, '$.block_id')`.

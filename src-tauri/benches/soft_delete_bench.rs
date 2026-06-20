@@ -56,7 +56,7 @@ async fn seed_tree(pool: &sqlx::SqlitePool, depth: usize, width: usize) -> Strin
 
 const ROOT_ID: &str = "ROOT00000000000000000000";
 
-/// Device id stamped on M-81 re-parent op log entries that
+/// Device id stamped on re-parent op log entries that
 /// `cascade_soft_delete` may emit when the bench seeds conflict copies.
 /// The seeded trees here have no conflict copies, so no op log rows are
 /// written, but the parameter is required by the signature.

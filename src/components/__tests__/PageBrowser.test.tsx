@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// PEND-37: virtualized pagination relies on auto-load timing that behaves
+// Virtualized pagination relies on auto-load timing that behaves
 // differently under happy-dom's IntersectionObserver shim. Pin to jsdom
 // until the auto-load test is rewritten to use the explicit `<LoadMoreButton>`
 // fallback path (which doesn't depend on intersection events).
@@ -34,12 +34,12 @@ import { useSpaceStore } from '../../stores/space'
 import { PageBrowser } from '../PageBrowser'
 
 // Capture every `estimateSize` callback passed to `useVirtualizer` so the
-// PEND-30 L-5 referential-stability test can assert the function identity
+// Referential-stability test can assert the function identity
 // is unchanged across re-renders that don't change `groupedRows`.
 //
 // The captured signature is the production one (`(index: number) => number`),
 // but the mock invokes it without args throughout this test file (legacy
-// zero-arg invocation predates the L-5 change). The `(...args: never[])`
+// Zero-arg invocation predates the change). The `(...args: never[])`
 // type lets both calling conventions type-check cleanly without `any`.
 type EstimateSizeFn = (...args: never[]) => number
 const capturedEstimateSizes: Array<EstimateSizeFn> = []
@@ -104,7 +104,7 @@ beforeEach(() => {
   // persisted key so chips added in one test don't leak into the next.
   localStorage.removeItem('agaric:page-browser-filters')
   usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
-  // FEAT-3 Phase 2 — PageBrowser now gates its render and page query
+  // Phase 2 — PageBrowser now gates its render and page query
   // on `useSpaceStore.isReady`. Seed the store so tests exercise the
   // real code path rather than the loading skeleton.
   useSpaceStore.setState({
@@ -389,8 +389,8 @@ describe('PageBrowser', () => {
       expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
     })
 
-    // UX-212: input has accessible name via Label htmlFor
-    it('new page input has accessible name via sr-only label (UX-212)', async () => {
+    // Input has accessible name via Label htmlFor
+    it('new page input has accessible name via sr-only label', async () => {
       mockedInvoke.mockResolvedValueOnce(emptyPage)
 
       render(<PageBrowser />)
@@ -632,12 +632,12 @@ describe('PageBrowser', () => {
     const pageRow = screen.getByText('Focus Page').closest('.group') as HTMLElement
     const pageBtn = within(pageRow).getByRole('button', { name: /Focus Page/i })
     expect(pageBtn.className).toContain('focus-ring-visible')
-    // UX-237: focus ring must be inset so the inner ScrollArea's
+    // Focus ring must be inset so the inner ScrollArea's
     // `overflow-hidden` does not clip its left/right legs.
     expect(pageBtn).toHaveClass('focus-visible:ring-inset')
   })
 
-  it('UX-11: focused page row highlights with bg only — focus ring lives on the inner button', async () => {
+  it('focused page row highlights with bg only — focus ring lives on the inner button', async () => {
     mockedInvoke.mockResolvedValueOnce({
       items: [makePage({ id: 'P1', content: 'Inset Page' })],
       next_cursor: null,
@@ -673,7 +673,7 @@ describe('PageBrowser', () => {
     expect(innerBtn?.className).toContain('focus-visible:ring-inset')
   })
 
-  it('UX-237: star-toggle and delete buttons have ring-inset focus rings', async () => {
+  it('star-toggle and delete buttons have ring-inset focus rings', async () => {
     mockedInvoke.mockResolvedValueOnce({
       items: [makePage({ id: 'P1', content: 'Inset Buttons Page' })],
       next_cursor: null,
@@ -1028,11 +1028,11 @@ describe('PageBrowser', () => {
       expect(screen.getByRole('button', { name: /^Delete$/i })).toBeInTheDocument()
     })
 
-    // UX-259: Delete is destructive — Cancel must be auto-focused so reflex
+    // Delete is destructive — Cancel must be auto-focused so reflex
     // Enter dismisses instead of permanently deleting the page. We assert
     // focus state + no-mutation rather than dialog dismissal alone, because
     // jsdom's autoFocus + Radix focus-trap timing can lag the Enter event.
-    it('UX-259: reflex Enter on delete dialog does NOT call trash_page', async () => {
+    it('reflex Enter on delete dialog does NOT call trash_page', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
         items: [makePage({ id: 'P1', content: 'work/project-a' })],
@@ -1240,7 +1240,7 @@ describe('PageBrowser', () => {
       expect(screen.getByTitle('Meeting Notes')).toBeInTheDocument()
     })
 
-    // UX-247 — Unicode-aware filter regression tests.  Plain
+    // Unicode-aware filter regression tests. Plain
     // `.toLowerCase().includes(...)` fails these cases; the filter
     // now delegates to `matchesSearchFolded` in `@/lib/fold-for-search`.
 
@@ -1338,13 +1338,13 @@ describe('PageBrowser', () => {
     })
 
     // -----------------------------------------------------------------
-    // PEND-29 B-2: alias-resolution stale-fetch guard. When a slow
+    // B-2: alias-resolution stale-fetch guard. When a slow
     // promise resolves AFTER a newer query has been issued, the older
     // result must be discarded so `aliasMatchId` reflects the latest
     // query — not the older in-flight one.
     // -----------------------------------------------------------------
 
-    it('alias resolution discards stale promise resolution (PEND-29 B-2)', async () => {
+    it('alias resolution discards stale promise resolution (B-2)', async () => {
       const user = userEvent.setup()
 
       // Two pages: `Apple` (P_APPLE) and `Banana` (P_BANANA). The alias
@@ -1634,7 +1634,7 @@ describe('PageBrowser', () => {
       expect(starButtons).toHaveLength(2)
     })
 
-    // FEAT-12: clicking the star toggle moves the page between groups.
+    // Clicking the star toggle moves the page between groups.
     // With a 1-page vault we render flat (no headers) — so this test
     // pairs with the multi-page case below which asserts the row jump.
     it('clicking star toggles starred state and persists to localStorage', async () => {
@@ -1669,9 +1669,9 @@ describe('PageBrowser', () => {
       expect(localStorage.getItem('starred-pages')).toBe(JSON.stringify([]))
     })
 
-    // FEAT-12: starring a page in a multi-page vault moves it to the top
+    // Starring a page in a multi-page vault moves it to the top
     // of the list under the "Starred" group header.
-    it('clicking star moves the page to the top under the Starred header (FEAT-12)', async () => {
+    it('clicking star moves the page to the top under the Starred header', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -1717,9 +1717,9 @@ describe('PageBrowser', () => {
       expect(starredRow).toHaveAttribute('data-starred', 'true')
     })
 
-    // FEAT-12: starred-above-unstarred ordering with sort applied
+    // Starred-above-unstarred ordering with sort applied
     // independently per group.
-    it('FEAT-12: alphabetical sort applies inside each group independently', async () => {
+    it('alphabetical sort applies inside each group independently', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P3', 'P1']))
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -1745,7 +1745,7 @@ describe('PageBrowser', () => {
       expect(titles).toEqual(['Banana', 'Cherry', 'Apple', 'Durian'])
     })
 
-    it('FEAT-12: created-DESC sort applies inside each group independently', async () => {
+    it('created-DESC sort applies inside each group independently', async () => {
       const user = userEvent.setup()
       localStorage.setItem('starred-pages', JSON.stringify(['01AAA', '01CCC']))
       mockedInvoke.mockResolvedValueOnce({
@@ -1775,7 +1775,7 @@ describe('PageBrowser', () => {
       expect(titles).toEqual(['NewStar', 'OldStar', 'NewestUnstar', 'MidUnstar'])
     })
 
-    it('FEAT-12: recent sort applies inside each group independently', async () => {
+    it('recent sort applies inside each group independently', async () => {
       const user = userEvent.setup()
       localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
       mockedGetRecentPages.mockReturnValue([
@@ -1809,7 +1809,7 @@ describe('PageBrowser', () => {
       expect(titles).toEqual(['Apple', 'Banana', 'Cherry', 'Durian'])
     })
 
-    it('FEAT-12: toggling star round-trips a page between groups', async () => {
+    it('toggling star round-trips a page between groups', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -1849,7 +1849,7 @@ describe('PageBrowser', () => {
       expect(titles).toEqual(['Apple', 'Banana', 'Cherry'])
     })
 
-    it('FEAT-14: namespaced pages render under the unified Pages section alongside Starred', async () => {
+    it('namespaced pages render under the unified Pages section alongside Starred', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -1864,7 +1864,7 @@ describe('PageBrowser', () => {
       render(<PageBrowser />)
       await screen.findByText('project-a')
 
-      // Under FEAT-14 the unified model NO LONGER bypasses Starred when
+      // Under the unified model NO LONGER bypasses Starred when
       // namespaced pages are present. Starred renders the starred-and-
       // namespaced page (full title); Pages renders the namespace tree.
       expect(screen.getByText('Starred')).toBeInTheDocument()
@@ -1876,7 +1876,7 @@ describe('PageBrowser', () => {
       expect(screen.getByText('project-b')).toBeInTheDocument()
     })
 
-    it('FEAT-12: zero-starred hides the Starred header', async () => {
+    it('zero-starred hides the Starred header', async () => {
       mockedInvoke.mockResolvedValueOnce({
         items: [
           makePage({ id: 'P1', content: 'Apple' }),
@@ -1896,7 +1896,7 @@ describe('PageBrowser', () => {
       expect(container.querySelector('[data-page-section="pages"]')).not.toBeNull()
     })
 
-    it('FEAT-12: all-starred hides the Pages header', async () => {
+    it('all-starred hides the Pages header', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -1915,7 +1915,7 @@ describe('PageBrowser', () => {
       expect(screen.queryByText('Pages')).not.toBeInTheDocument()
     })
 
-    it('FEAT-12: single-page vault renders flat with no headers', async () => {
+    it('single-page vault renders flat with no headers', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
         items: [makePage({ id: 'P1', content: 'Solo' })],
@@ -1931,7 +1931,7 @@ describe('PageBrowser', () => {
       expect(screen.queryByText('Pages')).not.toBeInTheDocument()
     })
 
-    it('FEAT-12: search narrows both groups; emptied group hides its header', async () => {
+    it('search narrows both groups; emptied group hides its header', async () => {
       const user = userEvent.setup()
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
@@ -1962,7 +1962,7 @@ describe('PageBrowser', () => {
       expect(screen.queryByText('StarredApple')).not.toBeInTheDocument()
     })
 
-    it('FEAT-12: Starred header carries count in its accessible name', async () => {
+    it('Starred header carries count in its accessible name', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -1982,7 +1982,7 @@ describe('PageBrowser', () => {
         '[data-page-section="starred"]',
       ) as HTMLElement | null
       expect(starredGroup).not.toBeNull()
-      // Under MAINT-162's grid flip the section header is a row inside
+      // Under grid flip the section header is a row inside
       // the page-list grid (its single gridcell child carries the
       // visible label and the icon).
       expect(starredGroup).toHaveAttribute('role', 'row')
@@ -1996,7 +1996,7 @@ describe('PageBrowser', () => {
       expect(pagesGroup).toHaveAccessibleName('Pages, 1 page')
     })
 
-    it('FEAT-12: viewport aria-label switches to grouped variant when starred exist', async () => {
+    it('viewport aria-label switches to grouped variant when starred exist', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -2015,7 +2015,7 @@ describe('PageBrowser', () => {
       expect(grid).toHaveAttribute('aria-label', 'Page list, grouped by starred')
     })
 
-    it('FEAT-12: viewport aria-label stays plain when no starred pages', async () => {
+    it('viewport aria-label stays plain when no starred pages', async () => {
       mockedInvoke.mockResolvedValueOnce({
         items: [
           makePage({ id: 'P1', content: 'Apple' }),
@@ -2033,7 +2033,7 @@ describe('PageBrowser', () => {
       expect(grid).toHaveAttribute('aria-label', 'Page list')
     })
 
-    it('FEAT-12: keyboard ArrowDown skips header rows (focus stays page-indexed)', async () => {
+    it('keyboard ArrowDown skips header rows (focus stays page-indexed)', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P2']))
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -2080,7 +2080,7 @@ describe('PageBrowser', () => {
       expect(homeFocused?.querySelector('.page-browser-item-title')?.textContent).toBe('Banana')
     })
 
-    it('FEAT-12: a11y audit passes on grouped state', async () => {
+    it('a11y audit passes on grouped state', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -2103,7 +2103,7 @@ describe('PageBrowser', () => {
       expect(results).toHaveNoViolations()
     })
 
-    it('FEAT-12: a11y audit passes on filtered state with grouping', async () => {
+    it('a11y audit passes on filtered state with grouping', async () => {
       const user = userEvent.setup()
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
@@ -2132,10 +2132,10 @@ describe('PageBrowser', () => {
     })
 
     // ---------------------------------------------------------------
-    // FEAT-14: unified Starred + Pages model
+    // Unified Starred + Pages model
     // ---------------------------------------------------------------
 
-    it('FEAT-14: starred (non-namespaced) and namespaced pages coexist', async () => {
+    it('starred (non-namespaced) and namespaced pages coexist', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -2164,7 +2164,7 @@ describe('PageBrowser', () => {
       expect(screen.getByText('foo')).toBeInTheDocument()
     })
 
-    it('FEAT-14: top-level flat pages and namespace roots interleave under Pages alphabetically', async () => {
+    it('top-level flat pages and namespace roots interleave under Pages alphabetically', async () => {
       mockedInvoke.mockResolvedValueOnce({
         items: [
           makePage({ id: 'P1', content: 'Inbox' }),
@@ -2193,7 +2193,7 @@ describe('PageBrowser', () => {
       expect(pageRows[1]?.textContent).toMatch(/work/)
     })
 
-    it('FEAT-14: a starred-and-namespaced page renders TWICE — once in Starred, once nested in Pages', async () => {
+    it('a starred-and-namespaced page renders TWICE — once in Starred, once nested in Pages', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -2221,7 +2221,7 @@ describe('PageBrowser', () => {
       expect(screen.getByText('work')).toBeInTheDocument()
     })
 
-    it('FEAT-14: star toggle from either copy of a duplicated row updates BOTH copies', async () => {
+    it('star toggle from either copy of a duplicated row updates BOTH copies', async () => {
       const user = userEvent.setup()
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
@@ -2251,7 +2251,7 @@ describe('PageBrowser', () => {
       expect(screen.getByText('foo')).toBeInTheDocument()
     })
 
-    it('FEAT-14: filter narrows Pages to empty → Pages header hides, Starred remains', async () => {
+    it('filter narrows Pages to empty → Pages header hides, Starred remains', async () => {
       const user = userEvent.setup()
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
@@ -2279,7 +2279,7 @@ describe('PageBrowser', () => {
       expect(screen.queryByText('Pages')).not.toBeInTheDocument()
     })
 
-    it('FEAT-14: filter narrows Starred to empty → Starred header hides, Pages remains', async () => {
+    it('filter narrows Starred to empty → Starred header hides, Pages remains', async () => {
       const user = userEvent.setup()
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
@@ -2304,7 +2304,7 @@ describe('PageBrowser', () => {
       expect(screen.getByText('work')).toBeInTheDocument()
     })
 
-    it('FEAT-14: keyboard ArrowDown walks every visible row in render order, including duplicates', async () => {
+    it('keyboard ArrowDown walks every visible row in render order, including duplicates', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -2319,7 +2319,7 @@ describe('PageBrowser', () => {
       render(<PageBrowser />)
       await screen.findByText('Inbox')
 
-      // Render order under FEAT-14:
+      // Render order under:
       //   row 0: Starred header
       //   row 1: page row `work/foo` (starred flat copy, pageIndex=0)
       //   row 2: Pages header
@@ -2365,7 +2365,7 @@ describe('PageBrowser', () => {
       expect(endWrapper?.className).toMatch(/ring-2/)
     })
 
-    it('FEAT-14: empty vault renders the EmptyState component (no section chrome)', async () => {
+    it('empty vault renders the EmptyState component (no section chrome)', async () => {
       mockedInvoke.mockResolvedValueOnce(emptyPage)
 
       render(<PageBrowser />)
@@ -2383,7 +2383,7 @@ describe('PageBrowser', () => {
       expect(viewport?.getAttribute('data-has-pages')).toBe('false')
     })
 
-    it('FEAT-14: a11y audit passes on the unified Starred + Pages layout with namespaced rows', async () => {
+    it('a11y audit passes on the unified Starred + Pages layout with namespaced rows', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -2398,7 +2398,7 @@ describe('PageBrowser', () => {
       const { container } = render(<PageBrowser />)
       await screen.findByText('project-a')
 
-      // Both sections render under FEAT-14: Starred (the starred-and-
+      // Both sections render under Starred (the starred-and-
       // namespaced page) and Pages (the namespace tree).
       expect(screen.getByText('Starred')).toBeInTheDocument()
       expect(screen.getByText('Pages')).toBeInTheDocument()
@@ -2431,8 +2431,8 @@ describe('PageBrowser', () => {
       expect(results).toHaveNoViolations()
     })
 
-    // UX-226: ScrollArea replaces bare overflow-y-auto on the page list
-    it('page list is wrapped in a ScrollArea viewport (UX-226)', async () => {
+    // ScrollArea replaces bare overflow-y-auto on the page list
+    it('page list is wrapped in a ScrollArea viewport', async () => {
       mockedInvoke.mockResolvedValueOnce({
         items: [makePage({ id: 'P1', content: 'A page' })],
         next_cursor: null,
@@ -2444,7 +2444,7 @@ describe('PageBrowser', () => {
 
       await screen.findByText('A page')
 
-      // The page-list grid lives on the ScrollArea viewport (MAINT-162).
+      // The page-list grid lives on the ScrollArea viewport.
       const viewport = container.querySelector('[data-slot="scroll-area-viewport"]')
       expect(viewport).toBeInTheDocument()
       expect(viewport?.getAttribute('role')).toBe('grid')
@@ -2456,10 +2456,10 @@ describe('PageBrowser', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // MAINT-14: handleCreateUnder setTimeout must be cleared on unmount so the
+  // HandleCreateUnder setTimeout must be cleared on unmount so the
   // scheduled focus callback never runs against a detached DOM.
   // ---------------------------------------------------------------------------
-  describe('handleCreateUnder setTimeout cleanup (#MAINT-14)', () => {
+  describe('handleCreateUnder setTimeout cleanup (#)', () => {
     it('does not throw if unmounted between handleCreateUnder setTimeout and fire', async () => {
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -2504,12 +2504,12 @@ describe('PageBrowser', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // UX-331: keyboard navigation exposes aria-activedescendant on the grid so
+  // Keyboard navigation exposes aria-activedescendant on the grid so
   // screen readers can track arrow-key focus moves without the inner buttons
   // having to receive DOM focus. Each rendered row also carries a stable id
   // matching the activedescendant value.
   // ---------------------------------------------------------------------------
-  describe('UX-331 aria-activedescendant on keyboard nav', () => {
+  describe(' aria-activedescendant on keyboard nav', () => {
     it('grid container exposes aria-activedescendant matching the focused row id', async () => {
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -2571,14 +2571,14 @@ describe('PageBrowser', () => {
     })
   })
 
-  describe('UX-198 header outlet migration', () => {
+  describe(' header outlet migration', () => {
     // The create-page form + search/sort bar used to live inside a
     // `sticky top-0` wrapper div. It's now hoisted to the App-level outlet
     // via <ViewHeader>; the per-view subtree must not contain the stale
     // sticky-positioning classes. The header content still renders
     // (inline fallback when no provider is present) so existing tests
     // querying the create-page form continue to work.
-    it('UX-198: no sticky top-0 wrapper div, but header content still renders', async () => {
+    it('no sticky top-0 wrapper div, but header content still renders', async () => {
       mockedInvoke.mockResolvedValueOnce(emptyPage)
       const { container } = render(<PageBrowser />)
       await waitFor(() => {
@@ -2593,10 +2593,10 @@ describe('PageBrowser', () => {
   })
 
   // ====================================================================
-  // UX-246 — SearchInput clear-button coverage
+  // SearchInput clear-button coverage
   // ====================================================================
 
-  describe('SearchInput clear button (UX-246)', () => {
+  describe('SearchInput clear button', () => {
     it('new-page input shows clear button when non-empty and clearing resets name + disables submit', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce(emptyPage)
@@ -2700,7 +2700,7 @@ describe('PageBrowser', () => {
   })
 
   // ====================================================================
-  // PEND-30 L-5 — useVirtualizer.estimateSize must be referentially
+  // UseVirtualizer.estimateSize must be referentially
   // stable across re-renders that don't change `groupedRows`. TanStack
   // Virtual treats option-identity changes as a re-measure trigger.
   // ====================================================================
@@ -2745,7 +2745,7 @@ describe('PageBrowser', () => {
       await user.type(search, 'an')
 
       // "Banana" matches; Apple/Cherry don't. The chip switches to the
-      // "X of Y matching" form. PEND-58e E13 — the text box narrows only
+      // "X of Y matching" form. the text box narrows only
       // the LOADED set (3 pages here), so the denominator is the loaded
       // count (3), NOT the server filtered total (312). Pairing a loaded
       // numerator with a server-total denominator was the basis skew E13
@@ -2954,7 +2954,7 @@ describe('PageBrowser', () => {
     })
   })
 
-  describe('PEND-30 L-5 estimateSize referential stability', () => {
+  describe('  estimateSize referential stability', () => {
     it('estimateSize identity is preserved across re-renders that do not change groupedRows', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
@@ -2997,11 +2997,11 @@ describe('PageBrowser', () => {
     })
   })
 
-  // ── PEND-56 Phase 3 — density rows ────────────────────────────────
+  // ── Phase 3 — density rows ────────────────────────────────
   //
   // The queryFn fetches via `listPagesWithMetadata` and routes the leaf
   // rows through `<DensityRow>`. These tests verify the wiring.
-  describe('PEND-56 — density rows', () => {
+  describe('density rows', () => {
     afterEach(() => {
       localStorage.removeItem('page-browser-density')
     })
@@ -3414,13 +3414,13 @@ describe('PageBrowser', () => {
     })
   })
 
-  // ── PEND-56 Phase 3 — sort comparator vs metadata ─────────────────
+  // ── Phase 3 — sort comparator vs metadata ─────────────────
   //
   // The frontend `sortPages` comparator re-sorts the loaded page when
   // the chosen sort is one of the metadata-aware modes. These tests
   // hand-craft rows with known counts/timestamps and confirm the
   // displayed order matches the comparator (alphabetical tiebreaker).
-  describe('PEND-56 — sort comparator vs metadata', () => {
+  describe('sort comparator vs metadata', () => {
     afterEach(() => {
       localStorage.removeItem('page-browser-sort')
     })
@@ -3570,13 +3570,13 @@ describe('PageBrowser', () => {
     })
   })
 
-  // ── PEND-58 Phase 3 — compound filters ────────────────────────────
+  // ── Phase 3 — compound filters ────────────────────────────
   //
   // The chip-row applies server-side filters by threading a `filters`
   // array into the metadata IPC. These tests drive the real Add-Filter
   // popover and assert the IPC receives the chosen primitive, then that
   // removing it clears it.
-  describe('PEND-58 — compound filters', () => {
+  describe('compound filters', () => {
     function metaPage(id: string, content: string) {
       return {
         id,
@@ -3767,13 +3767,13 @@ describe('PageBrowser', () => {
     })
   })
 
-  // ── PEND-58d — frontend container hardening ─────────────────────────
+  // ── frontend container hardening ─────────────────────────
   //
   // Covers the orchestrator-level fixes: load-more grid a11y (D9),
   // optimistic-create vs active filters (D10), count-chip basis
   // integration (D11), duplicate-chip dedupe (D22), and the
   // cursor-recovery retry-also-fails path (T-F2 / withCursorRecovery).
-  describe('PEND-58d — frontend container hardening', () => {
+  describe('frontend container hardening', () => {
     function metaPage(id: string, content: string) {
       return {
         id,
@@ -4124,8 +4124,8 @@ describe('PageBrowser', () => {
     })
   })
 
-  // ── PEND-58e — deep-review fixes (E5 / E7 / E13 / E15 / E16 / E18) ───
-  describe('PEND-58e — deep-review fixes', () => {
+  // ── deep-review fixes (E5 / E7 / E13 / E15 / E16 / E18) ───
+  describe('deep-review fixes', () => {
     beforeEach(() => {
       // Reset the global resolve cache so E5's tag-name fixture doesn't
       // leak across tests.

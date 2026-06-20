@@ -45,7 +45,7 @@ pub async fn list_trash(
         None => (None, 0, ""),
     };
 
-    // FEAT-3 Phase 2 — ?5 (space_id) drives the shared space filter.
+    // Phase 2 — ?5 (space_id) drives the shared space filter.
     // The clause is inlined here (rather than composed via
     // `crate::space_filter_clause!`) because `sqlx::query_as!` requires
     // a string literal and does not accept `concat!()`. Mirror any

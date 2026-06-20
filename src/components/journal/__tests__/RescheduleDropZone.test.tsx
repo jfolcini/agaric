@@ -323,7 +323,7 @@ describe('RescheduleDropZone', () => {
     expect(mockSetScheduledDate).not.toHaveBeenCalled()
   })
 
-  // UX-282: screen-reader announcement after successful reschedule
+  // Screen-reader announcement after successful reschedule
   it('announces task rescheduled after successful drop', async () => {
     render(
       <RescheduleDropZone dateStr="2025-01-15">
@@ -339,11 +339,11 @@ describe('RescheduleDropZone', () => {
     })
   })
 
-  // UX-274: keyboard-equivalent path is documented in the source JSDoc.
+  // Keyboard-equivalent path is documented in the source JSDoc.
   // Drag-only is OK because users can reschedule via DateChip → DateChipEditor.
   // This guards against an accidental removal of the JSDoc that explains why
   // the no-static-element-interactions oxlint-disable is justified.
-  it('source documents keyboard-equivalent reschedule path (UX-274)', async () => {
+  it('source documents keyboard-equivalent reschedule path', async () => {
     expect(typeof RescheduleDropZone).toBe('function')
     const fs = await import('node:fs')
     const path = await import('node:path')
@@ -353,7 +353,7 @@ describe('RescheduleDropZone', () => {
     expect(source).toMatch(/Keyboard accessibility/i)
   })
 
-  // UX-282: screen-reader announcement when reschedule fails
+  // Screen-reader announcement when reschedule fails
   it('announces reschedule failed when setDueDate rejects', async () => {
     mockSetDueDate.mockRejectedValueOnce(new Error('Network error'))
 

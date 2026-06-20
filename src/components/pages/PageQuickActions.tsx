@@ -6,7 +6,7 @@
  *   - journal `DaySection` (variant: 'journal') — day-header chrome.
  *   - (future) Pages-list `DensityRow` (variant: 'row').
  *
- * Principle (PEND-68 Part A): star is a safe, reversible toggle → always
+ * Principle (Part A): star is a safe, reversible toggle → always
  * visible. Delete is destructive → wrapped in a ConfirmDialog upstream,
  * and the trigger button gets destructive-on-hover styling + disabled
  * during in-flight IPC. Recovery from a mistaken delete is handled by
@@ -36,7 +36,7 @@
  *     group-hover, so a live UX review asked for them to render
  *     unconditionally (same as 'header', just the smaller `icon-xs` size).
  *   - 'row' — `icon-xs`, same hover-reveal as journal. Kept here so a
- *     future `DensityRow` refactor (PEND-68 A4, deferred) can switch
+ * Future `DensityRow` refactor (deferred) can switch
  *     without touching this file's surface area.
  */
 

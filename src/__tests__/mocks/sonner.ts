@@ -47,7 +47,7 @@ export const toast: ToastMock = Object.assign(vi.fn(), {
 
 // React-only props on the real sonner `<Toaster>` that are meaningless as DOM
 // attributes. Spreading them onto a `<section>` triggers React "does not
-// recognize the <foo> prop on a DOM element" warnings (TEST-4a). We filter
+// Recognize the <foo> prop on a DOM element" warnings. We filter
 // them out before forwarding the rest (which intentionally includes
 // `data-*` / `aria-*` / `className` / `style` etc. for test inspection).
 const TOASTER_REACT_ONLY_PROPS = new Set([

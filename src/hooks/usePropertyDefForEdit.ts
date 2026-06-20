@@ -7,7 +7,7 @@
  * everything when `editingProp` becomes `null`. Failures are logged via
  * `logger.warn` and degrade to a plain text input.
  *
- * Extracted from `SortableBlock` (MAINT-128).
+ * Extracted from `SortableBlock`.
  */
 
 import { useEffect, useState } from 'react'
@@ -43,7 +43,7 @@ export function usePropertyDefForEdit(
       return
     }
     let stale = false
-    // PEND-35 Tier 2.6: single-key PK lookup instead of paginating the
+    // Single-key PK lookup instead of paginating the
     // entire property-definition vocabulary every time the user opens
     // the per-block property-editor popover.
     getPropertyDef(editingProp.key)
@@ -68,7 +68,7 @@ export function usePropertyDefForEdit(
         } else if (def?.value_type === 'ref') {
           setIsRefProp(true)
           setSelectOptions(null)
-          // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
+          // Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
           // fallback is intentional pre-bootstrap behaviour: empty
           // string forces a no-match SQL filter rather than a runtime
           // null deref.

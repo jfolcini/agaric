@@ -98,7 +98,7 @@ export async function fetchBacklinksQuery(
   if (!params['target']) {
     throw new QueryValidationError('Backlinks query requires target:ULID parameter')
   }
-  // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
+  // Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
   // fallback is intentional pre-bootstrap behaviour: empty string
   // forces a no-match SQL filter rather than a runtime null deref.
   const resp = await listBlocks({
@@ -110,7 +110,7 @@ export async function fetchBacklinksQuery(
   return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
 }
 
-/** PEND-35 Tier 2.10b — AND-intersect property + tag predicates in SQL.
+/** AND-intersect property + tag predicates in SQL.
  *
  *  Single IPC into [`filteredBlocksQuery`] which composes one
  *  `EXISTS (SELECT 1 FROM block_properties …)` subquery per property
@@ -124,7 +124,7 @@ export async function fetchBacklinksQuery(
  *  sub-filter with `FILTERED_SUBQUERY_LIMIT = 200` and intersected the
  *  result-id sets in JS with `FILTERED_QUERY_MAX_ROWS = 50`. Any
  *  AND-set member outside the top-200 of any one sub-query was
- *  silently dropped — see PEND-35 Tier 2.10b for the full audit.
+ * Silently dropped — for the full audit.
  */
 export async function fetchFilteredQuery(
   propertyFilters: PropertyFilter[],
@@ -294,7 +294,7 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
   const [loadingMore, setLoadingMore] = useState(false)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
 
-  // PEND-22: monotonic request-id counter so a slow in-flight fetch can't
+  // Monotonic request-id counter so a slow in-flight fetch can't
   // clobber the results of a faster newer fetch when `expression` /
   // `currentSpaceId` change (or `handleLoadMore` is called) before the
   // previous IPC settles. Each fetch captures its own `myReqId`; if the

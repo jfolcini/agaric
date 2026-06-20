@@ -140,7 +140,7 @@ describe('PeerListItem', () => {
       await user.click(editBtn)
 
       // Popover is now open — type a syntactically valid address that
-      // the server rejects (UX-378: client validation now blocks
+      // The server rejects (client validation now blocks
       // malformed input before it reaches the IPC; this exercises
       // the defense-in-depth toast path for server-side rejections).
       const input = screen.getByLabelText('Address (host:port)')
@@ -149,7 +149,7 @@ describe('PeerListItem', () => {
       await user.click(screen.getByRole('button', { name: /Save/i }))
 
       await waitFor(() => {
-        // UX-12: toast now embeds the format example so the user
+        // Toast now embeds the format example so the user
         // doesn't have to reopen the popover hint to recover.
         expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
           'Invalid address format. Expected host:port (e.g., 192.168.1.100:5000).',
@@ -239,8 +239,8 @@ describe('PeerListItem', () => {
     })
   })
 
-  // ── UX-12: address popover Cancel button + format hint typography ───
-  describe('address popover Cancel button + format hint (UX-12)', () => {
+  // ── address popover Cancel button + format hint typography ───
+  describe('address popover Cancel button + format hint', () => {
     it('renders a Cancel button that closes the popover without invoking IPC', async () => {
       const user = userEvent.setup()
       const peer = makePeer({ device_name: 'Work Laptop' })
@@ -288,8 +288,8 @@ describe('PeerListItem', () => {
     })
   })
 
-  // ── UX-378: real-time inline format validation ──────────────────────
-  describe('address popover inline format validation (UX-378)', () => {
+  // ── real-time inline format validation ──────────────────────
+  describe('address popover inline format validation', () => {
     it('shows no inline error for empty input and disables Save', async () => {
       const user = userEvent.setup()
       const peer = makePeer({ device_name: 'Work Laptop' })
@@ -376,9 +376,9 @@ describe('PeerListItem', () => {
     })
   })
 
-  // PEND-23 M3: PopoverContent must carry an aria-label so screen readers
+  // PopoverContent must carry an aria-label so screen readers
   // announce the popover purpose, not a generic "dialog".
-  describe('address popover aria-label (PEND-23 M3)', () => {
+  describe('address popover aria-label', () => {
     it('labels the open popover with device.editAddressPopoverLabel', async () => {
       const user = userEvent.setup()
       const peer = makePeer({ device_name: 'Work Laptop' })
@@ -405,11 +405,11 @@ describe('PeerListItem', () => {
     })
   })
 
-  // PEND-23 L6: the IP-address Input inside the popover is placeholder-only
+  // The IP-address Input inside the popover is placeholder-only
   // by default. Placeholders disappear on focus and are not exposed as the
   // accessible name in every SR. The Input must carry a non-empty
   // aria-label sourced from i18n.
-  describe('address input aria-label (PEND-23 L6)', () => {
+  describe('address input aria-label', () => {
     it('labels the IP-address input with device.addressInputLabel', async () => {
       const user = userEvent.setup()
       const peer = makePeer({ device_name: 'Work Laptop' })

@@ -1,5 +1,5 @@
 /**
- * Tests for SpaceOnboardingHint (PEND-30 D-2 extraction).
+ * Tests for SpaceOnboardingHint (D-2 extraction).
  *
  * Coverage:
  *  - First render with open=true and ≤2 spaces shows the banner.
@@ -88,7 +88,7 @@ describe('SpaceOnboardingHint', () => {
     expect(readOnboardingSeen()).toBe(false)
   })
 
-  // Backwards-compat guard: pre-PEND-30 D-2 the storage key was
+  // Backwards-compat guard: pre- D-2 the storage key was
   // derived at runtime from `i18n.t('space.onboardingSeenKey')`. The
   // i18n value is `'agaric:space-onboarding-seen-v1'` (see
   // src/lib/i18n/common.ts). The new stable token MUST equal that

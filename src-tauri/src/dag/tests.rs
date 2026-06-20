@@ -13,7 +13,7 @@ const DEV_A: &str = "device-A";
 const DEV_B: &str = "device-B";
 
 /// Test-fixture constants for `find_lca_after_compaction_returns_clear_error`.
-/// Extracted from inline SQL (TEST-26) to make schema/format changes easier
+/// Extracted from inline SQL to make schema/format changes easier
 /// to track. Adjust here when the snapshot row schema or hash format changes.
 const TEST_SNAPSHOT_ID: &str = "SNAP01";
 const TEST_SNAPSHOT_HASH: &str = "fakehash";
@@ -65,7 +65,7 @@ fn make_remote_record(
     payload: &str,
 ) -> OpRecord {
     let hash = compute_op_hash(device_id, seq, parent_seqs.as_deref(), op_type, payload);
-    // L-13: cache the parsed block_id on the sidecar (mirrors the
+    // Cache the parsed block_id on the sidecar (mirrors the
     // production `From<OpTransfer>` path).
     let block_id = crate::op_log::extract_block_id_from_payload(payload);
     OpRecord {
@@ -457,7 +457,7 @@ async fn insert_remote_op_preserves_bytes_but_canonicalizes_on_read() {
     );
 }
 
-/// M-5: an op whose `parent_seqs` references a `(device_id, seq)` that
+/// An op whose `parent_seqs` references a `(device_id, seq)` that
 /// has not yet landed in the op_log must be rejected with
 /// `AppError::InvalidOperation("dag.parent_seqs.unresolved")`.
 ///
@@ -497,7 +497,7 @@ async fn insert_remote_op_rejects_unresolved_parent_seqs() {
     );
 }
 
-/// M-5: an op whose `parent_seqs` lists multiple parents must reject
+/// An op whose `parent_seqs` lists multiple parents must reject
 /// when *any* parent is unresolved, even if some parents do exist.
 #[tokio::test]
 async fn insert_remote_op_rejects_partial_unresolved_parent_seqs() {
@@ -653,7 +653,7 @@ async fn append_merge_op_rejects_empty_parents() {
     );
 }
 
-// PEND-24 M5 — `append_merge_op` now dedups `parent_entries` after the
+// `append_merge_op` now dedups `parent_entries` after the
 // canonical sort, before hashing, so a buggy caller that hands in
 // duplicate `(device_id, seq)` pairs cannot construct an op with a
 // degenerate parent set. The two tests below pin both halves of the
@@ -1070,7 +1070,7 @@ async fn find_lca_op_b_is_create_block() {
     assert_eq!(lca, Some((DEV_A.to_owned(), 1)));
 }
 
-/// M-4: a chain longer than `MAX_LCA_STEPS` (10,000) must trip the
+/// A chain longer than `MAX_LCA_STEPS` (10,000) must trip the
 /// step-cap and return `AppError::InvalidOperation` with a clear
 /// message — even when the chain is *acyclic* and would otherwise walk
 /// to completion.  Without the cap, a corrupted op log with a
@@ -1958,7 +1958,7 @@ async fn cte_oracle_two_op_chain_lca_is_genesis() {
     .await;
 }
 
-/// Disjoint chains (M-72 shape): two independent create_block ops for
+/// Disjoint chains (shape): two independent create_block ops for
 /// the same block_id — chains never overlap. Both implementations must
 /// return `None`.
 #[tokio::test]

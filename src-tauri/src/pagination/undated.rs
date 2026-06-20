@@ -8,7 +8,7 @@ use sqlx::SqlitePool;
 ///
 /// When `space_id` is `Some`, only blocks whose owning page
 /// (`b.page_id`) carries `space = ?space_id` are returned.
-/// `None` keeps the pre-FEAT-3 behaviour (no filter). See
+/// `None` keeps the pre- behaviour (no filter). See
 /// [`crate::space_filter_clause`] for the shared SQL fragment definition.
 pub async fn list_undated_tasks(
     pool: &SqlitePool,
@@ -21,7 +21,7 @@ pub async fn list_undated_tasks(
         None => (None, ""),
     };
 
-    // FEAT-3p4 — ?4 (space_id) drives the shared space-filter clause.
+    // ?4 (space_id) drives the shared space-filter clause.
     // The literal mirrors `crate::space_filter_clause!` — kept inline here
     // because `sqlx::query_as!` requires a string literal and does not
     // accept `concat!()`. Mirror any change to the filter SQL across

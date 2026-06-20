@@ -119,11 +119,11 @@ import type {
 } from './bindings'
 
 /**
- * PEND-18 Phase 3 — translate the JS-side `spaceId: string | null` shape
+ * Phase 3 — translate the JS-side `spaceId: string | null` shape
  * into the new tagged-enum [`SpaceScope`] the IPC boundary now expects.
  *
  * `null` / `undefined` → `{ kind: 'global' }` (cross-space view, the
- * pre-FEAT-3 behaviour for callsites that haven't promoted to per-space
+ * Pre- behaviour for callsites that haven't promoted to per-space
  * scoping yet). A non-empty ULID → `{ kind: 'active', space_id }`.
  *
  * The wrapper signatures in this file keep accepting the legacy
@@ -156,7 +156,7 @@ function unwrap<T>(result: { status: 'ok'; data: T } | { status: 'error'; error:
 }
 
 // ---------------------------------------------------------------------------
-// PEND-73 Phase 2.R4 — AbortSignal plumbing for the typed IPC wrappers.
+// Phase 2.R4 — AbortSignal plumbing for the typed IPC wrappers.
 //
 // The pattern below races the wrapped IPC promise against the caller's
 // AbortSignal. Tauri 2's `invoke()` itself does NOT honour the signal —
@@ -170,7 +170,7 @@ function unwrap<T>(result: { status: 'ok'; data: T } | { status: 'error'; error:
 // of hand-rolling a generation counter. Existing consumers are NOT
 // migrated in this commit — `useGenerationGuard` already gives them
 // the discard semantics, and the rewrite has no user-visible win
-// without an orchestrator decomposition (PEND-74-equivalent).
+// Without an orchestrator decomposition (equivalent).
 // ---------------------------------------------------------------------------
 
 import type { AppError } from './bindings'
@@ -227,7 +227,7 @@ export function withAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise
 
 /** Create a new block. Returns the created block with its generated ID.
  *
- * BUG-1 / H-3a — when `blockType === 'page'`, `spaceId` is REQUIRED.
+ * / H-3a — when `blockType === 'page'`, `spaceId` is REQUIRED.
  * The backend rejects page-typed creates without a space ULID with
  * `AppError::Validation`. For page creation, prefer the explicit
  * `createPageInSpace` helper below — it makes the invariant readable
@@ -258,7 +258,7 @@ export async function createBlock(params: {
 }
 
 /**
- * PEND-35 Tier 4.3 — atomically create N blocks (with optional per-block
+ * Atomically create N blocks (with optional per-block
  * properties) in a single backend IMMEDIATE transaction.
  *
  * Replaces the per-block `createBlock` IPC loop in
@@ -297,7 +297,7 @@ export async function deleteBlock(blockId: string): Promise<DeleteResponse> {
 }
 
 /**
- * PEND-35 Tier 2.1 — batch soft-delete a list of blocks (cascade to
+ * Batch soft-delete a list of blocks (cascade to
  * descendants for each root) inside a single backend IMMEDIATE
  * transaction. Returns the number of blocks soft-deleted (roots +
  * descendants combined).
@@ -308,7 +308,7 @@ export async function deleteBlock(blockId: string): Promise<DeleteResponse> {
  * the new path is one IPC, one writer-lock window, one op_log
  * append-scope. The backend's recursive CTE seeds from every root
  * simultaneously so descendant ids that are also in the input set
- * are coalesced — the FE no longer needs the MAINT-173 ancestor
+ * Are coalesced — the FE no longer needs the ancestor
  * pre-walk.
  *
  * Already-deleted / missing ids are silently dropped on the backend
@@ -322,7 +322,7 @@ export async function deleteBlocksByIds(blockIds: string[]): Promise<number> {
 }
 
 /**
- * #81 / PEND-57 — move N blocks to a target space in a single IPC.
+ * #81 / move N blocks to a target space in a single IPC.
  *
  * Returns the number of blocks actually moved (the backend skips ids
  * that are missing or already in `spaceId`). Used by the Pages-view
@@ -360,7 +360,7 @@ export async function purgeAllDeleted(): Promise<BulkTrashResponse> {
 }
 
 /**
- * PEND-35 Tier 2.2 — restore a list of soft-deleted blocks in a single IPC.
+ * Restore a list of soft-deleted blocks in a single IPC.
  *
  * Mirrors `restoreBlock` but accepts an array of ids; the backend runs one
  * IMMEDIATE transaction with one op_log scope instead of N. Each id is
@@ -375,7 +375,7 @@ export async function restoreBlocksByIds(blockIds: string[]): Promise<number> {
 }
 
 /**
- * PEND-35 Tier 2.2 — permanently purge a list of soft-deleted blocks in a
+ * Permanently purge a list of soft-deleted blocks in a
  * single IPC.
  *
  * Mirrors `purgeBlock` but accepts an array of ids; the backend runs one
@@ -403,7 +403,7 @@ export async function trashDescendantCounts(rootIds: string[]): Promise<Record<s
 /**
  * Batch-fetch the first child of each parent block in a single IPC call.
  *
- * PEND-35 Tier 2.8 — collapses the TemplatesView preview-fetch N+1
+ * Collapses the TemplatesView preview-fetch N+1
  * (`listBlocks({ parentId, limit: 1 })` per template) into a single
  * window-function-backed query on the backend. The returned record
  * maps `parentId -> firstChildBlockRow`, ordered by `(position, id)`
@@ -418,7 +418,7 @@ export async function firstChildForBlocks(blockIds: string[]): Promise<Record<st
 }
 
 /**
- * PEND-35 Tier 2.3 — batch-fetch full BlockRows by id.
+ * Batch-fetch full BlockRows by id.
  *
  * Sibling of `batchResolve` returning the full 12-column `BlockRow`
  * (not just the lightweight `id / title / block_type / deleted`
@@ -444,9 +444,9 @@ export async function getBlocks(ids: string[]): Promise<BlockRow[]> {
  * `agendaDateRange`, `agendaSource`) as three top-level fields for
  * backward compatibility. On the IPC boundary they are bundled into the
  * Rust `AgendaQuery` struct so the Tauri command stays under the
- * `tauri-specta` 10-arg limit after FEAT-3 Phase 2 added `spaceId`.
+ * `tauri-specta` 10-arg limit after Phase 2 added `spaceId`.
  *
- * `spaceId` (FEAT-3 Phase 4) — required. The backend filters results to
+ * `spaceId` (Phase 4) — required. The backend filters results to
  * blocks whose owning page carries `space = <spaceId>`. Callers must
  * resolve the active `currentSpaceId` (from `useSpaceStore`) before
  * invoking; pre-bootstrap callers should pass `''` (empty string), which
@@ -502,7 +502,7 @@ export async function listTrash(params: {
 /**
  * Look up a single journal page by its date string in the given space.
  *
- * BUG-48 — replaces the frontend pattern of paginating `listBlocks({ blockType:
+ * Replaces the frontend pattern of paginating `listBlocks({ blockType:
  * 'page', limit: 100 })` and probing the resulting Map. Backed by the partial
  * index `idx_blocks_journal_date` (migration 0047) so the lookup is O(index)
  * regardless of total block count. Returns `null` when no journal page exists
@@ -519,7 +519,7 @@ export async function getJournalPageByDate(params: {
  * List the date-formatted journal pages in the given space whose date falls
  * inclusively in `[startDate, endDate]`.
  *
- * BUG-48 — replaces the cursor-paginated `listBlocks({ blockType: 'page',
+ * Replaces the cursor-paginated `listBlocks({ blockType: 'page',
  * limit: 100 })` loop in `useCalendarPageDates` with a range-scoped
  * indexed lookup. Callers pass the visible date range (typically the
  * 6-week calendar grid for monthly views, or the visible week / day for
@@ -537,7 +537,7 @@ export async function listJournalPagesInRange(params: {
 }
 
 /**
- * PEND-56 — paginated page list with per-page metadata columns:
+ * Paginated page list with per-page metadata columns:
  * `last_modified_at`, `inbound_link_count`, `child_block_count`, and a
  * `has_property_flags` bitmask (bit 0 tags / 1 todo / 2 scheduled / 3 due).
  *
@@ -555,7 +555,7 @@ export async function listPagesWithMetadata(params: {
   cursor?: string | undefined
   limit?: SafeLimit | undefined
   /**
-   * PEND-58 Phase 3 — compound filter primitives applied server-side
+   * Phase 3 — compound filter primitives applied server-side
    * (AND-composed). Omit / empty for today's unfiltered behaviour. The
    * backend gates each primitive against the Pages allowed-keys set and
    * rejects Search-only primitives with a validation error.
@@ -599,9 +599,9 @@ export async function runAdvancedQuery(
 
 /** List undated tasks (tasks with todo_state but no due/scheduled date).
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, restricts results to undated
+ * `spaceId` (Phase 4) — when set, restricts results to undated
  * tasks whose owning page carries `space = <spaceId>`. `null` /
- * `undefined` leaves the result set unscoped, matching the pre-FEAT-3
+ * `undefined` leaves the result set unscoped, matching the pre-
  * behaviour for cross-space callers.
  */
 export async function listUndatedTasks(params?: {
@@ -621,10 +621,10 @@ export async function listUndatedTasks(params?: {
 /**
  * List projected future occurrences of repeating tasks for a date range.
  *
- * Cursor-paginated (M-25). Pass `cursor: response.next_cursor` to fetch
+ * Cursor-paginated. Pass `cursor: response.next_cursor` to fetch
  * the next page; `has_more = false` indicates the final page.
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, restricts projections to
+ * `spaceId` (Phase 4) — when set, restricts projections to
  * blocks whose owning page carries `space = <spaceId>`. `null` /
  * `undefined` leaves the result set unscoped.
  */
@@ -647,7 +647,7 @@ export async function listProjectedAgenda(opts: {
 }
 
 /**
- * Fire a native OS notification for a due / scheduled task (FEAT-11).
+ * Fire a native OS notification for a due / scheduled task.
  *
  * Thin wrapper over the `notify_task` IPC command. `title` is required and
  * must be non-empty (the backend rejects a blank title with a validation
@@ -665,7 +665,7 @@ export async function notifyTask(notification: TaskNotification): Promise<void> 
 }
 
 /**
- * Ensure the OS notification permission is granted (FEAT-11).
+ * Ensure the OS notification permission is granted.
  *
  * On Android 13+ a runtime `POST_NOTIFICATIONS` grant is required before
  * {@link notifyTask} can surface anything; on desktop the capability grant
@@ -708,7 +708,7 @@ export interface ResolvedBlock {
 
 /** Batch-resolve block metadata for multiple IDs in a single call.
  *
- * `spaceId` (FEAT-3p7) — when set, restricts resolution to blocks
+ * `spaceId` — when set, restricts resolution to blocks
  * whose owning page carries `space = <spaceId>`. Foreign-space targets
  * simply do not appear in the response, which is what makes the chip
  * fall into the "unknown id" branch and render via the broken-link
@@ -751,7 +751,7 @@ export async function addTag(blockId: string, tagId: string): Promise<TagRespons
 }
 
 /**
- * #81 / PEND-57 — add ONE tag to N blocks in a single IPC.
+ * #81 / add ONE tag to N blocks in a single IPC.
  *
  * Bulk counterpart to {@link addTag}; the backend skips ids that are
  * missing or already carry the tag, and returns the number of blocks
@@ -768,7 +768,7 @@ export async function removeTag(blockId: string, tagId: string): Promise<TagResp
 
 /** List blocks that link to the given block (backlinks), paginated.
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, restricts the backlinks to
+ * `spaceId` (Phase 4) — when set, restricts the backlinks to
  * source blocks whose owning page carries `space = <spaceId>`. `null` /
  * `undefined` leaves the result set unscoped (cross-space view).
  */
@@ -790,7 +790,7 @@ export async function getBacklinks(params: {
 
 /** List op-log history for a block, paginated (newest first).
  *
- * PEND-35 Tier 1.3 — `opTypeFilter` is pushed into SQL so cursor pages
+ * `opTypeFilter` is pushed into SQL so cursor pages
  * arrive pre-filtered. Mirrors `listPageHistory`. When `undefined`, all
  * op types for the block are returned. */
 export async function getBlockHistory(params: {
@@ -811,20 +811,20 @@ export async function getBlockHistory(params: {
 
 /** Full-text search across all blocks, paginated by relevance.
  *
- * `spaceId` (FEAT-3 Phase 4) — required. Restricts matches to blocks
+ * `spaceId` (Phase 4) — required. Restricts matches to blocks
  * whose owning page carries `space = <spaceId>`. Callers must resolve
  * the active `currentSpaceId` (from `useSpaceStore`) before invoking;
  * pre-bootstrap callers should pass `''` (empty string), which the
  * backend treats as a no-match (returns an empty page) rather than
  * crashing on a runtime null deref.
  *
- * PEND-50 Phase 0 — `parentId`, `tagIds`, `spaceId` are marshalled into
+ * Phase 0 — `parentId`, `tagIds`, `spaceId` are marshalled into
  * the backend's `SearchFilter` struct at the IPC boundary. The public
  * API stays flat so existing call sites (e.g. `SearchPanel.tsx`) do
- * not need to change. Follow-up plans (PEND-51 / 54 / 55 / 53) append
+ * Not need to change. Follow-up plans (54 / 55 / 53) append
  * new filter fields here; the wrapper forwards each into the struct.
  *
- * PEND-50 Phase 1 — responses now carry `SearchBlockRow` (which adds
+ * Phase 1 — responses now carry `SearchBlockRow` (which adds
  * `snippet: string | null`). The shape is a strict superset of
  * `BlockRow`, so existing consumers compile unchanged.
  */
@@ -836,59 +836,59 @@ export async function searchBlocks(
     cursor?: string | undefined
     limit?: SafeLimit | undefined
     spaceId: string
-    /** PEND-54 — page-name glob include list. See `SearchFilter`. */
+    /** page-name glob include list. See `SearchFilter`. */
     includePageGlobs?: string[] | undefined
-    /** PEND-54 — page-name glob exclude list. See `SearchFilter`. */
+    /** page-name glob exclude list. See `SearchFilter`. */
     excludePageGlobs?: string[] | undefined
-    /** PEND-55 — case-sensitive post-FTS filter. See `SearchFilter`. */
+    /** case-sensitive post-FTS filter. See `SearchFilter`. */
     caseSensitive?: boolean | undefined
-    /** PEND-55 — ASCII whole-word post-FTS filter. See `SearchFilter`. */
+    /** ASCII whole-word post-FTS filter. See `SearchFilter`. */
     wholeWord?: boolean | undefined
-    /** PEND-55 — regex-mode (bypasses FTS5). See `SearchFilter`. */
+    /** regex-mode (bypasses FTS5). See `SearchFilter`. */
     isRegex?: boolean | undefined
     /**
-     * PEND-51 — restrict to a specific `blocks.block_type` (e.g. `'page'`).
+     * Restrict to a specific `blocks.block_type` (e.g. `'page'`).
      * The Cmd+K palette fires a page-only query in parallel with an
      * unrestricted blocks query so the FE only has to merge by `page_id`.
-     * `undefined` preserves the pre-PEND-51 "all block types" behaviour.
+     * `undefined` preserves the pre- "all block types" behaviour.
      * See `SearchFilter.block_type_filter`.
      */
     blockTypeFilter?: string | undefined
-    /** PEND-53 — `blocks.todo_state IN (...)`. See `SearchFilter`. */
+    /** `blocks.todo_state IN (...)`. See `SearchFilter`. */
     stateFilter?: string[] | undefined
-    /** PEND-53 — `blocks.priority IN (...)`. See `SearchFilter`. */
+    /** `blocks.priority IN (...)`. See `SearchFilter`. */
     priorityFilter?: string[] | undefined
     /**
-     * PEND-53 — date predicate on `blocks.due_date`. The frontend AST
+     * Date predicate on `blocks.due_date`. The frontend AST
      * carries `DateFilterValue` with operators `< <= = >= >`; this
      * wrapper translates to the wire shape `{ named: ... } | { op: {
      * op: 'lt' | 'lte' | 'eq' | 'gte' | 'gt', date } }`.
      */
     dueFilter?: DateFilterValueInput | null | undefined
-    /** PEND-53 — same shape as `dueFilter` but on `blocks.scheduled_date`. */
+    /** same shape as `dueFilter` but on `blocks.scheduled_date`. */
     scheduledFilter?: DateFilterValueInput | null | undefined
-    /** PEND-53 — AND-joined property filters; see `SearchPropertyFilter`. */
+    /** AND-joined property filters; see `SearchPropertyFilter`. */
     propertyFilters?: { key: string; value: string }[] | undefined
-    /** PEND-53 — AND-joined property exclusions. */
+    /** AND-joined property exclusions. */
     excludedPropertyFilters?: { key: string; value: string }[] | undefined
     /**
-     * PEND-63 — `not-state:` projection. Backend emits
+     * `not-state:` projection. Backend emits
      * `(todo_state IS NULL OR todo_state NOT IN (...))` — NULL-inclusive
      * inversion. Literal `'none'` flips to `todo_state IS NOT NULL`.
      */
     excludedStateFilter?: string[] | undefined
-    /** PEND-63 — `not-priority:` projection. Symmetric to `excludedStateFilter`. */
+    /** `not-priority:` projection. Symmetric to `excludedStateFilter`. */
     excludedPriorityFilter?: string[] | undefined
   },
   /**
-   * PEND-58f FE-2 — optional client-side abort. When the supplied
+   * Optional client-side abort. When the supplied
    * `AbortSignal` fires the returned promise rejects with a
    * `cancelled`-kind `AppError` (see {@link withAbort}), which
    * `isCancellation()` discriminates so superseded searches are
    * swallowed silently by the caller. The underlying IPC is NOT
    * cancelled server-side (Tauri 2 limitation); this is a
    * stop-waiting primitive that lets a newer search drop the prior
-   * in-flight one. Omit for the pre-PEND-58f fire-and-forget shape.
+   * In-flight one. Omit for the pre- fire-and-forget shape.
    */
   signal?: AbortSignal,
 ): Promise<PageResponse<SearchBlockRow>> {
@@ -919,11 +919,11 @@ export async function searchBlocks(
 }
 
 /**
- * PEND-61 Phase 1 — partitioned full-text search.
+ * Phase 1 — partitioned full-text search.
  *
  * Returns `pages` (rows where `block_type='page'`) and `blocks`
  * (unrestricted rank-ordered set; may include pages alongside content)
- * in **one** FTS5 scan. Replaces the PEND-51 palette pattern of firing
+ * In **one** FTS5 scan. Replaces the palette pattern of firing
  * two parallel `searchBlocks` calls.
  *
  * `filter.blockTypeFilter` is ignored — the partitioning IS the
@@ -974,7 +974,7 @@ export async function searchBlocksPartitioned(params: {
 }
 
 /**
- * PEND-53 — frontend-side `DateFilter` input shape. Mirrors the
+ * Frontend-side `DateFilter` input shape. Mirrors the
  * `DateFilterValue` union in `src/lib/search-query/types.ts` (the
  * shape the AST projection emits). The IPC wrapper translates this
  * to the wire shape (`DateFilter`) at the IPC boundary so the rest
@@ -1010,11 +1010,11 @@ export async function getStatus(): Promise<StatusInfo> {
 
 /** Query blocks by boolean tag expression (AND/OR mode), paginated.
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, restricts matches to blocks
+ * `spaceId` (Phase 4) — when set, restricts matches to blocks
  * whose owning page carries `space = <spaceId>`. `null` / `undefined`
  * leaves the result set unscoped (cross-space view).
  *
- * `blockType` (PEND-35 Tier 3.4) — when set, restricts matches to
+ * `blockType` — when set, restricts matches to
  * blocks whose `block_type` equals the supplied value (e.g. `'page'`).
  * Pushes GraphView's JS-side `pagesResp.items.filter(p => p.block_type
  * === 'page')` predicate into SQL.
@@ -1109,7 +1109,7 @@ export interface PropertyRow {
   value_num: number | null
   value_date: string | null
   value_ref: string | null
-  /** PEND-14: native boolean property storage; SQLite represents it as 0/1/null. */
+  /** native boolean property storage; SQLite represents it as 0/1/null. */
   value_bool: number | null
 }
 
@@ -1145,7 +1145,7 @@ export async function getProperties(blockId: string): Promise<PropertyRow[]> {
 }
 
 /** Get a single property row by `(block_id, key)` primary key
- * (PEND-35 Tier 2.4c).
+ *.
  *
  * Returns the row, or `null` when no property exists for `key` on the
  * given block. Replaces the pattern of calling `getProperties(blockId)`
@@ -1172,7 +1172,7 @@ export async function getBatchProperties(
 
 /** Batch-count agenda items per date. Returns a map of date -> count.
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, restricts counts to agenda
+ * `spaceId` (Phase 4) — when set, restricts counts to agenda
  * items whose owning page carries `space = <spaceId>`. `null` /
  * `undefined` leaves the counts cross-space.
  */
@@ -1185,7 +1185,7 @@ export async function countAgendaBatch(params: {
 
 /** Batch-count agenda items per (date, source). Returns nested map: date -> source -> count.
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, restricts counts to agenda
+ * `spaceId` (Phase 4) — when set, restricts counts to agenda
  * items whose owning page carries `space = <spaceId>`. `null` /
  * `undefined` leaves the counts cross-space.
  */
@@ -1198,7 +1198,7 @@ export async function countAgendaBatchBySource(params: {
 
 /** Batch-count backlinks per target page. Returns a map of pageId -> count.
  *
- * `spaceId` (PEND-35 Tier 1.6) — when set, restricts the counted source
+ * `spaceId` — when set, restricts the counted source
  * blocks to those whose owning page carries `space = <spaceId>`.
  * `null` / `undefined` keeps the cross-space (legacy) behaviour. The
  * scope is forwarded as a [`SpaceScope`] via `toSpaceScope`. Without
@@ -1235,7 +1235,7 @@ export async function setTodoState(blockId: string, state: string | null): Promi
 }
 
 /**
- * PEND-35 Tier 2.1 — batch set/clear todo state across a list of blocks
+ * Batch set/clear todo state across a list of blocks
  * inside a single backend IMMEDIATE transaction. Returns the number of
  * blocks whose `todo_state` actually changed.
  *
@@ -1275,7 +1275,7 @@ export async function setScheduledDate(blockId: string, date: string | null): Pr
 
 /** List global operation history (page-scoped), paginated (newest first).
  *
- * FEAT-3 Phase 8 — `spaceId` narrows the global (`pageId === '__all__'`)
+ * Phase 8 — `spaceId` narrows the global (`pageId === '__all__'`)
  * query to ops whose `payload.block_id` belongs to the requested space.
  * Pass `undefined` to disable the space filter (cross-space all-spaces
  * mode). Ignored in per-page mode — a real ULID `pageId` is already
@@ -1300,14 +1300,14 @@ export async function listPageHistory(params: {
 
 /** List all page-to-page links for graph visualization.
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, restricts the link set to
+ * `spaceId` (Phase 4) — when set, restricts the link set to
  * source pages whose `space = <spaceId>`. `null` / `undefined` leaves
  * the graph cross-space (legacy behaviour).
  *
- * `tagIds` (PEND-35 Tier 4.5) — when non-empty, restricts edges to
+ * `tagIds` — when non-empty, restricts edges to
  * those whose **target page** carries at least one of the listed
  * tags (via `block_tags`, `block_tag_inherited`, or
- * `block_tag_refs` — same UX-250 union semantics as `queryByTags`).
+ * `block_tag_refs` — same union semantics as `queryByTags`).
  * Pushes the GraphView tag-filter predicate into SQL so the renderer
  * no longer fetches every space-wide edge then drops the off-tag
  * subgraph in JS. `null` / `undefined` / empty leaves the edge set
@@ -1356,7 +1356,7 @@ export async function restorePageToOp(params: {
 
 /** Query blocks by property key and optional value, with cursor pagination.
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, restricts matches to blocks
+ * `spaceId` (Phase 4) — when set, restricts matches to blocks
  * whose owning page carries `space = <spaceId>`. `null` / `undefined`
  * leaves the result set unscoped (cross-space view).
  */
@@ -1380,13 +1380,13 @@ export async function listUnfinishedTasks(params: {
 
 /** Query blocks by property key/value with cursor pagination.
  *
- * `excludeParentId` / `contentNonEmpty` (PEND-35 Tier 1.5) push the
+ * `excludeParentId` / `contentNonEmpty` push the
  * DonePanel's two post-filters down into SQL so cursor pagination,
  * `total_count`, and load-more reflect the visible set instead of
  * the unfiltered raw page. `undefined` / `false` preserves the legacy
  * unfiltered behaviour.
  *
- * `blockType` / `valueTextIn` / `valueDateRange` (PEND-35 Tier 3.4)
+ * `blockType` / `valueTextIn` / `valueDateRange`
  * push three more filters into SQL:
  *  - `blockType` — equality on `b.block_type` (e.g. restrict templates
  *    to `'page'`).
@@ -1476,7 +1476,7 @@ export interface FilteredBlocksTagFilter {
   includeInherited?: boolean
 }
 
-/** PEND-35 Tier 2.10b — AND-intersect property + tag predicates in SQL.
+/** AND-intersect property + tag predicates in SQL.
  *
  * Replaces the legacy `useQueryExecution.fetchFilteredQuery` shape that
  * fanned out one `queryByProperty` / `queryByTags` IPC per sub-filter
@@ -1566,7 +1566,7 @@ export async function undoPageOp(params: {
 }
 
 /**
- * PEND-35 Tier 4.4 — Compute the size of the consecutive same-device,
+ * Compute the size of the consecutive same-device,
  * within-window undo group starting at the Nth-most-recent undoable op
  * of a page.
  *
@@ -1617,7 +1617,7 @@ export async function computeEditDiff(params: {
 /**
  * Compute a word-level diff between a block's historical content (as of
  * `historicalSeq`) and its current live content. Powers the "Compared to
- * current" mode in the per-block history panel (PEND-17 Part B).
+ * Current" mode in the per-block history panel (Part B).
  *
  * Direction is `historical → current`, so `Insert` spans = text added
  * since the historical version (would be REMOVED on restore) and
@@ -1648,7 +1648,7 @@ export async function computeBlockVsCurrentDiff(params: {
 
 /** Query backlinks with composable filters, sort, and pagination.
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, restricts the source set to
+ * `spaceId` (Phase 4) — when set, restricts the source set to
  * blocks whose owning page carries `space = <spaceId>`. `null` /
  * `undefined` leaves the result set unscoped (cross-space view).
  */
@@ -1674,7 +1674,7 @@ export async function queryBacklinksFiltered(params: {
 
 /** Query backlinks grouped by source page, with filters and pagination.
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, restricts the source set to
+ * `spaceId` (Phase 4) — when set, restricts the source set to
  * blocks whose owning page carries `space = <spaceId>`. `null` /
  * `undefined` leaves the result set unscoped.
  */
@@ -1700,7 +1700,7 @@ export async function listBacklinksGrouped(params: {
 
 /** Query unlinked references grouped by source page, with filters, sort, and pagination.
  *
- * `spaceId` (FEAT-3 Phase 4) — when set, restricts the candidate set
+ * `spaceId` (Phase 4) — when set, restricts the candidate set
  * to blocks whose owning page carries `space = <spaceId>`. `null` /
  * `undefined` leaves the result set unscoped.
  */
@@ -1752,7 +1752,7 @@ export async function createPropertyDef(params: {
   )
 }
 
-/** Fetch a single property definition by key (PEND-35 Tier 2.6).
+/** Fetch a single property definition by key.
  *
  * Returns the row, or `null` when no definition exists for `key`.
  * Replaces the pattern of calling `listPropertyDefs()` (which paginates
@@ -1765,7 +1765,7 @@ export async function getPropertyDef(key: string): Promise<PropertyDefinition | 
   return unwrap(await commands.getPropertyDef(key))
 }
 
-/** List all property definitions, paginated (M-85).
+/** List all property definitions, paginated.
  *
  * Returns the canonical [`PageResponse`] envelope (`items`,
  * `next_cursor`, `has_more`). Single-page consumers (the typical case
@@ -1869,7 +1869,7 @@ export interface SyncSessionInfo {
 
 /** Start the pairing flow — returns a passphrase and QR SVG.
  *
- * M-34: the QR carries only the passphrase. mDNS owns discovery and
+ * The QR carries only the passphrase. mDNS owns discovery and
  * address resolution end-to-end, so there is no `host`/`port` field on
  * the returned payload.
  */
@@ -1923,7 +1923,7 @@ export async function getPageAliases(pageId: string): Promise<string[]> {
 /**
  * Resolve a page by one of its aliases. Returns page ID + title, or null.
  *
- * `spaceId` (PEND-35 Tier 1.2) — when set, restricts the match to
+ * `spaceId` — when set, restricts the match to
  * aliases pointing at pages whose `space` property equals `spaceId`.
  * Mirrors the param-object shape used by `listPageAliasesByPrefix`
  * directly below. Pass `null` / `undefined` to leave the resolve
@@ -1941,11 +1941,11 @@ export async function resolvePageByAlias(params: {
  * List page aliases whose alias starts with the given prefix, ordered
  * shortest-alias first, then alphabetical. Bounded server-side at 50.
  *
- * Used by the [[ picker for progressive alias filtering (PEND-34). The
+ * Used by the [[ picker for progressive alias filtering. The
  * exact-match `resolvePageByAlias` is still used by SearchPanel /
- * PageBrowser (out of scope here — see PEND-34 follow-ups).
+ * PageBrowser (out of scope here — follow-ups).
  *
- * `spaceId` (PEND-34 Q3) — when set, restricts matches to aliases
+ * `spaceId` — when set, restricts matches to aliases
  * pointing at pages whose `space` property equals `spaceId`. Pass
  * `null`/`undefined` to leave the result set unscoped (cross-space).
  */
@@ -2060,10 +2060,10 @@ export async function listAttachments(blockId: string): Promise<AttachmentRow[]>
  * Returns a record mapping block_id → AttachmentRow[]. Block IDs absent
  * from the record have either 0 attachments or are not in the database;
  * callers should default missing keys to `[]`. Counts are derivable as
- * `result[id].length` — PEND-35 Tier 2.7a folded the separate count
+ * `result[id].length` — folded the separate count
  * batch (`get_batch_attachment_counts`) into this one.
  *
- * MAINT-131 — replaces N per-block `listAttachments` IPCs for both the
+ * Replaces N per-block `listAttachments` IPCs for both the
  * SortableBlock paperclip badge and the StaticBlock inline-image render
  * path with a single batched query mounted at the BlockTree level.
  */
@@ -2093,7 +2093,7 @@ export async function addAttachment(params: {
 }
 
 /**
- * Add an attachment by passing the file's raw bytes over IPC (PEND-76 F2).
+ * Add an attachment by passing the file's raw bytes over IPC.
  * The backend is the sole writer — it persists the bytes under
  * `$APPDATA/attachments/` and records the row. `bytes` is the file content
  * (e.g. from `new Uint8Array(await file.arrayBuffer())`).
@@ -2114,7 +2114,7 @@ export async function addAttachmentWithBytes(params: {
   )
 }
 
-/** Read an attachment's raw bytes by ID (PEND-76 F2). */
+/** Read an attachment's raw bytes by ID. */
 export async function readAttachment(attachmentId: string): Promise<Uint8Array> {
   return Uint8Array.from(unwrap(await commands.readAttachment(attachmentId)))
 }
@@ -2156,7 +2156,7 @@ export interface ImportResult {
  * Import a Logseq/Markdown file. Creates a page from the filename and
  * blocks from content.
  *
- * `spaceId` (PEND-35 Tier 1.1) — required. The created page is stamped
+ * `spaceId` — required. The created page is stamped
  * with `space = ?spaceId` inside the same backend transaction as the
  * `CreateBlock` op, so an imported page can never exist without its
  * space property. Callers must pass the active space's ULID; the
@@ -2164,7 +2164,7 @@ export interface ImportResult {
  * bootstrapped (no active space) so this never receives an empty
  * string.
  *
- * `onProgress` (#128, PEND-38 / PEND-06 Tier 3) — optional. When
+ * `onProgress` (#128) — optional. When
  * supplied, the backend streams per-block progress over a
  * `Channel<ImportProgressUpdate>`: one `started` event, one `progress`
  * per block, then one `complete` after the import transaction commits.
@@ -2200,7 +2200,7 @@ export async function flushDraft(blockId: string): Promise<void> {
 }
 
 /**
- * Flush every pending draft in a single `BEGIN IMMEDIATE` tx (PEND-35
+ * Flush every pending draft in a single `BEGIN IMMEDIATE` tx (
  * Tier 2.12). Used by `useAppBootRecovery` to consolidate boot recovery
  * into one IPC instead of N fire-and-forget per-draft round-trips. The
  * backend semantics are all-or-nothing: a single draft failure rolls
@@ -2297,7 +2297,7 @@ export async function compactOpLog(retentionDays: number): Promise<CompactionRes
 }
 
 // ---------------------------------------------------------------------------
-// Link metadata (UX-165)
+// Link metadata
 // ---------------------------------------------------------------------------
 
 export interface LinkMetadata {
@@ -2309,7 +2309,7 @@ export interface LinkMetadata {
   fetched_at: number
   auth_required: boolean
   /**
-   * MAINT-213 (PEND-24 M4 follow-up): `true` when the most recent
+   * (follow-up): `true` when the most recent
    * fetch saw a terminal "gone" status (HTTP 404 or 410). Distinct
    * from `auth_required` (401/403, sign-in card) and from transient
    * 5xx (both flags `false` plus `title === null`). Optional so a
@@ -2329,7 +2329,7 @@ export async function getLinkMetadata(url: string): Promise<LinkMetadata | null>
 }
 
 // ---------------------------------------------------------------------------
-// Bug report (FEAT-5)
+// Bug report
 // ---------------------------------------------------------------------------
 
 export interface BugReport {
@@ -2367,7 +2367,7 @@ export async function readLogsForReport(redact: boolean): Promise<LogFileEntry[]
 }
 
 // ---------------------------------------------------------------------------
-// Spaces (FEAT-3 Phase 1)
+// Spaces (Phase 1)
 // ---------------------------------------------------------------------------
 
 /**
@@ -2381,7 +2381,7 @@ export async function listSpaces(): Promise<SpaceRow[]> {
 /**
  * Create a new page block and atomically assign it to `spaceId`.
  *
- * FEAT-3 Phase 2 — the backend wraps both the `CreateBlock` op and the
+ * Phase 2 — the backend wraps both the `CreateBlock` op and the
  * `SetProperty(space = <spaceId>)` op in a single transaction so a page
  * never exists without its space property. Callers that create
  * top-level pages (PageBrowser new-page, App new-page actions, the
@@ -2406,13 +2406,13 @@ export async function createPageInSpace(params: {
  * Create a new space (a top-level page block flagged
  * `is_space = 'true'`).
  *
- * FEAT-3 Phase 6 — the backend wraps the `CreateBlock` op, the
+ * Phase 6 — the backend wraps the `CreateBlock` op, the
  * `SetProperty(is_space = "true")` op, and the optional
  * `SetProperty(accent_color = …)` op in a single transaction so a
  * partial failure never leaves a half-created space (a page block
  * without its `is_space` flag) in the op log.
  *
- * `accentColor` accepts the palette tokens consumed by FEAT-3p10
+ * `accentColor` accepts the palette tokens consumed by
  * (e.g. `accent-violet`, `accent-blue`, …). Pass `null` / `undefined`
  * to skip the accent-color property entirely.
  *
@@ -2426,10 +2426,10 @@ export async function createSpace(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Quick capture (FEAT-12)
+// Quick capture
 // ---------------------------------------------------------------------------
 
-// FEAT-12: the global-shortcut JS API below is gated on `isMobilePlatform()`
+// The global-shortcut JS API below is gated on `isMobilePlatform()`
 // (a CAPABILITY check, exported from `./platform`) rather than `useIsMobile`
 // (a width breakpoint). `tauri-plugin-global-shortcut` is desktop-only — its
 // native dependency (`global-hotkey` crate) compiles only on
@@ -2439,7 +2439,7 @@ export async function createSpace(params: {
 // we guard at the wrapper boundary and return a no-op promise on mobile.
 
 /**
- * FEAT-12 + FEAT-3p5: drop a single content block onto today's journal
+ * + drop a single content block onto today's journal
  * page in the active space.
  *
  * Resolves today's journal page in `spaceId` on the backend (creating it
@@ -2454,7 +2454,7 @@ export async function quickCaptureBlock(content: string, spaceId: string): Promi
 }
 
 /**
- * FEAT-12: register a global hotkey via `@tauri-apps/plugin-global-shortcut`.
+ * Register a global hotkey via `@tauri-apps/plugin-global-shortcut`.
  *
  * `accelerator` is the chord string (`'CommandOrControl+Alt+N'`) that the
  * plugin recognises. `callback` fires once per press (we filter on
@@ -2481,7 +2481,7 @@ export async function registerGlobalShortcut(
 }
 
 /**
- * FEAT-12: unregister a previously-registered global hotkey.
+ * Unregister a previously-registered global hotkey.
  *
  * Desktop-only; a no-op on mobile (matches `registerGlobalShortcut`).
  * Safe to call when the chord was never registered — the underlying
@@ -2495,7 +2495,7 @@ export async function unregisterGlobalShortcut(accelerator: string): Promise<voi
 }
 
 /**
- * FEAT-12: probe whether `accelerator` is currently registered by *this*
+ * Probe whether `accelerator` is currently registered by *this*
  * application. Returns `false` for both "not registered by us" and
  * "registered by another app" cases — the plugin can't distinguish OS-
  * level conflicts from a clean unbound state.
@@ -2509,12 +2509,12 @@ export async function isGlobalShortcutRegistered(accelerator: string): Promise<b
 }
 
 // ---------------------------------------------------------------------------
-// Autostart (FEAT-13) — launch-on-login support
+// Autostart — launch-on-login support
 // ---------------------------------------------------------------------------
 //
 // Thin wrappers around `@tauri-apps/plugin-autostart`'s three exports
 // (`enable`, `disable`, `isEnabled`).  Desktop-only — the Rust side
-// gates registration with `#[cfg(desktop)]` (see lib.rs FEAT-13 block),
+// Gates registration with `#[cfg(desktop)]` (see lib.rs block),
 // so on Android / iOS the underlying IPC will reject with "command not
 // found".  Each wrapper uses a dynamic `import(...)` (matching the
 // `clipboard.ts` / `relaunch-app.ts` pattern) so a plain-browser dev
@@ -2575,7 +2575,7 @@ export async function disableAutostart(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Deep-link plugin wrappers (FEAT-10)
+// Deep-link plugin wrappers
 // ---------------------------------------------------------------------------
 //
 // `@tauri-apps/plugin-deep-link` exposes `getCurrent()` which returns the
@@ -2604,7 +2604,7 @@ export async function getCurrentDeepLink(): Promise<string[] | null> {
 }
 
 // ---------------------------------------------------------------------------
-// Window title (FEAT-3p10) — visual-identity surface
+// Window title — visual-identity surface
 // ---------------------------------------------------------------------------
 //
 // Wrapper around `@tauri-apps/api/window`'s

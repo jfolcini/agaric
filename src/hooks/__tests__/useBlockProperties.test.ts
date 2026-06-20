@@ -3,7 +3,7 @@
  *
  * Validates:
  * - getTodoState reads from block store
- * - handleToggleTodo cycles none → TODO → DOING → DONE → CANCELLED → none (UX-202/UX-234)
+ * HandleToggleTodo cycles none → TODO → DOING → DONE → CANCELLED → none
  * - handleToggleTodo calls set_todo_state IPC command
  * - handleToggleTodo does optimistic update + revert on failure
  * - handleTogglePriority cycles none → 1 → 2 → 3 → none
@@ -117,7 +117,7 @@ describe('useBlockProperties handleToggleTodo', () => {
     expect(block?.todo_state).toBe('DOING')
   })
 
-  it('cycles from DOING to DONE (UX-202/UX-234)', async () => {
+  it('cycles from DOING to DONE ()', async () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'DOING' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
@@ -135,7 +135,7 @@ describe('useBlockProperties handleToggleTodo', () => {
     expect(block?.todo_state).toBe('DONE')
   })
 
-  it('cycles from DONE to CANCELLED (UX-202/UX-234)', async () => {
+  it('cycles from DONE to CANCELLED ()', async () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'DONE' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
@@ -186,7 +186,7 @@ describe('useBlockProperties handleToggleTodo', () => {
     expect(block?.todo_state).toBe('TODO')
   })
 
-  it('completes a full cycle: null → TODO → DOING → DONE → CANCELLED → null (UX-202/UX-234)', async () => {
+  it('completes a full cycle: null → TODO → DOING → DONE → CANCELLED → null ()', async () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' })] })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })
@@ -328,10 +328,10 @@ describe('useBlockProperties handleTogglePriority', () => {
 })
 
 // ---------------------------------------------------------------------------
-// UX-201b: configurable priority cycle
+// Configurable priority cycle
 // ---------------------------------------------------------------------------
 
-describe('useBlockProperties handleTogglePriority — configurable levels (UX-201b)', () => {
+describe('useBlockProperties handleTogglePriority — configurable levels', () => {
   it('reads the cycle at click time (not at hook mount)', async () => {
     pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' })] })
 
@@ -556,7 +556,7 @@ describe('useBlockProperties undo notifications', () => {
 })
 
 // ---------------------------------------------------------------------------
-// F-37: dependency warning when cycling to DONE on a blocked task (UX-325)
+// F-37: dependency warning when cycling to DONE on a blocked task
 // ---------------------------------------------------------------------------
 
 const mockedToastWarning = vi.mocked(toast.warning)
@@ -568,7 +568,7 @@ describe('useBlockProperties handleToggleTodo F-37 dependency warning', () => {
    * the state-change IPC resolves — tests must let microtasks flush
    * before asserting on the warning toast.
    *
-   * PEND-35 Tier 2.4c — the dependency probe used to fetch the full
+   * The dependency probe used to fetch the full
    * property vocabulary and `find` the `blocked_by` row in JS. After
    * Tier 2.4c it issues a single-key PK lookup against `get_property`,
    * so this helper simulates that one row directly.

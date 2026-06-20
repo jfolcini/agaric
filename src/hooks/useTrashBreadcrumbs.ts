@@ -5,7 +5,7 @@
  * Resolves every distinct `parent_id` to a ResolvedBlock (or `null`
  * when the parent itself was purged) and exposes a `getParentLabel`
  * helper that returns the user-visible breadcrumb string. Extracted
- * from TrashView.tsx for MAINT-128.
+ * From TrashView.tsx for.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'

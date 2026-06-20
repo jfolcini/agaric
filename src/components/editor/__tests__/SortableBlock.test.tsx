@@ -29,7 +29,7 @@ vi.mock('../EditableBlock', () => ({
   ),
 }))
 
-// Mock PropertyChip — mirrors the TEST-4b shape: non-button wrapper with a
+// Mock PropertyChip — mirrors the shape: non-button wrapper with a
 // single inner key button. `onClick` rides on the wrapper so the existing
 // tests that fire `user.click(getByTestId('property-chip-…'))` still trigger
 // the value-edit flow without producing a nested `<button>`.
@@ -111,7 +111,7 @@ vi.mock('lucide-react', () => ({
   GripVertical: (props: { size: number }) => (
     <svg data-testid="grip-vertical-icon" width={props.size} height={props.size} />
   ),
-  // UX-304: BlockGutterControls renders MoreVertical on coarse-pointer
+  // BlockGutterControls renders MoreVertical on coarse-pointer
   // devices, so the swipe-cue tests below need this icon mocked too.
   MoreVertical: (props: { size?: number; className?: string }) => (
     <svg
@@ -179,12 +179,12 @@ vi.mock('../BlockContextMenu', () => ({
 }))
 
 // Mock tauri setProperty, getPropertyDef, listBlocks
-// MAINT-131 / PEND-35 Tier 2.7a: SortableBlock no longer calls
+// SortableBlock no longer calls
 // listAttachments — the badge count now flows from BatchAttachmentsProvider
 // (`useBatchAttachments()?.getCount(blockId)`). Tests render SortableBlock
 // without a provider, so attachmentCount falls back to 0 (no paperclip).
 const mockSetProperty = vi.fn().mockResolvedValue({})
-// PEND-35 Tier 2.6: `usePropertyDefForEdit` now calls `getPropertyDef(key)`
+// `usePropertyDefForEdit` now calls `getPropertyDef(key)`
 // which returns the row directly (or null) instead of paging the entire
 // vocabulary. The previous `pageOf([def])` / `pageOf([])` envelope helper
 // was retired with the migration.
@@ -238,7 +238,7 @@ vi.mock('@/hooks/useUndoShortcuts', () => ({
   useUndoShortcuts: vi.fn(),
 }))
 
-// Controlled mock for the swipe-actions hook (UX-304). Default mirrors the
+// Controlled mock for the swipe-actions hook. Default mirrors the
 // "no swipe in progress" state so existing tests that don't care about the
 // swipe overlay render exactly as before. Per-test overrides drive the
 // progressive-cue assertions further below.
@@ -1133,7 +1133,7 @@ describe('SortableBlock task marker', () => {
     expect(checkbox?.getAttribute('class')).toContain('bg-task-done')
   })
 
-  it('applies border-task-cancelled class to CANCELLED checkbox (UX-202)', () => {
+  it('applies border-task-cancelled class to CANCELLED checkbox', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1150,7 +1150,7 @@ describe('SortableBlock task marker', () => {
     expect(checkbox?.getAttribute('data-testid')).toBe('task-checkbox-cancelled')
   })
 
-  it('applies line-through and opacity-50 to content when CANCELLED (UX-202)', () => {
+  it('applies line-through and opacity-50 to content when CANCELLED', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1166,7 +1166,7 @@ describe('SortableBlock task marker', () => {
     expect(contentWrapper?.getAttribute('class')).toContain('opacity-50')
   })
 
-  it('does not apply CANCELLED strikethrough when block is focused (UX-202)', () => {
+  it('does not apply CANCELLED strikethrough when block is focused', () => {
     render(
       <SortableBlock
         blockId="B1"
@@ -3196,7 +3196,7 @@ describe('SortableBlock property chip click-to-edit', () => {
       expect(screen.getByTestId('select-options-dropdown')).toBeInTheDocument()
     })
 
-    // PEND-23 H1: options are listbox `role="option"` (not bare `role="button"`)
+    // Options are listbox `role="option"` (not bare `role="button"`)
     expect(screen.getByRole('option', { name: 'Backlog' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'In Progress' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'Done' })).toBeInTheDocument()
@@ -3234,7 +3234,7 @@ describe('SortableBlock property chip click-to-edit', () => {
       expect(screen.getByTestId('select-options-dropdown')).toBeInTheDocument()
     })
 
-    // PEND-23 H1: options are listbox `role="option"` (not bare `role="button"`)
+    // Options are listbox `role="option"` (not bare `role="button"`)
     const highOption = screen.getByRole('option', { name: 'High' })
     await user.click(highOption)
 
@@ -3276,7 +3276,7 @@ describe('SortableBlock property chip click-to-edit', () => {
       expect(screen.getByTestId('select-options-dropdown')).toBeInTheDocument()
     })
 
-    // PEND-23 H1: options are listbox `role="option"` (not bare `role="button"`)
+    // Options are listbox `role="option"` (not bare `role="button"`)
     const featureBtn = screen.getByRole('option', { name: 'Feature' })
     expect(featureBtn.className).toContain('bg-accent')
     expect(featureBtn.className).toContain('font-medium')
@@ -3645,7 +3645,7 @@ describe('SortableBlock property key rename', () => {
     const keyLabel = screen.getByTestId('property-key-effort')
     await user.click(keyLabel)
 
-    // MAINT-103: popup is portaled to document.body, not inside `container`.
+    // Popup is portaled to document.body, not inside `container`.
     const keyEditor = document.querySelector('.property-key-editor input')
     expect(keyEditor).toBeInTheDocument()
   })
@@ -3668,7 +3668,7 @@ describe('SortableBlock property key rename', () => {
     const keyLabel = screen.getByTestId('property-key-effort')
     await user.click(keyLabel)
 
-    // MAINT-103: popup is portaled to document.body, not inside `container`.
+    // Popup is portaled to document.body, not inside `container`.
     const input = document.querySelector('.property-key-editor input') as HTMLInputElement
     expect(input).toBeInTheDocument()
 
@@ -3954,7 +3954,7 @@ describe('SortableBlock ref property picker', () => {
 })
 
 // =========================================================================
-// UX-M20: Heading alignment — gutter/inline padding adjusts for headings
+// Heading alignment — gutter/inline padding adjusts for headings
 // =========================================================================
 
 describe('SortableBlock heading alignment', () => {
@@ -4026,7 +4026,7 @@ describe('SortableBlock heading alignment', () => {
 })
 
 // =========================================================================
-// UX-M21: Date pill tooltips — title & aria-label attributes
+// Date pill tooltips — title & aria-label attributes
 // =========================================================================
 
 describe('SortableBlock date pill tooltips', () => {
@@ -4072,7 +4072,7 @@ describe('SortableBlock date pill tooltips', () => {
   })
 })
 
-describe('SortableBlock mobile gutter hidden (UX-21)', () => {
+describe('SortableBlock mobile gutter hidden', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockUseSortable.mockReturnValue(makeSortable())
@@ -4152,7 +4152,7 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
 
     const dragHandle = screen.getByTestId('drag-handle')
     const gutterDiv = dragHandle.parentElement as HTMLElement
-    // UX-230: collapse widened from max-sm (<640px) to max-md (<768px) so
+    // Collapse widened from max-sm (<640px) to max-md (<768px) so
     // the 68-px gutter no longer forces horizontal overflow on portrait
     // tablets and narrow desktop windows.
     expect(gutterDiv.className).toContain('max-md:w-0')
@@ -4200,7 +4200,7 @@ describe('SortableBlock error paths', () => {
     mockUseSortable.mockReturnValue(makeSortable())
   })
 
-  // MAINT-131 / PEND-35 Tier 2.7a: SortableBlock no longer fires
+  // SortableBlock no longer fires
   // `listAttachments` directly. Without a `BatchAttachmentsProvider` the
   // count falls back to 0, so the paperclip and attachment list never
   // render. The IPC-failure path is exercised by useBatchAttachments.test.tsx.
@@ -4284,7 +4284,7 @@ describe('SortableBlock error paths', () => {
     })
 
     // listBlocks was called and rejected — refPages falls back to [].
-    // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`; `''` is the
+    // Phase 4 — `listBlocks` requires `spaceId`; `''` is the
     // pre-bootstrap fallback when no space is seeded in the test.
     expect(mockListBlocks).toHaveBeenCalledWith({ blockType: 'page', spaceId: '' })
 
@@ -4293,7 +4293,7 @@ describe('SortableBlock error paths', () => {
     expect(screen.getByText('No pages found')).toBeInTheDocument()
   })
 
-  // MAINT-131: replaces the previous `listAttachments rejection does not
+  // Replaces the previous `listAttachments rejection does not
   // affect other component functionality` test. Without a batch provider
   // the attachment count is 0 (no paperclip); todo/priority/due-date all
   // continue to render normally.
@@ -4359,7 +4359,7 @@ describe('SortableBlock error paths', () => {
       expect(screen.getByTestId('select-options-dropdown')).toBeInTheDocument()
     })
 
-    // PEND-23 H1: options are listbox `role="option"` (not bare `role="button"`)
+    // Options are listbox `role="option"` (not bare `role="button"`)
     await user.click(screen.getByRole('option', { name: 'High' }))
     expect(screen.queryByTestId('select-options-dropdown')).not.toBeInTheDocument()
 
@@ -4379,7 +4379,7 @@ describe('SortableBlock error paths', () => {
   })
 })
 
-describe('responsive layout (UX-151)', () => {
+describe('responsive layout', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockUseSortable.mockReturnValue(makeSortable())
@@ -4400,7 +4400,7 @@ describe('responsive layout (UX-151)', () => {
   })
 })
 
-describe('UX-230 responsive layout', () => {
+describe(' responsive layout', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockUseSortable.mockReturnValue(makeSortable())
@@ -4592,13 +4592,13 @@ describe('SortableBlock touch drag handle hittability (#918/#919)', () => {
   })
 })
 
-// ── UX-304: progressive swipe-to-delete cue ─────────────────────────────
+// ── progressive swipe-to-delete cue ─────────────────────────────
 //
 // The overlay renders only on coarse-pointer devices and only while a
 // swipe is in progress. These tests stub `useBlockSwipeActions` so we
 // can exercise the visual states deterministically (the hook itself is
 // covered by `useBlockSwipeActions.test.ts`).
-describe('SortableBlock swipe-to-delete progressive cue (UX-304)', () => {
+describe('SortableBlock swipe-to-delete progressive cue', () => {
   const originalMatchMedia = window.matchMedia
   /** Default mock implementation — re-applied in beforeEach to undo per-test overrides. */
   const defaultSwipeReturn = () => ({

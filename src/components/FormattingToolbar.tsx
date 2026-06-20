@@ -1,12 +1,12 @@
 /**
  * FormattingToolbar — always-visible toolbar rendered above the active editor.
  *
- * Buttons (post PEND-33 Layer A): Internal Link, Tag, Blockquote | Code Block,
+ * Buttons (post Layer A): Internal Link, Tag, Blockquote | Code Block,
  * Heading | Ordered List, Divider, Callout | Cycle Priority, Date, Due Date,
  * Scheduled Date, TODO, Properties | Undo, Redo, Discard. The 5 mark toggles
- * + External Link live in `SelectionBubbleMenu` (PEND-33 Layer A).
+ * + External Link live in `SelectionBubbleMenu` (Layer A).
  *
- * PEND-33 Layer B: each button carries a `priority` (see
+ * Layer B: each button carries a `priority` (see
  * `src/lib/toolbar-config.ts`). When the container is narrow enough that not
  * every button fits, the lowest-priority buttons collapse into a
  * `MoreHorizontal` overflow popover. Group separators disappear when both
@@ -17,7 +17,7 @@
  * Uses onPointerDown + preventDefault so clicks never steal focus from TipTap.
  * Priority and Date buttons dispatch custom events that BlockTree listens for.
  *
- * MAINT-219: per-group renderers, the item-flatten helper, and shared
+ * Per-group renderers, the item-flatten helper, and shared
  * primitives live in `./FormattingToolbar/`. This file only owns wiring —
  * editor state, popover open state, the overflow hook, and the
  * render-dispatch switch.

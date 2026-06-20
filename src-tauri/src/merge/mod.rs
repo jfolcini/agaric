@@ -43,7 +43,7 @@ pub(crate) mod divergence;
 /// `op_created_at` is the originating op's `created_at` as an epoch-ms
 /// decimal string (what production writes via `created_at.to_string()`;
 /// #668 — NOT RFC-3339). It is the real `deleted_at` timestamp the
-/// `DeleteBlock` arm writes onto the engine seed (PEND-80 Phase 2) so
+/// `DeleteBlock` arm writes onto the engine seed (Phase 2) so
 /// the value is lossless across sync — see
 /// [`LoroEngine::apply_delete_block`]. All other arms ignore it (their
 /// ops carry no timestamp the engine stores).
@@ -144,7 +144,7 @@ pub(crate) fn engine_apply(
             }
         }
         crate::op::OpPayload::SetProperty(p) => {
-            // PEND-80 §2.1: store the value with its NATIVE type so the
+            // Store the value with its NATIVE type so the
             // engine is type-lossless. This must mirror
             // `materializer::handlers::apply_set_property_via_loro` exactly
             // (#603 — the in-tx via-loro path is the production apply; any

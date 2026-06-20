@@ -216,7 +216,7 @@ pub async fn eval_backlink_query_grouped(
 
     // Group blocks by root page. The `if let Some(...)` here is purely
     // defensive against a race between resolve and group.
-    // L-5 (PEND-25): `FxHashMap` for the by-page bucket — keys are
+    // `FxHashMap` for the by-page bucket — keys are
     // owned `String` page-ids; the FNV hash matters here because this
     // map is built per query.
     let mut page_groups: FxHashMap<String, (Option<String>, Vec<String>)> = FxHashMap::default();
@@ -315,13 +315,13 @@ pub async fn eval_backlink_query_grouped(
     let fetched_rows = fetch_block_rows_by_ids(pool, &fetch_ids).await?;
 
     // Build a lookup map from id -> BlockRow.
-    // L-5 (PEND-25): short-lived per-query map keyed on borrowed `&str`s —
+    // Short-lived per-query map keyed on borrowed `&str`s —
     // `FxHashMap` skips SipHash setup with no behavioural change.
     let row_map: FxHashMap<&str, &BlockRow> =
         fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
 
     // 10. Distribute fetched rows back into groups (already in sort order).
-    //     MAINT-113 M2 — `all_block_ids` traces back to active candidates
+    // `all_block_ids` traces back to active candidates
     //     (the grouped query's base set filters `deleted_at IS NULL`), so
     //     the per-group rows are also active. The boundary cast records
     //     that claim in the type system.
@@ -401,7 +401,7 @@ pub async fn eval_unlinked_references(
     // 1. Fetch the page title.
     //    Filter  so a conflict-copy page id never resolves to a
     //    title that drives the unlinked-references search (mirrors the sister
-    //    `resolve_root_pages` helper). (L-81)
+    // `resolve_root_pages` helper).
     let title: Option<String> = sqlx::query_scalar(
         "SELECT content FROM blocks WHERE id = ?1 AND block_type = 'page' AND deleted_at IS NULL",
     )
@@ -465,7 +465,7 @@ pub async fn eval_unlinked_references(
     //    FTS_ROW_CAP). The `+ 1` literal is derived from the constant via
     //    `format!` so the SQL stays in sync if the constant changes (I-Search-3).
     //    `ORDER BY fb.block_id` makes the truncation boundary deterministic
-    //    across calls (M-62) — without it SQLite is free to return a different
+    // Across calls — without it SQLite is free to return a different
     //    10 001 rows on the next request, perturbing which groups appear.
     //    #625 — the grouped cursor now resumes via `cmp_group` comparison
     //    (`groups_after_cursor`), so even if a different truncation window
@@ -475,7 +475,7 @@ pub async fn eval_unlinked_references(
     //    pagination correctness no longer DEPENDS on the cursor group
     //    surviving. See I-Search-13 for the cursor-side cross-reference.
     //
-    //    FEAT-3p4 — the `(?3 IS NULL OR b.space_id = ?3)` clause mirrors
+    // The `(?3 IS NULL OR b.space_id = ?3)` clause mirrors
     //    [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`].
     //    Filters on the first-class `b.space_id` column (#533, migration
     //    0086) when `space_id` is `Some`. Kept inline (not via the macro)
@@ -484,7 +484,7 @@ pub async fn eval_unlinked_references(
     //    Applied at the base-set step so `total_count` /
     //    `filtered_count` reflect the post-space-filter universe.
     //
-    //    PEND-83 Bug 2 — drop title-block hits (`block_type = 'page'`)
+    // Bug 2 — drop title-block hits (`block_type = 'page'`)
     //    from the unlinked-refs base set. The trigram FTS tokenizer is
     //    substring-based, so a child page like `Notes/2026` (whose
     //    title block has `content = 'Notes/2026'`) matches the
@@ -598,7 +598,7 @@ pub async fn eval_unlinked_references(
     // 7a. Group filtered blocks by root page, excluding blocks whose root
     //     page is the target page. `root_map` covers `matching_ids ⊇
     //     filtered_matching` from step #4, so no second resolve is needed.
-    // L-5 (PEND-25): mirror the `eval_backlink_query_grouped` flavour
+    // Mirror the `eval_backlink_query_grouped` flavour
     // and use `FxHashMap` for the by-page bucket.
     let mut page_groups: FxHashMap<String, (Option<String>, Vec<String>)> = FxHashMap::default();
     for block_id_item in &filtered_matching {
@@ -705,13 +705,13 @@ pub async fn eval_unlinked_references(
     let fetched_rows = fetch_block_rows_by_ids(pool, &fetch_ids).await?;
 
     // Build a lookup map from id -> BlockRow.
-    // L-5 (PEND-25): same `FxHashMap` swap as the sister
+    // Same `FxHashMap` swap as the sister
     // `eval_backlink_query_grouped` block-row lookup.
     let row_map: FxHashMap<&str, &BlockRow> =
         fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
 
     // 12. Distribute fetched rows back into groups (already in sort order).
-    //     MAINT-113 M2 — same active-only invariant as above; the
+    // Same active-only invariant as above; the
     //     unlinked-references query path also filters
     //     deleted_at IS NULL` upstream.
     let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(capped_groups.len());

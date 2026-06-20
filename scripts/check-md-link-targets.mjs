@@ -14,7 +14,7 @@
 // CI's checkout doesn't have the untracked copy, so lychee fails
 // there. This script asks `git ls-files` instead, matching CI.
 //
-// Originally added after `REVIEW-LATER.md` was filter-repo'd out of
+// Originally added after a stale doc was filter-repo'd out of
 // history but two committed Markdown links to it (in ARCHITECTURE.md
 // §19 and CONTRIBUTING.md "Before you start") remained — caught
 // only by the 0.1.0 release-time lychee run.

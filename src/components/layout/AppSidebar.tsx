@@ -1,12 +1,12 @@
 /**
- * AppSidebar — sidebar shell extracted from App.tsx (MAINT-124 step 2).
+ * AppSidebar — sidebar shell extracted from App.tsx.
  *
  * Owns the sticky top space-switcher branding, the primary navigation
  * menu, and the bottom action strip (new page, sync, theme toggle,
  * shortcuts, collapse). `CollapseButton` and `syncDotClass` are
  * sidebar-internal helpers and live alongside the JSX they support.
  *
- * Subscription split (PERF-19 — design-system perf review tier-3 #19):
+ * Subscription split (design-system perf review tier-3 #19):
  * pure shell-only zustand slices — `syncStore.{state,peers,lastSyncedAt}`,
  * `spaceStore.{availableSpaces,currentSpaceId}`, and the polling
  * `useTrashCount` badge — live INSIDE this component, not on App.tsx.
@@ -52,7 +52,7 @@ import { type SyncState, useSyncStore } from '@/stores/sync'
 /**
  * Compute the CSS class for the sync status dot colour.
  *
- * UX-380: distinguish "offline" (network problem, nothing the user can do)
+ * Distinguish "offline" (network problem, nothing the user can do)
  * from "no peers" (pairing problem, the user needs to add a device). Offline
  * wins over no-peers because peer state is meaningless without a network.
  */
@@ -112,7 +112,7 @@ function AppSidebarInner({
   onShowShortcuts,
 }: AppSidebarProps): ReactElement {
   const { t } = useTranslation()
-  // PERF-19 (tier-3): pushed-down zustand selectors. App.tsx no longer
+  // (tier-3): pushed-down zustand selectors. App.tsx no longer
   // forwards these as props — the sidebar is the sole consumer of
   // sync-store status, the space-store roster, and the trash badge
   // count, so it owns the subscription. App's prop surface drops by 6
@@ -174,7 +174,7 @@ function AppSidebarInner({
     <Sidebar collapsible="icon">
       <SidebarHeader className="p-4 pb-2">
         {/* Agaric branding — restored at the top of the sidebar above the
-            SpaceSwitcher (BUG session 679). Originally removed in FEAT-3
+            SpaceSwitcher (BUG session 679). Originally removed in
             Phase 1 (c1548cfb) when the SpaceSwitcher replaced it; the
             user wants both visible: branding at the top for app identity,
             space selector below for navigation context. */}
@@ -185,12 +185,12 @@ function AppSidebarInner({
           </span>
         </div>
         {/*
-         * FEAT-3 Phase 1: the SpaceSwitcher sits below the branding.
+         * Phase 1: the SpaceSwitcher sits below the branding.
          * It is hidden when the sidebar collapses to icon mode to
          * preserve the compact rail layout (the switcher
          * re-appears on expand).
          *
-         * FEAT-3p10: when the sidebar collapses, the SpaceSwitcher
+         * When the sidebar collapses, the SpaceSwitcher
          * dropdown disappears and the user loses the only visual
          * cue of which space is active. The SpaceAccentBadge takes
          * its place in the icon rail — a 32px circle with the
@@ -245,7 +245,7 @@ function AppSidebarInner({
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
-              // UX-379 — the visible "last synced" line below is hidden in
+              // The visible "last synced" line below is hidden in
               // icon-collapsed mode, so fold the same text into the tooltip
               // (which is only rendered when collapsed). Users get the
               // timestamp in both modes without duplication on screen.
@@ -299,7 +299,7 @@ function AppSidebarInner({
           </SidebarMenuItem>
           <SidebarMenuItem>
             {/*
-             * UX-387 — surface the current theme in the tooltip so the
+             * Surface the current theme in the tooltip so the
              * 3-state cycle (auto / dark / light) is no longer silent.
              * The visible label still reads `t('sidebar.toggleTheme')` so the
              * expanded sidebar stays terse; only the tooltip carries
@@ -318,7 +318,7 @@ function AppSidebarInner({
           </SidebarMenuItem>
           <SidebarMenuItem>
             {(() => {
-              // UX-396 — surface the current keyboard binding in the
+              // Surface the current keyboard binding in the
               // tooltip so users discover the shortcut without having
               // to open the cheatsheet first. Falls back to the bare
               // label when the binding is unset to avoid a stray "()".

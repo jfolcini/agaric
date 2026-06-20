@@ -7,7 +7,7 @@ import { expect, test } from './helpers'
  * so the graph should render nodes (pages) and edges (links).
  *
  * Key selectors:
- * - SVG container: `[data-testid="graph-svg"]` (UX-270: role="img" was deliberately removed from the SVG; aria-label provides the accessible name without forcing AT to treat the interactive node graph as one opaque graphic)
+ * SVG container: `[data-testid="graph-svg"]` (role="img" was deliberately removed from the SVG; aria-label provides the accessible name without forcing AT to treat the interactive node graph as one opaque graphic)
  * - Nodes: `svg g.node` groups, each containing two `<circle>` elements
  *   (a transparent hit-area and a visible node circle)
  * - Edges: `svg line` elements
@@ -15,8 +15,8 @@ import { expect, test } from './helpers'
  */
 
 test.describe('Graph view', () => {
-  // TEST-33: GraphView initial render legitimately goes through a d3 worker
-  // startup path (PERF-9b) that can exceed the 3s global `expect` timeout on
+  // GraphView initial render legitimately goes through a d3 worker
+  // Startup path that can exceed the 3s global `expect` timeout on
   // cold tests. Use `test.slow()` at the suite level instead of sprinkling
   // `{ timeout: 10_000 }` overrides on every SVG-visibility assertion.
   test.slow()

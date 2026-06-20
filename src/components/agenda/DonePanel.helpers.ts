@@ -2,7 +2,7 @@
  * Pure helpers for {@link DonePanel}.
  *
  * Extracted from the component to keep individual effects/callbacks below the
- * oxlint eslint/complexity threshold (MAINT-58). Each helper is pure and
+ * Oxlint eslint/complexity threshold. Each helper is pure and
  * independently unit-tested in `__tests__/DonePanel.helpers.test.ts`.
  */
 
@@ -15,7 +15,7 @@ export interface DoneBlockGroup {
   items: BlockRow[]
 }
 
-// PEND-35 Tier 1.5 — `filterDoneBlocks` retired. Its UX-129
+// `filterDoneBlocks` retired. Its
 // (empty content) and B-74 (parent_id match) filters now live in SQL
 // via `query_by_property`'s `content_non_empty` and
 // `exclude_parent_id` parameters, so cursor pagination /

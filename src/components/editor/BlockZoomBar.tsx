@@ -5,12 +5,12 @@
  * Thin data adapter over the `Breadcrumb` design-system primitive
  * (`src/components/ui/breadcrumb.tsx`).
  *
- * Per UX-257, breadcrumb crumbs render plain stripped-text labels — never
+ * Per breadcrumb crumbs render plain stripped-text labels — never
  * inline `[[ULID]]` chips or rich content. Markdown markers are stripped and
  * `[[id]]` / `((id))` references are resolved via `useRichContentCallbacks`
  * (with a truncated-id fallback when the resolve cache is cold).
  *
- * Keyboard navigation (UX-215) and overflow handling live in the primitive.
+ * Keyboard navigation and overflow handling live in the primitive.
  */
 
 import type React from 'react'
@@ -80,7 +80,7 @@ export function BlockZoomBar({
         label,
         ...(isLast ? {} : { onSelect: () => onNavigate(item.id) }),
         testId: item.id,
-        // UX-215 callers historically targeted `data-zoom-crumb` for keyboard
+        // Callers historically targeted `data-zoom-crumb` for keyboard
         // and a11y assertions; preserve it alongside the primitive's generic
         // `data-breadcrumb-crumb` to avoid breaking those selectors.
         dataAttributes: { 'data-zoom-crumb': item.id },
@@ -97,7 +97,7 @@ export function BlockZoomBar({
         ariaLabel={t('blockZoom.breadcrumbs')}
         home={{
           onClick: onZoomToRoot,
-          // PEND-21 — Use the explicit t('blockZoom.exitZoom') wording on the Home icon so
+          // Use the explicit t('blockZoom.exitZoom') wording on the Home icon so
           // touch users (who lost the dedicated <X /> exit-zoom button) still
           // get the verbal affordance via screen readers / long-press tooltip.
           ariaLabel: t('blockZoom.exitZoom'),

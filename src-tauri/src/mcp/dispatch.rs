@@ -38,7 +38,7 @@ use crate::error::AppError;
 /// returned future may be driven across a `tokio::spawn` boundary, so
 /// the closure (and any state it captures) must own its data.
 ///
-/// MAINT-150 (h).
+/// (h).
 pub(crate) fn scoped_dispatch<F, Fut>(
     ctx: &ActorContext,
     name: &str,

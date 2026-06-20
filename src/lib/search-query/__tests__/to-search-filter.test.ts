@@ -1,5 +1,5 @@
 /**
- * PEND-54 + PEND-53 — Tests for `astToFilterProjection`.
+ * + Tests for `astToFilterProjection`.
  *
  * Guards the AST → IPC contract every search surface depends on:
  * given a parsed query, what does the wire-side `SearchFilter` look
@@ -17,7 +17,7 @@ function project(s: string) {
   return astToFilterProjection(parse(s))
 }
 
-describe('astToFilterProjection — PEND-54 (tag / path)', () => {
+describe('astToFilterProjection —  (tag / path)', () => {
   it('projects an empty AST to empty arrays', () => {
     const p = project('')
     expect(p.tagNames).toEqual([])
@@ -30,7 +30,7 @@ describe('astToFilterProjection — PEND-54 (tag / path)', () => {
     expect(p.tagNames).toEqual(['a', 'b'])
   })
 
-  it('NFC-normalises tag names (DSL-A3)', () => {
+  it('NFC-normalises tag names', () => {
     // Decomposed `e` + U+0301 (combining acute) vs. composed U+00E9.
     // The backend stores/indexes in NFC, so the projection must emit
     // the composed form regardless of how the user typed it.
@@ -49,7 +49,7 @@ describe('astToFilterProjection — PEND-54 (tag / path)', () => {
     expect(fromAlias.tagNames).toEqual([composed])
   })
 
-  it('dedups composed/decomposed tag names after NFC (DSL-A3)', () => {
+  it('dedups composed/decomposed tag names after NFC', () => {
     const composed = 'caf\u{00E9}'
     const decomposed = 'cafe\u{0301}'
     const p = project(`tag:#${composed} tag:#${decomposed}`)
@@ -62,7 +62,7 @@ describe('astToFilterProjection — PEND-54 (tag / path)', () => {
   })
 })
 
-describe('astToFilterProjection — PEND-53 (metadata)', () => {
+describe('astToFilterProjection —  (metadata)', () => {
   it('projects state tokens into stateFilter', () => {
     const p = project('state:TODO state:DOING')
     expect(p.stateFilter).toEqual(['TODO', 'DOING'])
@@ -73,7 +73,7 @@ describe('astToFilterProjection — PEND-53 (metadata)', () => {
     expect(p.stateFilter).toEqual(['TODO'])
   })
 
-  it('projects not-state tokens into excludedStateFilter (PEND-63)', () => {
+  it('projects not-state tokens into excludedStateFilter', () => {
     const p = project('not-state:DONE state:TODO')
     // `state:TODO` still populates stateFilter; `not-state:DONE` is a
     // separate field the backend uses to emit the NULL-inclusive
@@ -82,12 +82,12 @@ describe('astToFilterProjection — PEND-53 (metadata)', () => {
     expect(p.excludedStateFilter).toEqual(['DONE'])
   })
 
-  it('dedups excluded state values (PEND-63)', () => {
+  it('dedups excluded state values', () => {
     const p = project('not-state:DONE not-state:DONE not-state:CANCELLED')
     expect(p.excludedStateFilter).toEqual(['DONE', 'CANCELLED'])
   })
 
-  it('projects not-priority into excludedPriorityFilter (PEND-63)', () => {
+  it('projects not-priority into excludedPriorityFilter', () => {
     const p = project('not-priority:1 priority:2')
     expect(p.priorityFilter).toEqual(['2'])
     expect(p.excludedPriorityFilter).toEqual(['1'])

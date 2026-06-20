@@ -98,14 +98,14 @@ test.describe('Property drawer', () => {
     await expect(firstBlock).toBeVisible()
     await firstBlock.click({ button: 'right' })
 
-    // TEST-1b: scope to the active `role="menu"` so stale context-menu DOM
+    // Scope to the active `role="menu"` so stale context-menu DOM
     // from a previous test (which lives in `document.body` after it closes
     // and may briefly coexist with the fresh menu) can't match first.
     const menu = activeMenu(page)
     await expect(menu).toBeVisible()
     await menu.locator('[role="menuitem"]', { hasText: 'Properties' }).click()
 
-    // TEST-1b: the property drawer is a Radix Sheet; scope to the active
+    // The property drawer is a Radix Sheet; scope to the active
     // sheet-content so stale Sheet portals from previous tests can't match.
     const sheet = activeSheet(page)
     await expect(sheet.getByText('Block Properties')).toBeVisible()
@@ -172,7 +172,7 @@ test.describe('Set property via drawer', () => {
     // Click the "Add property" button to open the popover (scoped to the Sheet)
     await sheet.getByRole('button', { name: 'Add property' }).click()
 
-    // TEST-1b: the definition picker is a Radix Popover separate from the
+    // The definition picker is a Radix Popover separate from the
     // Sheet; scope to the active popover-content so stale popover DOM
     // cannot match the same label text.
     const popover = activePopover(page)
@@ -337,7 +337,7 @@ test.describe('Property definitions view', () => {
     await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
-    // TEST-1b: the confirmation is a Radix AlertDialog; scope to the
+    // The confirmation is a Radix AlertDialog; scope to the
     // active alert-dialog-content so a stale AlertDialog from a previous
     // test can't match.
     const confirm = activeAlertDialog(page)

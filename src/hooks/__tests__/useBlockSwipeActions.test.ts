@@ -98,7 +98,7 @@ describe('useBlockSwipeActions', () => {
     expect(typeof result.current.handlers.onTouchMove).toBe('function')
     expect(typeof result.current.handlers.onTouchEnd).toBe('function')
     expect(typeof result.current.reset).toBe('function')
-    // UX-304: progressive cue flag is exposed alongside translateX/isRevealed.
+    // Progressive cue flag is exposed alongside translateX/isRevealed.
     expect(result.current.thresholdCrossed).toBe(false)
 
     unmount()
@@ -421,8 +421,8 @@ describe('useBlockSwipeActions', () => {
     })
   })
 
-  // ── UX-304: progressive threshold-crossed cue ─────────────────────
-  describe('thresholdCrossed (UX-304)', () => {
+  // ── progressive threshold-crossed cue ─────────────────────
+  describe('thresholdCrossed', () => {
     it('stays false while swipe is between reveal and auto-delete thresholds', () => {
       mockCoarsePointer()
       const { result, unmount } = renderHook(() => useBlockSwipeActions(vi.fn()))

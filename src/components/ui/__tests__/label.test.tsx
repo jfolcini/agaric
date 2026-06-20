@@ -1,7 +1,7 @@
 /**
  * Tests for the Label UI primitive.
  *
- * Validates (per PEND-23 H4):
+ * Validates:
  *  - Renders children inside a `<label>` with `data-slot="label"`
  *  - Forwards `htmlFor` to the underlying `<label>` element (`for` attribute)
  *  - Click on the label associates with the linked input via `htmlFor`
@@ -14,7 +14,7 @@
  *
  * Note: there is overlap with the Label coverage in `primitives.test.tsx`.
  * This file is the canonical, dedicated test file going forward — see
- * PEND-23 H4 for context. The existing coverage in `primitives.test.tsx`
+ * For context. The existing coverage in `primitives.test.tsx`
  * is left untouched (per the task scope) and can be cleaned up later.
  */
 

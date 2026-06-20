@@ -76,7 +76,7 @@ test.describe('Settings panel', () => {
   })
 
   test('Navigate away and back restores the last selected tab', async ({ page }) => {
-    // UX-276 partial: SettingsView persists `activeTab` to localStorage under
+    // Partial: SettingsView persists `activeTab` to localStorage under
     // `agaric-settings-active-tab` so navigating away and coming back keeps
     // the user's place, instead of remounting straight onto General. The
     // "General is selected on first visit" invariant lives in the

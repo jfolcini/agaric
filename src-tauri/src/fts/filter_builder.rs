@@ -156,7 +156,7 @@ impl StructuralFilterBuilder {
         }
     }
 
-    /// #1320 PR-0 — append a pre-compiled [`crate::filters::primitive::WhereClause`]
+    /// #1320 append a pre-compiled [`crate::filters::primitive::WhereClause`]
     /// fragment (bare `?` placeholders, ordered [`Bind`]s) into this builder,
     /// renumbering each `?` to the running `?N` index in left-to-right order
     /// and recording the matching scalar binds in declaration order.
@@ -202,7 +202,7 @@ impl StructuralFilterBuilder {
         }
     }
 
-    /// #1320 PR-0 — space-id filter routed through [`SearchProjection`]
+    /// #1320 space-id filter routed through [`SearchProjection`]
     /// instead of the inline [`add_space`](Self::add_space) fragment. The
     /// projection's `compile_space` emits `b.space_id = ?` with one text
     /// bind — byte-identical (modulo placeholder numbering) to the legacy
@@ -338,9 +338,9 @@ impl StructuralFilterBuilder {
         self.add_projection_clause(prefix, &wc.sql, &wc.binds);
     }
 
-    /// #1320 PR-1 — ALL-tags filter routed through [`SearchProjection`]
+    /// #1320 ALL-tags filter routed through [`SearchProjection`]
     /// instead of the inline `add_tags_all` `COUNT(DISTINCT)` fragment
-    /// (#1320 PR-3 retired that legacy method; this is now the sole path).
+    /// (#1320 retired that legacy method; this is now the sole path).
     /// For each requested tag, compiles a
     /// [`FilterPrimitive::Tag`] (which `SearchProjection::compile_tag`
     /// emits as `b.id IN (SELECT block_id FROM block_tags WHERE tag_id =
@@ -354,7 +354,7 @@ impl StructuralFilterBuilder {
     /// `COUNT(DISTINCT)` sub-select).
     ///
     /// `tags` must already be deduped + UPPERCASE-normalised by the caller
-    /// (SQL-1 / SQL-A6) — dedup is now a correctness-neutral nicety rather
+    /// (/ SQL-A6) — dedup is now a correctness-neutral nicety rather
     /// than a hard requirement (a duplicated tag id only emits a redundant
     /// identical IN-subselect), but the caller keeps deduping for SQL
     /// economy. No-op on an empty slice (mirrors `add_tags_all`). The
@@ -371,8 +371,8 @@ impl StructuralFilterBuilder {
         }
     }
 
-    /// #1320 PR-2 — page-name-glob filter routed through [`SearchProjection`].
-    /// (#1320 PR-3 retired the former inline `add_page_globs` /
+    /// #1320 page-name-glob filter routed through [`SearchProjection`].
+    /// (#1320 retired the former inline `add_page_globs` /
     /// `append_page_glob_subselect` fragment; this is now the sole path.)
     /// Preserves the LEGACY
     /// `LOWER(title) GLOB ?` dialect byte-for-byte at the result level
@@ -483,7 +483,7 @@ impl StructuralFilterBuilder {
         }
     }
 
-    /// Splice the PEND-53 metadata predicates into the fragment via the
+    /// Splice the metadata predicates into the fragment via the
     /// shared [`append_metadata_sql`], recording each returned bind in
     /// declaration order. The relative position of this call vs
     /// [`add_block_type`](Self::add_block_type) differs between the FTS
@@ -572,7 +572,7 @@ impl StructuralFilterBuilder {
     }
 }
 
-/// #1320 PR-0 — lift the genuinely-shared filter subset (`Tag`,
+/// #1320 lift the genuinely-shared filter subset (`Tag`,
 /// `HasProperty`, `Space`) from the flat [`SearchFilter`] into
 /// [`FilterPrimitive`]s, so they can be compiled through
 /// [`SearchProjection`] (the cross-surface filter compiler) instead of the
@@ -582,7 +582,7 @@ impl StructuralFilterBuilder {
 /// subset. Path globs, metadata (state / priority / due / scheduled),
 /// `block_type`, the toggle filters, and the FTS `MATCH` query itself are
 /// left entirely on the legacy path — they diverge from the projection and
-/// are out of scope for PR-0.
+/// Are out of scope for.
 ///
 /// **Mapping:**
 /// - `tag_ids` → one [`FilterPrimitive::Tag`] per tag (ALL/AND semantics:
@@ -674,7 +674,7 @@ mod tests {
         assert_eq!(fb.next_param(), 7);
     }
 
-    // ── #1320 PR-0 — SearchProjection cutover parity ──────────────────
+    // ── #1320 SearchProjection cutover parity ──────────────────
     //
     // The zero-behaviour-change contract: routing the shared subset through
     // `SearchProjection` must emit byte-identical SQL + binds to the legacy
@@ -735,7 +735,7 @@ mod tests {
         assert_eq!(fb.bind_count(), 0);
     }
 
-    /// #1320 PR-1 — Tag is now ROUTED through `SearchProjection` in
+    /// #1320 Tag is now ROUTED through `SearchProjection` in
     /// `fts_fetch_rows` (`add_tags_via_projection`), replacing the legacy
     /// inline `COUNT(DISTINCT)` ALL-semantics fragment (`add_tags_all`).
     ///
@@ -780,7 +780,7 @@ mod tests {
             matches!(routed.binds.first(), Some(ScalarBind::Str(s)) if s == "01TAG0000000000000000000A")
         );
 
-        // #1320 PR-3 — the legacy `add_tags_all` `COUNT(DISTINCT)` fragment
+        // #1320 the legacy `add_tags_allCOUNT(DISTINCT)` fragment
         // has been retired, so there is no live legacy builder to diff
         // against. We still document the shape divergence intent: the routed
         // path uses per-tag `IN`-subselects, NOT the former single
@@ -797,7 +797,7 @@ mod tests {
     /// sub-select and (for a value) a four-column OR across
     /// `value_text` / `value_num` / `value_date` / `value_ref`;
     /// `SearchProjection` emits an un-aliased `value_text`-only sub-select.
-    /// This is WHY HasProperty is excluded from the PR-0 cutover.
+    /// This is WHY HasProperty is excluded from the cutover.
     #[test]
     fn projection_has_property_diverges_from_legacy_kept_legacy() {
         use crate::domain::search_types::SearchPropertyFilter;
@@ -1062,7 +1062,7 @@ mod tests {
         // tags, space, globs, block_type. Indices must increase
         // monotonically with no gaps or reuse.
         //
-        // #1320 PR-3 — routed through the `_via_projection` tag + glob
+        // #1320 routed through the `_via_projection` tag + glob
         // variants (the legacy `add_tags_all` / `add_page_globs` were
         // retired). `add_tags_via_projection` consumes ONE placeholder per
         // tag (no trailing `COUNT(DISTINCT)` count bind), so the indices are

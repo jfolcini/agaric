@@ -53,7 +53,7 @@ export class FeatureErrorBoundary extends React.Component<
     this.setState({ hasError: false, error: null })
   }
 
-  // UX-279: surface the in-app bug-report dialog with the captured error
+  // Surface the in-app bug-report dialog with the captured error
   // pre-filled. The listener lives at the App shell — see `App.tsx`. Using
   // a global CustomEvent (not a prop callback) keeps section-level
   // boundaries decoupled from the dialog's mount point.
@@ -84,7 +84,7 @@ export class FeatureErrorBoundary extends React.Component<
           <p className="max-w-xs text-center text-xs text-muted-foreground">
             {this.state.error?.message ?? i18n.t('error.unexpected')}
           </p>
-          {/* UX-12: reassure the user that retrying is non-destructive so the
+          {/* reassure the user that retrying is non-destructive so the
               raw error.message above doesn't read as data loss. */}
           <p className="max-w-xs text-center text-sm text-muted-foreground">
             {i18n.t('errorBoundary.dataSafe')}

@@ -82,7 +82,7 @@ function syncStateDotClasses(state: SyncState): string {
  * Per-state icon next to the sync-state dot. Adds a non-color signal so
  * states are distinguishable beyond colour. The icon is decorative — the
  * adjacent text label carries the canonical state name for assistive
- * tech, so we mark it `aria-hidden`. See UX-266.
+ * Tech, so we mark it `aria-hidden`. See.
  *
  * #1076: the `discovering` / `pairing` branches were removed alongside
  * those (dead, never-written) SyncState members.

@@ -70,13 +70,13 @@ export const editor: Record<string, string> = {
   // query (mirrors the command palette's recents strip).
   'slashCommand.categories.recent': 'Recent',
   'editor.templatePlaceholder': 'Type /template to start from a template, or just start typing...',
-  // UX-309: discoverability hint for the slash-command palette on empty blocks.
+  // Discoverability hint for the slash-command palette on empty blocks.
   // #217 D5: also surface the Shift+Enter soft-line-break shortcut, which has
   // no other UI affordance — the empty-block placeholder is the one moment the
   // user is looking at the block before typing, so it doubles as a teach-in.
   'editor.emptyBlockPlaceholder':
     'Type / for commands, [[ to link, @ to tag · Shift+Enter for a line break',
-  // UX-304: label shown over the swipe-to-delete overlay on coarse-pointer
+  // Label shown over the swipe-to-delete overlay on coarse-pointer
   // devices once the auto-delete threshold (200 px) is crossed mid-drag.
   'block.swipe.releaseToDelete': 'Release to delete',
   // #927 f7: Gmail-style undo affordance after a swipe-to-delete. The 200 px

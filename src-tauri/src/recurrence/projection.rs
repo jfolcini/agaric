@@ -1,10 +1,10 @@
-//! Shared per-block recurrence-date projection (MAINT-196).
+//! Shared per-block recurrence-date projection.
 //!
 //! Pure date math, no DB access. Used by both the projected-agenda cache
 //! rebuild (`cache::projected_agenda::project_block_into`) and the
 //! on-the-fly projection (`commands::agenda::list_projected_agenda_on_the_fly`).
 //!
-//! Before MAINT-196 the per-block recurrence projection lived inline in
+//! Before the per-block recurrence projection lived inline in
 //! both callsites and silently drifted: the parity test
 //! `projected_agenda_cached_equals_on_the_fly` recorded a 112-vs-110
 //! mismatch on the `.+1w` (dot_plus) surface. Consolidating the logic
@@ -41,7 +41,7 @@
 ///   `[range_start, range_end]` and is not past `repeat_until`.
 /// - 10 000-iteration safety bound per `(block, source)` so a
 ///   pathological rule cannot infinite-loop.
-/// - #680 / PEND-24 H2: for `plus_plus`, if the catch-up loop exhausts
+///   #680 / for `plus_plus`, if the catch-up loop exhausts
 ///   the safety bound (or `shift_date_once` overflows) WITHOUT reaching
 ///   a date strictly after `today`, the source is skipped entirely — no
 ///   occurrence is emitted. Emitting the stale past `current` would be a
@@ -74,7 +74,7 @@
 /// `remaining` is pre-computed by the caller from
 /// `repeat_count - repeat_seq` (see callsites). `None` means unbounded.
 ///
-/// # Drift notes (MAINT-196)
+/// # Drift notes
 ///
 /// The two pre-refactor callsites diverged on one subtle detail:
 /// the cache previously clipped emissions against `today..horizon`
@@ -147,7 +147,7 @@ pub(crate) fn project_block_dates<F>(
                 // greater than today. The caught-up date is pre-emitted
                 // below, then the main loop continues from it.
                 //
-                // #680 / PEND-24 H2: the catch-up can fail to reach a
+                // #680 / the catch-up can fail to reach a
                 // future date in two ways — the 10 000-step budget
                 // elapses without `c > today` (e.g. `++1d` against an
                 // `original` decades in the past), or `shift_date_once`

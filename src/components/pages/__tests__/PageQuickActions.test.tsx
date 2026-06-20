@@ -1,5 +1,5 @@
 /**
- * Tests for PageQuickActions (PEND-68 Part A).
+ * Tests for PageQuickActions (Part A).
  *
  * Validates:
  *  - Each variant renders both the star and the delete IconButton.

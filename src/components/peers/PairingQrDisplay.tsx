@@ -28,7 +28,7 @@ export interface PairingQrDisplayProps {
   onRetry: () => void
   retryBtnRef: React.RefObject<HTMLButtonElement | null>
   /**
-   * UX-263: When true, render an inline `t('pairing.countdownPaused')` indicator
+   * When true, render an inline `t('pairing.countdownPaused')` indicator
    * next to the countdown so the user knows the timer isn't ticking
    * while they enter the passphrase.
    */
@@ -48,7 +48,7 @@ export function PairingQrDisplay({
 }: PairingQrDisplayProps): React.ReactElement {
   const { t } = useTranslation()
 
-  // UX-377: The visual `t('pairing.countdownPaused')` indicator lives inside an
+  // The visual `t('pairing.countdownPaused')` indicator lives inside an
   // aria-hidden countdown paragraph (see below), so SR users can't hear it.
   // Mirror the pause/resume transitions through the shared `announce()`
   // singleton — same pattern PairingDialog's handleTypingStateChange uses,
@@ -80,7 +80,7 @@ export function PairingQrDisplay({
         <span className="text-sm font-medium text-muted-foreground">
           {t('pairing.passphraseLabel')}
         </span>
-        {/* UX-12: passphrase + inline copy button. Wrapping in a flex row
+        {/* passphrase + inline copy button. Wrapping in a flex row
             keeps the copy affordance discoverable next to the value. */}
         <div className="flex items-center gap-2">
           <p className="pairing-passphrase text-lg font-mono font-semibold break-words">
@@ -107,9 +107,9 @@ export function PairingQrDisplay({
         </div>
         <p className="text-xs text-muted-foreground mt-1">{t('pairing.scanOrEnterInstruction')}</p>
         {/* #294: Countdown timer.
-            UX-263: When pausedByTyping is true, append an inline indicator so
+            When pausedByTyping is true, append an inline indicator so
             the user understands why the timer isn't ticking.
-            UX-12: bump the indicator from muted italic to foreground +
+            bump the indicator from muted italic to foreground +
             Pause icon so it actually catches the eye while typing. */}
         {countdownDisplay && (
           <p className="pairing-countdown text-xs text-muted-foreground mt-1" aria-hidden="true">

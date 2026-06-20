@@ -120,7 +120,7 @@ function PageEditorInner({
           content: '',
           parentId: pageId,
         })
-        // PEND-35 Tier 4.2 — splice the returned row into the local store
+        // Splice the returned row into the local store
         // instead of re-fetching the full page. The backend response
         // already carries the canonical BlockRow, so the second
         // `list_blocks` IPC was pure waste.
@@ -132,7 +132,7 @@ function PageEditorInner({
     }
   }, [blocks, createBelow, setFocused, pageId, t, pageStore])
 
-  // ── Click on page background whitespace closes active editor (UX-M9) ──
+  // ── Click on page background whitespace closes active editor ──
   const handleBackgroundMouseDown = useCallback((e: React.PointerEvent) => {
     if (e.target !== e.currentTarget) return
     const { focusedBlockId } = useBlockStore.getState()
@@ -148,7 +148,7 @@ function PageEditorInner({
   }, [])
 
   // ── Link preview tooltip — covers all blocks (static + editor) ──
-  // PEND-52 — the same container element doubles as the host for the
+  // The same container element doubles as the host for the
   // in-page-find matcher. Registered via the find store so the toolbar
   // (mounted at App level) knows which subtree to walk; unregistering
   // on unmount auto-closes the toolbar when the user navigates away.
@@ -198,7 +198,7 @@ function PageEditorInner({
         </>
       )}
 
-      {/* Pages tree — child pages of this page (PEND-83 Bug 2).
+      {/* Pages tree — child pages of this page (Bug 2).
           Sits ABOVE LinkedReferences so the navigation affordance for
           descendant pages lives next to the editor body, not buried under
           the references stack. The section hides itself entirely when

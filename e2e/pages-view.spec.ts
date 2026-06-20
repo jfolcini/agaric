@@ -17,7 +17,7 @@ import {
 const axePath = createRequire(import.meta.url).resolve('axe-core')
 
 /**
- * PEND-58d — comprehensive behavioural e2e for every Pages-view capability.
+ * Comprehensive behavioural e2e for every Pages-view capability.
  *
  * Companion to `pages-filter.spec.ts` (chip-render + grooming facets); this
  * file asserts that each user-facing feature *does the thing* — narrows the
@@ -155,7 +155,7 @@ async function scrollGridToBottom(page: Page) {
 // ===========================================================================
 // 1. Each facet narrows
 // ===========================================================================
-test.describe('PEND-58d — facet narrowing (each facet does the thing)', () => {
+test.describe('facet narrowing (each facet does the thing)', () => {
   test('Orphan narrows to fully-isolated pages', async ({ page }) => {
     await bootPages(page)
     await expect(grid(page).getByText('Getting Started', { exact: true })).toBeVisible()
@@ -293,7 +293,7 @@ test.describe('PEND-58d — facet narrowing (each facet does the thing)', () => 
 // ===========================================================================
 // 2. Compound filters
 // ===========================================================================
-test.describe('PEND-58d — compound filters (AND-compose / widen / soft-cap)', () => {
+test.describe('compound filters (AND-compose / widen / soft-cap)', () => {
   test('two chips AND-narrow; removing one widens', async ({ page }) => {
     await bootPages(page)
     // Orphan (4 pages) ∧ path "Meet" (2 pages) → only "Meeting Notes
@@ -340,7 +340,7 @@ test.describe('PEND-58d — compound filters (AND-compose / widen / soft-cap)', 
 // ===========================================================================
 // 3. Zero-result state
 // ===========================================================================
-test.describe('PEND-58d — zero-result state', () => {
+test.describe('zero-result state', () => {
   test('a chip that empties the list shows no-match (not create-first) and recovers', async ({
     page,
   }) => {
@@ -366,7 +366,7 @@ test.describe('PEND-58d — zero-result state', () => {
 // ===========================================================================
 // 4. Clear-all
 // ===========================================================================
-test.describe('PEND-58d — clear-all', () => {
+test.describe('clear-all', () => {
   test('clear-all removes every chip and restores the full list', async ({ page }) => {
     await bootPages(page)
     await addBooleanFacet(page, 'Orphan')
@@ -386,7 +386,7 @@ test.describe('PEND-58d — clear-all', () => {
 // ===========================================================================
 // 5. Count chip
 // ===========================================================================
-test.describe('PEND-58d — count chip', () => {
+test.describe('count chip', () => {
   test('shows total with no filter, countMatching with chips, X-of-Y with text', async ({
     page,
   }) => {
@@ -412,7 +412,7 @@ test.describe('PEND-58d — count chip', () => {
 // ===========================================================================
 // 6. Search box
 // ===========================================================================
-test.describe('PEND-58d — search box', () => {
+test.describe('search box', () => {
   test('text narrows by title and composes orthogonally with a chip', async ({ page }) => {
     await bootPages(page)
     const search = page.getByPlaceholder('Search pages...')
@@ -446,7 +446,7 @@ test.describe('PEND-58d — search box', () => {
 // ===========================================================================
 // 7. Sort
 // ===========================================================================
-test.describe('PEND-58d — sort', () => {
+test.describe('sort', () => {
   test('the seven modes reorder the list', async ({ page }) => {
     await bootPages(page)
 
@@ -520,7 +520,7 @@ test.describe('PEND-58d — sort', () => {
 // ===========================================================================
 // 8. Density
 // ===========================================================================
-test.describe('PEND-58d — density', () => {
+test.describe('density', () => {
   test('toggling density changes the rows and persists across reload', async ({ page }) => {
     await bootPages(page)
     const firstRow = grid(page).locator('[data-page-item]').first()
@@ -560,7 +560,7 @@ test.describe('PEND-58d — density', () => {
 // ===========================================================================
 // 9. Pagination / virtualization (extends, doesn't duplicate, pages-filter)
 // ===========================================================================
-test.describe('PEND-58d — pagination / virtualization', () => {
+test.describe('pagination / virtualization', () => {
   test('load-more footer is a valid grid row (role=row > gridcell)', async ({ page }) => {
     await bootPages(page, { extraPages: 80 })
     await expect(grid(page).getByText('Bulk Page 001', { exact: true })).toBeVisible()
@@ -605,7 +605,7 @@ test.describe('PEND-58d — pagination / virtualization', () => {
 // ===========================================================================
 // 10. CRUD + grooming
 // ===========================================================================
-test.describe('PEND-58d — CRUD + grooming', () => {
+test.describe('CRUD + grooming', () => {
   test('create page (unfiltered) prepends optimistically and bumps the count', async ({ page }) => {
     await bootPages(page)
     await expect(countChip(page)).toHaveText('6 pages')
@@ -713,7 +713,7 @@ test.describe('PEND-58d — CRUD + grooming', () => {
 // ===========================================================================
 // 11. Chip-row + density rows
 // ===========================================================================
-test.describe('PEND-58d — chip-row + density rows', () => {
+test.describe('chip-row + density rows', () => {
   test('renders the chip-row + density rows', async ({ page }) => {
     await bootPages(page)
     await expect(page.getByRole('button', { name: 'Add filter' })).toBeVisible()
@@ -725,7 +725,7 @@ test.describe('PEND-58d — chip-row + density rows', () => {
 // ===========================================================================
 // 12. Metadata badges
 // ===========================================================================
-test.describe('PEND-58d — metadata badges', () => {
+test.describe('metadata badges', () => {
   test('inbound / children / last-modified render on regular-density rows', async ({ page }) => {
     await bootPages(page)
     // Getting Started: 1 inbound link, 5 child blocks, a relative-time stamp.
@@ -763,7 +763,7 @@ test.describe('PEND-58d — metadata badges', () => {
 // ===========================================================================
 // 13. Cursor robustness (sort change mid-session)
 // ===========================================================================
-test.describe('PEND-58d — cursor robustness', () => {
+test.describe('cursor robustness', () => {
   test('changing sort mid-session re-paginates without dupes or drops', async ({ page }) => {
     await bootPages(page, { extraPages: 80 })
     await expect(grid(page).getByText('Bulk Page 001', { exact: true })).toBeVisible()
@@ -798,7 +798,7 @@ test.describe('PEND-58d — cursor robustness', () => {
 })
 
 // ===========================================================================
-// 13b. Cursor IPC contract (PEND-58e E12) — drive the D6 null-retention,
+// 13b. Cursor IPC contract — drive the D6 null-retention,
 // cross-sort RequiresRefresh, and same-page inbound exclusion paths through
 // the mock at the IPC boundary, the same surface the Pages view consumes in
 // e2e. The browser-mock activates whenever `window.__TAURI_INTERNALS__` is
@@ -848,7 +848,7 @@ function invokePages(
   }, args)
 }
 
-test.describe('PEND-58e — cursor IPC contract (E12)', () => {
+test.describe('cursor IPC contract (E12)', () => {
   test('first page carries total_count; cursor pages return null (D6)', async ({ page }) => {
     await bootPages(page, { extraPages: 80 })
     const first = (await invokePages(page, {
@@ -913,7 +913,7 @@ test.describe('PEND-58e — cursor IPC contract (E12)', () => {
 // ===========================================================================
 // 14. a11y + keyboard
 // ===========================================================================
-test.describe('PEND-58d — a11y + keyboard', () => {
+test.describe('a11y + keyboard', () => {
   test('arrow keys move focus and update aria-activedescendant', async ({ page }) => {
     await bootPages(page)
     // Focus the grid, then arrow down — the grid's aria-activedescendant must
@@ -977,7 +977,7 @@ test.describe('PEND-58d — a11y + keyboard', () => {
 // ===========================================================================
 // 15. Responsive
 // ===========================================================================
-test.describe('PEND-58d — responsive', () => {
+test.describe('responsive', () => {
   test('narrow viewport wraps the header controls instead of overflowing', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 900 })
     await bootPages(page)

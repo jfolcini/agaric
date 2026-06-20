@@ -1,6 +1,6 @@
 /**
  * ResetOnboardingRow — `t('settings.resetOnboarding.title')` row inside the
- * General settings tab (UX-374).
+ * General settings tab.
  *
  * The Spaces onboarding banner inside `t('space.manage')` is dismissed
  * permanently the first time the user clicks `t('space.onboardingDismiss')`,

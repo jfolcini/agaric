@@ -49,7 +49,7 @@ async fn try_enqueue_background_drops_when_full() {
     }
 }
 
-/// M-7 / M-8: the `try_enqueue_background` Full-arm must increment
+/// The `try_enqueue_background` Full-arm must increment
 /// `metrics.bg_dropped` so sustained backpressure is visible in
 /// `StatusInfo`.  Without the increment, dropped cache-rebuild
 /// fan-outs are an invisible degradation.
@@ -83,7 +83,7 @@ async fn try_enqueue_background_full_arm_increments_bg_dropped() {
     mat.shutdown();
 }
 
-/// M-7 / M-8: the cache-rebuild fan-out path
+/// The cache-rebuild fan-out path
 /// (`enqueue_full_cache_rebuild`, used by `delete_block` /
 /// `restore_block` / `purge_block`) is the specific code path called
 /// out in the recommendation.  When the bg queue is saturated, every
@@ -123,7 +123,7 @@ async fn enqueue_full_cache_rebuild_under_backpressure_increments_bg_dropped() {
     mat.shutdown();
 }
 
-/// PEND-03: when the bg queue is full and a global cache rebuild
+/// When the bg queue is full and a global cache rebuild
 /// (`RebuildTagsCache`) is dispatched, three things must happen:
 ///   1. The task is shed (queue stays full, no panic).
 ///   2. `bg_dropped_global` ticks (separate from `bg_dropped` so
@@ -169,7 +169,7 @@ async fn test_global_task_dropped_on_queue_full() {
         }
         if std::time::Instant::now() > deadline {
             panic!(
-                "PEND-03: dropped global RebuildPagesCache must be persisted to \
+                "dropped global RebuildPagesCache must be persisted to \
                  materializer_retry_queue under '__GLOBAL__'; row never appeared"
             );
         }
@@ -248,7 +248,7 @@ async fn test_per_block_task_dropped_on_queue_full() {
     mat.shutdown();
 }
 
-/// PEND-03: a persisted global `RebuildAgendaCache` row whose
+/// A persisted global `RebuildAgendaCache` row whose
 /// `next_attempt_at` is already in the past must be re-enqueued by
 /// `sweep_once` and the row deleted from `materializer_retry_queue`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -364,7 +364,7 @@ async fn shutdown_when_full() {
     );
 }
 
-/// M-12 regression test: a long-running future spawned via the
+/// Regression test: a long-running future spawned via the
 /// materializer's tracked spawn helper must be aborted when
 /// `shutdown()` is called, not allowed to outlive the shutdown
 /// signal.
@@ -421,7 +421,7 @@ async fn shutdown_aborts_in_flight_tasks_m12() {
     // in <10 ms.
     while !dropped.load(AtomicOrdering::Acquire) {
         if start.elapsed() > Duration::from_secs(1) {
-            panic!("M-12: shutdown() must abort in-flight tasks within 1s");
+            panic!("shutdown() must abort in-flight tasks within 1s");
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -433,16 +433,16 @@ async fn shutdown_aborts_in_flight_tasks_m12() {
 ///
 /// Pre-fix, each attempt ran via a bare `tokio::task::spawn` that was
 /// merely `.await`ed; aborting the awaiting consumer task (the only thing
-/// the M-12 JoinSet tracked) detached the spawned attempt, which kept
+/// The JoinSet tracked) detached the spawned attempt, which kept
 /// running against the (closing) writer pool. That is the exact
-/// writer-pool-closed / slow-exit symptom the M-12 contract claims to
+/// Writer-pool-closed / slow-exit symptom the contract claims to
 /// prevent.
 ///
 /// The fix wraps each attempt's `JoinHandle` in an abort-on-drop guard,
 /// so cancelling the awaiting task also cancels the in-flight attempt.
 ///
 /// This test reproduces the path directly: it spawns a `retry_with_backoff`
-/// loop onto the tracked M-12 JoinSet (exactly how the foreground /
+/// Loop onto the tracked JoinSet (exactly how the foreground /
 /// background consumer loops are spawned). The handler attempt signals it
 /// has started, holds a `Drop` guard, then blocks forever. We confirm the
 /// attempt is actually running (no DB write yet, guard not dropped), call

@@ -40,7 +40,7 @@ export function mapPeerRefToInfo(row: PeerRefRow): PeerInfo {
 // the backend is mid-backoff, calling `startSync()` from here is a
 // no-op on the wire — it just resolves quickly. That is fine; do not
 // add cross-scheduler coordination here without first reading
-// `sync_scheduler.rs` end-to-end. See MAINT-168 for
+// `sync_scheduler.rs` end-to-end. See for
 // the deferred unification design note.
 const BASE_INTERVAL_MS = 60_000
 const MAX_INTERVAL_MS = 600_000 // 10 minutes
@@ -88,7 +88,7 @@ export async function runWithTimeout<T>(p: Promise<T>, ms: number, err: Error): 
  * Syncs a single peer with a timeout guard. Shows a toast on failure.
  * Returns `true` on success, `false` on failure.
  *
- * UX-264: per-peer failures are transient (network, peer-offline, timeout)
+ * Per-peer failures are transient (network, peer-offline, timeout)
  * so the failure toast carries a Retry action that re-runs `startSync`
  * for the same peer. Permanent failures (protocol mismatch, etc.) are
  * surfaced via separate channels and not routed through this helper.
@@ -108,7 +108,7 @@ async function syncOnePeerWithToast(
     const store = useSyncStore.getState()
     await runWithTimeout(
       startSync(peerId, (update) => {
-        // PEND-06 Tier 2 — `SyncProgressUpdate` is a tagged enum: the
+        // `SyncProgressUpdate` is a tagged enum: the
         // op-sync stream lands as `kind: 'sync'`, the post-sync
         // attachment-transfer stream lands as `kind: 'files'`. Fall
         // through to the file branch on `complete` so the affordance
@@ -305,7 +305,7 @@ export function useSyncTrigger() {
   }, [syncAll, scheduleNext])
 
   // Trigger immediate sync when coming back online (#667).
-  // UX-264: surface a `notify.info` when transitioning offline → online,
+  // Surface a `notify.info` when transitioning offline → online,
   // gated by the prior `offline` sync-store state so we don't fire on
   // benign repeats (some browsers dispatch multiple `online` events).
   useEffect(() => {

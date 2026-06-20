@@ -1,7 +1,7 @@
 /**
  * createSpaceSubscriber — shared `useSpaceStore` subscriber helper.
  *
- * MAINT-122: navigation, journal, and recent-pages stores all carry the
+ * Navigation, journal, and recent-pages stores all carry the
  * same "flush outgoing slice → swap currentSpaceId → pull incoming
  * slice" pattern, with identical first-fire-seed plumbing. This helper
  * centralizes the prevSpaceKey + first-fire-seed + diff detection so

@@ -1,5 +1,5 @@
 /**
- * AddFilterPopover — PEND-58 Phase 4. The discovery affordance for the
+ * AddFilterPopover — Phase 4. The discovery affordance for the
  * Pages-view compound-filter chip-row.
  *
  * Modelled on `GraphFilterBar`'s Add-Filter popover: a trigger button

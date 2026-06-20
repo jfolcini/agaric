@@ -48,7 +48,7 @@ vi.mock('@/components/editor-toolbar/SelectionBubbleMenu', () => ({
   ),
 }))
 
-// Mock LinkPreviewTooltip — tested separately in LinkPreviewTooltip.test.tsx (UX-165)
+// Mock LinkPreviewTooltip — tested separately in LinkPreviewTooltip.test.tsx
 vi.mock('@/components/LinkPreviewTooltip', () => ({
   LinkPreviewTooltip: () => <div data-testid="link-preview-tooltip-mock" />,
 }))
@@ -120,7 +120,7 @@ const _mockPageStore = {
   edit: mockEdit,
   splitBlock: mockSplitBlock,
   blocks: [] as Array<{ id: string; priority?: string | null }>,
-  // PEND-20 G — `EditableBlock`'s priority selector reads from `blocksById`.
+  // G — `EditableBlock`'s priority selector reads from `blocksById`.
   // Provide an empty Map so `selector(s).priority` is `undefined`, matching
   // the original `blocks.find(...)` behavior on an empty array.
   blocksById: new Map<string, { id: string; priority?: string | null }>(),
@@ -263,7 +263,7 @@ describe('EditableBlock', () => {
       expect(wrapper?.classList.contains('block-editor')).toBe(true)
     })
 
-    it('applies the block-selected recipe when isSelected (UX-302, recipe unified UX-929)', () => {
+    it('applies the block-selected recipe when isSelected (recipe unified)', () => {
       render(
         <EditableBlock
           blockId="B1"
@@ -274,7 +274,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      // UX-929 F4: selection now uses the single `block-selected` @utility
+      // Selection now uses the single `block-selected` @utility
       // (src/index.css) instead of the inlined ring-primary/bg-primary cluster.
       const wrapper = screen.getByTestId('block-editor')
       expect(wrapper.className).toContain('block-selected')
@@ -762,7 +762,7 @@ describe('EditableBlock', () => {
     })
   })
 
-  // ── EDITOR_PORTAL_SELECTOR constant (PEND-30 L-3) ─────────────────
+  // ── EDITOR_PORTAL_SELECTOR constant ─────────────────
 
   describe('EDITOR_PORTAL_SELECTOR', () => {
     it('is exported as the single canonical attribute selector', () => {
@@ -961,7 +961,7 @@ describe('EditableBlock', () => {
       expect(mockMount).toHaveBeenCalledWith('B1', '')
     })
 
-    it('auto-mount uses shouldSplitOnBlur, not naive newline check (M-5)', () => {
+    it('auto-mount uses shouldSplitOnBlur, not naive newline check', () => {
       // A code block has internal newlines but shouldSplitOnBlur returns false —
       // the auto-mount persist should call edit(), not splitBlock().
       const codeBlock = '```\nline1\nline2\n```'
@@ -1758,7 +1758,7 @@ describe('EditableBlock', () => {
   // ── F-27: Drag-and-drop and paste file attachments ─────────────────
 
   describe('drag-and-drop and paste file attachments', () => {
-    // PEND-76 F2 — the upload path reads the file to bytes and ships them over
+    // The upload path reads the file to bytes and ships them over
     // IPC; the browser file's absolute path is no longer used. Files carry
     // real byte content (`'content'` → 7 bytes) so we can assert on the bytes.
     const CONTENT_BYTES = [99, 111, 110, 116, 101, 110, 116]

@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-// PEND-37: the dragStart assertion relies on `fireEvent.dragStart(li, { dataTransfer })`
+// The dragStart assertion relies on `fireEvent.dragStart(li, { dataTransfer })`
 // passing the test's dataTransfer reference through to the component. jsdom honours
 // this; happy-dom's DragEvent constructor reconstructs a fresh DataTransfer and
 // discards the test's object, so component mutations never surface back.
 
 /**
- * Tests for BlockListItem component (UX-9).
+ * Tests for BlockListItem component.
  *
  * Validates:
  *  1. Renders truncated content text
@@ -288,7 +288,7 @@ describe('BlockListItem', () => {
     const contentSpan = screen.getByText('Test block content')
     expect(contentSpan.className).toContain('my-content-class')
     // Base classes still present (line-clamp-2 is NOT a base class — callers
-    // opt in via contentClassName; see UX-197).
+    // Opt in via contentClassName;).
     expect(contentSpan.className).toContain('text-sm')
     expect(contentSpan.className).not.toContain('line-clamp-2')
 
@@ -309,7 +309,7 @@ describe('BlockListItem', () => {
     expect(screen.getByTestId('my-test-id')).toBeInTheDocument()
   })
 
-  // 11. Full content rendering — NO built-in line-clamp (UX-197)
+  // 11. Full content rendering — NO built-in line-clamp
   it('renders full content without line-clamp by default', () => {
     const longContent = 'A'.repeat(50)
 
@@ -321,11 +321,11 @@ describe('BlockListItem', () => {
 
     const contentSpan = screen.getByText(longContent)
     expect(contentSpan).toBeInTheDocument()
-    // UX-197: line-clamp is opt-in via contentClassName, not a base class.
+    // Line-clamp is opt-in via contentClassName, not a base class.
     expect(contentSpan.className).not.toContain('line-clamp-2')
   })
 
-  // UX-197 follow-up: line-clamp is still available when callers opt in
+  // Follow-up: line-clamp is still available when callers opt in
   it('applies line-clamp when caller passes contentClassName="line-clamp-2"', () => {
     render(
       <ul>
@@ -339,7 +339,7 @@ describe('BlockListItem', () => {
     expect(contentSpan.className).toContain('line-clamp-2')
   })
 
-  // UX-195: touch min-height on the list-item container
+  // Touch min-height on the list-item container
   it('applies touch min-height utility on the li for 44px tap targets', () => {
     render(
       <ul>
@@ -540,7 +540,7 @@ describe('BlockListItem', () => {
 
 // ─── isFocused prop ────────────────────────────────────────────────────────
 describe('BlockListItem — isFocused prop', () => {
-  // UX-929 F4: selection/focus feedback is now the single `block-selected`
+  // Selection/focus feedback is now the single `block-selected`
   // recipe @utility (src/index.css), not an inlined ring/bg class cluster.
   it('applies the block-selected recipe when isFocused is true', () => {
     render(
@@ -818,7 +818,7 @@ describe('BlockListItem — handleDateSelect', () => {
     expect(mockSetScheduledDate).not.toHaveBeenCalled()
   })
 
-  // UX-282: screen-reader announcement after successful date pick
+  // Screen-reader announcement after successful date pick
   it('announces task rescheduled after successful date pick', async () => {
     mockGetBlock.mockResolvedValue({
       id: 'block-1',

@@ -7,8 +7,8 @@ pub use query::{
     eval_tag_query, list_all_tags_in_space, list_inherited_tags_for_block, list_tags_by_prefix,
     list_tags_for_block,
 };
-// MAINT-143: Shared leaf-resolution helpers — `backlink::filters` calls
-// these to stay in lockstep with `resolve_expr`'s UX-250 inline-ref
+// Shared leaf-resolution helpers — `backlink::filters` calls
+// These to stay in lockstep with `resolve_expr`'s inline-ref
 // union semantics. See `resolve.rs` for the canonical SQL.
 pub(crate) use resolve::{resolve_tag_leaves, resolve_tag_prefix_leaves};
 

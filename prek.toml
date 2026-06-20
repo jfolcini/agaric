@@ -54,7 +54,7 @@ repo = "https://github.com/gitleaks/gitleaks"
 rev = "v8.30.1"
 hooks = [{ id = "gitleaks", stages = ["pre-commit"] }]
 
-# Conventional Commits enforcement on commit-msg stage (PEND-41 R8).
+# Conventional Commits enforcement on commit-msg stage.
 [[repos]]
 repo = "https://github.com/compilerla/conventional-pre-commit"
 rev = "v4.4.0"
@@ -211,7 +211,7 @@ always_run = true
 stages = ["pre-commit", "pre-push"]
 
 # Legacy React API guard — block re-introduction of APIs we migrated away from
-# (MAINT-48 React 19, MAINT-49 TypeScript 6, follow-up MutableRefObject removal).
+# (React 19, TypeScript 6, follow-up MutableRefObject removal).
 # Two legitimate `React.JSX.IntrinsicElements` uses in RichContentRenderer.tsx are
 # the correct React-19 form and are excluded by the `[^.]` prefix in the pattern.
 [[repos]]
@@ -249,7 +249,7 @@ stages = ["pre-push"]
 # Tauri-mock parity: ensures every IPC command emitted from
 # `src/lib/bindings.ts` (the auto-generated tauri-specta surface) has a
 # handler in the in-browser tauri mock at `src/lib/tauri-mock/handlers.ts`.
-# Catches the FEAT-3 Phase 2 class of bug where a new backend command
+# Catches the Phase 2 class of bug where a new backend command
 # ships without a mock entry; e2e flows then silently get `null` and
 # fail in unrelated places. Allowlist for genuinely-not-mockable
 # commands (OAuth, OS sockets) lives inside the script.
@@ -340,7 +340,7 @@ stages = ["pre-commit"]
 # at least one axe(...) audit, per src/__tests__/AGENTS.md:227. Without
 # this, accessibility regressions slip through component additions
 # because reviewers can't catch the missing audit by eye on every PR.
-# Easy half of MAINT-99.
+# Easy half.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -355,7 +355,7 @@ stages = ["pre-commit"]
 # test-file-naming: enforce the convention from src/__tests__/AGENTS.md:81
 # (Vitest → .test.ts/.test.tsx in src/, Playwright → .spec.ts in e2e/).
 # Mixing the suffixes silently routes a file to the wrong runner.
-# Rust tests are out of scope (rule is frontend-only). Easy half of MAINT-99.
+# Rust tests are out of scope (rule is frontend-only). Easy half.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -373,8 +373,8 @@ stages = ["pre-commit"]
 # least one error-path test in either its sibling `__tests__/<name>.test.tsx`
 # or the top-level `src/components/__tests__/<name>.test.tsx` fallback.
 # Catches the silent-`.catch` / missing-toast class of regression that
-# AGENTS.md:198 is aimed at. Hard half of MAINT-99; recursive walk
-# closed by MAINT-159 (the `files` regex below is intentionally broad —
+# AGENTS.md:198 is aimed at. Hard half; recursive walk
+# Closed by (the `files` regex below is intentionally broad —
 # the `ui/` and `__tests__/` exclusions live in the script's
 # `listAllComponents()` walk, not in the regex).
 [[repos]]
@@ -408,8 +408,8 @@ stages = ["pre-commit"]
 # in any `src-tauri/src/**/*.rs` source file are auto-allowlisted as
 # deterministic test fixtures (per src-tauri/tests/AGENTS.md:319 —
 # "For deterministic data, no redaction needed"). Inline
-# `# MAINT-99-allow-<kind>: <reason>` comments support the rare known-
-# fixed-generated-value case. Hard half of MAINT-99.
+# `# snapshot-allow-<kind>: <reason>` comments support the rare known-
+# Fixed-generated-value case. Hard half.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -441,7 +441,7 @@ pass_filenames = false
 files = "(^package\\.json$|^package-lock\\.json$)"
 stages = ["pre-push"]
 
-# JS: license-checker (license compliance, PEND-41 R23). The repo is
+# JS: license-checker (license compliance). The repo is
 # GPL-3.0-or-later, so every accepted license below must be one-way-
 # compatible with GPL-3 (permissive or weak-copyleft compatible). The
 # Rust side enforces the equivalent allowlist in `src-tauri/deny.toml`
@@ -458,7 +458,7 @@ pass_filenames = false
 files = "(^package\\.json$|^package-lock\\.json$)"
 stages = ["pre-commit"]
 
-# JS: knip (dead export detection — also covers unused-dep detection, so PEND-41
+# JS: knip (dead export detection — also covers unused-dep detection, so
 # R19 retired the separate `depcheck` hook in favour of knip-only). Pre-push
 # only (#817): knip is a whole-repo analysis that goes red on stale branches
 # for diffs unrelated to the commit, so it doesn't belong in the commit path.
@@ -518,7 +518,7 @@ pass_filenames = true
 # pre-push git shim (not via Phase A, which is pre-commit-stage only).
 stages = ["pre-push"]
 
-# SQL: sqruff (SQLite migrations lint — MAINT-88)
+# SQL: sqruff (SQLite migrations lint)
 # Scope: src-tauri/migrations/*.sql only. Inline `sqlx::query!` strings in Rust
 # are not linted (covered by sqlx compile-time validation against .sqlx/ cache).
 # Rule set picked to match all currently-shipped migrations without triggering
@@ -535,7 +535,7 @@ pass_filenames = true
 files = "^src-tauri/migrations/.*\\.sql$"
 stages = ["pre-commit"]
 
-# Tauri command IPC error-sanitization check (MAINT-147 (c)). Every
+# Tauri command IPC error-sanitization check. Every
 # `#[tauri::command]` wrapper that returns `Result<_, AppError>` and
 # propagates errors via `?` should funnel them through
 # `.map_err(sanitize_internal_error)` so the IPC boundary never leaks
@@ -555,7 +555,7 @@ pass_filenames = false
 files = "^src-tauri/src/commands/.*\\.rs$"
 stages = ["pre-commit"]
 
-# Rust: raw write-tx guard (#110 / MAINT-112). MAINT-112 replaced ad-hoc
+# Rust: raw write-tx guard (#110). replaced ad-hoc
 # `pool.begin_with("BEGIN IMMEDIATE")` write transactions on user-edit
 # paths with the `CommandTx` convention (open via
 # `crate::db::begin_immediate_logged`, couple the commit with post-commit
@@ -761,7 +761,7 @@ pass_filenames = false
 files = "^src-tauri/Cargo\\.(toml|lock)$"
 stages = ["pre-commit"]
 
-# cargo-audit accept-list sync (PEND-40 #11). `cargo audit` (run as a
+# Cargo-audit accept-list sync (#11). `cargo audit` (run as a
 # warn-only step in `_validate.yml`) does NOT consult `deny.toml`, so
 # every advisory already triaged in `deny.toml`'s `[advisories].ignore`
 # re-surfaces in the CI log. The sync script projects those entries
@@ -782,7 +782,7 @@ pass_filenames = false
 files = "^src-tauri/(deny\\.toml|\\.cargo/audit\\.toml)$"
 stages = ["pre-commit"]
 
-# Rust: unsafe-code allowlist (PEND-41 R13). Workspace lint is
+# Rust: unsafe-code allowlist. Workspace lint is
 # `unsafe_code = "deny"`; the only escape hatch is a per-file
 # `#![allow(unsafe_code)]`. This hook fails when a file carries that
 # attribute without an explicit entry in
@@ -873,7 +873,7 @@ pass_filenames = false
 always_run = true
 stages = ["pre-commit"]
 
-# STRICT tables policy (PEND-07). Every new `CREATE TABLE` in a
+# STRICT tables policy. Every new `CREATE TABLE` in a
 # SQLite migration must use STRICT mode (SQLite 3.37+) so silent
 # type coercion fails at insert time instead of corrupting reads
 # later. Pre-policy migrations 0001..0041 are skipped by a

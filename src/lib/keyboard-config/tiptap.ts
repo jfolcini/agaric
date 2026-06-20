@@ -1,5 +1,5 @@
 /**
- * TipTap key-format conversion (MAINT-127). Translates a human-readable
+ * TipTap key-format conversion. Translates a human-readable
  * keyboard-config key string (e.g. `Ctrl + Shift + S`) into the dash-joined
  * `Mod-Shift-s` form that TipTap's `addKeyboardShortcuts` extension expects.
  */

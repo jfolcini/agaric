@@ -1,7 +1,7 @@
 import { expect, openPage, test, waitForBoot } from './helpers'
 
 /**
- * E2E tests for batch block operations (TEST-14).
+ * E2E tests for batch block operations.
  *
  * Tests multi-select via Ctrl+Click, batch toolbar visibility,
  * bulk TODO state changes, and Ctrl+A select-all functionality.

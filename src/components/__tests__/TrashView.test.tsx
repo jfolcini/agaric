@@ -81,7 +81,7 @@ function mockListAndResolve(items: ReturnType<typeof makeBlock>[], hasMore = fal
 beforeEach(() => {
   vi.clearAllMocks()
   useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
-  // FEAT-3p7 — `useResolveStore.set` keys entries by `${currentSpaceId}::${ulid}`.
+  // `useResolveStore.set` keys entries by `${currentSpaceId}::${ulid}`.
   // Pin a deterministic test space so the `cache.get` assertions below
   // can compose the same prefix.
   useSpaceStore.setState({
@@ -182,8 +182,8 @@ describe('TrashView', () => {
     expect(screen.queryByText('Permanently delete?')).not.toBeInTheDocument()
   })
 
-  // UX-259: destructive dialogs must not confirm on a reflex Enter on open.
-  it('UX-259: reflex Enter on purge dialog dismisses without calling purgeBlock', async () => {
+  // Destructive dialogs must not confirm on a reflex Enter on open.
+  it('reflex Enter on purge dialog dismisses without calling purgeBlock', async () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'to purge', deleted_at: 1736899200000 })
     mockListAndResolve([block])
@@ -634,7 +634,7 @@ describe('TrashView', () => {
     expect(screen.getByRole('button', { name: /^Purge selected$/i })).toBeInTheDocument()
   })
 
-  // PEND-35 Tier 2.2 — batch restore is one IPC. The previous version of
+  // Batch restore is one IPC. The previous version of
   // this test pinned a per-row `restore_block` loop; that path is now
   // collapsed into a single `restore_blocks_by_ids` call.
   it('batch restore fires ONE restore_blocks_by_ids IPC for all selected', async () => {
@@ -678,7 +678,7 @@ describe('TrashView', () => {
     })
   })
 
-  // PEND-35 Tier 2.2 — batch purge is one IPC. Previous test pinned a
+  // Batch purge is one IPC. Previous test pinned a
   // per-row `purge_block` loop; collapsed to `purge_blocks_by_ids`.
   it('batch purge shows confirmation then fires ONE purge_blocks_by_ids IPC', async () => {
     const user = userEvent.setup()
@@ -1011,7 +1011,7 @@ describe('TrashView', () => {
     expect(input).toHaveValue('')
   })
 
-  // UX-246: SearchInput clear (✕) button on the filter input itself
+  // SearchInput clear (✕) button on the filter input itself
   // (distinct from the empty-state `trash-clear-filter-btn`).
   it('SearchInput clear (✕) button resets filter and list', async () => {
     const user = userEvent.setup()
@@ -1112,7 +1112,7 @@ describe('TrashView', () => {
     })
   })
 
-  // UX-248 — Unicode-aware fold: trash filter matches Turkish / German
+  // Unicode-aware fold: trash filter matches Turkish / German
   // / accented content via `matchesSearchFolded`.
   it('filter matches Turkish İstanbul when query is lowercase istanbul', async () => {
     const user = userEvent.setup()
@@ -1166,14 +1166,14 @@ describe('TrashView', () => {
     await user.click(emptyTrashBtn)
 
     expect(screen.getByText('Empty trash?')).toBeInTheDocument()
-    // UX-341: dialog description shows the count of trashed items.
+    // Dialog description shows the count of trashed items.
     expect(
       screen.getByText('Permanently delete 1 item? This cannot be undone.'),
     ).toBeInTheDocument()
   })
 
-  // UX-341: confirmation dialog shows the count of items that will be purged.
-  it('UX-341: empty-trash dialog uses singular form when 1 item is loaded', async () => {
+  // Confirmation dialog shows the count of items that will be purged.
+  it('empty-trash dialog uses singular form when 1 item is loaded', async () => {
     const user = userEvent.setup()
     mockListAndResolve([makeBlock({ id: 'B1', content: 'only item', deleted_at: 1736899200000 })])
 
@@ -1190,7 +1190,7 @@ describe('TrashView', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('UX-341: empty-trash dialog uses plural form when multiple items are loaded', async () => {
+  it('empty-trash dialog uses plural form when multiple items are loaded', async () => {
     const user = userEvent.setup()
     mockListAndResolve([
       makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
@@ -1208,9 +1208,9 @@ describe('TrashView', () => {
     ).toBeInTheDocument()
   })
 
-  // UX-341: when more pages remain, the dialog must NOT claim a precise count
+  // When more pages remain, the dialog must NOT claim a precise count
   // (purge_all_deleted ignores pagination and wipes everything in trash).
-  it('UX-341: empty-trash dialog uses paginated copy when more pages remain', async () => {
+  it('empty-trash dialog uses paginated copy when more pages remain', async () => {
     const user = userEvent.setup()
     mockListAndResolve(
       [
@@ -1437,7 +1437,7 @@ describe('TrashView', () => {
     expect(within(toolbar).getByRole('button', { name: /^Purge selected$/i })).toBeInTheDocument()
   })
 
-  // ── UX-243: descendant-count badge ──────────────────────────────
+  // ── descendant-count badge ──────────────────────────────
 
   it('fetches descendant counts for every visible trash root', async () => {
     const block1 = makeBlock({
@@ -1581,7 +1581,7 @@ describe('TrashView', () => {
   })
 })
 
-describe('TrashView screen reader announcements (UX-282)', () => {
+describe('TrashView screen reader announcements', () => {
   it('announces batch restore count after Restore selected', async () => {
     const { announce } = await import('../../lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
@@ -1593,7 +1593,7 @@ describe('TrashView screen reader announcements (UX-282)', () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
-      // PEND-35 Tier 2.2 — single-IPC batch restore.
+      // Single-IPC batch restore.
       if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
       return undefined
     })
@@ -1621,7 +1621,7 @@ describe('TrashView screen reader announcements (UX-282)', () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
       if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
-      // PEND-35 Tier 2.2 — single-IPC batch purge.
+      // Single-IPC batch purge.
       if (cmd === 'purge_blocks_by_ids') return { affected_count: 2 }
       return undefined
     })
@@ -1695,11 +1695,11 @@ describe('TrashView screen reader announcements (UX-282)', () => {
 })
 
 // =========================================================================
-// UX-275 sub-fix 2/3/8: descendant badge stability, batch toolbar
+// Sub-fix 2/3/8: descendant badge stability, batch toolbar
 // keyboard shortcuts, and large-batch restore confirmation.
 // =========================================================================
 
-describe('TrashView UX-275 batch toolbar interaction', () => {
+describe('TrashView  batch toolbar interaction', () => {
   // -- sub-fix 2: badge testid + nowrap utility ----------------------------
   it('descendant badge carries the stable testid and whitespace-nowrap', async () => {
     const block = makeBlock({
@@ -1734,7 +1734,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
       if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
       if (cmd === 'batch_resolve') return []
       if (cmd === 'trash_descendant_counts') return {}
-      // PEND-35 Tier 2.2 — single-IPC batch restore.
+      // Single-IPC batch restore.
       if (cmd === 'restore_blocks_by_ids') return { affected_count: 2 }
       return undefined
     })
@@ -1869,7 +1869,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
     // Confirm — now the actual batch restore fires.
     await user.click(screen.getByTestId('trash-batch-restore-yes'))
 
-    // PEND-35 Tier 2.2 — single IPC for the entire batch.
+    // Single IPC for the entire batch.
     await waitFor(() => {
       expect(restoreCalls).toBe(1)
     })
@@ -1901,7 +1901,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
     await user.click(screen.getByTestId('trash-batch-restore-btn'))
 
     expect(screen.queryByTestId('trash-batch-restore-confirm')).not.toBeInTheDocument()
-    // PEND-35 Tier 2.2 — single batch IPC for the whole selection.
+    // Single batch IPC for the whole selection.
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', {
         blockIds: ['B0', 'B1', 'B2'],
@@ -1942,7 +1942,7 @@ describe('TrashView UX-275 batch toolbar interaction', () => {
   })
 })
 
-describe('TrashView UX-342 purge button tooltip', () => {
+describe('TrashView  purge button tooltip', () => {
   it('purge button is wrapped in a Tooltip and shows the localised content on hover', async () => {
     const user = userEvent.setup()
     mockListAndResolve([
@@ -1989,7 +1989,7 @@ describe('TrashView UX-342 purge button tooltip', () => {
   })
 })
 
-describe('TrashView UX-343 batch restore threshold tooltip', () => {
+describe('TrashView  batch restore threshold tooltip', () => {
   it('batch-restore button tooltip surfaces the >5 confirmation threshold', async () => {
     const user = userEvent.setup()
     mockListAndResolve([

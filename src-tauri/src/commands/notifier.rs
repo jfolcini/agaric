@@ -1,8 +1,8 @@
-//! OS-notification command handlers (FEAT-11).
+//! OS-notification command handlers.
 //!
 //! Provides the minimal backend path for surfacing a due / scheduled task
 //! as a native OS notification through `tauri-plugin-notification`.  This is
-//! the shippable vertical slice of FEAT-11 (issue #138): one command,
+//! the shippable vertical slice of (issue #138): one command,
 //! [`notify_task`], that the frontend can call to fire a notification right
 //! now.  It deliberately does *not* yet include the full scheduler, dedupe
 //! ledger, snooze semantics, or the Settings sub-tab described in the issue

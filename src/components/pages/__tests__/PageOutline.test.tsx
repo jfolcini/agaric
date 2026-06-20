@@ -35,7 +35,7 @@ vi.mock('lucide-react', () => ({
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 function createTestStore(blocks: FlatBlock[]): StoreApi<PageBlockState> {
-  // PEND-20 G — `blocksById` mirrors `blocks` for O(1) lookups.
+  // G — `blocksById` mirrors `blocks` for O(1) lookups.
   const blocksById = new Map(blocks.map((b) => [b.id, b]))
   return createStore<PageBlockState>()(() => ({
     blocks,
@@ -193,7 +193,7 @@ describe('PageOutline', () => {
     document.body.removeChild(fakeEl)
   })
 
-  it('UX-237: heading buttons have ring-inset focus rings so they are not clipped by the inner ScrollArea', async () => {
+  it('heading buttons have ring-inset focus rings so they are not clipped by the inner ScrollArea', async () => {
     const user = userEvent.setup()
     renderOutline([makeBlock({ id: 'b1', content: '# Heading 1' })])
 
@@ -227,9 +227,9 @@ describe('PageOutline', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // ── UX-361: trigger tooltip ────────────────────────────────────────────
+  // ── trigger tooltip ────────────────────────────────────────────
 
-  describe('UX-361: trigger tooltip', () => {
+  describe('trigger tooltip', () => {
     it('shows a tooltip with the localised label when hovering the trigger', async () => {
       const user = userEvent.setup()
       renderOutline([makeBlock({ id: 'b1', content: 'just text' })])

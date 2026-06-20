@@ -1,6 +1,6 @@
 /**
  * Recent-pages store — Zustand state for the desktop-only "Recently visited"
- * strip (FEAT-9) AND the unified recent-pages MRU consumed by SearchPanel,
+ * Strip AND the unified recent-pages MRU consumed by SearchPanel,
  * CommandPalette, and the PageBrowser sort/grouping (#1149).
  *
  * Tracks up to `MAX_RETAINED` recent page visits in MRU order. Visits are
@@ -9,7 +9,7 @@
  * to the front (MRU dedup) and uses the new title, so stored titles always
  * reflect the most recent navigation.
  *
- * FEAT-3 Phase 3 — visits are partitioned by space. `recentPagesBySpace`
+ * Phase 3 — visits are partitioned by space. `recentPagesBySpace`
  * holds one MRU list per space id (with `__legacy__` for the no-space
  * slice); the flat `recentPages` field mirrors the active-space slice so
  * existing reads (and the `currentSpaceId == null` boot path) keep working
@@ -80,7 +80,7 @@ const MAX_RETAINED = 10
 
 /** Raw-localStorage key prefix used by the now-removed `lib/recent-pages.ts`. */
 const RAW_KEY_PREFIX = 'recent_pages'
-/** Pre-FEAT-3 single unscoped raw key (migrated into the `__legacy__` slot). */
+/** Pre- single unscoped raw key (migrated into the `__legacy__` slot). */
 const RAW_LEGACY_UNSCOPED_KEY = 'recent_pages'
 
 interface RecentPagesState {
@@ -204,7 +204,7 @@ export function toRecentPage(ref: PageRef): RecentPage {
  *    was pinned in EITHER source, and keeps the newer `visitedAt`.
  *  - The merged slice is pin-first sorted and pin-exempt capped.
  *
- * The pre-FEAT-3 unscoped `recent_pages` key (if present) is folded into the
+ * The pre- unscoped `recent_pages` key (if present) is folded into the
  * `__legacy__` slot. After a successful merge the raw keys are removed so a
  * later hydrate can't re-merge stale data; the persisted `rawKeysMerged`
  * guard is the belt-and-braces second line of defence.
@@ -400,7 +400,7 @@ function coerceRecentPagesBySpace(raw: unknown): Record<string, PageRef[]> {
  * as well closes that path. The coercion is idempotent, so the migrate→merge
  * double pass on version-mismatched blobs is harmless.
  *
- * v0 → v1: pre-FEAT-3p3 stored only `recentPages`. When the blob has no
+ * V0 → v1: pre- stored only `recentPages`. When the blob has no
  * `recentPagesBySpace` map, the flat list is carried into the `__legacy__`
  * per-space slot so consumers that pass `currentSpaceId = null` still see the
  * user's history and the per-space map gains a non-empty seed.
@@ -433,7 +433,7 @@ export const useRecentPagesStore = create<RecentPagesState>()(
       recordVisit: (ref) => {
         const state = get()
         const key = activeSpaceKey()
-        // PEND-78: build the next MRU from the active space's OWN slice — the
+        // Build the next MRU from the active space's OWN slice — the
         // single source of truth. Reading the flat mirror here was the
         // write-time corruption path: a stale flat field (another space's
         // list, e.g. after rehydrate) would be copied into this space's slice
@@ -581,12 +581,12 @@ export const useRecentPagesStore = create<RecentPagesState>()(
  * the flat `recentPages` mirror on a space change. On first fire
  * (`prevKey === newKey`) it (a) seeds the legacy slot from the rehydrated
  * flat list for the v0→v1 path, then (b) reconciles the flat mirror to the
- * active space's slice — PEND-78 Defect 2: on rehydrate the flat field may
+ * Active space's slice — Defect 2: on rehydrate the flat field may
  * hold a *different* space's list (whichever was active when persistence
  * last ran), and leaving it stale leaks that list through the flat-field
  * read paths.
  *
- * MAINT-122: subscription mechanics + diff detection live in
+ * Subscription mechanics + diff detection live in
  * `createSpaceSubscriber`; this callback owns only the recent-pages
  * flush/pull/reconcile. Exported because the module-level subscriber fires
  * its first-fire (seed) path once at import, so that path is otherwise

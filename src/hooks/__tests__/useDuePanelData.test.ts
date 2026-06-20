@@ -86,7 +86,7 @@ beforeEach(() => {
     total_count: null,
   })
   mockedQueryByProperty.mockResolvedValue(emptyResponse)
-  // TEST-31: Freeze Date only (not setTimeout/setInterval — waitFor and
+  // Freeze Date only (not setTimeout/setInterval — waitFor and
   // renderHook rely on real timers). Prevents midnight-boundary flakes
   // where the test's `new Date()` crosses a day boundary mid-assertion.
   vi.useFakeTimers({ toFake: ['Date'] })
@@ -286,7 +286,7 @@ describe('useDuePanelData', () => {
       )
     })
 
-    // PEND-27 P4 — the merged paginated list reads through `blocksRef`
+    // The merged paginated list reads through `blocksRef`
     // (no `blocks` in the deps array). The post-load state must contain
     // BOTH pages' items, in order, to prove the ref is fresh by the time
     // the second `fetchBlocks` runs.
@@ -412,7 +412,7 @@ describe('useDuePanelData', () => {
     })
   })
 
-  it('filters out blocks with empty content (UX-129)', async () => {
+  it('filters out blocks with empty content', async () => {
     mockedListBlocks.mockResolvedValue({
       items: [
         makeBlock({ id: 'B1', content: 'real task' }),
@@ -707,7 +707,7 @@ describe('useDuePanelData', () => {
     })
   })
 
-  it('logs overdue and upcoming fetch failures via logger.warn (FE-M-1)', async () => {
+  it('logs overdue and upcoming fetch failures via logger.warn ()', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     localStorage.setItem('agaric:deadlineWarningDays', '7')
 
@@ -739,7 +739,7 @@ describe('useDuePanelData', () => {
     warnSpy.mockRestore()
   })
 
-  it('skips inner agenda catch side-effects after unmount (FE-M-2)', async () => {
+  it('skips inner agenda catch side-effects after unmount ()', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 
     // Outer listProjectedAgenda resolves so we enter the .then branch and
@@ -794,7 +794,7 @@ describe('useDuePanelData', () => {
 
   // #757 — the outer projected-agenda .catch fired notify.error OUTSIDE the
   // `!stale` guard, so a fetch that rejected after unmount still raised a
-  // toast (the nested handler was already fixed for exactly this, FE-M-2).
+  // Toast (the nested handler was already fixed for exactly this).
   describe('projected agenda failure toast (#757)', () => {
     it('shows the load-failed toast when the fetch rejects while mounted', async () => {
       const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
@@ -927,7 +927,7 @@ describe('useDuePanelData', () => {
   })
 })
 
-// #738 sub-3 — the projected-agenda cache (UX-114, 30s TTL) must be
+// #738 sub-3 — the projected-agenda cache (30s TTL) must be
 // cleared ONLY when `invalidationKey` actually changes (a property event
 // fired), NOT on every effect re-run. Before the fix, the effect deps
 // included `date` + `currentSpaceId`, and any prior property event left

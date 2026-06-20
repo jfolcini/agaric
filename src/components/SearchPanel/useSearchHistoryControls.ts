@@ -1,7 +1,7 @@
 /**
  * useSearchHistoryControls — the SearchPanel search-history surface.
  *
- * PEND-58g FE-A18 — extracted from the SearchPanel god-component. Owns the
+ * FE-A18 — extracted from the SearchPanel god-component. Owns the
  * per-space history store wiring (entries, push, clear, per-row delete, the
  * enable/disable toggle), the ArrowUp/Down recall cycling machine, the
  * listbox id for combobox a11y, and the recall/clear/remove/toggle handlers.
@@ -52,16 +52,16 @@ export function useSearchHistoryControls({
   setTyping,
   debounced,
 }: UseSearchHistoryControlsOptions): UseSearchHistoryControlsValue {
-  // PEND-55 — history store + cycling hook.
+  // History store + cycling hook.
   const historyEntries = useSearchHistoryStore((s) => selectHistoryForSpace(s, currentSpaceId))
   const pushHistory = useSearchHistoryStore((s) => s.push)
   const clearHistory = useSearchHistoryStore((s) => s.clear)
-  // UX-11 — per-row delete + record-history toggle.
+  // Per-row delete + record-history toggle.
   const removeHistoryEntry = useSearchHistoryStore((s) => s.removeEntry)
   const historyEnabled = useSearchHistoryStore((s) => s.historyEnabled)
   const setHistoryEnabled = useSearchHistoryStore((s) => s.setHistoryEnabled)
   const cycling = useSearchHistoryCycling(historyEntries, query, setQueryAndCaret)
-  // PEND-73 Phase 3.U2 — stable id for the history listbox so the owning
+  // Phase 3.U2 — stable id for the history listbox so the owning
   // input can wire `aria-controls` and `aria-activedescendant`.
   const historyListboxId = useId()
 

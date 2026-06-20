@@ -3,7 +3,7 @@
  *
  * Validates:
  *  - Renders label and count
- *  - Applies semantic color tokens (PEND-23 M7: prop is now a typed enum)
+ * Applies semantic color tokens (prop is now a typed enum)
  *  - Defaults to `text-foreground` when `color` is omitted
  *  - Forwards ref to the h4 element
  *  - Merges custom className

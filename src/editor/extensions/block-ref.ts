@@ -18,7 +18,7 @@ export interface BlockRefOptions {
   resolveContent: (id: string) => string
   /** Called when the user clicks a block ref chip. Navigates to the target block. */
   onNavigate?: ((id: string) => void) | undefined
-  /** PEND-15 Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
+  /** Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
   resolveStatus?: ((id: string) => 'active' | 'deleted') | undefined
 }
 

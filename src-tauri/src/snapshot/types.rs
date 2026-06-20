@@ -46,7 +46,7 @@ pub(crate) const MIN_SCHEMA_VERSION: u32 = 4;
 /// rather than a misleading "CBOR decode" failure originating inside a
 /// renamed/retyped column. The whole decode still happens in the single
 /// streaming pass (no second read of the reader), preserving the
-/// memory-bounded L-67 / #428 decode contract.
+/// Memory-bounded / #428 decode contract.
 fn deserialize_gated_schema_version<'de, D>(deserializer: D) -> Result<u32, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -109,8 +109,8 @@ pub struct BlockPropertySnapshot {
     pub value_num: Option<f64>,
     pub value_date: Option<String>,
     pub value_ref: Option<String>,
-    /// PEND-14: native boolean property storage. Defaults to `None` so
-    /// snapshots written before PEND-14 (no `value_bool` column) still
+    /// Native boolean property storage. Defaults to `None` so
+    /// Snapshots written before (no `value_bool` column) still
     /// deserialize. SQLite represents booleans as INTEGER (0/1).
     #[serde(default)]
     pub value_bool: Option<i64>,

@@ -1,5 +1,5 @@
 /**
- * PEND-54 — Filter chip row.
+ * Filter chip row.
  *
  * Renders one chip per `FilterToken` in the parsed AST. The chip
  * label mirrors the canonical token source (`tag:#name`, `path:…`,
@@ -56,7 +56,7 @@ export function FilterChipRow({
         const label = labelFor(token)
         const isInvalid = token.kind === 'invalid'
         // Invalid chip styling: red border + aria-invalid + tooltip
-        // carrying the typed error. Matches PEND-50's chip pattern.
+        // Carrying the typed error. Matches chip pattern.
         const invalidClass = isInvalid
           ? 'border-destructive/60 bg-destructive/10 text-destructive aria-invalid:border-destructive'
           : undefined

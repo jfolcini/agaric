@@ -12,12 +12,12 @@ use crate::ulid::BlockId;
 /// multiple devices — the op_log PK is `(device_id, seq)` and `seq` alone
 /// is not globally unique.
 ///
-/// PEND-20 B.2: queries the native `block_id` column (migration 0030)
+/// B.2: queries the native `block_id` column (migration 0030)
 /// directly, replacing the old `LIKE` pre-filter + `json_extract`
 /// fallback. The `idx_op_log_block_id` index makes this O(log N) instead
 /// of a full op_log scan with per-row JSON parsing.
 ///
-/// PEND-35 Tier 1.3: optional `op_type_filter` pushes the FE-side
+/// Optional `op_type_filter` pushes the FE-side
 /// `op_type` filter into SQL, mirroring `list_page_history`. Without
 /// this the FE applied the filter post-pagination, so a 50-row cursor
 /// page could yield 0 visible rows and "Load more" would appear empty.
@@ -25,7 +25,7 @@ use crate::ulid::BlockId;
 /// Note: When `op_type_filter` is `None`, this queries ALL op types for
 /// a block (create, edit, add_tag, remove_tag, move, set_property, etc.).
 ///
-/// # Cursor seq invariant (L-21)
+/// # Cursor seq invariant
 ///
 /// `op_log.seq` is auto-incremented per device starting at **1** (see
 /// `op_log::append_local_op_in_tx`'s `COALESCE(MAX(seq), 0) + 1`
@@ -52,7 +52,7 @@ pub async fn list_block_history(
     // `id` in the cursor stores `device_id` for history queries — it is the
     // tie-breaker because the op_log PK is `(device_id, seq)`. The
     // `cursor_seq = 0` sentinel in the no-cursor branch is safe per the
-    // L-21 doc-block above (op_log seq starts at 1).
+    // Doc-block above (op_log seq starts at 1).
     let (cursor_flag, cursor_seq, cursor_device_id): (Option<i64>, i64, &str) =
         match page.after.as_ref() {
             Some(c) => (Some(1), c.seq.unwrap_or(0), &c.id),
@@ -95,7 +95,7 @@ pub async fn list_block_history(
 /// The cursor stores `created_at` (in the `deleted_at` field, reused for
 /// this timestamp purpose) and `seq` for correct keyset pagination.
 ///
-/// FEAT-3 Phase 8 — when `page_id == "__all__"` and `space_id` is `Some`,
+/// Phase 8 — when `page_id == "__all__"` and `space_id` is `Some`,
 /// the global query is additionally filtered to only ops whose
 /// `payload.block_id` belongs to the requested space (via the
 /// `blocks.space_id` column — #533). When `space_id` is `None`, behaviour
@@ -137,11 +137,11 @@ pub async fn list_page_history(
 
     if page_id == "__all__" {
         // Global history: query all ops without page-scoping CTE.
-        // FEAT-3 Phase 8 — when `space_id` is `Some`, narrow to ops whose
+        // Phase 8 — when `space_id` is `Some`, narrow to ops whose
         // `payload.block_id` belongs to the requested space (matching the
         // pattern used in `pagination/hierarchy.rs:113-134`).
         //
-        // L-22: compile-time SQL check via `query_as!` (AGENTS.md
+        // Compile-time SQL check via `query_as!` (AGENTS.md
         // invariant #6). The previous dynamic `query_as::<_, _>` form
         // bypassed `cargo sqlx prepare` validation; this branch is
         // entirely static SQL with `?N IS NULL` short-circuits, so the

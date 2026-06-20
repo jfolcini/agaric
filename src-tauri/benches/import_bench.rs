@@ -108,7 +108,7 @@ fn bench_import_markdown_inner(c: &mut Criterion) {
                             let pool = fresh_pool(&dir, "import").await;
                             let materializer = Materializer::new(pool.clone());
 
-                            // PEND-35 1.1: import_markdown_inner now requires a
+                            // 1.1: import_markdown_inner now requires a
                             // valid space_id. Seed one per iteration via the
                             // public `create_space_inner` API so the bench
                             // exercises the full validated path.

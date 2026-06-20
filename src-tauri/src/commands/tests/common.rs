@@ -12,14 +12,14 @@ use tempfile::TempDir;
 pub const DEV: &str = "test-device-001";
 pub const FIXED_TS: i64 = 1_735_689_600_000; // 2025-01-01T00:00:00Z
 
-/// Synthetic space ULID for tests that need to satisfy the FEAT-3 Phase 7
+/// Synthetic space ULID for tests that need to satisfy the Phase 7
 /// space-scoped query path (e.g. `batch_resolve_inner`, `get_page_inner`)
 /// without going through the full `bootstrap_spaces` flow. Tests that care
 /// about real Personal/Work semantics should use the constants in
 /// `crate::spaces` instead.
 pub const TEST_SPACE_ID: &str = "01TESTSPACE000000000000001";
 
-/// Second synthetic space ULID for FEAT-3p4 cross-space tests that need
+/// Second synthetic space ULID for cross-space tests that need
 /// two distinct spaces in the same fixture (e.g. asserting a query
 /// scoped to space A excludes blocks in space B).
 pub const TEST_SPACE_B_ID: &str = "01TESTSPACE000000000000002";
@@ -100,7 +100,7 @@ pub async fn ensure_test_space(pool: &SqlitePool) {
         .unwrap();
 }
 
-/// PEND-35 — stamp `is_space = 'true'` on `space_id` so the block
+/// Stamp `is_space = 'true'` on `space_id` so the block
 /// satisfies `import_markdown_inner` / `create_page_in_space_inner`'s
 /// upfront space-validity check (which requires the target to carry
 /// `is_space = 'true'`). Idempotent (`INSERT OR IGNORE`). Caller must
@@ -139,7 +139,7 @@ pub async fn assign_to_test_space(pool: &SqlitePool, block_id: &str) {
         .unwrap();
 }
 
-/// FEAT-3p4 — variant of [`ensure_test_space`] that seeds the
+/// Variant of [`ensure_test_space`] that seeds the
 /// [`TEST_SPACE_B_ID`] block. Idempotent. Used by cross-space tests
 /// that need two distinct spaces in the same fixture.
 pub async fn ensure_test_space_b(pool: &SqlitePool) {
@@ -161,7 +161,7 @@ pub async fn ensure_test_space_b(pool: &SqlitePool) {
         .unwrap();
 }
 
-/// FEAT-3p4 — assign `block_id` to an arbitrary space ULID. Used by
+/// Assign `block_id` to an arbitrary space ULID. Used by
 /// cross-space tests so the same helper drives both the A and B
 /// branches. Caller must seed the space block separately
 /// (`ensure_test_space` / `ensure_test_space_b`) so the FK on
@@ -179,10 +179,10 @@ pub async fn assign_to_space(pool: &SqlitePool, block_id: &str, space_id: &str) 
         .unwrap();
 }
 
-/// FEAT-3p4 — bulk-assign every block currently in the DB (excluding the
+/// Bulk-assign every block currently in the DB (excluding the
 /// space block itself and any block already in a space) to
 /// [`TEST_SPACE_ID`]. Use this at the end of a test's seed phase so the
-/// FEAT-3p4 hard-filter paths (`list_blocks_inner`, `search_blocks_inner`)
+/// Hard-filter paths (`list_blocks_inner`, `search_blocks_inner`)
 /// return everything the test set up.
 ///
 /// Phase 2 (#533): space membership is the `blocks.space_id` column (the

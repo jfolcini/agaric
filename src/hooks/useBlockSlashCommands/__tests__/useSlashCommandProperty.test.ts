@@ -427,7 +427,7 @@ describe('useSlashCommandProperty — attach', () => {
     }
   })
 
-  it('FE-M-6: surfaces toast + logger.warn when input.click() throws', async () => {
+  it('surfaces toast + logger.warn when input.click() throws', async () => {
     const originalClick = HTMLInputElement.prototype.click
     const clickMock = vi.fn(() => {
       throw new Error('mock click')

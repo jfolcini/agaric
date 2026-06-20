@@ -1,6 +1,6 @@
 import { blurEditors, expect, focusBlock, openPage, reopenPage, test, waitForBoot } from './helpers'
 
-// TEST-1a: block-level undo/redo tests mutate shared mock op-log state
+// Block-level undo/redo tests mutate shared mock op-log state
 // within a describe, so run them serially to avoid cross-test interference
 // even under fullyParallel.
 test.describe.configure({ mode: 'serial' })

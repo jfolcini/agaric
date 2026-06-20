@@ -1,12 +1,12 @@
 /**
- * Tests for SpaceAccentPicker (PEND-30 D-2 extraction).
+ * Tests for SpaceAccentPicker (D-2 extraction).
  *
  * Coverage:
- *  - Renders all 6 swatches with palette tokens (PEND-23 L3 contract).
+ * Renders all 6 swatches with palette tokens (contract).
  *  - Each swatch carries aria-label `accentSwatchLabel`.
  *  - Clicking a swatch calls setProperty(accent_color, token).
  *  - The clicked swatch flips `aria-pressed=true`; others stay false.
- *  - Selected swatch overlays the Check icon (UX-6); others do not.
+ * Selected swatch overlays the Check icon; others do not.
  *  - During the in-flight save every swatch is `disabled`.
  *  - On IPC failure: toast.error fires + previous selection is restored.
  *  - The 6 swatches advertise `data-accent-token` for downstream tests.
@@ -50,7 +50,7 @@ describe('SpaceAccentPicker', () => {
     ])
   })
 
-  it('renders all 6 swatches with palette tokens (PEND-23 L3)', () => {
+  it('renders all 6 swatches with palette tokens', () => {
     render(<SpaceAccentPicker spaceId="SPACE_1" />)
     const group = screen.getByRole('group', { name: t('space.accentColorLabel') })
     const swatches = within(group).getAllByRole('button', { name: /accent/i })
@@ -115,7 +115,7 @@ describe('SpaceAccentPicker', () => {
     expect(blue.getAttribute('aria-pressed')).toBe('false')
   })
 
-  it('overlays the Check icon on the selected swatch only (UX-6)', async () => {
+  it('overlays the Check icon on the selected swatch only', async () => {
     const user = userEvent.setup()
     render(<SpaceAccentPicker spaceId="SPACE_1" />)
 

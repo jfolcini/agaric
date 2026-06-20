@@ -7,7 +7,7 @@
  * down to EditableBlock, mirroring the per-block action chain.
  * `BlockResolversProvider` publishes them once so descendants can call
  * `useBlockResolvers()` instead of accepting four near-identical props
- * (MAINT-118).
+ *.
  *
  * Outside a provider, the hook returns `null`. Consumers that mix prop
  * + context pass-through use `propX ?? ctx?.x`, preserving the

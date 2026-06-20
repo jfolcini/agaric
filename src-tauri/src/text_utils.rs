@@ -1,6 +1,6 @@
 //! Small text-handling helpers shared across IPC boundaries.
 //!
-//! L-59: extracted to deduplicate the UTF-8-safe truncation logic that
+//! extracted to deduplicate the UTF-8-safe truncation logic that
 //! previously lived in both `commands::logging::truncate_log_field`
 //! (frontend log field cap) and `commands::bug_report::cap_line_length`
 //! (per-line cap inside the redacted bug-report bundle). Both call sites

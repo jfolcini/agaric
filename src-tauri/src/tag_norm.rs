@@ -12,8 +12,8 @@
 //! ## The rules (in order)
 //!
 //! 1. **NFC** — same canonical composition the FTS pipeline applies at
-//!    index *and* query time (`crate::fts::strip::nfc_normalise`,
-//!    PEND-73 B3). Reused directly so the tag layer cannot drift from
+//!    index *and* query time (`crate::fts::strip::nfc_normalise`).
+//!    Reused directly so the tag layer cannot drift from
 //!    the FTS layer's notion of "the same characters" (e.g. an NFD
 //!    `e + U+0301` pasted from Safari composes to `é` in both).
 //! 2. **Unicode lowercase** (`str::to_lowercase`) — full Unicode case

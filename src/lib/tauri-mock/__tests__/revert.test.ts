@@ -240,7 +240,7 @@ describe('applyRevertForOp', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // TEST-3: task-property setters (revert to from_state / from_level / from_date)
+  // Task-property setters (revert to from_state / from_level / from_date)
   // ---------------------------------------------------------------------------
 
   it('reverts set_todo_state by restoring from_state on the block row', () => {
@@ -306,7 +306,7 @@ describe('applyRevertForOp', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // TEST-3: property map mutations (set_property / delete_property)
+  // Property map mutations (set_property / delete_property)
   // ---------------------------------------------------------------------------
 
   it('reverts set_property by restoring the prior typed value', () => {
@@ -393,7 +393,7 @@ describe('applyRevertForOp', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // TEST-3: tag map mutations (add_tag / remove_tag)
+  // Tag map mutations (add_tag / remove_tag)
   // ---------------------------------------------------------------------------
 
   it('reverts add_tag by removing the tag from the block', () => {

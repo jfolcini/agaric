@@ -1,7 +1,7 @@
 /**
  * useSearchResults — the SearchPanel results pipeline.
  *
- * PEND-58g FE-A18 (continues FE-9) — extracted from the SearchPanel
+ * FE-A18 (continues) — extracted from the SearchPanel
  * god-component. Owns the AST→IPC projection, the paginated `searchBlocks`
  * query, the inline regex-error derive, breadcrumb (page-title)
  * resolution, page grouping + collapse state, the roving keyboard-nav
@@ -96,7 +96,7 @@ export function useSearchResults({
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
 
   const debouncedProjection = useMemo(() => astToFilterProjection(debouncedAst), [debouncedAst])
-  // FE-9 — tag name→id resolution (prefix lookup; FE-5 space-scoped cache
+  // Tag name→id resolution (prefix lookup; space-scoped cache
   // invalidation lives in the hook). #717 — `pending` gates the query below
   // so the first debounced search can't fire before resolution settles and
   // flash unfiltered results; a settled-but-unresolved name makes
@@ -106,7 +106,7 @@ export function useSearchResults({
     currentSpaceId,
   )
 
-  // DSL-A8 / UX-A4 — the two search modes are symmetric. In BOTH modes the
+  // The two search modes are symmetric. In BOTH modes the
   // structural filters are projected and applied as SQL filters server-side;
   // the only difference is the `isRegex` flag and how the backend interprets
   // the free-text remainder.
@@ -115,10 +115,10 @@ export function useSearchResults({
     [debouncedProjection, tagIds],
   )
   const queryFn = useCallback(
-    // FE-2 — forward the AbortSignal so a superseded search is cancelled
+    // Forward the AbortSignal so a superseded search is cancelled
     // mid-flight instead of running the backend scan to completion.
     (cursor?: string, signal?: AbortSignal) =>
-      // FEAT-3 Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
+      // Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
       // fallback is intentional pre-bootstrap behaviour: empty string forces
       // a no-match SQL filter (returning empty results) rather than a runtime
       // null deref.
@@ -154,7 +154,7 @@ export function useSearchResults({
     capped,
     setItems,
   } = usePaginatedQuery(queryFn, {
-    // PEND-54 / DSL-A8 / PEND-58g NEW-3 — fire when there is a free-text
+    // NEW-3 — fire when there is a free-text
     // pattern OR at least one structural filter (filter-only search).
     // #717 — HOLD while tag name→id resolution is in flight: firing now
     // would send the query without the tag constraint (transient
@@ -167,11 +167,11 @@ export function useSearchResults({
     // prefix off the raw IPC message via `regexError` below.
   })
 
-  // PEND-55 / UX-A2 — parse `AppError::Validation("InvalidRegex: …")` off the
+  // Parse `AppError::Validation("InvalidRegex: …")` off the
   // raw IPC error and surface it inline. Derived synchronously (not via an
   // effect) so the status region's generic-error suppression is single-commit.
   const regexError = useMemo<string | null>(() => {
-    // PEND-70 CR11 — the inline regex alert is regex-mode-only. In
+    // The inline regex alert is regex-mode-only. In
     // case-sensitive / whole-word mode the backend builds a *literal* match
     // regex internally; an oversized literal makes `build_regex` reject with an
     // `InvalidRegex:`-prefixed error. Surfacing that as "invalid regex" to a
@@ -202,7 +202,7 @@ export function useSearchResults({
   // `!pageTitles.has(id)` filter below would re-fire `batchResolve` for
   // them on every `loadMore`.
   useEffect(() => {
-    // FE-11 — only resolve page ids we haven't already resolved or
+    // Only resolve page ids we haven't already resolved or
     // already attempted (#153).
     const parentIds = [
       ...new Set(results.map((b) => b.page_id).filter((id): id is string => id != null)),
@@ -216,7 +216,7 @@ export function useSearchResults({
       .then((resolved) => {
         if (Array.isArray(resolved)) {
           setPageTitles((prev) => {
-            // PEND-73 Phase 4.P2 — stabilise Map identity so the
+            // Phase 4.P2 — stabilise Map identity so the
             // `groupResultsByPage` memo doesn't invalidate on every
             // batchResolve fetch. Only allocate a new Map if a title changed.
             let changed = false
@@ -245,7 +245,7 @@ export function useSearchResults({
     // latest map; the empty-`parentIds` guard makes the follow-up a no-op.
   }, [results, pageTitles])
 
-  // FE-4 — a monotonic "navigation generation". Each click claims the next
+  // A monotonic "navigation generation". Each click claims the next
   // generation; only the latest may resolve the spinner / perform the
   // deferred navigation.
   const navGenerationRef = useRef(0)
@@ -284,7 +284,7 @@ export function useSearchResults({
     [addRecentPage, navigateToPage, t],
   )
 
-  // PEND-50 Phase 1 — page-group results. Groups are derived from the flat
+  // Phase 1 — page-group results. Groups are derived from the flat
   // list each render; their expand state lives in `expandedGroups` so it
   // persists across re-renders but resets on a new query (effect below).
   const groups = useMemo(() => groupResultsByPage(results, pageTitles), [results, pageTitles])
@@ -298,7 +298,7 @@ export function useSearchResults({
     setExpandedGroups({})
   }, [debouncedQuery])
 
-  // PEND-50 Phase 1 — flatten visible (expanded) rows for the keyboard nav
+  // Phase 1 — flatten visible (expanded) rows for the keyboard nav
   // hook. Collapsed groups contribute zero rows.
   const visibleRows = useMemo(() => {
     const out: SearchBlockRow[] = []

@@ -32,7 +32,7 @@ async fn add_tag_success() {
     .unwrap();
     assert!(row.is_some(), "block_tags row should exist after add_tag");
 
-    // Verify op_log row was written with op_type='add_tag' (TEST-41)
+    // Verify op_log row was written with op_type='add_tag'
     let block_id = "AT_BLK";
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM op_log WHERE op_type = 'add_tag' \
@@ -126,7 +126,7 @@ async fn add_tag_non_tag_block_type_returns_error() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn add_tag_self_returns_invalid_operation() {
-    // L-34 regression: a block cannot tag itself. The guard rejects the call
+    // Regression: a block cannot tag itself. The guard rejects the call
     // before any DB work, regardless of whether the block exists or its type.
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -148,7 +148,7 @@ async fn add_tag_self_returns_invalid_operation() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn add_tag_deleted_block_returns_not_found() {
-    // TEST-40: soft-deleted block must reject add_tag with NotFound. The
+    // Soft-deleted block must reject add_tag with NotFound. The
     // block-existence check in `add_tag_inner` filters `deleted_at IS NULL`,
     // so a cascaded soft-delete must surface as NotFound (not a stale row).
     let (pool, _dir) = test_pool().await;
@@ -206,7 +206,7 @@ async fn remove_tag_success() {
         "block_tags row should be gone after remove_tag"
     );
 
-    // Verify op_log row was written with op_type='remove_tag' (TEST-41)
+    // Verify op_log row was written with op_type='remove_tag'
     let block_id = "RT_BLK";
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM op_log WHERE op_type = 'remove_tag' \
@@ -245,7 +245,7 @@ async fn remove_tag_not_applied_returns_error() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remove_tag_deleted_block_returns_not_found() {
-    // TEST-40: soft-deleted block must reject remove_tag with NotFound. The
+    // Soft-deleted block must reject remove_tag with NotFound. The
     // block-existence check in `remove_tag_inner` filters `deleted_at IS NULL`
     // before the association lookup, so the cascade-deleted block surfaces
     // as NotFound even though the `block_tags` row physically still exists.
@@ -354,11 +354,11 @@ async fn list_tags_by_prefix_inner_respects_limit() {
 }
 
 // ======================================================================
-// list_tags_inner — cursor pagination (M-85)
+// List_tags_inner — cursor pagination
 // ======================================================================
 //
 // `list_tags_inner` migrated from a flat `Vec<TagCacheRow>` to a
-// `PageResponse<TagCacheRow>` so the FEAT-4c MCP `list_tags` tool exposes
+// `PageResponse<TagCacheRow>` so the MCP `list_tags` tool exposes
 // the canonical cursor surface (AGENTS.md invariant #3). Ordered by
 // `tag_id ASC` so the keyset cursor (`Cursor::for_id(tag_id)`) is
 // monotonic. These four tests pin the contract end-to-end:
@@ -400,11 +400,11 @@ async fn list_tags_returns_next_cursor_when_capped_m85() {
     );
     assert!(
         page.has_more,
-        "has_more must be true when more entries remain past the page cap (M-85)"
+        "has_more must be true when more entries remain past the page cap"
     );
     assert!(
         page.next_cursor.is_some(),
-        "next_cursor must be populated when has_more is true so callers can page (M-85)"
+        "next_cursor must be populated when has_more is true so callers can page"
     );
 }
 
@@ -486,7 +486,7 @@ async fn list_tags_with_no_cursor_returns_first_page_m85() {
 async fn list_tags_empty_result_returns_no_cursor_m85() {
     let (pool, _dir) = test_pool().await;
     // No tags seeded — the result must be empty with no cursor and
-    // `has_more = false` (M-85).
+    // `has_more = false`.
     let page = list_tags_inner(&pool, None, Some(5)).await.unwrap();
     assert_eq!(page.items.len(), 0, "no rows should yield an empty page");
     assert!(page.next_cursor.is_none(), "empty result must not paginate");
@@ -494,7 +494,7 @@ async fn list_tags_empty_result_returns_no_cursor_m85() {
 }
 
 // ======================================================================
-// PEND-18 Phase 2 — SpaceScope parity test
+// Phase 2 — SpaceScope parity test
 // ======================================================================
 //
 // Asserts that `query_by_tags_inner` honours the `&SpaceScope` boundary:
@@ -701,7 +701,7 @@ async fn query_by_tag_expr_rejects_over_max_depth() {
 }
 
 // ======================================================================
-// PEND-76 F4 — orphan-tag adoption on add_tag
+// Orphan-tag adoption on add_tag
 // ======================================================================
 
 /// A tag with no space yet (e.g. created mid-session) applied to a block
@@ -769,7 +769,7 @@ async fn add_tag_rejects_genuine_cross_space_tag() {
 }
 
 // ======================================================================
-// #81 / PEND-57 — add_tags_by_ids (bulk add-tag)
+// #81 / add_tags_by_ids (bulk add-tag)
 // ======================================================================
 
 /// Happy path: ONE tag applied to N blocks writes N `add_tag` ops in a

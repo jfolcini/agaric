@@ -51,7 +51,7 @@ beforeEach(() => {
     version: 0,
     _preloaded: false,
   })
-  // FEAT-3 Phase 2 — `onCreatePage` and the `searchPages` IPC paths now
+  // Phase 2 — `onCreatePage` and the `searchPages` IPC paths now
   // consult `useSpaceStore`. Seed a deterministic space so both paths
   // exercise the real code instead of the defensive `!isReady` guard.
   useSpaceStore.setState({
@@ -303,7 +303,7 @@ describe('searchTags', () => {
     })
 
     // Verify the resolve store cache was populated.
-    // FEAT-3p7 — cache is composite-keyed (`${spaceId}::${ulid}`).
+    // Cache is composite-keyed (`${spaceId}::${ulid}`).
     const cache = useResolveStore.getState().cache
     expect(cache.get(keyFor('SPACE_TEST', 'T10'))).toEqual({ title: 'important', deleted: false })
     expect(cache.get(keyFor('SPACE_TEST', 'T11'))).toEqual({ title: 'urgent', deleted: false })
@@ -921,7 +921,7 @@ describe('searchPages — "Create new" option', () => {
     expect(createOption).toBeUndefined()
   })
 
-  // UX-248 — Unicode-aware fold so the "exact match exists" check
+  // Unicode-aware fold so the "exact match exists" check
   // folds Turkish / German / accented titles the same way the cache
   // filter does above.  Without this, a page titled `İstanbul` queried
   // as `istanbul` would (incorrectly) trigger "Create new".
@@ -1241,7 +1241,7 @@ describe('onCreatePage', () => {
       content: 'Brand New Page',
       spaceId: 'SPACE_TEST',
     })
-    // FEAT-3 Phase 2 — the legacy `createBlock({ blockType: 'page' })`
+    // Phase 2 — the legacy `createBlock({ blockType: 'page' })`
     // path is no longer invoked; the space-aware wrapper replaces it.
     expect(mockedCreateBlock).not.toHaveBeenCalled()
     expect(newId).toBe('NEW_PAGE_1')
@@ -1293,7 +1293,7 @@ describe('onCreatePage', () => {
     expect(newId).toBe('RETURNED_ID')
   })
 
-  // FEAT-3 Phase 2 — defensive guard for the `!isReady` branch.
+  // Phase 2 — defensive guard for the `!isReady` branch.
   it('refuses to create when the space store has not hydrated', async () => {
     useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [], isReady: false })
 
@@ -1576,16 +1576,16 @@ describe('searchPages — resolve-store space guard (#853)', () => {
   })
 })
 
-// ── searchPages alias matching (PEND-34) ────────────────────────────────
+// ── searchPages alias matching ────────────────────────────────
 //
-// PEND-34 replaced the exact-match `resolvePageByAlias` call with the
+// Replaced the exact-match `resolvePageByAlias` call with the
 // prefix-indexed `listPageAliasesByPrefix` so every keystroke after `[[`
 // folds matching aliases into the result list. Each row of the returned
 // `[pageId, alias, title]` tuple becomes one picker item that carries
 // the matched `alias` text on `aliasText` (used by the input-rule's
 // exact-match disambiguation).
 
-describe('searchPages — alias prefix matching (PEND-34)', () => {
+describe('searchPages — alias prefix matching', () => {
   it('prepends every alias prefix match in returned order', async () => {
     // FTS returns no direct matches
     mockedSearchBlocks.mockResolvedValueOnce({
@@ -1741,7 +1741,7 @@ describe('searchPages — alias prefix matching (PEND-34)', () => {
   })
 })
 
-// ── Priority ordering (MAINT-61) ────────────────────────────────────────
+// ── Priority ordering ────────────────────────────────────────
 //
 // After the strategy extraction, the dispatcher runs resolvers in a fixed
 // priority order:
@@ -1752,7 +1752,7 @@ describe('searchPages — alias prefix matching (PEND-34)', () => {
 // These tests lock the observable order so future refactors can't silently
 // reshuffle it.
 
-describe('searchPages — strategy priority ordering (MAINT-61)', () => {
+describe('searchPages — strategy priority ordering', () => {
   it('orders results: alias first, then FTS matches, then create last', async () => {
     mockedSearchBlocks.mockResolvedValueOnce({
       items: [
@@ -1868,7 +1868,7 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
     // Cache population happens BEFORE alias lookup and BEFORE create option,
     // so only FTS/cache-strategy matches should be in the resolve store,
     // never the "__create__" synthetic id.
-    // FEAT-3p7 — cache is composite-keyed (`${spaceId}::${ulid}`).
+    // Cache is composite-keyed (`${spaceId}::${ulid}`).
     const cache = useResolveStore.getState().cache
     expect(cache.get(keyFor('SPACE_TEST', 'CACHE_POP_1'))).toEqual({
       title: 'Sample Page',
@@ -1985,9 +1985,9 @@ describe('searchPages — strategy priority ordering (MAINT-61)', () => {
   })
 })
 
-// ── UX-65: Icons in picker items ────────────────────────────────────────
+// ── Icons in picker items ────────────────────────────────────────
 
-describe('searchTags — icons (UX-65)', () => {
+describe('searchTags — icons', () => {
   it('includes icon in tag picker items', async () => {
     mockedListTagsByPrefix.mockResolvedValueOnce([
       { tag_id: 'T100', name: 'work', usage_count: 1, updated_at: '2024-01-01' },
@@ -2006,7 +2006,7 @@ describe('searchTags — icons (UX-65)', () => {
   })
 })
 
-describe('searchPages — icons and breadcrumbs (UX-65)', () => {
+describe('searchPages — icons and breadcrumbs', () => {
   it('includes icon in page picker items', async () => {
     const { result } = renderHook(() => useBlockResolve())
 
@@ -2096,7 +2096,7 @@ describe('searchPages — icons and breadcrumbs (UX-65)', () => {
   })
 })
 
-describe('searchBlockRefs — icons (UX-65)', () => {
+describe('searchBlockRefs — icons', () => {
   it('includes icon in block ref picker items', async () => {
     mockedSearchBlocks.mockResolvedValueOnce({
       items: [
@@ -2207,9 +2207,9 @@ describe('searchBlockRefs — icons (UX-65)', () => {
   })
 })
 
-// ── UX-68: Fuzzy matching ───────────────────────────────────────────────
+// ── Fuzzy matching ───────────────────────────────────────────────
 
-describe('searchTags — fuzzy matching (UX-68)', () => {
+describe('searchTags — fuzzy matching', () => {
   it('matches tags via fuzzy matching, not just substring', async () => {
     mockedListTagsByPrefix.mockResolvedValueOnce([
       { tag_id: 'TF1', name: 'quick-notes', usage_count: 1, updated_at: '2024-01-01' },
@@ -2230,7 +2230,7 @@ describe('searchTags — fuzzy matching (UX-68)', () => {
   })
 })
 
-describe('searchPages — fuzzy matching (UX-68)', () => {
+describe('searchPages — fuzzy matching', () => {
   it('matches pages via fuzzy matching for short queries', async () => {
     const { result } = renderHook(() => useBlockResolve())
 

@@ -1,6 +1,6 @@
 /**
  * usePriorityLevels — subscribes React components to the user-configurable
- * priority level list (UX-201b).
+ * Priority level list.
  *
  * Re-renders when the underlying levels change (boot-time load or after a
  * successful edit in the Properties tab).

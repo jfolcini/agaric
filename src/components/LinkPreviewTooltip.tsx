@@ -6,7 +6,7 @@
  * back to the raw URL when no title is present. Uses @floating-ui/dom for
  * viewport-aware positioning below the hovered link element.
  *
- * UX-165
+ *
  */
 
 import { computePosition, flip, shift } from '@floating-ui/dom'
@@ -68,7 +68,7 @@ export function LinkPreviewTooltip({
 
   if (!url || !anchorRect) return null
 
-  // MAINT-213: distinguish three terminal "no useful metadata" states
+  // Distinguish three terminal "no useful metadata" states
   // so the tooltip can render appropriate UX:
   //   * auth_required (401/403) — backend will surface the sign-in
   //     card elsewhere; tooltip just shows the bare URL + Globe.

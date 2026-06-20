@@ -1,8 +1,8 @@
 /**
  * SpaceTopStripe — full-width 3px accent stripe pinned to the top of
- * the viewport (PEND-11).
+ * The viewport.
  *
- * Replaces the FEAT-3p10 sidebar-footer `SpaceStatusChip` with a
+ * Replaces the sidebar-footer `SpaceStatusChip` with a
  * higher-signal indicator that is always visible, regardless of
  * sidebar state (expanded, collapsed-rail, mobile-drawer-closed).
  * The colour is sourced from the active space's `accent_color`

@@ -1,5 +1,5 @@
 /**
- * Tests for `useTauriEventListener` — MAINT-122.
+ * Tests for `useTauriEventListener` —.
  *
  * Validates:
  *   - registers the listener with the requested event name,

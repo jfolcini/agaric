@@ -1,5 +1,5 @@
 /**
- * KeyboardSettingsTab — keyboard shortcut customization panel (UX-86).
+ * KeyboardSettingsTab — keyboard shortcut customization panel.
  * Shows all shortcuts grouped by category with inline editing.
  */
 
@@ -51,7 +51,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
   // oxlint-disable-next-line react-hooks/exhaustive-deps -- version counter triggers re-read from localStorage
   const conflicts = useMemo(() => findConflicts(), [version])
 
-  // UX-391 — validate the in-progress edit value (only meaningful while editing).
+  // Validate the in-progress edit value (only meaningful while editing).
   const validationError = useMemo<'empty' | 'modifierOnly' | null>(() => {
     if (!editingId) return null
     return validateBindingInput(editValue)
@@ -205,7 +205,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
                             </span>
                           )}
 
-                          {/* Conflict warning (UX-386/UX-392): inline inside the keys column */}
+                          {/* Conflict warning (): inline inside the keys column */}
                           {conflictNames && conflictNames.length > 0 && !isEditing && (
                             <div className="text-xs text-alert-warning-foreground mt-1">
                               {t('keyboard.settings.conflictWarning', {

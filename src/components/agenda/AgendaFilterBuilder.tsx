@@ -99,7 +99,7 @@ export interface AgendaFilter {
  * the dimension dedup in AddFilterPopover), so `key={filter.dimension}`
  * produced duplicate React keys and index-based edit/remove could target
  * the wrong chip after a re-render. Same pattern as `FilterPillRow`'s
- * `_addId` stamp (MAINT-190): the marker rides along on the filter object
+ * `_addId` stamp: the marker rides along on the filter object
  * and is ignored everywhere else (agenda-filters reads dimension/values).
  */
 export type AgendaFilterWithKey = AgendaFilter & { _addId: number }
@@ -221,12 +221,12 @@ function AddFilterPopover({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-56 p-3 max-w-[calc(100vw-2rem)]">
         {step === 'pick-dimension' && (
-          // UX-9 — wrap each dimension item in a Tooltip so the
+          // Wrap each dimension item in a Tooltip so the
           // distinction between visually-similar dimensions (dueDate vs
           // scheduledDate, completedDate vs createdDate) is discoverable
           // without opening the dimension and trying its values.
           //
-          // UX-323 — visually group the 8 dimensions under
+          // Visually group the 8 dimensions under
           // `t('agendaFilter.group.taskMetadata')` /
           // `t('agendaFilter.group.dates')` /
           // `t('agendaFilter.group.organisation')` headings so users can scan by family
@@ -234,7 +234,7 @@ function AddFilterPopover({
           // DIMENSION_GROUPS (filter-dimension-metadata.ts).
           //
           // role="group" carries the picker's accessible name (preserving the
-          // pre-UX-323 single-<ul> semantics); a nested <fieldset> inside the
+          // Pre- single-<ul> semantics); a nested <fieldset> inside the
           // AgendaFilterBuilder's outer fieldset would be the wrong
           // form-grouping primitive here.
           <div

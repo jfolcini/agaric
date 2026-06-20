@@ -1,6 +1,6 @@
 /**
  * Tests for ViewHeader — the portal-consumer wrapper that renders view-level
- * headers into the outlet owned by <ViewHeaderOutletProvider /> (UX-198).
+ * Headers into the outlet owned by <ViewHeaderOutletProvider />.
  *
  * Validates:
  *  1. Children portal into the outlet element when the provider + slot are mounted.

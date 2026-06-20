@@ -72,7 +72,7 @@ function persistUnmount(
 /**
  * Shared attachment-processing loop used by both handleDrop and handlePaste.
  * Validates MIME + size, reads the file to bytes, calls
- * `addAttachmentWithBytes` (PEND-76 F2 — backend is the sole writer), and
+ * `addAttachmentWithBytes` (backend is the sole writer), and
  * shows success/error toasts.
  *
  * Inline-image wiring (#1434): when a pasted/dropped file is an IMAGE and the

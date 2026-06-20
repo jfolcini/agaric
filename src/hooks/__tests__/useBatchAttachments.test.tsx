@@ -10,7 +10,7 @@
  *  - Does NOT re-fetch when blockIds reference changes but membership is identical
  *  - `invalidate(blockId)` triggers a refetch of the whole batch
  *  - `loading` flips during initial fetch and after invalidation
- *  - PEND-35 Tier 2.7a: `getCount(blockId)` returns `rows.length` (or 0 when
+ * `getCount(blockId)` returns `rows.length` (or 0 when
  *    the block is absent from the cache) — replaces the dropped
  *    BatchAttachmentCountsProvider.
  */
@@ -302,7 +302,7 @@ describe('useBatchAttachments', () => {
   })
 
   // -------------------------------------------------------------------------
-  // PEND-35 Tier 2.7a — getCount derives `rows.length` from the same cache
+  // GetCount derives `rows.length` from the same cache
   // -------------------------------------------------------------------------
 
   describe('getCount', () => {
@@ -352,7 +352,7 @@ describe('useBatchAttachments', () => {
         expect(result.current?.getCount('A')).toBe(1)
       })
 
-      // Regression for PEND-35 Tier 2.7a: the dropped count batch must
+      // Regression for the dropped count batch must
       // never fire — this hook is now the sole source of attachment data.
       const countCalls = mockedInvoke.mock.calls.filter(
         ([cmd]) => cmd === 'get_batch_attachment_counts',

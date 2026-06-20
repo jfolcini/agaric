@@ -42,7 +42,7 @@
 //!   its own `WITH RECURSIVE` prefix and cannot be composed into one
 //!   multi-CTE `WITH` block.
 //!
-//! (Pre-MAINT-113-M1 a fourth site existed: `soft_delete::get_descendants`
+//! (Pre--M1 a fourth site existed: `soft_delete::get_descendants`
 //! mirrored `descendants_cte_standard!()`. It was dead code with zero
 //! production callers and was removed when the `ActiveBlockId` newtype
 //! landed; the cascade / restore / purge paths use the macros above.)
@@ -208,7 +208,7 @@ pub const ANCESTORS_CTE_STANDARD: &str = ancestors_cte_standard!();
 /// String form of [`ancestors_cte_active`]. See [`DESCENDANTS_CTE_STANDARD`].
 pub const ANCESTORS_CTE_ACTIVE: &str = ancestors_cte_active!();
 
-/// PEND-26 N2: did the depth-100 cap on the recursive descendants walk
+/// Did the depth-100 cap on the recursive descendants walk
 /// actually fire for this `root_id`?
 ///
 /// The `descendants_cte_*!()` macros cap every walk at `d.depth < 100`
@@ -228,7 +228,7 @@ pub const ANCESTORS_CTE_ACTIVE: &str = ancestors_cte_active!();
 ///
 /// # Variant choice
 ///
-/// The PEND-26 plan body suggested `descendants_cte_active!()`, but
+/// The plan body suggested `descendants_cte_active!`, but
 /// that variant filters `b.deleted_at IS NULL` in the recursive arm —
 /// which means **after** a soft-delete cascade the recursive walk
 /// finds nothing (every descendant now has `deleted_at = now`) and the
@@ -240,7 +240,7 @@ pub const ANCESTORS_CTE_ACTIVE: &str = ancestors_cte_active!();
 ///
 /// # Threshold
 ///
-/// `>= 99` per the PEND-26 plan: the recursive arm's `d.depth < 100`
+/// `>= 99` per the plan: the recursive arm's `d.depth < 100`
 /// filter allows the walk to step from `d.depth=99` to
 /// `d.depth+1=100`, so MAX(depth) can be 100 when saturation occurs.
 /// The slightly conservative `>= 99` boundary catches both the genuine
@@ -501,7 +501,7 @@ mod ancestor_db_tests {
         );
     }
 
-    /// PEND-26 N2: a 105-block linear chain saturates the depth-100
+    /// A 105-block linear chain saturates the depth-100
     /// cap. `cascade_depth_saturated` must report `true`.
     #[tokio::test]
     async fn cascade_depth_saturated_fires_on_pathological_chain() {
@@ -522,12 +522,12 @@ mod ancestor_db_tests {
             .unwrap();
         assert!(
             saturated,
-            "PEND-26 N2: a 105-block chain MUST trip the saturation flag; \
+            "a 105-block chain MUST trip the saturation flag; \
              the recursive CTE caps at depth 100 and the helper detects it"
         );
     }
 
-    /// PEND-26 N2: a 99-level tree (depths 0..98 — 99 blocks) does NOT
+    /// A 99-level tree (depths 0..98 — 99 blocks) does NOT
     /// reach the depth-100 cap. `cascade_depth_saturated` must report
     /// `false` so the warn does not fire on legitimate trees.
     #[tokio::test]
@@ -549,7 +549,7 @@ mod ancestor_db_tests {
             .unwrap();
         assert!(
             !saturated,
-            "PEND-26 N2: a 99-block chain (max depth 98) MUST NOT \
+            "a 99-block chain (max depth 98) MUST NOT \
              trip the saturation flag — that is below the >=99 threshold"
         );
     }

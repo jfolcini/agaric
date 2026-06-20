@@ -1,11 +1,11 @@
 /**
- * PEND-58? — tests for `<FilterHelperPopover>` hardening.
+ * ? — tests for `<FilterHelperPopover>` hardening.
  *
  * Coverage:
- *  - UX-A3: every visible string renders via `t()` (no hardcoded English).
+ * Every visible string renders via `t()` (no hardcoded English).
  *  - FE-A20: out-of-order `listTagsByPrefix` responses never paint stale
  *    suggestions (latest-wins sequence guard) + debounce coalescing.
- *  - UX-A6: the tag picker is an ARIA combobox/listbox — role/aria attrs,
+ * The tag picker is an ARIA combobox/listbox — role/aria attrs,
  *    ArrowUp/Down to move the active option, Enter to select, Escape to
  *    close.
  *  - error path: a rejected fetch is logged and clears suggestions.
@@ -72,10 +72,10 @@ afterEach(() => {
 })
 
 // ---------------------------------------------------------------------------
-// UX-A3 — i18n
+// I18n
 // ---------------------------------------------------------------------------
 
-describe('FilterHelperPopover — i18n (UX-A3)', () => {
+describe('FilterHelperPopover — i18n', () => {
   it('renders the trigger and menu category labels via t()', async () => {
     const user = userEvent.setup()
     renderPopover()
@@ -189,10 +189,10 @@ describe('FilterHelperPopover — tag fetch race guard (FE-A20)', () => {
 })
 
 // ---------------------------------------------------------------------------
-// UX-A6 — combobox / listbox a11y
+// Combobox / listbox a11y
 // ---------------------------------------------------------------------------
 
-describe('FilterHelperPopover — combobox a11y (UX-A6)', () => {
+describe('FilterHelperPopover — combobox a11y', () => {
   async function openTagPicker(): Promise<ReturnType<typeof userEvent.setup>> {
     const user = userEvent.setup()
     mockedListTags.mockResolvedValue([
@@ -358,7 +358,7 @@ describe('FilterHelperPopover — path filters', () => {
 })
 
 // ---------------------------------------------------------------------------
-// PEND-58g UX-A5 — structural filter builder categories
+// Structural filter builder categories
 // ---------------------------------------------------------------------------
 
 async function openCategory(categoryKey: string): Promise<{
@@ -372,7 +372,7 @@ async function openCategory(categoryKey: string): Promise<{
   return { user, onAddFilter }
 }
 
-describe('FilterHelperPopover — state filter (UX-A5)', () => {
+describe('FilterHelperPopover — state filter', () => {
   it('emits a `state` token for the default include + selected value', async () => {
     const { user, onAddFilter } = await openCategory('search.filterCategory.state')
     await user.selectOptions(
@@ -428,7 +428,7 @@ describe('FilterHelperPopover — state filter (UX-A5)', () => {
   })
 })
 
-describe('FilterHelperPopover — priority filter (UX-A5)', () => {
+describe('FilterHelperPopover — priority filter', () => {
   it('emits a `priority` token for the selected value', async () => {
     const { user, onAddFilter } = await openCategory('search.filterCategory.priority')
     await user.selectOptions(
@@ -467,7 +467,7 @@ describe('FilterHelperPopover — priority filter (UX-A5)', () => {
   })
 })
 
-describe('FilterHelperPopover — due / scheduled filter (UX-A5)', () => {
+describe('FilterHelperPopover — due / scheduled filter', () => {
   it('emits a `due` named-bucket token round-tripping to `due:today`', async () => {
     const { user, onAddFilter } = await openCategory('search.filterCategory.due')
     await user.selectOptions(
@@ -529,7 +529,7 @@ describe('FilterHelperPopover — due / scheduled filter (UX-A5)', () => {
   })
 })
 
-describe('FilterHelperPopover — property filter (UX-A5)', () => {
+describe('FilterHelperPopover — property filter', () => {
   it('emits a `prop` token with key + value', async () => {
     const { user, onAddFilter } = await openCategory('search.filterCategory.prop')
     await user.type(screen.getByLabelText(t('search.filterHelper.propKeyLabel')), 'area')

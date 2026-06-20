@@ -110,9 +110,9 @@ describe('BlockLinkPicker input rule (H-13)', () => {
   })
 })
 
-// ── PEND-34: prefix-alias disambiguation in the input rule ─────────────
+// ── prefix-alias disambiguation in the input rule ─────────────
 //
-// Pre-PEND-34 the exact-match check was `label === text || item.isAlias`,
+// Pre- the exact-match check was `label === text || item.isAlias`,
 // which auto-resolved any item carrying `isAlias: true` regardless of
 // whether the typed text was a prefix or the full alias. With prefix
 // matching now in `searchPages`, that fallback would auto-resolve
@@ -120,7 +120,7 @@ describe('BlockLinkPicker input rule (H-13)', () => {
 // The fix narrows the alias branch to `aliasText === text` so only a
 // fully-typed alias triggers resolution.
 
-describe('BlockLinkPicker input rule — alias disambiguation (PEND-34)', () => {
+describe('BlockLinkPicker input rule — alias disambiguation', () => {
   it('[[my-alias]] input rule resolves to alias target', async () => {
     const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
     const chainProxy: Record<string, unknown> = {
@@ -435,7 +435,7 @@ describe('BlockLinkPicker input rule uses insertContentAt (race-condition fix)',
   })
 })
 
-// ── FE-M-15 ──────────────────────────────────────────────────────────────
+// ── ──────────────────────────────────────────────────────────────
 //
 // `insertContentAt(insertPos, ...)` clamps silently rather than throwing
 // when `insertPos` is past the doc's end. The user can edit (or clear) the
@@ -445,7 +445,7 @@ describe('BlockLinkPicker input rule uses insertContentAt (race-condition fix)',
 // `insertContentAt`, and fall back to plain text at the current cursor
 // when the offset is stale.
 
-describe('BlockLinkPicker stale-insertPos guard (FE-M-15)', () => {
+describe('BlockLinkPicker stale-insertPos guard ()', () => {
   it('falls back to plain text at cursor when insertPos > doc.content.size', async () => {
     const insertContentCalls: unknown[] = []
     const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
@@ -637,7 +637,7 @@ describe('resolveBlockLinkFromSelection command', () => {
       },
     } as unknown
 
-    // PEND-34 — the alias-resolution path now keys on `aliasText === text`
+    // The alias-resolution path now keys on `aliasText === text`
     // rather than the old `isAlias` short-circuit. The picker item must
     // carry the matched alias text so the selection-resolve path can
     // recognise it as an exact match.
@@ -666,14 +666,14 @@ describe('resolveBlockLinkFromSelection command', () => {
   })
 })
 
-// ── Suggestion plugin `command` — UX-232 trailing-space behaviour ────────
+// ── Suggestion plugin `command` — trailing-space behaviour ────────
 //
 // After the user picks an item from the [[ suggestion popup, the chain must
 // be: deleteRange(range) → insertBlockLink(id) → insertContent(' ') → run().
 // The trailing space keeps the cursor on the same visual line, separated
 // from the chip by exactly one character.
 
-describe('BlockLinkPicker suggestion command chain (UX-232)', () => {
+describe('BlockLinkPicker suggestion command chain', () => {
   it('captured command invokes the correct chain (mock @tiptap/suggestion)', async () => {
     // Re-import with a mocked @tiptap/suggestion so we can capture the
     // `command` option that BlockLinkPicker passes to Suggestion(...).
@@ -804,7 +804,7 @@ describe('BlockLinkPicker suggestion command chain (UX-232)', () => {
   })
 })
 
-// ── Integration: real editor doc state after the picker chain (UX-232) ──
+// ── Integration: real editor doc state after the picker chain ──
 //
 // These tests drive the exact chain that block-link-picker.command runs
 // through a real TipTap Editor (BlockLink + Document + Paragraph + Text,
@@ -813,7 +813,7 @@ describe('BlockLinkPicker suggestion command chain (UX-232)', () => {
 //   - selection.from === doc.content.size (cursor at paragraph end)
 //   - doc has exactly one paragraph (no stray hard_break / paragraph split)
 
-describe('BlockLinkPicker real-editor chain result (UX-232)', () => {
+describe('BlockLinkPicker real-editor chain result', () => {
   let editor: Editor | undefined
 
   afterEach(() => {
@@ -848,7 +848,7 @@ describe('BlockLinkPicker real-editor chain result (UX-232)', () => {
     // paragraph start token). The suggestion range on selection is this
     // span — mirror the real command's chain.
     editor.chain().focus().deleteRange({ from: 1, to: 6 }).insertBlockLink('ULID_OK').run()
-    // Apply the trailing space the UX-232 fix appends:
+    // Apply the trailing space the fix appends:
     editor.chain().focus().insertContent(' ').run()
 
     const doc = editor.state.doc

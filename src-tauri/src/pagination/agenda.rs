@@ -15,9 +15,9 @@ use crate::error::AppError;
 ///
 /// `date` must be in `YYYY-MM-DD` format.
 ///
-/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to blocks
+/// `space_id` — when `Some`, restricts the result set to blocks
 /// whose owning page (`b.page_id`) carries `space = ?space_id`.
-/// `None` keeps the pre-FEAT-3 behaviour (no filter). See
+/// `None` keeps the pre- behaviour (no filter). See
 /// [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] for the shared
 /// SQL fragment definition.
 pub async fn list_agenda(
@@ -34,7 +34,7 @@ pub async fn list_agenda(
         None => (None, ""),
     };
 
-    // FEAT-3p4 — ?6 (space_id) drives the shared space-filter clause.
+    // ?6 (space_id) drives the shared space-filter clause.
     // The literal mirrors `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline here
     // because `sqlx::query_as!` requires a string literal and does not
     // accept `concat!()`. Mirror any change to the filter SQL across
@@ -106,7 +106,7 @@ pub async fn list_agenda_range(
     // use it directly to populate the cursor instead of guessing from
     // `b.due_date` / `b.scheduled_date`.
     //
-    // FEAT-3p4 — ?8 (space_id) drives the shared space-filter clause.
+    // ?8 (space_id) drives the shared space-filter clause.
     // Mirrors `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline because
     // `sqlx::query!` requires a string literal directly.
     let raw_rows = sqlx::query!(

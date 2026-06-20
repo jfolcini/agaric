@@ -1,6 +1,6 @@
 /**
  * useCommandPaletteStore — Zustand singleton for the Cmd/Ctrl+K
- * command palette (PEND-61 Phases 2-4 — successor to
+ * Command palette (Phases 2-4 — successor to
  * `useSearchPaletteStore`).
  *
  * Owns:
@@ -30,8 +30,8 @@ import { create } from 'zustand'
 /**
  * Closed enum of palette modes.
  *
- *  - v1 (PEND-61) ships `'search'` and `'commands'`.
- *  - v2 (PEND-67 Phase 3) adds `'tags'` (`#` prefix → block_type=tag
+ * V1 ships `'search'` and `'commands'`.
+ * V2 (Phase 3) adds `'tags'` (`#` prefix → block_type=tag
  *    search) and `'help'` (`?` prefix → keyboard-shortcut catalog).
  *  - `'nav' | 'spaces' | 'agents' | 'settings'` remain reserved slots
  *    for future phases so callers can early-narrow on future
@@ -48,7 +48,7 @@ export type PaletteMode =
   | 'settings'
 
 /**
- * Per-mode query memory (PEND-67 Phase 6).
+ * Per-mode query memory (Phase 6).
  *
  * VSCode's Cmd+P / Cmd+Shift+P remembers a separate query per mode so
  * toggling modes feels responsive instead of destructive. `setQuery`
@@ -94,7 +94,7 @@ interface CommandPaletteState {
    */
   previousFocusedElement: HTMLElement | null
   /**
-   * PEND-73 Phase 3.U8 — snapshot of the document selection at the
+   * Phase 3.U8 — snapshot of the document selection at the
    * moment the palette opened, captured BEFORE focus moved into the
    * palette input. Cloned via `Range.cloneRange()` so subsequent
    * DOM updates / selection changes don't mutate it. `null` when
@@ -115,7 +115,7 @@ interface CommandPaletteState {
   /** Switch palette mode without closing the dialog; restores that mode's remembered query. */
   setMode: (mode: PaletteMode) => void
   /**
-   * PEND-67 Phase 6 helper for the mode router. Atomically:
+   * Phase 6 helper for the mode router. Atomically:
    *  - switches `mode` to `next`,
    *  - sets the flat `query` AND `queryByMode[next]` to `q`,
    *  - clears `queryByMode[mode]` (the prefix character was a shortcut,
@@ -147,7 +147,7 @@ export const useCommandPaletteStore = create<CommandPaletteState>((set, get) => 
     // `null` or the `<body>` when nothing is focused.
     const active = document.activeElement
     const focused = active instanceof HTMLElement && active !== document.body ? active : null
-    // PEND-73 Phase 3.U8 — also snapshot the live selection range so
+    // Phase 3.U8 — also snapshot the live selection range so
     // `[[page]]` insertion can plant text at the user's caret position
     // even after the palette stole focus (which collapses the
     // selection in some browsers). Cloned so a downstream

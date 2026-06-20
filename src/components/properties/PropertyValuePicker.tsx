@@ -22,7 +22,7 @@ export function PropertyValuePicker({
   onChange: (values: string[]) => void
 }): React.ReactElement {
   const { t } = useTranslation()
-  // MAINT-189: shared cache replaces per-mount `listPropertyKeys()` IPC.
+  // Shared cache replaces per-mount `listPropertyKeys()` IPC.
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [propertyKey, setPropertyKey] = useState(() => {

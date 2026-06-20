@@ -45,7 +45,7 @@ use super::sanitizer::sanitize_fts_query;
 /// queries shorter than 3 characters return no results.  Earlier
 /// versions of this module used the default `unicode61` tokenizer, which
 /// split CJK incorrectly; the trigram switch is what fixes that.
-#[allow(clippy::too_many_arguments)] // PEND-54 added include/exclude path glob params; refactor to a struct lives in PEND-58.
+#[allow(clippy::too_many_arguments)] //  added include/exclude path glob params; refactor to a struct lives in .
 pub async fn search_fts(
     pool: &SqlitePool,
     query: &str,
@@ -72,7 +72,7 @@ pub async fn search_fts(
         });
     }
 
-    // SQL-4 (PEND-58f) — reject over-long queries up front, before the
+    // Reject over-long queries up front, before the
     // NFC-normalise + tokenise walk. Mirrors the regex path's
     // `MAX_PATTERN_LEN` guard.
     if query.len() > MAX_QUERY_LEN {
@@ -130,7 +130,7 @@ pub async fn search_fts(
         // post-filter that would clobber them.
         // P4 (#346) — propagate the DB-side content truncation choice.
         snippet_len,
-        // PEND-70 — the non-partitioned `search_fts` path is the
+        // The non-partitioned `search_fts` path is the
         // cursor-paginated `search_blocks` IPC; it is not subject to
         // the palette's keystroke-burst pattern (the panel paginates
         // explicitly via Load More). No cancellation token is wired
@@ -149,7 +149,7 @@ pub async fn search_fts(
     } else {
         None
     };
-    // PEND-50 Phase 1 — emit `SearchBlockRow` (= `ActiveBlockRow` +
+    // Phase 1 — emit `SearchBlockRow` (= `ActiveBlockRow` +
     // `snippet`). The `snippet` column from FTS5 carries #828 PUA sentinel
     // boundaries (U+E000 / U+E001); the frontend parses them as
     // React nodes — never as raw HTML.

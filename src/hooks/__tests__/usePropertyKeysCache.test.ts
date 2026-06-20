@@ -1,5 +1,5 @@
 /**
- * Tests for `usePropertyKeysCache` (MAINT-189).
+ * Tests for `usePropertyKeysCache`.
  *
  * Validates the four invariants pinned by the maintenance task:
  *  (a) two consecutive `usePropertyKeysCache(spaceId)` mounts fire ONE IPC,

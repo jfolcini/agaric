@@ -1,8 +1,8 @@
 /**
- * PEND-54 — Classifier: raw tokens → `SearchQueryAST`.
+ * Classifier: raw tokens → `SearchQueryAST`.
  *
  * Each raw token is asked to match a registered prefix (`tag:`,
- * `path:`, `not-path:` for this plan; PEND-53 will add more). Bare
+ * `path:`, `not-path:` for this plan; will add more). Bare
  * `#tag` is recognised as the tag alias.
  *
  * Tokens we don't recognise fall through to free-text and are
@@ -37,7 +37,7 @@ export function classify(tokens: RawToken[], input: string): SearchQueryAST {
   // Track the spans we "consumed" as filters so we can reconstruct
   // free-text by stripping them out of the original input.
   const consumedSpans: Array<[number, number]> = []
-  // DSL-A1 — track quoted phrase spans so the free-text whitespace
+  // Track quoted phrase spans so the free-text whitespace
   // collapse can skip over them. A quoted phrase is matched exactly,
   // so internal runs of whitespace MUST survive verbatim.
   const quotedSpans: Array<[number, number]> = []
@@ -62,7 +62,7 @@ export function classify(tokens: RawToken[], input: string): SearchQueryAST {
       continue
     }
     // Token shaped like `xxx:yyy` but unregistered → invalid chip.
-    // DSL-10: `looksLikeUnknownPrefix` returns null for `key://…`
+    // `looksLikeUnknownPrefix` returns null for `key://…`
     // (pasted URLs), so those fall through to free-text below instead of
     // being consumed as an invalid chip and silently dropped.
     const unk = looksLikeUnknownPrefix(tok.text)
@@ -78,7 +78,7 @@ export function classify(tokens: RawToken[], input: string): SearchQueryAST {
     // Everything else is free-text.
   }
 
-  // DSL-5 — only the LAST due:/scheduled: token reaches the backend
+  // Only the LAST due:/scheduled: token reaches the backend
   // (see astToFilterProjection's "last wins"). Flag the earlier,
   // shadowed tokens as invalid so the rendered chips agree with the
   // effective query instead of showing filters that silently don't apply.
@@ -110,7 +110,7 @@ export function classify(tokens: RawToken[], input: string): SearchQueryAST {
  * `input`, then collapsing runs of whitespace — but ONLY outside quoted
  * phrases.
  *
- * DSL-A1 — whitespace inside a `"…"` quoted span is preserved verbatim
+ * Whitespace inside a `"…"` quoted span is preserved verbatim
  * because a quoted phrase is meant to match exactly; a global
  * `.replace(/\s+/g, ' ')` would silently rewrite the phrase. We walk the
  * surviving (non-consumed) text segment-by-segment against `input`,
@@ -162,7 +162,7 @@ function buildFreeText(
   if (cursor < input.length) append(cursor, input.length)
 
   // Second pass: collapse runs of whitespace, but copy quoted ranges
-  // verbatim so intra-phrase whitespace survives (DSL-A1).
+  // Verbatim so intra-phrase whitespace survives.
   let out = ''
   let pos = 0
   for (const [qs, qe] of quotedOut) {

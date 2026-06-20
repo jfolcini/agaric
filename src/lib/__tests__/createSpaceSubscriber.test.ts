@@ -1,5 +1,5 @@
 /**
- * Tests for `createSpaceSubscriber` — MAINT-122 (semantics) plus the
+ * Tests for `createSpaceSubscriber` — (semantics) plus the
  * design-system-perf-review-2026-05-09 item 13 migration to the
  * `subscribeWithSelector` middleware on `useSpaceStore`.
  *

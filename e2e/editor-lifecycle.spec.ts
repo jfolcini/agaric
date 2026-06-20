@@ -5,7 +5,7 @@ import { expect, test } from './helpers'
  * All block operations use the "Getting Started" seed page.
  *
  * Key selectors:
- * - Static blocks: `[data-testid="block-static"]` div (passive container after MAINT-162 — no role/aria-label)
+ * Static blocks: `[data-testid="block-static"]` div (passive container after no role/aria-label)
  * - TipTap editor: `[role="textbox"][aria-label="Block editor"]` (contenteditable)
  * - Sortable wrapper: `[data-testid="sortable-block"]`
  * - Enter saves; Escape discards.
@@ -18,7 +18,7 @@ async function openGettingStarted(page: import('@playwright/test').Page) {
     .click()
   // Scope to the page list so we don't match the page-title textbox or a
   // block-link-chip that also renders "Getting Started" (strict-mode
-  // violation under parallel load — TEST-3 flake, session 679).
+  // Violation under parallel load — flake, session 679).
   await page.locator('[data-page-item]').filter({ hasText: 'Getting Started' }).first().click()
   await expect(page.locator('[aria-label="Page title"]')).toBeVisible({ timeout: 5000 })
 }
@@ -81,7 +81,7 @@ test.describe('Editor lifecycle', () => {
     await openGettingStarted(page)
 
     // Click the first seed block to focus it. Static blocks are passive
-    // div containers (MAINT-162), located via data-testid.
+    // Div containers, located via data-testid.
     const firstBlock = page.locator('[data-testid="block-static"]').first()
     const originalText = (await firstBlock.textContent())?.trim()
     if (!originalText) throw new Error('seed block had no text content')
@@ -137,7 +137,7 @@ test.describe('Editor lifecycle', () => {
     await page.getByRole('button', { name: 'Status', exact: true }).click()
     await expect(headerLabel).toHaveText('Status')
 
-    // (Conflicts nav-item removed in Session 700 / PEND-09 Phase 5.)
+    // (Conflicts nav-item removed in Session 700 / Phase 5.)
 
     // Navigate back to Journal (no header label — has mode tabs instead)
     await page.getByRole('button', { name: 'Journal', exact: true }).click()
@@ -190,7 +190,7 @@ test.describe('Editor lifecycle', () => {
     // Reload the page — mock state resets.
     // Under heavy parallel load the dev server can still be serving stale
     // bundles when reload resolves; wait for the network to settle so the
-    // app shell is fully hydrated before asserting (TEST-3 flake).
+    // App shell is fully hydrated before asserting (flake).
     await page.reload()
     await page.waitForLoadState('networkidle')
     await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible({

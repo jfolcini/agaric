@@ -25,7 +25,7 @@ export interface PropertyRowProps {
   /**
    * The raw property key (e.g. `repeat`, `status`). Used to surface
    * key-specific affordances such as the `repeat` syntax help popover
-   * (UX-320). When omitted, no key-specific UI is rendered.
+   *. When omitted, no key-specific UI is rendered.
    */
   propKey?: string
   /** Optional icon to display in the badge. When provided, the badge uses icon+text styling; otherwise font-mono. */
@@ -64,7 +64,7 @@ export function PropertyRow({
   const isDate = inputType === 'date'
   const isRepeat = propKey === 'repeat'
 
-  // Date input hook (M-29) — always called, values used only when isDate
+  // Date input hook — always called, values used only when isDate
   const {
     dateInput,
     datePreview,
@@ -89,7 +89,7 @@ export function PropertyRow({
         {label}
       </Badge>
       <div className="flex-1">
-        {/* UX-320: when the row is the `repeat` property, wrap the Input
+        {/* when the row is the `repeat` property, wrap the Input
             and a `<Popover>` help trigger in a flex container. For all
             other rows (including dates, where `BuiltinDateFields.test`
             queries `input.parentElement?.querySelector('.text-muted-foreground')`

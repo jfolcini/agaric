@@ -107,10 +107,10 @@ describe('RenameDialog', () => {
   })
 
   // ----------------------------------------------------------------------
-  // UX-263: input validation (trim, empty, length cap, control chars)
+  // Input validation (trim, empty, length cap, control chars)
   // ----------------------------------------------------------------------
 
-  describe('validateRenameInput / sanitizeRenameInput (UX-263)', () => {
+  describe('validateRenameInput / sanitizeRenameInput', () => {
     it('reports empty for whitespace-only input', () => {
       expect(validateRenameInput('')).toBe('empty')
       expect(validateRenameInput('   ')).toBe('empty')
@@ -141,13 +141,13 @@ describe('RenameDialog', () => {
     })
   })
 
-  it('disables Save when the input is empty (UX-263)', () => {
+  it('disables Save when the input is empty', () => {
     render(<RenameDialog open={true} onOpenChange={vi.fn()} onConfirm={vi.fn()} currentName="" />)
     const save = screen.getByRole('button', { name: /save/i })
     expect(save).toBeDisabled()
   })
 
-  it('shows inline error after the user clears the field (UX-263)', async () => {
+  it('shows inline error after the user clears the field', async () => {
     const user = userEvent.setup()
     const onConfirm = vi.fn()
     render(
@@ -168,7 +168,7 @@ describe('RenameDialog', () => {
     expect(onConfirm).not.toHaveBeenCalled()
   })
 
-  it('blocks Save and shows tooLong error when the name exceeds the cap (UX-263)', async () => {
+  it('blocks Save and shows tooLong error when the name exceeds the cap', async () => {
     const user = userEvent.setup()
     const onConfirm = vi.fn()
     render(<RenameDialog open={true} onOpenChange={vi.fn()} onConfirm={onConfirm} currentName="" />)
@@ -183,7 +183,7 @@ describe('RenameDialog', () => {
     expect(onConfirm).not.toHaveBeenCalled()
   })
 
-  it('strips control characters from pasted input before persisting (UX-263)', async () => {
+  it('strips control characters from pasted input before persisting', async () => {
     const user = userEvent.setup()
     const onConfirm = vi.fn()
     render(<RenameDialog open={true} onOpenChange={vi.fn()} onConfirm={onConfirm} currentName="" />)
@@ -200,13 +200,13 @@ describe('RenameDialog', () => {
   })
 
   // ----------------------------------------------------------------------
-  // MAINT-215: dialog mounts under both desktop (Dialog) and mobile (Sheet)
+  // Dialog mounts under both desktop (Dialog) and mobile (Sheet)
   // paths via useDialogOrSheet('dialog'). We don't assert on Radix DOM
   // specifics — just that the title / form / buttons are accessible under
   // both code paths.
   // ----------------------------------------------------------------------
 
-  describe('responsive path (MAINT-215)', () => {
+  describe('responsive path', () => {
     it('mounts on the mobile path (Sheet) with title, input, and buttons accessible', () => {
       mockedUseIsMobile.mockReturnValue(true)
 

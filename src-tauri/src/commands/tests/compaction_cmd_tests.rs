@@ -218,7 +218,7 @@ async fn compact_op_log_cmd_noop_when_no_old_ops() {
     mat.shutdown();
 }
 
-/// L-42 regression: `compact_op_log_cmd_inner` previously returned
+/// Regression: `compact_op_log_cmd_inner` previously returned
 /// `ops_deleted = eligible_in_tx`, the count of ops eligible at the
 /// start of the wrapper transaction. That figure is stale by the time
 /// the inner `snapshot::compact_op_log` runs (more ops can be appended
@@ -316,7 +316,7 @@ async fn compact_op_log_returns_real_deleted_count_l42() {
 
     let actual_deleted = count_before - count_after;
 
-    // Core L-42 invariant: the reported `ops_deleted` is the **real**
+    // Core invariant: the reported `ops_deleted` is the **real**
     // number of rows the inner DELETE removed, not the pre-flight
     // recount. Any regression that wires the wrapper back to
     // `eligible_in_tx` would break this invariant the moment the two
@@ -324,7 +324,7 @@ async fn compact_op_log_returns_real_deleted_count_l42() {
     assert_eq!(
         result.ops_deleted, actual_deleted,
         "ops_deleted ({}) must equal the actual op_log row delta ({}); \
-         L-42 regression — wrapper is reporting a stale count",
+          regression — wrapper is reporting a stale count",
         result.ops_deleted, actual_deleted
     );
 
@@ -341,7 +341,7 @@ async fn compact_op_log_returns_real_deleted_count_l42() {
 
 #[tokio::test]
 async fn compact_op_log_cmd_rejects_retention_days_zero() {
-    // M-38 regression: retention_days = 0 must be rejected up-front with
+    // Regression: retention_days = 0 must be rejected up-front with
     // AppError::Validation("retention_days.too_small") before any DB work
     // (otherwise cutoff = now() and the entire op log is purged).
     let (pool, _dir) = test_pool().await;

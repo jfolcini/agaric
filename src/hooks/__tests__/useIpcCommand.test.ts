@@ -1,5 +1,5 @@
 /**
- * Tests for useIpcCommand — MAINT-120 hook that collapses the
+ * Tests for useIpcCommand — hook that collapses the
  * try/catch + logger + optimistic/revert pattern shared by the settings
  * and dialog components.
  *
@@ -16,7 +16,7 @@
  *  - logLevel='warn': uses `logger.warn` instead of `logger.error`.
  *  - errorLogContext function form: receives the execute args.
  *  - onSuccess callback fires with the result.
- *  - onSuccess errors do NOT trigger revert/onError (review-MAINT-120).
+ * OnSuccess errors do NOT trigger revert/onError (review-).
  */
 
 import { act, renderHook } from '@testing-library/react'
@@ -193,7 +193,7 @@ describe('useIpcCommand — error path', () => {
     expect(order).toEqual(['revert', 'onError'])
   })
 
-  it('does NOT trigger revert/onError when onSuccess throws (review-MAINT-120)', async () => {
+  it('does NOT trigger revert/onError when onSuccess throws (review-)', async () => {
     // A successful IPC followed by a failing onSuccess callback (e.g.
     // toast library throws, refetch fails) is NOT the same as a failed
     // IPC. The backend already saw the mutation succeed; reverting the

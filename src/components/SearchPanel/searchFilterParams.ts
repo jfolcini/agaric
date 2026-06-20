@@ -2,12 +2,12 @@
  * searchFilterParams — the IPC filter-param bundle SearchPanel hands to
  * `searchBlocks`.
  *
- * PEND-58g FE-A18 — extracted from `SearchPanel.tsx` so the AST→IPC
+ * FE-A18 — extracted from `SearchPanel.tsx` so the AST→IPC
  * projection lives next to the other search-query plumbing instead of
  * inline in the orchestrator. Pure (no React).
  *
- * PEND-53 — `astFilterParams(projection, tagIds)` returns the
- * AST-projected bundle used in BOTH search modes (DSL-A8 / UX-A4). The
+ * `astFilterParams(projection, tagIds)` returns the
+ * AST-projected bundle used in BOTH search modes. The
  * shape is accepted by `searchBlocks` as `Partial<…>` extension fields
  * (each entry is `T | undefined`).
  */

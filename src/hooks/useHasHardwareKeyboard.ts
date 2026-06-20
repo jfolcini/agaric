@@ -3,7 +3,7 @@
  *
  * Returns `false` until the FIRST signal that a hardware keyboard is
  * present, then `true` for the rest of the session. Two signals OR-
- * combined (per PEND-68):
+ * Combined:
  *
  *   1. `navigator.keyboard.getLayoutMap()` — Chromium-only; resolves
  *      when a keyboard layout is exposed → keyboard is present. Safari

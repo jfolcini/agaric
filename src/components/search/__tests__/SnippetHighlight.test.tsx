@@ -1,7 +1,7 @@
 /**
  * Tests for the `SnippetHighlight` renderer + `parseSnippet` parser.
  *
- * Covers the PEND-50 Phase 1 "Testing surface — frontend / Unit" cases
+ * Covers the Phase 1 "Testing surface — frontend / Unit" cases
  * for `SearchResultBlockRow.tsx`'s snippet path:
  *
  *  - Plain text (no sentinel boundaries) → single text span.

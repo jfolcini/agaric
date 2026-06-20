@@ -2,7 +2,7 @@ import { expect, test } from './helpers'
 
 test.describe('Smoke tests', () => {
   test('app loads and shows Agaric branding', async ({ page }) => {
-    // FEAT-3 Phase 1 deliberately removed the sidebar "Agaric" wordmark —
+    // Phase 1 deliberately removed the sidebar "Agaric" wordmark —
     // app identity now lives in the window title (set in `index.html`)
     // plus the favicon. Assert the title rather than searching the body.
     await page.goto('/')
@@ -17,7 +17,7 @@ test.describe('Smoke tests', () => {
 
     // Nav labels that are always exactly their own text (no count badge).
     // Scope to the sidebar so the new `QuickAccessBar` quick-nav chips
-    // (PEND-68 B — `Pages`/`Tags`/`Graph`/`Search` with `aria-label`)
+    // (B — `Pages`/`Tags`/`Graph`/`Search` with `aria-label`)
     // don't collide with the sidebar buttons under strict mode.
     const sidebar = page.locator('[data-slot="sidebar"]')
     const exactNavLabels = ['Journal', 'Pages', 'Tags', 'Status']
@@ -26,7 +26,7 @@ test.describe('Smoke tests', () => {
     }
     // Trash has an optional count badge that becomes part of the
     // accessible name when non-zero — match on prefix instead of exact.
-    // (Conflicts nav-item removed in Session 700 / PEND-09 Phase 5.)
+    // (Conflicts nav-item removed in Session 700 / Phase 5.)
     await expect(sidebar.getByRole('button', { name: /^Trash/ })).toBeVisible()
   })
 

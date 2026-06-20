@@ -43,7 +43,7 @@ pub async fn set_page_aliases_inner(
     // sync replay / scripted imports must be normalised here.
     let page_id = page_id.to_ascii_uppercase();
 
-    // M-21: wrap the DELETE + per-alias INSERT loop in a single
+    // Wrap the DELETE + per-alias INSERT loop in a single
     // `BEGIN IMMEDIATE` transaction so that a crash, pool-acquire
     // failure, or per-row INSERT error mid-loop rolls the page back to
     // its prior alias set instead of leaving a partial replacement.
@@ -118,7 +118,7 @@ pub async fn get_page_aliases_inner(
 
 /// Look up a page by one of its aliases. Returns `(page_id, title)` if found.
 ///
-/// `scope` (PEND-35 Tier 1.2) — [`SpaceScope::Active`] restricts the
+/// `scope` — [`SpaceScope::Active`] restricts the
 /// match to aliases pointing at pages whose `b.space_id` equals the
 /// wrapped [`SpaceId`] (#533, migration 0086 — `space_id` is a first-class
 /// column). Mirrors the
@@ -182,7 +182,7 @@ struct PageAliasPrefixRow {
 /// Bounded by [`MAX_PAGE_ALIASES_PREFIX`] to keep the popup responsive
 /// even if a user has hundreds of substring-matched aliases.
 ///
-/// `scope` (FEAT-3p4 / PEND-34) — [`SpaceScope::Active`] restricts the
+/// `scope` — [`SpaceScope::Active`] restricts the
 /// result set to aliases pointing at pages whose `space` property
 /// equals the wrapped [`SpaceId`]. Mirrors the
 /// `(?N IS NULL OR ... IN (...))` short-circuit pattern used by

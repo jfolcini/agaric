@@ -29,9 +29,9 @@
  *     if that matters (it usually does not, because setState on an
  *     unmounted component is a no-op in React 18+).
  *
- * PEND-73 Phase 4.M3 — extracted from CommandPalette + SearchPanel +
+ * Phase 4.M3 — extracted from CommandPalette + SearchPanel +
  * useAutocompleteSources. With Phase 2's `AbortController` plumbing
- * (PEND-73 R4) the IPC sites can drop this in favour of signal-based
+ * The IPC sites can drop this in favour of signal-based
  * cancellation, but the autocomplete tag-debounce path stays the
  * same shape (the debounce is the race, not the IPC), so the hook
  * earns its keep there indefinitely.

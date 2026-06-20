@@ -1,5 +1,5 @@
 /**
- * Tests for the Jaro-Winkler fuzzy scorer (PEND-51).
+ * Tests for the Jaro-Winkler fuzzy scorer.
  */
 
 import { describe, expect, it } from 'vitest'

@@ -1,7 +1,7 @@
 /**
  * useIpcCommand — collapses the recurring "try/await IPC/catch + logger.<level>
  * + optional optimistic update + revert" boilerplate that settings + dialog
- * components carried inline (MAINT-120).
+ * Components carried inline.
  *
  * The hook owns:
  *  - the try/catch/finally lifecycle around the IPC adapter,

@@ -11,7 +11,7 @@ use sqlx::SqlitePool;
 fn shift_date_default_mode_shifts_from_original() {
     // Default (+) mode: shift from the original date.
     //
-    // PEND-26 N3 / PEND-24 H2: `shift_date` returns
+    // `shift_date` returns
     // `Result<Option<String>, AppError>`. The default arm cannot trip
     // either error path (no `++` loop, no overflow), so we unwrap the
     // outer `Result` once and pattern-match the `Option` as before.
@@ -76,7 +76,7 @@ fn shift_date_plus_plus_prefix_advances_to_future() {
     let past = today - chrono::Duration::days(21);
     let past_str = past.format("%Y-%m-%d").to_string();
 
-    // Two `unwrap`s after PEND-26 N3 / PEND-24 H2: outer for `Result`,
+    // Two `unwrap`s after: outer for `Result`,
     // inner for `Option<String>`. A 21-day origin is well under the
     // 10 000-iteration cap so the `++` arm returns `Ok(Some(_))`.
     let result = shift_date(&past_str, "++weekly").unwrap().unwrap();
@@ -164,7 +164,7 @@ fn shift_date_once_custom_intervals() {
 
 #[test]
 fn shift_date_once_dst_transitions_calendar_safe() {
-    // L-110: shift_date_once is calendar-day arithmetic on NaiveDate, so DST
+    // Shift_date_once is calendar-day arithmetic on NaiveDate, so DST
     // transitions in any timezone must not shift the result by ±1 day.
     //
     // We exercise dates that fall on (or one day before) known DST-transition
@@ -294,7 +294,7 @@ fn shift_date_once_dst_transitions_calendar_safe() {
 
 #[test]
 fn shift_date_returns_none_for_bad_input() {
-    // PEND-26 N3 / PEND-24 H2: malformed inputs (bad date, unknown
+    // Malformed inputs (bad date, unknown
     // interval, empty rule) stay on the `Ok(None)` channel — they are
     // user-input shape errors, not the new `++`-arm overflow / cap
     // signals. The compute caller treats `Ok(None)` as "skip the shift
@@ -400,7 +400,7 @@ fn shift_date_monthly_december_rolls_year() {
 }
 
 // ==================================================================
-// M-36: overflow / range checks for month arithmetic
+// Overflow / range checks for month arithmetic
 // ==================================================================
 
 #[test]
@@ -451,11 +451,11 @@ fn shift_date_once_months_extreme_negative_returns_none() {
 
 #[test]
 fn shift_date_rejects_negative_intervals() {
-    // M-79 regression: Org-mode recurrence never goes backwards. A typo or
+    // Regression: Org-mode recurrence never goes backwards. A typo or
     // paste like `-1d` / `-3w` / `-2m` would silently set the next-occurrence
     // to a date in the past; reject at parse time so the caller (and the
     // user) sees the rule was not honored.
-    // PEND-26 N3 / PEND-24 H2: rejection stays on the `Ok(None)` channel.
+    // Rejection stays on the `Ok(None)` channel.
     for rule in ["-1d", "-1w", "-1m", "-3w", "-2m", "-7d"] {
         assert_eq!(
             shift_date("2025-06-15", rule).unwrap(),
@@ -467,10 +467,10 @@ fn shift_date_rejects_negative_intervals() {
 
 #[test]
 fn shift_date_rejects_zero_intervals() {
-    // M-79 regression: a zero interval is also nonsense — `+0d` would no-op
+    // Regression: a zero interval is also nonsense — `+0d` would no-op
     // (sibling has the same date as the original) and `++0w` would loop
     // until the 10_000-iteration safety limit.
-    // PEND-26 N3 / PEND-24 H2: zero-count rejection stays on `Ok(None)`.
+    // Zero-count rejection stays on `Ok(None)`.
     for rule in ["0d", "0w", "0m", "+0d", "+0w", "+0m"] {
         assert_eq!(
             shift_date("2025-06-15", rule).unwrap(),
@@ -482,7 +482,7 @@ fn shift_date_rejects_zero_intervals() {
 
 #[test]
 fn shift_date_rejects_malformed_intervals() {
-    // TEST-50: malformed RRULE intervals must be rejected at parse time
+    // Malformed RRULE intervals must be rejected at parse time
     // (return None) rather than silently coerced to 0 / 1 / something
     // arbitrary. Covers four shapes that have all surfaced from real
     // user typos:
@@ -491,7 +491,7 @@ fn shift_date_rejects_malformed_intervals() {
     //   - "3.5d"   float (i64 parser must fail)
     //   - "invalid" free-text junk
     // Style mirrors `shift_date_rejects_zero_intervals` above.
-    // PEND-26 N3 / PEND-24 H2: malformed-rule rejection stays on `Ok(None)`.
+    // Malformed-rule rejection stays on `Ok(None)`.
     for rule in ["5x", "w", "3.5d", "invalid"] {
         assert_eq!(
             shift_date("2025-06-15", rule).unwrap(),
@@ -502,17 +502,17 @@ fn shift_date_rejects_malformed_intervals() {
 }
 
 // ==================================================================
-// PEND-24 H2 + PEND-26 N3: `++` arm explicit failure modes
+// + `++` arm explicit failure modes
 // ==================================================================
 //
 // Two distinct dead-ends in the `shift_date` `++` arm previously
 // returned silent garbage:
 //
-// * **PEND-24 H2** — the 10 000-iteration safety budget elapses without
+// * **** — the 10 000-iteration safety budget elapses without
 //   `current > today`. Pre-fix the loop returned a stale past date; the
 //   compute caller used it for end-condition checks and sibling
 //   creation, silently creating a sibling with a past due date.
-// * **PEND-26 N3** — `shift_date_once` returns `None` mid-loop (single
+// * **** — `shift_date_once` returns `None` mid-loop (single
 //   `NaiveDate` arithmetic overflow). Pre-fix the `?` propagation
 //   surfaced this as `Ok(None)`, which the compute caller treated as
 //   "no recurrence requested" and created a sibling with no due date.
@@ -525,7 +525,7 @@ fn shift_date_rejects_malformed_intervals() {
 
 #[test]
 fn plus_plus_with_very_old_origin_returns_err() {
-    // PEND-24 H2: an origin 11 000 days in the past with `+1d`
+    // An origin 11 000 days in the past with `+1d`
     // exhausts the 10 000-iteration cap without catching up to today.
     // Pre-fix: silently returned a stale past date.
     // Post-fix: `Err(AppError::Validation)` carrying the inputs that
@@ -550,7 +550,7 @@ fn plus_plus_with_very_old_origin_returns_err() {
 
 #[test]
 fn plus_plus_overflow_returns_err() {
-    // PEND-26 N3: an origin within a few years of `NaiveDate::MAX`
+    // An origin within a few years of `NaiveDate::MAX`
     // combined with `++100y` overflows the underlying `chrono` month
     // arithmetic on the first iteration (`shift_by_months` rejects
     // years above `MAX_CALENDAR_YEAR` = 2200).
@@ -584,7 +584,7 @@ fn plus_plus_overflow_returns_err() {
 fn plus_plus_boundary_success_under_cap() {
     // Boundary case: origin only 5 days in the past with `+1d` should
     // succeed in 6 iterations — well under the 10 000-iteration cap.
-    // Confirms PEND-24 H2's added `hit_cap` flag does not regress the
+    // Confirms added `hit_cap` flag does not regress the
     // success path.
     let today = chrono::Local::now().date_naive();
     let recent = today - chrono::Duration::days(5);
@@ -608,7 +608,7 @@ fn plus_plus_boundary_success_under_cap() {
 
 #[test]
 fn projection_plus_plus_cap_exhaustion_emits_no_stale_date() {
-    // #680 / PEND-24 H2 (projection surface): a `++1d` rule whose
+    // #680 / (projection surface): a `++1d` rule whose
     // `due_date` is far enough in the past that the 10 000-step catch-up
     // budget elapses without ever exceeding `today`. Pre-fix, the
     // catch-up loop left `current` as a STALE PAST date and the
@@ -1360,7 +1360,7 @@ async fn handle_recurrence_sets_repeat_origin_on_sibling() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handle_recurrence_sibling_position_does_not_collide() {
-    // M-78 regression: the new recurrence sibling's position must NOT
+    // Regression: the new recurrence sibling's position must NOT
     // collide with an existing sibling that already occupies
     // `original.position + 1`. The sibling is appended past MAX(position)
     // among living siblings so each sibling holds a unique slot.
@@ -1506,7 +1506,7 @@ async fn handle_recurrence_sibling_position_does_not_collide() {
 }
 
 // ==================================================================
-// TEST-16: year-boundary recurrence integration tests
+// Year-boundary recurrence integration tests
 // ==================================================================
 //
 // Pin the year-component arithmetic in `shift_date` end-to-end through
@@ -1519,7 +1519,7 @@ async fn handle_recurrence_sibling_position_does_not_collide() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handle_recurrence_daily_crosses_year_boundary() {
-    // TEST-16: daily recurrence on Dec 31 must shift to Jan 1 of the
+    // Daily recurrence on Dec 31 must shift to Jan 1 of the
     // next year. Invariant: the year component increments when the day
     // arithmetic carries past Dec 31.
     let (pool, _dir) = test_pool().await;
@@ -1591,7 +1591,7 @@ async fn handle_recurrence_daily_crosses_year_boundary() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handle_recurrence_weekly_crosses_year_boundary() {
-    // TEST-16: weekly recurrence on Tuesday Dec 30, 2025 must shift to
+    // Weekly recurrence on Tuesday Dec 30, 2025 must shift to
     // Tuesday Jan 6, 2026. Invariant: a 7-day shift that straddles
     // Dec 31 -> Jan 1 advances the year exactly once and preserves the
     // weekday (verified against calendar: Dec 30 2025 = Tuesday,
@@ -1665,7 +1665,7 @@ async fn handle_recurrence_weekly_crosses_year_boundary() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn plus_plus_cap_exceeded_propagates_through_handle_recurrence() {
-    // PEND-24 H2 (caller-level): the `Err(AppError::Validation)` raised
+    // (caller-level): the `Err(AppError::Validation)` raised
     // by `shift_date`'s `++` cap-exceeded path must propagate through
     // `handle_recurrence_in_tx` (called via `set_todo_state_inner` at
     // `commands/properties.rs:348`) and roll back the IMMEDIATE tx so
@@ -1746,7 +1746,7 @@ async fn plus_plus_cap_exceeded_propagates_through_handle_recurrence() {
     .await;
 
     let err = result.expect_err(
-        "PEND-24 H2: ancient origin under ++1d must propagate cap-exceeded as AppError::Validation",
+        "ancient origin under ++1d must propagate cap-exceeded as AppError::Validation",
     );
     let msg = err.to_string();
     assert!(

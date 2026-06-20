@@ -1218,7 +1218,7 @@ async fn backlinks_filtered_unicode_content() {
     );
 }
 
-// L-95: aligns eval_backlink_query with eval_unlinked_references /
+// Aligns eval_backlink_query with eval_unlinked_references /
 // eval_backlink_query_grouped self-ref exclusion convention. A block
 // linking to itself must not surface as its own backlink and must not
 // inflate `total_count` / `filtered_count`.
@@ -1267,15 +1267,15 @@ async fn backlinks_filtered_self_reference_excluded() {
     assert_eq!(
         resp.items.len(),
         0,
-        "self-referencing block excluded from backlinks (L-95)"
+        "self-referencing block excluded from backlinks"
     );
     assert_eq!(
         resp.total_count, 0,
-        "self-link must not inflate total_count (L-95)"
+        "self-link must not inflate total_count"
     );
     assert_eq!(
         resp.filtered_count, 0,
-        "self-link must not inflate filtered_count (L-95)"
+        "self-link must not inflate filtered_count"
     );
 }
 
@@ -1645,7 +1645,7 @@ async fn batch_resolve_returns_matching_blocks() {
     // level get `page_id = NULL`; the pre-§5.3 COALESCE fallback resolved
     // to `b.id`. Stamp `page_id = id` so the post-migration filter
     // (`b.page_id IN (...)`) finds the tag block.
-    // FEAT-3 Phase 7: batch_resolve_inner filters by space; assign both
+    // Phase 7: batch_resolve_inner filters by space; assign both
     // blocks to the synthetic test space so the membership filter keeps
     // them in scope.
     assign_to_test_space(&pool, b1.id.as_str()).await;
@@ -1655,7 +1655,7 @@ async fn batch_resolve_returns_matching_blocks() {
     // FULL_CACHE_REBUILD_TASKS) races with the explicit `page_id = id`
     // stamp above and the rebuilder can overwrite b2.page_id back to NULL
     // (canonical for tag blocks), dropping the tag from the resolve set.
-    // Surfaced as a 1-in-3 flake during the M-6 hygiene sweep.
+    // Surfaced as a 1-in-3 flake during the hygiene sweep.
     settle(&mat).await;
     // #533: stamp space_id alongside page_id — the settle() above ran
     // rebuild_space_ids, which derives space_id from page_id (NULL at that

@@ -1,5 +1,5 @@
 /**
- * PEND-58 Phase 4 + PEND-58d (T-F3 / D24) — AddFilterPopover tests.
+ * Phase 4 + (T-F3 / D24) — AddFilterPopover tests.
  *
  * T-F3 mandates exercising the REAL component: the Radix Popover is NOT
  * mocked here (it was in the original Phase-4 test). We open the popover by

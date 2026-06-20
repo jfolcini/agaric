@@ -113,7 +113,7 @@ const CommandItem = ({
   <CommandPrimitive.Item
     data-slot="command-item"
     className={cn(
-      // PEND-61 CR — `aria-selected:bg-accent` collides with
+      // `aria-selected:bg-accent` collides with
       // `.search-result-mark`'s own `bg-accent`, hiding FTS5 snippet
       // highlights on the currently-focused row. /40 alpha lifts the
       // mark out of the row background while still signalling the

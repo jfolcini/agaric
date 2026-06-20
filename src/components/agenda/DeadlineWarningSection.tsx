@@ -41,7 +41,7 @@ export function DeadlineWarningSection(): React.ReactElement {
     [setDays],
   )
 
-  // UX-4: notify the user when their typed value was clamped — silent clamping
+  // Notify the user when their typed value was clamped — silent clamping
   // (e.g. typing 100 and getting 90 with no feedback) is a documented
   // anti-pattern and confuses users.
   const handleBlur = useCallback(

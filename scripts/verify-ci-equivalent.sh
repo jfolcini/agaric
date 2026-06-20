@@ -10,7 +10,7 @@
 #   Phase A — `prek run --all-files --hook-stage pre-commit`
 #             Runs every pre-commit hook against the WHOLE tree, not just
 #             staged files. Catches the "latent breach in an untouched
-#             file" class (cf. PEND-69's `useAppKeyboardShortcuts`
+# File" class ('s `useAppKeyboardShortcuts`
 #             cognitive-complexity drift that the staged-only pre-commit
 #             missed). Tests are skipped here because the prek vitest /
 #             cargo-test hooks read `--cached` and there's nothing staged

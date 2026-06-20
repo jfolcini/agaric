@@ -1,5 +1,5 @@
 /**
- * E2E — PEND-58f search history (E2E-5).
+ * E2E — search history (E2E-5).
  *
  * The focus/caret/mousedown interplay around the history dropdown is
  * browser-specific and only surfaces against a real DOM, so it's the highest-
@@ -69,7 +69,7 @@ async function openHistoryDropdown(page: import('@playwright/test').Page) {
   return dropdown
 }
 
-test.describe('Search history (PEND-58f E2E-5)', () => {
+test.describe('Search history (E2E-5)', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
   })
@@ -184,7 +184,7 @@ test.describe('Search history (PEND-58f E2E-5)', () => {
 // must be installed via `addInitScript` BEFORE boot so it lands before the
 // store hydrates.
 // ---------------------------------------------------------------------------
-test.describe('Search history — per-space isolation (PEND-58g E2E-A10)', () => {
+test.describe('Search history — per-space isolation (E2E-A10)', () => {
   const FOREIGN_SPACE = 'SPACE_OTHER'
   const FOREIGN_ENTRY = 'foreign-space-query'
 

@@ -58,7 +58,7 @@ pub async fn add_tag_inner(
     let block_id_str = block_id.as_str();
     let tag_id_str = tag_id.as_str();
 
-    // L-34: defence-in-depth guard against pathological inputs (MCP tool, sync
+    // Defence-in-depth guard against pathological inputs (MCP tool, sync
     // replay, scripted import) where a block tries to tag itself. Reject up-front
     // before any DB work; otherwise `tag_inheritance::propagate_tag_to_descendants`
     // could re-enter if the tag also appears in its own ancestry.
@@ -77,7 +77,7 @@ pub async fn add_tag_inner(
     // 2. Single IMMEDIATE transaction: validation + op_log + block_tags write.
     //    BEGIN IMMEDIATE eagerly acquires the write lock, preventing
     //    SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
-    //    and the actual mutation. MAINT-112: CommandTx couples commit +
+    // And the actual mutation. CommandTx couples commit +
     //    post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "add_tag").await?;
 
@@ -143,7 +143,7 @@ pub async fn add_tag_inner(
 /// inheritance-propagation logic has ONE source of truth.
 ///
 /// Performs, in order:
-/// 1. PEND-15 Phase 2 cross-space guard with PEND-76 F4 orphan adoption —
+/// 1. Phase 2 cross-space guard with orphan adoption —
 ///    a tag with no space is adopted into the source block's space (emitting
 ///    a `SetProperty(space)` op + materialising the row); a genuine
 ///    cross-space pairing is rejected with [`AppError::Validation`].
@@ -169,10 +169,10 @@ async fn apply_tag_to_block_in_tx(
     tag_id: &str,
     payload: OpPayload,
 ) -> Result<Option<op_log::OpRecord>, AppError> {
-    // PEND-15 Phase 2 (Path A) — tags are space-scoped; a tag may not be
+    // Phase 2 (Path A) — tags are space-scoped; a tag may not be
     // applied across spaces.
     //
-    // PEND-76 F4: a tag with no space yet (an orphan — e.g. one created
+    // A tag with no space yet (an orphan — e.g. one created
     // mid-session via `handleCreateTag`, which creates the tag block
     // without a space property) is ADOPTED into the source block's space
     // here instead of being rejected. This is the eager equivalent of the
@@ -246,7 +246,7 @@ async fn apply_tag_to_block_in_tx(
     let op_record =
         op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms()).await?;
 
-    // #1257 PR-3: route the `block_tags` write + inheritance fan-out through the
+    // #1257 route the `block_tags` write + inheritance fan-out through the
     // SAME engine-apply + projection the boot-replay / sync `ApplyOp` path uses,
     // IN this CommandTx, INSTEAD of the inline `INSERT INTO block_tags` +
     // `propagate_tag_to_descendants`. `apply_add_tag_via_loro` resolves the
@@ -308,7 +308,7 @@ pub async fn remove_tag_inner(
     // 2. Single IMMEDIATE transaction: validation + op_log + block_tags write.
     //    BEGIN IMMEDIATE eagerly acquires the write lock, preventing
     //    SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
-    //    and the actual mutation. MAINT-112: CommandTx couples commit +
+    // And the actual mutation. CommandTx couples commit +
     //    post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "remove_tag").await?;
 
@@ -341,7 +341,7 @@ pub async fn remove_tag_inner(
     let op_record =
         op_log::append_local_op_in_tx(&mut tx, device_id, payload, crate::db::now_ms()).await?;
 
-    // 4. #1257 PR-3: route the `block_tags` delete + inherited-tag cleanup
+    // 4. #1257 route the `block_tags` delete + inherited-tag cleanup
     // through the SAME engine-apply + projection the boot-replay / sync `ApplyOp`
     // path uses, IN this CommandTx, INSTEAD of the inline
     // `DELETE FROM block_tags` + `remove_inherited_tag`. `apply_remove_tag_via_loro`
@@ -377,12 +377,12 @@ pub async fn remove_tag_inner(
 /// `mode` is `"and"` for intersection, anything else defaults to `"or"` (union).
 /// Returns an empty page when no tag IDs or prefixes are supplied.
 ///
-/// `scope` (FEAT-3p4) — [`SpaceScope::Active`] restricts the result
+/// `scope` — [`SpaceScope::Active`] restricts the result
 /// set to blocks whose owning page carries `space = ?space_id`.
-/// [`SpaceScope::Global`] is the unscoped (pre-FEAT-3) behaviour
+/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour
 /// preserved for callsites that span every space.
 ///
-/// `block_type` (PEND-35 Tier 3.4) — when `Some`, restricts results to
+/// `block_type` — when `Some`, restricts results to
 /// blocks whose `block_type` equals the supplied value. `None` is the
 /// unfiltered behaviour. Pushes GraphView's JS-side
 /// `pagesResp.items.filter(p => p.block_type === 'page')` predicate
@@ -533,16 +533,16 @@ pub async fn list_all_tags_in_space_inner(
 }
 
 /// List every tag in the tag cache with cursor-based pagination
-/// (M-85, AGENTS.md invariant #3).
+/// (AGENTS.md invariant #3).
 ///
-/// Backs the FEAT-4c MCP `list_tags` tool. Ordered by `tag_id ASC`
+/// Backs the MCP `list_tags` tool. Ordered by `tag_id ASC`
 /// (ULIDs sort chronologically) so the keyset cursor encoded via
 /// [`Cursor::for_id`] is monotonic. `limit` is forwarded through
 /// [`pagination::PageRequest::new`] which clamps to the canonical
 /// `[1, MAX_PAGE_SIZE]` range; the MCP tool boundary applies its own
 /// `LIST_RESULT_CAP` clamp.
 ///
-/// M-85: previously a thin wrapper over `list_tags_by_prefix_inner("")`
+/// Previously a thin wrapper over `list_tags_by_prefix_inner("")`
 /// returning a flat `Vec<TagCacheRow>`. Now returns a
 /// [`PageResponse<TagCacheRow>`] so the tool surface is consistent with
 /// the rest of the paginated read commands. The frontend `listTags()`
@@ -622,7 +622,7 @@ pub async fn add_tag(
     .map_err(sanitize_internal_error)
 }
 
-/// #81 / PEND-57 — bulk variant of [`add_tag_inner`]: apply ONE `tag_id`
+/// #81 / bulk variant of [`add_tag_inner`]: apply ONE `tag_id`
 /// to N `block_ids` in a single `BEGIN IMMEDIATE` transaction (the Pages
 /// multi-select "tag selected" action).
 ///
@@ -704,7 +704,7 @@ pub async fn add_tags_by_ids_inner(
 
     let mut tagged: i64 = 0;
     for block_id in &block_ids {
-        // L-34 mirror — a block cannot tag itself. Skip rather than abort:
+        // Mirror — a block cannot tag itself. Skip rather than abort:
         // a multi-select that happens to include the tag block is a benign
         // gesture, not a caller error.
         if block_id == &tag_id {
@@ -746,7 +746,7 @@ pub async fn add_tags_by_ids_inner(
     Ok(tagged)
 }
 
-/// Tauri command: add ONE tag to N blocks (#81 / PEND-57). Delegates to
+/// Tauri command: add ONE tag to N blocks (#81). Delegates to
 /// [`add_tags_by_ids_inner`]. Returns the number of blocks newly tagged.
 #[tauri::command]
 #[specta::specta]

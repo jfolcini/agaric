@@ -28,10 +28,10 @@ vi.mock('@/lib/tauri', () => ({
   editBlock: vi.fn(),
   listTagsByPrefix: vi.fn(),
   listPropertyKeys: vi.fn(),
-  // PEND-36 — `handleLinkIt` now reads aliases via `getPageAliases` so
+  // `handleLinkIt` now reads aliases via `getPageAliases` so
   // alias-only mentions can be rewritten. Default mock returns no
   // aliases so the legacy title-only test paths stay unaffected;
-  // PEND-36-specific cases override per-test.
+  // -specific cases override per-test.
   getPageAliases: vi.fn(),
   paginationLimit: (n: number) => n,
 }))
@@ -163,7 +163,7 @@ const emptyResponse = {
 beforeEach(() => {
   vi.clearAllMocks()
   mockNavigateToPage.mockClear()
-  // MAINT-189: shared property-keys cache is module-level — flush it
+  // Shared property-keys cache is module-level — flush it
   // between tests so each case fetches its own keys.
   _resetPropertyKeysCacheForTest()
   mockedListUnlinked.mockResolvedValue(emptyResponse)
@@ -182,11 +182,11 @@ beforeEach(() => {
   })
   mockedListTagsByPrefix.mockResolvedValue([])
   mockedListPropertyKeys.mockResolvedValue([])
-  // PEND-36: legacy tests don't care about aliases — default to none.
+  // Legacy tests don't care about aliases — default to none.
   mockedGetPageAliases.mockResolvedValue([])
 })
 
-/** Wrap UnlinkedReferences in TooltipProvider (required for UX-168 filter icon button). */
+/** Wrap UnlinkedReferences in TooltipProvider (required for filter icon button). */
 function renderUnlinkedReferences(props: {
   pageId: string
   pageTitle: string
@@ -834,7 +834,7 @@ describe('UnlinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Group header page title navigation (#UX-H11)
+  // Group header page title navigation (#)
   // ---------------------------------------------------------------------------
 
   // clicking group header page title triggers navigation
@@ -870,11 +870,11 @@ describe('UnlinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // PEND-31: BacklinkFilterBuilder visibility
+  // BacklinkFilterBuilder visibility
   // ---------------------------------------------------------------------------
 
   // BacklinkFilterBuilder hidden while collapsed (default state).
-  it('BacklinkFilterBuilder hidden when collapsed (PEND-31)', async () => {
+  it('BacklinkFilterBuilder hidden when collapsed', async () => {
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
       next_cursor: null,
@@ -902,7 +902,7 @@ describe('UnlinkedReferences', () => {
   })
 
   // BacklinkFilterBuilder visible whenever expanded — no toggle click required.
-  it('BacklinkFilterBuilder visible unconditionally when expanded (PEND-31)', async () => {
+  it('BacklinkFilterBuilder visible unconditionally when expanded', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
@@ -925,7 +925,7 @@ describe('UnlinkedReferences', () => {
   })
 
   // Filter builder hidden again when the panel collapses on pageId change.
-  it('BacklinkFilterBuilder hides when collapsed on pageId change (PEND-31)', async () => {
+  it('BacklinkFilterBuilder hides when collapsed on pageId change', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
@@ -958,7 +958,7 @@ describe('UnlinkedReferences', () => {
   })
 
   // Loads tags and property keys on mount
-  it('loads tags and property keys on mount (UX-168)', async () => {
+  it('loads tags and property keys on mount', async () => {
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
       next_cursor: null,
@@ -1020,8 +1020,8 @@ describe('UnlinkedReferences', () => {
     expect(screen.queryByText('Results truncated — refine search')).not.toBeInTheDocument()
   })
 
-  // UX-210: keyboard nav container has correct aria-label resolved via t()
-  it('keyboard nav container aria-label resolves via t() (UX-210)', async () => {
+  // Keyboard nav container has correct aria-label resolved via t()
+  it('keyboard nav container aria-label resolves via t()', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
@@ -1046,10 +1046,10 @@ describe('UnlinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // BUG-44: filter + sort are forwarded to the backend IPC call
+  // Filter + sort are forwarded to the backend IPC call
   // ---------------------------------------------------------------------------
 
-  it('selecting a filter triggers a refetch with filters in payload (BUG-44)', async () => {
+  it('selecting a filter triggers a refetch with filters in payload', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
@@ -1063,7 +1063,7 @@ describe('UnlinkedReferences', () => {
 
     renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
-    // Expand — BacklinkFilterBuilder is now always visible (PEND-31).
+    // Expand — BacklinkFilterBuilder is now always visible.
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('mention text')
     expect(screen.getByTestId('backlink-filter-builder')).toBeInTheDocument()
@@ -1091,7 +1091,7 @@ describe('UnlinkedReferences', () => {
     })
   })
 
-  it('changing sort triggers a refetch with the new sort in payload (BUG-44)', async () => {
+  it('changing sort triggers a refetch with the new sort in payload', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
@@ -1105,7 +1105,7 @@ describe('UnlinkedReferences', () => {
 
     renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
-    // Expand — BacklinkFilterBuilder is now always visible (PEND-31).
+    // Expand — BacklinkFilterBuilder is now always visible.
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('mention text')
 
@@ -1126,7 +1126,7 @@ describe('UnlinkedReferences', () => {
     })
   })
 
-  it('shows error toast when listUnlinkedReferences fetch rejects (BUG-44 error path)', async () => {
+  it('shows error toast when listUnlinkedReferences fetch rejects (error path)', async () => {
     const { toast } = await import('sonner')
     mockedListUnlinked.mockRejectedValueOnce(new Error('network boom'))
 
@@ -1156,10 +1156,10 @@ describe('UnlinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // UX-240: Header row keeps flex-nowrap / min-w-0 layout primitives
+  // Header row keeps flex-nowrap / min-w-0 layout primitives
   // ---------------------------------------------------------------------------
 
-  it('outer header row and children carry flex-nowrap / min-w-0 (UX-240)', async () => {
+  it('outer header row and children carry flex-nowrap / min-w-0', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
@@ -1193,10 +1193,10 @@ describe('UnlinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // UX-271: "Unlinked" section badge + active-filter count badge
+  // "Unlinked" section badge + active-filter count badge
   // ---------------------------------------------------------------------------
 
-  it('renders "Unlinked" section badge once expanded (UX-271)', async () => {
+  it('renders "Unlinked" section badge once expanded', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
@@ -1225,7 +1225,7 @@ describe('UnlinkedReferences', () => {
     expect(badge).toHaveTextContent('Unlinked')
   })
 
-  it('does not render filter count badge when no filters are active (UX-271)', async () => {
+  it('does not render filter count badge when no filters are active', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
@@ -1242,7 +1242,7 @@ describe('UnlinkedReferences', () => {
       pageTitle: 'My Page',
     })
 
-    // Expand — BacklinkFilterBuilder is now always visible (PEND-31).
+    // Expand — BacklinkFilterBuilder is now always visible.
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('mention text')
 
@@ -1250,7 +1250,7 @@ describe('UnlinkedReferences', () => {
     expect(container.querySelector('.unlinked-references-filter-count')).toBeNull()
   })
 
-  it('renders filter count badge with active filter count (UX-271)', async () => {
+  it('renders filter count badge with active filter count', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
@@ -1267,7 +1267,7 @@ describe('UnlinkedReferences', () => {
       pageTitle: 'My Page',
     })
 
-    // Expand — BacklinkFilterBuilder is now always visible (PEND-31).
+    // Expand — BacklinkFilterBuilder is now always visible.
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('mention text')
 
@@ -1283,7 +1283,7 @@ describe('UnlinkedReferences', () => {
     expect(badge).toHaveAttribute('aria-label', '1 filter applied')
   })
 
-  it('hides filter count badge after filters are cleared (UX-271)', async () => {
+  it('hides filter count badge after filters are cleared', async () => {
     const user = userEvent.setup()
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
@@ -1300,7 +1300,7 @@ describe('UnlinkedReferences', () => {
       pageTitle: 'My Page',
     })
 
-    // Expand — BacklinkFilterBuilder is now always visible (PEND-31).
+    // Expand — BacklinkFilterBuilder is now always visible.
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
     await screen.findByText('mention text')
 
@@ -1318,10 +1318,10 @@ describe('UnlinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // PEND-29 B-6: cancellation flag on the mount-once `listTagsByPrefix` effect
+  // B-6: cancellation flag on the mount-once `listTagsByPrefix` effect
   // ---------------------------------------------------------------------------
 
-  it('cancels the listTagsByPrefix promise on unmount (PEND-29 B-6)', async () => {
+  it('cancels the listTagsByPrefix promise on unmount (B-6)', async () => {
     let rejectTags!: (err: unknown) => void
     mockedListTagsByPrefix.mockImplementation(
       () =>
@@ -1357,20 +1357,20 @@ describe('UnlinkedReferences', () => {
     )
   })
 
-  // ── PEND-36: alias fallback in handleLinkIt ──────────────────────────────
+  // ── alias fallback in handleLinkIt ──────────────────────────────
   //
   // The backend's `eval_unlinked_references` OR-joins the page title and
   // its aliases into the FTS5 query, so a block whose content mentions
-  // ONLY an alias still surfaces here. Pre-PEND-36 the FE's
+  // ONLY an alias still surfaces here. Pre- the FE's
   // `handleLinkIt` compiled `new RegExp(escapeRegExp(pageTitle))` and
   // silently no-op'd on alias-only matches while the optimistic UI told
-  // the user "linked" — see `pending/PEND-36-...` for the full diagnosis.
+  // The user "linked" — see `pending/-...` for the full diagnosis.
   // The four cases below pin: alias-only match rewrites, title takes
   // priority when both present, the no-match guard surfaces a toast and
   // skips the optimistic removal, and aliases follow the page when
   // `pageId` changes.
 
-  it('"Link it" rewrites an alias-only mention into [[pageId]] (PEND-36)', async () => {
+  it('"Link it" rewrites an alias-only mention into [[pageId]]', async () => {
     const user = userEvent.setup()
     mockedGetPageAliases.mockResolvedValue(['ProjAlpha'])
     const resp = {
@@ -1406,7 +1406,7 @@ describe('UnlinkedReferences', () => {
     })
   })
 
-  it('"Link it" prefers the canonical title when content matches both (PEND-36)', async () => {
+  it('"Link it" prefers the canonical title when content matches both', async () => {
     // Title takes priority — the user gave the page that name, the
     // alias is secondary. If both appear in the content, the title
     // mention is the one that gets converted.
@@ -1447,7 +1447,7 @@ describe('UnlinkedReferences', () => {
     })
   })
 
-  it('"Link it" surfaces a toast and skips edit when no candidate matches (PEND-36)', async () => {
+  it('"Link it" surfaces a toast and skips edit when no candidate matches', async () => {
     // Reachable when the backend FTS5 match succeeds on a token the
     // regex literal-matcher can't see (e.g. trigram-tokenized CJK
     // alias). The FE must NOT call `editBlock` (would write a
@@ -1495,7 +1495,7 @@ describe('UnlinkedReferences', () => {
     )
   })
 
-  it('"Link it" reloads aliases when pageId changes (PEND-36)', async () => {
+  it('"Link it" reloads aliases when pageId changes', async () => {
     // Two consecutive renders with different pageIds — the alias fetch
     // must fire for each, otherwise switching pages would carry the
     // previous page's aliases into the new context.

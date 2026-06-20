@@ -90,7 +90,7 @@ describe('DateChipEditor', () => {
     expect(screen.getByTestId('quick-clear')).toHaveTextContent('Clear')
   })
 
-  // PEND-23 M1: opening the editor on a block that already has a date
+  // Opening the editor on a block that already has a date
   // pre-fills the input with that ISO value so the user can edit (not
   // re-enter from scratch).
   it('pre-fills the input with currentDate', () => {
@@ -189,7 +189,7 @@ describe('DateChipEditor', () => {
     expect(screen.getByText('Could not parse date')).toBeInTheDocument()
   })
 
-  // UX-274: invalid input also marks the input itself as invalid
+  // Invalid input also marks the input itself as invalid
   it('sets aria-invalid + border-destructive on the input when parse fails', async () => {
     const user = userEvent.setup()
 
@@ -213,7 +213,7 @@ describe('DateChipEditor', () => {
     expect(hasStandaloneBorderDestructive(input)).toBe(true)
   })
 
-  // UX-274: clearing the input restores the valid state
+  // Clearing the input restores the valid state
   it('clears aria-invalid when input becomes empty', async () => {
     const user = userEvent.setup()
 
@@ -320,7 +320,7 @@ describe('DateChipEditor', () => {
     })
   })
 
-  // UX-282: screen-reader announcements paired with date-chip toast feedback
+  // Screen-reader announcements paired with date-chip toast feedback
   it('announces date updated when applying a new date', async () => {
     const user = userEvent.setup()
 

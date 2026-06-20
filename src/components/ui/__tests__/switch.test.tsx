@@ -1,7 +1,7 @@
 /**
  * Tests for the Switch UI primitive (Radix Switch wrapper).
  *
- * Validates (per TEST-1):
+ * Validates:
  *  - Renders with controlled `checked` true/false (and `aria-checked` mirrors)
  *  - Calls `onCheckedChange` on click
  *  - Keyboard: Space toggles when focused
@@ -10,7 +10,7 @@
  *  - a11y: `axe(container)` clean
  *
  * Caveat: the Switch primitive's coarse-pointer height is `h-7` (28 px),
- * not the 44 px minimum referenced in TEST-1. The width is `w-12` (48 px)
+ * Not the 44 px minimum referenced in. The width is `w-12` (48 px)
  * which does meet the threshold. We assert the classes that are actually
  * present in the implementation rather than a hypothetical 44 px target —
  * if the design system later raises the height, the assertion can be

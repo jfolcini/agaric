@@ -2,7 +2,7 @@
  * Parse half of the markdown serializer (Markdown → PM doc).
  *
  * Extracted from the original `markdown-serializer.ts` monolith
- * (MAINT-117), then split again from a single ~1340-line file into a
+ *then split again from a single ~1340-line file into a
  * `markdown-parse/` directory of cohesive modules:
  *   - `markdown-parse/vocab.ts`  — constants, the scanner primitive, the
  *     result/state shapes and the parse-independent pure helpers (a leaf the

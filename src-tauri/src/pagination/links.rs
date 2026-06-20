@@ -9,13 +9,13 @@ use crate::error::AppError;
 /// Uses covering index `idx_block_links_target_source(target_id, source_id)`,
 /// so the order is index-supplied and no temp B-tree is built (audit #415).
 ///
-/// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to
+/// `space_id` — when `Some`, restricts the result set to
 /// source blocks whose owning page (`b.page_id`)
-/// carries `space = ?space_id`. `None` keeps the pre-FEAT-3 behaviour
+/// Carries `space = ?space_id`. `None` keeps the pre- behaviour
 /// (no filter). See [`crate::space_filter_clause`] for the shared SQL
 /// fragment definition.
 ///
-/// MAINT-113 M2 — returns `ActiveBlockRow` because the SQL filters
+/// Returns `ActiveBlockRow` because the SQL filters
 /// `b.deleted_at IS NULL` on the source block.
 pub async fn list_backlinks(
     pool: &SqlitePool,
@@ -30,13 +30,13 @@ pub async fn list_backlinks(
         None => (None, ""),
     };
 
-    // FEAT-3p4 — ?5 (space_id) drives the shared space-filter clause.
+    // ?5 (space_id) drives the shared space-filter clause.
     // The literal mirrors `crate::space_filter_clause!` — kept inline
     // here because `sqlx::query_as!` requires a string literal and does
     // not accept `concat!()`. Mirror any change to the filter SQL
     // across every inlined copy.
     //
-    // MAINT-113 M2 — `id as "id: crate::ulid::ActiveBlockId"` is the
+    // `id as "id: crate::ulid::ActiveBlockId"` is the
     // sqlx column-cast hint for the typed-id slot on ActiveBlockRow;
     // sqlx::Type for ActiveBlockId is `transparent` over String so the
     // decode is a free wrap.
