@@ -119,7 +119,7 @@ export function useBlockTouchLongPress({
       // scroll isn't hijacked into a context menu. The radial (Euclidean)
       // check covers vertical, horizontal, and diagonal drags alike; a
       // near-stationary press (jitter < 10 px) still opens the menu at 400 ms.
-      if (Math.sqrt(dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD) {
+      if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_THRESHOLD) {
         clearLongPress()
       }
     },
