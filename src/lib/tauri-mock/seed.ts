@@ -698,13 +698,24 @@ export function addMockAttachment(
   filename: string,
   mimeType: string,
   sizeBytes: number,
+  // #1451: optional UTF-8 text content. When provided, its bytes are stored so
+  // `read_attachment` round-trips them (needed for the inline .md/text preview).
+  // When omitted, `size_bytes` keeps the caller-supplied value (legacy callers).
+  content?: string,
 ): Record<string, unknown> {
+  const id = fakeId()
+  let size = sizeBytes
+  if (content != null) {
+    const bytes = Array.from(new TextEncoder().encode(content))
+    attachmentBytes.set(id, bytes)
+    size = bytes.length
+  }
   const row = {
-    id: fakeId(),
+    id,
     block_id: blockId,
     filename,
     mime_type: mimeType,
-    size_bytes: sizeBytes,
+    size_bytes: size,
     fs_path: `/mock/${filename}`,
     created_at: new Date().toISOString(),
   }

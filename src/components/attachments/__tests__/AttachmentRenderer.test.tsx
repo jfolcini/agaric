@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -363,6 +363,121 @@ describe('AttachmentRenderer', () => {
     await waitFor(() => expect(mockedReadAttachment).toHaveBeenCalledWith('att-zip'))
     // A blob URL is created from the bytes to drive the download.
     expect(createSpy).toHaveBeenCalled()
+  })
+
+  // ---- #1451: inline rich-text preview for .md / text attachments ----
+
+  describe('markdown / text attachment inline preview (#1451)', () => {
+    const MD_SOURCE = '# Title\n\nSome **bold** text\n\n- one\n- two\n'
+
+    function mdAttachment(overrides = {}) {
+      return makeAttachment({
+        id: 'att-md',
+        filename: 'notes.md',
+        fs_path: 'attachments/att-md',
+        mime_type: 'text/markdown',
+        size_bytes: MD_SOURCE.length,
+        ...overrides,
+      })
+    }
+
+    it('renders parsed markdown inline via renderRichContent (heading/bold/list)', async () => {
+      mockedReadAttachment.mockResolvedValue(new TextEncoder().encode(MD_SOURCE))
+      render(<AttachmentRenderer {...baseProps} attachments={[mdAttachment()]} />)
+
+      // Lazy byte read fires once the viewport gate enters.
+      await waitFor(() => expect(mockedReadAttachment).toHaveBeenCalledWith('att-md'))
+
+      const body = await screen.findByTestId('markdown-attachment-body')
+      // Heading is rendered as a real heading element (rich render, not raw md).
+      const heading = within(body).getByRole('heading', { name: 'Title' })
+      expect(heading).toBeInTheDocument()
+      // Bold + list items surface as formatted text (no leading "#"/"-").
+      expect(within(body).getByText('bold')).toBeInTheDocument()
+      expect(within(body).getByText('one')).toBeInTheDocument()
+      expect(within(body).getByText('two')).toBeInTheDocument()
+      // The raw markdown source is not shown verbatim.
+      expect(body.textContent).not.toContain('# Title')
+    })
+
+    it('detects markdown by .md extension even with a generic mime type', async () => {
+      mockedReadAttachment.mockResolvedValue(new TextEncoder().encode(MD_SOURCE))
+      render(
+        <AttachmentRenderer
+          {...baseProps}
+          attachments={[mdAttachment({ mime_type: 'application/octet-stream' })]}
+        />,
+      )
+      expect(await screen.findByTestId('markdown-attachment')).toBeInTheDocument()
+      await waitFor(() => expect(mockedReadAttachment).toHaveBeenCalledWith('att-md'))
+    })
+
+    it('renders text/plain attachments inline too', async () => {
+      mockedReadAttachment.mockResolvedValue(new TextEncoder().encode('plain text body'))
+      render(
+        <AttachmentRenderer
+          {...baseProps}
+          attachments={[mdAttachment({ filename: 'log.txt', mime_type: 'text/plain' })]}
+        />,
+      )
+      const body = await screen.findByTestId('markdown-attachment-body')
+      expect(body.textContent).toContain('plain text body')
+    })
+
+    it('collapse/expand toggle hides and shows the preview body', async () => {
+      mockedReadAttachment.mockResolvedValue(new TextEncoder().encode(MD_SOURCE))
+      render(<AttachmentRenderer {...baseProps} attachments={[mdAttachment()]} />)
+      await screen.findByTestId('markdown-attachment-body')
+
+      const toggle = screen.getByRole('button', { name: /Collapse preview of notes\.md/ })
+      expect(toggle.getAttribute('aria-expanded')).toBe('true')
+      fireEvent.click(toggle)
+      expect(screen.queryByTestId('markdown-attachment-body')).not.toBeInTheDocument()
+      // Re-expandable.
+      fireEvent.click(screen.getByRole('button', { name: /Expand preview of notes\.md/ }))
+      expect(await screen.findByTestId('markdown-attachment-body')).toBeInTheDocument()
+    })
+
+    it('download affordance reads the bytes and triggers a blob download', async () => {
+      mockedReadAttachment.mockResolvedValue(new TextEncoder().encode(MD_SOURCE))
+      render(<AttachmentRenderer {...baseProps} attachments={[mdAttachment()]} />)
+      await screen.findByTestId('markdown-attachment-body')
+      mockedReadAttachment.mockClear()
+
+      fireEvent.click(screen.getByRole('button', { name: /Download notes\.md/ }))
+      await waitFor(() => expect(mockedReadAttachment).toHaveBeenCalledWith('att-md'))
+      expect(createSpy).toHaveBeenCalled()
+    })
+
+    it('truncates very large previews and shows a download hint', async () => {
+      const big = `# Big\n\n${'x'.repeat(300 * 1024)}`
+      mockedReadAttachment.mockResolvedValue(new TextEncoder().encode(big))
+      render(
+        <AttachmentRenderer
+          {...baseProps}
+          attachments={[mdAttachment({ size_bytes: big.length })]}
+        />,
+      )
+      expect(await screen.findByTestId('markdown-attachment-truncated')).toBeInTheDocument()
+    })
+
+    it('falls back to a file chip when the byte read fails', async () => {
+      mockedReadAttachment.mockRejectedValueOnce(new Error('boom'))
+      render(<AttachmentRenderer {...baseProps} attachments={[mdAttachment()]} />)
+      // Chip fallback exposes the generic open-file affordance.
+      expect(await screen.findByRole('button', { name: 'Open file notes.md' })).toBeInTheDocument()
+      expect(screen.queryByTestId('markdown-attachment-body')).not.toBeInTheDocument()
+    })
+
+    it('has no a11y violations for a rendered markdown preview', async () => {
+      mockedReadAttachment.mockResolvedValue(new TextEncoder().encode(MD_SOURCE))
+      const { container } = render(
+        <AttachmentRenderer {...baseProps} attachments={[mdAttachment()]} />,
+      )
+      await screen.findByTestId('markdown-attachment-body')
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 
   it('has no a11y violations with file attachments', async () => {

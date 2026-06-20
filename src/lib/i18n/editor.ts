@@ -20,6 +20,13 @@ export const editor: Record<string, string> = {
   'attachment.openImageFullscreen': 'Open image {{filename}} in full screen',
   'attachment.loadingImage': 'Loading image…',
   'attachment.imageLoadFailed': 'Failed to load image',
+  // #1451 — inline rich-text preview for .md / text attachments.
+  'attachment.loadingMarkdown': 'Loading preview…',
+  'attachment.markdownLoadFailed': 'Failed to load preview',
+  'attachment.collapsePreview': 'Collapse preview of {{filename}}',
+  'attachment.expandPreview': 'Expand preview of {{filename}}',
+  'attachment.downloadFile': 'Download {{filename}}',
+  'attachment.previewTruncated': 'Preview truncated — download to view the full file.',
   // #1492 — external-image privacy placeholder (node view + static renderer).
   'editor.image.loadButton': 'Load',
   'editor.image.blockedNote': 'external image blocked',
