@@ -154,7 +154,12 @@ pub(crate) async fn resolve_tag_prefix_leaves(
 ///
 /// Returns a column named `block_id` so the same shape composes whether
 /// it is the only term or one term of a larger set expression.
-fn tag_leaf_subquery_body(include_inherited: bool) -> &'static str {
+///
+/// #1661 — `pub(crate)` so the #414 leaf fast path in `query.rs` wraps
+/// THIS exact body as `b.id IN (<body>)` instead of hand-duplicating the
+/// SQL. The `tag_leaf_fast_path_clause_matches_shared_body` drift guard
+/// pins that single-source invariant.
+pub(crate) fn tag_leaf_subquery_body(include_inherited: bool) -> &'static str {
     if include_inherited {
         "SELECT bt.block_id \
          FROM block_tags bt JOIN blocks b ON b.id = bt.block_id \
@@ -182,7 +187,10 @@ fn tag_leaf_subquery_body(include_inherited: bool) -> &'static str {
 /// Mirrors [`resolve_tag_prefix_leaves`] EXACTLY: same UNION shape as the
 /// tag leaf but joining `tags_cache tc` with `tc.name LIKE ? ESCAPE '\'`
 /// and `SELECT DISTINCT`. The LIKE pattern is bound once per arm.
-fn prefix_leaf_subquery_body(include_inherited: bool) -> &'static str {
+///
+/// #1661 — `pub(crate)` so the #414 prefix-leaf fast path in `query.rs`
+/// wraps THIS exact body (see [`tag_leaf_subquery_body`]).
+pub(crate) fn prefix_leaf_subquery_body(include_inherited: bool) -> &'static str {
     if include_inherited {
         "SELECT DISTINCT bt.block_id \
          FROM tags_cache tc \

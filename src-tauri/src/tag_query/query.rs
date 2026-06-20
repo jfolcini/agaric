@@ -3,7 +3,9 @@
 use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 
-use super::resolve::{compile_candidate_subquery, resolve_expr};
+use super::resolve::{
+    compile_candidate_subquery, prefix_leaf_subquery_body, resolve_expr, tag_leaf_subquery_body,
+};
 use super::{TagCacheRow, TagExpr};
 use crate::error::AppError;
 use crate::pagination::{ActiveBlockRow, Cursor, PageRequest, PageResponse};
@@ -50,7 +52,7 @@ pub async fn eval_tag_query(
             // 3 arms inherited).
             let arms = if include_inherited { 3 } else { 2 };
             let binds = std::iter::repeat_n(tag_id.clone(), arms).collect();
-            (build_projection_sql(candidate_clause), binds)
+            (build_projection_sql(&candidate_clause), binds)
         }
         TagExpr::Prefix(prefix) => {
             let escaped = format!("{}%", escape_like(prefix));
@@ -58,7 +60,7 @@ pub async fn eval_tag_query(
             // The LIKE pattern is bound once per UNION arm.
             let arms = if include_inherited { 3 } else { 2 };
             let binds = std::iter::repeat_n(escaped, arms).collect();
-            (build_projection_sql(candidate_clause), binds)
+            (build_projection_sql(&candidate_clause), binds)
         }
         TagExpr::And(_) | TagExpr::Or(_) | TagExpr::Not(_) => {
             // #1597 — reject pathologically deep trees before either the
@@ -127,76 +129,27 @@ struct ProjectionParams<'a> {
     page: &'a PageRequest,
 }
 
-/// Candidate-set subquery for a single `TagExpr::Tag` leaf. Mirrors
-/// `resolve_tag_leaves` (resolve.rs) EXACTLY: `block_tags` ∪
-/// `block_tag_refs` (∪ `block_tag_inherited` when inherited), each arm
-/// joining `blocks` and filtering `b.deleted_at IS NULL`. `tag_id` is
-/// bound once per arm (caller binds 2 non-inherited / 3 inherited).
-fn tag_leaf_candidate_clause(include_inherited: bool) -> &'static str {
-    if include_inherited {
-        "b.id IN ( \
-            SELECT bt.block_id \
-            FROM block_tags bt JOIN blocks b ON b.id = bt.block_id \
-            WHERE bt.tag_id = ? AND b.deleted_at IS NULL \
-            UNION \
-            SELECT btr.source_id \
-            FROM block_tag_refs btr JOIN blocks b ON b.id = btr.source_id \
-            WHERE btr.tag_id = ? AND b.deleted_at IS NULL \
-            UNION \
-            SELECT bti.block_id \
-            FROM block_tag_inherited bti JOIN blocks b ON b.id = bti.block_id \
-            WHERE bti.tag_id = ? AND b.deleted_at IS NULL)"
-    } else {
-        "b.id IN ( \
-            SELECT bt.block_id \
-            FROM block_tags bt JOIN blocks b ON b.id = bt.block_id \
-            WHERE bt.tag_id = ? AND b.deleted_at IS NULL \
-            UNION \
-            SELECT btr.source_id \
-            FROM block_tag_refs btr JOIN blocks b ON b.id = btr.source_id \
-            WHERE btr.tag_id = ? AND b.deleted_at IS NULL)"
-    }
+/// Candidate-set predicate for a single `TagExpr::Tag` leaf.
+///
+/// #1661 — SINGLE-SOURCED with the resolver: this wraps the SHARED
+/// [`tag_leaf_subquery_body`] (the #1622 canonical leaf body, also used by
+/// `compile_candidate_subquery`) as `b.id IN (<body>)` rather than
+/// hand-duplicating the SQL. There is therefore no second copy of the leaf
+/// UNION that could drift. The `tag_leaf_fast_path_clause_matches_shared_body`
+/// drift guard pins this byte-identity. `tag_id` is bound once per UNION arm
+/// (caller binds 2 non-inherited / 3 inherited).
+fn tag_leaf_candidate_clause(include_inherited: bool) -> String {
+    format!("b.id IN ({})", tag_leaf_subquery_body(include_inherited))
 }
 
-/// Candidate-set subquery for a single `TagExpr::Prefix` leaf. Mirrors
-/// `resolve_tag_prefix_leaves` (resolve.rs) EXACTLY: same UNION shape as
-/// the tag leaf but joining `tags_cache tc` with
-/// `tc.name LIKE ? ESCAPE '\'` and `SELECT DISTINCT`. The LIKE pattern
-/// is bound once per arm (caller binds 2 non-inherited / 3 inherited).
-fn prefix_leaf_candidate_clause(include_inherited: bool) -> &'static str {
-    if include_inherited {
-        "b.id IN ( \
-            SELECT DISTINCT bt.block_id \
-            FROM tags_cache tc \
-            JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-            JOIN blocks b ON b.id = bt.block_id \
-            WHERE tc.name LIKE ? ESCAPE '\\' AND b.deleted_at IS NULL \
-            UNION \
-            SELECT DISTINCT btr.source_id \
-            FROM tags_cache tc \
-            JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
-            JOIN blocks b ON b.id = btr.source_id \
-            WHERE tc.name LIKE ? ESCAPE '\\' AND b.deleted_at IS NULL \
-            UNION \
-            SELECT DISTINCT bti.block_id \
-            FROM tags_cache tc \
-            JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
-            JOIN blocks b ON b.id = bti.block_id \
-            WHERE tc.name LIKE ? ESCAPE '\\' AND b.deleted_at IS NULL)"
-    } else {
-        "b.id IN ( \
-            SELECT DISTINCT bt.block_id \
-            FROM tags_cache tc \
-            JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-            JOIN blocks b ON b.id = bt.block_id \
-            WHERE tc.name LIKE ? ESCAPE '\\' AND b.deleted_at IS NULL \
-            UNION \
-            SELECT DISTINCT btr.source_id \
-            FROM tags_cache tc \
-            JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
-            JOIN blocks b ON b.id = btr.source_id \
-            WHERE tc.name LIKE ? ESCAPE '\\' AND b.deleted_at IS NULL)"
-    }
+/// Candidate-set predicate for a single `TagExpr::Prefix` leaf.
+///
+/// #1661 — SINGLE-SOURCED with the resolver: wraps the SHARED
+/// [`prefix_leaf_subquery_body`] as `b.id IN (<body>)` (see
+/// [`tag_leaf_candidate_clause`]). The LIKE pattern is bound once per UNION
+/// arm (caller binds 2 non-inherited / 3 inherited).
+fn prefix_leaf_candidate_clause(include_inherited: bool) -> String {
+    format!("b.id IN ({})", prefix_leaf_subquery_body(include_inherited))
 }
 
 /// Build the paginated projection SELECT for a given candidate clause.
@@ -1637,6 +1590,45 @@ mod tests {
                 vec!["RONLY"],
                 "Prefix fast path must include a block_tag_refs-only \
                  block (inherited={inherited})"
+            );
+        }
+    }
+
+    /// #1661 — drift guard. The #414 leaf fast path used to carry its own
+    /// hand-written copy of the leaf UNION SQL, documented to "Mirror
+    /// resolve_tag_leaves / resolve_tag_prefix_leaves EXACTLY" but with
+    /// nothing enforcing it. It is now SINGLE-SOURCED on the #1622 shared
+    /// bodies (`tag_leaf_subquery_body` / `prefix_leaf_subquery_body`,
+    /// resolve.rs) — the same bodies `compile_candidate_subquery` composes
+    /// for the And/Or/Not pushdown — wrapped as `b.id IN (<body>)`.
+    ///
+    /// This test pins that single-source byte-for-byte: each fast-path
+    /// candidate clause must equal `b.id IN (<shared body>)` exactly. If
+    /// anyone ever re-inlines a divergent copy of the leaf SQL into the
+    /// fast path (or alters the shared body without the wrapper following),
+    /// the strings differ and this fails — WITHOUT having converted the
+    /// resolver's compile-checked `query_scalar!` macros to runtime SQL.
+    ///
+    /// Layered with `assert_fast_path_matches_reference` (output-set parity
+    /// against the `resolve_expr` oracle, which drives the compile-checked
+    /// resolver macros): this guard pins the SQL *text* is shared; that one
+    /// pins the shared body's *result set* matches the macro resolver.
+    #[test]
+    fn fast_path_leaf_clauses_single_source_shared_bodies() {
+        for include_inherited in [false, true] {
+            assert_eq!(
+                tag_leaf_candidate_clause(include_inherited),
+                format!("b.id IN ({})", tag_leaf_subquery_body(include_inherited)),
+                "Tag leaf fast-path clause must be EXACTLY the shared \
+                 tag_leaf_subquery_body wrapped as `b.id IN (...)` \
+                 (single-source drift guard, #1661; include_inherited={include_inherited})"
+            );
+            assert_eq!(
+                prefix_leaf_candidate_clause(include_inherited),
+                format!("b.id IN ({})", prefix_leaf_subquery_body(include_inherited)),
+                "Prefix leaf fast-path clause must be EXACTLY the shared \
+                 prefix_leaf_subquery_body wrapped as `b.id IN (...)` \
+                 (single-source drift guard, #1661; include_inherited={include_inherited})"
             );
         }
     }
