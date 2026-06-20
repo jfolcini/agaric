@@ -743,3 +743,132 @@ export function canonicalToSearchProjection(
   }
   return projection
 }
+/**
+ * Project a canonical predicate back to a `FilterPrimitive`, or `null` when the
+ * predicate is not expressible as a single Pages/advanced wire leaf.
+ *
+ * This is the EXACT inverse of `filterPrimitiveToCanonical` for every category
+ * the Pages browser / advanced-query popover builds, so a `FilterPrimitive`
+ * that round-trips
+ * `filterPrimitiveToCanonical` → `canonicalToFilterPrimitive` comes back
+ * BYTE-IDENTICAL (Issue #1646, surface 2 / PageBrowser migration). The
+ * round-trip table in `model.test.ts` is the load-bearing parity guarantee.
+ *
+ * Notes on the asymmetric cases (so the inverse is total but never lossy):
+ *  - `tag` by **name** reconstructs `{ type: 'Tag', tag }` (the Pages wire only
+ *    carries a tag *name*); a `by: 'id'` tag is a graph/backlink shape, not a
+ *    Pages leaf, so it returns `null`.
+ *  - `priority` carries a multi-value membership in the canonical model, but the
+ *    Pages `Priority` wire leaf is single-valued and never negated. Only an
+ *    un-negated single-value priority maps back; anything else is not a Pages
+ *    leaf (returns `null`).
+ *  - `property` with `exclude: true` has no Pages `HasProperty` wire form (that
+ *    leaf has no exclude field), so it returns `null`. `exclude: false`
+ *    reconstructs `{ type: 'HasProperty', key, predicate }` verbatim — the
+ *    `predicate` (incl. the `Exists`/`NotExists` empty-property sentinels) is
+ *    passed through untouched, preserving the #1647 absent-vs-literal
+ *    distinction.
+ *  - `status` reconstructs `{ type: 'State', values, is_null, exclude }`. The
+ *    Pages popover always emits both `is_null` and `exclude` keys, so the
+ *    canonical (non-optional) flags reproduce that shape exactly.
+ *  - `tagPrefix`, `sourcePage`, `contains`, `hasBacklinks`, `excludeTemplates`
+ *    are other surfaces' vocabulary with no Pages wire leaf and return `null`.
+ *  - The recursive `HasParentMatching` (`FilterExpr`) and the search `Snippet`
+ *    window have no flat canonical category yet, so the Pages browser routes
+ *    them around the canonical model entirely (see `AddFilterPopover`).
+ */
+/** A canonical `tag` back to the Pages `Tag` leaf (only the by-name form). */
+function canonicalTagToFilterPrimitive(
+  predicate: Extract<FilterPredicate, { kind: 'tag' }>,
+): FilterPrimitive | null {
+  // The Pages wire only carries a tag *name*; a by-id tag is a graph/backlink
+  // shape, not a Pages leaf.
+  return predicate.by === 'name' ? { type: 'Tag', tag: predicate.name } : null
+}
+
+/** A canonical `property` back to the Pages `HasProperty` leaf (un-negated only). */
+function canonicalPropertyToFilterPrimitive(
+  predicate: Extract<FilterPredicate, { kind: 'property' }>,
+): FilterPrimitive | null {
+  // The Pages `HasProperty` wire leaf has no exclude field; a negated property
+  // is a search-only `not-prop:` shape. The `predicate` (incl. the
+  // Exists/NotExists empty-property sentinels) is passed through verbatim.
+  return predicate.exclude
+    ? null
+    : { type: 'HasProperty', key: predicate.key, predicate: predicate.predicate }
+}
+
+/** A canonical `priority` back to the single-valued, never-negated Pages leaf. */
+function canonicalPriorityToFilterPrimitive(
+  predicate: Extract<FilterPredicate, { kind: 'priority' }>,
+): FilterPrimitive | null {
+  // The Pages `Priority` wire leaf is single-valued and never negated.
+  const [only] = predicate.values
+  return !predicate.exclude && predicate.values.length === 1 && only !== undefined
+    ? { type: 'Priority', priority: only }
+    : null
+}
+
+/** A canonical `date` back to the Pages `DueDate` / `Scheduled` leaf (or null). */
+function canonicalDateToFilterPrimitive(
+  predicate: Extract<FilterPredicate, { kind: 'date' }>,
+): FilterPrimitive | null {
+  // `created` / `lastEdited` date fields are carried by the `createdRange` /
+  // `lastEdited` canonical kinds on this surface, not the `date` kind.
+  if (predicate.field === 'due') return { type: 'DueDate', predicate: predicate.predicate }
+  if (predicate.field === 'scheduled') return { type: 'Scheduled', predicate: predicate.predicate }
+  return null
+}
+
+export function canonicalToFilterPrimitive(predicate: FilterPredicate): FilterPrimitive | null {
+  switch (predicate.kind) {
+    case 'tag':
+      return canonicalTagToFilterPrimitive(predicate)
+    case 'pathGlob':
+      return { type: 'PathGlob', pattern: predicate.pattern, exclude: predicate.exclude }
+    case 'property':
+      return canonicalPropertyToFilterPrimitive(predicate)
+    case 'lastEdited':
+      return { type: 'LastEdited', spec: predicate.spec }
+    case 'space':
+      return { type: 'Space', space_id: predicate.spaceId }
+    case 'priority':
+      return canonicalPriorityToFilterPrimitive(predicate)
+    case 'status':
+      return {
+        type: 'State',
+        values: [...predicate.values],
+        is_null: predicate.isNull,
+        exclude: predicate.exclude,
+      }
+    case 'blockType':
+      return { type: 'BlockType', values: [...predicate.values], exclude: predicate.exclude }
+    case 'date':
+      return canonicalDateToFilterPrimitive(predicate)
+    case 'createdRange':
+      return { type: 'Created', after: predicate.after, before: predicate.before }
+    case 'linksTo':
+      return { type: 'LinksTo', target: predicate.target }
+    case 'linkedFrom':
+      return { type: 'LinkedFrom', source: predicate.source }
+    case 'orphan':
+      return { type: 'Orphan' }
+    case 'stub':
+      return { type: 'Stub' }
+    case 'hasNoInboundLinks':
+      return { type: 'HasNoInboundLinks' }
+    case 'regex':
+      return { type: 'Regex', pattern: predicate.pattern }
+    case 'caseSensitive':
+      return { type: 'CaseSensitive', enabled: predicate.enabled }
+    case 'wholeWord':
+      return { type: 'WholeWord', enabled: predicate.enabled }
+    // Other surfaces' vocabulary — no Pages/advanced wire leaf.
+    case 'tagPrefix':
+    case 'sourcePage':
+    case 'contains':
+    case 'hasBacklinks':
+    case 'excludeTemplates':
+      return null
+  }
+}
