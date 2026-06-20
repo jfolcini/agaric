@@ -58,6 +58,409 @@ import type { BlockContextMenuProps, MenuItem } from './block-context-menu/types
 // importing it from `@/components/editor/BlockContextMenu` unchanged.
 export type { BlockContextMenuProps } from './block-context-menu/types'
 
+/** Translate fn shape used by the pure builders below. */
+type TFn = ReturnType<typeof useTranslation>['t']
+
+/**
+ * Everything `buildMenuGroups` needs. Passing a single context object keeps the
+ * builder a PURE module-level function (no hooks), so all the branchy
+ * group-assembly logic lives outside the component body and stops inflating its
+ * cyclomatic complexity. Behaviour is identical to the previous inline code.
+ */
+interface MenuGroupContext {
+  t: TFn
+  blockId: string
+  onClose: () => void
+  actions: BlockContextMenuProps['actions']
+  isBulk: boolean
+  bulkIds: string[] | null
+  dispatch: (action: ((blockId: string) => void | Promise<void>) | undefined) => void
+  handleAction: (action: ((blockId: string) => void | Promise<void>) | undefined) => void
+  handleBulkAction: (
+    action: ((blockId: string) => void | Promise<void>) | undefined,
+    ids: string[],
+  ) => void
+  hasChildren: boolean | undefined
+  isCollapsed: boolean | undefined
+  todoState: (string | null) | undefined
+  priority: (string | null) | undefined
+  linkUrl: string | undefined
+  pageRefId: string | undefined
+  activeBlockType: BlockTypeToken | undefined
+  turnIntoOpen: boolean
+  setTurnIntoOpen: React.Dispatch<React.SetStateAction<boolean>>
+  turnIntoGroupId: string
+  moveArrangeOpen: boolean
+  setMoveArrangeOpen: React.Dispatch<React.SetStateAction<boolean>>
+  moveArrangeGroupId: string
+}
+
+/** Group 1: the (single or bulk) Delete row. */
+function buildDeleteGroup(ctx: MenuGroupContext): MenuItem[] {
+  const { t, isBulk, bulkIds, onClose, handleAction, handleBulkAction, actions } = ctx
+  const { onDelete, onBatchDelete } = actions
+  // Fix 6 — in bulk mode prefer the dedicated single-IPC batch delete
+  // (`onBatchDelete`: confirm dialog + undo toast) over looping `onDelete`.
+  const deleteAction = isBulk
+    ? onBatchDelete
+      ? () => {
+          onBatchDelete()
+          onClose()
+        }
+      : onDelete && bulkIds
+        ? () => handleBulkAction(onDelete, bulkIds)
+        : undefined
+    : onDelete
+      ? () => handleAction(onDelete)
+      : undefined
+  return [
+    {
+      label:
+        isBulk && bulkIds
+          ? t('contextMenu.deleteSelected', { count: bulkIds.length })
+          : t('contextMenu.delete'),
+      icon: <Trash2 className="h-3.5 w-3.5" />,
+      action: deleteAction,
+      className: 'text-destructive hover:bg-destructive/10',
+      // #976 (item 16) — surface the delete binding. It's positional
+      // (`deleteBlock`: Backspace on an empty block), so the hint carries the
+      // "(when empty)" condition rather than implying Backspace always deletes.
+      // Suppressed in bulk mode, where the batch-delete has no single-key chord.
+      // #1728 — the key is sourced from the `deleteBlock` catalog entry
+      // (positional, documentation-only); the "(when empty)" condition stays
+      // appended verbatim.
+      ...(isBulk ? {} : { shortcut: `${shortcutHint('deleteBlock')} (when empty)` }),
+    },
+  ]
+}
+
+/** The collapsible "Move & arrange" children: Move up/down, Duplicate, Merge. */
+function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
+  const { t, dispatch, handleAction, isBulk, actions, moveArrangeGroupId } = ctx
+  const { onMoveUp, onMoveDown, onDuplicate, onMerge } = actions
+  const disclosureLabel = t('contextMenu.moveArrange')
+  return [
+    {
+      label: t('contextMenu.moveUp'),
+      icon: <MoveUp className="h-3.5 w-3.5" />,
+      action: onMoveUp ? () => dispatch(onMoveUp) : undefined,
+      shortcut: shortcutHint('moveBlockUp'),
+      indented: true,
+      disclosureId: moveArrangeGroupId,
+      disclosureLabel,
+    },
+    {
+      label: t('contextMenu.moveDown'),
+      icon: <MoveDown className="h-3.5 w-3.5" />,
+      action: onMoveDown ? () => dispatch(onMoveDown) : undefined,
+      shortcut: shortcutHint('moveBlockDown'),
+      indented: true,
+      disclosureId: moveArrangeGroupId,
+      disclosureLabel,
+    },
+    // #976 (item 13) — Duplicate the block + its subtree. Single-block only: in
+    // bulk mode the action is omitted.
+    ...(onDuplicate && !isBulk
+      ? [
+          {
+            label: t('contextMenu.duplicate'),
+            icon: <CopyPlus className="h-3.5 w-3.5" />,
+            action: () => handleAction(onDuplicate),
+            shortcut: shortcutHint('duplicateBlock'),
+            indented: true,
+            disclosureId: moveArrangeGroupId,
+            disclosureLabel,
+          },
+        ]
+      : []),
+    ...(onMerge
+      ? [
+          {
+            label: t('contextMenu.merge'),
+            icon: <Merge className="h-3.5 w-3.5" />,
+            action: () => handleAction(onMerge),
+            shortcut: `${shortcutHint('mergeWithPrevious')} (at start)`,
+            indented: true,
+            disclosureId: moveArrangeGroupId,
+            disclosureLabel,
+          },
+        ]
+      : []),
+  ]
+}
+
+/** Group 2: Indent / Dedent inline + the collapsible "Move & arrange". */
+function buildMoveGroup(ctx: MenuGroupContext): MenuItem[] {
+  const { t, dispatch, actions, moveArrangeOpen, setMoveArrangeOpen, moveArrangeGroupId } = ctx
+  const { onIndent, onDedent } = actions
+  const indentDedentItems: MenuItem[] = [
+    {
+      label: t('contextMenu.indent'),
+      icon: <ArrowRightToLine className="h-3.5 w-3.5" />,
+      action: onIndent ? () => dispatch(onIndent) : undefined,
+      shortcut: shortcutHint('indentBlock'),
+    },
+    {
+      label: t('contextMenu.dedent'),
+      icon: <ArrowLeftToLine className="h-3.5 w-3.5" />,
+      action: onDedent ? () => dispatch(onDedent) : undefined,
+      shortcut: shortcutHint('dedentBlock'),
+    },
+  ]
+  const moveArrangeChildren = buildMoveArrangeChildren(ctx)
+  // Only show the "Move & arrange" toggle when at least one child action is
+  // actually wired (else the disclosure would expand to nothing).
+  const hasMoveArrangeChildren = moveArrangeChildren.some((item) => item.action !== undefined)
+  return [
+    ...indentDedentItems,
+    ...(hasMoveArrangeChildren
+      ? [
+          {
+            label: t('contextMenu.moveArrange'),
+            icon: <MoveVertical className="h-3.5 w-3.5" />,
+            action: () => setMoveArrangeOpen((o) => !o),
+            expanded: moveArrangeOpen,
+            disclosureId: moveArrangeGroupId,
+          },
+          ...(moveArrangeOpen ? moveArrangeChildren : []),
+        ]
+      : []),
+  ]
+}
+
+/** Group 3: Collapse/Expand + Zoom in (only if hasChildren). */
+function buildCollapseGroup(ctx: MenuGroupContext): MenuItem[] {
+  const { t, handleAction, actions, hasChildren, isCollapsed } = ctx
+  const { onToggleCollapse, onZoomIn } = actions
+  if (!hasChildren) return []
+  return [
+    {
+      label: isCollapsed ? t('contextMenu.expand') : t('contextMenu.collapse'),
+      icon: isCollapsed ? (
+        <ChevronRight className="h-3.5 w-3.5" />
+      ) : (
+        <ChevronDown className="h-3.5 w-3.5" />
+      ),
+      action: onToggleCollapse ? () => handleAction(onToggleCollapse) : undefined,
+      shortcut: shortcutHint('collapseExpand'),
+    },
+    ...(onZoomIn
+      ? [
+          {
+            label: t('contextMenu.zoomIn'),
+            icon: <ZoomIn className="h-3.5 w-3.5" />,
+            action: () => handleAction(onZoomIn),
+            shortcut: shortcutHint('zoomIn'),
+          },
+        ]
+      : []),
+  ]
+}
+
+/** Group 4: TODO cycle, Priority cycle. */
+function buildTaskGroup(ctx: MenuGroupContext): MenuItem[] {
+  const { t, dispatch, isBulk, actions, todoState, priority } = ctx
+  const { onToggleTodo, onTogglePriority } = actions
+  return [
+    {
+      label: isBulk ? t('contextMenu.cycleTodoSelected') : getTodoLabel(todoState, t),
+      icon: <CheckSquare className="h-3.5 w-3.5" />,
+      action: onToggleTodo ? () => dispatch(onToggleTodo) : undefined,
+      shortcut: shortcutHint('cycleTaskState'),
+    },
+    {
+      label: isBulk ? t('contextMenu.cyclePrioritySelected') : getPriorityLabel(priority, t),
+      icon: <Signal className="h-3.5 w-3.5" />,
+      action: onTogglePriority ? () => dispatch(onTogglePriority) : undefined,
+      shortcut: priorityHint(),
+    },
+  ]
+}
+
+/** Group 5: History, Properties. */
+function buildHistoryGroup(ctx: MenuGroupContext): MenuItem[] {
+  const { t, handleAction, actions } = ctx
+  const { onShowHistory, onShowProperties } = actions
+  return [
+    ...(onShowHistory
+      ? [
+          {
+            label: t('contextMenu.history'),
+            icon: <Clock className="h-3.5 w-3.5" />,
+            action: () => handleAction(onShowHistory),
+            shortcut: shortcutHint('openBlockHistory'),
+          },
+        ]
+      : []),
+    ...(onShowProperties
+      ? [
+          {
+            label: t('contextMenu.properties'),
+            icon: <Settings2 className="h-3.5 w-3.5" />,
+            action: () => handleAction(onShowProperties),
+            shortcut: shortcutHint('openPropertiesDrawer'),
+          },
+        ]
+      : []),
+  ]
+}
+
+/** Link group: Open link / Copy URL / Copy block ref / Copy page ref. */
+function buildLinkGroup(ctx: MenuGroupContext): MenuItem[] {
+  const { t, blockId, onClose, linkUrl, pageRefId } = ctx
+
+  const openLinkItem: MenuItem | null = linkUrl
+    ? {
+        label: t('contextMenu.openLink'),
+        icon: <ExternalLink className="h-3.5 w-3.5" />,
+        action: () => {
+          void (async () => {
+            // openUrl never rejects — it returns false when neither the Tauri
+            // shell nor window.open could open a tab.
+            const opened = await openUrl(linkUrl)
+            if (!opened) {
+              logger.warn('BlockContextMenu', 'Failed to open external link', { url: linkUrl })
+              notify.error(t('contextMenu.actionFailed'))
+            }
+            onClose()
+          })()
+        },
+      }
+    : null
+
+  const copyUrlItem: MenuItem | null = linkUrl
+    ? {
+        label: t('contextMenu.copyUrl'),
+        icon: <Copy className="h-3.5 w-3.5" />,
+        action: async () => {
+          try {
+            await writeText(linkUrl)
+            notify.success(t('contextMenu.urlCopied'))
+          } catch (err) {
+            logger.error(
+              'BlockContextMenu',
+              'Failed to copy URL to clipboard',
+              { url: linkUrl },
+              err,
+            )
+            notify.error(t('contextMenu.copyUrlFailed'))
+          }
+          onClose()
+        },
+      }
+    : null
+
+  // #1445 — "Copy block reference" (`((ULID))`). Always available.
+  const copyBlockRefItem: MenuItem = {
+    label: t('contextMenu.copyBlockRef'),
+    icon: <Copy className="h-3.5 w-3.5" />,
+    action: async () => {
+      try {
+        await writeText(`((${blockId}))`)
+        notify.success(t('contextMenu.blockRefCopied'))
+      } catch (err) {
+        logger.error('BlockContextMenu', 'Failed to copy block reference', { blockId }, err)
+        notify.error(t('contextMenu.copyRefFailed'))
+      }
+      onClose()
+    },
+  }
+
+  // #1445 — "Copy page reference" (`[[ULID]]`). Hidden when pageRefId unknown.
+  const copyPageRefItem: MenuItem | null = pageRefId
+    ? {
+        label: t('contextMenu.copyPageRef'),
+        icon: <Link2 className="h-3.5 w-3.5" />,
+        action: async () => {
+          try {
+            await writeText(`[[${pageRefId}]]`)
+            notify.success(t('contextMenu.pageRefCopied'))
+          } catch (err) {
+            logger.error('BlockContextMenu', 'Failed to copy page reference', { pageRefId }, err)
+            notify.error(t('contextMenu.copyRefFailed'))
+          }
+          onClose()
+        },
+      }
+    : null
+
+  return [openLinkItem, copyUrlItem, copyBlockRefItem, copyPageRefItem].filter(
+    (item): item is MenuItem => item !== null,
+  )
+}
+
+/** #264 — "Turn into" disclosure group. */
+function buildTurnIntoGroup(ctx: MenuGroupContext): MenuItem[] {
+  const {
+    t,
+    blockId,
+    onClose,
+    actions,
+    activeBlockType,
+    turnIntoOpen,
+    setTurnIntoOpen,
+    turnIntoGroupId,
+  } = ctx
+  const { onTurnInto } = actions
+  if (!onTurnInto) return []
+  return [
+    {
+      label: t('contextMenu.turnInto'),
+      icon: <Replace className="h-3.5 w-3.5" />,
+      action: () => setTurnIntoOpen((o) => !o),
+      expanded: turnIntoOpen,
+      disclosureId: turnIntoGroupId,
+      shortcut: shortcutHint('turnIntoBlock'),
+    },
+    ...(turnIntoOpen
+      ? TURN_INTO_OPTIONS.map((opt): MenuItem => {
+          const Icon = opt.icon
+          const blockType = opt.blockType as BlockTypeToken
+          const isActive = activeBlockType === blockType
+          return {
+            label: t(turnIntoTypeKey(opt.blockType)),
+            icon: Icon ? <Icon className="h-3.5 w-3.5" /> : <span className="h-3.5 w-3.5" />,
+            active: isActive,
+            indented: true,
+            disclosureId: turnIntoGroupId,
+            disclosureLabel: t('contextMenu.turnInto'),
+            action: isActive
+              ? undefined
+              : () => {
+                  onTurnInto(blockId, blockType)
+                  onClose()
+                },
+          }
+        })
+      : []),
+  ]
+}
+
+/**
+ * Assemble + filter the ordered menu groups. PURE — all reactive inputs arrive
+ * via `ctx`. #217 A1 — order for calm scannability and mis-click safety:
+ * contextual link actions · Tasks · Turn into · Block ops · View · History ·
+ * Delete LAST.
+ */
+function buildMenuGroups(ctx: MenuGroupContext): MenuItem[][] {
+  const groups = [
+    buildLinkGroup(ctx),
+    buildTaskGroup(ctx),
+    buildTurnIntoGroup(ctx),
+    buildMoveGroup(ctx),
+    buildCollapseGroup(ctx),
+    buildHistoryGroup(ctx),
+    buildDeleteGroup(ctx),
+  ]
+  return (
+    groups
+      // Keep actionable items, plus the active "Turn into" indicator row (which
+      // has no action by design — it shows the block's current type).
+      .map((group) => group.filter((item) => item.action !== undefined || item.active))
+      .filter((group) => group.length > 0)
+  )
+}
+
 export function BlockContextMenu({
   blockId,
   position,
@@ -76,25 +479,10 @@ export function BlockContextMenu({
 }: BlockContextMenuProps): React.ReactElement {
   const { t } = useTranslation()
 
-  // A2 (#1020) — destructure the action bag once. Each entry is optional; a
-  // missing key gates its menu item off (the conditional-group behaviour).
-  const {
-    onDelete,
-    onIndent,
-    onDedent,
-    onToggleTodo,
-    onTogglePriority,
-    onToggleCollapse,
-    onMoveUp,
-    onMoveDown,
-    onMerge,
-    onShowHistory,
-    onShowProperties,
-    onZoomIn,
-    onTurnInto,
-    onDuplicate,
-    onBatchDelete,
-  } = actions
+  // A2 (#1020) — the per-block action callbacks arrive as a single cohesive
+  // `actions` bag. Each entry is optional; a missing key gates its menu item
+  // off (the conditional-group behaviour). The bag is threaded into the pure
+  // `buildMenuGroups` helper below, which destructures the individual keys.
 
   // #1018 — subscribe to the global multi-selection HERE (the menu is the only
   // consumer and only mounts while open) instead of in every `SortableBlock`
@@ -316,374 +704,33 @@ export function BlockContextMenu({
   )
 
   // ── Menu item groups ─────────────────────────────────────────────
-
-  // Group 1: Delete
-  // Fix 6 — in bulk mode prefer the dedicated single-IPC batch delete
-  // (`onBatchDelete`: confirm dialog + undo toast) over looping `onDelete`.
-  // The label reflects the selection count so it's clear the whole selection
-  // goes. Outside bulk mode this is the unchanged single-block delete.
-  const deleteAction = isBulk
-    ? onBatchDelete
-      ? () => {
-          onBatchDelete()
-          onClose()
-        }
-      : onDelete
-        ? () => handleBulkAction(onDelete, bulkIds)
-        : undefined
-    : onDelete
-      ? () => handleAction(onDelete)
-      : undefined
-  const group1: MenuItem[] = [
-    {
-      label: isBulk
-        ? t('contextMenu.deleteSelected', { count: bulkIds.length })
-        : t('contextMenu.delete'),
-      icon: <Trash2 className="h-3.5 w-3.5" />,
-      action: deleteAction,
-      className: 'text-destructive hover:bg-destructive/10',
-      // #976 (item 16) — surface the delete binding. It's positional
-      // (`deleteBlock`: Backspace on an empty block), so the hint carries the
-      // "(when empty)" condition rather than implying Backspace always deletes.
-      // Suppressed in bulk mode, where the batch-delete has no single-key chord.
-      // #1728 — the key is sourced from the `deleteBlock` catalog entry
-      // (positional, documentation-only); the "(when empty)" condition stays
-      // appended verbatim.
-      ...(isBulk ? {} : { shortcut: `${shortcutHint('deleteBlock')} (when empty)` }),
-    },
-  ]
-
-  // Group 2: Indent / Dedent stay inline (high-frequency, single-press chorded);
-  // the low-frequency ops (Move up/down, Duplicate, Merge) collapse behind a
-  // "Move & arrange" disclosure (#1109).
-  const indentDedentItems: MenuItem[] = [
-    {
-      label: t('contextMenu.indent'),
-      icon: <ArrowRightToLine className="h-3.5 w-3.5" />,
-      action: onIndent ? () => dispatch(onIndent) : undefined,
-      shortcut: shortcutHint('indentBlock'),
-    },
-    {
-      label: t('contextMenu.dedent'),
-      icon: <ArrowLeftToLine className="h-3.5 w-3.5" />,
-      action: onDedent ? () => dispatch(onDedent) : undefined,
-      shortcut: shortcutHint('dedentBlock'),
-    },
-  ]
-
-  // #1109 — the collapsible "Move & arrange" children: Move up/down, Duplicate,
-  // Merge. Each child keeps its EXACT prior action + shortcut (no behaviour
-  // change); only its disclosure/organisation moves behind the toggle. Children
-  // carry `indented` + `disclosureId` so they render as a labelled, indented
-  // subgroup (mirroring the "Turn into" options).
-  const moveArrangeChildren: MenuItem[] = [
-    {
-      label: t('contextMenu.moveUp'),
-      icon: <MoveUp className="h-3.5 w-3.5" />,
-      action: onMoveUp ? () => dispatch(onMoveUp) : undefined,
-      shortcut: shortcutHint('moveBlockUp'),
-      indented: true,
-      disclosureId: moveArrangeGroupId,
-      disclosureLabel: t('contextMenu.moveArrange'),
-    },
-    {
-      label: t('contextMenu.moveDown'),
-      icon: <MoveDown className="h-3.5 w-3.5" />,
-      action: onMoveDown ? () => dispatch(onMoveDown) : undefined,
-      shortcut: shortcutHint('moveBlockDown'),
-      indented: true,
-      disclosureId: moveArrangeGroupId,
-      disclosureLabel: t('contextMenu.moveArrange'),
-    },
-    // #976 (item 13) — Duplicate the block + its subtree (insert after the
-    // original at the same depth). Single-block only: in bulk mode the action
-    // is omitted (duplicating a heterogeneous selection has no single intuitive
-    // anchor; the batch toolbar owns multi-block ops).
-    ...(onDuplicate && !isBulk
-      ? [
-          {
-            label: t('contextMenu.duplicate'),
-            icon: <CopyPlus className="h-3.5 w-3.5" />,
-            action: () => handleAction(onDuplicate),
-            // #976 (item 13) — surface the `duplicateBlock` catalog binding,
-            // matching the adjacent move/merge hints. #1728 — sourced from the
-            // catalog (default `Ctrl+Shift+J`) so a rebind/platform glyph shows.
-            shortcut: shortcutHint('duplicateBlock'),
-            indented: true,
-            disclosureId: moveArrangeGroupId,
-            disclosureLabel: t('contextMenu.moveArrange'),
-          },
-        ]
-      : []),
-    ...(onMerge
-      ? [
-          {
-            label: t('contextMenu.merge'),
-            icon: <Merge className="h-3.5 w-3.5" />,
-            action: () => handleAction(onMerge),
-            // #976 (item 17) — surface the merge binding. It's positional
-            // (`mergeWithPrevious`: Backspace at the start of the block), so the
-            // hint carries the "(at start)" condition to avoid implying a bare
-            // Backspace deletes the block. #1728 — key sourced from the
-            // `mergeWithPrevious` catalog entry (positional, documentation-only).
-            shortcut: `${shortcutHint('mergeWithPrevious')} (at start)`,
-            indented: true,
-            disclosureId: moveArrangeGroupId,
-            disclosureLabel: t('contextMenu.moveArrange'),
-          },
-        ]
-      : []),
-  ]
-
-  // Only show the "Move & arrange" toggle when at least one child action is
-  // actually wired (else the disclosure would expand to nothing). The toggle is
-  // a plain expand/collapse — it dispatches no block action itself.
-  const hasMoveArrangeChildren = moveArrangeChildren.some((item) => item.action !== undefined)
-  const group2: MenuItem[] = [
-    ...indentDedentItems,
-    ...(hasMoveArrangeChildren
-      ? [
-          {
-            label: t('contextMenu.moveArrange'),
-            icon: <MoveVertical className="h-3.5 w-3.5" />,
-            action: () => setMoveArrangeOpen((o) => !o),
-            expanded: moveArrangeOpen,
-            disclosureId: moveArrangeGroupId,
-          },
-          ...(moveArrangeOpen ? moveArrangeChildren : []),
-        ]
-      : []),
-  ]
-
-  // Group 3: Collapse/Expand (only if hasChildren)
-  const group3: MenuItem[] = hasChildren
-    ? [
-        {
-          label: isCollapsed ? t('contextMenu.expand') : t('contextMenu.collapse'),
-          icon: isCollapsed ? (
-            <ChevronRight className="h-3.5 w-3.5" />
-          ) : (
-            <ChevronDown className="h-3.5 w-3.5" />
-          ),
-          action: onToggleCollapse ? () => handleAction(onToggleCollapse) : undefined,
-          shortcut: shortcutHint('collapseExpand'),
-        },
-        ...(onZoomIn
-          ? [
-              {
-                label: t('contextMenu.zoomIn'),
-                icon: <ZoomIn className="h-3.5 w-3.5" />,
-                action: () => handleAction(onZoomIn),
-                // #976 (item 18) — surface the `zoomIn` catalog binding (Alt+.),
-                // matching the adjacent collapse / properties hints. #1728 —
-                // sourced from the catalog so a rebind/platform glyph shows.
-                shortcut: shortcutHint('zoomIn'),
-              },
-            ]
-          : []),
-      ]
-    : []
-
-  // Group 4: TODO cycle, Priority cycle
-  const group4: MenuItem[] = [
-    {
-      // In bulk mode the per-block cycle label ("TODO → DOING" etc.) would be
-      // misleading across a heterogeneous selection, so show a neutral
-      // "Cycle task state" label; the action cycles every selected block.
-      label: isBulk ? t('contextMenu.cycleTodoSelected') : getTodoLabel(todoState, t),
-      icon: <CheckSquare className="h-3.5 w-3.5" />,
-      action: onToggleTodo ? () => dispatch(onToggleTodo) : undefined,
-      shortcut: shortcutHint('cycleTaskState'),
-    },
-    {
-      label: isBulk ? t('contextMenu.cyclePrioritySelected') : getPriorityLabel(priority, t),
-      icon: <Signal className="h-3.5 w-3.5" />,
-      action: onTogglePriority ? () => dispatch(onTogglePriority) : undefined,
-      // #976 (item 19) — `'Ctrl+Shift+1-3'` read ambiguously as "press 1 then 2
-      // then 3"; the catalog defines three INDEPENDENT bindings
-      // (`priority1`/`priority2`/`priority3`). Alternation notation ("1/2/3")
-      // makes it clear any one of the three sets that priority. #1728 — the
-      // chord is now sourced from those catalog ids (rebind/platform aware).
-      shortcut: priorityHint(),
-    },
-  ]
-
-  // Group 5: History
-  const group5: MenuItem[] = [
-    ...(onShowHistory
-      ? [
-          {
-            label: t('contextMenu.history'),
-            icon: <Clock className="h-3.5 w-3.5" />,
-            action: () => handleAction(onShowHistory),
-            // #976 (item 15) — surface the block-history binding, matching the
-            // adjacent properties row. #1728 — sourced from the catalog
-            // (`openBlockHistory`) so a rebind/platform glyph is reflected.
-            shortcut: shortcutHint('openBlockHistory'),
-          },
-        ]
-      : []),
-    ...(onShowProperties
-      ? [
-          {
-            label: t('contextMenu.properties'),
-            icon: <Settings2 className="h-3.5 w-3.5" />,
-            action: () => handleAction(onShowProperties),
-            // #1728 — sourced from the `openPropertiesDrawer` catalog entry.
-            shortcut: shortcutHint('openPropertiesDrawer'),
-          },
-        ]
-      : []),
-  ]
-
-  // Link group (shown only when right-clicking/long-pressing an external link):
-  // "Open link" (→ system browser) and "Copy URL". #924 — discoverable,
-  // non-modifier counterpart to the editor's Ctrl/Cmd+Click open path.
-  const openLinkItem: MenuItem | null = linkUrl
-    ? {
-        label: t('contextMenu.openLink'),
-        icon: <ExternalLink className="h-3.5 w-3.5" />,
-        action: () => {
-          void (async () => {
-            // openUrl never rejects — it returns false when neither the
-            // Tauri shell nor window.open could open a tab. Surface that
-            // as a toast rather than silently closing on a no-op.
-            const opened = await openUrl(linkUrl)
-            if (!opened) {
-              logger.warn('BlockContextMenu', 'Failed to open external link', { url: linkUrl })
-              notify.error(t('contextMenu.actionFailed'))
-            }
-            onClose()
-          })()
-        },
-      }
-    : null
-
-  const copyUrlItem: MenuItem | null = linkUrl
-    ? {
-        label: t('contextMenu.copyUrl'),
-        icon: <Copy className="h-3.5 w-3.5" />,
-        action: async () => {
-          try {
-            await writeText(linkUrl)
-            notify.success(t('contextMenu.urlCopied'))
-          } catch (err) {
-            logger.error(
-              'BlockContextMenu',
-              'Failed to copy URL to clipboard',
-              { url: linkUrl },
-              err,
-            )
-            notify.error(t('contextMenu.copyUrlFailed'))
-          }
-          onClose()
-        },
-      }
-    : null
-
-  // #1445 — "Copy block reference" copies a Roam-style block ref (`((ULID))`)
-  // for the right-clicked block, mirroring the palette's "Copy block link"
-  // shape. Always available (every block has an id); follows the `copyUrlItem`
-  // pattern (writeText + success/error toast + close).
-  const copyBlockRefItem: MenuItem = {
-    label: t('contextMenu.copyBlockRef'),
-    icon: <Copy className="h-3.5 w-3.5" />,
-    action: async () => {
-      try {
-        await writeText(`((${blockId}))`)
-        notify.success(t('contextMenu.blockRefCopied'))
-      } catch (err) {
-        logger.error('BlockContextMenu', 'Failed to copy block reference', { blockId }, err)
-        notify.error(t('contextMenu.copyRefFailed'))
-      }
-      onClose()
-    },
-  }
-
-  // #1445 — "Copy page reference" copies a page link (`[[ULID]]`) for the
-  // containing page (or the block's own id when the block IS a page). Hidden
-  // when `pageRefId` is unknown. Emits `[[ULID]]`, matching the palette's
-  // "Copy page link" page action (#1521 aligned the palette, which previously
-  // copied a bare, unpasteable ULID).
-  const copyPageRefItem: MenuItem | null = pageRefId
-    ? {
-        label: t('contextMenu.copyPageRef'),
-        icon: <Link2 className="h-3.5 w-3.5" />,
-        action: async () => {
-          try {
-            await writeText(`[[${pageRefId}]]`)
-            notify.success(t('contextMenu.pageRefCopied'))
-          } catch (err) {
-            logger.error('BlockContextMenu', 'Failed to copy page reference', { pageRefId }, err)
-            notify.error(t('contextMenu.copyRefFailed'))
-          }
-          onClose()
-        },
-      }
-    : null
-
-  const linkGroup = [openLinkItem, copyUrlItem, copyBlockRefItem, copyPageRefItem].filter(
-    (item): item is MenuItem => item !== null,
-  )
-
-  // #264 — "Turn into" group. A parent toggle row ("Turn into" + chevron) that
-  // expands to the block-type options inline. Each option converts the block
-  // via `onTurnInto` and closes the menu; the block's current type is marked
-  // active and rendered as a non-interactive indicator (converting to the
-  // current type is a no-op the user shouldn't reach for).
-  const turnIntoGroup: MenuItem[] = onTurnInto
-    ? [
-        {
-          label: t('contextMenu.turnInto'),
-          icon: <Replace className="h-3.5 w-3.5" />,
-          action: () => setTurnIntoOpen((o) => !o),
-          expanded: turnIntoOpen,
-          disclosureId: turnIntoGroupId,
-          // #976 (item 14) — surface the `turnIntoBlock` catalog binding next to
-          // the disclosure chevron. #1728 — sourced from the catalog (default
-          // `Ctrl+Shift+T`) so a rebind/platform glyph is reflected.
-          shortcut: shortcutHint('turnIntoBlock'),
-        },
-        ...(turnIntoOpen
-          ? TURN_INTO_OPTIONS.map((opt): MenuItem => {
-              const Icon = opt.icon
-              const blockType = opt.blockType as BlockTypeToken
-              const isActive = activeBlockType === blockType
-              return {
-                label: t(turnIntoTypeKey(opt.blockType)),
-                // #999 — keep the type icon at the file-wide size; indentation
-                // is applied once at the row level via `indented` (below), not
-                // via an ad-hoc per-icon `ml-3`.
-                icon: Icon ? <Icon className="h-3.5 w-3.5" /> : <span className="h-3.5 w-3.5" />,
-                active: isActive,
-                indented: true,
-                disclosureId: turnIntoGroupId,
-                disclosureLabel: t('contextMenu.turnInto'),
-                action: isActive
-                  ? undefined
-                  : () => {
-                      onTurnInto(blockId, blockType)
-                      onClose()
-                    },
-              }
-            })
-          : []),
-      ]
-    : []
-
-  // Filter out items without actions and empty groups.
-  //
-  // #217 A1 — order for calm scannability and mis-click safety: contextual
-  // link actions (Open link / Copy URL) · Tasks (TODO/Priority) · Block ops
-  // (indent/move/merge) · View (collapse/zoom) · History/Properties · Delete
-  // LAST. The destructive Delete previously sat at the very top (group1) — the
-  // easiest item to mis-click; it now lives at the bottom, visually separated
-  // by the existing inter-group divider and its `text-destructive` styling.
-  const groups = [linkGroup, group4, turnIntoGroup, group2, group3, group5, group1]
-    // Keep actionable items, plus the active "Turn into" indicator row (which
-    // has no action by design — it shows the block's current type).
-    .map((group) => group.filter((item) => item.action !== undefined || item.active))
-    .filter((group) => group.length > 0)
+  // All the branchy group-assembly logic lives in `buildMenuGroups` (a pure
+  // module-level helper) so it doesn't inflate this component's cyclomatic
+  // complexity. Behaviour is identical to the previous inline construction.
+  const groups = buildMenuGroups({
+    t,
+    blockId,
+    onClose,
+    actions,
+    isBulk,
+    bulkIds,
+    dispatch,
+    handleAction,
+    handleBulkAction,
+    hasChildren,
+    isCollapsed,
+    todoState,
+    priority,
+    linkUrl,
+    pageRefId,
+    activeBlockType,
+    turnIntoOpen,
+    setTurnIntoOpen,
+    turnIntoGroupId,
+    moveArrangeOpen,
+    setMoveArrangeOpen,
+    moveArrangeGroupId,
+  })
 
   // Only actionable items participate in keyboard roving focus; the active
   // indicator row is skipped.

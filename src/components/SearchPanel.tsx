@@ -83,6 +83,66 @@ function hasCJK(text: string): boolean {
   )
 }
 
+/**
+ * Whether the history dropdown is on screen: input focused + (empty input OR
+ * an active recall) AND (there are entries to recall OR recording is off).
+ * Extracted as a pure helper so the boolean chain doesn't add decision points
+ * to the `SearchPanel` body's cyclomatic complexity.
+ */
+function computeHistoryDropdownVisible(args: {
+  inputFocused: boolean
+  queryLength: number
+  historyActiveIndex: number
+  historyEntryCount: number
+  historyEnabled: boolean
+}): boolean {
+  const { inputFocused, queryLength, historyActiveIndex, historyEntryCount, historyEnabled } = args
+  return (
+    inputFocused &&
+    (queryLength === 0 || historyActiveIndex >= 0) &&
+    (historyEntryCount > 0 || !historyEnabled)
+  )
+}
+
+/**
+ * Build the `aria-controls` / `aria-activedescendant` pair for the input's
+ * combobox attrs. Autocomplete wins over history (the two are mutually
+ * exclusive on screen). Extracted as a pure helper so the component's
+ * `inputComboboxAttrs` memo stays under the cyclomatic-complexity ceiling.
+ */
+function comboboxControlAttrs(args: {
+  expanded: boolean
+  autocompleteAriaIds: SearchAutocompleteState['ariaIds']
+  historyListboxVisible: boolean
+  historyListboxId: string
+  historyActiveIndex: number
+}): Record<string, string> {
+  const {
+    expanded,
+    autocompleteAriaIds,
+    historyListboxVisible,
+    historyListboxId,
+    historyActiveIndex,
+  } = args
+  if (expanded && autocompleteAriaIds != null) {
+    return {
+      'aria-controls': autocompleteAriaIds.listboxId,
+      ...(autocompleteAriaIds.activeDescendantId != null
+        ? { 'aria-activedescendant': autocompleteAriaIds.activeDescendantId }
+        : {}),
+    }
+  }
+  if (historyListboxVisible) {
+    return {
+      'aria-controls': historyListboxId,
+      ...(historyActiveIndex >= 0
+        ? { 'aria-activedescendant': `${historyListboxId}-opt-${historyActiveIndex}` }
+        : {}),
+    }
+  }
+  return {}
+}
+
 export function SearchPanel(): React.ReactElement {
   const { t } = useTranslation()
 
@@ -274,10 +334,13 @@ export function SearchPanel(): React.ReactElement {
   // active, making the roving selection (and the keyboard per-row delete it
   // gates) impossible to announce to AT. Keeping it open through recall is
   // also what lets the user SEE which row Delete/Backspace will remove.
-  const historyDropdownVisible =
-    inputFocused &&
-    (query.length === 0 || cycling.activeIndex >= 0) &&
-    (historyEntries.length > 0 || !historyEnabled)
+  const historyDropdownVisible = computeHistoryDropdownVisible({
+    inputFocused,
+    queryLength: query.length,
+    historyActiveIndex: cycling.activeIndex,
+    historyEntryCount: historyEntries.length,
+    historyEnabled,
+  })
   // FE-A13 / the `role="listbox"` element (and its `historyListboxId`)
   // only renders when there are entries, so the combobox's `aria-expanded` /
   // `aria-controls` must track the LISTBOX, not the dropdown shell.
@@ -288,23 +351,13 @@ export function SearchPanel(): React.ReactElement {
       'aria-autocomplete': 'list' as const,
       'aria-haspopup': 'listbox' as const,
       'aria-expanded': expanded || historyListboxVisible,
-      ...(expanded && autocomplete.ariaIds != null
-        ? {
-            'aria-controls': autocomplete.ariaIds.listboxId,
-            ...(autocomplete.ariaIds.activeDescendantId != null
-              ? { 'aria-activedescendant': autocomplete.ariaIds.activeDescendantId }
-              : {}),
-          }
-        : historyListboxVisible
-          ? {
-              'aria-controls': historyListboxId,
-              ...(cycling.activeIndex >= 0
-                ? {
-                    'aria-activedescendant': `${historyListboxId}-opt-${cycling.activeIndex}`,
-                  }
-                : {}),
-            }
-          : {}),
+      ...comboboxControlAttrs({
+        expanded,
+        autocompleteAriaIds: autocomplete.ariaIds,
+        historyListboxVisible,
+        historyListboxId,
+        historyActiveIndex: cycling.activeIndex,
+      }),
     }),
     [expanded, autocomplete.ariaIds, historyListboxVisible, historyListboxId, cycling.activeIndex],
   )

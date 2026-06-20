@@ -52,6 +52,28 @@ import { PageBrowserRowRenderer } from './PageBrowser/PageBrowserRowRenderer'
 
 const HEADER_ROW_HEIGHT = 36
 
+/**
+ * Grid-role ARIA attrs for the list viewport. In the no-match state the only
+ * child is a status `<section>` (not a valid grid child), so the grid role and
+ * its grid-only attrs are dropped, leaving a plain region. Extracted as a pure
+ * helper so the branch + nested `aria-activedescendant` spread don't add
+ * decision points to `PageBrowser`'s cyclomatic complexity.
+ */
+function viewportGridAttrs(args: {
+  showNoMatch: boolean
+  hasStarred: boolean
+  activeDescendantId: string | undefined
+  t: (key: string) => string
+}): Record<string, string | number> {
+  const { showNoMatch, hasStarred, activeDescendantId, t } = args
+  if (showNoMatch) return {}
+  return {
+    role: 'grid',
+    'aria-label': hasStarred ? t('pageBrowser.pageListGrouped') : t('pageBrowser.pageList'),
+    ...(activeDescendantId ? { 'aria-activedescendant': activeDescendantId } : {}),
+  }
+}
+
 interface PageBrowserProps {
   /** Called when a page is selected. */
   onPageSelect?: (pageId: string, title?: string) => void
@@ -523,19 +545,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           // child (`aria-required-children`). Drop the grid role (and its
           // grid-only ARIA attrs) in that state so the container is a
           // plain region holding the "No matching pages" message.
-          ...(showNoMatch
-            ? {}
-            : {
-                role: 'grid',
-                'aria-label': hasStarred
-                  ? t('pageBrowser.pageListGrouped')
-                  : t('pageBrowser.pageList'),
-                // Bind `aria-activedescendant` to the focused
-                // row's stable id so screen readers track arrow-key
-                // focus moves without the inner buttons receiving DOM
-                // focus.
-                ...(activeDescendantId ? { 'aria-activedescendant': activeDescendantId } : {}),
-              }),
+          // Bind `aria-activedescendant` to the focused row's stable id so
+          // screen readers track arrow-key focus moves without the inner
+          // buttons receiving DOM focus. The grid role/attrs are dropped in the
+          // no-match state (see `viewportGridAttrs`).
+          ...viewportGridAttrs({ showNoMatch, hasStarred, activeDescendantId, t }),
           tabIndex: 0,
           // Section presence flags exposed for tests / styling hooks.
           // The unified model means either or both can be

@@ -185,6 +185,375 @@ export interface BlockInlineControlsProps {
   onEditKey: (keyInfo: { oldKey: string; value: string }) => void
 }
 
+/**
+ * The row-leading collapse chevron (when the block has children) or a reserved
+ * placeholder slot (when any sibling does). Extracted to keep the conditional
+ * chevron/placeholder branching out of `BlockInlineControls`' complexity count.
+ */
+function LeadingCollapseSlot({
+  blockId,
+  hasChildren,
+  isCollapsed,
+  isTouch,
+  anyBlockHasChildren,
+  onToggleCollapse,
+}: {
+  blockId: string
+  hasChildren: boolean
+  isCollapsed: boolean
+  isTouch: boolean
+  anyBlockHasChildren: boolean
+  onToggleCollapse?: ((blockId: string) => void) | undefined
+}): React.ReactElement | null {
+  const { t } = useTranslation()
+  if (hasChildren) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              'collapse-toggle flex-shrink-0 w-5 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center',
+              // #1243: an EXPANDED parent hides its chevron at rest. Its
+              // children are already visible below, so a persistent caret
+              // just floats in the empty left gutter, detached from the
+              // block text (the "caret too far left" report). It reveals on
+              // the SAME per-block hover / focus-within / .block-active
+              // contract as the gutter controls and the zoom bullet, so the
+              // tree reads clean at rest and the toggle is right there the
+              // moment you engage a block. Touch has no hover → always shown.
+              !isCollapsed &&
+                !isTouch &&
+                'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto',
+              // C4 (#216): the chevron signals collapsed/expanded by rotation
+              // alone, which colour-blind users (and anyone who misses the
+              // subtle 90° turn) can't reliably perceive. Add a non-rotation
+              // cue — a faint filled background + ring — that only shows when
+              // the block is collapsed (i.e. has hidden children). A
+              // collapsed block ALSO stays visible at rest (above): it is the
+              // only affordance to reveal the hidden children.
+              isCollapsed && 'rounded-sm bg-muted/60 text-foreground ring-1 ring-border',
+            )}
+            data-testid="collapse-toggle"
+            data-collapsed={isCollapsed}
+            // #1498: the gutter controls live OUTSIDE the contenteditable. With
+            // the block's ProseMirror editor focused, a plain click would first
+            // blur the editor (flush → re-render/remount) and the pending click
+            // gets swallowed — the control does nothing. preventDefault on
+            // mousedown retains editor focus (no blur → no flush) so the click
+            // fires and the caret stays put. Mirrors the Mermaid toggle (#1438).
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onToggleCollapse?.(blockId)}
+            aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}
+            aria-expanded={!isCollapsed}
+            // D4 (#217): expose the Ctrl+. collapse/expand shortcut to AT.
+            aria-keyshortcuts={t('block.collapseKeyshortcuts')}
+          >
+            <ChevronToggle isExpanded={!isCollapsed} size="lg" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" sideOffset={4}>
+          {isCollapsed ? t('block.expandTip') : t('block.collapseTip')}
+        </TooltipContent>
+      </Tooltip>
+    )
+  }
+  // Only reserve space for the caret if at least one block in the tree has
+  // children. This avoids an unsightly gap on leaf-only pages.
+  if (anyBlockHasChildren) {
+    return <span className="flex-shrink-0 w-5 h-5" aria-hidden />
+  }
+  return null
+}
+
+/**
+ * The tap-the-bullet zoom control (#927 f3), rendered on every row. Hidden at
+ * rest on fine pointers; the ring halo doubles as the collapsed-children cue.
+ */
+function ZoomBullet({
+  blockId,
+  hasChildren,
+  isCollapsed,
+  isTouch,
+  zoomIn,
+}: {
+  blockId: string
+  hasChildren: boolean
+  isCollapsed: boolean
+  isTouch: boolean
+  zoomIn?: ((blockId: string) => void) | undefined
+}): React.ReactElement {
+  const { t } = useTranslation()
+  // #976 (item 12) — distinguish three cases so AT users can tell an expanded
+  // parent (has children) from a leaf.
+  const ariaLabel = isCollapsed
+    ? t('block.zoomBulletCollapsed')
+    : hasChildren
+      ? t('block.zoomBulletParent')
+      : t('block.zoomBullet')
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            'block-bullet group/bullet flex-shrink-0 flex items-center justify-center w-5 h-5 p-0 text-muted-foreground transition-opacity focus-ring-visible active:scale-95 touch-target',
+            'hover:text-foreground',
+            // FINE pointers (desktop): hidden at rest, revealed only on this
+            // block's hover / focus-within / active (selection), matching
+            // GUTTER_BUTTON_BASE. COARSE pointers (touch): NOT hidden — there is
+            // no hover, and the bullet is the tap-to-zoom target (#927 f3), so it
+            // must stay visible/tappable at rest (like the touch drag handle).
+            // #1236: gate the at-rest hidden state on `!isTouch` (JS) rather
+            // than `[@media(pointer:fine)]` (CSS) — WebKitGTK lies about that
+            // media query, so a desktop mouse would otherwise keep the bullet
+            // always-visible on every row.
+            !isTouch && 'opacity-0 pointer-events-none',
+            'group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto',
+          )}
+          data-testid="block-bullet"
+          data-has-children={hasChildren}
+          data-collapsed={isCollapsed}
+          aria-label={ariaLabel}
+          // #1498: keep editor focus on click (see collapse-toggle note).
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={(e) => {
+            e.stopPropagation()
+            zoomIn?.(blockId)
+          }}
+        >
+          {/* The ring halo (visible only when the block has hidden children)
+            is the non-zoom collapsed cue; the inner dot is the bullet. */}
+          <span
+            className={cn(
+              'flex items-center justify-center rounded-full transition-colors',
+              isCollapsed ? 'h-4 w-4 bg-muted/60 ring-1 ring-border' : 'h-4 w-4',
+            )}
+            aria-hidden
+          >
+            <span className="block h-1.5 w-1.5 rounded-full bg-current group-hover/bullet:bg-current" />
+          </span>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" sideOffset={4}>
+        {t('block.zoomBulletTip')}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** The per-block task checkbox (suppressed in multi-select mode by the caller). */
+function TaskMarkerButton({
+  blockId,
+  todoState,
+  onToggleTodo,
+}: {
+  blockId: string
+  todoState?: (string | null) | undefined
+  onToggleTodo?: ((blockId: string) => void) | undefined
+}): React.ReactElement {
+  const { t } = useTranslation()
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            'task-marker flex-shrink-0 p-0.5 transition-opacity focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center',
+            // Fix 5: a block with NO todo_state renders the EMPTY checkbox,
+            // which is a pure affordance ("set a task here"), not meaningful
+            // state. Showing it on every row at rest clutters the whole tree,
+            // so gate it behind the same per-block hover/active contract as
+            // the gutter buttons — hidden at rest, revealed only when the
+            // block is hovered / focus-within / `.block-active`. A block that
+            // DOES carry a todo_state keeps its checkbox always visible (the
+            // TODO/DOING/DONE/CANCELLED glyph IS meaningful state). On coarse
+            // pointers there is no hover and the long-press menu owns setting
+            // task state, so the empty checkbox stays hidden at rest there too.
+            !todoState &&
+              'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100 [.block-active_&]:opacity-100',
+          )}
+          data-testid="task-marker"
+          // #1498: keep editor focus on click (see collapse-toggle note).
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleTodo?.(blockId)
+          }}
+          aria-label={todoState ? t('block.taskCycle', { state: todoState }) : t('block.setTodo')}
+        >
+          <TaskCheckbox state={todoState} />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" sideOffset={4}>
+        {todoState ? t('block.todoCycleTip', { state: todoState }) : t('block.setTodoTip')}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** The priority badge toggle (rendered only when a priority is set). */
+function PriorityBadge({
+  blockId,
+  priority,
+  onTogglePriority,
+}: {
+  blockId: string
+  priority: string
+  onTogglePriority?: ((blockId: string) => void) | undefined
+}): React.ReactElement {
+  const { t } = useTranslation()
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
+          data-testid="priority-badge"
+          aria-label={t('block.priorityCycle', { level: priorityLabel(priority) })}
+          // #976 (item 9) — the badge is a toggle button cycling the block's
+          // priority; expose its set/unset state per WAI-ARIA toggle-button
+          // semantics. The badge only renders when a priority is set, so the
+          // pressed state is always `true` here.
+          aria-pressed
+          // #1498: keep editor focus on click (see collapse-toggle note).
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={(e) => {
+            e.stopPropagation()
+            onTogglePriority?.(blockId)
+          }}
+        >
+          <span
+            className={cn(
+              'inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold max-sm:px-2.5 max-sm:py-1',
+              priorityColor(priority),
+            )}
+          >
+            {priorityLabel(priority)}
+          </span>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" sideOffset={4}>
+        {t('block.priorityTip', { level: priorityLabel(priority) })}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** The repeat-rule indicator chip (rendered only when a `repeat` property is set). */
+function RepeatIndicator({ repeatValue }: { repeatValue: string }): React.ReactElement {
+  const { t } = useTranslation()
+  return (
+    <span
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- inline status chip rendered among sibling chips; native <output> carries an implicit "Output" semantic and is not a drop-in for this inline <span> badge
+      role="status"
+      className="repeat-indicator flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indicator-repeat text-indicator-repeat-foreground max-sm:px-2.5 max-sm:py-1"
+      aria-label={t('block.repeats', { value: repeatValue })}
+    >
+      <Repeat className="h-3 w-3 flex-shrink-0" />
+      {formatRepeatLabel(repeatValue, t)}
+    </span>
+  )
+}
+
+/** The inline property chips + `+N` overflow pill. */
+function InlineProperties({
+  filteredProperties,
+  inlinePropLimit,
+  resolveBlockTitle,
+  onEditProp,
+  onEditKey,
+}: {
+  filteredProperties: Array<{ key: string; value: string }>
+  inlinePropLimit: number
+  resolveBlockTitle?: ((id: string) => string) | undefined
+  onEditProp: (prop: { key: string; value: string }) => void
+  onEditKey: (keyInfo: { oldKey: string; value: string }) => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  return (
+    <>
+      {filteredProperties.slice(0, inlinePropLimit).map((p) => {
+        const displayValue = resolveBlockTitle ? resolveBlockTitle(p.value) || p.value : p.value
+        return (
+          <PropertyChip
+            key={p.key}
+            propKey={p.key}
+            value={displayValue}
+            onClick={() => onEditProp({ key: p.key, value: p.value })}
+            onKeyClick={() => onEditKey({ oldKey: p.key, value: p.value })}
+          />
+        )
+      })}
+      {filteredProperties.length > inlinePropLimit && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="property-overflow inline-flex items-center flex-shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors select-none focus-ring-visible active:scale-95 max-sm:px-2.5 max-sm:py-1"
+              data-testid="property-overflow"
+              aria-label={t('block.showAllProperties', { count: filteredProperties.length })}
+              // #1498: keep editor focus on click (see collapse-toggle note).
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => {
+                e.stopPropagation()
+                dispatchBlockEvent('OPEN_BLOCK_PROPERTIES')
+              }}
+            >
+              +{filteredProperties.length - inlinePropLimit}
+              <ChevronRight className="h-3 w-3 ml-0.5 opacity-60" aria-hidden="true" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" sideOffset={4}>
+            {t('block.showAllProperties', { count: filteredProperties.length })}
+          </TooltipContent>
+        </Tooltip>
+      )}
+    </>
+  )
+}
+
+/** The collapsible-attachments badge (rendered only when the block has attachments). */
+function AttachmentBadge({
+  attachmentCount,
+  showAttachments,
+  animKey,
+  onToggleAttachments,
+}: {
+  attachmentCount: number
+  showAttachments: boolean
+  animKey: number | null
+  onToggleAttachments: () => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          key={animKey ?? 'initial'}
+          type="button"
+          className={cn(
+            'attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-2.5 max-sm:py-1 touch-target',
+            animKey !== null && 'animate-in fade-in-0 zoom-in-95 duration-normal',
+          )}
+          data-testid="attachment-badge"
+          aria-label={t('block.attachments', { count: attachmentCount })}
+          aria-expanded={showAttachments}
+          // #1498: keep editor focus on click (see collapse-toggle note).
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onToggleAttachments}
+        >
+          <Paperclip className="h-3 w-3 flex-shrink-0" />
+          {attachmentCount}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" sideOffset={4}>
+        {t('block.attachmentsTip', { count: attachmentCount })}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 export const BlockInlineControls = React.memo(
   ({
     blockId,
@@ -209,8 +578,6 @@ export const BlockInlineControls = React.memo(
     onEditProp,
     onEditKey,
   }: BlockInlineControlsProps): React.ReactElement => {
-    const { t } = useTranslation()
-
     // #927 f3: prefer the explicit prop (test fixtures), else read the zoom-in
     // handler off the action bag the BlockTree publishes in production.
     const actionsZoomIn = useBlockActions().onZoomIn
@@ -265,210 +632,50 @@ export const BlockInlineControls = React.memo(
       }
     }, [attachmentCount])
 
+    // The `repeat` property (if any) drives the repeat indicator chip. Resolve
+    // it once so the JSX below stays a flat list of presentational subcomponents.
+    const repeatValue = properties?.find((p) => p.key === 'repeat')?.value
+
     return (
       <div
         className={cn(
           'inline-controls flex items-center flex-shrink-0 gap-1 max-sm:flex-shrink max-sm:flex-wrap max-sm:w-auto max-sm:gap-x-1 max-sm:gap-y-1.5',
         )}
       >
-        {hasChildren ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className={cn(
-                  'collapse-toggle flex-shrink-0 w-5 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center',
-                  // #1243: an EXPANDED parent hides its chevron at rest. Its
-                  // children are already visible below, so a persistent caret
-                  // just floats in the empty left gutter, detached from the
-                  // block text (the "caret too far left" report). It reveals on
-                  // the SAME per-block hover / focus-within / .block-active
-                  // contract as the gutter controls and the zoom bullet, so the
-                  // tree reads clean at rest and the toggle is right there the
-                  // moment you engage a block. Touch has no hover → always shown.
-                  !isCollapsed &&
-                    !isTouch &&
-                    'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto',
-                  // C4 (#216): the chevron signals collapsed/expanded by rotation
-                  // alone, which colour-blind users (and anyone who misses the
-                  // subtle 90° turn) can't reliably perceive. Add a non-rotation
-                  // cue — a faint filled background + ring — that only shows when
-                  // the block is collapsed (i.e. has hidden children). A
-                  // collapsed block ALSO stays visible at rest (above): it is the
-                  // only affordance to reveal the hidden children.
-                  isCollapsed && 'rounded-sm bg-muted/60 text-foreground ring-1 ring-border',
-                )}
-                data-testid="collapse-toggle"
-                data-collapsed={isCollapsed}
-                // #1498: the gutter controls live OUTSIDE the contenteditable. With
-                // the block's ProseMirror editor focused, a plain click would first
-                // blur the editor (flush → re-render/remount) and the pending click
-                // gets swallowed — the control does nothing. preventDefault on
-                // mousedown retains editor focus (no blur → no flush) so the click
-                // fires and the caret stays put. Mirrors the Mermaid toggle (#1438).
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => onToggleCollapse?.(blockId)}
-                aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}
-                aria-expanded={!isCollapsed}
-                // D4 (#217): expose the Ctrl+. collapse/expand shortcut to AT.
-                aria-keyshortcuts={t('block.collapseKeyshortcuts')}
-              >
-                <ChevronToggle isExpanded={!isCollapsed} size="lg" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" sideOffset={4}>
-              {isCollapsed ? t('block.expandTip') : t('block.collapseTip')}
-            </TooltipContent>
-          </Tooltip>
-        ) : // Only reserve space for the caret if at least one block in the tree has children.
-        // This avoids an unsightly gap on leaf-only pages.
-        anyBlockHasChildren ? (
-          <span className="flex-shrink-0 w-5 h-5" aria-hidden />
-        ) : null}
+        <LeadingCollapseSlot
+          blockId={blockId}
+          hasChildren={hasChildren}
+          isCollapsed={isCollapsed}
+          isTouch={isTouch}
+          anyBlockHasChildren={anyBlockHasChildren}
+          onToggleCollapse={onToggleCollapse}
+        />
 
         {/* #927 f3: tap-the-bullet zoom (Logseq's signature gesture). Rendered on
           every row (leaves too) for a consistent affordance, but HIDDEN AT REST —
           it follows the same per-block hover/focus/active contract as the gutter
-          controls (opacity-0 → revealed on group-hover / group-focus-within /
-          .block-active), so it only shows for the hovered or selected block and
-          doesn't clutter the tree. Tap/click zooms into the block; the collapse
-          chevron carries the has-children/collapsed cue. */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              className={cn(
-                'block-bullet group/bullet flex-shrink-0 flex items-center justify-center w-5 h-5 p-0 text-muted-foreground transition-opacity focus-ring-visible active:scale-95 touch-target',
-                'hover:text-foreground',
-                // FINE pointers (desktop): hidden at rest, revealed only on this
-                // block's hover / focus-within / active (selection), matching
-                // GUTTER_BUTTON_BASE. COARSE pointers (touch): NOT hidden — there is
-                // no hover, and the bullet is the tap-to-zoom target (#927 f3), so it
-                // must stay visible/tappable at rest (like the touch drag handle).
-                // #1236: gate the at-rest hidden state on `!isTouch` (JS) rather
-                // than `[@media(pointer:fine)]` (CSS) — WebKitGTK lies about that
-                // media query, so a desktop mouse would otherwise keep the bullet
-                // always-visible on every row.
-                !isTouch && 'opacity-0 pointer-events-none',
-                'group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto',
-              )}
-              data-testid="block-bullet"
-              data-has-children={hasChildren}
-              data-collapsed={isCollapsed}
-              // #976 (item 12) — distinguish three cases so AT users can tell an
-              // expanded parent (has children) from a leaf: collapsed (hidden
-              // children) keeps its own label; an EXPANDED parent announces it has
-              // children; a leaf stays the bare "Zoom in".
-              aria-label={
-                isCollapsed
-                  ? t('block.zoomBulletCollapsed')
-                  : hasChildren
-                    ? t('block.zoomBulletParent')
-                    : t('block.zoomBullet')
-              }
-              // #1498: keep editor focus on click (see collapse-toggle note).
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={(e) => {
-                e.stopPropagation()
-                zoomIn?.(blockId)
-              }}
-            >
-              {/* The ring halo (visible only when the block has hidden children)
-                is the non-zoom collapsed cue; the inner dot is the bullet. */}
-              <span
-                className={cn(
-                  'flex items-center justify-center rounded-full transition-colors',
-                  isCollapsed ? 'h-4 w-4 bg-muted/60 ring-1 ring-border' : 'h-4 w-4',
-                )}
-                aria-hidden
-              >
-                <span className="block h-1.5 w-1.5 rounded-full bg-current group-hover/bullet:bg-current" />
-              </span>
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" sideOffset={4}>
-            {t('block.zoomBulletTip')}
-          </TooltipContent>
-        </Tooltip>
+          controls. Tap/click zooms into the block; the collapse chevron carries
+          the has-children/collapsed cue. */}
+        <ZoomBullet
+          blockId={blockId}
+          hasChildren={hasChildren}
+          isCollapsed={isCollapsed}
+          isTouch={isTouch}
+          zoomIn={zoomIn}
+        />
 
         {/* Fix 6: in multiselect mode the task checkbox is suppressed on every
           row (only the gutter select checkbox shows). */}
         {!hasSelection && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className={cn(
-                  'task-marker flex-shrink-0 p-0.5 transition-opacity focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center',
-                  // Fix 5: a block with NO todo_state renders the EMPTY checkbox,
-                  // which is a pure affordance ("set a task here"), not meaningful
-                  // state. Showing it on every row at rest clutters the whole tree,
-                  // so gate it behind the same per-block hover/active contract as
-                  // the gutter buttons — hidden at rest, revealed only when the
-                  // block is hovered / focus-within / `.block-active`. A block that
-                  // DOES carry a todo_state keeps its checkbox always visible (the
-                  // TODO/DOING/DONE/CANCELLED glyph IS meaningful state). On coarse
-                  // pointers there is no hover and the long-press menu owns setting
-                  // task state, so the empty checkbox stays hidden at rest there too.
-                  !todoState &&
-                    'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100 [.block-active_&]:opacity-100',
-                )}
-                data-testid="task-marker"
-                // #1498: keep editor focus on click (see collapse-toggle note).
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onToggleTodo?.(blockId)
-                }}
-                aria-label={
-                  todoState ? t('block.taskCycle', { state: todoState }) : t('block.setTodo')
-                }
-              >
-                <TaskCheckbox state={todoState} />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" sideOffset={4}>
-              {todoState ? t('block.todoCycleTip', { state: todoState }) : t('block.setTodoTip')}
-            </TooltipContent>
-          </Tooltip>
+          <TaskMarkerButton blockId={blockId} todoState={todoState} onToggleTodo={onToggleTodo} />
         )}
 
         {priority && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
-                data-testid="priority-badge"
-                aria-label={t('block.priorityCycle', { level: priorityLabel(priority) })}
-                // #976 (item 9) — the badge is a toggle button cycling the
-                // block's priority; expose its set/unset state per WAI-ARIA
-                // toggle-button semantics (matching the collapse/attachment
-                // toggles' `aria-expanded`). The badge only renders when a
-                // priority is set, so the pressed state is always `true` here;
-                // stating it explicitly keeps the toggle semantics clear for AT.
-                aria-pressed
-                // #1498: keep editor focus on click (see collapse-toggle note).
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onTogglePriority?.(blockId)
-                }}
-              >
-                <span
-                  className={cn(
-                    'inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold max-sm:px-2.5 max-sm:py-1',
-                    priorityColor(priority),
-                  )}
-                >
-                  {priorityLabel(priority)}
-                </span>
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" sideOffset={4}>
-              {t('block.priorityTip', { level: priorityLabel(priority) })}
-            </TooltipContent>
-          </Tooltip>
+          <PriorityBadge
+            blockId={blockId}
+            priority={priority}
+            onTogglePriority={onTogglePriority}
+          />
         )}
 
         {dueDate && (
@@ -499,90 +706,25 @@ export const BlockInlineControls = React.memo(
           />
         )}
 
-        {properties?.some((p) => p.key === 'repeat') && (
-          <span
-            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- inline status chip rendered among sibling chips; native <output> carries an implicit "Output" semantic and is not a drop-in for this inline <span> badge
-            role="status"
-            className="repeat-indicator flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indicator-repeat text-indicator-repeat-foreground max-sm:px-2.5 max-sm:py-1"
-            aria-label={t('block.repeats', {
-              value: properties.find((p) => p.key === 'repeat')?.value ?? '',
-            })}
-          >
-            <Repeat className="h-3 w-3 flex-shrink-0" />
-            {formatRepeatLabel(properties.find((p) => p.key === 'repeat')?.value ?? '', t)}
-          </span>
-        )}
+        {repeatValue !== undefined && <RepeatIndicator repeatValue={repeatValue} />}
 
         {filteredProperties.length > 0 && (
-          <>
-            {filteredProperties.slice(0, inlinePropLimit).map((p) => {
-              const displayValue = resolveBlockTitle
-                ? resolveBlockTitle(p.value) || p.value
-                : p.value
-              return (
-                <PropertyChip
-                  key={p.key}
-                  propKey={p.key}
-                  value={displayValue}
-                  onClick={() => onEditProp({ key: p.key, value: p.value })}
-                  onKeyClick={() => onEditKey({ oldKey: p.key, value: p.value })}
-                />
-              )
-            })}
-            {filteredProperties.length > inlinePropLimit && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    className="property-overflow inline-flex items-center flex-shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors select-none focus-ring-visible active:scale-95 max-sm:px-2.5 max-sm:py-1"
-                    data-testid="property-overflow"
-                    aria-label={t('block.showAllProperties', {
-                      count: filteredProperties.length,
-                    })}
-                    // #1498: keep editor focus on click (see collapse-toggle note).
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      dispatchBlockEvent('OPEN_BLOCK_PROPERTIES')
-                    }}
-                  >
-                    +{filteredProperties.length - inlinePropLimit}
-                    <ChevronRight className="h-3 w-3 ml-0.5 opacity-60" aria-hidden="true" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" sideOffset={4}>
-                  {t('block.showAllProperties', { count: filteredProperties.length })}
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </>
+          <InlineProperties
+            filteredProperties={filteredProperties}
+            inlinePropLimit={inlinePropLimit}
+            resolveBlockTitle={resolveBlockTitle}
+            onEditProp={onEditProp}
+            onEditKey={onEditKey}
+          />
         )}
 
         {attachmentCount > 0 && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                key={animKey ?? 'initial'}
-                type="button"
-                className={cn(
-                  'attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-2.5 max-sm:py-1 touch-target',
-                  animKey !== null && 'animate-in fade-in-0 zoom-in-95 duration-normal',
-                )}
-                data-testid="attachment-badge"
-                aria-label={t('block.attachments', { count: attachmentCount })}
-                aria-expanded={showAttachments}
-                // #1498: keep editor focus on click (see collapse-toggle note).
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={onToggleAttachments}
-              >
-                <Paperclip className="h-3 w-3 flex-shrink-0" />
-                {attachmentCount}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" sideOffset={4}>
-              {t('block.attachmentsTip', { count: attachmentCount })}
-            </TooltipContent>
-          </Tooltip>
+          <AttachmentBadge
+            attachmentCount={attachmentCount}
+            showAttachments={showAttachments}
+            animKey={animKey}
+            onToggleAttachments={onToggleAttachments}
+          />
         )}
       </div>
     )
