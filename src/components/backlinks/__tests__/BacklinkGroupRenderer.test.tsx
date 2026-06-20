@@ -438,14 +438,14 @@ describe('BacklinkGroupRenderer', () => {
       const mockFn = vi.mocked(renderRichContent)
 
       class TestErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
-        state = { hasError: false }
+        override state = { hasError: false }
         static getDerivedStateFromError() {
           return { hasError: true }
         }
-        componentDidCatch(error: Error) {
+        override componentDidCatch(error: Error) {
           caughtError.current = error
         }
-        render() {
+        override render() {
           return this.state.hasError ? (
             <div data-testid="error-fallback">error</div>
           ) : (

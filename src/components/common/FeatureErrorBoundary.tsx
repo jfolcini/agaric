@@ -42,7 +42,7 @@ export class FeatureErrorBoundary extends React.Component<
     return { hasError: true, error }
   }
 
-  componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
+  override componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
     logger.error(this.props.name, error.message, {
       stack: error.stack ?? '',
       componentStack: errorInfo.componentStack ?? '',
@@ -65,7 +65,7 @@ export class FeatureErrorBoundary extends React.Component<
     })
   }
 
-  render() {
+  override render() {
     if (this.state.hasError) {
       return (
         <div
