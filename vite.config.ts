@@ -1,17 +1,58 @@
-import { realpathSync } from 'node:fs'
+import { createReadStream, realpathSync } from 'node:fs'
 import path from 'node:path'
 
 import babel from '@rolldown/plugin-babel'
 import tailwindcss from '@tailwindcss/vite'
 import react, { reactCompilerPreset } from '@vitejs/plugin-react'
 import { visualizer } from 'rollup-plugin-visualizer'
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
+
+// #1458: the Playwright e2e suite runs against a static `vite preview`
+// production build (not the HMR dev server, which stalled under shard load and
+// cascaded a random shard to the CI job cap). One spec — `pdfjs-v6-smoke` —
+// imports the pdfjs *API* module straight from `/node_modules/pdfjs-dist/
+// build/pdf.min.mjs`, a URL only the DEV server serves; `vite preview` serves
+// `dist/` alone, so that import 404s under preview. Rather than ship a 447 kB
+// dev-only artifact into every release `public/` (the worker is genuinely
+// needed at runtime; this API module is not — the app bundles `pdfjs-dist`),
+// this preview-only middleware maps that exact URL to the real node_modules
+// file. It is wired ONLY when `VITE_E2E=1` (the e2e build), so normal `npm run
+// preview` / releases are untouched, and the spec stays byte-for-byte
+// unchanged (its asserted behaviour — worker/API version match, real raster —
+// is what we want to verify against the prod build).
+function e2ePdfjsPreviewAsset(): Plugin {
+  const URL_PATH = '/node_modules/pdfjs-dist/build/pdf.min.mjs'
+  const realFile = path.resolve(
+    realpathSync(path.resolve(__dirname, 'node_modules')),
+    'pdfjs-dist/build/pdf.min.mjs',
+  )
+  return {
+    name: 'e2e-pdfjs-preview-asset',
+    apply: 'serve',
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => {
+        // Ignore any query string (`?import`, cache-busters) when matching.
+        if (req.url && req.url.split('?')[0] === URL_PATH) {
+          res.setHeader('Content-Type', 'text/javascript')
+          createReadStream(realFile).pipe(res)
+          return
+        }
+        next()
+      })
+    },
+  }
+}
 
 // https://vite.dev/config/
 // Set `ANALYZE=1` (e.g. `ANALYZE=1 npm run build`) to emit a
 // `dist/stats.html` bundle treemap from rollup-plugin-visualizer.
 // `dist/` is gitignored, so the artefact never ships to the repo.
 const analyze = process.env['ANALYZE'] === '1'
+
+// #1458: set by `npm run build:e2e` / `preview:e2e`. Wires the pdfjs preview
+// asset middleware below so the one dev-path-dependent spec keeps working
+// against the static preview build. Never set for normal builds/releases.
+const e2e = !!process.env['VITE_E2E']
 
 // React Compiler (#887) — full-tree auto-memoization. The eval proved
 // the codebase compiler-clean (healthcheck 469/469, 0 bails; TipTap
@@ -125,6 +166,7 @@ export default defineConfig({
       ? [babel({ include: /\.[jt]sx(?:$|\?)/, presets: [reactCompilerPreset()] })]
       : []),
     tailwindcss(),
+    ...(e2e ? [e2ePdfjsPreviewAsset()] : []),
     ...(analyze
       ? [
           visualizer({

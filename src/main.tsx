@@ -34,10 +34,21 @@ async function main() {
   // so the UI renders for visual development/debugging.
   //
   // The `import.meta.env.PROD` check lets Vite tree-shake the entire
-  // `tauri-mock` chunk out of the production bundle (PROD is statically
-  // `true` in `vite build`). The runtime `__TAURI_INTERNALS__` check is
-  // retained for the dev/test paths where PROD is `false`.
-  if (!import.meta.env.PROD && !window.__TAURI_INTERNALS__) {
+  // `tauri-mock` chunk out of the *shipped* production bundle (PROD is
+  // statically `true` in `vite build`, so the `!PROD` arm folds to `false`
+  // and the dynamic import is dropped). The runtime `__TAURI_INTERNALS__`
+  // check is retained for the dev/test paths where PROD is `false`.
+  //
+  // `VITE_E2E` (#1458): the Playwright e2e suite no longer runs against the
+  // HMR `vite dev` server (which stalled under shard load and cascaded a
+  // random shard to the 20m CI cap). It runs against a *production* build
+  // served by `vite preview`. A prod build sets PROD=`true`, which would
+  // tree-shake the mock the suite depends on — so an explicit, build-time
+  // `VITE_E2E=1` keeps the mock in that one build. `import.meta.env.VITE_E2E`
+  // is statically `undefined` in a normal `npm run build` (the env var is
+  // unset), so the OR arm folds to `false` and the shipped bundle is mock-free
+  // exactly as before — the tree-shake win is preserved for real releases.
+  if ((!import.meta.env.PROD || import.meta.env.VITE_E2E) && !window.__TAURI_INTERNALS__) {
     const { setupMock } = await import('./lib/tauri-mock')
     setupMock()
   }
