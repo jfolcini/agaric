@@ -25,9 +25,11 @@ import { ImageNodeView } from './ImageNodeView'
  * (`data:` / `blob:`), and the Tauri asset host. Any other explicit scheme
  * (e.g. `javascript:`, `ftp:`) is rejected so the input rule won't mint a node
  * for a hostile/garbage src — symmetric with how the link rule gates on
- * `isValidHttpUrl`.
+ * `isValidHttpUrl`. `attachment:` is the internal ref for a pasted/dropped image
+ * stored as an attachment (#1434); it resolves to the attachment's bytes at
+ * render time and is always a trusted local src.
  */
-const SAFE_IMAGE_SCHEMES = ['data:', 'blob:', 'asset:', 'tauri:']
+const SAFE_IMAGE_SCHEMES = ['data:', 'blob:', 'asset:', 'tauri:', 'attachment:']
 
 /**
  * Whether `src` is an acceptable image source for node creation. Accepts a

@@ -2059,4 +2059,126 @@ describe('EditableBlock', () => {
       expect(mockToastError).not.toHaveBeenCalled()
     })
   })
+
+  // ── #1434 — image paste/drop inserts an inline image node ──────────────────
+  describe('inline image paste/drop (#1434)', () => {
+    function makeFile(name: string, type: string): File {
+      return new File(['content'], name, { type })
+    }
+
+    /**
+     * A chainable TipTap-editor stub recording the `insertImage` attrs. Mirrors
+     * the `editor.chain().focus().insertImage(attrs).run()` call shape used by
+     * `processFileAttachments` for an image file on the active block.
+     */
+    function makeChainEditor(): {
+      editor: unknown
+      insertImage: ReturnType<typeof vi.fn>
+    } {
+      const insertImage = vi.fn(() => chain)
+      const chain = {
+        focus: vi.fn(() => chain),
+        insertImage,
+        run: vi.fn(() => true),
+      }
+      const editor = { chain: vi.fn(() => chain) }
+      return { editor, insertImage }
+    }
+
+    it('inserts an inline image node referencing the new attachment on image drop', async () => {
+      const { editor, insertImage } = makeChainEditor()
+      render(
+        <EditableBlock
+          blockId="BLK_1"
+          content="hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor({ editor, activeBlockId: 'BLK_1' }) as never}
+        />,
+      )
+
+      const file = makeFile('shot.png', 'image/png')
+      const wrapper = getBlockEditorWrapper()
+
+      await act(async () => {
+        fireEvent.drop(wrapper, {
+          dataTransfer: { files: [file], types: ['Files'] },
+        })
+      })
+
+      // Attachment created, then referenced inline by `attachment:<id>`.
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledTimes(1)
+      expect(insertImage).toHaveBeenCalledWith({ src: 'attachment:ATT_1', alt: 'shot.png' })
+    })
+
+    it('inserts an inline image node on image paste', async () => {
+      const { editor, insertImage } = makeChainEditor()
+      render(
+        <EditableBlock
+          blockId="BLK_1"
+          content="hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor({ editor, activeBlockId: 'BLK_1' }) as never}
+        />,
+      )
+
+      const file = makeFile('paste.png', 'image/png')
+      const wrapper = getBlockEditorWrapper()
+
+      await act(async () => {
+        fireEvent.paste(wrapper, { clipboardData: { files: [file] } })
+      })
+
+      expect(insertImage).toHaveBeenCalledWith({ src: 'attachment:ATT_1', alt: 'paste.png' })
+    })
+
+    it('does NOT insert an inline node for a non-image file', async () => {
+      const { editor, insertImage } = makeChainEditor()
+      render(
+        <EditableBlock
+          blockId="BLK_1"
+          content="hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor({ editor, activeBlockId: 'BLK_1' }) as never}
+        />,
+      )
+
+      const file = makeFile('notes.pdf', 'application/pdf')
+      const wrapper = getBlockEditorWrapper()
+
+      await act(async () => {
+        fireEvent.drop(wrapper, {
+          dataTransfer: { files: [file], types: ['Files'] },
+        })
+      })
+
+      // The PDF still attaches, but no inline image node is inserted.
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledTimes(1)
+      expect(insertImage).not.toHaveBeenCalled()
+    })
+
+    it('does NOT insert an inline node when the active editor block differs', async () => {
+      const { editor, insertImage } = makeChainEditor()
+      render(
+        <EditableBlock
+          blockId="BLK_1"
+          content="hello"
+          isFocused={true}
+          // Editor is mounted on a DIFFERENT block — never inject into it.
+          rovingEditor={makeRovingEditor({ editor, activeBlockId: 'BLK_OTHER' }) as never}
+        />,
+      )
+
+      const file = makeFile('shot.png', 'image/png')
+      const wrapper = getBlockEditorWrapper()
+
+      await act(async () => {
+        fireEvent.drop(wrapper, {
+          dataTransfer: { files: [file], types: ['Files'] },
+        })
+      })
+
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledTimes(1)
+      expect(insertImage).not.toHaveBeenCalled()
+    })
+  })
 })

@@ -8,9 +8,9 @@
  * `<img>`; a11y.
  */
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import {
@@ -20,8 +20,15 @@ import {
 
 import { GatedImage } from '../GatedImage'
 
+// #1434 — resolving an `attachment:<id>` ref reads the bytes over IPC.
+const mockReadAttachment = vi.fn()
+vi.mock('@/lib/tauri', () => ({
+  readAttachment: (...args: unknown[]) => mockReadAttachment(...args),
+}))
+
 afterEach(() => {
   localStorage.clear()
+  mockReadAttachment.mockReset()
 })
 
 describe('GatedImage — local/data srcs always load', () => {
@@ -111,5 +118,55 @@ describe('GatedImage — a11y', () => {
   it('blocked placeholder has no a11y violations', async () => {
     const { container } = render(<GatedImage src="https://images.example.com/cat.png" alt="cat" />)
     expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+describe('GatedImage — attachment ref resolution (#1434)', () => {
+  const ORIG_CREATE = URL.createObjectURL
+  const ORIG_REVOKE = URL.revokeObjectURL
+  afterEach(() => {
+    URL.createObjectURL = ORIG_CREATE
+    URL.revokeObjectURL = ORIG_REVOKE
+  })
+
+  it('resolves `attachment:<id>` to an object URL and renders the <img>', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:obj-1')
+    URL.revokeObjectURL = vi.fn()
+    mockReadAttachment.mockResolvedValue(new Uint8Array([1, 2, 3]))
+
+    render(<GatedImage src="attachment:ATT_1" alt="pasted" />)
+
+    // The attachment bytes are read by id, then the <img> renders the object URL.
+    await waitFor(() => {
+      expect(screen.getByTestId('image-rendered').getAttribute('src')).toBe('blob:obj-1')
+    })
+    expect(mockReadAttachment).toHaveBeenCalledWith('ATT_1')
+    expect(screen.getByTestId('image-rendered').getAttribute('alt')).toBe('pasted')
+  })
+
+  it('shows the broken-image placeholder when the attachment fails to load', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:obj-2')
+    mockReadAttachment.mockRejectedValue(new Error('gone'))
+
+    render(<GatedImage src="attachment:MISSING" alt="pasted" />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('image-broken')).toBeTruthy()
+    })
+    expect(screen.queryByTestId('image-rendered')).toBeNull()
+  })
+
+  it('revokes the object URL on unmount', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:obj-3')
+    const revoke = vi.fn()
+    URL.revokeObjectURL = revoke
+    mockReadAttachment.mockResolvedValue(new Uint8Array([9]))
+
+    const { unmount } = render(<GatedImage src="attachment:ATT_2" alt="x" />)
+    await waitFor(() => {
+      expect(screen.getByTestId('image-rendered')).toBeTruthy()
+    })
+    unmount()
+    expect(revoke).toHaveBeenCalledWith('blob:obj-3')
   })
 })

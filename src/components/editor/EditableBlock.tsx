@@ -19,6 +19,7 @@ import { shouldSplitOnBlur } from '@/editor/use-roving-editor'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { useEditorBlur } from '@/hooks/useEditorBlur'
 import { useScrollCaretAboveKeyboard } from '@/hooks/useScrollCaretAboveKeyboard'
+import { attachmentRef } from '@/lib/attachment-ref'
 import { extractFileInfo, isAttachmentAllowed, readFileBytes } from '@/lib/file-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -73,11 +74,29 @@ function persistUnmount(
  * Validates MIME + size, reads the file to bytes, calls
  * `addAttachmentWithBytes` (PEND-76 F2 — backend is the sole writer), and
  * shows success/error toasts.
+ *
+ * Inline-image wiring (#1434): when a pasted/dropped file is an IMAGE and the
+ * block's editor is currently mounted (`rovingEditor`), the new attachment is
+ * also inserted as an INLINE image node — `![filename](attachment:<id>)` —
+ * referencing the attachment by id. The bytes never live in the markdown; only
+ * the ref does, and `GatedImage` resolves it back to the bytes at render time.
+ * Non-image files (and images dropped while no editor is mounted) keep the
+ * existing block-attachment behaviour.
  */
 /** Files smaller than this show no progress toast — the IPC round-trip is fast enough. */
 const ATTACH_PROGRESS_THRESHOLD_BYTES = 1_048_576 // 1 MB
 
-async function processFileAttachments(files: File[], blockId: string, t: TFunction): Promise<void> {
+/** Whether a file's resolved MIME type is an image (drives inline insertion). */
+function isImageMime(mimeType: string): boolean {
+  return mimeType.startsWith('image/')
+}
+
+async function processFileAttachments(
+  files: File[],
+  blockId: string,
+  t: TFunction,
+  rovingEditor: RovingEditorHandle,
+): Promise<void> {
   for (const file of files) {
     const info = extractFileInfo(file)
     const allowed = isAttachmentAllowed(info.mimeType, info.sizeBytes)
@@ -91,13 +110,26 @@ async function processFileAttachments(files: File[], blockId: string, t: TFuncti
       : undefined
     try {
       const bytes = await readFileBytes(file)
-      await addAttachmentWithBytes({
+      const row = await addAttachmentWithBytes({
         blockId,
         filename: info.filename,
         mimeType: info.mimeType,
         bytes,
       })
       if (progressToastId !== undefined) notify.dismiss(progressToastId)
+      // #1434 — an image becomes an INLINE image node referencing the attachment
+      // by id, but only while THIS block's editor is the mounted one (so the
+      // node lands in the doc the user is editing, not a stale/other block). A
+      // non-image, or an image dropped onto an unmounted block, stays a plain
+      // block attachment.
+      const editor = rovingEditor.editor
+      if (isImageMime(info.mimeType) && editor !== null && rovingEditor.activeBlockId === blockId) {
+        editor
+          .chain()
+          .focus()
+          .insertImage({ src: attachmentRef(row.id), alt: info.filename })
+          .run()
+      }
       notify.success(t('blockTree.attachedFileMessage', { filename: info.filename }))
     } catch (err) {
       if (progressToastId !== undefined) notify.dismiss(progressToastId)
@@ -307,7 +339,7 @@ function EditableBlockInner({
       setIsDragOver(false)
       const files = Array.from(e.dataTransfer.files)
       if (files.length === 0) return
-      await processFileAttachments(files, blockId, t)
+      await processFileAttachments(files, blockId, t, rovingEditorRef.current)
     },
     [blockId, t],
   )
@@ -317,7 +349,7 @@ function EditableBlockInner({
       const files = Array.from(e.clipboardData.files)
       if (files.length === 0) return // No files — let TipTap handle text paste
       e.preventDefault()
-      await processFileAttachments(files, blockId, t)
+      await processFileAttachments(files, blockId, t, rovingEditorRef.current)
     },
     [blockId, t],
   )
