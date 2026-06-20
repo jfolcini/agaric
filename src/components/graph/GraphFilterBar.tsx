@@ -31,6 +31,11 @@ import {
 } from '@/components/ui/select'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import {
+  canonicalToGraphFilters,
+  type FilterPredicate,
+  graphFiltersToCanonical,
+} from '@/lib/filters/model'
+import {
   GRAPH_STATUS_VALUES,
   type GraphFilter,
   type GraphFilterType,
@@ -56,7 +61,18 @@ export interface GraphFilterBarTag {
 /**
  * Read the persisted filter list from localStorage. Returns `null` when no
  * value is stored, when storage is unavailable (SSR), or when the stored value
- * fails to parse as a `GraphFilter[]`.
+ * fails to parse.
+ *
+ * Issue #1646 proof: the graph surface now persists its filters as CANONICAL
+ * `FilterPredicate[]` (the single cross-surface model) and projects them back
+ * to the surface-local `GraphFilter[]` on read via
+ * `canonicalToGraphFilters`. The canonical model is therefore the source of
+ * truth at the persistence boundary; `GraphView` / `applyGraphFilters` and the
+ * `GraphFilter[]` prop contract are unchanged.
+ *
+ * A legacy stored value (pre-migration `GraphFilter[]`, lacking a `kind`
+ * discriminant) is still accepted: it is read straight through as
+ * `GraphFilter[]`, then re-persisted in canonical form on the next write.
  */
 function readPersistedFilters(): GraphFilter[] | null {
   if (typeof window === 'undefined') return null
@@ -65,6 +81,13 @@ function readPersistedFilters(): GraphFilter[] | null {
     if (!raw) return null
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return null
+    // Canonical predicates carry a `kind` discriminant; legacy graph filters
+    // carry `type`. Detect and project canonical → graph; pass legacy through.
+    const looksCanonical = parsed.every(
+      (e): e is FilterPredicate =>
+        typeof e === 'object' && e !== null && 'kind' in e && typeof e.kind === 'string',
+    )
+    if (looksCanonical) return canonicalToGraphFilters(parsed as FilterPredicate[])
     return parsed as GraphFilter[]
   } catch (err) {
     logger.warn('GraphFilterBar', 'Failed to read persisted filters', { key: STORAGE_KEY }, err)
@@ -72,11 +95,16 @@ function readPersistedFilters(): GraphFilter[] | null {
   }
 }
 
-/** Write the current filter list to localStorage. No-ops on SSR / storage errors. */
+/**
+ * Write the current filter list to localStorage as canonical
+ * `FilterPredicate[]`. No-ops on SSR / storage errors. See
+ * `readPersistedFilters` for the round-trip contract.
+ */
 function writePersistedFilters(filters: GraphFilter[]): void {
   if (typeof window === 'undefined') return
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(filters))
+    const canonical = graphFiltersToCanonical(filters)
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(canonical))
   } catch (err) {
     logger.warn('GraphFilterBar', 'Failed to persist filters', { key: STORAGE_KEY }, err)
   }
