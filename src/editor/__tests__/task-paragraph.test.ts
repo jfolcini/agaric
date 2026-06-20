@@ -217,4 +217,42 @@ describe('TaskPaste handlePaste (#1481)', () => {
     const handled = paste(editor, '- [ ] task')
     expect(handled).toBe(false)
   })
+
+  it('does NOT wipe existing content on a caret paste into a non-empty block (#1514)', () => {
+    editor = build()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'keep me' }] }],
+    })
+    // Collapsed caret at the end of the existing text — not a selection.
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+    const handled = paste(editor, '- [ ] task')
+    // We decline; the default paste inserts the raw marker at the caret.
+    expect(handled).toBe(false)
+    // The pre-existing text MUST survive (no clobber).
+    expect(editor.state.doc.child(0).textContent).toBe('keep me')
+    expect(firstParagraph(editor.getJSON() as DocNode)?.attrs?.todoState).toBeFalsy()
+  })
+
+  it('does NOT take over a non-empty block when caret is mid-text (#1514)', () => {
+    editor = build()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello world' }] }],
+    })
+    // Caret between "hello" and " world".
+    editor.commands.setTextSelection(6)
+    const handled = paste(editor, '- [x] done')
+    expect(handled).toBe(false)
+    expect(editor.state.doc.child(0).textContent).toBe('hello world')
+  })
+
+  it('still takes over a genuinely empty block (no regression)', () => {
+    editor = build()
+    editor.commands.focus()
+    const handled = paste(editor, '- [ ] task')
+    expect(handled).toBe(true)
+    expect(firstParagraph(editor.getJSON() as DocNode)?.attrs?.todoState).toBe('TODO')
+    expect(editor.state.doc.child(0).textContent).toBe('task')
+  })
 })
