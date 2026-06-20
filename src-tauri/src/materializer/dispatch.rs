@@ -433,7 +433,10 @@ fn invalidations_for_op(
                 "page" => tasks.push(MaterializeTask::RebuildPagesCache),
                 _ => {}
             }
-            if !hint.block_id.is_empty() {
+            if hint.block_id.is_empty() {
+                // Defensive fallback: no block_id in payload → full rebuild.
+                tasks.push(MaterializeTask::RebuildPageIds);
+            } else {
                 let block_id: Arc<str> = Arc::from(hint.block_id.as_str());
                 tasks.push(MaterializeTask::UpdateFtsBlock {
                     block_id: Arc::clone(&block_id),
@@ -453,9 +456,6 @@ fn invalidations_for_op(
                 if hint.block_type != "page" {
                     tasks.push(MaterializeTask::SetBlockPageId { block_id });
                 }
-            } else {
-                // Defensive fallback: no block_id in payload → full rebuild.
-                tasks.push(MaterializeTask::RebuildPageIds);
             }
             tasks.push(MaterializeTask::RebuildTagInheritanceCache);
             tasks.push(MaterializeTask::RebuildProjectedAgendaCache);

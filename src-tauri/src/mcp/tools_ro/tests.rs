@@ -1572,7 +1572,7 @@ async fn journal_for_date_accepts_lowercase_space_id_694() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_rejects_oversized_tag_ids_vector_699() {
     let (tools, _mat, _dir) = mk_tools().await;
-    let tag_ids: Vec<String> = (0..SEARCH_FILTER_TERMS_CAP + 1)
+    let tag_ids: Vec<String> = (0..=SEARCH_FILTER_TERMS_CAP)
         .map(|i| format!("TAG{i}"))
         .collect();
     let err = tools
@@ -1603,7 +1603,7 @@ async fn search_rejects_oversized_tag_ids_vector_699() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_rejects_oversized_combined_filter_vectors_699() {
     let (tools, _mat, _dir) = mk_tools().await;
-    let half: Vec<String> = (0..(SEARCH_FILTER_TERMS_CAP / 2 + 1))
+    let half: Vec<String> = (0..=(SEARCH_FILTER_TERMS_CAP / 2))
         .map(|i| format!("S{i}"))
         .collect();
     let err = tools
@@ -1944,7 +1944,7 @@ async fn list_pages_cursor_pagination_roundtrip() {
             "page".into(),
             format!("P{i}"),
             None,
-            Some(i as i64 + 1),
+            Some(i64::from(i) + 1),
         )
         .await
         .unwrap();
@@ -2323,10 +2323,7 @@ async fn concurrent_clients_exact_success_count() {
     assert_eq!(
         total,
         CLIENTS * ITERS * TOOLS_PER_ITER,
-        "all {} × {} × {} calls must succeed",
-        CLIENTS,
-        ITERS,
-        TOOLS_PER_ITER,
+        "all {CLIENTS} × {ITERS} × {TOOLS_PER_ITER} calls must succeed",
     );
 
     // Shape check: at least one of the sampled list_pages responses

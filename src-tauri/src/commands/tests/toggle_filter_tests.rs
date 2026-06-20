@@ -300,7 +300,7 @@ async fn empty_query_with_regex_toggle_returns_empty() {
 
     let resp = search_blocks_inner(
         &pool,
-        "".into(),
+        String::new(),
         None,
         Some(20),
         filter_with(false, false, true),

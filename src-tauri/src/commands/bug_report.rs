@@ -2471,7 +2471,7 @@ mod tests {
             !out.contains("/home/alice"),
             "H-9a `$HOME` scrub must run on text fallback: {out}"
         );
-        assert!(out.contains("~"), "tilde replacement: {out}");
+        assert!(out.contains('~'), "tilde replacement: {out}");
     }
 
     /// H-9b — property test: random alphanumeric / PII-shaped strings
@@ -2606,7 +2606,7 @@ mod tests {
             !out.contains("/home/alice"),
             "$HOME scrub on text fallback line: {out}"
         );
-        assert!(out.contains("~"), "tilde marker present: {out}");
+        assert!(out.contains('~'), "tilde marker present: {out}");
     }
 
     /// Single-pass Aho-Corasick scrub on the text-fallback path must

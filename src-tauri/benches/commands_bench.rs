@@ -168,7 +168,7 @@ fn bench_create_block_content_type(c: &mut Criterion) {
                 .await
                 .unwrap()
             }
-        })
+        });
     });
 
     rt.block_on(async { materializer.shutdown() });
@@ -217,7 +217,7 @@ fn bench_create_block_with_parent(c: &mut Criterion) {
                 .await
                 .unwrap()
             }
-        })
+        });
     });
 
     rt.block_on(async { materializer.shutdown() });
@@ -246,7 +246,7 @@ fn bench_create_block_page_type(c: &mut Criterion) {
                 .await
                 .unwrap()
             }
-        })
+        });
     });
 
     rt.block_on(async { materializer.shutdown() });
@@ -287,7 +287,7 @@ fn bench_edit_block_small_content(c: &mut Criterion) {
                 .await
                 .unwrap()
             }
-        })
+        });
     });
 
     rt.block_on(async { materializer.shutdown() });
@@ -323,7 +323,7 @@ fn bench_edit_block_large_content(c: &mut Criterion) {
                 .await
                 .unwrap()
             }
-        })
+        });
     });
 
     rt.block_on(async { materializer.shutdown() });
@@ -358,7 +358,7 @@ fn bench_edit_block_sequential_10(c: &mut Criterion) {
                     .unwrap();
                 }
             }
-        })
+        });
     });
 
     rt.block_on(async { materializer.shutdown() });
@@ -396,7 +396,7 @@ fn bench_list_blocks_empty(c: &mut Criterion) {
                 .await
                 .unwrap()
             }
-        })
+        });
     });
 }
 
@@ -429,7 +429,7 @@ fn bench_list_blocks_10_items(c: &mut Criterion) {
                 .await
                 .unwrap()
             }
-        })
+        });
     });
 
     rt.block_on(async { materializer.shutdown() });
@@ -467,7 +467,7 @@ fn bench_list_blocks_100_items(c: &mut Criterion) {
                 .await
                 .unwrap()
             }
-        })
+        });
     });
 
     rt.block_on(async { materializer.shutdown() });
@@ -521,7 +521,7 @@ fn bench_list_blocks_paginate_10_of_100(c: &mut Criterion) {
                     .unwrap();
                 }
             }
-        })
+        });
     });
 
     rt.block_on(async { materializer.shutdown() });
@@ -544,7 +544,7 @@ fn bench_list_blocks_with_type_filter(c: &mut Criterion) {
                 "page".into(),
                 format!("Page {i}"),
                 None,
-                Some(100 + i as i64),
+                Some(100 + i64::from(i)),
             )
             .await
             .unwrap();
@@ -572,7 +572,7 @@ fn bench_list_blocks_with_type_filter(c: &mut Criterion) {
                 .await
                 .unwrap()
             }
-        })
+        });
     });
 
     rt.block_on(async { materializer.shutdown() });
@@ -655,7 +655,7 @@ fn bench_batch_resolve(c: &mut Criterion) {
                         .await
                         .unwrap()
                     }
-                })
+                });
             },
         );
 
@@ -734,7 +734,7 @@ fn bench_batch_properties(c: &mut Criterion) {
                     let ids: Vec<agaric_lib::ulid::BlockId> =
                         subset.clone().into_iter().map(Into::into).collect();
                     async move { get_batch_properties_inner(&pool, ids).await.unwrap() }
-                })
+                });
             },
         );
     }
@@ -778,7 +778,7 @@ fn bench_create_block_at_scale(c: &mut Criterion) {
                         .await
                         .unwrap()
                     }
-                })
+                });
             },
         );
 
@@ -818,7 +818,7 @@ fn bench_edit_block_at_scale(c: &mut Criterion) {
                         .await
                         .unwrap()
                     }
-                })
+                });
             },
         );
 
@@ -861,7 +861,7 @@ fn bench_list_blocks_at_scale(c: &mut Criterion) {
                         .await
                         .unwrap()
                     }
-                })
+                });
             },
         );
     }
@@ -891,7 +891,7 @@ fn bench_get_block(c: &mut Criterion) {
                     let pool = pool.clone();
                     let target_id = target_id.clone();
                     async move { get_block_inner(&pool, target_id.into()).await.unwrap() }
-                })
+                });
             },
         );
     }
@@ -943,7 +943,7 @@ fn bench_get_block_history(c: &mut Criterion) {
                             .await
                             .unwrap()
                     }
-                })
+                });
             },
         );
 

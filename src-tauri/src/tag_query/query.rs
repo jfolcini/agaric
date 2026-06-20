@@ -757,9 +757,9 @@ mod tests {
         // dynamic `sqlx::query` (not `query!`) so the EXPLAIN prefix
         // doesn't get type-checked against the offline cache.
         let rows = sqlx::query(
-            r#"EXPLAIN QUERY PLAN
+            r"EXPLAIN QUERY PLAN
                SELECT tag_id, name, usage_count, updated_at
-               FROM tags_cache WHERE name LIKE ?1 ESCAPE '\' ORDER BY name LIMIT ?2"#,
+               FROM tags_cache WHERE name LIKE ?1 ESCAPE '\' ORDER BY name LIMIT ?2",
         )
         .bind("a%")
         .bind(50_i64)
@@ -806,7 +806,7 @@ mod tests {
         // match — it is pushed off by the 25 uppercase siblings. This is the
         // pre-fix failure mode the splice repairs.
         let bare = sqlx::query_scalar::<_, String>(
-            r#"SELECT name FROM tags_cache WHERE name LIKE 'wip%' ESCAPE '\' ORDER BY name LIMIT 20"#,
+            r"SELECT name FROM tags_cache WHERE name LIKE 'wip%' ESCAPE '\' ORDER BY name LIMIT 20",
         )
         .fetch_all(&pool)
         .await
@@ -860,7 +860,7 @@ mod tests {
         // Sanity: the bare limit-3 page is the three uppercase siblings; the
         // exact match is off-page, so the splice path runs.
         let bare = sqlx::query_scalar::<_, String>(
-            r#"SELECT name FROM tags_cache WHERE name LIKE 'foo%' ESCAPE '\' ORDER BY name LIMIT 3"#,
+            r"SELECT name FROM tags_cache WHERE name LIKE 'foo%' ESCAPE '\' ORDER BY name LIMIT 3",
         )
         .fetch_all(&pool)
         .await

@@ -1049,7 +1049,7 @@ mod tests {
                     "offered blob_blake3 must hash the snapshot blob"
                 );
             }
-            other => panic!("expected SnapshotOffer, got {:?}", other),
+            other => panic!("expected SnapshotOffer, got {other:?}"),
         }
         client_conn
             .send_json(&SyncMessage::SnapshotAccept)
@@ -1164,7 +1164,7 @@ mod tests {
         let err = snapshot_covers_remote_heads(&snap_seqs, &heads_behind)
             .expect_err("seq=99 must not be covered by snapshot at seq=5");
         assert!(
-            err.contains("dev-B") && err.contains("99") && err.contains("5"),
+            err.contains("dev-B") && err.contains("99") && err.contains('5'),
             "error message must name the offending device and seqs, got {err:?}"
         );
 
@@ -1238,10 +1238,7 @@ mod tests {
                     " Error message must include the remote's claimed seq, got {message:?}"
                 );
             }
-            other => panic!(
-                "expected SyncMessage::Error for stale snapshot, got {:?}",
-                other
-            ),
+            other => panic!("expected SyncMessage::Error for stale snapshot, got {other:?}"),
         }
 
         let outcome = responder
@@ -1256,8 +1253,7 @@ mod tests {
                 );
             }
             other => panic!(
-                "expected OfferOutcome::SnapshotStale when snapshot is behind remote, got {:?}",
-                other
+                "expected OfferOutcome::SnapshotStale when snapshot is behind remote, got {other:?}"
             ),
         }
     }
@@ -1333,7 +1329,7 @@ mod tests {
                     "up_to_hash must be populated from decoded snapshot"
                 );
             }
-            other => panic!("expected Applied, got {:?}", other),
+            other => panic!("expected Applied, got {other:?}"),
         }
 
         // Verify the snapshot applied: the seeded block from the
@@ -1739,7 +1735,7 @@ mod tests {
                     "error message must mention the expected message type, got {msg:?}"
                 );
             }
-            other => panic!("expected InvalidOperation, got {:?}", other),
+            other => panic!("expected InvalidOperation, got {other:?}"),
         }
 
         server_task.await.unwrap();
@@ -1785,7 +1781,7 @@ mod tests {
                     "error message must include the peer's error text, got {msg:?}"
                 );
             }
-            other => panic!("expected InvalidOperation, got {:?}", other),
+            other => panic!("expected InvalidOperation, got {other:?}"),
         }
 
         server_task.await.unwrap();

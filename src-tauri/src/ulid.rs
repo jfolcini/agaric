@@ -70,7 +70,7 @@ impl BlockId {
     pub fn from_string(s: impl Into<String>) -> Result<Self, crate::error::AppError> {
         let s = s.into();
         let parsed = ulid::Ulid::from_str(&s)
-            .map_err(|e| crate::error::AppError::Ulid(format!("Invalid ULID '{}': {}", s, e)))?;
+            .map_err(|e| crate::error::AppError::Ulid(format!("Invalid ULID '{s}': {e}")))?;
         // Store the canonical uppercase form, not the original input
         Ok(Self(parsed.to_string()))
     }
@@ -432,13 +432,11 @@ pub async fn verify_active_in_tx(
     .fetch_optional(&mut *conn)
     .await?;
 
-    let row =
-        row.ok_or_else(|| AppError::NotFound(format!("block '{}' does not exist", id_str)))?;
+    let row = row.ok_or_else(|| AppError::NotFound(format!("block '{id_str}' does not exist")))?;
 
     if row.deleted_at.is_some() {
         return Err(AppError::Validation(format!(
-            "block '{}' has been soft-deleted",
-            id_str
+            "block '{id_str}' has been soft-deleted"
         )));
     }
 

@@ -2098,8 +2098,7 @@ async fn grouped_backlinks_empty_block_id_returns_error() {
 
     assert!(
         matches!(result, Err(AppError::Validation(_))),
-        "empty block_id must return Validation error, got {:?}",
-        result
+        "empty block_id must return Validation error, got {result:?}"
     );
 }
 
@@ -2373,9 +2372,9 @@ async fn grouped_backlinks_pagination() {
             DEV,
             &mat,
             "page".into(),
-            format!("Page{}", i),
+            format!("Page{i}"),
             None,
-            Some((i + 2) as i64),
+            Some(i64::from(i + 2)),
         )
         .await
         .unwrap();
@@ -2642,9 +2641,9 @@ async fn grouped_backlinks_with_source_page_include_filter() {
             DEV,
             &mat,
             "page".into(),
-            format!("Src{}", i),
+            format!("Src{i}"),
             None,
-            Some((i + 2) as i64),
+            Some(i64::from(i + 2)),
         )
         .await
         .unwrap();
@@ -2733,9 +2732,9 @@ async fn grouped_backlinks_with_source_page_exclude_filter() {
             DEV,
             &mat,
             "page".into(),
-            format!("Src{}", i),
+            format!("Src{i}"),
             None,
-            Some((i + 2) as i64),
+            Some(i64::from(i + 2)),
         )
         .await
         .unwrap();
@@ -2832,9 +2831,9 @@ async fn grouped_backlinks_with_source_page_include_and_exclude() {
             DEV,
             &mat,
             "page".into(),
-            format!("Src{}", i),
+            format!("Src{i}"),
             None,
-            Some((i + 2) as i64),
+            Some(i64::from(i + 2)),
         )
         .await
         .unwrap();

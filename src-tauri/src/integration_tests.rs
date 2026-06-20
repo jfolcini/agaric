@@ -357,7 +357,7 @@ async fn hash_chain_links_each_op_to_its_predecessor() {
             &mat,
             &format!("block {i}"),
             None,
-            Some((i + 1) as i64),
+            Some(i64::from(i + 1)),
         )
         .await;
     }
@@ -1018,7 +1018,7 @@ async fn list_excludes_soft_deleted_blocks_and_trash_shows_only_deleted() {
                 &mat,
                 &format!("block {i}"),
                 None,
-                Some((i + 1) as i64),
+                Some(i64::from(i + 1)),
             )
             .await
             .id,
@@ -1194,7 +1194,7 @@ async fn list_by_type_filters_to_matching_block_type() {
             &mat,
             &format!("content {i}"),
             None,
-            Some((i + 1) as i64),
+            Some(i64::from(i + 1)),
         )
         .await;
     }
@@ -1206,7 +1206,7 @@ async fn list_by_type_filters_to_matching_block_type() {
             TYPE_PAGE.into(),
             format!("page {i}"),
             None,
-            Some((10 + i) as i64),
+            Some(i64::from(10 + i)),
         )
         .await
         .unwrap();

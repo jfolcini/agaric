@@ -80,7 +80,7 @@ fn bench_save_draft(c: &mut Criterion) {
                     .await
                     .unwrap();
             }
-        })
+        });
     });
 
     rt.block_on(async { mat.shutdown() });
@@ -110,7 +110,7 @@ fn bench_save_draft_if_changed_write(c: &mut Criterion) {
                     .await
                     .unwrap();
             }
-        })
+        });
     });
 
     rt.block_on(async { mat.shutdown() });
@@ -136,7 +136,7 @@ fn bench_save_draft_if_changed_skip(c: &mut Criterion) {
                     .await
                     .unwrap();
             }
-        })
+        });
     });
 
     rt.block_on(async { mat.shutdown() });
@@ -172,7 +172,7 @@ fn bench_flush_draft(c: &mut Criterion) {
                     .await
                     .unwrap();
             }
-        })
+        });
     });
 
     rt.block_on(async { mat.shutdown() });
@@ -214,7 +214,7 @@ fn bench_save_draft_with_background_drafts(c: &mut Criterion) {
                             .await
                             .unwrap();
                     }
-                })
+                });
             },
         );
 
@@ -261,7 +261,7 @@ fn bench_flush_draft_with_background_drafts(c: &mut Criterion) {
                             .await
                             .unwrap();
                     }
-                })
+                });
             },
         );
 
@@ -310,7 +310,7 @@ fn bench_delete_draft(c: &mut Criterion) {
                         }
                         start.elapsed()
                     }
-                })
+                });
             },
         );
 
@@ -347,7 +347,7 @@ fn bench_list_drafts(c: &mut Criterion) {
                     async move {
                         list_drafts_inner(&pool).await.unwrap();
                     }
-                })
+                });
             },
         );
 

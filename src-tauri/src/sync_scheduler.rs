@@ -321,11 +321,11 @@ impl SyncScheduler {
         // Then keep waiting while notifications keep coming within the window.
         loop {
             tokio::select! {
-                _ = self.change_notify.notified() => {
+                () = self.change_notify.notified() => {
                     // Another change arrived — restart the window.
                     continue;
                 }
-                _ = tokio::time::sleep(self.debounce_window) => {
+                () = tokio::time::sleep(self.debounce_window) => {
                     // Quiet period elapsed — debounce complete.
                     break;
                 }
@@ -690,14 +690,12 @@ mod tests {
         // Should complete ~50ms after the LAST notification (debounce resets each time)
         assert!(
             elapsed >= Duration::from_millis(50),
-            "debounce should wait at least the full window after last notification, got {:?}",
-            elapsed
+            "debounce should wait at least the full window after last notification, got {elapsed:?}"
         );
         // And not too much longer (allow generous margin for CI)
         assert!(
             elapsed < Duration::from_millis(200),
-            "debounce should complete within reasonable time, got {:?}",
-            elapsed
+            "debounce should complete within reasonable time, got {elapsed:?}"
         );
     }
 

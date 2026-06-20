@@ -1008,7 +1008,7 @@ async fn bulk_seed_link_skew(pool: &SqlitePool, page_ids: &[String]) {
     let n = page_ids.len();
     // 1. One body block per page (multi-row INSERT, chunked).
     //    block_type='content', page_id = its page.
-    let body_id = |i: usize| format!("01BODY{:020}", i);
+    let body_id = |i: usize| format!("01BODY{i:020}");
     {
         // 6 columns/row → cap chunk at 150 rows (900 params < 999).
         for chunk in (0..n).collect::<Vec<_>>().chunks(150) {
@@ -1166,7 +1166,7 @@ async fn most_linked_perf_gate_20k_pages() {
     let seed_start = std::time::Instant::now();
     let mut page_ids: Vec<String> = Vec::with_capacity(n);
     for i in 0..n {
-        let pid = format!("01PAGE{:020}", i);
+        let pid = format!("01PAGE{i:020}");
         seed_page(&pool, &pid, &format!("p{i}")).await;
         page_ids.push(pid);
     }
@@ -1191,7 +1191,7 @@ async fn most_linked_perf_gate_20k_pages() {
             .unwrap();
         samples.push(start.elapsed().as_millis());
     }
-    samples.sort();
+    samples.sort_unstable();
     let median_ms = samples[samples.len() / 2];
     eprintln!("[ PERF] MostLinked @ 20k pages: samples={samples:?} median={median_ms} ms");
     // Soft assertion — acceptance criterion is "under
@@ -1234,7 +1234,7 @@ async fn recently_modified_perf_gate_20k_pages() {
     let seed_start = std::time::Instant::now();
     let mut page_ids: Vec<String> = Vec::with_capacity(n);
     for i in 0..n {
-        let pid = format!("01PAGE{:020}", i);
+        let pid = format!("01PAGE{i:020}");
         seed_page(&pool, &pid, &format!("p{i}")).await;
         page_ids.push(pid);
     }
@@ -1271,7 +1271,7 @@ async fn recently_modified_perf_gate_20k_pages() {
         .unwrap();
         samples.push(start.elapsed().as_millis());
     }
-    samples.sort();
+    samples.sort_unstable();
     let median_ms = samples[samples.len() / 2];
     eprintln!("[ PERF] RecentlyModified @ 20k pages: samples={samples:?} median={median_ms} ms");
     // Soft assertion — the un-materialised correlated MAX subquery is the
@@ -1311,7 +1311,7 @@ async fn filtered_query_perf_gate_20k_pages() {
     let seed_start = std::time::Instant::now();
     let mut page_ids: Vec<String> = Vec::with_capacity(n);
     for i in 0..n {
-        let pid = format!("01PAGE{:020}", i);
+        let pid = format!("01PAGE{i:020}");
         seed_page(&pool, &pid, &format!("p{i}")).await;
         page_ids.push(pid);
     }
@@ -1357,7 +1357,7 @@ async fn filtered_query_perf_gate_20k_pages() {
             .unwrap();
         samples.push(start.elapsed().as_millis());
     }
-    samples.sort();
+    samples.sort_unstable();
     let median_ms = samples[samples.len() / 2];
     eprintln!("[ PERF] Orphan+Tag filtered @ 20k pages: samples={samples:?} median={median_ms} ms");
     // Soft assertion — the filtered path also computes a `total_count` COUNT
@@ -1404,7 +1404,7 @@ async fn default_and_alphabetical_sort_perf_gate_20k_pages() {
     let seed_start = std::time::Instant::now();
     let mut page_ids: Vec<String> = Vec::with_capacity(n);
     for i in 0..n {
-        let pid = format!("01PAGE{:020}", i);
+        let pid = format!("01PAGE{i:020}");
         seed_page(&pool, &pid, &format!("p{i}")).await;
         page_ids.push(pid);
     }
@@ -1440,7 +1440,7 @@ async fn default_and_alphabetical_sort_perf_gate_20k_pages() {
                 .unwrap();
             samples.push(start.elapsed().as_millis());
         }
-        samples.sort();
+        samples.sort_unstable();
         let median_ms = samples[samples.len() / 2];
         eprintln!("[#424 PERF] {label} @ 20k pages: samples={samples:?} median={median_ms} ms");
         // Soft assertion. Both modes pay the temp B-tree + per-row EXISTS /
@@ -2633,7 +2633,7 @@ async fn last_edited_range_rejects_malformed_and_empty_dates() {
             PageSort::Alphabetical,
             vec![FilterPrimitive::LastEdited {
                 spec: LastEditedSpec::Range {
-                    start: "".to_string(),
+                    start: String::new(),
                     end: "2026-03-01".to_string(),
                 },
             }],

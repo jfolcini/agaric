@@ -807,7 +807,7 @@ async fn undo_chain_edit_round_trip() {
     let rev1 = compute_reverse(&pool, TEST_DEVICE, edit.seq).await.unwrap();
     match &rev1 {
         OpPayload::EditBlock(p) => assert_eq!(p.to_text, "original"),
-        other => panic!("Expected EditBlock, got {:?}", other),
+        other => panic!("Expected EditBlock, got {other:?}"),
     }
     let undo_op = append_op(&pool, rev1, 1_736_942_520_000).await;
     let rev2 = compute_reverse(&pool, TEST_DEVICE, undo_op.seq)
@@ -815,7 +815,7 @@ async fn undo_chain_edit_round_trip() {
         .unwrap();
     match &rev2 {
         OpPayload::EditBlock(p) => assert_eq!(p.to_text, "modified"),
-        other => panic!("Expected EditBlock, got {:?}", other),
+        other => panic!("Expected EditBlock, got {other:?}"),
     }
 }
 #[tokio::test]
@@ -853,7 +853,7 @@ async fn undo_chain_move_round_trip() {
             assert_eq!(p.new_parent_id, Some(BlockId::test_id("PAGE1")));
             assert_eq!(p.new_position, 0);
         }
-        other => panic!("Expected MoveBlock, got {:?}", other),
+        other => panic!("Expected MoveBlock, got {other:?}"),
     }
     let undo_op = append_op(&pool, rev1, 1_736_942_520_000).await;
     let rev2 = compute_reverse(&pool, TEST_DEVICE, undo_op.seq)
@@ -864,7 +864,7 @@ async fn undo_chain_move_round_trip() {
             assert_eq!(p.new_parent_id, Some(BlockId::test_id("PAGE2")));
             assert_eq!(p.new_position, 5);
         }
-        other => panic!("Expected MoveBlock, got {:?}", other),
+        other => panic!("Expected MoveBlock, got {other:?}"),
     }
 }
 #[tokio::test]
@@ -935,7 +935,7 @@ async fn reverse_set_property_value_num() {
     .await;
     match compute_reverse(&pool, TEST_DEVICE, set2.seq).await.unwrap() {
         OpPayload::SetProperty(p) => assert_eq!(p.value_num, Some(42.0)),
-        other => panic!("Expected SetProperty, got {:?}", other),
+        other => panic!("Expected SetProperty, got {other:?}"),
     }
 }
 #[tokio::test]
@@ -975,7 +975,7 @@ async fn reverse_set_property_value_date() {
     .await;
     match compute_reverse(&pool, TEST_DEVICE, set2.seq).await.unwrap() {
         OpPayload::SetProperty(p) => assert_eq!(p.value_date, Some("2025-06-15".into())),
-        other => panic!("Expected SetProperty, got {:?}", other),
+        other => panic!("Expected SetProperty, got {other:?}"),
     }
 }
 /// Regression: reversing a `set_property` whose prior op was a
@@ -1025,7 +1025,7 @@ async fn reverse_set_property_value_bool() {
             assert!(p.value_date.is_none());
             assert!(p.value_ref.is_none());
         }
-        other => panic!("Expected SetProperty, got {:?}", other),
+        other => panic!("Expected SetProperty, got {other:?}"),
     }
 }
 /// Regression: reversing a `delete_property` whose prior op was a
@@ -1059,7 +1059,7 @@ async fn reverse_delete_property_restores_value_bool() {
     .await;
     match compute_reverse(&pool, TEST_DEVICE, del.seq).await.unwrap() {
         OpPayload::SetProperty(p) => assert_eq!(p.value_bool, Some(true)),
-        other => panic!("Expected SetProperty, got {:?}", other),
+        other => panic!("Expected SetProperty, got {other:?}"),
     }
 }
 #[tokio::test]
@@ -1104,7 +1104,7 @@ async fn reverse_edit_same_timestamp_uses_seq_ordering() {
         .unwrap()
     {
         OpPayload::EditBlock(p) => assert_eq!(p.to_text, "v1"),
-        other => panic!("Expected EditBlock, got {:?}", other),
+        other => panic!("Expected EditBlock, got {other:?}"),
     }
 }
 #[tokio::test]
@@ -1177,7 +1177,7 @@ async fn reverse_delete_attachment_returns_add_attachment_with_metadata() {
             assert_eq!(p.attachment_id, "ATT_001");
             assert_eq!(p.block_id, "BLK_ATT");
         }
-        other => panic!("Expected AddAttachment, got {:?}", other),
+        other => panic!("Expected AddAttachment, got {other:?}"),
     }
 }
 #[tokio::test]
@@ -1223,7 +1223,7 @@ async fn reverse_delete_attachment_roundtrip() {
         .unwrap()
     {
         OpPayload::AddAttachment(p) => assert_eq!(p.attachment_id, "ATT_RT"),
-        other => panic!("Expected AddAttachment, got {:?}", other),
+        other => panic!("Expected AddAttachment, got {other:?}"),
     }
 }
 #[tokio::test]
@@ -1280,7 +1280,7 @@ async fn reverse_set_reserved_property_todo_state_with_prior() {
     .await;
     match compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap() {
         OpPayload::SetProperty(p) => assert_eq!(p.value_text, Some("TODO".into())),
-        other => panic!("Expected SetProperty, got {:?}", other),
+        other => panic!("Expected SetProperty, got {other:?}"),
     }
 }
 #[tokio::test]
@@ -1311,7 +1311,7 @@ async fn reverse_delete_reserved_property_todo_state() {
     .await;
     match compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap() {
         OpPayload::SetProperty(p) => assert_eq!(p.value_text, Some("DOING".into())),
-        other => panic!("Expected SetProperty, got {:?}", other),
+        other => panic!("Expected SetProperty, got {other:?}"),
     }
 }
 #[tokio::test]
@@ -1347,7 +1347,7 @@ async fn reverse_set_reserved_property_priority_with_prior() {
     .await;
     match compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap() {
         OpPayload::SetProperty(p) => assert_eq!(p.value_text, Some("A".into())),
-        other => panic!("Expected SetProperty, got {:?}", other),
+        other => panic!("Expected SetProperty, got {other:?}"),
     }
 }
 #[tokio::test]
@@ -1383,7 +1383,7 @@ async fn reverse_set_reserved_property_due_date_with_prior() {
     .await;
     match compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap() {
         OpPayload::SetProperty(p) => assert_eq!(p.value_text, Some("2025-06-15".into())),
-        other => panic!("Expected SetProperty, got {:?}", other),
+        other => panic!("Expected SetProperty, got {other:?}"),
     }
 }
 #[tokio::test]
@@ -1419,7 +1419,7 @@ async fn reverse_set_reserved_property_scheduled_date_with_prior() {
     .await;
     match compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap() {
         OpPayload::SetProperty(p) => assert_eq!(p.value_text, Some("2025-06-15".into())),
-        other => panic!("Expected SetProperty, got {:?}", other),
+        other => panic!("Expected SetProperty, got {other:?}"),
     }
 }
 

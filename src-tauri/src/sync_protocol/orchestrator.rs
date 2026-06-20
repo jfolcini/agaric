@@ -306,7 +306,7 @@ impl SyncOrchestrator {
         // Reject messages that don't match the current state.
         match (&self.state, &msg) {
             // Terminal states reject everything
-            (SyncState::Complete, _) | (SyncState::Failed(_), _) => {
+            (SyncState::Complete | SyncState::Failed(_), _) => {
                 return Err(AppError::InvalidOperation(format!(
                     "sync session already in terminal state {:?}, cannot handle {:?}",
                     self.state,
@@ -314,7 +314,7 @@ impl SyncOrchestrator {
                 )));
             }
             // Error and ResetRequired are always accepted (protocol signals)
-            (_, SyncMessage::Error { .. }) | (_, SyncMessage::ResetRequired { .. }) => {}
+            (_, SyncMessage::Error { .. } | SyncMessage::ResetRequired { .. }) => {}
             // HeadExchange only valid in Idle or ExchangingHeads
             (SyncState::Idle | SyncState::ExchangingHeads, SyncMessage::HeadExchange { .. }) => {}
             (_, SyncMessage::HeadExchange { .. }) => {
@@ -477,123 +477,119 @@ impl SyncOrchestrator {
                 {
                     use crate::sync_protocol::loro_sync::{self, ApplyOutcome};
 
-                    match self.loro_state() {
-                        Some(loro_state) => {
-                            self.state = SyncState::ApplyingOps;
-                            self.session.state = SyncState::ApplyingOps;
-                            self.emit(crate::sync_events::SyncEvent::Progress {
-                                state: crate::sync_events::sync_state_label(&self.state)
-                                    .to_string(),
-                                remote_device_id: self.session.remote_device_id.clone(),
-                                ops_received: self.session.ops_received,
-                                ops_sent: self.session.ops_sent,
-                            });
-                            let outcome = loro_sync::apply_remote(
-                                &self.pool,
-                                &loro_state.registry,
-                                &self.device_id,
-                                msg,
-                            )
-                            .await?;
-                            match outcome {
-                                ApplyOutcome::Imported {
-                                    changed_blocks,
-                                    changed_page_ids,
-                                    ..
-                                } => {
-                                    // #1071: accumulate the resolved page ids
-                                    // (deduped) across this session's inbound
-                                    // LoroSync messages so the terminal
-                                    // `SyncEvent::Complete` carries the full
-                                    // targeted-invalidation set. A space with
-                                    // many touched pages, or a multi-space
-                                    // session, contributes them all here.
-                                    for pid in changed_page_ids {
-                                        if !self.session.changed_page_ids.contains(&pid) {
-                                            self.session.changed_page_ids.push(pid);
-                                        }
-                                    }
-                                    // #705: this counts inbound LoroSync
-                                    // *messages* (one per space, each a full
-                                    // CRDT snapshot/update), not individual
-                                    // CRDT operations. The UI surfaces it as
-                                    // "Ops Received"; see the i18n tooltip,
-                                    // which is worded as "sync messages" to
-                                    // match this semantics.
-                                    self.session.ops_received =
-                                        self.session.ops_received.saturating_add(1);
-                                    // #4: `apply_remote` wrote the
-                                    // per-block SQL projection (core columns,
-                                    // properties incl. reserved hot-path columns,
-                                    // direct tag edges) and rebuilt
-                                    // `block_tag_inherited`, but NOT the read-path
-                                    // derived caches / FTS. Enqueue the global
-                                    // rebuild fan-out via the materializer
-                                    // (background, deduped). #421: FTS is driven
-                                    // from `changed_blocks` (targeted per-block
-                                    // reindex) instead of a full O(vault) rebuild.
-                                    // Non-fatal: a queue-closed error must not
-                                    // unwind the sync session — the projection
-                                    // already committed — so log + continue
-                                    // (mirrors `dispatch_background_or_warn`).
-                                    if let Err(e) = self
-                                        .materializer
-                                        .enqueue_inbound_sync_rebuilds(&changed_blocks)
-                                        .await
-                                    {
-                                        tracing::warn!(
-                                            device_id = %self.device_id,
-                                            error = %e,
-                                            "failed to enqueue inbound-sync cache rebuilds"
-                                        );
+                    if let Some(loro_state) = self.loro_state() {
+                        self.state = SyncState::ApplyingOps;
+                        self.session.state = SyncState::ApplyingOps;
+                        self.emit(crate::sync_events::SyncEvent::Progress {
+                            state: crate::sync_events::sync_state_label(&self.state).to_string(),
+                            remote_device_id: self.session.remote_device_id.clone(),
+                            ops_received: self.session.ops_received,
+                            ops_sent: self.session.ops_sent,
+                        });
+                        let outcome = loro_sync::apply_remote(
+                            &self.pool,
+                            &loro_state.registry,
+                            &self.device_id,
+                            msg,
+                        )
+                        .await?;
+                        match outcome {
+                            ApplyOutcome::Imported {
+                                changed_blocks,
+                                changed_page_ids,
+                                ..
+                            } => {
+                                // #1071: accumulate the resolved page ids
+                                // (deduped) across this session's inbound
+                                // LoroSync messages so the terminal
+                                // `SyncEvent::Complete` carries the full
+                                // targeted-invalidation set. A space with
+                                // many touched pages, or a multi-space
+                                // session, contributes them all here.
+                                for pid in changed_page_ids {
+                                    if !self.session.changed_page_ids.contains(&pid) {
+                                        self.session.changed_page_ids.push(pid);
                                     }
                                 }
-                                ApplyOutcome::SnapshotFallbackRequested { space_id, reason } => {
-                                    // The import was NOT
-                                    // attempted because the peer's
-                                    // `from_vv` is not reachable from
-                                    // our `oplog_vv()`.  Transition
-                                    // to ResetRequired and let the
-                                    // daemon layer drive snapshot
-                                    // catch-up via
-                                    // `sync_daemon::snapshot_transfer`.
-                                    let full_reason = format!(
-                                        "loro-sync update from_vv unreachable for space {space_id}: \
-                                         {reason}",
-                                        space_id = space_id.as_str(),
+                                // #705: this counts inbound LoroSync
+                                // *messages* (one per space, each a full
+                                // CRDT snapshot/update), not individual
+                                // CRDT operations. The UI surfaces it as
+                                // "Ops Received"; see the i18n tooltip,
+                                // which is worded as "sync messages" to
+                                // match this semantics.
+                                self.session.ops_received =
+                                    self.session.ops_received.saturating_add(1);
+                                // #4: `apply_remote` wrote the
+                                // per-block SQL projection (core columns,
+                                // properties incl. reserved hot-path columns,
+                                // direct tag edges) and rebuilt
+                                // `block_tag_inherited`, but NOT the read-path
+                                // derived caches / FTS. Enqueue the global
+                                // rebuild fan-out via the materializer
+                                // (background, deduped). #421: FTS is driven
+                                // from `changed_blocks` (targeted per-block
+                                // reindex) instead of a full O(vault) rebuild.
+                                // Non-fatal: a queue-closed error must not
+                                // unwind the sync session — the projection
+                                // already committed — so log + continue
+                                // (mirrors `dispatch_background_or_warn`).
+                                if let Err(e) = self
+                                    .materializer
+                                    .enqueue_inbound_sync_rebuilds(&changed_blocks)
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        device_id = %self.device_id,
+                                        error = %e,
+                                        "failed to enqueue inbound-sync cache rebuilds"
                                     );
-                                    self.state = SyncState::ResetRequired;
-                                    self.session.state = SyncState::ResetRequired;
-                                    self.emit(crate::sync_events::SyncEvent::Error {
-                                        message: full_reason.clone(),
-                                        remote_device_id: self.session.remote_device_id.clone(),
-                                    });
-                                    return Ok(Some(SyncMessage::ResetRequired {
-                                        reason: full_reason,
-                                    }));
                                 }
                             }
+                            ApplyOutcome::SnapshotFallbackRequested { space_id, reason } => {
+                                // The import was NOT
+                                // attempted because the peer's
+                                // `from_vv` is not reachable from
+                                // our `oplog_vv()`.  Transition
+                                // to ResetRequired and let the
+                                // daemon layer drive snapshot
+                                // catch-up via
+                                // `sync_daemon::snapshot_transfer`.
+                                let full_reason = format!(
+                                    "loro-sync update from_vv unreachable for space {space_id}: \
+                                     {reason}",
+                                    space_id = space_id.as_str(),
+                                );
+                                self.state = SyncState::ResetRequired;
+                                self.session.state = SyncState::ResetRequired;
+                                self.emit(crate::sync_events::SyncEvent::Error {
+                                    message: full_reason.clone(),
+                                    remote_device_id: self.session.remote_device_id.clone(),
+                                });
+                                return Ok(Some(SyncMessage::ResetRequired {
+                                    reason: full_reason,
+                                }));
+                            }
                         }
-                        None => {
-                            // #705: the registry must be initialised before
-                            // any session runs (init is synchronous and
-                            // pre-recovery in `lib.rs`), so this branch is
-                            // unreachable in production. If it is ever hit,
-                            // the payload cannot be imported — silently
-                            // dropping it and proceeding to `SyncComplete`
-                            // would fake convergence and let the responder
-                            // record a bogus `synced_at`. Fail the session
-                            // loudly instead.
-                            let msg_str = "loro: shared state not initialised; \
-                                           cannot import incoming LoroSync";
-                            self.state = SyncState::Failed(msg_str.into());
-                            self.session.state = self.state.clone();
-                            self.emit(crate::sync_events::SyncEvent::Error {
-                                message: msg_str.into(),
-                                remote_device_id: self.session.remote_device_id.clone(),
-                            });
-                            return Err(AppError::InvalidOperation(msg_str.into()));
-                        }
+                    } else {
+                        // #705: the registry must be initialised before
+                        // any session runs (init is synchronous and
+                        // pre-recovery in `lib.rs`), so this branch is
+                        // unreachable in production. If it is ever hit,
+                        // the payload cannot be imported — silently
+                        // dropping it and proceeding to `SyncComplete`
+                        // would fake convergence and let the responder
+                        // record a bogus `synced_at`. Fail the session
+                        // loudly instead.
+                        let msg_str = "loro: shared state not initialised; \
+                                       cannot import incoming LoroSync";
+                        self.state = SyncState::Failed(msg_str.into());
+                        self.session.state = self.state.clone();
+                        self.emit(crate::sync_events::SyncEvent::Error {
+                            message: msg_str.into(),
+                            remote_device_id: self.session.remote_device_id.clone(),
+                        });
+                        return Err(AppError::InvalidOperation(msg_str.into()));
                     }
                 }
 
@@ -866,16 +862,15 @@ impl SyncOrchestrator {
         // treat it as an empty registry — we still need to advance
         // the remote's state machine, just with zero ops sent.
         let loro_state_opt = self.loro_state();
-        let space_ids: Vec<crate::space::SpaceId> = match &loro_state_opt {
-            Some(s) => s.registry.space_ids(),
-            None => {
-                tracing::warn!(
-                    device_id = %self.device_id,
-                    "loro: shared state not initialised; \
-                     skipping LoroSync push (short-circuiting to SyncComplete)"
-                );
-                Vec::new()
-            }
+        let space_ids: Vec<crate::space::SpaceId> = if let Some(s) = &loro_state_opt {
+            s.registry.space_ids()
+        } else {
+            tracing::warn!(
+                device_id = %self.device_id,
+                "loro: shared state not initialised; \
+                 skipping LoroSync push (short-circuiting to SyncComplete)"
+            );
+            Vec::new()
         };
 
         // Empty-stream short-circuit. No registered spaces means there

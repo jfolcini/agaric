@@ -515,8 +515,7 @@ fn validate_property_value(
         && !is_valid_iso_date(date_str)
     {
         return Err(AppError::Validation(format!(
-            "Invalid date format: '{}'. Expected YYYY-MM-DD.",
-            date_str
+            "Invalid date format: '{date_str}'. Expected YYYY-MM-DD."
         )));
     }
 

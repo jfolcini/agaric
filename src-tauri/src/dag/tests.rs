@@ -1640,8 +1640,7 @@ async fn find_lca_detects_cycle_in_chain() {
 
     assert!(
         result.is_ok(),
-        "find_lca should not hang or error on cycle — it should break via visited set, got: {:?}",
-        result
+        "find_lca should not hang or error on cycle — it should break via visited set, got: {result:?}"
     );
     assert_eq!(
         result.unwrap(),
@@ -1699,8 +1698,7 @@ async fn find_lca_detects_self_loop() {
     let result = find_lca(&pool, &(DEV_A.into(), 2), &(DEV_B.into(), 1)).await;
     assert!(
         result.is_ok(),
-        "find_lca should not hang on self-loop, got: {:?}",
-        result
+        "find_lca should not hang on self-loop, got: {result:?}"
     );
     assert_eq!(
         result.unwrap(),

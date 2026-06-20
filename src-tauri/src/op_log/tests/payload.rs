@@ -386,7 +386,7 @@ fn parent_seqs_serialisation_byte_identical_to_format_macro_i_core_11() {
     let device_id = "00000000-0000-0000-0000-000000000001";
     let prev_seq: i64 = 42;
 
-    let legacy = format!(r#"[["{}",{}]]"#, device_id, prev_seq);
+    let legacy = format!(r#"[["{device_id}",{prev_seq}]]"#);
     let migrated = serde_json::to_string(&[(device_id.to_string(), prev_seq)]).unwrap();
 
     assert_eq!(

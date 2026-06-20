@@ -478,7 +478,7 @@ fn missing_attachment_is_cloneable_and_debuggable() {
     assert_eq!(clone.id, ma.id);
     assert_eq!(clone.fs_path, ma.fs_path);
     // Debug impl check
-    let debug = format!("{:?}", ma);
+    let debug = format!("{ma:?}");
     assert!(debug.contains("ATT1"));
 }
 
@@ -919,7 +919,7 @@ async fn protocol_hash_mismatch_no_ack_returns_err() {
     };
 
     let cancel_init = AtomicBool::new(false);
-    let (_, initiator_result) = tokio::join!(
+    let ((), initiator_result) = tokio::join!(
         server_side,
         request_and_receive_files(
             &mut client_conn,
@@ -1013,7 +1013,7 @@ async fn protocol_size_mismatch_no_ack_returns_err() {
     };
 
     let cancel_init = AtomicBool::new(false);
-    let (_, initiator_result) = tokio::join!(
+    let ((), initiator_result) = tokio::join!(
         server_side,
         request_and_receive_files(
             &mut client_conn,
@@ -1142,7 +1142,7 @@ async fn protocol_unknown_attachment_acks_and_round_continues() {
     };
 
     let cancel_init = AtomicBool::new(false);
-    let (_, initiator_result) = tokio::join!(
+    let ((), initiator_result) = tokio::join!(
         server_side,
         request_and_receive_files(
             &mut client_conn,
@@ -1280,7 +1280,7 @@ async fn protocol_temp_writer_reject_acks_and_round_continues() {
     };
 
     let cancel_init = AtomicBool::new(false);
-    let (_, initiator_result) = tokio::join!(
+    let ((), initiator_result) = tokio::join!(
         server_side,
         request_and_receive_files(
             &mut client_conn,

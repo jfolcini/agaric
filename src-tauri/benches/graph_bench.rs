@@ -111,7 +111,7 @@ fn bench_list_page_links(c: &mut Criterion) {
                             .await
                             .unwrap()
                     }
-                })
+                });
             },
         );
     }

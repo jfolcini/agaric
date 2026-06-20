@@ -261,7 +261,7 @@ pub trait ActivityEmitter: Send + Sync {
 /// handler pipeline.
 impl<T: ActivityEmitter + ?Sized> ActivityEmitter for Arc<T> {
     fn emit(&self, entry: &ActivityEntry) {
-        (**self).emit(entry)
+        (**self).emit(entry);
     }
 }
 
@@ -919,7 +919,7 @@ mod tests {
     fn activity_entry_serializes_without_agent_name_when_none() {
         let entry = ActivityEntry {
             tool_name: "search".to_string(),
-            summary: "".to_string(),
+            summary: String::new(),
             timestamp: Utc::now(),
             actor_kind: ActorKind::User,
             agent_name: None,
@@ -968,7 +968,7 @@ mod tests {
     fn activity_entry_omits_op_ref_when_none() {
         let entry = ActivityEntry {
             tool_name: "search".to_string(),
-            summary: "".to_string(),
+            summary: String::new(),
             timestamp: Utc::now(),
             actor_kind: ActorKind::Agent,
             agent_name: Some("claude".to_string()),

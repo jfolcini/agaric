@@ -74,7 +74,7 @@ impl SpaceId {
     pub fn from_string(s: impl Into<String>) -> Result<Self, AppError> {
         let s = s.into();
         let parsed = ulid::Ulid::from_str(&s)
-            .map_err(|e| AppError::Ulid(format!("Invalid space ULID '{}': {}", s, e)))?;
+            .map_err(|e| AppError::Ulid(format!("Invalid space ULID '{s}': {e}")))?;
         // Store the canonical uppercase form, not the original input —
         // mirrors `BlockId::from_string`. For ASCII Crockford base32 the
         // two forms coincide, but going through `parsed.to_string()`

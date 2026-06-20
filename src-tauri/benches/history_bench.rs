@@ -233,7 +233,7 @@ fn bench_list_page_history(c: &mut Criterion) {
                         .await
                         .unwrap()
                     }
-                })
+                });
             },
         );
     }
@@ -291,7 +291,7 @@ fn bench_revert_ops_50op(c: &mut Criterion) {
                             .await
                             .unwrap()
                     }
-                })
+                });
             },
         );
 
@@ -331,7 +331,7 @@ fn bench_undo_page_op(c: &mut Criterion) {
                             .await
                             .unwrap()
                     }
-                })
+                });
             },
         );
 
@@ -388,7 +388,7 @@ fn bench_redo_page_op(c: &mut Criterion) {
                         .await
                         .unwrap()
                     }
-                })
+                });
             },
         );
 

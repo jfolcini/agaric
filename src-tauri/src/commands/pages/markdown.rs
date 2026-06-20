@@ -906,23 +906,22 @@ pub async fn import_markdown_with_progress(
                 )
                 .fetch_optional(&mut **tx)
                 .await?;
-                match resolved {
-                    Some(id) => (None, None, None, Some(id), None),
-                    None => {
-                        // No same-space page/tag carries this title (it may
-                        // live in another space, or not exist). The value type
-                        // is declared `ref`, so we cannot persist the raw title
-                        // as a `ref` (no live target) NOR as `text` (the typed
-                        // def would reject text). Skip this single property with
-                        // a warning rather than abort the whole import — the
-                        // human-readable title is surfaced in the warning so it
-                        // is never silently lost.
-                        warnings.push(format!(
-                            "frontmatter ref property '{key}' could not resolve target \
-                             '{value}' to a page in this space; skipped"
-                        ));
-                        continue;
-                    }
+                if let Some(id) = resolved {
+                    (None, None, None, Some(id), None)
+                } else {
+                    // No same-space page/tag carries this title (it may
+                    // live in another space, or not exist). The value type
+                    // is declared `ref`, so we cannot persist the raw title
+                    // as a `ref` (no live target) NOR as `text` (the typed
+                    // def would reject text). Skip this single property with
+                    // a warning rather than abort the whole import — the
+                    // human-readable title is surfaced in the warning so it
+                    // is never silently lost.
+                    warnings.push(format!(
+                        "frontmatter ref property '{key}' could not resolve target \
+                         '{value}' to a page in this space; skipped"
+                    ));
+                    continue;
                 }
             } else {
                 crate::domain::block_ops::typed_property_args_for_registry_value(

@@ -249,15 +249,14 @@ async fn wait_for_pending_block_count_refreshes_returns_after_tasks_already_fini
         .load(AtomicOrdering::Acquire)
         != 0
     {
-        if tokio::time::Instant::now() >= deadline {
-            panic!(
-                "test precondition: refresh did not drain the counter within 5s \
-                 (last value: {})",
-                mat.block_count_test_hooks
-                    .pending_block_count_refreshes
-                    .load(AtomicOrdering::Acquire)
-            );
-        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "test precondition: refresh did not drain the counter within 5s \
+             (last value: {})",
+            mat.block_count_test_hooks
+                .pending_block_count_refreshes
+                .load(AtomicOrdering::Acquire)
+        );
         tokio::time::sleep(Duration::from_millis(1)).await;
     }
 

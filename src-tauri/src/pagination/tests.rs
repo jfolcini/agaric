@@ -3614,7 +3614,7 @@ async fn list_children_ifnull_oracle(
     };
 
     let rows = sqlx::query_as::<_, BlockRow>(
-        r#"SELECT id, block_type, content, parent_id, position,
+        r"SELECT id, block_type, content, parent_id, position,
                 deleted_at,
                  todo_state, priority, due_date, scheduled_date, page_id
          FROM blocks
@@ -3623,7 +3623,7 @@ async fn list_children_ifnull_oracle(
                 IFNULL(position, ?6) > ?3
                 OR (IFNULL(position, ?6) = ?3 AND id > ?4)))
          ORDER BY IFNULL(position, ?6) ASC, id ASC
-         LIMIT ?5"#,
+         LIMIT ?5",
     )
     .bind(parent_id)
     .bind(cursor_flag)
@@ -5089,7 +5089,7 @@ mod tests_p7 {
                     "page",
                     &format!("page {p_idx} in space {s_idx}"),
                     None,
-                    Some(p_idx as i64 + 1),
+                    Some(i64::from(p_idx) + 1),
                 )
                 .await;
                 assign_to_space(&pool, &page_id, space_id).await;
@@ -5113,7 +5113,7 @@ mod tests_p7 {
 
         // For every (page, space) pair: same-space succeeds, foreign-space fails.
         for (page_id, owning_space) in &all_pages {
-            for candidate_space in spaces.iter() {
+            for candidate_space in &spaces {
                 if candidate_space == owning_space {
                     // Same-space — both APIs must succeed.
                     let resolved = batch_resolve_inner(

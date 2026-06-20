@@ -1141,10 +1141,7 @@ mod tests {
                     &extracted,
                     Some((kind, id)) if *kind == expected_kind && id == GLOBAL_TASK_SENTINEL
                 ),
-                "global task {:?} must extract as ({:?}, '__GLOBAL__'); got {:?}",
-                task,
-                expected_kind,
-                extracted
+                "global task {task:?} must extract as ({expected_kind:?}, '__GLOBAL__'); got {extracted:?}"
             );
         }
 
@@ -1541,12 +1538,11 @@ mod tests {
             if pending_count(&pool).await.unwrap() == 0 {
                 break;
             }
-            if std::time::Instant::now() > deadline {
-                panic!(
-                    "issue #378: swept row must be cleared by the consumer's \
-                     durable-success path; row never cleared"
-                );
-            }
+            assert!(
+                std::time::Instant::now() <= deadline,
+                "issue #378: swept row must be cleared by the consumer's \
+                 durable-success path; row never cleared"
+            );
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
 

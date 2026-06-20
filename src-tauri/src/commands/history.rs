@@ -856,9 +856,8 @@ pub async fn redo_page_op_inner(
     // is session-scoped, so no live ref can point at one).
     if undo_row.is_undo == 0 {
         return Err(AppError::Validation(format!(
-            "redo target ({undo_device_id}, {undo_seq}) is a '{}' op that was not \
-             produced by undo — refusing to reverse a forward op via redo (#659)",
-            undo_op_type
+            "redo target ({undo_device_id}, {undo_seq}) is a '{undo_op_type}' op that was not \
+             produced by undo — refusing to reverse a forward op via redo (#659)"
         )));
     }
 
@@ -1028,7 +1027,7 @@ pub async fn find_undo_group_inner(
     // as i64)` defends against a future relaxation of that bound; the
     // `try_from(...).unwrap_or(i32::MAX)` form keeps clippy's
     // `cast_possible_truncation` lint quiet without an `#[allow]`.
-    let raw = count.unwrap_or(0).max(0).min(i32::MAX as i64);
+    let raw = count.unwrap_or(0).max(0).min(i64::from(i32::MAX));
     Ok(i32::try_from(raw).unwrap_or(i32::MAX))
 }
 

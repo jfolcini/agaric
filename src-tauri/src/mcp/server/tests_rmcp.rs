@@ -222,9 +222,8 @@ async fn disconnect_signal_drops_after_grace_period_when_call_hangs_l113() {
     let lower_bound = MCP_DISCONNECT_GRACE_PERIOD - Duration::from_millis(200);
     assert!(
         elapsed >= lower_bound,
-        "server task exited too quickly ({:?}); the grace-period \
+        "server task exited too quickly ({elapsed:?}); the grace-period \
          timeout arm must elapse before the stream is dropped",
-        elapsed,
     );
 }
 

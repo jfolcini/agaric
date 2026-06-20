@@ -615,7 +615,7 @@ mod tests {
         let suffix = std::str::from_utf8(&suffix).unwrap();
         let core = format!("{prefix}{suffix}");
         // Pad to 26 with leading zeros after the prefix.
-        format!("{:0>26}", core)
+        format!("{core:0>26}")
     }
 
     // ----- M-19a tests -----------------------------------------------------

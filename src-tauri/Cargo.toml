@@ -76,6 +76,26 @@ dbg_macro = "warn"
 todo = "warn"
 unimplemented = "warn"
 
+# Auto-fixable pedantic lints (every violation is machine-applicable via
+# `cargo clippy --fix`). Enabled as warn; pre-push/CI run `-D warnings`.
+uninlined_format_args = "warn"
+semicolon_if_nothing_returned = "warn"
+map_unwrap_or = "warn"
+cast_lossless = "warn"
+manual_string_new = "warn"
+single_match_else = "warn"
+needless_raw_string_hashes = "warn"
+range_plus_one = "warn"
+manual_assert = "warn"
+unnested_or_patterns = "warn"
+stable_sort_primitive = "warn"
+single_char_pattern = "warn"
+implicit_clone = "warn"
+bool_to_int_with_if = "warn"
+ignored_unit_patterns = "warn"
+explicit_iter_loop = "warn"
+if_not_else = "warn"
+
 [features]
 # Opt-in feature for end-to-end smoke tests that require the
 # `agaric-mcp` binary to be built first. CI enables this; local

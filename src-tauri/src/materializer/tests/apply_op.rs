@@ -303,7 +303,7 @@ async fn apply_op_unknown_op() {
     let mat = Materializer::new(pool.clone());
     mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(fake_op_record(
         "unknown_op",
-        r#"{}"#,
+        r"{}",
     ))))
     .await
     .unwrap();

@@ -758,7 +758,7 @@ mod tests {
             parent_id: None,
             position: None,
             index: None,
-            content: "".into(),
+            content: String::new(),
         });
         let json = serde_json::to_string(&p).unwrap();
         assert!(
@@ -969,8 +969,7 @@ mod tests {
             assert_eq!(
                 variant.as_str(),
                 serde_str,
-                "as_str() vs serde mismatch for {:?}",
-                variant
+                "as_str() vs serde mismatch for {variant:?}"
             );
         }
     }
@@ -981,8 +980,7 @@ mod tests {
             assert_eq!(
                 variant.to_string(),
                 variant.as_str(),
-                "Display vs as_str mismatch for {:?}",
-                variant
+                "Display vs as_str mismatch for {variant:?}"
             );
         }
     }
@@ -1174,7 +1172,7 @@ mod tests {
     fn empty_content_roundtrips_through_serde() {
         let payload = OpPayload::EditBlock(EditBlockPayload {
             block_id: BlockId::from_string(TEST_BID).unwrap(),
-            to_text: "".into(),
+            to_text: String::new(),
             prev_edit: None,
         });
         let json = serde_json::to_string(&payload).unwrap();
@@ -1516,7 +1514,7 @@ mod tests {
     fn validate_set_property_rejects_empty_key() {
         let p = SetPropertyPayload {
             block_id: BlockId::test_id("B1"),
-            key: "".into(),
+            key: String::new(),
             value_text: Some("v".into()),
             value_num: None,
             value_date: None,

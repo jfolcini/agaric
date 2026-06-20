@@ -25,8 +25,7 @@ pub(super) fn days_in_month(year: i32, month: u32) -> u32 {
         if month == 12 { 1 } else { month + 1 },
         1,
     )
-    .map(|d| d.pred_opt().unwrap().day())
-    .unwrap_or(28)
+    .map_or(28, |d| d.pred_opt().unwrap().day())
 }
 
 /// (b) — shift `base` by `n_months` months, clamping the resulting
@@ -42,9 +41,9 @@ fn shift_by_months(base: chrono::NaiveDate, n_months: i64) -> Option<chrono::Nai
     let month = base.month();
     let day = base.day();
 
-    let total_months = (year as i64)
+    let total_months = i64::from(year)
         .checked_mul(12)?
-        .checked_add(month as i64 - 1)?
+        .checked_add(i64::from(month) - 1)?
         .checked_add(n_months)?;
     let new_year_i64 = total_months.div_euclid(12);
     let new_month: u32 = u32::try_from(total_months.rem_euclid(12) + 1)

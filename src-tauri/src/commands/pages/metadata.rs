@@ -756,7 +756,7 @@ fn compile_pages_filters(
 /// outright (a `(inbound_link_count DESC)`-style materialised sort column) is
 /// the same gated schema promotion deferred above — revisit only if a future
 /// workload regresses past budget at 100k+ pages.
-const PAGES_METADATA_BASE_SELECT: &str = r#"SELECT
+const PAGES_METADATA_BASE_SELECT: &str = r"SELECT
                b.id, b.block_type, b.content, b.parent_id, b.position,
                b.deleted_at, b.todo_state, b.priority, b.due_date,
                b.scheduled_date, b.page_id,
@@ -782,7 +782,7 @@ const PAGES_METADATA_BASE_SELECT: &str = r#"SELECT
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
              AND b.space_id = ?1
-        "#;
+        ";
 
 /// Test-only accessor that composes the **real** first-page
 /// (no cursor) SQL `list_pages_with_metadata_inner` emits for the given

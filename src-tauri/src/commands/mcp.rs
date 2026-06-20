@@ -148,7 +148,7 @@ fn set_marker_enabled(
         );
     } else {
         match std::fs::remove_file(&marker_path) {
-            Ok(_) => {
+            Ok(()) => {
                 tracing::info!(
                     target: "mcp",
                     label = log_label,

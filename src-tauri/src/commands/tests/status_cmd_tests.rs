@@ -98,7 +98,7 @@ async fn get_status_total_ops_in_log_reflects_op_log_count() {
              VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind("dev-status")
-        .bind(i as i64)
+        .bind(i64::from(i))
         .bind(format!("hash-{i}"))
         .bind("create_block")
         .bind(r#"{"block_id":"BLK_S","block_type":"content","content":""}"#)

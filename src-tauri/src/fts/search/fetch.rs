@@ -137,7 +137,7 @@ pub(super) async fn fts_fetch_rows(
     // the dynamic filter builder.
     let content_select = content_select_expr(snippet_len);
     let mut sql = format!(
-        r#"SELECT b.id, b.block_type, {content_select}, b.parent_id, b.position,
+        r"SELECT b.id, b.block_type, {content_select}, b.parent_id, b.position,
                 b.deleted_at,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id,
@@ -149,7 +149,7 @@ pub(super) async fn fts_fetch_rows(
            AND b.deleted_at IS NULL
            AND (?2 IS NULL
                 OR fts.rank > ?3 + (1e-9 * MAX(1.0, ABS(?3)))
-                OR (ABS(fts.rank - ?3) <= (1e-9 * MAX(1.0, ABS(?3))) AND b.id > ?4))"#,
+                OR (ABS(fts.rank - ?3) <= (1e-9 * MAX(1.0, ABS(?3))) AND b.id > ?4))",
     );
 
     // M2 (#348) — `StructuralFilterBuilder` owns the dynamic fragment,
@@ -352,7 +352,7 @@ pub(super) async fn fts_fetch_rows(
         // signal; the code check is the redundant guard. Defence in
         // depth — both have to align.
         let is_fts5_parse_error = matches!(&e, sqlx::Error::Database(db) if {
-            let code_match = matches!(db.code().as_deref(), Some("1") | Some("SQLITE_ERROR"));
+            let code_match = matches!(db.code().as_deref(), Some("1" | "SQLITE_ERROR"));
             let prefix_match = db.message().starts_with("fts5: ");
             code_match && prefix_match
         });
@@ -382,7 +382,7 @@ pub(crate) fn fts_select_prefix_for_test(with_snippet: bool) -> String {
         "NULL as snippet"
     };
     format!(
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+        r"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id,
@@ -394,6 +394,6 @@ pub(crate) fn fts_select_prefix_for_test(with_snippet: bool) -> String {
            AND b.deleted_at IS NULL
            AND (?2 IS NULL
                 OR fts.rank > ?3 + (1e-9 * MAX(1.0, ABS(?3)))
-                OR (ABS(fts.rank - ?3) <= (1e-9 * MAX(1.0, ABS(?3))) AND b.id > ?4))"#,
+                OR (ABS(fts.rank - ?3) <= (1e-9 * MAX(1.0, ABS(?3))) AND b.id > ?4))",
     )
 }

@@ -713,7 +713,7 @@ fn bench_get_block(c: &mut Criterion) {
                 acc.record(elapsed, iters);
                 elapsed
             }
-        })
+        });
     });
     group.finish();
 
@@ -768,7 +768,7 @@ fn bench_get_properties(c: &mut Criterion) {
                 acc.record(elapsed, iters);
                 elapsed
             }
-        })
+        });
     });
     group.finish();
 
@@ -818,7 +818,7 @@ fn bench_list_blocks(c: &mut Criterion) {
                 acc.record(elapsed, iters);
                 elapsed
             }
-        })
+        });
     });
     group.finish();
 
@@ -888,7 +888,7 @@ fn bench_batch_resolve(c: &mut Criterion) {
                 acc.record(elapsed, iters);
                 elapsed
             }
-        })
+        });
     });
     group.finish();
 
@@ -936,7 +936,7 @@ fn bench_count_agenda_batch(c: &mut Criterion) {
                 acc.record(elapsed, iters);
                 elapsed
             }
-        })
+        });
     });
     group.finish();
 
@@ -986,7 +986,7 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
                 acc.record(elapsed, iters);
                 elapsed
             }
-        })
+        });
     });
     group.finish();
 
@@ -1031,7 +1031,7 @@ fn bench_export_page_markdown(c: &mut Criterion) {
                 acc.record(elapsed, iters);
                 elapsed
             }
-        })
+        });
     });
     group.finish();
 
@@ -1080,7 +1080,7 @@ fn bench_create_block(c: &mut Criterion) {
                     acc.record(elapsed, iters);
                     elapsed
                 }
-            })
+            });
         });
     }
     group.finish();
@@ -1156,7 +1156,7 @@ fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
                     acc.record(elapsed, iters);
                     elapsed
                 }
-            })
+            });
         });
     }
     group.finish();
@@ -1216,7 +1216,7 @@ fn bench_list_page_links(c: &mut Criterion) {
                 acc.record(elapsed, iters);
                 elapsed
             }
-        })
+        });
     });
     group.finish();
 
@@ -1267,7 +1267,7 @@ fn bench_list_projected_agenda(c: &mut Criterion) {
                 acc.record(elapsed, iters);
                 elapsed
             }
-        })
+        });
     });
     group.finish();
 

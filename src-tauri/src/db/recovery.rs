@@ -771,7 +771,7 @@ pub(crate) async fn recover_derived_state_from_op_log(
                     let value_bool = payload
                         .get("value_bool")
                         .and_then(serde_json::Value::as_bool)
-                        .map(|b| if b { 1i64 } else { 0i64 });
+                        .map(i64::from);
 
                     // A `SetProperty` with NO value set is an explicit *clear*
                     // (value = None) — the live projection represents a cleared

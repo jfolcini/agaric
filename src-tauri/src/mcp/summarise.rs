@@ -65,7 +65,7 @@ fn array_len(v: &Value, key: &str) -> Option<usize> {
 
 /// Length of `result` interpreted as a top-level JSON array.
 fn root_array_len(v: &Value) -> usize {
-    v.as_array().map(Vec::len).unwrap_or(0)
+    v.as_array().map_or(0, Vec::len)
 }
 
 /// `result["has_more"]` as a bool, defaulting to false.

@@ -252,7 +252,7 @@ fn bench_eval_tag_query_paginated(c: &mut Criterion) {
 /// Run the OLD recursive-CTE approach for a single tag and return the match count.
 async fn bench_cte_query(pool: &SqlitePool, tag_id: &str) -> i64 {
     sqlx::query_scalar::<_, i64>(
-        r#"
+        r"
         WITH RECURSIVE tagged_tree AS (
             SELECT bt.block_id AS id
             FROM block_tags bt
@@ -265,7 +265,7 @@ async fn bench_cte_query(pool: &SqlitePool, tag_id: &str) -> i64 {
             WHERE b.deleted_at IS NULL
         )
         SELECT COUNT(DISTINCT id) FROM tagged_tree
-        "#,
+        ",
     )
     .bind(tag_id)
     .fetch_one(pool)

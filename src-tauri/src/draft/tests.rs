@@ -784,7 +784,7 @@ async fn content_containing_json_like_strings() {
         r#"[1, 2, {"nested": true}]"#,
         r#"{"block_id": "fake", "op_type": "edit_block"}"#,
         r#"content with "quotes" and {braces}"#,
-        r#"null"#,
+        r"null",
     ];
 
     for (i, content) in json_like_contents.iter().enumerate() {

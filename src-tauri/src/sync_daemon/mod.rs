@@ -292,13 +292,13 @@ impl SyncDaemon {
                             break;
                         }
                     }
-                    _ = scheduler.wait_for_debounced_change() => {
+                    () = scheduler.wait_for_debounced_change() => {
                         // Likely a pair event; recheck immediately.
                         if peers_appeared(&pool).await {
                             break;
                         }
                     }
-                    _ = shutdown_notify_task.notified() => {
+                    () = shutdown_notify_task.notified() => {
                         tracing::info!("SyncDaemon shutdown received while dormant");
                         return;
                     }

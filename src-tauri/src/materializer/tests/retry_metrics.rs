@@ -408,12 +408,11 @@ async fn foreground_applyop_exhausted_persists_and_re_enqueues_on_boot() {
         if remaining == 0 {
             break;
         }
-        if std::time::Instant::now() > deadline {
-            panic!(
-                "issue #378: leased ApplyOp row must be cleared after the \
-                 re-enqueued task completes durably; row never cleared"
-            );
-        }
+        assert!(
+            std::time::Instant::now() <= deadline,
+            "issue #378: leased ApplyOp row must be cleared after the \
+             re-enqueued task completes durably; row never cleared"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 

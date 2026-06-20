@@ -84,7 +84,7 @@ fn bench_create_property_def(c: &mut Criterion) {
                         .await
                         .unwrap();
                     }
-                })
+                });
             },
         );
     }
@@ -128,7 +128,7 @@ fn bench_list_property_defs(c: &mut Criterion) {
                             "expected exactly {count} property definitions"
                         );
                     }
-                })
+                });
             },
         );
     }
@@ -172,7 +172,7 @@ fn bench_update_property_def_options(c: &mut Criterion) {
                         .await
                         .unwrap();
                     }
-                })
+                });
             },
         );
     }
@@ -237,7 +237,7 @@ fn bench_delete_property_def(c: &mut Criterion) {
                         }
                         start.elapsed()
                     }
-                })
+                });
             },
         );
     }

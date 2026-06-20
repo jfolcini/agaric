@@ -192,11 +192,7 @@ fn parse_service_event_returns_none_for_unhandled_kinds() {
 /// is recovered from the service fullname produced by `MdnsService::announce`.
 #[test]
 fn parse_service_event_returns_removed_for_service_removed() {
-    let fullname = format!(
-        "{name}_PEER42.{ty}",
-        name = MDNS_SERVICE_NAME,
-        ty = MDNS_SERVICE_TYPE,
-    );
+    let fullname = format!("{MDNS_SERVICE_NAME}_PEER42.{MDNS_SERVICE_TYPE}",);
     let event = mdns_sd::ServiceEvent::ServiceRemoved(MDNS_SERVICE_TYPE.into(), fullname);
     let parsed = parse_service_event(event).expect("ServiceRemoved must surface a Removed kind");
     match parsed {

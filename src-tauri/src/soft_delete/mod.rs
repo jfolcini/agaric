@@ -256,7 +256,7 @@ mod tests {
                 "content",
                 &format!("child {i}"),
                 Some("WROOT"),
-                Some(i as i64 + 1),
+                Some(i64::from(i) + 1),
             )
             .await;
         }

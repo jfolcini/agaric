@@ -1095,7 +1095,7 @@ mod n_way {
             // associativity+commutativity assertion. ---
             let reference = &ata[0];
             for (label, engines) in [("ring", &ring), ("star", &star)] {
-                for peer in engines.iter() {
+                for peer in engines {
                     for id in &all_ids {
                         if let Err(msg) = compare_block_reads(reference, peer, id) {
                             prop_assert!(false, "{label} vs all-to-all block divergence: {msg}");

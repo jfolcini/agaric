@@ -270,23 +270,20 @@ pub(crate) async fn handle_incoming_sync(
         // S-5: Acquire per-peer lock BEFORE reading/storing cert hash so
         // two devices that connect simultaneously after pairing cannot
         // race through the TOFU path and overwrite each other's hash.
-        let guard = match scheduler.try_lock_peer(&remote_id) {
-            Some(guard) => {
-                tracing::info!(peer_id = %remote_id, "responder locked peer for sync");
-                guard
-            }
-            None => {
-                tracing::info!(
-                    peer_id = %remote_id,
-                    "rejecting incoming sync: already syncing with this peer"
-                );
-                conn.send_json(&SyncMessage::Error {
-                    message: "peer is busy with another sync session".into(),
-                })
-                .await?;
-                let _ = conn.close().await;
-                return Ok(());
-            }
+        let guard = if let Some(guard) = scheduler.try_lock_peer(&remote_id) {
+            tracing::info!(peer_id = %remote_id, "responder locked peer for sync");
+            guard
+        } else {
+            tracing::info!(
+                peer_id = %remote_id,
+                "rejecting incoming sync: already syncing with this peer"
+            );
+            conn.send_json(&SyncMessage::Error {
+                message: "peer is busy with another sync session".into(),
+            })
+            .await?;
+            let _ = conn.close().await;
+            return Ok(());
         };
 
         // B-33: Verify TLS certificate hash matches stored cert_hash.
@@ -436,20 +433,17 @@ pub(crate) async fn handle_incoming_sync(
                 ))
             })??;
 
-        match response {
-            Some(resp) => {
-                super::wire::send_sync_message(&mut conn, &resp).await?;
-                // Drain any pending op batches (B-3)
-                while let Some(batch) = orch.next_message() {
-                    super::wire::send_sync_message(&mut conn, &batch).await?;
-                }
+        if let Some(resp) = response {
+            super::wire::send_sync_message(&mut conn, &resp).await?;
+            // Drain any pending op batches (B-3)
+            while let Some(batch) = orch.next_message() {
+                super::wire::send_sync_message(&mut conn, &batch).await?;
             }
-            None => {
-                let state = &orch.session().state;
-                if matches!(state, SyncState::Failed(_) | SyncState::ResetRequired) {
-                    tracing::warn!(state = ?state, "responder sync ended in non-complete state");
-                    break;
-                }
+        } else {
+            let state = &orch.session().state;
+            if matches!(state, SyncState::Failed(_) | SyncState::ResetRequired) {
+                tracing::warn!(state = ?state, "responder sync ended in non-complete state");
+                break;
             }
         }
     }

@@ -57,7 +57,7 @@ fn bench_append_single_op(c: &mut Criterion) {
                 });
                 append_local_op(&pool, "dev-bench", payload).await.unwrap();
             }
-        })
+        });
     });
 }
 
@@ -86,7 +86,7 @@ fn bench_append_batch_100(c: &mut Criterion) {
                     append_local_op(&pool, "dev-batch", payload).await.unwrap();
                 }
             }
-        })
+        });
     });
     group.finish();
 }
@@ -118,7 +118,7 @@ fn bench_append_varying_payload_size(c: &mut Criterion) {
                     });
                     append_local_op(&pool, "dev-size", payload).await.unwrap();
                 }
-            })
+            });
         });
     }
     group.finish();
@@ -153,7 +153,7 @@ fn bench_append_to_populated(c: &mut Criterion) {
                         });
                         append_local_op(&pool, "dev-pop", payload).await.unwrap();
                     }
-                })
+                });
             },
         );
     }

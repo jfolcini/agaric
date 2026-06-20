@@ -217,10 +217,10 @@ pub(super) async fn apply_move_block_sql_only(
 
     // #400: prefer the new-scheme 0-based `new_index` (as a 1-based position)
     // on this engine-less (test-only) path; else the legacy `new_position`.
-    let position = p
-        .new_index
-        .map(crate::pagination::index_to_provisional_position)
-        .unwrap_or(p.new_position);
+    let position = p.new_index.map_or(
+        p.new_position,
+        crate::pagination::index_to_provisional_position,
+    );
     // Synthesize the engine's read-back snapshot. `project_move_block_to_sql`
     // binds only `block_id` / `parent_id` / `position`; `block_type` / `content`
     // are inert placeholders it never reads.

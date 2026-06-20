@@ -137,7 +137,7 @@ fn bench_set_page_aliases(c: &mut Criterion) {
                             .await
                             .unwrap()
                     }
-                })
+                });
             },
         );
     }
@@ -168,7 +168,7 @@ fn bench_get_page_aliases(c: &mut Criterion) {
                     let pool = pool.clone();
                     let target_id = target_id.clone();
                     async move { get_page_aliases_inner(&pool, &target_id).await.unwrap() }
-                })
+                });
             },
         );
     }
@@ -210,7 +210,7 @@ fn bench_resolve_page_by_alias(c: &mut Criterion) {
                         .await
                         .unwrap()
                     }
-                })
+                });
             },
         );
     }

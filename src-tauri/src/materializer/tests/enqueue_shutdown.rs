@@ -167,12 +167,11 @@ async fn test_global_task_dropped_on_queue_full() {
         if row.is_some() {
             break;
         }
-        if std::time::Instant::now() > deadline {
-            panic!(
-                "dropped global RebuildPagesCache must be persisted to \
-                 materializer_retry_queue under '__GLOBAL__'; row never appeared"
-            );
-        }
+        assert!(
+            std::time::Instant::now() <= deadline,
+            "dropped global RebuildPagesCache must be persisted to \
+             materializer_retry_queue under '__GLOBAL__'; row never appeared"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
@@ -226,12 +225,11 @@ async fn test_per_block_task_dropped_on_queue_full() {
         if row.is_some() {
             break;
         }
-        if std::time::Instant::now() > deadline {
-            panic!(
-                "audit #423: dropped per-block UpdateFtsBlock must be persisted to \
-                 materializer_retry_queue keyed by its block_id; row never appeared"
-            );
-        }
+        assert!(
+            std::time::Instant::now() <= deadline,
+            "audit #423: dropped per-block UpdateFtsBlock must be persisted to \
+             materializer_retry_queue keyed by its block_id; row never appeared"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
@@ -298,12 +296,11 @@ async fn test_global_task_re_enqueued_after_backoff() {
         if remaining == 0 {
             break;
         }
-        if std::time::Instant::now() > deadline {
-            panic!(
-                "issue #378: swept row must be cleared after the re-enqueued \
-                 task completes durably; row never cleared"
-            );
-        }
+        assert!(
+            std::time::Instant::now() <= deadline,
+            "issue #378: swept row must be cleared after the re-enqueued \
+             task completes durably; row never cleared"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
@@ -420,9 +417,10 @@ async fn shutdown_aborts_in_flight_tasks_m12() {
     // generous on a multi-thread runtime; in practice this resolves
     // in <10 ms.
     while !dropped.load(AtomicOrdering::Acquire) {
-        if start.elapsed() > Duration::from_secs(1) {
-            panic!("shutdown() must abort in-flight tasks within 1s");
-        }
+        assert!(
+            start.elapsed() <= Duration::from_secs(1),
+            "shutdown() must abort in-flight tasks within 1s"
+        );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
@@ -531,12 +529,11 @@ async fn shutdown_cancels_in_flight_retry_attempt_665() {
     // in-flight attempt: its frame is dropped, setting the flag. 1s is
     // generous on a multi-thread runtime; in practice <10 ms.
     while !attempt_dropped.load(AtomicOrdering::Acquire) {
-        if start.elapsed() > Duration::from_secs(1) {
-            panic!(
-                "#665: shutdown() must cancel the in-flight retry attempt, \
-                 not detach it — attempt frame was never dropped within 1s"
-            );
-        }
+        assert!(
+            start.elapsed() <= Duration::from_secs(1),
+            "#665: shutdown() must cancel the in-flight retry attempt, \
+             not detach it — attempt frame was never dropped within 1s"
+        );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 

@@ -558,7 +558,7 @@ fn push_bind(val: &CursorValue, next_pos: &mut usize, binds: &mut Vec<Bind>) -> 
 /// message prefix. Used only on the full-text path's queries.
 fn map_fts_error(e: sqlx::Error) -> AppError {
     let is_fts5_parse_error = matches!(&e, sqlx::Error::Database(db) if {
-        let code_match = matches!(db.code().as_deref(), Some("1") | Some("SQLITE_ERROR"));
+        let code_match = matches!(db.code().as_deref(), Some("1" | "SQLITE_ERROR"));
         let prefix_match = db.message().starts_with("fts5: ");
         code_match && prefix_match
     });

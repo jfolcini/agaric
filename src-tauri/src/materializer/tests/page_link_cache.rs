@@ -36,7 +36,7 @@ async fn reindex_block_links_populates_page_link_cache() {
         .bind(&child_id)
         .bind(format!("link [[{page_b}]]"))
         .bind(page_a)
-        .bind(i as i64 + 1)
+        .bind(i64::from(i) + 1)
         .execute(&pool)
         .await
         .unwrap();

@@ -1007,7 +1007,7 @@ impl Projection for PagesProjection {
                 "last_edited Range bound must be a valid RFC 3339 timestamp \
                  (pre-validated by validate_last_edited_date), got: '{ts}'"
             );
-            parsed.map(|d| d.timestamp_millis()).unwrap_or(0)
+            parsed.map_or(0, |d| d.timestamp_millis())
         }
         match spec {
             LastEditedSpec::Rolling { days } => WhereClause::new(
@@ -1623,7 +1623,7 @@ mod tests {
         let older = p.compile(&FilterPrimitive::LastEdited {
             spec: LastEditedSpec::OlderThan { days: 30 },
         });
-        assert!(older.sql.contains("<"), "OlderThan must use `<` comparator");
+        assert!(older.sql.contains('<'), "OlderThan must use `<` comparator");
         assert_eq!(older.binds, vec![Bind::Text("-30 days".to_string())]);
     }
 
@@ -1758,7 +1758,7 @@ mod tests {
             spec: LastEditedSpec::OlderThan { days: 7 },
         });
         assert!(rolling.sql.contains(">="));
-        assert!(older.sql.contains("<"));
+        assert!(older.sql.contains('<'));
         // Both bind a "-7 days" sentinel.
         assert_eq!(rolling.binds, vec![Bind::Text("-7 days".to_string())]);
         assert_eq!(older.binds, vec![Bind::Text("-7 days".to_string())]);
@@ -2452,7 +2452,7 @@ mod explain_query_plan_tests {
             )
             .bind(&id)
             .bind(format!("p{i}"))
-            .bind(i as i64)
+            .bind(i64::from(i))
             .bind(&id)
             .bind(TEST_SPACE_ID)
             .execute(pool)

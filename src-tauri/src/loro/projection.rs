@@ -291,7 +291,7 @@ pub async fn project_set_property_to_sql(
         .execute(&mut *conn)
         .await?;
     } else {
-        let value_bool_int: Option<i64> = payload.value_bool.map(|b| b as i64);
+        let value_bool_int: Option<i64> = payload.value_bool.map(i64::from);
         let block_id = payload.block_id.as_str();
         // The `block_properties.exactly_one_value` CHECK (migration 0062)
         // forbids an all-NULL row. An all-None payload represents a cleared
@@ -680,71 +680,68 @@ pub async fn project_block_full_to_sql(
     block_id: &crate::ulid::BlockId,
     snapshot: Option<&crate::loro::engine::BlockSnapshot>,
 ) -> Result<(), AppError> {
-    match snapshot {
-        Some(snap) => {
-            let parent_id = snap.parent_id.as_deref();
-            // #533: space membership is the `blocks.space_id` column (never a
-            // `block_properties` row). Every block carried in space S's
-            // per-space Loro doc belongs to S, so stamp `space_id` from the
-            // doc's space on both insert and conflict-update — this is how a
-            // synced block gets its space (the per-op `space` projection only
-            // fires for the page that holds the `SetProperty(space)` op; the
-            // engine-reproject path must set it for EVERY block or synced
-            // blocks land NULL and vanish from space-filtered reads).
-            //
-            // Stamp conditionally via a subquery so it can never violate the
-            // `space_id REFERENCES spaces(id)` FK (#708, migration 0089): if
-            // the space isn't registered yet (cross-doc sync ordering — the
-            // space block and its `is_space` flag live outside this space's
-            // own doc), resolve to NULL rather than abort the inbound tx; a
-            // later import / rebuild reconciles once the space block (and
-            // its registering `is_space` property) arrives. `?6`/`?7` both
-            // bind the space id.
-            let space_id_str = space_id.as_str();
-            // #1324: a page block's `page_id` is `id` (the command path stamps
-            // it inline; the deferred `SetBlockPageId` materialize task is
-            // skipped for pages — see `materializer/dispatch.rs`). This
-            // engine-reproject path is the canonical sync-pull import, so
-            // without stamping it here a synced page lands with NULL `page_id`
-            // and is invisible to every `page_id`-scoped read (page listing,
-            // backlinks, subtree) until a full cache rebuild. Non-page blocks
-            // keep NULL on insert (the deferred task fills them); the conflict
-            // branch must NOT clobber a non-page block's already-resolved
-            // `page_id`, so it only overwrites for pages (`page_id = id`).
-            let page_id = (snap.block_type == "page").then_some(snap.block_id.as_str());
-            sqlx::query!(
-                "INSERT INTO blocks \
-                     (id, block_type, content, parent_id, position, space_id, page_id) \
-                 VALUES (?, ?, ?, ?, ?, (SELECT id FROM spaces WHERE id = ?), ?) \
-                 ON CONFLICT(id) DO UPDATE SET \
-                     block_type = excluded.block_type, \
-                     content = excluded.content, \
-                     parent_id = excluded.parent_id, \
-                     position = excluded.position, \
-                     space_id = (SELECT id FROM spaces WHERE id = ?), \
-                     page_id = CASE WHEN excluded.block_type = 'page' \
-                                    THEN excluded.id ELSE blocks.page_id END",
-                snap.block_id,
-                snap.block_type,
-                snap.content,
-                parent_id,
-                snap.position,
-                space_id_str,
-                page_id,
-                space_id_str,
-            )
-            .execute(&mut *conn)
-            .await?;
-            Ok(())
-        }
-        None => {
-            tracing::warn!(
-                space_id = %space_id.as_str(),
-                block_id = %block_id.as_str(),
-                "project_block_full_to_sql: engine has no record; skipping (defer to explicit purge op)"
-            );
-            Ok(())
-        }
+    if let Some(snap) = snapshot {
+        let parent_id = snap.parent_id.as_deref();
+        // #533: space membership is the `blocks.space_id` column (never a
+        // `block_properties` row). Every block carried in space S's
+        // per-space Loro doc belongs to S, so stamp `space_id` from the
+        // doc's space on both insert and conflict-update — this is how a
+        // synced block gets its space (the per-op `space` projection only
+        // fires for the page that holds the `SetProperty(space)` op; the
+        // engine-reproject path must set it for EVERY block or synced
+        // blocks land NULL and vanish from space-filtered reads).
+        //
+        // Stamp conditionally via a subquery so it can never violate the
+        // `space_id REFERENCES spaces(id)` FK (#708, migration 0089): if
+        // the space isn't registered yet (cross-doc sync ordering — the
+        // space block and its `is_space` flag live outside this space's
+        // own doc), resolve to NULL rather than abort the inbound tx; a
+        // later import / rebuild reconciles once the space block (and
+        // its registering `is_space` property) arrives. `?6`/`?7` both
+        // bind the space id.
+        let space_id_str = space_id.as_str();
+        // #1324: a page block's `page_id` is `id` (the command path stamps
+        // it inline; the deferred `SetBlockPageId` materialize task is
+        // skipped for pages — see `materializer/dispatch.rs`). This
+        // engine-reproject path is the canonical sync-pull import, so
+        // without stamping it here a synced page lands with NULL `page_id`
+        // and is invisible to every `page_id`-scoped read (page listing,
+        // backlinks, subtree) until a full cache rebuild. Non-page blocks
+        // keep NULL on insert (the deferred task fills them); the conflict
+        // branch must NOT clobber a non-page block's already-resolved
+        // `page_id`, so it only overwrites for pages (`page_id = id`).
+        let page_id = (snap.block_type == "page").then_some(snap.block_id.as_str());
+        sqlx::query!(
+            "INSERT INTO blocks \
+                 (id, block_type, content, parent_id, position, space_id, page_id) \
+             VALUES (?, ?, ?, ?, ?, (SELECT id FROM spaces WHERE id = ?), ?) \
+             ON CONFLICT(id) DO UPDATE SET \
+                 block_type = excluded.block_type, \
+                 content = excluded.content, \
+                 parent_id = excluded.parent_id, \
+                 position = excluded.position, \
+                 space_id = (SELECT id FROM spaces WHERE id = ?), \
+                 page_id = CASE WHEN excluded.block_type = 'page' \
+                                THEN excluded.id ELSE blocks.page_id END",
+            snap.block_id,
+            snap.block_type,
+            snap.content,
+            parent_id,
+            snap.position,
+            space_id_str,
+            page_id,
+            space_id_str,
+        )
+        .execute(&mut *conn)
+        .await?;
+        Ok(())
+    } else {
+        tracing::warn!(
+            space_id = %space_id.as_str(),
+            block_id = %block_id.as_str(),
+            "project_block_full_to_sql: engine has no record; skipping (defer to explicit purge op)"
+        );
+        Ok(())
     }
 }
 
@@ -1097,85 +1094,82 @@ pub async fn reproject_block_deleted_at_from_engine(
     block_id: &crate::ulid::BlockId,
     engine_deleted_at: Option<&str>,
 ) -> Result<(), AppError> {
-    match engine_deleted_at {
-        Some(ts) => {
-            // Cascade soft-delete the seed + active descendants at the
-            // engine's timestamp. Re-uses the local delete projection so
-            // the inbound-sync and local paths share one cascade shape.
-            // #109 Phase 2: the engine seed carries `deleted_at` as a
-            // serialized String slot; parse to i64 epoch-ms for the
-            // INTEGER `blocks.deleted_at` column.
-            //
-            // #668 defensive fallback: production writes epoch-ms decimal
-            // strings, but a pre-#109 doc could still hold an RFC-3339
-            // `deleted_at` slot. A strict i64-only parse hard-errors on
-            // such a slot, wedging inbound-sync reprojection on every
-            // retry. Self-heal instead: on i64 failure, try RFC-3339 and
-            // convert to epoch-ms. Only a value that is neither (genuine
-            // garbage) propagates the error.
-            let ts = match ts.parse::<i64>() {
-                Ok(ms) => ms,
-                Err(int_err) => match chrono::DateTime::parse_from_rfc3339(ts) {
-                    Ok(dt) => {
-                        let ms = dt.timestamp_millis();
-                        tracing::warn!(
-                            block_id = %block_id.as_str(),
-                            raw = %ts,
-                            epoch_ms = ms,
-                            "reproject_block_deleted_at_from_engine: legacy RFC-3339 \
-                             deleted_at slot; healed to epoch-ms (#668)",
-                        );
-                        ms
-                    }
-                    Err(rfc_err) => {
-                        return Err(AppError::Validation(format!(
-                            "engine deleted_at neither epoch-ms ({int_err}) nor \
-                             RFC-3339 ({rfc_err}): {ts:?}"
-                        )));
-                    }
-                },
-            };
-            project_delete_block_to_sql(conn, block_id.as_str(), ts).await?;
-        }
-        None => {
-            // The remote says this block is alive. Read SQL's current
-            // soft-delete state: nothing to do if it is already alive or
-            // absent.
-            let block_id_str = block_id.as_str();
-            let current: Option<Option<i64>> =
-                sqlx::query_scalar!("SELECT deleted_at FROM blocks WHERE id = ?", block_id_str)
-                    .fetch_optional(&mut *conn)
-                    .await?;
-            let Some(Some(deleted_at_ref)) = current else {
-                return Ok(());
-            };
+    if let Some(ts) = engine_deleted_at {
+        // Cascade soft-delete the seed + active descendants at the
+        // engine's timestamp. Re-uses the local delete projection so
+        // the inbound-sync and local paths share one cascade shape.
+        // #109 Phase 2: the engine seed carries `deleted_at` as a
+        // serialized String slot; parse to i64 epoch-ms for the
+        // INTEGER `blocks.deleted_at` column.
+        //
+        // #668 defensive fallback: production writes epoch-ms decimal
+        // strings, but a pre-#109 doc could still hold an RFC-3339
+        // `deleted_at` slot. A strict i64-only parse hard-errors on
+        // such a slot, wedging inbound-sync reprojection on every
+        // retry. Self-heal instead: on i64 failure, try RFC-3339 and
+        // convert to epoch-ms. Only a value that is neither (genuine
+        // garbage) propagates the error.
+        let ts = match ts.parse::<i64>() {
+            Ok(ms) => ms,
+            Err(int_err) => match chrono::DateTime::parse_from_rfc3339(ts) {
+                Ok(dt) => {
+                    let ms = dt.timestamp_millis();
+                    tracing::warn!(
+                        block_id = %block_id.as_str(),
+                        raw = %ts,
+                        epoch_ms = ms,
+                        "reproject_block_deleted_at_from_engine: legacy RFC-3339 \
+                         deleted_at slot; healed to epoch-ms (#668)",
+                    );
+                    ms
+                }
+                Err(rfc_err) => {
+                    return Err(AppError::Validation(format!(
+                        "engine deleted_at neither epoch-ms ({int_err}) nor \
+                         RFC-3339 ({rfc_err}): {ts:?}"
+                    )));
+                }
+            },
+        };
+        project_delete_block_to_sql(conn, block_id.as_str(), ts).await?;
+    } else {
+        // The remote says this block is alive. Read SQL's current
+        // soft-delete state: nothing to do if it is already alive or
+        // absent.
+        let block_id_str = block_id.as_str();
+        let current: Option<Option<i64>> =
+            sqlx::query_scalar!("SELECT deleted_at FROM blocks WHERE id = ?", block_id_str)
+                .fetch_optional(&mut *conn)
+                .await?;
+        let Some(Some(deleted_at_ref)) = current else {
+            return Ok(());
+        };
 
-            // Resurrection guard: only a genuine delete seed (no
-            // soft-deleted ancestor) is a restore target. A block under a
-            // still-deleted ancestor must stay deleted — the engine marks
-            // only the seed, so its `None` here means "descendant of a
-            // live cohort", not "restore me". `ancestors_cte_standard!()`
-            // emits the seed at depth 0; the `a.depth > 0` filter
-            // restricts the check to strict ancestors.
-            let has_deleted_ancestor: bool = sqlx::query_scalar(concat!(
-                crate::ancestors_cte_standard!(),
-                "SELECT EXISTS( \
-                     SELECT 1 FROM ancestors a \
-                     JOIN blocks b ON b.id = a.id \
-                     WHERE a.depth > 0 AND b.deleted_at IS NOT NULL \
-                 )",
-            ))
-            .bind(block_id.as_str())
-            .fetch_one(&mut *conn)
-            .await?;
-            if has_deleted_ancestor {
-                return Ok(());
-            }
-
-            // Genuine seed restore: clear the cohort (seed + descendants
-            // soft-deleted at the same timestamp).
-            project_restore_block_to_sql(conn, block_id.as_str(), deleted_at_ref).await?;
+        // Resurrection guard: only a genuine delete seed (no
+        // soft-deleted ancestor) is a restore target. A block under a
+        // still-deleted ancestor must stay deleted — the engine marks
+        // only the seed, so its `None` here means "descendant of a
+        // live cohort", not "restore me". `ancestors_cte_standard!()`
+        // emits the seed at depth 0; the `a.depth > 0` filter
+        // restricts the check to strict ancestors.
+        let has_deleted_ancestor: bool = sqlx::query_scalar(concat!(
+            crate::ancestors_cte_standard!(),
+            "SELECT EXISTS( \
+                 SELECT 1 FROM ancestors a \
+                 JOIN blocks b ON b.id = a.id \
+                 WHERE a.depth > 0 AND b.deleted_at IS NOT NULL \
+             )",
+        ))
+        .bind(block_id.as_str())
+        .fetch_one(&mut *conn)
+        .await?;
+        if has_deleted_ancestor {
+            return Ok(());
         }
+
+        // Genuine seed restore: clear the cohort (seed + descendants
+        // soft-deleted at the same timestamp).
+        project_restore_block_to_sql(conn, block_id.as_str(), deleted_at_ref).await?;
     }
     Ok(())
 }

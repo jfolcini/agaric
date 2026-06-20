@@ -468,7 +468,7 @@ mod tests {
             SyncEvent::Progress { state, .. } => {
                 assert_eq!(state, "exchanging_heads", "first event state mismatch");
             }
-            other => panic!("expected Progress, got {:?}", other),
+            other => panic!("expected Progress, got {other:?}"),
         }
 
         // Second event: Progress with streaming_ops
@@ -476,7 +476,7 @@ mod tests {
             SyncEvent::Progress { state, .. } => {
                 assert_eq!(state, "streaming_ops", "second event state mismatch");
             }
-            other => panic!("expected Progress, got {:?}", other),
+            other => panic!("expected Progress, got {other:?}"),
         }
 
         // Third event: Complete
@@ -489,7 +489,7 @@ mod tests {
                 assert_eq!(*ops_received, 5, "complete ops_received mismatch");
                 assert_eq!(*ops_sent, 3, "complete ops_sent mismatch");
             }
-            other => panic!("expected Complete, got {:?}", other),
+            other => panic!("expected Complete, got {other:?}"),
         }
     }
 
@@ -619,7 +619,9 @@ mod tests {
 
     #[test]
     fn sync_event_mdns_disabled_empty_reason() {
-        let event = SyncEvent::MdnsDisabled { reason: "".into() };
+        let event = SyncEvent::MdnsDisabled {
+            reason: String::new(),
+        };
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["type"], "mdns_disabled");
         assert_eq!(json["reason"], "");
@@ -669,7 +671,7 @@ mod tests {
                 assert_eq!(*ops_received, 1);
                 assert_eq!(*ops_sent, 2);
             }
-            other => panic!("expected Progress, got {:?}", other),
+            other => panic!("expected Progress, got {other:?}"),
         }
     }
 
@@ -695,7 +697,7 @@ mod tests {
     #[test]
     fn sync_event_error_with_empty_message() {
         let event = SyncEvent::Error {
-            message: "".into(),
+            message: String::new(),
             remote_device_id: "DEV_EMPTY".into(),
         };
         let json = serde_json::to_value(&event).unwrap();

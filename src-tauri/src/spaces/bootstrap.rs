@@ -837,8 +837,7 @@ pub async fn migrate_orphan_tags_to_space(
 
         let target_space = majority_space
             .get(tag_id.as_str())
-            .map(String::as_str)
-            .unwrap_or(SPACE_PERSONAL_ULID);
+            .map_or(SPACE_PERSONAL_ULID, String::as_str);
 
         // Step 3 — emit a SetProperty op assigning this tag to the
         // chosen space. The op flows through the normal pipeline so

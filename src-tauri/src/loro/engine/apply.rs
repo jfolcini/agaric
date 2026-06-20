@@ -269,8 +269,7 @@ impl LoroEngine {
         let len = content_text.len_unicode();
         if range_start
             .checked_add(range_len)
-            .map(|end| end > len)
-            .unwrap_or(true)
+            .is_none_or(|end| end > len)
         {
             return Err(AppError::Validation(format!(
                 "loro: edit content block {block_id} range {range_start}+{range_len} \
@@ -401,12 +400,11 @@ impl LoroEngine {
     ) -> Option<TreeParentId> {
         match new_parent_id {
             None => Some(TreeParentId::Root),
-            Some(pid) => match self.node_for(pid) {
-                Some(parent_node) => {
+            Some(pid) => {
+                if let Some(parent_node) = self.node_for(pid) {
                     self.pending_parent.remove(block_id);
                     Some(TreeParentId::Node(parent_node))
-                }
-                None => {
+                } else {
                     self.pending_parent
                         .insert(block_id.to_string(), pid.to_string());
                     tracing::warn!(
@@ -415,7 +413,7 @@ impl LoroEngine {
                     );
                     None
                 }
-            },
+            }
         }
     }
     /// Shared move implementation: place `node` at `slot` under `target` via
