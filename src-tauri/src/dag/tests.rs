@@ -365,6 +365,98 @@ async fn insert_remote_op_with_parent_seqs() {
     assert_eq!(fetched.parent_seqs, parent_seqs);
 }
 
+/// #1552 — `parse_parent_seqs_canonical` re-sorts the parsed `Vec` into the
+/// writer's canonical lexicographic order regardless of the on-disk byte
+/// order, and leaves an already-canonical array untouched.
+///
+/// A peer running older/bugged writer code can land a hash-valid but
+/// non-canonically-ordered `parent_seqs` array (the hash is recomputed over
+/// the stored string, so any self-consistent ordering verifies). Readers
+/// must not inherit that ordering — they canonicalize on read.
+#[test]
+fn parse_parent_seqs_canonical_sorts_non_canonical_order() {
+    // Stored bytes are NON-canonical: device-B before device-A.
+    let non_canonical = r#"[["device-B",2],["device-A",1]]"#;
+    let parsed = parse_parent_seqs_canonical(non_canonical).unwrap();
+    assert_eq!(
+        parsed,
+        vec![("device-A".to_owned(), 1), ("device-B".to_owned(), 2)],
+        "non-canonical stored order must be re-sorted to canonical order on read"
+    );
+
+    // Already-canonical input round-trips unchanged.
+    let canonical = r#"[["device-A",1],["device-B",2]]"#;
+    let parsed_canonical = parse_parent_seqs_canonical(canonical).unwrap();
+    assert_eq!(
+        parsed_canonical,
+        vec![("device-A".to_owned(), 1), ("device-B".to_owned(), 2)],
+        "already-canonical input must be unchanged"
+    );
+
+    // Both orderings canonicalize to the same Vec — the read-side invariant.
+    assert_eq!(parsed, parsed_canonical);
+}
+
+/// #1552 — a remote merge op whose `parent_seqs` is hash-valid but stored
+/// in NON-canonical order lands successfully (its stored bytes are preserved
+/// verbatim so the hash stays valid), yet canonicalizing the fetched row on
+/// read yields the writer's canonical order. Proves storage is left
+/// untouched while readers see a deterministic ordering.
+#[tokio::test]
+async fn insert_remote_op_preserves_bytes_but_canonicalizes_on_read() {
+    let (pool, _dir) = test_pool().await;
+
+    // Land two genesis parents so the existence check resolves.
+    let pa = make_remote_record(
+        DEV_A,
+        1,
+        None,
+        "create_block",
+        r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"a"}"#,
+    );
+    let pb = make_remote_record(
+        DEV_B,
+        2,
+        None,
+        "create_block",
+        r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"b"}"#,
+    );
+    insert_remote_op(&pool, &pa).await.unwrap();
+    insert_remote_op(&pool, &pb).await.unwrap();
+
+    // A merge op with parent_seqs stored in NON-canonical order (B before A).
+    // make_remote_record hashes over this exact string, so the row is
+    // hash-valid despite the non-canonical ordering.
+    let non_canonical = r#"[["device-B",2],["device-A",1]]"#.to_owned();
+    let merge = make_remote_record(
+        DEV_A,
+        2,
+        Some(non_canonical.clone()),
+        "edit_block",
+        r#"{"block_id":"B1","to_text":"merge","prev_edit":["device-A",1]}"#,
+    );
+    insert_remote_op(&pool, &merge).await.unwrap();
+
+    // The stored bytes are preserved verbatim — re-sorting them would have
+    // broken the hash chain.
+    let fetched = get_op_by_seq(&ReadPool(pool.clone()), DEV_A, 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        fetched.parent_seqs,
+        Some(non_canonical),
+        "stored parent_seqs bytes must be preserved verbatim (hash validity)"
+    );
+
+    // But canonicalizing on read yields the writer's canonical order.
+    let canonical = parse_parent_seqs_canonical(fetched.parent_seqs.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        canonical,
+        vec![(DEV_A.to_owned(), 1), (DEV_B.to_owned(), 2)],
+        "reader must canonicalize the parsed parent_seqs to lexicographic order"
+    );
+}
+
 /// M-5: an op whose `parent_seqs` references a `(device_id, seq)` that
 /// has not yet landed in the op_log must be rejected with
 /// `AppError::InvalidOperation("dag.parent_seqs.unresolved")`.

@@ -24,6 +24,7 @@
 use serde_json::Value;
 use sqlx::SqlitePool;
 
+use crate::db::CommandTx;
 use crate::error::AppError;
 
 /// Convert a serde-json deserialization error into an
@@ -112,11 +113,38 @@ pub(crate) fn normalize_ulid_arg(s: &str) -> String {
 ///   space, or has a NULL `space_id` / no owning page at all (e.g. the
 ///   caller passed a tag block ID, or a corrupted page that escaped the
 ///   BUG-1 / H-3a IPC tightening).
+///
+/// # TOCTOU — transactional read on the writer path (#1544)
+///
+/// The authorization SELECT runs inside a `BEGIN IMMEDIATE` transaction
+/// (via [`CommandTx`]) rather than as an autocommit `fetch_optional` on a
+/// pooled connection. `BEGIN IMMEDIATE` takes SQLite's write lock, so this
+/// read is serialized against every other writer — including a concurrent
+/// space-membership mutation (a move-block / delete-page that would change
+/// `COALESCE(b.space_id, pg.space_id)`). It therefore evaluates the
+/// authorization decision on the same serialized writer snapshot the
+/// subsequent `*_inner` `BEGIN IMMEDIATE` write will see, rather than on an
+/// arbitrary read snapshot that could pre-date a membership change. This
+/// mirrors `journal.rs`, which performs its space check inside the write tx
+/// for the same TOCTOU reason (see `create_daily_page_in_space_inner`).
+///
+/// The transaction is read-only and is always rolled back: the guard never
+/// mutates state, it only needs the writer-lock serialization for its read.
+/// The residual gap (the guard tx commits/rolls back before `*_inner` opens
+/// its own tx) cannot be closed without threading a single tx through the
+/// `*_inner` write, which is out of this guard's module boundary; under the
+/// app's single-writer model it is not reachable in practice.
 pub(crate) async fn validate_block_in_space(
     pool: &SqlitePool,
     block_id: &str,
     space_id: &str,
 ) -> Result<(), AppError> {
+    // #1544: take the writer lock for the authorization read so the check
+    // is serialized against concurrent space-membership writes, mirroring
+    // journal.rs's in-tx space check. Rolled back unconditionally below —
+    // this guard is read-only.
+    let mut tx = CommandTx::begin_immediate(pool, "validate_block_in_space").await?;
+
     // #1666: the compile-time-checked `query_scalar!` macro is used so a
     // future `blocks.space_id` / `blocks.page_id` schema change breaks
     // the build here rather than silently altering this security guard.
@@ -142,8 +170,14 @@ pub(crate) async fn validate_block_in_space(
            WHERE b.id = ?"#,
         block_id,
     )
-    .fetch_optional(pool)
+    .fetch_optional(&mut **tx)
     .await?;
+
+    // Read-only guard: release the writer lock without persisting anything.
+    // A rollback error here is surfaced as `AppError::Sqlx` (no `?`-eaten
+    // commit path) so a broken transaction never silently "passes" the
+    // guard.
+    tx.rollback().await?;
 
     match row {
         // Block doesn't exist — defer to the downstream `*_inner` to
@@ -417,5 +451,66 @@ mod tests {
         validate_block_in_space(&pool, "01HTEST0000000000000MISSAA", &space)
             .await
             .expect("missing block must defer (Ok) to downstream NotFound");
+    }
+
+    /// #1544 TOCTOU: the guard's authorization SELECT must run inside a
+    /// `BEGIN IMMEDIATE` write transaction, NOT as an autocommit read on a
+    /// pooled connection. We prove this by holding the SQLite writer lock
+    /// open in the test and asserting the guard *blocks* on it (cannot make
+    /// progress) until the lock is released — an autocommit reader would
+    /// sail past a held writer lock under WAL, so the fact that the guard
+    /// waits is direct evidence its read is serialized on the writer path,
+    /// the same path the subsequent `*_inner` write takes.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn guard_read_runs_inside_write_transaction() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        let space = create_space_inner(
+            &pool,
+            "d",
+            &Materializer::new(pool.clone()),
+            "S".into(),
+            None,
+        )
+        .await
+        .unwrap()
+        .into_string();
+
+        let block_id = "01HTEST0000000000000LOCKAA";
+        insert_content_block(&pool, block_id, Some(&space)).await;
+
+        // Hold the writer lock: another `BEGIN IMMEDIATE` cannot acquire it
+        // until this one is released.
+        let holder = CommandTx::begin_immediate(&pool, "test_writer_lock_holder")
+            .await
+            .expect("test must acquire the writer lock first");
+
+        // Spawn the guard concurrently. Because its SELECT now runs inside
+        // `BEGIN IMMEDIATE`, it must contend for the writer lock the holder
+        // owns and therefore must NOT complete while we hold it.
+        let pool2 = pool.clone();
+        let space2 = space.clone();
+        let bid = block_id.to_string();
+        let guard =
+            tokio::spawn(async move { validate_block_in_space(&pool2, &bid, &space2).await });
+
+        // Give the guard ample time to run; an autocommit reader would have
+        // finished by now. The guard must still be pending (blocked on the
+        // writer lock), proving its read is transactional.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(
+            !guard.is_finished(),
+            "#1544 regression: guard completed while the writer lock was held \
+             — its read is NOT inside a write transaction (TOCTOU window open)"
+        );
+
+        // Release the writer lock; the guard can now acquire it and resolve.
+        holder
+            .rollback()
+            .await
+            .expect("holder rollback must succeed");
+
+        let result = guard.await.expect("guard task must not panic");
+        result.expect("same-space write must be allowed once the lock frees");
     }
 }
