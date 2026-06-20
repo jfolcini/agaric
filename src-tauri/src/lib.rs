@@ -126,6 +126,9 @@ macro_rules! agaric_commands {
             // two parallel `search_blocks` calls per keystroke.
             $crate::commands::queries::search_blocks_partitioned,
             $crate::commands::tags::query_by_tags,
+            // #1472 — nested boolean tag expression `(A AND B) OR (NOT C)`
+            // over IPC (the flat `query_by_tags` above stays for back-compat).
+            $crate::commands::tags::query_by_tag_expr,
             $crate::commands::queries::query_by_property,
             // PEND-35 Tier 2.10b — AND-intersected property + tag query
             // resolved entirely in SQL via composed `EXISTS` subqueries.

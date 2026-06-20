@@ -452,6 +452,56 @@ pub async fn query_by_tags_inner(
     .await
 }
 
+/// Query blocks by an arbitrary nested boolean tag expression (#1472).
+///
+/// Unlike [`query_by_tags_inner`] — which assembles at most a single-level
+/// tree from a flat `(tag_ids, prefixes, mode)` triple — this accepts the
+/// full recursive [`TagExpr`] (`(A AND B) OR (NOT C)`, per-leaf `Not`,
+/// arbitrary `Prefix` leaves) so the deep TagFilterPanel composer can reach
+/// the resolver's existing nested-tree capability over IPC.
+///
+/// `expr` is UNTRUSTED IPC input, so its nesting depth is validated against
+/// [`TagExpr::MAX_DEPTH`] BEFORE resolution — the same gate
+/// [`eval_tag_query`] applies to its own And/Or/Not arms, lifted here so a
+/// pathologically deep leaf-only tree (which `eval_tag_query`'s leaf fast
+/// path would not depth-check) is also rejected up front, and so the
+/// rejection happens before any DB work. Resolution then drives the SAME
+/// [`tag_query::eval_tag_query`] path (#1622 set-op pushdown / paginated
+/// projection) that backs the flat command — identical result semantics,
+/// scope-scoping, inheritance, and `block_type` filtering.
+///
+/// `scope` / `block_type` / `include_inherited` / pagination args mirror
+/// [`query_by_tags_inner`] exactly.
+#[instrument(skip(pool, expr), err)]
+#[allow(clippy::too_many_arguments)]
+pub async fn query_by_tag_expr_inner(
+    pool: &SqlitePool,
+    expr: TagExpr,
+    include_inherited: Option<bool>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+    scope: &SpaceScope,
+    block_type: Option<String>,
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
+    // #1472 — depth-validate the untrusted tree before any resolution.
+    // `eval_tag_query` validates its And/Or/Not arms, but a deeply-nested
+    // tree whose ROOT is a leaf (or that bottoms out at a leaf fast path)
+    // would skip that gate; validating here bounds every shape uniformly and
+    // mirrors `FilterExpr`'s "caller validates untrusted IPC input" contract.
+    expr.validate_depth()?;
+
+    let page = pagination::PageRequest::new(cursor, limit)?;
+    tag_query::eval_tag_query(
+        pool,
+        &expr,
+        &page,
+        include_inherited.unwrap_or(false),
+        scope.as_filter_param(),
+        block_type.as_deref(),
+    )
+    .await
+}
+
 /// List all tags matching a name prefix (autocomplete / UI).
 #[instrument(skip(pool), err)]
 pub async fn list_tags_by_prefix_inner(
@@ -755,6 +805,37 @@ pub async fn query_by_tags(
         tag_ids,
         prefixes,
         mode,
+        include_inherited,
+        cursor,
+        limit,
+        &scope,
+        block_type,
+    )
+    .await
+    .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: query blocks by an arbitrary nested boolean tag
+/// expression (#1472). Delegates to [`query_by_tag_expr_inner`].
+///
+/// Exposes the resolver's full `(A AND B) OR (NOT C)` nesting over IPC —
+/// the flat [`query_by_tags`] remains for back-compat. The `expr` is
+/// depth-validated against [`TagExpr::MAX_DEPTH`] before resolution.
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub async fn query_by_tag_expr(
+    pool: State<'_, ReadPool>,
+    expr: TagExpr,
+    include_inherited: Option<bool>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+    scope: SpaceScope,
+    block_type: Option<String>,
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
+    query_by_tag_expr_inner(
+        &pool.0,
+        expr,
         include_inherited,
         cursor,
         limit,

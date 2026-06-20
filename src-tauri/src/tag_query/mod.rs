@@ -12,10 +12,35 @@ pub use query::{
 // union semantics. See `resolve.rs` for the canonical SQL.
 pub(crate) use resolve::{resolve_tag_leaves, resolve_tag_prefix_leaves};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Boolean expression tree for tag queries.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// # IPC wire format (#1472)
+///
+/// Adjacently-tagged via `#[serde(tag = "type", content = "value")]`, the
+/// same shape `SpaceScope` (`space.rs`) and `CursorValue` (`query/engine.rs`)
+/// use for tuple/newtype variants. Internal tagging (`#[serde(tag = "type")]`,
+/// as `FilterExpr` uses) cannot wrap the non-struct newtype payloads here
+/// (`Tag(String)` / `Not(Box<TagExpr>)`); adjacent tagging keeps the existing
+/// tuple-variant shape — so every in-tree constructor (`TagExpr::Tag(..)`,
+/// `TagExpr::And(vec![..])`, …) is unchanged — while still emitting a
+/// specta-expressible, self-describing TS discriminated union:
+///
+/// - `Tag("urgent")`      → `{ "type": "Tag",    "value": "urgent" }`
+/// - `Prefix("work/")`    → `{ "type": "Prefix", "value": "work/" }`
+/// - `And([a, b])`        → `{ "type": "And",    "value": [a, b] }`
+/// - `Or([a, b])`         → `{ "type": "Or",     "value": [a, b] }`
+/// - `Not(a)`             → `{ "type": "Not",    "value": a }`
+///
+/// The recursion bottoms out at the `Tag`/`Prefix` leaves, so the type is a
+/// self-referential discriminated union specta emits losslessly. Untrusted
+/// trees deserialised at the IPC boundary MUST be passed through
+/// [`TagExpr::validate_depth`] before resolution — `query_by_tag_expr`
+/// (`commands/tags.rs`) is the gate (see also `eval_tag_query`'s own
+/// `validate_depth` call for the And/Or/Not arms).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(tag = "type", content = "value")]
 pub enum TagExpr {
     Tag(String),
     Prefix(String),

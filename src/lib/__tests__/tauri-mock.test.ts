@@ -960,6 +960,89 @@ describe('query_by_tags', () => {
   })
 })
 
+// #1472 — nested boolean tag expression `(A AND B) OR (NOT C)` over IPC.
+// The flat `query_by_tags` cannot express this; `query_by_tag_expr` takes the
+// recursive `TagExpr` tree and must NOT flatten it.
+describe('query_by_tag_expr', () => {
+  it('resolves a genuinely nested (A AND B) OR (NOT C) tree', () => {
+    // GS_1: WORK + PERSONAL  -> matches (WORK AND PERSONAL).
+    // GS_2: WORK only        -> not the AND; lacks IDEA -> matches (NOT IDEA).
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_PERSONAL })
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_2, tagId: SEED_IDS.TAG_WORK })
+
+    const expr = {
+      type: 'Or',
+      value: [
+        {
+          type: 'And',
+          value: [
+            { type: 'Tag', value: SEED_IDS.TAG_WORK },
+            { type: 'Tag', value: SEED_IDS.TAG_PERSONAL },
+          ],
+        },
+        { type: 'Not', value: { type: 'Tag', value: SEED_IDS.TAG_IDEA } },
+      ],
+    }
+    const result = invoke('query_by_tag_expr', { expr }) as {
+      items: Record<string, unknown>[]
+    }
+    const ids = result.items.map((b) => b['id'])
+    // Both arms contribute: GS_1 via the AND, GS_2 via (NOT IDEA).
+    expect(ids).toContain(SEED_IDS.BLOCK_GS_1)
+    expect(ids).toContain(SEED_IDS.BLOCK_GS_2)
+    // No block carries IDEA in the seed, so nothing is excluded by the NOT arm
+    // beyond IDEA-tagged blocks — the union is non-empty and includes both.
+    expect(result).toHaveProperty('next_cursor', null)
+    expect(result).toHaveProperty('has_more', false)
+  })
+
+  it('per-leaf NOT excludes only blocks carrying that tag', () => {
+    // GS_1 gets WORK; the NOT(WORK) arm must therefore exclude GS_1 while
+    // still returning GS_2 (untagged) — proving Not is evaluated per-block,
+    // not flattened into the AND/OR composer.
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    const expr = { type: 'Not', value: { type: 'Tag', value: SEED_IDS.TAG_WORK } }
+    const result = invoke('query_by_tag_expr', { expr }) as {
+      items: Record<string, unknown>[]
+    }
+    const ids = result.items.map((b) => b['id'])
+    expect(ids).not.toContain(SEED_IDS.BLOCK_GS_1)
+    expect(ids).toContain(SEED_IDS.BLOCK_GS_2)
+  })
+
+  it('AND of two tags returns only blocks carrying both', () => {
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_PERSONAL })
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_2, tagId: SEED_IDS.TAG_WORK })
+    const expr = {
+      type: 'And',
+      value: [
+        { type: 'Tag', value: SEED_IDS.TAG_WORK },
+        { type: 'Tag', value: SEED_IDS.TAG_PERSONAL },
+      ],
+    }
+    const result = invoke('query_by_tag_expr', { expr }) as {
+      items: Record<string, unknown>[]
+    }
+    const ids = result.items.map((b) => b['id'])
+    expect(ids).toContain(SEED_IDS.BLOCK_GS_1)
+    expect(ids).not.toContain(SEED_IDS.BLOCK_GS_2)
+  })
+
+  it('excludes deleted blocks from a NOT complement', () => {
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_2 })
+    const expr = { type: 'Not', value: { type: 'Tag', value: SEED_IDS.TAG_WORK } }
+    const result = invoke('query_by_tag_expr', { expr }) as {
+      items: Record<string, unknown>[]
+    }
+    const ids = result.items.map((b) => b['id'])
+    expect(ids).not.toContain(SEED_IDS.BLOCK_GS_2)
+    expect(ids).not.toContain(SEED_IDS.BLOCK_GS_1)
+  })
+})
+
 // ---------------------------------------------------------------------------
 // restore_block
 // ---------------------------------------------------------------------------
