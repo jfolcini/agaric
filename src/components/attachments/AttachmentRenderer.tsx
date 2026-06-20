@@ -117,7 +117,7 @@ export interface AttachmentRendererProps {
    * prev/next navigation (#212 item 2).
    */
   onLightboxOpen: (image: LightboxImage, images: LightboxImage[]) => void
-  onPdfOpen: (url: string, filename: string) => void
+  onPdfOpen: (url: string, filename: string, attachmentId: string) => void
 }
 
 /**
@@ -591,7 +591,7 @@ export function AttachmentRenderer({
                 try {
                   const bytes = await readAttachment(att.id)
                   const url = URL.createObjectURL(bytesToBlob(bytes, att.mime_type))
-                  onPdfOpen(url, att.filename)
+                  onPdfOpen(url, att.filename, att.id)
                 } catch (err) {
                   logger.warn('AttachmentRenderer', 'read pdf bytes failed', { id: att.id }, err)
                   notify.error(t('attachments.loadFailed'))

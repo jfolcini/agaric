@@ -15,7 +15,12 @@ import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 
 import { dispatch } from './handlers'
 import { clearMockErrors, getInjectedError, hasInjectedError, injectMockError } from './injection'
-import { addMockAgendaItems, addMockAttachment, seedBlocks } from './seed'
+import {
+  addMockAgendaItems,
+  addMockAttachment,
+  addMockAttachmentWithBytes,
+  seedBlocks,
+} from './seed'
 
 // ---------------------------------------------------------------------------
 // Public re-exports
@@ -75,6 +80,9 @@ export function setupMock(): void {
 
   // Expose attachment seeding to E2E tests
   w['__addMockAttachment'] = addMockAttachment
+  // #1452 — seed a PDF attachment WITH real bytes so the annotation viewer
+  // can parse it with pdf.js.
+  w['__addMockAttachmentWithBytes'] = addMockAttachmentWithBytes
 
   // Expose bulk agenda-item seeding to E2E tests (#548 virtualization spec).
   w['__addMockAgendaItems'] = addMockAgendaItems
