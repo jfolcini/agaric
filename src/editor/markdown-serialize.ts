@@ -48,95 +48,99 @@ function dollarOpensMath(s: string, i: number): boolean {
   return next !== '' && next !== ' ' && next !== '\t' && !/[0-9]/.test(next)
 }
 
+/**
+ * Single-char escapes whose verdict is context-free: the char is always
+ * rewritten to `\<char>` regardless of neighbours. `|` is the table-cell
+ * separator AND the table block gate (`startsWith('|')`); `*`/`` ` ``/`~`/`=`
+ * are mark/code/strike/highlight delimiters; `[`/`]` open/close link labels;
+ * `\` itself doubles. Kept as a table so the per-char loop stays flat.
+ */
+const ALWAYS_ESCAPE: Record<string, string> = {
+  '\\': '\\\\',
+  '*': '\\*',
+  '`': '\\`',
+  '~': '\\~',
+  '=': '\\=',
+  '|': '\\|',
+  '[': '\\[',
+  ']': '\\]',
+}
+
+/**
+ * Defuse a bare `http(s)://…` URL inside PLAIN (unlinked) text so it does not
+ * re-autolink on the next parse (#1441). Returns the escaped slice + the index
+ * to resume from when `s[i]` opens such a URL at a left boundary, else `null`.
+ * We escape the scheme colon (`https\://…`): `\:` round-trips to `:`, but
+ * `https\:/` no longer matches the `://` autolink trigger. Only fires at a left
+ * boundary (start of node or non-word char before), mirroring the parser's
+ * autolink left-flank rule, so we never touch an intraword `http`.
+ */
+function escapeBareUrl(s: string, i: number): { text: string; next: number } | null {
+  const ch = s[i]
+  if (ch !== 'h' && ch !== 'H') return null
+  if (scanBareUrl(s, i) === -1) return null
+  const before = i > 0 ? (s[i - 1] as string) : null
+  if (before !== null && WORD_CHAR_RE.test(before)) return null
+  const colon = s.indexOf(':', i)
+  return { text: `${s.slice(i, colon)}\\:`, next: colon }
+}
+
+/**
+ * Escape verdict for a single char at index `i` whose decision depends on the
+ * surrounding text. Returns the replacement string, or `null` to emit the char
+ * verbatim. Mirrors the per-rule comments inline below.
+ */
+function escapeContextChar(s: string, i: number): string | null {
+  const ch = s[i] as string
+  // `$` is the inline-math delimiter (#1437). Escape a literal `$` exactly when
+  // the parser's inline-math OPEN rule could fire — next char is non-space,
+  // non-digit (a digit means currency like `$5`, left literal). `\$` round-trips
+  // back to `$`, so this is lossless and stops `$x … $` re-parsing as math.
+  if (ch === '$') return dollarOpensMath(s, i) ? '\\$' : null
+  // `_` is an emphasis delimiter (GFM) — escape exactly the runs the parser's
+  // flanking rule could treat as delimiters (#710-1), so `_foo_` survives the
+  // round-trip while intraword underscores (`snake_case`) stay readable.
+  // `'unknown'` edges: this node may be concatenated with neighboring marked
+  // nodes, so a run at a node edge is escaped pessimistically. Inserted escapes
+  // never flip a flank verdict: every escapable char is punctuation, like `\`.
+  if (ch === '_') {
+    const { canOpen, canClose } = underscoreRunFlank(s, i, 'unknown')
+    return canOpen || canClose ? '\\_' : null
+  }
+  // `<u>` / `</u>` are the underline storage tokens (#211 P2-5) — escape the
+  // leading `<` so literal angle-bracket text round-trips as text instead of
+  // re-parsing into an underline mark.
+  if (ch === '<' && (s.slice(i + 1, i + 3) === 'u>' || s.slice(i + 1, i + 4) === '/u>')) {
+    return '\\<'
+  }
+  // `#` before `[` could be confused with tag_ref `#[ULID]` — escape the `#`.
+  if (ch === '#' && s[i + 1] === '[') return '\\#'
+  // `!` before `[` is the image discriminator (#1434): `![…](…)` parses as an
+  // image, so a LITERAL `!` preceding a `[` must be escaped or it turns `!` +
+  // a literal `[…]` into an image on reparse. (`\!` decodes back to `!`, so the
+  // escape is lossless; an interior `!` NOT before `[` stays readable.) The
+  // cross-NODE case is defused at the node join in `serializeInlineNodes`.
+  if (ch === '!' && s[i + 1] === '[') return '\\!'
+  return null
+}
+
 function escapeText(s: string): string {
   let out = ''
   for (let i = 0; i < s.length; i++) {
-    const ch = s[i]
-    // Defuse a bare `http(s)://…` URL inside PLAIN (unlinked) text so it does
-    // not re-autolink on the next parse (#1441). A linked URL never reaches
-    // here — link spans are serialized via `serializeParagraph`. We escape the
-    // scheme colon (`https\://…`): `\:` round-trips to `:`, but `https\:/` no
-    // longer matches the `://` autolink trigger. Only fire at a left boundary
-    // (start of node or non-word char before), mirroring the parser's
-    // autolink left-flank rule, so we never touch an intraword `http`.
-    if ((ch === 'h' || ch === 'H') && scanBareUrl(s, i) !== -1) {
-      const before = i > 0 ? (s[i - 1] as string) : null
-      if (before === null || !WORD_CHAR_RE.test(before)) {
-        const colon = s.indexOf(':', i)
-        out += `${s.slice(i, colon)}\\:`
-        i = colon
-        continue
-      }
-    }
-    if (ch === '\\') {
-      out += '\\\\'
+    const ch = s[i] as string
+    const url = escapeBareUrl(s, i)
+    if (url) {
+      out += url.text
+      i = url.next
       continue
     }
-    // `|` is the table-cell separator AND the table block gate
-    // (`startsWith('|')`) — unescaped it can turn a paragraph into a table
-    // on reparse (#710-4).
-    if (ch === '*' || ch === '`' || ch === '~' || ch === '=' || ch === '|') {
-      out += `\\${ch}`
+    const always = ALWAYS_ESCAPE[ch]
+    if (always !== undefined) {
+      out += always
       continue
     }
-    // `$` is the inline-math delimiter (#1437). Escape a literal `$` exactly
-    // when the parser's inline-math OPEN rule could fire — i.e. the next char
-    // is a non-space, non-digit (a digit means currency like `$5`, which the
-    // parser already leaves literal, so it needs no escape and stays readable).
-    // `\$` round-trips back to `$` via the parser's backslash escape, so this
-    // is lossless and stops a literal `$x … $` in plain text from re-parsing
-    // as math.
-    if (ch === '$') {
-      out += dollarOpensMath(s, i) ? '\\$' : ch
-      continue
-    }
-    // `_` is an emphasis delimiter (GFM) — escape exactly the runs the
-    // parser's flanking rule could treat as delimiters (#710-1), so a
-    // literal `_foo_` survives the round-trip while intraword underscores
-    // (`snake_case`) stay readable and unescaped. `'unknown'` edges: this
-    // node may be concatenated with neighboring marked nodes, so a run at a
-    // node edge is escaped pessimistically. Inserted backslash escapes never
-    // flip a flank verdict: every escapable char is punctuation (non-word,
-    // non-whitespace), exactly like the backslash replacing it.
-    if (ch === '_') {
-      const { canOpen, canClose } = underscoreRunFlank(s, i, 'unknown')
-      out += canOpen || canClose ? `\\${ch}` : ch
-      continue
-    }
-    // `<u>` / `</u>` are the underline storage tokens (#211 P2-5) — escape the
-    // leading `<` so literal angle-bracket text round-trips as text instead of
-    // re-parsing into an underline mark.
-    if (ch === '<' && (s.slice(i + 1, i + 3) === 'u>' || s.slice(i + 1, i + 4) === '/u>')) {
-      out += '\\<'
-      continue
-    }
-    // # before [ could be confused with tag_ref #[ULID] — escape the #
-    if (ch === '#' && i + 1 < s.length && s[i + 1] === '[') {
-      out += '\\#'
-      continue
-    }
-    // `!` before `[` is the image discriminator (#1434): `![…](…)` parses as an
-    // image, so a LITERAL `!` that precedes a `[` inside this text node must be
-    // escaped or it would turn `!` + a literal `[…]` into an image on reparse.
-    // (`\!` always decodes back to a literal `!`, so the escape is lossless; an
-    // interior `!` NOT before `[` stays readable — a sentence-final `!` is not
-    // over-escaped.) The cross-NODE case (a `!` ending one node, a `[`-leading
-    // link/ref node next) is defused at the node join in `serializeInlineNodes`.
-    if (ch === '!' && i + 1 < s.length && s[i + 1] === '[') {
-      out += '\\!'
-      continue
-    }
-    // [ could start a link or block_link — escape as \[
-    if (ch === '[') {
-      out += '\\['
-      continue
-    }
-    // ] could close a link label — escape as \]
-    if (ch === ']') {
-      out += '\\]'
-      continue
-    }
-    out += ch
+    const ctx = escapeContextChar(s, i)
+    out += ctx ?? ch
   }
   return out
 }

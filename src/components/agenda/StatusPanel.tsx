@@ -6,6 +6,7 @@
  * total ops dispatched, total background dispatched.
  */
 
+import type { TFunction } from 'i18next'
 import { Activity, AlertCircle, AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react'
 import type React from 'react'
 import { useCallback } from 'react'
@@ -27,6 +28,25 @@ function queueHealthClasses(depth: number): string {
   if (depth === 0) return 'border-status-done text-status-done-foreground'
   if (depth > 10) return 'border-status-pending text-status-pending-foreground'
   return ''
+}
+
+/**
+ * Assemble the comma-joined error/panic summary line. Pure helper so the
+ * component body doesn't carry the four-way `&&` chain (keeps its
+ * cyclomatic complexity under the lint ceiling).
+ */
+function errorSummaryText(
+  counts: { fgErrors: number; bgErrors: number; fgPanics: number; bgPanics: number },
+  t: TFunction,
+): string {
+  return [
+    counts.fgErrors > 0 && t('status.foregroundErrorsMessage', { count: counts.fgErrors }),
+    counts.bgErrors > 0 && t('status.backgroundErrorsMessage', { count: counts.bgErrors }),
+    counts.fgPanics > 0 && t('status.foregroundPanicsMessage', { count: counts.fgPanics }),
+    counts.bgPanics > 0 && t('status.backgroundPanicsMessage', { count: counts.bgPanics }),
+  ]
+    .filter(Boolean)
+    .join(', ')
 }
 
 function MetricLabel({ label, tooltip }: { label: string; tooltip: string }): React.ReactElement {
@@ -259,16 +279,7 @@ export function StatusPanel(): React.ReactElement {
                 <div className="status-panel-errors mt-4 flex flex-col gap-1 rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
                   <div className="flex items-start gap-2">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <p>
-                      {[
-                        fgErrors > 0 && t('status.foregroundErrorsMessage', { count: fgErrors }),
-                        bgErrors > 0 && t('status.backgroundErrorsMessage', { count: bgErrors }),
-                        fgPanics > 0 && t('status.foregroundPanicsMessage', { count: fgPanics }),
-                        bgPanics > 0 && t('status.backgroundPanicsMessage', { count: bgPanics }),
-                      ]
-                        .filter(Boolean)
-                        .join(', ')}
-                    </p>
+                    <p>{errorSummaryText({ fgErrors, bgErrors, fgPanics, bgPanics }, t)}</p>
                   </div>
                   {bgErrors > 0 && (
                     <p className="ml-6 text-xs text-muted-foreground">

@@ -12,6 +12,7 @@
  * touch-friendly access to block actions: delete, indent, dedent, TODO, priority.
  */
 
+import type { DraggableAttributes, DraggableSyntheticListeners } from '@dnd-kit/core'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { IndentDecrease, IndentIncrease, Trash2 } from 'lucide-react'
@@ -23,9 +24,13 @@ import { BlockContextMenu } from '@/components/editor/BlockContextMenu'
 import { BlockGutterControls } from '@/components/editor/BlockGutterControls'
 import {
   BlockInlineControls,
+  type BlockInlineControlsProps,
   getInlinePropertyLimit,
 } from '@/components/editor/BlockInlineControls'
-import { BlockPropertyEditor } from '@/components/editor/BlockPropertyEditor'
+import {
+  BlockPropertyEditor,
+  type BlockPropertyEditorProps,
+} from '@/components/editor/BlockPropertyEditor'
 import { EditableBlock } from '@/components/editor/EditableBlock'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useBatchAttachments } from '@/hooks/useBatchAttachments'
@@ -49,6 +54,384 @@ export const INDENT_WIDTH = 24
 
 /** Fixed width for the gutter so positions never shift. */
 const GUTTER_WIDTH = 'w-[68px]'
+
+/**
+ * The mobile swipe-gesture affordances (delete backdrop, indent/outdent
+ * accents) plus the sr-only gesture description. Extracted to a pure
+ * module-level component so the conditional backdrops don't inflate
+ * `SortableBlockInner`'s cyclomatic complexity. Each backdrop renders only when
+ * its gesture is the active `gestureIntent`, exactly as before. All branches
+ * are already gated on `isTouchDevice` by the caller, so this renders nothing
+ * on fine pointers.
+ */
+function SwipeAffordances({
+  blockId,
+  swipeRowDescId,
+  onDelete,
+  onIndent,
+  onDedent,
+  gestureIntent,
+  thresholdCrossed,
+  onReset,
+}: {
+  blockId: string
+  swipeRowDescId: string
+  onDelete?: ((blockId: string) => void) | undefined
+  onIndent?: ((blockId: string) => void) | undefined
+  onDedent?: ((blockId: string) => void) | undefined
+  gestureIntent: string | null | undefined
+  thresholdCrossed: boolean
+  onReset: () => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  return (
+    <>
+      {/* #1349: sr-only description target for the swipe gesture, referenced
+            by the row's `aria-describedby`. */}
+      {onDelete && (
+        <span id={swipeRowDescId} className="sr-only">
+          {t('block.swipeRowDescription')}
+        </span>
+      )}
+      {/* ── Swipe-to-delete backdrop (mobile only) ──────────────── */}
+      {/* progressive cue — the backdrop is a muted destructive
+            tint while the gesture only reveals the action, then flips to
+            the solid destructive variant + t('block.swipe.releaseToDelete') label
+            once the auto-delete threshold is crossed mid-drag.
+            #1732: gate on the hook's gestureIntent === 'delete' rather than
+            "any left translate", so a left swipe that's actually an outdent no
+            longer flashes the destructive delete backdrop before outdenting. */}
+      {onDelete && gestureIntent === 'delete' && (
+        <div
+          className={cn(
+            'absolute right-0 top-0 bottom-0 flex items-center justify-center gap-2 px-3',
+            'transition-colors duration-normal',
+            thresholdCrossed
+              ? 'bg-destructive text-destructive-foreground'
+              : 'bg-destructive/10 text-destructive',
+          )}
+          style={{ width: thresholdCrossed ? '100%' : 80 }}
+          data-testid="swipe-delete-action"
+          data-threshold-crossed={thresholdCrossed ? 'true' : 'false'}
+        >
+          <button
+            type="button"
+            aria-label={t('block.delete')}
+            className="flex items-center justify-center h-full"
+            onClick={() => {
+              onDelete(blockId)
+              onReset()
+            }}
+          >
+            {/* Larger icon for swipe gesture affordance */}
+            <Trash2 className="h-5 w-5" />
+          </button>
+          {thresholdCrossed && (
+            <span
+              className="hidden text-sm font-medium [@media(pointer:coarse)]:inline"
+              data-testid="swipe-release-hint"
+            >
+              {t('block.swipe.releaseToDelete')}
+            </span>
+          )}
+        </div>
+      )}
+      {/* ── Swipe-to-indent affordance (mobile only) ────────────── */}
+      {/* #1748: a right swipe past the indent threshold previously slid the row
+            over a blank gutter with no cue. Mirror the delete backdrop with a
+            non-destructive accent one on the LEFT edge (the side the content
+            slides away from) so the indent gesture is discoverable/confirmed. */}
+      {onIndent && gestureIntent === 'indent' && (
+        <div
+          className={cn(
+            'absolute left-0 top-0 bottom-0 flex items-center justify-center gap-2 px-3',
+            'transition-colors duration-normal',
+            'bg-primary/10 text-primary',
+          )}
+          style={{ width: 80 }}
+          data-testid="swipe-indent-action"
+        >
+          <IndentIncrease className="h-5 w-5" />
+          <span
+            className="hidden text-sm font-medium [@media(pointer:coarse)]:inline"
+            data-testid="swipe-indent-hint"
+          >
+            {t('block.swipe.indentHint')}
+          </span>
+        </div>
+      )}
+      {/* ── Swipe-to-outdent affordance (mobile only) ───────────── */}
+      {/* #1732: a short left swipe in the outdent band is non-destructive, so it
+            gets the same neutral accent backdrop as indent (on the RIGHT edge,
+            mirroring the delete side) instead of the red delete cue. */}
+      {onDedent && gestureIntent === 'outdent' && (
+        <div
+          className={cn(
+            'absolute right-0 top-0 bottom-0 flex items-center justify-center gap-2 px-3',
+            'transition-colors duration-normal',
+            'bg-primary/10 text-primary',
+          )}
+          style={{ width: 80 }}
+          data-testid="swipe-outdent-action"
+        >
+          <IndentDecrease className="h-5 w-5" />
+          <span
+            className="hidden text-sm font-medium [@media(pointer:coarse)]:inline"
+            data-testid="swipe-outdent-hint"
+          >
+            {t('block.swipe.outdentHint')}
+          </span>
+        </div>
+      )}
+    </>
+  )
+}
+
+/** Resolver callbacks shared by the inline controls and the editor body. */
+type ResolverProps = Pick<BlockInlineControlsProps, 'resolveBlockTitle'> & {
+  resolveTagName?: ((id: string) => string) | undefined
+  resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
+  resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
+}
+
+/** Property-editor state forwarded straight through to `BlockPropertyEditor`. */
+type PropertyEditorProps = Pick<
+  BlockPropertyEditorProps,
+  | 'editingProp'
+  | 'setEditingProp'
+  | 'editingKey'
+  | 'setEditingKey'
+  | 'selectOptions'
+  | 'isRefProp'
+  | 'refPages'
+  | 'refSearch'
+  | 'setRefSearch'
+>
+
+interface SortableBlockBodyProps extends ResolverProps, PropertyEditorProps {
+  blockId: string
+  content: string
+  depth: number
+  isFocused: boolean
+  isTouchDevice: boolean
+  swipeTranslateX: number
+  hasChildren: boolean
+  anyBlockHasChildren: boolean
+  isCollapsed: boolean
+  todoState?: (string | null) | undefined
+  priority?: (string | null) | undefined
+  dueDate?: (string | null) | undefined
+  scheduledDate?: (string | null) | undefined
+  properties?: Array<{ key: string; value: string }> | undefined
+  filteredProperties: Array<{ key: string; value: string }>
+  maxInlineProperties: number
+  isSelected?: boolean | undefined
+  attachmentCount: number
+  showAttachments: boolean
+  rovingEditor: RovingEditorHandle
+  attributes: DraggableAttributes
+  listeners: DraggableSyntheticListeners
+  onDelete?: ((blockId: string) => void) | undefined
+  onShowHistory?: ((blockId: string) => void) | undefined
+  onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
+  onToggleCollapse?: ((blockId: string) => void) | undefined
+  onToggleTodo?: ((blockId: string) => void) | undefined
+  onTogglePriority?: ((blockId: string) => void) | undefined
+  onNavigate?: ((id: string) => void) | undefined
+  onToggleAttachments: () => void
+  onEditProp: (prop: { key: string; value: string }) => void
+  onEditKey: (keyInfo: { oldKey: string; value: string }) => void
+}
+
+/**
+ * The sliding content wrapper: indent guide + narrow gutter + inline controls +
+ * property editor + editor body + collapsible attachment list. Extracted to a
+ * pure subcomponent so its branchy presentational logic (slide transform,
+ * gutter collapse, line-through-on-done, attachment list) lives outside
+ * `SortableBlockInner` and stops inflating its cyclomatic complexity. Behaviour
+ * is identical to the previous inline markup.
+ */
+function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
+  const {
+    blockId,
+    content,
+    depth,
+    isFocused,
+    isTouchDevice,
+    swipeTranslateX,
+    hasChildren,
+    anyBlockHasChildren,
+    isCollapsed,
+    todoState,
+    priority,
+    dueDate,
+    scheduledDate,
+    properties,
+    filteredProperties,
+    maxInlineProperties,
+    isSelected,
+    attachmentCount,
+    showAttachments,
+    rovingEditor,
+    attributes,
+    listeners,
+    onDelete,
+    onShowHistory,
+    onSelect,
+    onToggleCollapse,
+    onToggleTodo,
+    onTogglePriority,
+    onNavigate,
+    onToggleAttachments,
+    onEditProp,
+    onEditKey,
+    resolveBlockTitle,
+    resolveTagName,
+    resolveBlockStatus,
+    resolveTagStatus,
+    editingProp,
+    setEditingProp,
+    editingKey,
+    setEditingKey,
+    selectOptions,
+    isRefProp,
+    refPages,
+    refSearch,
+    setRefSearch,
+  } = props
+
+  const isSliding = isTouchDevice && swipeTranslateX !== 0
+  const isClosedTask = todoState === 'DONE' || todoState === 'CANCELLED'
+
+  return (
+    <div
+      className={cn(
+        'flex items-stretch gap-1 w-full max-sm:items-start max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5 min-w-0',
+        // #1347: token-driven transition (respects prefers-reduced-motion).
+        isSliding && 'swipe-content-sliding',
+      )}
+      data-testid="swipe-content"
+      style={{
+        transform: isSliding ? `translateX(${swipeTranslateX}px)` : undefined,
+      }}
+    >
+      {/* Indent guide line for nested blocks */}
+      {depth > 0 && (
+        <div
+          className="absolute left-0 top-0 bottom-0 border-l border-border/20"
+          style={{ left: `calc(var(--indent-width) * ${depth - 1} + var(--indent-width) / 2)` }}
+        />
+      )}
+
+      {/* ── Narrow gutter — grip + history + delete ────────────── */}
+      {/* #918: On a fine-pointer device the gutter collapses to 0px on
+            narrow viewports (`max-md`) and reveals its controls on hover.
+            On a touch device there is no hover, and `BlockGutterControls`
+            renders a dedicated touch drag handle — collapsing to `w-0`
+            clipped that handle to zero width, leaving nothing hittable to
+            start a drag. So we only apply the touch-collapse classes when
+            the pointer is *not* coarse; on touch the gutter keeps its real
+            width and the touch grip stays a hittable target. */}
+      <div
+        className={cn(
+          GUTTER_WIDTH,
+          'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end',
+          !isTouchDevice && 'max-md:w-0 max-md:overflow-hidden',
+        )}
+      >
+        <BlockGutterControls
+          blockId={blockId}
+          onDelete={onDelete}
+          onShowHistory={onShowHistory}
+          dragAttributes={attributes}
+          dragListeners={listeners}
+          isSelected={isSelected}
+          onSelect={onSelect}
+          // #1094: the gutter keeps its deliberate 500ms hover delay (longer
+          // than the 300ms app baseline) so tips don't flicker as the
+          // pointer crosses rows. The per-surface TooltipProvider that set
+          // this is gone; the override now rides on each gutter Tooltip.
+          tooltipDelayDuration={500}
+        />
+      </div>
+
+      {/* ── Inline controls — chevron, checkbox, priority ─────── */}
+      <BlockInlineControls
+        blockId={blockId}
+        hasChildren={hasChildren}
+        isCollapsed={isCollapsed}
+        onToggleCollapse={onToggleCollapse}
+        todoState={todoState}
+        onToggleTodo={onToggleTodo}
+        priority={priority}
+        onTogglePriority={onTogglePriority}
+        dueDate={dueDate}
+        scheduledDate={scheduledDate}
+        properties={properties}
+        filteredProperties={filteredProperties}
+        maxInlineProperties={maxInlineProperties}
+        resolveBlockTitle={resolveBlockTitle}
+        anyBlockHasChildren={anyBlockHasChildren}
+        attachmentCount={attachmentCount}
+        showAttachments={showAttachments}
+        onToggleAttachments={onToggleAttachments}
+        onEditProp={onEditProp}
+        onEditKey={onEditKey}
+      />
+
+      {/* ── Property edit popover / key rename ────────────────── */}
+      <BlockPropertyEditor
+        blockId={blockId}
+        editingProp={editingProp}
+        setEditingProp={setEditingProp}
+        editingKey={editingKey}
+        setEditingKey={setEditingKey}
+        selectOptions={selectOptions}
+        isRefProp={isRefProp}
+        refPages={refPages}
+        refSearch={refSearch}
+        setRefSearch={setRefSearch}
+      />
+
+      {/* ── Block content ─────────────────────────────────────────── */}
+      <div
+        className={cn(
+          'flex-1 min-w-0 transition-[text-decoration-color,opacity] duration-moderate',
+          // #1243: NO active-block highlight here. A focused block already
+          // gets its own indicator — the `block-editor` box rendered by
+          // EditableBlock (`ring-1 ring-border bg-accent/[0.06] shadow-sm`,
+          // rounded). The earlier #1232 red `border-l-primary` bar +
+          // `bg-sidebar-accent` tint layered a second, alarm-red highlight on
+          // top of that grey box and let the tint bleed to the left edge
+          // behind the bar. Removing it leaves a single, calm focus
+          // treatment and tightens the negative space left of the text.
+          isClosedTask && !isFocused ? 'line-through opacity-50' : 'no-underline opacity-100',
+        )}
+      >
+        <EditableBlock
+          blockId={blockId}
+          content={content}
+          isFocused={isFocused}
+          rovingEditor={rovingEditor}
+          onNavigate={onNavigate}
+          resolveBlockTitle={resolveBlockTitle}
+          resolveTagName={resolveTagName}
+          resolveBlockStatus={resolveBlockStatus}
+          resolveTagStatus={resolveTagStatus}
+          isSelected={isSelected}
+          onSelect={onSelect}
+        />
+      </div>
+
+      {/* ── Collapsible attachment list ────────────────────────────── */}
+      {showAttachments && attachmentCount > 0 && (
+        <div className="mt-1 ml-5 border-l-2 border-border/30 pl-3">
+          <AttachmentList blockId={blockId} />
+        </div>
+      )}
+    </div>
+  )
+}
 
 interface SortableBlockProps {
   blockId: string
@@ -299,234 +682,72 @@ function SortableBlockInner({
       }}
       onContextMenu={handleContextMenu}
     >
-      {/* #1349: sr-only description target for the swipe gesture, referenced
-            by the row's `aria-describedby` above. */}
-      {isTouchDevice && onDelete && (
-        <span id={swipeRowDescId} className="sr-only">
-          {t('block.swipeRowDescription')}
-        </span>
-      )}
-      {/* ── Swipe-to-delete backdrop (mobile only) ──────────────── */}
-      {/* progressive cue — the backdrop is a muted destructive
-            tint while the gesture only reveals the action, then flips to
-            the solid destructive variant + t('block.swipe.releaseToDelete') label
-            once the auto-delete threshold is crossed mid-drag.
-            #1732: gate on the hook's gestureIntent === 'delete' rather than
-            "any left translate", so a left swipe that's actually an outdent no
-            longer flashes the destructive delete backdrop before outdenting. */}
-      {isTouchDevice && onDelete && swipeGestureIntent === 'delete' && (
-        <div
-          className={cn(
-            'absolute right-0 top-0 bottom-0 flex items-center justify-center gap-2 px-3',
-            'transition-colors duration-normal',
-            swipeThresholdCrossed
-              ? 'bg-destructive text-destructive-foreground'
-              : 'bg-destructive/10 text-destructive',
-          )}
-          style={{ width: swipeThresholdCrossed ? '100%' : 80 }}
-          data-testid="swipe-delete-action"
-          data-threshold-crossed={swipeThresholdCrossed ? 'true' : 'false'}
-        >
-          <button
-            type="button"
-            aria-label={t('block.delete')}
-            className="flex items-center justify-center h-full"
-            onClick={() => {
-              onDelete(blockId)
-              swipeReset()
-            }}
-          >
-            {/* Larger icon for swipe gesture affordance */}
-            <Trash2 className="h-5 w-5" />
-          </button>
-          {swipeThresholdCrossed && (
-            <span
-              className="hidden text-sm font-medium [@media(pointer:coarse)]:inline"
-              data-testid="swipe-release-hint"
-            >
-              {t('block.swipe.releaseToDelete')}
-            </span>
-          )}
-        </div>
-      )}
-      {/* ── Swipe-to-indent affordance (mobile only) ────────────── */}
-      {/* #1748: a right swipe past the indent threshold previously slid the row
-            over a blank gutter with no cue. Mirror the delete backdrop with a
-            non-destructive accent one on the LEFT edge (the side the content
-            slides away from) so the indent gesture is discoverable/confirmed. */}
-      {isTouchDevice && onIndent && swipeGestureIntent === 'indent' && (
-        <div
-          className={cn(
-            'absolute left-0 top-0 bottom-0 flex items-center justify-center gap-2 px-3',
-            'transition-colors duration-normal',
-            'bg-primary/10 text-primary',
-          )}
-          style={{ width: 80 }}
-          data-testid="swipe-indent-action"
-        >
-          <IndentIncrease className="h-5 w-5" />
-          <span
-            className="hidden text-sm font-medium [@media(pointer:coarse)]:inline"
-            data-testid="swipe-indent-hint"
-          >
-            {t('block.swipe.indentHint')}
-          </span>
-        </div>
-      )}
-      {/* ── Swipe-to-outdent affordance (mobile only) ───────────── */}
-      {/* #1732: a short left swipe in the outdent band is non-destructive, so it
-            gets the same neutral accent backdrop as indent (on the RIGHT edge,
-            mirroring the delete side) instead of the red delete cue. */}
-      {isTouchDevice && onDedent && swipeGestureIntent === 'outdent' && (
-        <div
-          className={cn(
-            'absolute right-0 top-0 bottom-0 flex items-center justify-center gap-2 px-3',
-            'transition-colors duration-normal',
-            'bg-primary/10 text-primary',
-          )}
-          style={{ width: 80 }}
-          data-testid="swipe-outdent-action"
-        >
-          <IndentDecrease className="h-5 w-5" />
-          <span
-            className="hidden text-sm font-medium [@media(pointer:coarse)]:inline"
-            data-testid="swipe-outdent-hint"
-          >
-            {t('block.swipe.outdentHint')}
-          </span>
-        </div>
-      )}
-
-      {/* ── Sliding content wrapper (swipe-to-delete) ───────────── */}
-      <div
-        className={cn(
-          'flex items-stretch gap-1 w-full max-sm:items-start max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5 min-w-0',
-          // #1347: token-driven transition (respects prefers-reduced-motion).
-          isTouchDevice && swipeTranslateX !== 0 && 'swipe-content-sliding',
-        )}
-        data-testid="swipe-content"
-        style={{
-          transform:
-            isTouchDevice && swipeTranslateX !== 0 ? `translateX(${swipeTranslateX}px)` : undefined,
-        }}
-      >
-        {/* Indent guide line for nested blocks */}
-        {depth > 0 && (
-          <div
-            className="absolute left-0 top-0 bottom-0 border-l border-border/20"
-            style={{ left: `calc(var(--indent-width) * ${depth - 1} + var(--indent-width) / 2)` }}
-          />
-        )}
-
-        {/* ── Narrow gutter — grip + history + delete ────────────── */}
-        {/* #918: On a fine-pointer device the gutter collapses to 0px on
-              narrow viewports (`max-md`) and reveals its controls on hover.
-              On a touch device there is no hover, and `BlockGutterControls`
-              renders a dedicated touch drag handle — collapsing to `w-0`
-              clipped that handle to zero width, leaving nothing hittable to
-              start a drag. So we only apply the touch-collapse classes when
-              the pointer is *not* coarse; on touch the gutter keeps its real
-              width and the touch grip stays a hittable target. */}
-        <div
-          className={cn(
-            GUTTER_WIDTH,
-            'relative z-10 flex-shrink-0 flex items-center gap-1 justify-end',
-            !isTouchDevice && 'max-md:w-0 max-md:overflow-hidden',
-          )}
-        >
-          <BlockGutterControls
-            blockId={blockId}
-            onDelete={onDelete}
-            onShowHistory={onShowHistory}
-            dragAttributes={attributes}
-            dragListeners={listeners}
-            isSelected={isSelected}
-            onSelect={onSelect}
-            // #1094: the gutter keeps its deliberate 500ms hover delay (longer
-            // than the 300ms app baseline) so tips don't flicker as the
-            // pointer crosses rows. The per-surface TooltipProvider that set
-            // this is gone; the override now rides on each gutter Tooltip.
-            tooltipDelayDuration={500}
-          />
-        </div>
-
-        {/* ── Inline controls — chevron, checkbox, priority ─────── */}
-        <BlockInlineControls
+      {/* Mobile swipe affordances (sr-only description + delete/indent/outdent
+          backdrops). Gated on `isTouchDevice` here so the component renders
+          nothing on fine pointers; the per-gesture conditionals live inside it. */}
+      {isTouchDevice && (
+        <SwipeAffordances
           blockId={blockId}
-          hasChildren={hasChildren}
-          isCollapsed={isCollapsed}
-          onToggleCollapse={onToggleCollapse}
-          todoState={todoState}
-          onToggleTodo={onToggleTodo}
-          priority={priority}
-          onTogglePriority={onTogglePriority}
-          dueDate={dueDate}
-          scheduledDate={scheduledDate}
-          properties={properties}
-          filteredProperties={filteredProperties}
-          maxInlineProperties={maxInlineProperties}
-          resolveBlockTitle={resolveBlockTitle}
-          anyBlockHasChildren={anyBlockHasChildren}
-          attachmentCount={attachmentCount}
-          showAttachments={showAttachments}
-          onToggleAttachments={handleToggleAttachments}
-          onEditProp={setEditingProp}
-          onEditKey={handleEditKey}
+          swipeRowDescId={swipeRowDescId}
+          onDelete={onDelete}
+          onIndent={onIndent}
+          onDedent={onDedent}
+          gestureIntent={swipeGestureIntent}
+          thresholdCrossed={swipeThresholdCrossed}
+          onReset={swipeReset}
         />
+      )}
 
-        {/* ── Property edit popover / key rename ────────────────── */}
-        <BlockPropertyEditor
-          blockId={blockId}
-          editingProp={editingProp}
-          setEditingProp={setEditingProp}
-          editingKey={editingKey}
-          setEditingKey={setEditingKey}
-          selectOptions={selectOptions}
-          isRefProp={isRefProp}
-          refPages={refPages}
-          refSearch={refSearch}
-          setRefSearch={setRefSearch}
-        />
-
-        {/* ── Block content ─────────────────────────────────────────── */}
-        <div
-          className={cn(
-            'flex-1 min-w-0 transition-[text-decoration-color,opacity] duration-moderate',
-            // #1243: NO active-block highlight here. A focused block already
-            // gets its own indicator — the `block-editor` box rendered by
-            // EditableBlock (`ring-1 ring-border bg-accent/[0.06] shadow-sm`,
-            // rounded). The earlier #1232 red `border-l-primary` bar +
-            // `bg-sidebar-accent` tint layered a second, alarm-red highlight on
-            // top of that grey box and let the tint bleed to the left edge
-            // behind the bar. Removing it leaves a single, calm focus
-            // treatment and tightens the negative space left of the text.
-            (todoState === 'DONE' || todoState === 'CANCELLED') && !isFocused
-              ? 'line-through opacity-50'
-              : 'no-underline opacity-100',
-          )}
-        >
-          <EditableBlock
-            blockId={blockId}
-            content={content}
-            isFocused={isFocused}
-            rovingEditor={rovingEditor}
-            onNavigate={onNavigate}
-            resolveBlockTitle={resolveBlockTitle}
-            resolveTagName={resolveTagName}
-            resolveBlockStatus={resolveBlockStatus}
-            resolveTagStatus={resolveTagStatus}
-            isSelected={isSelected}
-            onSelect={onSelect}
-          />
-        </div>
-
-        {/* ── Collapsible attachment list ────────────────────────────── */}
-        {showAttachments && attachmentCount > 0 && (
-          <div className="mt-1 ml-5 border-l-2 border-border/30 pl-3">
-            <AttachmentList blockId={blockId} />
-          </div>
-        )}
-      </div>
+      {/* Sliding content wrapper (gutter + inline controls + editor body +
+          attachment list). Extracted to a pure subcomponent so its branchy
+          presentational logic doesn't inflate `SortableBlockInner`. */}
+      <SortableBlockBody
+        blockId={blockId}
+        content={content}
+        depth={depth}
+        isFocused={isFocused}
+        isTouchDevice={isTouchDevice}
+        swipeTranslateX={swipeTranslateX}
+        hasChildren={hasChildren}
+        anyBlockHasChildren={anyBlockHasChildren}
+        isCollapsed={isCollapsed}
+        todoState={todoState}
+        priority={priority}
+        dueDate={dueDate}
+        scheduledDate={scheduledDate}
+        properties={properties}
+        filteredProperties={filteredProperties}
+        maxInlineProperties={maxInlineProperties}
+        isSelected={isSelected}
+        attachmentCount={attachmentCount}
+        showAttachments={showAttachments}
+        rovingEditor={rovingEditor}
+        attributes={attributes}
+        listeners={listeners}
+        onDelete={onDelete}
+        onShowHistory={onShowHistory}
+        onSelect={onSelect}
+        onToggleCollapse={onToggleCollapse}
+        onToggleTodo={onToggleTodo}
+        onTogglePriority={onTogglePriority}
+        onNavigate={onNavigate}
+        onToggleAttachments={handleToggleAttachments}
+        onEditProp={setEditingProp}
+        onEditKey={handleEditKey}
+        resolveBlockTitle={resolveBlockTitle}
+        resolveTagName={resolveTagName}
+        resolveBlockStatus={resolveBlockStatus}
+        resolveTagStatus={resolveTagStatus}
+        editingProp={editingProp}
+        setEditingProp={setEditingProp}
+        editingKey={editingKey}
+        setEditingKey={setEditingKey}
+        selectOptions={selectOptions}
+        isRefProp={isRefProp}
+        refPages={refPages}
+        refSearch={refSearch}
+        setRefSearch={setRefSearch}
+      />
 
       {/* ── Context menu (long-press / right-click) ───────────────── */}
       {contextMenu && (

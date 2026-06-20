@@ -76,19 +76,58 @@ function clearMock(): void {
   opLog.length = 0
 }
 
-/** Load a fixture's seed state into the mock, mirroring the backend's raw insert. */
-function loadSeed(fixture: Fixture): void {
-  for (const b of fixture.seed.blocks) {
-    const id = seedLabelToId(b['id'] as string)
-    const parentId = b['parent_id'] == null ? null : seedLabelToId(b['parent_id'] as string)
-    const row = makeBlock(
+/** Walk `row`'s `parent_id` chain to the root page; the page root's id is the
+ *  `page_id`. Cycle-guarded. Returns `null` when no page ancestor exists. */
+function resolveRootPageId(row: Record<string, unknown>): string | null {
+  let cursor: string | null = (row['parent_id'] as string | null) ?? null
+  const guard = new Set<string>()
+  while (cursor != null && !guard.has(cursor)) {
+    guard.add(cursor)
+    const parent = blocks.get(cursor)
+    if (!parent) break
+    if (parent['block_type'] === 'page') return parent['id'] as string
+    cursor = (parent['parent_id'] as string | null) ?? null
+  }
+  return null
+}
+
+/** Insert one seed block into the `blocks` store and return its expanded id. */
+function loadSeedBlock(b: Record<string, unknown>): string {
+  const id = seedLabelToId(b['id'] as string)
+  const parentId = b['parent_id'] == null ? null : seedLabelToId(b['parent_id'] as string)
+  blocks.set(
+    id,
+    makeBlock(
       id,
       b['block_type'] as string,
       (b['content'] as string | null) ?? null,
       parentId,
       (b['position'] as number | null) ?? 0,
-    )
-    blocks.set(id, row)
+    ),
+  )
+  return id
+}
+
+/** Insert one seed property bundle into the `properties` store. */
+function loadSeedProperty(p: Record<string, unknown>): void {
+  const blockId = seedLabelToId(p['block_id'] as string)
+  const key = p['key'] as string
+  const v = (p['value'] as Record<string, unknown>) ?? {}
+  if (!properties.has(blockId)) properties.set(blockId, new Map())
+  properties.get(blockId)?.set(key, {
+    key,
+    value_text: (v['value_text'] as string | null) ?? null,
+    value_num: (v['value_num'] as number | null) ?? null,
+    value_date: (v['value_date'] as string | null) ?? null,
+    value_ref: v['value_ref'] == null ? null : seedLabelToId(v['value_ref'] as string),
+    value_bool: v['value_bool'] == null ? null : (v['value_bool'] as boolean) ? 1 : 0,
+  })
+}
+
+/** Load a fixture's seed state into the mock, mirroring the backend's raw insert. */
+function loadSeed(fixture: Fixture): void {
+  for (const b of fixture.seed.blocks) {
+    loadSeedBlock(b)
   }
   // #1775: `makeBlock` stamps a non-page block's `page_id` with its IMMEDIATE
   // parent, but the backend's `page_id` is the ROOT page of the parent chain.
@@ -100,39 +139,10 @@ function loadSeed(fixture: Fixture): void {
     const id = seedLabelToId(b['id'] as string)
     const row = blocks.get(id)
     if (!row) continue
-    if (row['block_type'] === 'page') {
-      row['page_id'] = id
-      continue
-    }
-    // Walk parent_id to the root; the page root's id is the page_id.
-    let cursor: string | null = (row['parent_id'] as string | null) ?? null
-    let pageId: string | null = null
-    const guard = new Set<string>()
-    while (cursor != null && !guard.has(cursor)) {
-      guard.add(cursor)
-      const parent = blocks.get(cursor)
-      if (!parent) break
-      if (parent['block_type'] === 'page') {
-        pageId = parent['id'] as string
-        break
-      }
-      cursor = (parent['parent_id'] as string | null) ?? null
-    }
-    row['page_id'] = pageId
+    row['page_id'] = row['block_type'] === 'page' ? id : resolveRootPageId(row)
   }
   for (const p of fixture.seed.properties) {
-    const blockId = seedLabelToId(p['block_id'] as string)
-    const key = p['key'] as string
-    const v = (p['value'] as Record<string, unknown>) ?? {}
-    if (!properties.has(blockId)) properties.set(blockId, new Map())
-    properties.get(blockId)?.set(key, {
-      key,
-      value_text: (v['value_text'] as string | null) ?? null,
-      value_num: (v['value_num'] as number | null) ?? null,
-      value_date: (v['value_date'] as string | null) ?? null,
-      value_ref: v['value_ref'] == null ? null : seedLabelToId(v['value_ref'] as string),
-      value_bool: v['value_bool'] == null ? null : (v['value_bool'] as boolean) ? 1 : 0,
-    })
+    loadSeedProperty(p)
   }
   for (const t of fixture.seed.tags) {
     const blockId = seedLabelToId(t['block_id'] as string)

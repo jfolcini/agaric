@@ -564,6 +564,133 @@ function refreshDescendantPageIds(rootBlockId: string): void {
   }
 }
 
+// -- filtered_blocks_query helpers (extracted to keep the handler flat) -------
+
+/** Reserved row-level columns and the value column they compare against. */
+const FBQ_ROW_FIELD_KEYS: Record<string, 'text' | 'date'> = {
+  todo_state: 'text',
+  priority: 'text',
+  due_date: 'date',
+  scheduled_date: 'date',
+}
+
+/** Compare `lhs`/`rhs` under the named PropertyFilter operator. */
+function fbqCompare(operator: string, lhs: string, rhs: string): boolean {
+  switch (operator) {
+    case 'neq': {
+      return lhs !== rhs
+    }
+    case 'lt': {
+      return lhs < rhs
+    }
+    case 'gt': {
+      return lhs > rhs
+    }
+    case 'lte': {
+      return lhs <= rhs
+    }
+    case 'gte': {
+      return lhs >= rhs
+    }
+    default: {
+      return lhs === rhs
+    }
+  }
+}
+
+/** Resolve a block's candidate text/date for `key` from block_properties or
+ *  the row-level reserved column. `null` text+date both null ⇒ key absent. */
+function fbqResolveValues(
+  b: Record<string, unknown>,
+  key: string,
+): { pText: string | null; pDate: string | null } | null {
+  const prop = properties.get(b['id'] as string)?.get(key)
+  if (prop) {
+    return {
+      pText: (prop['value_text'] as string | null) ?? null,
+      pDate: (prop['value_date'] as string | null) ?? null,
+    }
+  }
+  const rowKind = FBQ_ROW_FIELD_KEYS[key]
+  if (rowKind === undefined) return null // key absent
+  const v = (b[key] as string | null | undefined) ?? null
+  return rowKind === 'text' ? { pText: v, pDate: null } : { pText: null, pDate: v }
+}
+
+/**
+ * Evaluate one PropertyFilter against a block — mirrors the EXISTS-subquery
+ * semantics the backend emits per filter (or, for reserved keys, the direct
+ * column predicate routing).
+ */
+function fbqPropertyFilterMatches(
+  b: Record<string, unknown>,
+  pf: Record<string, unknown>,
+): boolean {
+  const resolved = fbqResolveValues(b, pf['key'] as string)
+  if (resolved === null) return false
+  const { pText, pDate } = resolved
+  const operator = ((pf['operator'] as string | null) ?? 'eq').toLowerCase()
+
+  const valueTextIn = (pf['valueTextIn'] as string[] | null) ?? null
+  if (valueTextIn && valueTextIn.length > 0 && (pText == null || !valueTextIn.includes(pText))) {
+    return false
+  }
+  const valueDateRange = (pf['valueDateRange'] as [string, string] | null) ?? null
+  if (valueDateRange) {
+    const [from, to] = valueDateRange
+    if (pDate == null || !(pDate >= from && pDate < to)) return false
+  }
+  const valueText = (pf['valueText'] as string | null) ?? null
+  if (valueText !== null && (pText == null || !fbqCompare(operator, pText, valueText))) return false
+  const valueDate = (pf['valueDate'] as string | null) ?? null
+  if (valueDate !== null && (pDate == null || !fbqCompare(operator, pDate, valueDate))) return false
+  return true
+}
+
+/** Resolve prefix strings to tag-block ids by content prefix-match (mirrors the
+ *  backend's `tags_cache.name LIKE ?`; the mock walks tag blocks instead). */
+function fbqResolvePrefixTagIds(prefixes: string[]): string[] {
+  const out: string[] = []
+  for (const prefix of prefixes) {
+    const lp = prefix.toLowerCase()
+    for (const [, blk] of blocks) {
+      if (
+        blk['block_type'] === 'tag' &&
+        !blk['deleted_at'] &&
+        ((blk['content'] as string) ?? '').toLowerCase().startsWith(lp)
+      ) {
+        out.push(blk['id'] as string)
+      }
+    }
+  }
+  return out
+}
+
+/** Evaluate the (optional) tag filter against a block. */
+function fbqTagFilterMatches(
+  b: Record<string, unknown>,
+  tagFilters: Record<string, unknown> | null,
+): boolean {
+  if (!tagFilters) return true
+  const tagIds = (tagFilters['tagIds'] as string[] | null) ?? []
+  const prefixes = (tagFilters['prefixes'] as string[] | null) ?? []
+  const mode = ((tagFilters['mode'] as string | null) ?? 'or').toLowerCase()
+  if (tagIds.length === 0 && prefixes.length === 0) return true
+
+  const allIds = [...tagIds, ...fbqResolvePrefixTagIds(prefixes)]
+  const tags = blockTags.get(b['id'] as string)
+  if (!tags || tags.size === 0) return false
+  return mode === 'and' ? allIds.every((tid) => tags.has(tid)) : allIds.some((tid) => tags.has(tid))
+}
+
+/** Space-scope gate (mirrors `filtered_blocks_query_inner`). */
+function fbqInSpace(b: Record<string, unknown>, spaceId: string | null): boolean {
+  if (spaceId === null) return true
+  const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+  const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
+  return ownerSpace === spaceId
+}
+
 export const HANDLERS: Record<string, Handler> = {
   // ---------------------------------------------------------------------------
   // Block listing & CRUD
@@ -2090,130 +2217,12 @@ export const HANDLERS: Record<string, Handler> = {
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
 
-    const ROW_FIELD_KEYS: Record<string, 'text' | 'date'> = {
-      todo_state: 'text',
-      priority: 'text',
-      due_date: 'date',
-      scheduled_date: 'date',
-    }
-
-    /**
-     * Evaluate one PropertyFilter against a block — mirrors the
-     * EXISTS-subquery semantics the backend emits per filter (or, for
-     * reserved keys, the direct column predicate routing).
-     */
-    const propertyFilterMatches = (
-      b: Record<string, unknown>,
-      pf: Record<string, unknown>,
-    ): boolean => {
-      const key = pf['key'] as string
-      const valueText = (pf['valueText'] as string | null) ?? null
-      const valueTextIn = (pf['valueTextIn'] as string[] | null) ?? null
-      const valueDate = (pf['valueDate'] as string | null) ?? null
-      const valueDateRange = (pf['valueDateRange'] as [string, string] | null) ?? null
-      const operator = ((pf['operator'] as string | null) ?? 'eq').toLowerCase()
-
-      const cmp = (lhs: string, rhs: string): boolean => {
-        switch (operator) {
-          case 'neq': {
-            return lhs !== rhs
-          }
-          case 'lt': {
-            return lhs < rhs
-          }
-          case 'gt': {
-            return lhs > rhs
-          }
-          case 'lte': {
-            return lhs <= rhs
-          }
-          case 'gte': {
-            return lhs >= rhs
-          }
-          default: {
-            return lhs === rhs
-          }
-        }
-      }
-
-      const blockProps = properties.get(b['id'] as string)
-      const prop = blockProps?.get(key)
-      const rowKind = ROW_FIELD_KEYS[key]
-      // Resolve the candidate text/date for comparison from either
-      // block_properties or the row-level reserved column.
-      let pText: string | null = null
-      let pDate: string | null = null
-      if (prop) {
-        pText = (prop['value_text'] as string | null) ?? null
-        pDate = (prop['value_date'] as string | null) ?? null
-      } else if (rowKind !== undefined) {
-        const v = (b[key] as string | null | undefined) ?? null
-        if (rowKind === 'text') pText = v
-        else pDate = v
-      } else {
-        return false // key absent
-      }
-
-      if (valueTextIn && valueTextIn.length > 0) {
-        if (pText == null || !valueTextIn.includes(pText)) return false
-      }
-      if (valueDateRange) {
-        if (pDate == null) return false
-        const [from, to] = valueDateRange
-        if (!(pDate >= from && pDate < to)) return false
-      }
-      if (valueText !== null) {
-        if (pText == null || !cmp(pText, valueText)) return false
-      }
-      if (valueDate !== null) {
-        if (pDate == null || !cmp(pDate, valueDate)) return false
-      }
-      return true
-    }
-
-    const tagFilterMatches = (b: Record<string, unknown>): boolean => {
-      if (!tagFilters) return true
-      const tagIds = (tagFilters['tagIds'] as string[] | null) ?? []
-      const prefixes = (tagFilters['prefixes'] as string[] | null) ?? []
-      const mode = ((tagFilters['mode'] as string | null) ?? 'or').toLowerCase()
-      if (tagIds.length === 0 && prefixes.length === 0) return true
-
-      // Resolve prefixes to tag-block ids by content prefix-match
-      // (mirrors the backend's `tags_cache.name LIKE ?` semantics —
-      // the mock has no tags_cache table so we walk tag blocks).
-      const resolvedFromPrefix: string[] = []
-      for (const prefix of prefixes) {
-        const lp = prefix.toLowerCase()
-        for (const [, blk] of blocks) {
-          if (
-            blk['block_type'] === 'tag' &&
-            !blk['deleted_at'] &&
-            ((blk['content'] as string) ?? '').toLowerCase().startsWith(lp)
-          ) {
-            resolvedFromPrefix.push(blk['id'] as string)
-          }
-        }
-      }
-      const allIds = [...tagIds, ...resolvedFromPrefix]
-      const tags = blockTags.get(b['id'] as string)
-      if (!tags || tags.size === 0) return false
-      if (mode === 'and') return allIds.every((tid) => tags.has(tid))
-      return allIds.some((tid) => tags.has(tid))
-    }
-
     const items = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
       if (blockType !== null && b['block_type'] !== blockType) return false
-      if (spaceId !== null) {
-        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-        if (ownerSpace !== spaceId) return false
-      }
-      for (const pf of propertyFilters) {
-        if (!propertyFilterMatches(b, pf)) return false
-      }
-      if (!tagFilterMatches(b)) return false
-      return true
+      if (!fbqInSpace(b, spaceId)) return false
+      if (!propertyFilters.every((pf) => fbqPropertyFilterMatches(b, pf))) return false
+      return fbqTagFilterMatches(b, tagFilters)
     })
     items.sort((x, y) => (x['id'] as string).localeCompare(y['id'] as string))
     return { items, next_cursor: null, has_more: false }
