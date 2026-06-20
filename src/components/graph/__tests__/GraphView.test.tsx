@@ -33,6 +33,11 @@ import {
   getBlockPropertyInvalidationKey,
   recordBlockPropertyChange,
 } from '@/lib/block-property-events'
+import {
+  _resetGraphStructureEventsForTest,
+  getGraphStructureKey,
+  recordGraphStructureChange,
+} from '@/lib/graph-structure-events'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { useNavigationStore } from '@/stores/navigation'
@@ -78,6 +83,26 @@ vi.mock('@/hooks/useBlockPropertyEvents', async () => {
       invalidationKey: react.useSyncExternalStore(
         store.subscribeToBlockPropertyEvents,
         store.getBlockPropertyInvalidationKey,
+      ),
+    }),
+  }
+})
+
+// #1530: same wiring for the graph-STRUCTURE signal — the one that actually
+// tracks the graph's axis (page/`[[link]]` create, block insert/delete/move/
+// edit, and applied remote ops). The real module-level store is driven directly
+// by `recordGraphStructureChange` (there is no Tauri listener); the hook is a
+// thin `useSyncExternalStore` adapter over it so a test can bump the structure
+// counter and observe GraphView refetch (incl. across an unmount, since the
+// counter is module-level).
+vi.mock('@/hooks/useGraphStructureEvents', async () => {
+  const react = await import('react')
+  const store = await import('@/lib/graph-structure-events')
+  return {
+    useGraphStructureEvents: () => ({
+      structureKey: react.useSyncExternalStore(
+        store.subscribeToGraphStructureEvents,
+        store.getGraphStructureKey,
       ),
     }),
   }
@@ -241,6 +266,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   clearGraphCache()
   _resetBlockPropertyEventsForTest()
+  _resetGraphStructureEventsForTest()
   forceEmptyFilter = false
   MockWorker.instances = []
   // Stub the global Worker with our MockWorker by default
@@ -828,16 +854,24 @@ describe('GraphView', () => {
       dateSpy.mockRestore()
     })
 
-    // #1530: a block/link mutation bumps `invalidationKey`. The graph must
-    // refetch (stale-while-revalidate) even though the cache is still fresh
+    // #1530: a graph-STRUCTURE mutation — a page/`[[link]]` create, or any
+    // block insert/delete/move/edit routed through `page-blocks.ts` — bumps the
+    // module-level structure counter (`recordGraphStructureChange`). The graph
+    // must refetch (stale-while-revalidate) even though the cache is still fresh
     // — and conversely a remount within the TTL with NO bump must NOT refetch
     // (the existing TTL behavior is preserved).
+    //
+    // This is the CORRECT signal for the issue: the prior fix proxied the
+    // mutation via `recordBlockPropertyChange` (`block:properties-changed`),
+    // which never fires for page/link/structure changes — so it could not have
+    // verified the actual stale-graph bug. We drive the structure counter
+    // instead, the same one `page-blocks.ts` / `sync:complete` bump in prod.
     //
     // Without the `mutated` bypass in GraphView, the bumped-key re-render would
     // still hit the "fresh cache → return" early-exit and `fetchGraphData`
     // (here observed via the `list_all_pages_in_space` invoke) would be called
     // exactly once total — so the post-bump assertion (>= 2 calls) would fail.
-    it('refetches on invalidationKey bump but not on a fresh remount (#1530)', async () => {
+    it('refetches on a graph-structure mutation but not on a fresh remount (#1530)', async () => {
       const pagesResponse = {
         items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
         next_cursor: null,
@@ -878,12 +912,110 @@ describe('GraphView', () => {
       })
       expect(fetchCalls()).toBe(1)
 
-      // Now simulate a block/link mutation on the MOUNTED instance: fire the
-      // real (module-level) invalidation event. The debounced counter bumps and
-      // `useSyncExternalStore` propagates it; even though the cache is fresh,
-      // the graph must refetch (stale-while-revalidate).
+      // Now simulate a real graph-structure mutation on the MOUNTED instance
+      // (the production bump site `notifyUndoNewAction` / `appendBlock` call
+      // this exact fn). The debounced counter bumps and `useSyncExternalStore`
+      // propagates it; even though the cache is fresh, the graph must refetch.
+      act(() => {
+        recordGraphStructureChange()
+      })
+      await waitFor(() => {
+        expect(fetchCalls()).toBeGreaterThanOrEqual(2)
+      })
+    })
+
+    // #1530: a graph-structure mutation that fires while GraphView is UNMOUNTED
+    // must cause the next mount-within-TTL to refetch instead of serving the
+    // stale module-level cache entry. This is the structure-axis analogue of the
+    // #1818 property-axis unmount test below — the counter is module-level, so it
+    // survives unmount (a page/link created while the user was on another view
+    // must not leave the graph stale on return).
+    it('refetches on remount when a structure mutation fired while unmounted (#1530)', async () => {
+      const pagesResponse = {
+        items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      const fetchCalls = () =>
+        mockedInvoke.mock.calls.filter((c) => c[0] === 'list_all_pages_in_space').length
+
+      // Initial mount → one fetch, fresh cache populated.
+      const first = render(<GraphView />)
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+      await waitFor(() => {
+        expect(fetchCalls()).toBe(1)
+      })
+
+      // Unmount, THEN fire a structure mutation while nothing is mounted.
+      first.unmount()
+      act(() => {
+        recordGraphStructureChange()
+      })
+      await waitFor(() => {
+        expect(getGraphStructureKey()).toBe(1)
+      })
+
+      // Cache is still well within the 5-min TTL, but the remount reads the
+      // bumped structure key (1 != lastInvalidationRef 0) → refetch.
+      render(<GraphView />)
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+      await waitFor(() => {
+        expect(fetchCalls()).toBeGreaterThanOrEqual(2)
+      })
+    })
+
+    // #1530: the property signal is kept as a BACKSTOP — folded into the same
+    // combined invalidation key — so a block-property command also invalidates
+    // the graph cache. (A property may render as a graph-visible attribute; the
+    // structure counter is the primary axis, but property changes legitimately
+    // invalidate too and must not regress.) This documents that intended
+    // behavior: both axes invalidate.
+    it('still refetches on a block-property change (property backstop, #1530)', async () => {
+      const pagesResponse = {
+        items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
+        if (cmd === 'list_page_links') return Promise.resolve([])
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      const fetchCalls = () =>
+        mockedInvoke.mock.calls.filter((c) => c[0] === 'list_all_pages_in_space').length
+
+      render(<GraphView />)
+      await waitFor(() => {
+        expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+      })
+      await waitFor(() => {
+        expect(fetchCalls()).toBe(1)
+      })
+
+      // A property change bumps the property counter, which the combined
+      // invalidation key folds in → refetch.
       act(() => {
         recordBlockPropertyChange()
+      })
+      await waitFor(() => {
+        expect(getBlockPropertyInvalidationKey()).toBe(1)
       })
       await waitFor(() => {
         expect(fetchCalls()).toBeGreaterThanOrEqual(2)

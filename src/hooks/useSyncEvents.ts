@@ -20,6 +20,7 @@
  */
 
 import { announce } from '@/lib/announcer'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -166,6 +167,14 @@ export function useSyncEvents(): void {
           // and rendered as broken-link chips.
           const refreshSpaceId = useSpaceStore.getState().currentSpaceId
           useResolveStore.getState().preload(refreshSpaceId ?? undefined, true)
+
+          // #1530 — remote ops also change the page-link graph topology (a
+          // synced page creation or a `[[link]]` edit). Bump the graph-structure
+          // signal so a mounted GraphView refetches its cache (stale-while-
+          // revalidate) instead of serving stale nodes/edges until the TTL. The
+          // signal is module-level, so a mount that happens after this sync —
+          // while GraphView was unmounted — still observes the bump.
+          recordGraphStructureChange()
         }
       } catch (err: unknown) {
         logger.error('useSyncEvents', 'sync:complete handler failed', undefined, err)
