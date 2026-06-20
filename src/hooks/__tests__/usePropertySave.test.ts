@@ -341,7 +341,7 @@ describe('usePropertySave handleDelete', () => {
       makeProp('status', { value_text: 'active' }),
       makeProp('priority', { value_num: 1 }),
     ]
-    // oxlint-disable-next-line typescript/no-non-null-assertion -- verified not-null above
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- verified not-null above; capturedUpdater is assigned only inside an act() closure that TS flow-analysis can't see through, so a guard narrows to `never`
     const filtered = capturedUpdater!(prev)
     expect(filtered).toHaveLength(1)
     expect(filtered[0]?.key).toBe('priority')

@@ -50,6 +50,9 @@ const mockPeers = [
   },
 ]
 
+const [firstPeer] = mockPeers
+if (firstPeer === undefined) throw new Error('mockPeers fixture must have at least one peer')
+
 describe('PairingPeersList', () => {
   it('shows "Paired Devices" heading', () => {
     render(<PairingPeersList peers={[]} onUnpair={vi.fn()} />)
@@ -90,8 +93,7 @@ describe('PairingPeersList', () => {
   })
 
   it('hides reset badge when count is 0', () => {
-    // oxlint-disable-next-line typescript/no-non-null-assertion -- test data known to exist
-    const singlePeer = [mockPeers[0]!]
+    const singlePeer = [firstPeer]
     render(<PairingPeersList peers={singlePeer} onUnpair={vi.fn()} />)
 
     expect(screen.queryByText(/reset/)).not.toBeInTheDocument()
@@ -100,8 +102,7 @@ describe('PairingPeersList', () => {
   it('shows singular "reset" for count of 1', () => {
     const peerWithOneReset = [
       {
-        // oxlint-disable-next-line typescript/no-non-null-assertion -- test data known to exist
-        ...mockPeers[0]!,
+        ...firstPeer,
         reset_count: 1,
       },
     ]

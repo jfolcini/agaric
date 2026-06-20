@@ -14,7 +14,7 @@
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 
 import { dispatch } from './handlers'
-import { clearMockErrors, getInjectedError, hasInjectedError, injectMockError } from './injection'
+import { clearMockErrors, getInjectedError, injectMockError } from './injection'
 import {
   addMockAgendaItems,
   addMockAttachment,
@@ -66,9 +66,9 @@ export function setupMock(): void {
 
   mockIPC((cmd, args) => {
     // Error injection — E2E tests can force any command to fail
-    if (hasInjectedError(cmd)) {
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- hasInjectedError() guarantees getInjectedError() returns a string
-      throw new Error(getInjectedError(cmd)!)
+    const injectedError = getInjectedError(cmd)
+    if (injectedError !== undefined) {
+      throw new Error(injectedError)
     }
     return dispatch(cmd, args)
   })

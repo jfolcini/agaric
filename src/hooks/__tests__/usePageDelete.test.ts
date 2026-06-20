@@ -80,8 +80,9 @@ describe('usePageDelete', () => {
     expect(setPages).toHaveBeenCalledWith(expect.any(Function))
 
     // Verify the updater function filters out the deleted page
-    // oxlint-disable-next-line typescript/no-non-null-assertion -- test data — we just asserted setPages was called
-    const updater = setPages.mock.calls[0]![0]
+    const firstCall = setPages.mock.calls[0]
+    if (firstCall === undefined) throw new Error('expected setPages to have been called')
+    const updater = firstCall[0]
     const filtered = updater([
       { id: 'P1', content: 'Page 1' },
       { id: 'P2', content: 'Page 2' },

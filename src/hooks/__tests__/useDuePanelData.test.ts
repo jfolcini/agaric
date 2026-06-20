@@ -395,8 +395,7 @@ describe('useDuePanelData', () => {
     await waitFor(() => {
       // Only B2 should remain (B1 has due_date matching the date)
       expect(result.current.blocks).toHaveLength(1)
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- test assertion — length checked above
-      expect(result.current.blocks[0]!.id).toBe('B2')
+      expect(result.current.blocks[0]?.id).toBe('B2')
     })
   })
 
