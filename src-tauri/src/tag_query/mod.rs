@@ -61,6 +61,38 @@ impl TagExpr {
             TagExpr::Not(inner) => inner.check_depth(depth + 1),
         }
     }
+
+    /// #1622 — maximum boolean-tree depth for which `eval_tag_query`
+    /// compiles the expression to a SINGLE pushed-down candidate subquery
+    /// (`And→INTERSECT`, `Or→UNION`, `Not→NOT IN`). Beyond this depth the
+    /// query falls back to the legacy `resolve_expr` materialisation so it
+    /// stays correct.
+    ///
+    /// **Why a cap is required (not imagined — measured).** Each nesting
+    /// level wraps the inner subquery in another `NOT IN (...)` / `SELECT
+    /// FROM (...)`, growing SQLite's parser expression tree. A pure `Not`
+    /// chain is the worst case: SQLite's hard `SQLITE_MAX_EXPR_DEPTH = 1000`
+    /// is hit at a chain of 23 nested `Not`s (measured), so a depth-50
+    /// `MAX_DEPTH` tree could blow the SQL parser. `15` sits well under the
+    /// observed 22-level ceiling (≈645/1000 expr-depth used) with ample
+    /// headroom, and real tag queries are far shallower (a handful of
+    /// And/Or leaves, a single Not), so the fallback is effectively never
+    /// taken in practice.
+    pub const MAX_PUSHDOWN_DEPTH: usize = 15;
+
+    /// Boolean-tree nesting depth (leaves are depth 0; each `And`/`Or`/`Not`
+    /// adds one over its deepest child). Used to decide whether the pushed-
+    /// down candidate-subquery compilation is safe (`<= MAX_PUSHDOWN_DEPTH`)
+    /// or the legacy materialisation fallback must be used.
+    pub fn depth(&self) -> usize {
+        match self {
+            TagExpr::Tag(_) | TagExpr::Prefix(_) => 0,
+            TagExpr::And(exprs) | TagExpr::Or(exprs) => {
+                1 + exprs.iter().map(TagExpr::depth).max().unwrap_or(0)
+            }
+            TagExpr::Not(inner) => 1 + inner.depth(),
+        }
+    }
 }
 
 /// Row from `tags_cache`, used by `list_tags_by_prefix`.
