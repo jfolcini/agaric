@@ -201,8 +201,8 @@ describe('PageTreeItem', () => {
       expect(screen.getByText('sub-page')).toBeInTheDocument()
 
       // Click the chevron (first button in the row)
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- button known to exist after render
-      const chevronBtn = container.querySelector('button')!
+      const chevronBtn = container.querySelector('button')
+      if (chevronBtn === null) throw new Error('expected chevron button to render')
       await user.click(chevronBtn)
       expect(screen.queryByText('sub-page')).not.toBeInTheDocument()
     })
@@ -292,8 +292,8 @@ describe('PageTreeItem', () => {
       const { container } = render(<PageTreeItem node={node} {...defaultProps} />)
 
       // The leaf navigation button is the first <button> child
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- button known to exist after render
-      const leafBtn = container.querySelector('button')!
+      const leafBtn = container.querySelector('button')
+      if (leafBtn === null) throw new Error('expected leaf button to render')
       for (const cls of ringClasses) {
         expect(leafBtn.className).toContain(cls)
       }

@@ -74,7 +74,7 @@ describe('useSyncWithTimeout', () => {
         }),
     )
 
-    let execPromise: Promise<void>
+    let execPromise!: Promise<void>
     act(() => {
       execPromise = result.current.execute(syncFn)
     })
@@ -83,8 +83,7 @@ describe('useSyncWithTimeout', () => {
 
     await act(async () => {
       resolveFn()
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- assigned in act() above
-      await execPromise!
+      await execPromise
     })
 
     expect(result.current.loading).toBe(false)
