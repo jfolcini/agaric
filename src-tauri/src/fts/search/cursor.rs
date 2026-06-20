@@ -17,10 +17,12 @@ use super::sanitizer::sanitize_fts_query;
 ///
 /// Results are ordered by FTS5 rank (best match first) with `block_id` as
 /// tiebreaker.  The cursor is a composite `(rank, id)` pair.  Rank comparison
-/// uses an epsilon of 1e-9 (`ABS(rank - cursor_rank) < 1e-9`) instead of exact
-/// float equality, which avoids potential duplicate or missing results caused by
-/// floating-point precision drift between cursor serialization and SQLite
-/// re-computation of the FTS5 rank.
+/// uses a *relative* epsilon — `ABS(rank - cursor_rank) <= 1e-9 * MAX(1, ABS(cursor_rank))`
+/// (#1598) — instead of a fixed absolute band, so the tolerance scales with the
+/// rank's magnitude.  This absorbs floating-point precision drift between cursor
+/// serialization and SQLite's re-computation of the FTS5 rank without coupling
+/// pagination correctness to bm25's numeric scale (equal-rank rows are always
+/// disambiguated by the unique `block_id`).
 ///
 /// Empty/whitespace queries return an empty response (no error).
 ///

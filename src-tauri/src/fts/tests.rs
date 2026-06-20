@@ -2359,6 +2359,173 @@ async fn search_pagination_close_ranks_epsilon_boundary() {
     assert_eq!(unique.len(), 3, "no duplicates across pages");
 }
 
+#[tokio::test]
+async fn search_pagination_equal_ranks_id_tiebreak() {
+    // #1598 — when several blocks share the *same* bm25 rank (identical
+    // content/length), the rank comparison falls entirely within the
+    // epsilon band, so pagination must advance purely on the unique
+    // `block_id` tiebreaker. Walk the whole corpus one row per page and
+    // assert every block appears exactly once: a broken tiebreak would
+    // either skip a row (the boundary row's id is excluded) or loop on a
+    // duplicate. Three identical-content blocks is the minimal corpus that
+    // forces a page boundary *inside* a run of equal ranks.
+    let (pool, _dir) = test_pool().await;
+
+    // Identical content ⇒ identical bm25 rank for all three rows.
+    for (id, pos) in [(BLOCK_A, 0), (BLOCK_B, 1), (BLOCK_C, 2)] {
+        insert_block(
+            &pool,
+            id,
+            "content",
+            "pagination identical body",
+            None,
+            Some(pos),
+        )
+        .await;
+    }
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let mut all_ids: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut pages = 0;
+    loop {
+        let page = PageRequest::new(cursor.clone(), Some(1)).unwrap();
+        let result = search_fts(
+            &pool,
+            "pagination",
+            &page,
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            None,
+            &crate::fts::metadata_filter::MetadataPredicates::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        for item in &result.items {
+            all_ids.push(item.id.clone().into());
+        }
+        pages += 1;
+        assert!(pages <= 5, "too many pages — possible infinite loop / dup");
+        if !result.has_more {
+            break;
+        }
+        cursor = result.next_cursor;
+    }
+
+    let unique: std::collections::HashSet<&str> = all_ids.iter().map(String::as_str).collect();
+    assert_eq!(
+        all_ids.len(),
+        3,
+        "equal-rank rows must paginate exactly once each (got {all_ids:?})"
+    );
+    assert_eq!(unique.len(), 3, "no equal-rank row skipped or duplicated");
+}
+
+/// #1598 — the cursor keyset predicate must absorb float-precision drift
+/// proportional to the rank's *magnitude*, so pagination correctness is
+/// not coupled to bm25's numeric scale. Real trigram bm25 ranks are
+/// sub-unit (≈ -1e-6), where the relative band `1e-9 * MAX(1, |rank|)`
+/// collapses to the old fixed `1e-9` — so the two only diverge at large
+/// magnitudes. To exercise that regime directly we run the EXACT
+/// production WHERE predicate against a synthetic rowset.
+///
+/// Scenario: the boundary row (the last row of page 1, the one the cursor
+/// points at) is re-presented to the page-2 query with its rank drifted
+/// UPWARD by an amount proportional to magnitude — wider than `1e-9` but
+/// within `1e-9 * |rank|` (the kind of drift SQLite's f64 recomputation
+/// produces for large-magnitude ranks). The page-2 query must NOT
+/// re-emit that already-seen row.
+///
+/// - Relative epsilon (production): the drift stays inside the band, so
+///   the boundary row falls through to the `id > cursor_id` tiebreak,
+///   which excludes it (same id) — correct, no duplicate.
+/// - Old fixed `1e-9`: the drift exceeds the band, so the boundary row
+///   satisfies `rank > cursor_rank + 1e-9` and is DUPLICATED.
+///
+/// The test asserts both arms, locking the relative fix in as a
+/// mutation-killer (revert to `1e-9` ⇒ the duplicate reappears ⇒ fail).
+#[tokio::test]
+async fn fts_cursor_keyset_predicate_scale_invariant() {
+    let (pool, _dir) = test_pool().await;
+
+    // Cursor points at the boundary row (R, "ID_B") emitted on page 1.
+    let cursor_rank = -1000.0_f64;
+    let cursor_id = "ID_B";
+
+    // The boundary row's rank as RE-COMPUTED on the page-2 query, drifted
+    // upward by 5e-7. At |rank|=1000 the relative band half-width is
+    // 1e-9*1000 = 1e-6, so 5e-7 < 1e-6 (absorbed) but 5e-7 > 1e-9 (NOT
+    // absorbed by the old fixed band).
+    let drift = 5e-7_f64;
+    let boundary_recomputed = cursor_rank + drift;
+    assert!(drift > 1e-9, "drift must exceed the OLD fixed epsilon");
+    assert!(
+        drift < 1e-9 * cursor_rank.abs(),
+        "drift must stay within the relative band"
+    );
+
+    // Page-2 candidate rowset (as the `fts JOIN blocks` projection would
+    // yield it), ordered by `(rank, id)`:
+    //   - the boundary row, re-presented with its drifted rank + SAME id
+    //   - a genuinely-later row that page 2 SHOULD return
+    let later_rank = cursor_rank + 1.0; // unambiguously greater (less negative)
+    let rows: Vec<(f64, &str)> = vec![(boundary_recomputed, "ID_B"), (later_rank, "ID_C")];
+    let values_clause = rows
+        .iter()
+        .map(|(r, id)| format!("({r:?}, '{id}')"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    // (a) Relative epsilon — the production predicate (mirrors fetch.rs).
+    //     Must return ONLY the genuinely-later row; the drifted boundary
+    //     row is excluded by the id tiebreak.
+    let sql_rel = format!(
+        "WITH rows(rank, id) AS (VALUES {values_clause}) \
+         SELECT id FROM rows \
+         WHERE rank > ?1 + (1e-9 * MAX(1.0, ABS(?1))) \
+            OR (ABS(rank - ?1) <= (1e-9 * MAX(1.0, ABS(?1))) AND id > ?2) \
+         ORDER BY rank, id"
+    );
+    let page2_rel: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql_rel))
+        .bind(cursor_rank)
+        .bind(cursor_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        page2_rel,
+        vec!["ID_C".to_string()],
+        "relative-epsilon keyset must exclude the drifted boundary row (no dup) \
+         and return exactly the unseen row"
+    );
+
+    // (b) The OLD fixed-`1e-9` predicate — demonstrate it DUPLICATES the
+    //     boundary row "ID_B" at this magnitude, which is exactly the bug
+    //     the relative band fixes.
+    let sql_fixed = format!(
+        "WITH rows(rank, id) AS (VALUES {values_clause}) \
+         SELECT id FROM rows \
+         WHERE rank > ?1 + 1e-9 \
+            OR (ABS(rank - ?1) < 1e-9 AND id > ?2) \
+         ORDER BY rank, id"
+    );
+    let page2_fixed: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql_fixed))
+        .bind(cursor_rank)
+        .bind(cursor_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert!(
+        page2_fixed.contains(&"ID_B".to_string()),
+        "guard: the OLD fixed-1e-9 predicate is expected to DUPLICATE the boundary \
+         row at this scale (proving the relative fix is load-bearing); got {page2_fixed:?}"
+    );
+}
+
 // ======================================================================
 // FTS5 parse error mapping (defense-in-depth)
 // ======================================================================
@@ -6488,6 +6655,26 @@ fn partitioned_snippet_skipped_when_post_filter_clears_it() {
         without.contains("NULL as snippet"),
         "snippet=false must synthesise NULL so the row deserialises with Option<String>=None: {without}"
     );
+}
+
+/// #1598: the FTS cursor keyset must scale the rank epsilon by the cursor
+/// magnitude (a RELATIVE band `1e-9 * MAX(1.0, ABS(?3))`), not a fixed
+/// `1e-9`, so pagination stays correct independent of bm25's numeric scale.
+/// Pins the production-mirror SQL (byte-identical to the live query) so a
+/// revert to the scale-coupled fixed epsilon fails CI — the inline-SQL
+/// predicate tests don't guard the `fetch.rs` production path.
+#[test]
+fn fts_cursor_predicate_uses_relative_rank_epsilon_1598() {
+    use super::search::fts_select_prefix_for_test;
+
+    for with_snippet in [true, false] {
+        let sql = fts_select_prefix_for_test(with_snippet);
+        assert!(
+            sql.contains("1e-9 * MAX(1.0, ABS(?3))"),
+            "cursor keyset must use the relative rank epsilon `1e-9 * MAX(1.0, ABS(?3))` \
+             (not a fixed 1e-9) — see #1598 (with_snippet={with_snippet}): {sql}"
+        );
+    }
 }
 
 // ======================================================================

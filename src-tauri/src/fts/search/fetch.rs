@@ -104,27 +104,29 @@ pub(super) async fn fts_fetch_rows(
     } else {
         "NULL as snippet"
     };
-    // SQL-9 (PEND-58f) — the cursor tiebreak uses an EPSILON of `1e-9`:
-    // `ABS(fts.rank - ?3) < 1e-9` treats two ranks within 1e-9 of each
-    // other as "equal" and falls back to the `b.id` tiebreaker. This
-    // couples pagination correctness to bm25's numeric scale. The
-    // assumption is that genuinely-distinct adjacent ranks differ by far
-    // more than 1e-9 (bm25 scores are O(1)–O(10) for typical corpora), so
-    // 1e-9 only ever absorbs float-precision drift between the cursor's
-    // serialized rank and SQLite's recomputation — never two legitimately
-    // different ranks. If a future ranking function emits scores whose
-    // meaningful resolution is finer than 1e-9, this epsilon would merge
-    // distinct ranks and skip/duplicate rows at the page boundary; revisit
-    // it together with the cursor `rank` field then.
+    // SQL-9 (PEND-58f) — the cursor tiebreak uses a RELATIVE epsilon
+    // (#1598). Two ranks are treated as "equal" (and disambiguated by the
+    // unique `b.id` tiebreaker) when they fall within
+    // `1e-9 * MAX(1, ABS(?3))` of each other, i.e. the band half-width
+    // scales with the magnitude of the cursor's rank rather than being a
+    // fixed absolute `1e-9`. This decouples pagination correctness from
+    // bm25's numeric scale: the band only ever absorbs float-precision
+    // drift between the cursor's serialized rank and SQLite's recomputation
+    // (which is itself proportional to the value's magnitude), never two
+    // legitimately-different ranks — including a future ranking function
+    // whose scores are scaled far above or below bm25's typical O(1)–O(10).
+    // The `MAX(1, ...)` floor keeps the band from collapsing to zero (which
+    // would re-expose raw float-equality drift) when ranks are sub-unit.
     //
     // #671 — the strict-greater arm must clear the epsilon band, i.e.
-    // `fts.rank > ?3 + 1e-9`, NOT `fts.rank > ?3`. The boundary row's
-    // recomputed rank can drift UPWARD into `(?3, ?3 + 1e-9)`; with a bare
+    // `fts.rank > ?3 + eps`, NOT `fts.rank > ?3`. The boundary row's
+    // recomputed rank can drift UPWARD into `(?3, ?3 + eps)`; with a bare
     // `> ?3` that row satisfies the first disjunct and is re-emitted on the
-    // next page (the `ABS(...) < 1e-9 AND id > ?4` tiebreak never gets to
-    // exclude it). Adding `+ 1e-9` makes the predicate symmetric: anything
+    // next page (the `ABS(...) <= eps AND id > ?4` tiebreak never gets to
+    // exclude it). Adding `+ eps` makes the predicate symmetric: anything
     // inside the epsilon band falls through to the id tiebreak, only a
-    // genuinely-greater rank advances past it.
+    // genuinely-greater rank advances past it. `eps` is the same relative
+    // band on both arms, so the partition stays exact (no skipped/dup rows).
     // P4 (#346) — when the caller (the MCP `search` tool) supplies a
     // `snippet_len`, truncate `content` at the DB with `substr(b.content,
     // 1, N)` instead of shipping the full column up to Rust to be
@@ -145,8 +147,9 @@ pub(super) async fn fts_fetch_rows(
          JOIN blocks b ON b.id = fts.block_id
          WHERE fts_blocks MATCH ?1
            AND b.deleted_at IS NULL
-           AND (?2 IS NULL OR fts.rank > ?3 + 1e-9
-                OR (ABS(fts.rank - ?3) < 1e-9 AND b.id > ?4))"#,
+           AND (?2 IS NULL
+                OR fts.rank > ?3 + (1e-9 * MAX(1.0, ABS(?3)))
+                OR (ABS(fts.rank - ?3) <= (1e-9 * MAX(1.0, ABS(?3))) AND b.id > ?4))"#,
     );
 
     // M2 (#348) — `StructuralFilterBuilder` owns the dynamic fragment,
@@ -385,7 +388,8 @@ pub(crate) fn fts_select_prefix_for_test(with_snippet: bool) -> String {
          JOIN blocks b ON b.id = fts.block_id
          WHERE fts_blocks MATCH ?1
            AND b.deleted_at IS NULL
-           AND (?2 IS NULL OR fts.rank > ?3 + 1e-9
-                OR (ABS(fts.rank - ?3) < 1e-9 AND b.id > ?4))"#,
+           AND (?2 IS NULL
+                OR fts.rank > ?3 + (1e-9 * MAX(1.0, ABS(?3)))
+                OR (ABS(fts.rank - ?3) <= (1e-9 * MAX(1.0, ABS(?3))) AND b.id > ?4))"#,
     )
 }
