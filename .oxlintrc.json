@@ -73,7 +73,9 @@
     "oxc/no-map-spread": "error",
     "unicorn/prefer-set-has": "error",
     "unicorn/prefer-array-find": "error",
-    "react/jsx-no-constructed-context-values": "error"
+    "react/jsx-no-constructed-context-values": "error",
+
+    "eslint/eqeqeq": ["error", "always", { "null": "ignore" }]
   },
   "overrides": [
     {
