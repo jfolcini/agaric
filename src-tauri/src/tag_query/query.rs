@@ -297,8 +297,10 @@ pub async fn list_tags_by_prefix(
     // case-variants ahead of a lowercase exact match: with 20+ siblings like
     // `WIP-1`…`WIP-25` an exact `wip` sorts past the page and the frontend
     // resolver settles the name as unresolved (false-empty after #717). Fetch
-    // the exact NOCASE match separately and splice it to the front (deduped) so
-    // a valid tag always resolves. The bounded LIKE scan above is unchanged, so
+    // the exact NOCASE match separately and splice it into its sorted position
+    // (deduped) so a valid tag always resolves while the result stays strictly
+    // name-ordered (#1557 — the previous `insert(0, …)` prepend broke the
+    // `ORDER BY name` contract). The bounded LIKE scan above is unchanged, so
     // the NOCASE prefix-index plan (migration 0050) still applies.
     if !prefix.is_empty() {
         let exact = sqlx::query_as!(
@@ -312,12 +314,23 @@ pub async fn list_tags_by_prefix(
         if let Some(exact) = exact
             && !rows.iter().any(|r| r.tag_id == exact.tag_id)
         {
+            // Find the BINARY-collated sorted slot for the exact match so the
+            // returned page stays in `ORDER BY name` order. `rows` is already
+            // sorted by `name` (BINARY), matching SQLite's default collation
+            // for `tags_cache.name`, so a partition_point on `r.name < name`
+            // yields the correct insertion index.
+            let pos = rows.partition_point(|r| r.name.as_str() < exact.name.as_str());
             // Drop the page's last row if inserting the exact match would push
             // the result over the caller's requested limit, keeping the cap.
+            // The exact match is inserted in-order, so we evict the highest
+            // (last) name rather than blindly the tail of a prepend.
             if i64::try_from(rows.len()).unwrap_or(i64::MAX) >= effective_limit {
                 rows.pop();
             }
-            rows.insert(0, exact);
+            // Clamp the insertion index in case the eviction above shifted the
+            // tail boundary below `pos` (only possible when `pos == len`).
+            let pos = pos.min(rows.len());
+            rows.insert(pos, exact);
         }
     }
     Ok(rows)
@@ -817,6 +830,70 @@ mod tests {
             "result must not exceed the requested limit; got {}",
             result.len()
         );
+    }
+
+    /// #1557 — the #768 exact-match splice must place the exact match in its
+    /// `ORDER BY name` (BINARY) sorted slot, not prepend it to index 0. The
+    /// splice path only runs when the exact match has fallen off the `LIMIT`
+    /// page (otherwise the SQL `ORDER BY` already sorts it). So we seed enough
+    /// case-variant siblings that BINARY-sort *before* the lowercase exact
+    /// match to push it off the page, then assert the spliced result is still
+    /// strictly name-sorted (exact at the END, after all uppercase siblings),
+    /// rather than yanked to index 0 by the old `insert(0, …)`.
+    #[tokio::test]
+    async fn list_tags_by_prefix_exact_match_inserted_in_sorted_position_1557() {
+        let (pool, _dir) = test_pool().await;
+
+        // Three uppercase siblings (`FOO-1`…`FOO-3`). Uppercase ASCII sorts
+        // before lowercase under BINARY, so with `limit = 3` the page is
+        // exactly these three and the lowercase exact `foo` falls off.
+        for i in 1..=3 {
+            let id = format!("TAGFOO{i:020}");
+            let name = format!("FOO-{i}");
+            insert_block(&pool, &id, "tag", &name).await;
+            insert_tag_cache(&pool, &id, &name, 1).await;
+        }
+        // The lowercase exact match — BINARY-sorts AFTER all uppercase `FOO-*`.
+        insert_block(&pool, "TAGFOOEXACT0000000000000001", "tag", "foo").await;
+        insert_tag_cache(&pool, "TAGFOOEXACT0000000000000001", "foo", 1).await;
+
+        // Sanity: the bare limit-3 page is the three uppercase siblings; the
+        // exact match is off-page, so the splice path runs.
+        let bare = sqlx::query_scalar::<_, String>(
+            r#"SELECT name FROM tags_cache WHERE name LIKE 'foo%' ESCAPE '\' ORDER BY name LIMIT 3"#,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(
+            !bare.iter().any(|n| n == "foo"),
+            "fixture invariant: exact 'foo' must fall off the bare 3-row prefix page"
+        );
+
+        let result = list_tags_by_prefix(&pool, "foo", Some(3)).await.unwrap();
+        let names: Vec<&str> = result.iter().map(|r| r.name.as_str()).collect();
+
+        // #1557 contract: the spliced exact match lands in its BINARY-sorted
+        // slot (the END, after the uppercase siblings), not prepended to index
+        // 0. The cap evicts the highest-sorting page row (`FOO-3`).
+        assert_eq!(
+            names,
+            vec!["FOO-1", "FOO-2", "foo"],
+            "exact 'foo' must appear in its ORDER BY name sorted position, not prepended"
+        );
+
+        // No duplication of the exact match.
+        let exact_count = result.iter().filter(|r| r.name == "foo").count();
+        assert_eq!(exact_count, 1, "exact match must not be duplicated");
+
+        // Strictly name-sorted overall (the #1557 contract).
+        assert!(
+            result.windows(2).all(|w| w[0].name <= w[1].name),
+            "result must be strictly name-sorted; got {names:?}"
+        );
+
+        // Cap honoured.
+        assert!(result.len() <= 3, "result must not exceed the limit");
     }
 
     /// Helper: assign a tag block to a space via the denormalized

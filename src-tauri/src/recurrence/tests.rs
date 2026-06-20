@@ -723,6 +723,93 @@ fn projection_plus_plus_caught_up_still_emits() {
 }
 
 // ==================================================================
+// #1550: `remaining` (repeat-count) budget must count the TRUE series,
+// not only in-range emits.
+// ==================================================================
+
+#[test]
+fn projection_remaining_counts_pre_range_occurrences() {
+    // #1550: a recurrence whose base sits far BEFORE `range_start`, with a
+    // small `remaining` (= repeat_count - repeat_seq). The first `remaining`
+    // occurrences of the true series all fall before `range_start`, so they
+    // are filtered out of the emitted set — but they STILL consume the
+    // repeat-count budget. Post-fix the budget is exhausted before any
+    // in-range occurrence is reached, so nothing is emitted.
+    //
+    // Pre-fix `projected_count` only incremented on in-range emits, so the
+    // loop advanced through the pre-range weeks for free and then emitted 3
+    // in-range occurrences — more than `repeat_count` (3) permits for the
+    // whole series.
+    let today = chrono::Local::now().date_naive();
+    // Weekly rule; base is 100 days ago. The first three series occurrences
+    // are base+7 (today-93), base+14 (today-86), base+21 (today-79) — all
+    // strictly before `range_start = today`.
+    let base = today - chrono::Duration::days(100);
+    let base_str = base.format("%Y-%m-%d").to_string();
+
+    let range_start = today;
+    let range_end = today + chrono::Duration::days(365);
+
+    let mut emitted: Vec<(chrono::NaiveDate, &'static str)> = Vec::new();
+    crate::recurrence::project_block_dates(
+        Some(&base_str), // due_date
+        None,            // scheduled_date
+        "1w",            // default-mode weekly rule
+        None,            // repeat_until
+        Some(3),         // remaining = repeat_count - repeat_seq
+        today,
+        range_start,
+        range_end,
+        |date, source| emitted.push((date, source)),
+    );
+
+    assert!(
+        emitted.is_empty(),
+        "the 3-occurrence budget is fully consumed by pre-range occurrences, \
+         so nothing in-range may be emitted, got: {emitted:?}"
+    );
+}
+
+#[test]
+fn projection_remaining_in_range_emits_unchanged() {
+    // Control for #1550: when the base is recent enough that the first
+    // `remaining` occurrences land inside the window, the in-range emits are
+    // exactly the first `remaining` occurrences of the series — unchanged by
+    // the budget-accounting fix.
+    let today = chrono::Local::now().date_naive();
+    // Base 3 days ago, weekly: series is base+7 (today+4), base+14 (today+11),
+    // base+21 (today+18), base+28 (today+25), ... all in range below.
+    let base = today - chrono::Duration::days(3);
+    let base_str = base.format("%Y-%m-%d").to_string();
+
+    let range_start = today;
+    let range_end = today + chrono::Duration::days(365);
+
+    let mut emitted: Vec<(chrono::NaiveDate, &'static str)> = Vec::new();
+    crate::recurrence::project_block_dates(
+        Some(&base_str),
+        None,
+        "1w",
+        None,
+        Some(3), // exactly three in-range occurrences expected
+        today,
+        range_start,
+        range_end,
+        |date, source| emitted.push((date, source)),
+    );
+
+    assert_eq!(
+        emitted,
+        vec![
+            (base + chrono::Duration::days(7), "due_date"),
+            (base + chrono::Duration::days(14), "due_date"),
+            (base + chrono::Duration::days(21), "due_date"),
+        ],
+        "first three in-range series occurrences must emit unchanged"
+    );
+}
+
+// ==================================================================
 // T-36: handle_recurrence() dedicated integration tests
 // ==================================================================
 

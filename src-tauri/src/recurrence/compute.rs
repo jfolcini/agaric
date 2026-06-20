@@ -284,60 +284,48 @@ pub(crate) async fn handle_recurrence_in_tx(
     )
     .await?;
 
-    // Shift due_date if present.
+    // Shift due_date / scheduled_date if present.
     //
     // M-77: failures in `set_property_in_tx` propagate via `?` — the
     // IMMEDIATE tx rolls back so the half-built sibling is not left
     // visible. Previously the call was wrapped in a `match` that
     // tracing::warn!-logged the error and continued, hiding partial
     // failures (e.g. a date validation rejection) behind a log line.
+    //
+    // #1547: the post-shift `is_valid_iso_date` guard used to `warn!` and
+    // *skip* the property write while still committing the sibling. The
+    // shifted date should always be a valid `YYYY-MM-DD` (it comes from
+    // `chrono::NaiveDate::format` with the year clamped to the calendar
+    // guard rail in `shift_date`), so this branch is defensive. But if it
+    // ever fired, the source block's own date had already advanced and the
+    // sibling committed *dateless* — silently losing the date it was meant
+    // to carry. We now propagate `AppError::Validation` (matching M-77 and
+    // the surrounding date-shape rejections) so the IMMEDIATE tx rolls back
+    // cleanly instead of committing a half-formed, dateless sibling.
     if let Some(shifted) = shifted_due {
-        if !is_valid_iso_date(&shifted) {
-            tracing::warn!(
-                block_id,
-                new_block_id = %new_block.id,
-                shifted = %shifted,
-                "shifted due_date is not valid YYYY-MM-DD, skipping"
-            );
-        } else {
-            set_recurrence_property(
-                &mut *tx,
-                device_id,
-                new_block.id.clone().into_string(),
-                "due_date",
-                None,
-                None,
-                Some(shifted),
-                None,
-                &mut op_records,
-            )
-            .await?;
-        }
+        push_shifted_date_property(
+            &mut *tx,
+            device_id,
+            &new_block,
+            block_id,
+            "due_date",
+            shifted,
+            &mut op_records,
+        )
+        .await?;
     }
 
-    // Shift scheduled_date if present (M-77: propagate via `?`).
     if let Some(shifted) = shifted_sched {
-        if !is_valid_iso_date(&shifted) {
-            tracing::warn!(
-                block_id,
-                new_block_id = %new_block.id,
-                shifted = %shifted,
-                "shifted scheduled_date is not valid YYYY-MM-DD, skipping"
-            );
-        } else {
-            set_recurrence_property(
-                &mut *tx,
-                device_id,
-                new_block.id.clone().into_string(),
-                "scheduled_date",
-                None,
-                None,
-                Some(shifted),
-                None,
-                &mut op_records,
-            )
-            .await?;
-        }
+        push_shifted_date_property(
+            &mut *tx,
+            device_id,
+            &new_block,
+            block_id,
+            "scheduled_date",
+            shifted,
+            &mut op_records,
+        )
+        .await?;
     }
 
     // Copy repeat-until to new block if present (M-77: propagate via `?`).
@@ -449,6 +437,49 @@ pub(crate) async fn handle_recurrence_in_tx(
     }
 
     Ok(true)
+}
+
+/// #1547: write a shifted `due_date` / `scheduled_date` onto the recurrence
+/// sibling, propagating `AppError::Validation` if the shifted value somehow
+/// fails post-shift ISO validation.
+///
+/// In normal operation `shifted` is always a valid `YYYY-MM-DD` — it is the
+/// output of `chrono::NaiveDate::format("%Y-%m-%d")` with the year clamped to
+/// the calendar guard rail in `shift_date`. The validation here is therefore
+/// defensive. But it must NOT silently skip on failure: the source block's
+/// own date has already advanced and the sibling is about to commit, so a
+/// skipped write leaves a *dateless* sibling committed (the #1547 bug). By
+/// returning `Err(AppError::Validation)` we let the `?` at the call site roll
+/// back the IMMEDIATE tx, matching the M-77 contract for the other property
+/// writes in this flow.
+async fn push_shifted_date_property(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device_id: &str,
+    new_block: &BlockRow,
+    block_id: &str,
+    key: &str,
+    shifted: String,
+    op_records: &mut Vec<op_log::OpRecord>,
+) -> Result<(), crate::error::AppError> {
+    if !is_valid_iso_date(&shifted) {
+        return Err(crate::error::AppError::Validation(format!(
+            "recurrence sibling {new_block_id}: shifted {key} '{shifted}' is not a valid \
+             YYYY-MM-DD date (source block {block_id})",
+            new_block_id = new_block.id,
+        )));
+    }
+    set_recurrence_property(
+        tx,
+        device_id,
+        new_block.id.clone().into_string(),
+        key,
+        None,
+        None,
+        Some(shifted),
+        None,
+        op_records,
+    )
+    .await
 }
 
 /// MAINT-171: thin wrapper over [`set_property_in_tx`] that captures the
@@ -1194,5 +1225,106 @@ mod tests_l99_l100 {
         );
 
         mat.shutdown();
+    }
+
+    // --- #1547: shifted-date carry / invalid-shifted-date rollback ---
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recurrence_sibling_carries_shifted_due_date() {
+        // #1547 (normal path): a plain `daily` recurrence must produce a
+        // sibling that CARRIES the shifted due_date — never a dateless
+        // sibling. Pre-fix the date was written by a branch that could
+        // silently skip; this pins that the date is present and correct so
+        // the rollback change below cannot regress the happy path.
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Origin: due=2025-06-15 + daily → shifted due 2025-06-16.
+        let id = make_recurring_block(&pool, &mat, "2025-06-15").await;
+
+        let created = handle_recurrence(&pool, DEV, &mat, &id).await.unwrap();
+        assert!(
+            created,
+            "daily recurrence with no end condition must create a sibling"
+        );
+        mat.flush_background().await.unwrap();
+        settle().await;
+
+        let siblings = find_todo_siblings(&pool, &id).await;
+        assert_eq!(siblings.len(), 1, "expected exactly one TODO sibling");
+        let sibling = &siblings[0];
+        assert_eq!(
+            sibling.due_date.as_deref(),
+            Some("2025-06-16"),
+            "sibling must carry the shifted due_date, not be dateless (#1547)"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn push_shifted_date_property_rejects_invalid_date() {
+        // #1547 (defensive branch): the post-shift ISO guard used to
+        // `warn!` and SKIP the date write while the sibling still
+        // committed — leaving a dateless sibling after the source block's
+        // date had already advanced. The guard now returns
+        // `AppError::Validation` so the caller's `?` rolls the IMMEDIATE
+        // tx back. This branch is unreachable through the public recurrence
+        // flow (shifted dates always validate), so we drive the helper
+        // directly with a deliberately malformed shifted value to pin the
+        // propagation contract.
+        let (pool, _dir) = test_pool().await;
+
+        // A bare BlockRow is enough — the helper rejects the date *before*
+        // touching the DB, so no block needs to exist for the Err path.
+        let new_block = BlockRow {
+            id: crate::ulid::BlockId::new(),
+            block_type: "task".into(),
+            content: Some("content".into()),
+            parent_id: None,
+            position: None,
+            deleted_at: None,
+            todo_state: Some("TODO".into()),
+            priority: None,
+            due_date: None,
+            scheduled_date: None,
+            page_id: None,
+        };
+        let mut op_records: Vec<op_log::OpRecord> = Vec::new();
+        let mut tx = pool.begin().await.unwrap();
+
+        let err = push_shifted_date_property(
+            &mut tx,
+            DEV,
+            &new_block,
+            "source-block-id",
+            "due_date",
+            "not-a-date".to_string(),
+            &mut op_records,
+        )
+        .await
+        .expect_err("invalid shifted date must return Err, not silently skip (#1547)");
+
+        assert!(
+            matches!(err, crate::error::AppError::Validation(_)),
+            "invalid shifted date must surface AppError::Validation so the tx rolls back, got {err:?}"
+        );
+        assert!(
+            op_records.is_empty(),
+            "no op record must be enqueued for a rejected shifted date"
+        );
+
+        // A valid shifted date, by contrast, is accepted and enqueues an op.
+        // (Use the same bare tx — the date is validated before any block
+        // lookup, and set_property_in_tx upserts the property row.)
+        // We don't assert on persisted state here; the full-flow test above
+        // covers the carry. This only confirms the valid branch does not err
+        // on the validation gate.
+        assert!(
+            is_valid_iso_date("2025-06-16"),
+            "sanity: a shifted date is valid ISO"
+        );
+
+        tx.rollback().await.unwrap();
     }
 }
