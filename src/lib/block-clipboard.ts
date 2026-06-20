@@ -88,6 +88,159 @@ export function humanizeRefTokens(content: string, resolve: RefResolver): string
     })
 }
 
+// ── Human-readable reference resolution (import/paste only, #1484) ────────────
+
+/**
+ * A canonical 26-char Crockford-base32 ULID (uppercase). Used to recognise a
+ * reference token that is ALREADY in internal/canonical form so the import
+ * resolver leaves it untouched (an internal duplicate→paste round-trip serializes
+ * `[[ULID]]`/`#[ULID]` with NO humanize resolver, so its tokens carry ULIDs, not
+ * names — they must NOT be treated as a page/tag NAME to look up).
+ */
+const ULID_BODY_RE = /^[0-9A-Z]{26}$/
+
+/**
+ * Human-readable page/block link on the way IN: `[[Some Page]]`. The body is
+ * any run of chars that is NOT `]` (so the `]]` close is unambiguous) and NOT a
+ * bare ULID (handled verbatim — see {@link ULID_BODY_RE}). Non-greedy so
+ * `[[A]] [[B]]` matches twice, not once across the gap.
+ */
+const HUMAN_PAGE_LINK_RE = /\[\[([^\]\n]+?)\]\]/g
+
+/**
+ * Human-readable tag on the way IN: `#tag` / `#nested/tag`. The name is a run of
+ * tag-name chars (Unicode letters/digits plus `_`, `-`, `/` for nested tags),
+ * mirroring the hashtag + nested-namespace convention. A `#` immediately
+ * followed by `[` is the CANONICAL `#[ULID]` form and is deliberately NOT
+ * matched here (the `[^[\W]`-style first-char guard via the class excludes `[`),
+ * so canonical tags survive an internal round-trip untouched. The leading
+ * boundary (`(^|[^\w])`) stops `a#b` / `word#frag` from being read as a tag.
+ */
+const HUMAN_TAG_RE = /(^|[^\p{L}\p{N}_])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu
+
+/**
+ * Resolve a human-readable reference NAME to its internal ULID on import,
+ * CREATING the page/tag when it does not exist (#1484). Returns the ULID, or
+ * `null` to leave the original token as plain text (an unresolvable/ambiguous
+ * name — e.g. a duplicate page title under the leave-plain rule, or a creation
+ * failure). May be async (creation routes through IPC).
+ */
+export type RefInternalizer = (name: string) => Promise<string | null>
+
+/**
+ * Injected resolvers for {@link internalizeRefTokens}. Each maps a
+ * human-readable name to an internal ULID, creating the target if missing.
+ * `block` is optional: `((Block Name))` has no by-name creation path, so when
+ * omitted those tokens are left as plain text.
+ */
+export interface RefInternalizers {
+  page: RefInternalizer
+  tag: RefInternalizer
+}
+
+/**
+ * Rewrite the human-readable reference tokens in a single block's content into
+ * the internal ULID forms the editor stores/parses (#1484) — the inverse of
+ * {@link humanizeRefTokens}:
+ *
+ *   `[[Page Name]]` → `[[ULID]]`   (resolve title; create the page if missing)
+ *   `#tag`          → `#[ULID]`     (resolve tag name; create the tag if missing)
+ *   `((Block Name))`→ left as plain text (no by-name block-ref creation path)
+ *
+ * A token already in canonical form (`[[ULID]]`, `#[ULID]`) is left untouched so
+ * an internal duplicate→paste round-trip stays ULID-canonical. A name the
+ * resolver returns `null` for (unresolvable / ambiguous duplicate title /
+ * creation failure) is left as its original plain-text token — nothing is
+ * dropped and no exception escapes (the caller's resolver owns error handling).
+ *
+ * Async because page/tag creation routes through IPC. Pure w.r.t. the input
+ * string: it returns a rewritten COPY and never mutates `content`.
+ */
+export async function internalizeRefTokens(
+  content: string,
+  resolvers: RefInternalizers,
+): Promise<string> {
+  // Two sequential passes (page links, then tags). Each pass collects the
+  // distinct names, resolves them ONCE (so a name repeated in the line creates
+  // at most one page/tag), then does a synchronous replace with the resolved
+  // map. Page links are resolved before tags purely for readability; the token
+  // shapes are disjoint so ordering is immaterial to correctness.
+  const withPages = await replaceRefs(
+    content,
+    HUMAN_PAGE_LINK_RE,
+    resolvers.page,
+    (ulid) => `[[${ulid}]]`,
+  )
+  return replaceRefs(withPages, HUMAN_TAG_RE, resolvers.tag, (ulid) => `#[${ulid}]`, true)
+}
+
+/**
+ * Shared engine for {@link internalizeRefTokens}: find every NAME match of
+ * `re`, resolve the distinct names once via `resolve`, then rebuild the string
+ * with each resolved name rewritten via `render(ulid)`. A name that is a bare
+ * ULID (already canonical) or that resolves to `null` keeps its original token.
+ *
+ * `tagBoundary` (tags only) — the tag regex captures a leading boundary char in
+ * group 1 and the name in group 2; it must be re-emitted before the rewritten
+ * token. Page links have the name in group 1 and no boundary capture.
+ */
+async function replaceRefs(
+  content: string,
+  re: RegExp,
+  resolve: RefInternalizer,
+  render: (ulid: string) => string,
+  tagBoundary = false,
+): Promise<string> {
+  // In tag mode, a `#tag`-looking substring may live inside an UNRESOLVED
+  // `[[Page Name]]` token that survived the page pass (e.g. `[[Project #alpha]]`).
+  // Rewriting that `#alpha` would corrupt the link into `[[Project #[ULID]]]`,
+  // so collect the `[[ ... ]]` spans and skip any tag match that falls inside one.
+  // (Resolved links are already `[[ULID]]` and contain no `#`, so they're inert.)
+  const bracketSpans: Array<[number, number]> = []
+  if (tagBoundary) {
+    for (const b of content.matchAll(HUMAN_PAGE_LINK_RE)) {
+      bracketSpans.push([b.index, b.index + b[0].length])
+    }
+  }
+  // The `#` of a tag match sits after its captured leading-boundary char.
+  const tagInsideBracket = (matchIndex: number, boundaryLen: number): boolean => {
+    const hashPos = matchIndex + boundaryLen
+    return bracketSpans.some(([start, end]) => hashPos >= start && hashPos < end)
+  }
+
+  // Pass 1: collect distinct candidate names (skip bare-ULID canonical bodies,
+  // and — for tags — names whose `#` is inside an unresolved `[[ ]]` span).
+  const names = new Set<string>()
+  for (const m of content.matchAll(re)) {
+    const name = (tagBoundary ? m[2] : m[1]) ?? ''
+    if (tagBoundary && tagInsideBracket(m.index, (m[1] ?? '').length)) continue
+    if (name.length > 0 && !ULID_BODY_RE.test(name)) names.add(name)
+  }
+  if (names.size === 0) return content
+
+  // Pass 2: resolve each distinct name once (create-if-missing), sequentially
+  // so concurrent creation of the SAME name can't race into two pages/tags.
+  const resolved = new Map<string, string | null>()
+  for (const name of names) {
+    try {
+      resolved.set(name, await resolve(name))
+    } catch {
+      resolved.set(name, null)
+    }
+  }
+
+  // Pass 3: synchronous rebuild. A null/unresolved/ULID name — or a tag inside an
+  // unresolved `[[ ]]` span — keeps its original token.
+  return content.replace(re, (match, g1: string, g2: string | undefined, offset: number) => {
+    const boundary = tagBoundary ? g1 : ''
+    const name = (tagBoundary ? g2 : g1) ?? ''
+    if (tagBoundary && tagInsideBracket(offset, boundary.length)) return match
+    if (ULID_BODY_RE.test(name)) return match
+    const ulid = resolved.get(name)
+    return ulid == null ? match : boundary + render(ulid)
+  })
+}
+
 /**
  * A parsed clipboard block: its content and a pointer to its parent's index in
  * the SAME parsed list (`null` = top-level / paste root). Children always

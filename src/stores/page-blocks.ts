@@ -28,7 +28,11 @@ import { createStore, type StoreApi, useStore } from 'zustand'
 import { notify } from '@/lib/notify'
 
 import { retryOnPoolBusy } from '../lib/app-error'
-import { parseIndentedMarkdown } from '../lib/block-clipboard'
+import {
+  internalizeRefTokens,
+  parseIndentedMarkdown,
+  type RefInternalizers,
+} from '../lib/block-clipboard'
 import { computeIndentedBlocks, findPrevSiblingAt, planSplit } from '../lib/block-tree-ops'
 import { recordGraphStructureChange } from '../lib/graph-structure-events'
 import { i18n } from '../lib/i18n'
@@ -37,8 +41,11 @@ import type { BlockRow, CreateBlockSpec } from '../lib/tauri'
 import {
   createBlock,
   createBlocksBatch,
+  createPageInSpace,
   deleteBlock,
   editBlock,
+  listAllPagesInSpace,
+  listAllTagsInSpace,
   loadPageSubtree,
   moveBlock,
 } from '../lib/tauri'
@@ -49,6 +56,7 @@ import {
   MAX_BLOCK_DEPTH,
 } from '../lib/tree-utils'
 import { useBlockStore } from './blocks'
+import { useResolveStore } from './resolve'
 import { useSpaceStore } from './space'
 import { useUndoStore } from './undo'
 
@@ -394,6 +402,107 @@ export function storeOwnsBlock(
   blockId: string | null,
 ): blockId is string {
   return blockId != null && store.getState().blocksById.has(blockId)
+}
+
+// ── Import wiki-link resolution (#1484) ──────────────────────────────────────
+
+/**
+ * Build the page/tag name→ULID resolvers used to rewrite human-readable
+ * wiki-links (`[[Page Name]]`, `#tag`) back to internal refs on paste/import
+ * (#1484). Each resolver looks the name up in the active space and CREATES the
+ * target when it does not exist, reusing the same creation IPC the editor's
+ * link/tag pickers use (`createPageInSpace` / `createBlock({ blockType: 'tag' })`).
+ *
+ * The authoritative active-space page/tag lists are fetched ONCE and shared
+ * across every block in a multi-block paste (closures over the two lazily-built
+ * maps), so a paste of N blocks does not issue N list IPCs. Newly created
+ * pages/tags are folded back into the maps so two references to the same new
+ * name in one paste create it exactly once.
+ *
+ * Duplicate-title rule (#1484): a `[[Name]]` whose title matches exactly ONE
+ * active page links to it; a title matching MULTIPLE active pages is ambiguous
+ * and left as plain text (we never guess which page was meant); a title
+ * matching NONE is created. Tag names are unique per space, so tags have no
+ * ambiguity branch.
+ *
+ * Returns `null` (→ caller skips resolution, content stays verbatim) when no
+ * space is active, so a pre-bootstrap paste never creates cross-space data.
+ */
+function buildImportRefInternalizers(): RefInternalizers | null {
+  const currentSpaceId = useSpaceStore.getState().currentSpaceId
+  if (currentSpaceId == null) return null
+  // Capture as a non-null const so the async closures below keep the narrowing.
+  const spaceId: string = currentSpaceId
+
+  // Lazily-fetched, paste-scoped caches. `title → [ulid, …]` keeps every page
+  // sharing a title so the duplicate rule can count them; `name → ulid` is a
+  // 1:1 tag map (tag names are unique). Built on first reference of each kind.
+  let pagesByTitle: Map<string, string[]> | null = null
+  let tagsByName: Map<string, string> | null = null
+
+  async function ensurePages(): Promise<Map<string, string[]>> {
+    if (pagesByTitle) return pagesByTitle
+    const map = new Map<string, string[]>()
+    try {
+      for (const p of await listAllPagesInSpace(spaceId)) {
+        const title = p.content ?? ''
+        if (title.length === 0) continue
+        const ids = map.get(title)
+        if (ids) ids.push(p.id)
+        else map.set(title, [p.id])
+      }
+    } catch (err) {
+      logger.warn('page-blocks', 'import: page list fetch failed', {}, err)
+    }
+    pagesByTitle = map
+    return map
+  }
+
+  async function ensureTags(): Promise<Map<string, string>> {
+    if (tagsByName) return tagsByName
+    const map = new Map<string, string>()
+    try {
+      for (const t of await listAllTagsInSpace(spaceId)) map.set(t.name, t.tag_id)
+    } catch (err) {
+      logger.warn('page-blocks', 'import: tag list fetch failed', {}, err)
+    }
+    tagsByName = map
+    return map
+  }
+
+  return {
+    page: async (name) => {
+      const map = await ensurePages()
+      const existing = map.get(name)
+      // Ambiguous duplicate title → leave plain text (never guess).
+      if (existing && existing.length > 1) return null
+      if (existing && existing.length === 1) return existing[0] ?? null
+      try {
+        const newId = await createPageInSpace({ content: name, spaceId })
+        map.set(name, [newId])
+        // Seed the resolve cache so the new link chip renders its title at once.
+        useResolveStore.getState().set(newId, name, false)
+        return newId
+      } catch (err) {
+        logger.warn('page-blocks', 'import: page create failed', { name }, err)
+        return null
+      }
+    },
+    tag: async (name) => {
+      const map = await ensureTags()
+      const existing = map.get(name)
+      if (existing != null) return existing
+      try {
+        const block = await createBlock({ blockType: 'tag', content: name })
+        map.set(name, block.id)
+        useResolveStore.getState().set(block.id, name, false)
+        return block.id
+      } catch (err) {
+        logger.warn('page-blocks', 'import: tag create failed', { name }, err)
+        return null
+      }
+    },
+  }
 }
 
 // ── Store factory ────────────────────────────────────────────────────────
@@ -1448,6 +1557,20 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       const parsed = parseIndentedMarkdown(markdown)
       const effective =
         parsed.length > 0 ? parsed : [{ content: markdown, parentIndex: null as number | null }]
+
+      // #1484 — rewrite human-readable wiki-links (`[[Page Name]]`, `#tag`) in
+      // the pasted content back to internal refs (`[[ULID]]`, `#[ULID]`),
+      // creating missing pages/tags. Canonical `[[ULID]]`/`#[ULID]` tokens (an
+      // internal duplicate→paste round-trip) and unresolvable/ambiguous names
+      // are left untouched. The resolvers share one page/tag list fetch across
+      // the whole paste; sequential per-block so same-name creation can't race.
+      // `null` (no active space) → skip resolution, content stays verbatim.
+      const internalizers = buildImportRefInternalizers()
+      if (internalizers) {
+        for (const entry of effective) {
+          entry.content = await internalizeRefTokens(entry.content, internalizers)
+        }
+      }
 
       // Compute each parsed block's depth so we can batch level-by-level
       // (children reference parents created in an earlier batch — the

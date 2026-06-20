@@ -3902,5 +3902,153 @@ describe('PageBlockStore', () => {
         expect.objectContaining({ rootBlockId: 'PAGE_1' }),
       )
     })
+
+    // #1484 — human-readable wiki-link resolution on paste/import. The
+    // resolvers fetch the active-space page/tag lists and create missing
+    // targets through the existing IPC (`create_page_in_space` / `create_block`
+    // with `block_type: 'tag'`).
+    describe('wiki-link resolution on import (#1484)', () => {
+      const EXISTING_PAGE = '01HZ0PAGE0000000000000000A'
+      const EXISTING_TAG = '01HZ0TAG00000000000000000B'
+
+      /**
+       * Wire the paste batch/reload plus the wiki-link resolution IPC:
+       * `list_all_pages_in_space` / `list_all_tags_in_space` return the seeded
+       * existing rows; `create_page_in_space` returns a fresh ULID and records
+       * the title; `create_block` (tag) returns a fresh BlockRow and records the
+       * name. Captures every batch's specs plus the created page titles/tag names.
+       */
+      function wireWikiLinkIpc(opts: {
+        pages?: Array<{ id: string; content: string }>
+        tags?: Array<{ tag_id: string; name: string }>
+      }): { batches: unknown[][]; createdPages: string[]; createdTags: string[] } {
+        const batches: unknown[][] = []
+        const createdPages: string[] = []
+        const createdTags: string[] = []
+        let createdBlocks = 0
+        let createdPageN = 0
+        let createdTagN = 0
+        mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+          if (cmd === 'list_all_pages_in_space') return opts.pages ?? []
+          if (cmd === 'list_all_tags_in_space') {
+            return (opts.tags ?? []).map((t) => ({
+              tag_id: t.tag_id,
+              name: t.name,
+              usage_count: 0,
+              updated_at: '',
+            }))
+          }
+          if (cmd === 'create_page_in_space') {
+            const content = (args as { content: string }).content
+            createdPages.push(content)
+            return `01HZ0CREATEDPAGE0000000${String(createdPageN++).padStart(3, '0')}`
+          }
+          if (cmd === 'create_block') {
+            const a = args as { blockType: string; content: string }
+            const id =
+              a.blockType === 'tag'
+                ? `01HZ0CREATEDTAG00000000${String(createdTagN++).padStart(3, '0')}`
+                : `NEWBLOCK${createdBlocks}`
+            if (a.blockType === 'tag') createdTags.push(a.content)
+            return {
+              id,
+              block_type: a.blockType,
+              content: a.content,
+              parent_id: null,
+              position: null,
+              deleted_at: null,
+            }
+          }
+          if (cmd === 'create_blocks_batch') {
+            const specs = ((args as { specs?: unknown })?.specs ?? []) as Array<{
+              content: string
+              parentId: string | null
+            }>
+            batches.push(specs)
+            return specs.map((s) => ({
+              id: `NEW${createdBlocks++}`,
+              block_type: 'content',
+              content: s.content,
+              parent_id: s.parentId,
+              position: null,
+              deleted_at: null,
+            }))
+          }
+          if (cmd === 'load_page_subtree') {
+            return subtreeResp([makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })])
+          }
+          return []
+        })
+        return { batches, createdPages, createdTags }
+      }
+
+      function firstSpecContent(batches: unknown[][]): string {
+        const specs = batches[0] as Array<{ content: string }>
+        return specs[0]?.content ?? ''
+      }
+
+      it('resolves an existing [[Page Name]] to its internal [[ULID]]', async () => {
+        store.setState({ blocks: [makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })] })
+        const { batches, createdPages } = wireWikiLinkIpc({
+          pages: [{ id: EXISTING_PAGE, content: 'My Page' }],
+        })
+
+        await store.getState().pasteBlocks('A', 'see [[My Page]] here')
+
+        expect(firstSpecContent(batches)).toBe(`see [[${EXISTING_PAGE}]] here`)
+        expect(createdPages).toEqual([])
+      })
+
+      it('creates a missing [[New Page]] and links to the created ULID', async () => {
+        store.setState({ blocks: [makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })] })
+        const { batches, createdPages } = wireWikiLinkIpc({ pages: [] })
+
+        await store.getState().pasteBlocks('A', 'link [[Fresh Page]]')
+
+        expect(createdPages).toEqual(['Fresh Page'])
+        expect(firstSpecContent(batches)).toBe('link [[01HZ0CREATEDPAGE0000000000]]')
+      })
+
+      it('resolves an existing #tag and creates a missing one', async () => {
+        store.setState({ blocks: [makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })] })
+        const { batches, createdTags } = wireWikiLinkIpc({
+          tags: [{ tag_id: EXISTING_TAG, name: 'todo' }],
+        })
+
+        await store.getState().pasteBlocks('A', 'a #todo and a #newtag')
+
+        expect(createdTags).toEqual(['newtag'])
+        expect(firstSpecContent(batches)).toBe(
+          `a #[${EXISTING_TAG}] and a #[01HZ0CREATEDTAG00000000000]`,
+        )
+      })
+
+      it('leaves a canonical [[ULID]] untouched (internal duplicate→paste round-trip)', async () => {
+        store.setState({ blocks: [makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })] })
+        const { batches, createdPages } = wireWikiLinkIpc({ pages: [] })
+
+        await store.getState().pasteBlocks('A', `dup [[${EXISTING_PAGE}]]`)
+
+        // The ULID body is never looked up or created — it stays canonical.
+        expect(firstSpecContent(batches)).toBe(`dup [[${EXISTING_PAGE}]]`)
+        expect(createdPages).toEqual([])
+        expect(mockedInvoke).not.toHaveBeenCalledWith('create_page_in_space', expect.anything())
+      })
+
+      it('leaves an ambiguous duplicate title as plain text (no create)', async () => {
+        store.setState({ blocks: [makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })] })
+        const { batches, createdPages } = wireWikiLinkIpc({
+          pages: [
+            { id: '01HZ0DUP000000000000000001', content: 'Dup' },
+            { id: '01HZ0DUP000000000000000002', content: 'Dup' },
+          ],
+        })
+
+        await store.getState().pasteBlocks('A', 'see [[Dup]]')
+
+        expect(firstSpecContent(batches)).toBe('see [[Dup]]')
+        expect(createdPages).toEqual([])
+      })
+    })
   })
 })
